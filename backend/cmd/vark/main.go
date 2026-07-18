@@ -48,6 +48,17 @@ func run() error {
 		return err
 	}
 
+	// MediaDir and YtdlpDir are written to directly (downloaded media, the
+	// self-updated yt-dlp binary); DBPath's parent holds the SQLite file.
+	// None of these are guaranteed to pre-exist (e.g. a fresh bind-mounted
+	// volume), so create them up front rather than fail deep inside a
+	// download or self-update attempt.
+	for _, dir := range []string{filepath.Dir(cfg.DBPath), cfg.MediaDir, cfg.YtdlpDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create dir %q: %w", dir, err)
+		}
+	}
+
 	db, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return err
@@ -168,15 +179,23 @@ func run() error {
 	// rather than exiting the process out from under them. Both loops exit
 	// promptly on ctx.Done(), so this wait is short.
 	var workerWG sync.WaitGroup
-	workerWG.Add(2)
+	workerWG.Add(3)
 	go func() {
 		defer workerWG.Done()
+		slog.Info("download worker started")
 		worker.Run(ctx)
 	}()
 	go func() {
 		defer workerWG.Done()
+		slog.Info("retention sweeper started")
 		sweeper.Run(ctx)
 	}()
+	go func() {
+		defer workerWG.Done()
+		runYtdlpSelfUpdateTicker(ctx, cfg.YtdlpDir, ytdlpSelfUpdateInterval)
+	}()
+
+	slog.Info("SSE hub ready")
 
 	deps := httpapi.Deps{
 		Version:        version.Version,
@@ -225,6 +244,44 @@ func (v ytdlpVersioner) Version(ctx context.Context) (string, error) {
 
 func (v ytdlpVersioner) UpdateLatest(ctx context.Context) (string, error) {
 	return ytdlp.UpdateLatest(ctx, v.dir)
+}
+
+// ytdlpSelfUpdateInterval is how often the background ticker refreshes the
+// yt-dlp binary in cfg.YtdlpDir. yt-dlp ships frequent releases that track
+// YouTube's ever-changing player/extraction internals, so a stale binary is
+// the single most common cause of downloads silently starting to fail; a
+// daily check keeps that window small without hammering GitHub's releases
+// endpoint.
+const ytdlpSelfUpdateInterval = 24 * time.Hour
+
+// runYtdlpSelfUpdateTicker logs the yt-dlp version already on disk at boot,
+// then periodically re-runs ytdlp.UpdateLatest to fetch newer releases into
+// dir. It never returns an error to the caller: a failed update (e.g. no
+// network, GitHub rate limit) is logged and retried on the next tick rather
+// than treated as fatal, since the existing binary keeps working in the
+// meantime.
+func runYtdlpSelfUpdateTicker(ctx context.Context, dir string, interval time.Duration) {
+	if v, err := ytdlp.Version(ctx, resolveYtdlpBin(dir)); err != nil {
+		slog.Warn("yt-dlp not available at boot; downloads will fail until self-update succeeds", "err", err)
+	} else {
+		slog.Info("yt-dlp self-update ticker started", "version", v, "interval", interval)
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			v, err := ytdlp.UpdateLatest(ctx, dir)
+			if err != nil {
+				slog.Warn("yt-dlp self-update failed", "err", err)
+				continue
+			}
+			slog.Info("yt-dlp self-update succeeded", "version", v)
+		}
+	}
 }
 
 // resolveYtdlpBin returns the path to the yt-dlp binary: <dir>/yt-dlp if it

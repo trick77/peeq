@@ -1,0 +1,99 @@
+# Production stack: single vark service behind an external Traefik reverse
+# proxy that terminates TLS. Requires an external "traefik" network
+# (`docker network create traefik`) shared with your Traefik instance.
+#
+#   cp .env.example .env   # fill in the values, especially VARK_SESSION_SECRET
+#                           # and the OIDC block
+#   docker compose up -d
+#
+# Edit the Host() rule below to your real domain before deploying.
+services:
+  vark:
+    image: ghcr.io/trick77/vark:latest
+    restart: unless-stopped
+
+    # --- Container hardening ---------------------------------------------
+    # Run as a fixed, non-root uid:gid. Matches the ownership `data-init`
+    # (see compose.dev.yaml) or a one-off `chown -R 1000:1000 ./data` gives
+    # the bind-mounted volume.
+    user: "1000:1000"
+    # Drop every Linux capability; vark only listens on a TCP port and
+    # shells out to yt-dlp/ffmpeg as a plain child process, none of which
+    # needs any capability at all.
+    cap_drop:
+      - ALL
+    # Block privilege escalation via setuid/setgid binaries even if one
+    # somehow ended up in the image.
+    security_opt:
+      - no-new-privileges:true
+    # Root filesystem is immutable; every path the process (or yt-dlp/ffmpeg
+    # as its children) writes to is called out explicitly below.
+    read_only: true
+    tmpfs:
+      # yt-dlp's cookie file (written fresh per invocation, see
+      # internal/ytdlp/ytdlp.go writeCookieTempFile) and its own XDG cache
+      # dir both land in $TMPDIR/$HOME; HOME is pointed at /tmp below so
+      # both stay inside this tmpfs instead of needing a writable rootfs.
+      - /tmp:size=256m
+
+    environment:
+      # See the tmpfs comment above: HOME/TMPDIR must be a writable path
+      # when the rootfs is read-only. /tmp is the tmpfs mounted above.
+      HOME: /tmp
+      TMPDIR: /tmp
+      VARK_ADDR: ":8080"
+      VARK_PUBLIC_URL: "${VARK_PUBLIC_URL}"
+      VARK_SESSION_SECRET: "${VARK_SESSION_SECRET}"
+      VARK_AUTH_MODE: "${VARK_AUTH_MODE:-oidc}"
+      VARK_OIDC_ISSUER: "${VARK_OIDC_ISSUER}"
+      VARK_OIDC_CLIENT_ID: "${VARK_OIDC_CLIENT_ID}"
+      VARK_OIDC_CLIENT_SECRET: "${VARK_OIDC_CLIENT_SECRET}"
+      VARK_OIDC_REDIRECT_URL: "${VARK_OIDC_REDIRECT_URL}"
+      VARK_OIDC_POST_LOGOUT_REDIRECT_URL: "${VARK_OIDC_POST_LOGOUT_REDIRECT_URL}"
+      VARK_OIDC_ADMIN_GROUP: "${VARK_OIDC_ADMIN_GROUP:-vark-admins}"
+      VARK_DB_PATH: /data/vark.db
+      VARK_MEDIA_DIR: /data/media
+      VARK_YTDLP_DIR: /data/bin
+      VARK_LOG_LEVEL: "${VARK_LOG_LEVEL:-info}"
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 60s
+      timeout: 5s
+      start_period: 30s
+      start_interval: 5s
+      retries: 3
+
+    volumes:
+      # SQLite DB + downloaded media + the self-updating yt-dlp binary all
+      # live under one bind mount so a single directory backup covers state.
+      - ./data:/data
+
+    networks:
+      - traefik
+
+    # Soft resource ceiling: yt-dlp+ffmpeg transcoding/muxing is the only
+    # CPU-heavy step and vark runs at most one download at a time (single-
+    # concurrency worker), so this is generous headroom, not a tight limit.
+    # Adjust to your host; docker compose applies deploy.resources.limits
+    # even outside Swarm mode.
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1g
+
+    labels:
+      # The single vark image serves both the API and the embedded SPA on
+      # :8080, so it is the public service; Traefik terminates TLS in front
+      # of it. Replace the Host() rule with your real domain.
+      traefik.enable: "true"
+      traefik.docker.network: traefik
+      traefik.http.routers.vark.rule: Host(`vark.example.com`)
+      traefik.http.routers.vark.entrypoints: websecure
+      traefik.http.routers.vark.tls: "true"
+      traefik.http.services.vark.loadbalancer.server.port: "8080"
+
+networks:
+  traefik:
+    external: true
