@@ -321,7 +321,7 @@ func (w *Worker) unregister(jobID int64) {
 // cancel path — the flag path and every ErrNotRunning from a guarded write —
 // so the job/video end state can never diverge across those paths.
 func (w *Worker) settleCanceled(job *jobs.Job, video *videos.Video) {
-	if err := w.deps.Jobs.Cancel(job.ID); err != nil {
+	if _, err := w.deps.Jobs.Cancel(job.ID); err != nil {
 		w.deps.Logger.Error("download worker: mark canceled failed", "job_id", job.ID, "err", err)
 	}
 	if video != nil {
@@ -483,7 +483,13 @@ func marshalSegments(segs []ytdlp.Segment) string {
 // terminal write) the job is canceled directly in the store, where the
 // state = 'running' guard on Finish/Bump/Fail stops that write from
 // resurrecting the now-canceled row.
-func (w *Worker) Cancel(jobID int64) {
+//
+// The returned bool reports whether a pending/running job was actually
+// cancelled: true for the running-job (flag) path, and whatever the store
+// reports for the store-fallback path — false for an unknown job id or one
+// already in a terminal state, so callers (the HTTP handler) can tell an
+// unknown/finished job apart from a real cancel.
+func (w *Worker) Cancel(jobID int64) bool {
 	w.mu.Lock()
 	if jobID == w.curJobID && w.curCancel != nil {
 		w.cancelRequested = true
@@ -492,12 +498,15 @@ func (w *Worker) Cancel(jobID int64) {
 		// Kill the child; the loop's completion path is the single writer
 		// that will mark the job canceled once Download returns.
 		cancel()
-		return
+		return true
 	}
 	w.mu.Unlock()
-	if err := w.deps.Jobs.Cancel(jobID); err != nil {
+	canceled, err := w.deps.Jobs.Cancel(jobID)
+	if err != nil {
 		w.deps.Logger.Error("download worker: cancel pending job failed", "job_id", jobID, "err", err)
+		return false
 	}
+	return canceled
 }
 
 // Resume clears a pause (from a blocked/expired cookie) and wakes the loop

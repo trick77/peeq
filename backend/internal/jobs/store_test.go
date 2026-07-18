@@ -172,8 +172,8 @@ func TestGuardedWrites_noOpWhenNotRunning(t *testing.T) {
 	if _, err := s.ClaimNext(); err != nil { // -> running
 		t.Fatalf("claim: %v", err)
 	}
-	if err := s.Cancel(id); err != nil { // running -> canceled (store path)
-		t.Fatalf("cancel: %v", err)
+	if ok, err := s.Cancel(id); err != nil || !ok { // running -> canceled (store path)
+		t.Fatalf("cancel: ok=%v err=%v, want ok=true err=nil", ok, err)
 	}
 
 	if err := s.Finish(id, "done", "", ""); !errors.Is(err, ErrNotRunning) {
@@ -280,11 +280,11 @@ func TestCancel_onlyPendingOrRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueue a: %v", err)
 	}
-	if err := s.Cancel(pendingID); err != nil {
-		t.Fatalf("cancel pending: %v", err)
+	if ok, err := s.Cancel(pendingID); err != nil || !ok {
+		t.Fatalf("cancel pending: ok=%v err=%v, want ok=true err=nil", ok, err)
 	}
 
-	// Already-done job: Cancel is a no-op (state unchanged).
+	// Already-done job: Cancel is a no-op (state unchanged) and reports false.
 	doneID, err := s.Enqueue("b", 0)
 	if err != nil {
 		t.Fatalf("enqueue b: %v", err)
@@ -295,8 +295,13 @@ func TestCancel_onlyPendingOrRunning(t *testing.T) {
 	if err := s.Finish(doneID, "done", "", ""); err != nil {
 		t.Fatalf("finish b: %v", err)
 	}
-	if err := s.Cancel(doneID); err != nil {
-		t.Fatalf("cancel done: %v", err)
+	if ok, err := s.Cancel(doneID); err != nil || ok {
+		t.Fatalf("cancel done: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+
+	// Unknown job id: Cancel is a no-op and reports false, not an error.
+	if ok, err := s.Cancel(999999); err != nil || ok {
+		t.Fatalf("cancel unknown: ok=%v err=%v, want ok=false err=nil", ok, err)
 	}
 
 	jobs, err := s.List()

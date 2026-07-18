@@ -105,8 +105,9 @@ type Event struct {
 // client that subscribes only sees events published after it subscribed.
 // Safe for concurrent use.
 type Hub struct {
-	mu   sync.Mutex
-	subs map[chan Event]struct{}
+	mu     sync.Mutex
+	subs   map[chan Event]struct{}
+	closed bool
 }
 
 // NewHub returns an empty Hub, ready to accept subscribers and publish
@@ -118,12 +119,22 @@ func NewHub() *Hub {
 // Subscribe registers a new listener and returns its event channel plus an
 // unsubscribe function. Callers MUST call unsubscribe (typically via defer)
 // when done reading, or the channel leaks for the life of the Hub.
+//
+// Once the Hub has been Closed, Subscribe short-circuits: it returns an
+// already-closed channel (so a caller's receive loop sees ok == false on its
+// very first read, exactly as an existing subscriber does when Close runs)
+// and a no-op unsubscribe.
 func (h *Hub) Subscribe() (<-chan Event, func()) {
 	// Buffered so a burst of progress events doesn't block Publish while a
 	// slow client catches up; Publish drops events for a subscriber whose
 	// buffer is full rather than block the publisher.
 	ch := make(chan Event, 32)
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		close(ch)
+		return ch, func() {}
+	}
 	h.subs[ch] = struct{}{}
 	h.mu.Unlock()
 
@@ -141,14 +152,38 @@ func (h *Hub) Subscribe() (<-chan Event, func()) {
 // Publish fans out an event to every current subscriber. It never blocks: a
 // subscriber whose buffer is full simply misses this event rather than
 // stalling every other subscriber (and the caller, typically the download
-// worker's progress callback).
+// worker's progress callback). Publish is a no-op after Close.
 func (h *Hub) Publish(name, data string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
 	for ch := range h.subs {
 		select {
 		case ch <- Event{Name: name, Data: data}:
 		default:
 		}
+	}
+}
+
+// Close marks the Hub closed and closes every currently-subscribed channel,
+// so any handler blocked in a `case ev, ok := <-ch` receive (e.g. the SSE
+// stream handler, which otherwise only unblocks on its own request context)
+// observes ok == false and returns immediately. This lets graceful shutdown
+// (which does not cancel in-flight request contexts) complete promptly even
+// while SSE clients are connected. Safe to call multiple times and safe for
+// concurrent use with Subscribe/Publish; after Close, Subscribe returns an
+// already-closed channel and Publish is a no-op.
+func (h *Hub) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
+	h.closed = true
+	for ch := range h.subs {
+		close(ch)
+		delete(h.subs, ch)
 	}
 }

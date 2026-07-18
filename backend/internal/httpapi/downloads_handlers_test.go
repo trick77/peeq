@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/trick77/vark/internal/auth"
 	"github.com/trick77/vark/internal/jobs"
 	"github.com/trick77/vark/internal/settings"
+	"github.com/trick77/vark/internal/sse"
 	"github.com/trick77/vark/internal/videos"
 	"github.com/trick77/vark/internal/ytdlp"
 )
@@ -214,6 +217,78 @@ func TestDownloads_cancelMarksCanceled(t *testing.T) {
 	}
 	if allJobs[0].State != "canceled" {
 		t.Fatalf("job state = %q, want %q", allJobs[0].State, "canceled")
+	}
+}
+
+// TestDownloads_cancelUnknownJob_404 asserts canceling a job id that was
+// never enqueued (and so is neither pending nor running) returns 404, not a
+// false-positive 200 — this exercises the store-fallback path (no worker
+// wired, matching downloadsTestDeps).
+func TestDownloads_cancelUnknownJob_404(t *testing.T) {
+	h := New(downloadsTestDeps(t, &fakeDownloadsRunner{}))
+	sessionCookie := loginAndGetCookie(t, h)
+
+	cancelReq := httptest.NewRequest(http.MethodPost, "/api/downloads/999999/cancel", nil)
+	cancelReq.AddCookie(sessionCookie)
+	cancelRec := httptest.NewRecorder()
+	h.ServeHTTP(cancelRec, cancelReq)
+	if cancelRec.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/downloads/999999/cancel status = %d, want 404, body = %s", cancelRec.Code, cancelRec.Body.String())
+	}
+}
+
+// TestDownloadsStream_hubCloseReturnsPromptly asserts the SSE stream
+// handler returns promptly once the Hub is closed, even while a client
+// stays connected. This is the fix for graceful shutdown: http.Server.
+// Shutdown does not cancel in-flight request contexts, so before this fix
+// an open stream (blocked on r.Context().Done(), which a connected client
+// never triggers) would make Shutdown burn its full timeout. Uses a real
+// httptest.Server (not a plain recorder) so the client observes the
+// connection actually being torn down when the handler returns.
+func TestDownloadsStream_hubCloseReturnsPromptly(t *testing.T) {
+	deps := downloadsTestDeps(t, &fakeDownloadsRunner{})
+	hub := sse.NewHub()
+	deps.SSEHub = hub
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/downloads/stream", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.AddCookie(sessionCookie)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET stream: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream status = %d, want 200", resp.StatusCode)
+	}
+
+	streamDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		close(streamDone)
+	}()
+
+	// Give the handler a moment to reach its subscribe/select loop before
+	// closing the hub, so the close genuinely interrupts an in-progress
+	// receive rather than racing Subscribe.
+	time.Sleep(50 * time.Millisecond)
+	hub.Close()
+
+	select {
+	case <-streamDone:
+		// Handler returned and the server closed the connection — exactly
+		// what lets srv.Shutdown finish fast instead of blocking on this
+		// client for its full 10s timeout.
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream handler did not return within 2s of hub.Close(); would block graceful shutdown")
 	}
 }
 

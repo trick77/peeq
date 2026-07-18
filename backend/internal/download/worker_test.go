@@ -338,7 +338,9 @@ func TestWorker_cancelRunningJob(t *testing.T) {
 	runWorker(t, h.worker)
 
 	<-started // download is now in-flight
-	h.worker.Cancel(id)
+	if ok := h.worker.Cancel(id); !ok {
+		t.Fatalf("Cancel(running job) = false, want true")
+	}
 
 	waitFor(t, "job canceled", func() bool { return h.jobState(t, id).State == "canceled" })
 
@@ -347,6 +349,21 @@ func TestWorker_cancelRunningJob(t *testing.T) {
 	v, _ := h.videos.Get("vid")
 	if v.Status == "error" {
 		t.Fatalf("canceled job wrongly marked video as error")
+	}
+}
+
+// TestWorker_cancelUnknownJob_returnsFalse asserts Cancel reports false (not
+// true) for a job id that is neither the currently-running job nor a
+// pending/running row in the store — e.g. one that was never enqueued, or
+// already finished — so callers (the HTTP handler) can tell an unknown or
+// already-settled job apart from a real cancel.
+func TestWorker_cancelUnknownJob_returnsFalse(t *testing.T) {
+	h := newHarness(t, &fakeRunner{fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		return &ytdlp.Result{MediaPath: "/x.mp4", FormatUsed: "f"}, nil
+	}}, nil)
+
+	if ok := h.worker.Cancel(999999); ok {
+		t.Fatalf("Cancel(unknown job) = true, want false")
 	}
 }
 

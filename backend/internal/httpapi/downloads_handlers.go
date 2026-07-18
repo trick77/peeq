@@ -31,9 +31,11 @@ type DownloadsRunner interface {
 // DownloadsWorker is the subset of *download.Worker the downloads API
 // needs: cancelling a running or pending job. It is optional — when unset,
 // cancel falls back to marking a pending job canceled directly in the
-// store (see handleDownloadsCancel).
+// store (see handleDownloadsCancel). Cancel reports whether a pending/running
+// job was actually cancelled, so the handler can distinguish an unknown or
+// already-finished job (404) from a real cancel (200).
 type DownloadsWorker interface {
-	Cancel(jobID int64)
+	Cancel(jobID int64) bool
 }
 
 // downloadsPostRequest is the body of POST /api/downloads.
@@ -177,7 +179,9 @@ func (s *server) handleDownloadsList(w http.ResponseWriter, r *http.Request) {
 // handleDownloadsCancel cancels one job by id. If a worker is wired, it owns
 // the cancel (it knows whether the job is currently running and needs its
 // context killed vs. merely pending); otherwise this falls back to marking
-// a pending job canceled directly in the store.
+// a pending job canceled directly in the store. Either path reports whether
+// anything was actually cancelled; an unknown or already-finished job id
+// yields 404 rather than a false-positive 200.
 func (s *server) handleDownloadsCancel(w http.ResponseWriter, r *http.Request) {
 	jobID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -185,16 +189,22 @@ func (s *server) handleDownloadsCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var canceled bool
 	switch {
 	case s.worker != nil:
-		s.worker.Cancel(jobID)
+		canceled = s.worker.Cancel(jobID)
 	case s.jobs != nil:
-		if err := s.jobs.Cancel(jobID); err != nil {
+		canceled, err = s.jobs.Cancel(jobID)
+		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "cancel failed")
 			return
 		}
 	default:
 		writeJSONError(w, http.StatusServiceUnavailable, "downloads are not configured")
+		return
+	}
+	if !canceled {
+		writeJSONError(w, http.StatusNotFound, "job not found or not cancelable")
 		return
 	}
 	writeJSON(w, map[string]string{"status": "canceled"})

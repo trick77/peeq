@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -148,7 +149,17 @@ func run() error {
 			sseHub.Publish("progress", string(data))
 		},
 	})
-	go worker.Run(ctx)
+	// Bound the worker goroutine's lifetime to the process: wg.Wait() below
+	// (after serve returns, i.e. after ctx is cancelled) blocks until Run has
+	// actually observed ctx.Done() and returned, rather than exiting the
+	// process out from under it. Run's own loop already exits promptly on
+	// ctx.Done(), so this wait is short.
+	var workerWG sync.WaitGroup
+	workerWG.Add(1)
+	go func() {
+		defer workerWG.Done()
+		worker.Run(ctx)
+	}()
 
 	deps := httpapi.Deps{
 		Version:        version.Version,
@@ -167,7 +178,15 @@ func run() error {
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler}
 
-	return serve(ctx, srv)
+	err = serve(ctx, srv, sseHub)
+	// serve can return either because ctx was cancelled (signal) or because
+	// the listener itself failed to start/serve, in which case ctx is still
+	// live. Stop it explicitly (idempotent; the deferred stop() above is a
+	// no-op on top of this) so the worker's ctx.Done() check unblocks and
+	// workerWG.Wait() below is always bounded, not just on the signal path.
+	stop()
+	workerWG.Wait()
+	return err
 }
 
 // resolveYtdlpBin returns the path to the yt-dlp binary: <dir>/yt-dlp if it
@@ -187,7 +206,16 @@ func resolveYtdlpBin(dir string) string {
 // serve starts srv and blocks until either the server fails to start/serve
 // (in which case that error is returned immediately, without waiting for
 // ctx) or ctx is cancelled (in which case srv is shut down gracefully).
-func serve(ctx context.Context, srv *http.Server) error {
+//
+// hub.Close() is called before srv.Shutdown: http.Server.Shutdown does NOT
+// cancel in-flight request contexts, it only waits for handlers to return —
+// so an open SSE stream (which otherwise blocks on r.Context().Done(), which
+// never fires during a graceful shutdown while the client stays connected)
+// would make Shutdown block for the full 10s timeout and return
+// context.DeadlineExceeded, one connected client at a time. Closing the hub
+// first closes every subscriber channel, so the stream handler's select sees
+// its channel close and returns immediately, and Shutdown completes fast.
+func serve(ctx context.Context, srv *http.Server, hub *sse.Hub) error {
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("listening", "addr", srv.Addr, "version", version.Version)
@@ -204,6 +232,7 @@ func serve(ctx context.Context, srv *http.Server) error {
 	case <-ctx.Done():
 	}
 
+	hub.Close()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)

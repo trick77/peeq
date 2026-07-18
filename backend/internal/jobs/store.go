@@ -192,17 +192,23 @@ WHERE id = ? AND state = 'running'`,
 
 // Cancel marks a job canceled, but only if it is still pending or running
 // (a job that already finished, failed, or was canceled is left untouched).
-func (s *Store) Cancel(id int64) error {
-	_, err := s.db.ExecContext(context.Background(), `
+// The returned bool reports whether a row was actually transitioned to
+// canceled — false for an unknown job id or one already in a terminal state.
+func (s *Store) Cancel(id int64) (bool, error) {
+	res, err := s.db.ExecContext(context.Background(), `
 UPDATE download_jobs
 SET state = 'canceled', finished_at = datetime('now')
 WHERE id = ? AND state IN ('pending', 'running')`,
 		id,
 	)
 	if err != nil {
-		return fmt.Errorf("cancel job %d: %w", id, err)
+		return false, fmt.Errorf("cancel job %d: %w", id, err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("cancel job %d: rows affected: %w", id, err)
+	}
+	return n > 0, nil
 }
 
 // ResetOrphans returns every running job to pending. It is called once at
