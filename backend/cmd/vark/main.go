@@ -192,6 +192,7 @@ func run() error {
 		Worker:         worker,
 		SSEHub:         sseHub,
 		StreamAccess:   streamTracker,
+		YTDLP:          ytdlpVersioner{bin: resolveYtdlpBin(cfg.YtdlpDir), dir: cfg.YtdlpDir},
 	}
 	handler := httpapi.New(deps)
 
@@ -206,6 +207,24 @@ func run() error {
 	stop()
 	workerWG.Wait()
 	return err
+}
+
+// ytdlpVersioner adapts the ytdlp package's free functions (Version,
+// UpdateLatest) to the httpapi.YTDLPVersioner interface the Settings page's
+// version display/Update button need. bin is the resolved binary path used
+// for Version; dir is the yt-dlp install directory UpdateLatest downloads
+// the new release into (see resolveYtdlpBin — dir/yt-dlp).
+type ytdlpVersioner struct {
+	bin string
+	dir string
+}
+
+func (v ytdlpVersioner) Version(ctx context.Context) (string, error) {
+	return ytdlp.Version(ctx, v.bin)
+}
+
+func (v ytdlpVersioner) UpdateLatest(ctx context.Context) (string, error) {
+	return ytdlp.UpdateLatest(ctx, v.dir)
 }
 
 // resolveYtdlpBin returns the path to the yt-dlp binary: <dir>/yt-dlp if it

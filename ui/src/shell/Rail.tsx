@@ -43,6 +43,7 @@ export function Rail({
   onNavigate,
   pendingCount = 0,
   jobs = [],
+  progressByJobId,
   cookieStatus,
   cookieUpdatedAtLabel,
 }: {
@@ -51,6 +52,8 @@ export function Rail({
   /** Badge count for "New & pending". */
   pendingCount?: number;
   jobs?: Job[];
+  /** Live per-job percent/speed/eta from the download SSE feed. */
+  progressByJobId?: Record<number, { percent: number; speed: string; eta: string }>;
   cookieStatus?: string;
   cookieUpdatedAtLabel?: string;
 }) {
@@ -58,7 +61,7 @@ export function Rail({
     <aside className="rail">
       <div className="rail-brand">
         <div className="rail-logo">
-          <Icon name="play" size="0.9rem" />
+          <Icon name="playFilled" size="0.9rem" />
         </div>
         <div>
           <b>
@@ -98,7 +101,7 @@ export function Rail({
       </nav>
 
       <div className="rail-foot">
-        <DownloadDock jobs={jobs} />
+        <DownloadDock jobs={jobs} progressByJobId={progressByJobId} />
         {cookieStatus !== undefined ? (
           <CookieStatus status={cookieStatus} updatedAtLabel={cookieUpdatedAtLabel} />
         ) : null}

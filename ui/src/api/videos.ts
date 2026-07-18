@@ -46,3 +46,10 @@ export async function setResume(id: string, position: number): Promise<number> {
 export function streamUrl(id: string): string {
   return `/api/videos/${encodeURIComponent(id)}/stream`;
 }
+
+// thumbnailUrl points at the Task 14 thumbnail endpoint. Callers should
+// only render this (as an <img src>) when Video.has_thumbnail is true —
+// VideoCard falls back to a gradient fill otherwise, matching the mockup.
+export function thumbnailUrl(id: string): string {
+  return `/api/videos/${encodeURIComponent(id)}/thumbnail`;
+}

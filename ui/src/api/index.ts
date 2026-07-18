@@ -10,3 +10,4 @@ export * from "./auth";
 export * from "./videos";
 export * from "./downloads";
 export * from "./settings";
+export * from "./ytdlp";

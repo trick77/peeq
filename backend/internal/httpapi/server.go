@@ -5,6 +5,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/trick77/vark/internal/auth"
@@ -54,6 +55,19 @@ type Deps struct {
 	// currently-playing video apart from a merely-eligible one. Optional:
 	// when nil, the hook is skipped (no now-playing protection).
 	StreamAccess StreamAccessRecorder
+	// YTDLP backs the Settings page's yt-dlp version display and Update
+	// button. Optional: when nil, both endpoints return 503 rather than
+	// panic — a deployment without a resolvable yt-dlp binary still boots.
+	YTDLP YTDLPVersioner
+}
+
+// YTDLPVersioner is the subset of *ytdlp.Runner the settings API needs to
+// show/refresh the installed yt-dlp version. Unlike Metadata/Download, these
+// calls never touch YouTube, so implementations should skip the cookie gate
+// and throttle entirely.
+type YTDLPVersioner interface {
+	Version(ctx context.Context) (string, error)
+	UpdateLatest(ctx context.Context) (string, error)
 }
 
 // StreamAccessRecorder is the narrow interface handleStreamVideo needs to
@@ -81,6 +95,7 @@ type server struct {
 	sseHub   *sse.Hub
 
 	streamAccess StreamAccessRecorder
+	ytdlp        YTDLPVersioner
 }
 
 // New returns the fully wired HTTP handler.
@@ -99,6 +114,7 @@ func New(d Deps) http.Handler {
 		worker:        d.Worker,
 		sseHub:        d.SSEHub,
 		streamAccess:  d.StreamAccess,
+		ytdlp:         d.YTDLP,
 	}
 
 	mux := http.NewServeMux()
@@ -114,6 +130,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/videos/{id}/watched", s.requireAuth(http.HandlerFunc(s.handleWatchedVideo)))
 	mux.Handle("POST /api/videos/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleResumeVideo)))
 	mux.Handle("GET /api/videos/{id}/stream", s.requireAuth(http.HandlerFunc(s.handleStreamVideo)))
+	mux.Handle("GET /api/videos/{id}/thumbnail", s.requireAuth(http.HandlerFunc(s.handleVideoThumbnail)))
 	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleGetSettings)))
 	mux.Handle("PUT /api/settings", s.requireAuth(http.HandlerFunc(s.handlePutSettings)))
 	mux.Handle("PUT /api/settings/cookie", s.requireAuth(http.HandlerFunc(s.handlePutSettingsCookie)))
@@ -122,6 +139,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsList)))
 	mux.Handle("POST /api/downloads/{id}/cancel", s.requireAuth(http.HandlerFunc(s.handleDownloadsCancel)))
 	mux.Handle("GET /api/downloads/stream", s.requireAuth(http.HandlerFunc(s.handleDownloadsStream)))
+	mux.Handle("GET /api/ytdlp/version", s.requireAuth(http.HandlerFunc(s.handleYTDLPVersion)))
+	mux.Handle("POST /api/ytdlp/update", s.requireAuth(http.HandlerFunc(s.handleYTDLPUpdate)))
 	if s.static != nil {
 		mux.Handle("/", s.static)
 	}

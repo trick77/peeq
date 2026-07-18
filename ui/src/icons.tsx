@@ -49,12 +49,13 @@ const COMPONENTS = {
   externalLink: ExternalLink,
   listTree: ListTree,
   play: Play,
+  playFilled: Play, // rendered solid via the FILLED set below — rail logo + player play button
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof COMPONENTS;
 
 /** Names rendered as a solid (filled) glyph rather than an outline. */
-const FILLED = new Set<IconName>(["starFilled"]);
+const FILLED = new Set<IconName>(["starFilled", "playFilled"]);
 
 export function Icon({
   name,

@@ -15,26 +15,51 @@ import (
 // (empty string / nil) into fields the frontend can read directly — the
 // "Expires in N days" UI is watched_at + settings.retention_days.
 type videoDTO struct {
-	ID                    string  `json:"id"`
-	URL                   string  `json:"url"`
-	Title                 string  `json:"title"`
-	ChannelID             string  `json:"channel_id"`
-	ChannelName           string  `json:"channel_name"`
-	DurationSeconds       int64   `json:"duration_seconds,omitempty"`
-	PublishedAt           string  `json:"published_at,omitempty"`
-	Description           string  `json:"description,omitempty"`
-	ThumbnailPath         string  `json:"thumbnail_path,omitempty"`
-	HasMedia              bool    `json:"has_media"`
-	FilesizeBytes         int64   `json:"filesize_bytes,omitempty"`
-	FormatUsed            string  `json:"format_used,omitempty"`
-	Availability          string  `json:"availability"`
-	Status                string  `json:"status"`
-	ErrorMessage          string  `json:"error_message,omitempty"`
-	Watched               bool    `json:"watched"`
-	WatchedAt             string  `json:"watched_at,omitempty"`
-	ResumePositionSeconds float64 `json:"resume_position_seconds"`
-	Favorite              bool    `json:"favorite"`
-	DownloadedAt          string  `json:"downloaded_at,omitempty"`
+	ID                    string                   `json:"id"`
+	URL                   string                   `json:"url"`
+	Title                 string                   `json:"title"`
+	ChannelID             string                   `json:"channel_id"`
+	ChannelName           string                   `json:"channel_name"`
+	DurationSeconds       int64                    `json:"duration_seconds,omitempty"`
+	PublishedAt           string                   `json:"published_at,omitempty"`
+	Description           string                   `json:"description,omitempty"`
+	HasThumbnail          bool                     `json:"has_thumbnail"`
+	HasMedia              bool                     `json:"has_media"`
+	FilesizeBytes         int64                    `json:"filesize_bytes,omitempty"`
+	FormatUsed            string                   `json:"format_used,omitempty"`
+	Availability          string                   `json:"availability"`
+	Status                string                   `json:"status"`
+	ErrorMessage          string                   `json:"error_message,omitempty"`
+	Watched               bool                     `json:"watched"`
+	WatchedAt             string                   `json:"watched_at,omitempty"`
+	ResumePositionSeconds float64                  `json:"resume_position_seconds"`
+	Favorite              bool                     `json:"favorite"`
+	DownloadedAt          string                   `json:"downloaded_at,omitempty"`
+	SponsorblockSegments  []sponsorblockSegmentDTO `json:"sponsorblock_segments,omitempty"`
+}
+
+// sponsorblockSegmentDTO is one entry of the parsed sponsorblock_segments
+// column (see download/worker.go's segmentJSON, which writes this exact
+// shape). The player auto-skips [StartTime, EndTime) ranges client-side.
+type sponsorblockSegmentDTO struct {
+	Category  string  `json:"category"`
+	StartTime float64 `json:"start_time"`
+	EndTime   float64 `json:"end_time"`
+}
+
+// parseSponsorblockSegments decodes the stored JSON text column. A blank or
+// malformed value (including "[]", the empty-but-valid case) yields a nil
+// slice, which the omitempty tag above then drops from the response
+// entirely rather than emitting "sponsorblock_segments": [].
+func parseSponsorblockSegments(raw string) []sponsorblockSegmentDTO {
+	if raw == "" {
+		return nil
+	}
+	var segs []sponsorblockSegmentDTO
+	if err := json.Unmarshal([]byte(raw), &segs); err != nil || len(segs) == 0 {
+		return nil
+	}
+	return segs
 }
 
 // toVideoDTO maps a store row to its JSON shape. media_path itself is
@@ -50,7 +75,7 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		DurationSeconds:       v.DurationSeconds,
 		PublishedAt:           v.PublishedAt,
 		Description:           v.Description,
-		ThumbnailPath:         v.ThumbnailPath,
+		HasThumbnail:          v.ThumbnailPath != "",
 		HasMedia:              v.MediaPath != "",
 		FilesizeBytes:         v.FilesizeBytes,
 		FormatUsed:            v.FormatUsed,
@@ -62,6 +87,7 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		ResumePositionSeconds: v.ResumePositionSeconds,
 		Favorite:              v.Favorite,
 		DownloadedAt:          v.DownloadedAt,
+		SponsorblockSegments:  parseSponsorblockSegments(v.SponsorblockSegments),
 	}
 }
 
@@ -230,6 +256,41 @@ func (s *server) handleStreamVideo(w http.ResponseWriter, r *http.Request) {
 	stat, err := f.Stat()
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "media not available")
+		return
+	}
+	http.ServeContent(w, r, filepath.Base(safe), stat.ModTime(), f)
+}
+
+// handleVideoThumbnail serves the video's thumbnail image file, resolved
+// safely under mediaDir exactly like handleStreamVideo does for the media
+// file itself. 404 covers both "no video" and "video has no local
+// thumbnail" (including the not-yet-downloaded case where ThumbnailPath may
+// hold a remote URL rather than a local path — SafeMediaPath rejects that
+// too, which is the correct outcome here).
+func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.lookupVideo(w, r)
+	if !ok {
+		return
+	}
+	if v.ThumbnailPath == "" {
+		writeJSONError(w, http.StatusNotFound, "no thumbnail for this video")
+		return
+	}
+	safe, err := media.SafeMediaPath(s.mediaDir, v.ThumbnailPath)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, "thumbnail not available")
+		return
+	}
+	f, err := os.Open(safe)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, "thumbnail not available")
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "thumbnail not available")
 		return
 	}
 	http.ServeContent(w, r, filepath.Base(safe), stat.ModTime(), f)

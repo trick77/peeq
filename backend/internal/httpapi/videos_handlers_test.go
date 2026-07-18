@@ -358,6 +358,160 @@ func TestSafeMediaPath_allowsRegularFileInsideMediaDir(t *testing.T) {
 	}
 }
 
+// TestVideosThumbnail_servesFile covers the happy path: a video with a
+// local thumbnail file serves its bytes, and the list/get DTO reports
+// has_thumbnail=true without ever exposing the filesystem path itself.
+func TestVideosThumbnail_servesFile(t *testing.T) {
+	deps, mediaDir := videosTestDeps(t)
+	videoDir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	thumbPath := filepath.Join(videoDir, "v1.jpg")
+	content := []byte("fake jpeg bytes")
+	if err := os.WriteFile(thumbPath, content, 0o644); err != nil {
+		t.Fatalf("write thumbnail file: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{ThumbnailPath: thumbPath}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/thumbnail", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET thumbnail status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != string(content) {
+		t.Fatalf("body = %q, want %q", got, string(content))
+	}
+
+	getRec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
+	var dto map[string]any
+	if err := json.Unmarshal(getRec.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("unmarshal video: %v", err)
+	}
+	if has, _ := dto["has_thumbnail"].(bool); !has {
+		t.Fatalf("has_thumbnail = %v, want true", dto["has_thumbnail"])
+	}
+	if _, present := dto["thumbnail_path"]; present {
+		t.Fatalf("video DTO leaked thumbnail_path: %+v", dto)
+	}
+}
+
+// TestVideosThumbnail_notFoundWithoutThumbnail covers the negative path: a
+// video with no thumbnail returns 404, and has_thumbnail is false.
+func TestVideosThumbnail_notFoundWithoutThumbnail(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/thumbnail", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET thumbnail (none) status = %d, want 404, body = %s", rec.Code, rec.Body.String())
+	}
+
+	getRec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
+	var dto map[string]any
+	if err := json.Unmarshal(getRec.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("unmarshal video: %v", err)
+	}
+	if has, _ := dto["has_thumbnail"].(bool); has {
+		t.Fatalf("has_thumbnail = %v, want false", dto["has_thumbnail"])
+	}
+}
+
+// TestVideosThumbnail_pathSafety mirrors the stream endpoint's symlink-escape
+// guard: a thumbnail path that resolves outside mediaDir must never be
+// served.
+func TestVideosThumbnail_pathSafety(t *testing.T) {
+	deps, mediaDir := videosTestDeps(t)
+	outsidePath := filepath.Join(t.TempDir(), "secret.jpg")
+	if err := os.WriteFile(outsidePath, []byte("top secret"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	escapeLink := filepath.Join(mediaDir, "escape.jpg")
+	if err := os.Symlink(outsidePath, escapeLink); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
+
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{ThumbnailPath: escapeLink}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/thumbnail", nil)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("GET thumbnail via symlink escape = 200, want an error status")
+	}
+	if rec.Body.String() == "top secret" {
+		t.Fatalf("GET thumbnail served the outside file's contents through a symlink escape")
+	}
+}
+
+// TestVideosGet_exposesSponsorblockSegments covers the Task 14 player's
+// client-side auto-skip data: the stored sponsorblock_segments JSON column
+// must come through the DTO as a structured array.
+func TestVideosGet_exposesSponsorblockSegments(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	segmentsJSON := `[{"category":"sponsor","start_time":10,"end_time":25}]`
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{SponsorblockSegments: segmentsJSON}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
+	var dto map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("unmarshal video: %v", err)
+	}
+	segs, ok := dto["sponsorblock_segments"].([]any)
+	if !ok || len(segs) != 1 {
+		t.Fatalf("sponsorblock_segments = %#v, want one segment", dto["sponsorblock_segments"])
+	}
+	seg := segs[0].(map[string]any)
+	if seg["category"] != "sponsor" || seg["start_time"] != 10.0 || seg["end_time"] != 25.0 {
+		t.Fatalf("segment = %+v, want category=sponsor start_time=10 end_time=25", seg)
+	}
+}
+
+// TestVideosGet_omitsEmptySponsorblockSegments covers the omitempty path: a
+// video with no segments must not carry an empty-array field.
+func TestVideosGet_omitsEmptySponsorblockSegments(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
+	var dto map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("unmarshal video: %v", err)
+	}
+	if _, present := dto["sponsorblock_segments"]; present {
+		t.Fatalf("sponsorblock_segments present with no segments: %+v", dto["sponsorblock_segments"])
+	}
+}
+
 // TestVideosResume_rejectsNegativePosition covers the handler-level guard
 // against a buggy player writing a negative resume position.
 func TestVideosResume_rejectsNegativePosition(t *testing.T) {

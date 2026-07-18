@@ -32,7 +32,9 @@ export type Video = {
   duration_seconds?: number;
   published_at?: string;
   description?: string;
-  thumbnail_path?: string;
+  // has_thumbnail (not the filesystem path) is what the backend sends — see
+  // GET /api/videos/{id}/thumbnail (Task 14) for the actual image bytes.
+  has_thumbnail: boolean;
   has_media: boolean;
   filesize_bytes?: number;
   format_used?: string;
@@ -44,6 +46,11 @@ export type Video = {
   resume_position_seconds: number;
   favorite: boolean;
   downloaded_at?: string;
+  // sponsorblock_segments mirrors httpapi.sponsorblockSegmentDTO — the
+  // downloaded video's own --sponsorblock-mark chapters, parsed server-side
+  // from the stored JSON column. Absent (undefined, via omitempty) when
+  // there are none. Player.tsx auto-skips [start_time, end_time) ranges.
+  sponsorblock_segments?: { category: string; start_time: number; end_time: number }[];
 };
 
 // Job mirrors httpapi.downloadItem — one download-queue entry, optionally
