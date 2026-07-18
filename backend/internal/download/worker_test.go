@@ -122,6 +122,23 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for: %s", what)
 }
 
+// waitForVideoStatus blocks until the video row reaches the given status. The
+// worker writes the job's terminal state (done/failed/canceled) BEFORE the
+// matching video status (succeed: Finish then SetDownloaded; fail: Fail then
+// SetStatus; settleCanceled: Cancel then SetStatus). Waiting on the job state
+// alone therefore races the still-running worker goroutine's follow-up video
+// write, so a test that then reads the video can observe the transient
+// "downloading". Synchronizing on the video's settled status closes that
+// window without reordering the worker (whose guarded-first job write is
+// deliberate for cancel-safety).
+func waitForVideoStatus(t *testing.T, h *harness, videoID, status string) {
+	t.Helper()
+	waitFor(t, "video status "+status, func() bool {
+		v, err := h.videos.Get(videoID)
+		return err == nil && v.Status == status
+	})
+}
+
 func runWorker(t *testing.T, w *Worker) context.CancelFunc {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -166,6 +183,7 @@ func TestWorker_success(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	waitForVideoStatus(t, h, "vid", "downloaded")
 
 	v, err := h.videos.Get("vid")
 	if err != nil {
@@ -254,6 +272,7 @@ func TestWorker_terminalFailsImmediately(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "job failed", func() bool { return h.jobState(t, id).State == "failed" })
+	waitForVideoStatus(t, h, "vid", "error")
 
 	// No retry: exactly one call, attempts untouched.
 	if c := runner.calls(); c != 1 {
@@ -297,6 +316,7 @@ func TestWorker_retryableRetriesThenFails(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "job failed after retries", func() bool { return h.jobState(t, id).State == "failed" })
+	waitForVideoStatus(t, h, "vid", "error")
 
 	// 3 attempts total (max_attempts), so 3 runner calls.
 	if c := runner.calls(); c != 3 {
@@ -343,6 +363,9 @@ func TestWorker_cancelRunningJob(t *testing.T) {
 	}
 
 	waitFor(t, "job canceled", func() bool { return h.jobState(t, id).State == "canceled" })
+	// settleCanceled marks the job canceled BEFORE resetting the video to
+	// "new"; wait for that follow-up write before reading the video.
+	waitForVideoStatus(t, h, "vid", "new")
 
 	// A canceled job must NOT be reclassified as failed/retried: the video
 	// is left out of a terminal error state.
