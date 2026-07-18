@@ -23,9 +23,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
-          # No go.sum yet (Task 1 has zero backend deps) — cache-dependency-path
-          # would fail to resolve. Re-enable caching once deps (and go.sum) land.
-          cache: false
+          cache-dependency-path: backend/go.sum
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
