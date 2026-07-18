@@ -138,6 +138,20 @@ WHERE id = 1`,
 	return nil
 }
 
+// CookieCredentials returns the raw cookie text and status, for wiring the
+// yt-dlp Runner's CookieProvider. Unlike Get/Settings (which back the JSON
+// settings API and deliberately never carry the cookie body), this is for
+// internal server-side use only and must never be exposed over HTTP.
+// Returns ("", "absent") if the read fails, so a Runner using this as its
+// CookieProvider fails safe (refuses to run) rather than panics.
+func (s *Store) CookieCredentials(ctx context.Context) (text string, status string) {
+	err := s.db.QueryRowContext(ctx, `SELECT cookie_text, cookie_status FROM settings WHERE id = 1`).Scan(&text, &status)
+	if err != nil {
+		return "", "absent"
+	}
+	return text, status
+}
+
 // CookieStatus returns the current cookie_status without loading the rest
 // of the settings row. Returns "absent" if the read fails, so callers that
 // only gate on "is there a usable cookie" fail safe rather than panic.

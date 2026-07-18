@@ -7,7 +7,10 @@ import (
 	"net/http"
 
 	"github.com/trick77/vark/internal/auth"
+	"github.com/trick77/vark/internal/jobs"
 	"github.com/trick77/vark/internal/settings"
+	"github.com/trick77/vark/internal/sse"
+	"github.com/trick77/vark/internal/videos"
 )
 
 // Deps are the dependencies needed to build the server.
@@ -27,6 +30,20 @@ type Deps struct {
 	// session directly from these claims instead of redirecting to OIDC. Only
 	// ever set when VARK_AUTH_MODE=dev (see config's loopback-only guard).
 	DevAuthClaims auth.Claims
+
+	// Jobs is the download queue store backing the downloads API.
+	Jobs *jobs.Store
+	// Videos is the video metadata store backing the downloads API.
+	Videos *videos.Store
+	// Runner fetches metadata for a video before it is enqueued. May be a
+	// fake in tests; the real *ytdlp.Runner satisfies DownloadsRunner.
+	Runner DownloadsRunner
+	// Worker cancels running/pending jobs. Optional: when nil, cancel falls
+	// back to marking a pending job canceled directly in the Jobs store.
+	Worker DownloadsWorker
+	// SSEHub fans out download progress/queue events to /api/downloads/stream
+	// subscribers. Optional: when nil, the stream endpoint returns 503.
+	SSEHub *sse.Hub
 }
 
 type server struct {
@@ -36,6 +53,12 @@ type server struct {
 	authMW        *auth.Middleware
 	settings      *settings.Store
 	devAuthClaims auth.Claims
+
+	jobs   *jobs.Store
+	videos *videos.Store
+	runner DownloadsRunner
+	worker DownloadsWorker
+	sseHub *sse.Hub
 }
 
 // New returns the fully wired HTTP handler.
@@ -47,6 +70,11 @@ func New(d Deps) http.Handler {
 		authMW:        d.AuthMiddleware,
 		settings:      d.Settings,
 		devAuthClaims: d.DevAuthClaims,
+		jobs:          d.Jobs,
+		videos:        d.Videos,
+		runner:        d.Runner,
+		worker:        d.Worker,
+		sseHub:        d.SSEHub,
 	}
 
 	mux := http.NewServeMux()
@@ -60,6 +88,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("PUT /api/settings", s.requireAuth(http.HandlerFunc(s.handlePutSettings)))
 	mux.Handle("PUT /api/settings/cookie", s.requireAuth(http.HandlerFunc(s.handlePutSettingsCookie)))
 	mux.Handle("GET /api/cookie/health", s.requireAuth(http.HandlerFunc(s.handleCookieHealth)))
+	mux.Handle("POST /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsPost)))
+	mux.Handle("GET /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsList)))
+	mux.Handle("POST /api/downloads/{id}/cancel", s.requireAuth(http.HandlerFunc(s.handleDownloadsCancel)))
+	mux.Handle("GET /api/downloads/stream", s.requireAuth(http.HandlerFunc(s.handleDownloadsStream)))
 	if s.static != nil {
 		mux.Handle("/", s.static)
 	}

@@ -6,22 +6,29 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/trick77/vark/internal/auth"
 	"github.com/trick77/vark/internal/config"
+	"github.com/trick77/vark/internal/download"
 	"github.com/trick77/vark/internal/httpapi"
+	"github.com/trick77/vark/internal/jobs"
 	"github.com/trick77/vark/internal/settings"
+	"github.com/trick77/vark/internal/sse"
 	"github.com/trick77/vark/internal/store"
 	"github.com/trick77/vark/internal/version"
+	"github.com/trick77/vark/internal/videos"
+	"github.com/trick77/vark/internal/ytdlp"
 	"github.com/trick77/vark/web"
 )
 
@@ -98,6 +105,50 @@ func run() error {
 
 	authSvc := auth.NewService(oidcSvc, sessions, users)
 	settingsStore := settings.New(db)
+	jobsStore := jobs.New(db)
+	videosStore := videos.New(db)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// The throttle floor is read once at boot; the Runner clamps whatever is
+	// configured up to its own hard 20s minimum regardless.
+	initialSettings, err := settingsStore.Get(ctx)
+	if err != nil {
+		return err
+	}
+	runner := ytdlp.New(ytdlp.RunnerConfig{
+		Bin: resolveYtdlpBin(cfg.YtdlpDir),
+		CookieProvider: func() (string, string) {
+			// Read fresh on every call (not just at boot) so a cookie pasted
+			// or invalidated while the worker is running takes effect on the
+			// very next yt-dlp invocation.
+			return settingsStore.CookieCredentials(context.Background())
+		},
+		ThrottleFloor: time.Duration(initialSettings.ThrottleBaseSeconds) * time.Second,
+		MediaDir:      cfg.MediaDir,
+	})
+
+	sseHub := sse.NewHub()
+	worker := download.New(download.Deps{
+		Jobs:     jobsStore,
+		Videos:   videosStore,
+		Settings: settingsStore,
+		Runner:   runner,
+		OnProgress: func(jobID int64, p ytdlp.Progress) {
+			data, err := json.Marshal(map[string]any{
+				"job_id":  jobID,
+				"percent": p.Percent,
+				"speed":   p.Speed,
+				"eta":     p.ETA,
+			})
+			if err != nil {
+				return
+			}
+			sseHub.Publish("progress", string(data))
+		},
+	})
+	go worker.Run(ctx)
 
 	deps := httpapi.Deps{
 		Version:        version.Version,
@@ -106,15 +157,31 @@ func run() error {
 		AuthMiddleware: authMW,
 		Settings:       settingsStore,
 		DevAuthClaims:  devClaims,
+		Jobs:           jobsStore,
+		Videos:         videosStore,
+		Runner:         runner,
+		Worker:         worker,
+		SSEHub:         sseHub,
 	}
 	handler := httpapi.New(deps)
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	return serve(ctx, srv)
+}
+
+// resolveYtdlpBin returns the path to the yt-dlp binary: <dir>/yt-dlp if it
+// exists there, otherwise the bare "yt-dlp" name so exec falls back to
+// resolving it from PATH.
+func resolveYtdlpBin(dir string) string {
+	if dir == "" {
+		return "yt-dlp"
+	}
+	candidate := filepath.Join(dir, "yt-dlp")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	return "yt-dlp"
 }
 
 // serve starts srv and blocks until either the server fails to start/serve

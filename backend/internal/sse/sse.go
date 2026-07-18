@@ -93,3 +93,62 @@ func (s *Writer) Heartbeat(ctx context.Context, interval time.Duration) func() {
 		<-stopped
 	}
 }
+
+// Event is one message fanned out by a Hub.
+type Event struct {
+	Name string
+	Data string
+}
+
+// Hub fans out events (e.g. download progress) to any number of
+// concurrently connected SSE clients. It has no memory of past events: a
+// client that subscribes only sees events published after it subscribed.
+// Safe for concurrent use.
+type Hub struct {
+	mu   sync.Mutex
+	subs map[chan Event]struct{}
+}
+
+// NewHub returns an empty Hub, ready to accept subscribers and publish
+// events.
+func NewHub() *Hub {
+	return &Hub{subs: make(map[chan Event]struct{})}
+}
+
+// Subscribe registers a new listener and returns its event channel plus an
+// unsubscribe function. Callers MUST call unsubscribe (typically via defer)
+// when done reading, or the channel leaks for the life of the Hub.
+func (h *Hub) Subscribe() (<-chan Event, func()) {
+	// Buffered so a burst of progress events doesn't block Publish while a
+	// slow client catches up; Publish drops events for a subscriber whose
+	// buffer is full rather than block the publisher.
+	ch := make(chan Event, 32)
+	h.mu.Lock()
+	h.subs[ch] = struct{}{}
+	h.mu.Unlock()
+
+	var once sync.Once
+	unsubscribe := func() {
+		once.Do(func() {
+			h.mu.Lock()
+			delete(h.subs, ch)
+			h.mu.Unlock()
+		})
+	}
+	return ch, unsubscribe
+}
+
+// Publish fans out an event to every current subscriber. It never blocks: a
+// subscriber whose buffer is full simply misses this event rather than
+// stalling every other subscriber (and the caller, typically the download
+// worker's progress callback).
+func (h *Hub) Publish(name, data string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.subs {
+		select {
+		case ch <- Event{Name: name, Data: data}:
+		default:
+		}
+	}
+}
