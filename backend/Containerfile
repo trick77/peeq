@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1
+
+# --- Stage 1: build the SPA ---
+FROM node:22-alpine AS ui
+WORKDIR /app/ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
+# --- Stage 2: build the Go API binary (pure-Go, no cgo) with the embedded SPA ---
+FROM golang:1.25-alpine AS build
+ARG VARK_VERSION=dev
+WORKDIR /app/backend
+COPY backend/go.mod backend/go.sum* ./
+RUN go mod download
+COPY backend/ ./
+# Overwrite the committed backend/web/dist placeholder with the real Vite bundle
+# so //go:embed all:dist bakes the production UI into the binary. ui/vite.config.ts
+# builds straight to ../backend/web/dist (not the Vite-default ui/dist), so from the
+# ui stage's WORKDIR that lands at /app/backend/web/dist.
+COPY --from=ui /app/backend/web/dist ./web/dist
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/trick77/vark/internal/version.Version=${VARK_VERSION}" -o /out/vark ./cmd/vark
+
+# --- Stage 3: minimal runtime ---
+#
+# Deviation from loom: loom's runtime is gcr.io/distroless/static-debian12, a
+# scratch-like image with no shell, no package manager, and no dynamic libc —
+# it cannot host ffmpeg or the yt-dlp binary (both need a real userland, and
+# yt-dlp additionally needs a Python interpreter and OpenSSL/certs). vark's
+# runtime instead needs to shell out to ffmpeg and yt-dlp for every download,
+# so it uses debian:12-slim (glibc, apt) and installs both directly.
+FROM debian:12-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    ca-certificates \
+    python3 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+# Fetch the yt-dlp standalone binary into /usr/local/bin. /data/bin (VARK_YTDLP_DIR)
+# is a separate, writable volume used later for self-update of yt-dlp at runtime
+# without needing to rebuild the image.
+RUN curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp
+COPY --from=build /out/vark /usr/local/bin/vark
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/vark"]
