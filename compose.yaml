@@ -50,7 +50,8 @@ services:
       VARK_OIDC_CLIENT_SECRET: "${VARK_OIDC_CLIENT_SECRET}"
       VARK_OIDC_REDIRECT_URL: "${VARK_OIDC_REDIRECT_URL}"
       VARK_OIDC_POST_LOGOUT_REDIRECT_URL: "${VARK_OIDC_POST_LOGOUT_REDIRECT_URL}"
-      VARK_OIDC_ADMIN_GROUP: "${VARK_OIDC_ADMIN_GROUP:-vark-admins}"
+      # Empty = no admin-group check (matches the code default); set to your IdP group to gate admin.
+      VARK_OIDC_ADMIN_GROUP: "${VARK_OIDC_ADMIN_GROUP}"
       VARK_DB_PATH: /data/vark.db
       VARK_MEDIA_DIR: /data/media
       VARK_YTDLP_DIR: /data/bin
