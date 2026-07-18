@@ -2,8 +2,44 @@ package auth
 
 import (
 	"context"
+	"net/http/httptest"
 	"testing"
 )
+
+func TestService_OIDCConfigured(t *testing.T) {
+	db := openTestDB(t)
+
+	devOnly := NewService(nil, NewSessionStore(db, false), NewUserStore(db))
+	if devOnly.OIDCConfigured() {
+		t.Fatal("OIDCConfigured() = true for a nil OIDC backend, want false")
+	}
+
+	withOIDC := NewService(
+		NewOIDCService(OIDCServiceConfig{ClientID: "client", Backend: fakeOIDCBackend{}}),
+		NewSessionStore(db, false),
+		NewUserStore(db),
+	)
+	if !withOIDC.OIDCConfigured() {
+		t.Fatal("OIDCConfigured() = false with an OIDC backend set, want true")
+	}
+
+	var nilService *Service
+	if nilService.OIDCConfigured() {
+		t.Fatal("OIDCConfigured() = true on a nil *Service, want false")
+	}
+}
+
+func TestService_ClearOIDCCookiesIsNoOpWithoutOIDC(t *testing.T) {
+	db := openTestDB(t)
+	svc := NewService(nil, NewSessionStore(db, false), NewUserStore(db))
+	rec := httptest.NewRecorder()
+
+	svc.ClearOIDCCookies(rec) // must not panic
+
+	if len(rec.Result().Cookies()) != 0 {
+		t.Fatalf("expected no cookies set, got %v", rec.Result().Cookies())
+	}
+}
 
 func TestService_CreateSessionFromClaimsUpsertsUserAndSession(t *testing.T) {
 	db := openTestDB(t)

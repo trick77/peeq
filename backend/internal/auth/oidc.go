@@ -127,6 +127,27 @@ func (s *OIDCService) transientCookie(name, value string) *http.Cookie {
 	}
 }
 
+// ClearTransientCookies clears the state and nonce cookies set by StartLogin.
+// Callers should invoke this once a callback has been processed (success or
+// failure) so the cookies don't linger for their full ~10 minute lifetime.
+func (s *OIDCService) ClearTransientCookies(w http.ResponseWriter) {
+	http.SetCookie(w, s.expiredCookie(oidcStateCookieName))
+	http.SetCookie(w, s.expiredCookie(oidcNonceCookieName))
+}
+
+func (s *OIDCService) expiredCookie(name string) *http.Cookie {
+	return &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   s.secure,
+		SameSite: http.SameSiteLaxMode,
+	}
+}
+
 type realOIDCBackend struct {
 	oauthConfig oauth2.Config
 	verifier    *oidc.IDTokenVerifier

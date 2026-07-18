@@ -44,6 +44,23 @@ func (s *Service) CreateSessionFromClaims(ctx context.Context, claims Claims) (S
 	return session, user, nil
 }
 
+// OIDCConfigured reports whether OIDC login/callback is available (as opposed
+// to a Service built for dev-only auth with a nil OIDC backend). Callers must
+// check this before invoking StartLogin or HandleCallback: both panic on a nil
+// OIDC backend. Safe to call on a nil *Service.
+func (s *Service) OIDCConfigured() bool {
+	return s != nil && s.oidc != nil
+}
+
+// ClearOIDCCookies clears the transient OIDC state/nonce cookies. Safe to call
+// even when OIDC isn't configured (e.g. dev mode), in which case it is a no-op.
+func (s *Service) ClearOIDCCookies(w http.ResponseWriter) {
+	if s == nil || s.oidc == nil {
+		return
+	}
+	s.oidc.ClearTransientCookies(w)
+}
+
 // Revoke deletes the session identified by the raw token (logout).
 func (s *Service) Revoke(ctx context.Context, token string) error {
 	return s.sessions.Revoke(ctx, token)

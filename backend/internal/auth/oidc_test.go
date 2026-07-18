@@ -11,6 +11,23 @@ import (
 	"golang.org/x/oauth2"
 )
 
+func TestOIDCService_ClearTransientCookiesExpiresStateAndNonce(t *testing.T) {
+	service := NewOIDCService(OIDCServiceConfig{ClientID: "client", Backend: fakeOIDCBackend{}})
+	rec := httptest.NewRecorder()
+
+	service.ClearTransientCookies(rec)
+
+	cleared := map[string]bool{}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.MaxAge < 0 {
+			cleared[cookie.Name] = true
+		}
+	}
+	if !cleared[oidcStateCookieName] || !cleared[oidcNonceCookieName] {
+		t.Fatalf("expected both state and nonce cookies to be cleared, got %v", cleared)
+	}
+}
+
 func TestOIDCService_CallbackRejectsInvalidState(t *testing.T) {
 	service := NewOIDCService(OIDCServiceConfig{
 		ClientID: "client",
