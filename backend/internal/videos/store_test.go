@@ -156,7 +156,9 @@ func TestSetResume_autoMarksWatchedAtNinetyPercent_noResetOnRewatch(t *testing.T
 	}
 
 	// Manual un-watch clears both watched and watched_at (rescues from the
-	// auto-delete sweep).
+	// auto-delete sweep), and ALSO resets resume_position_seconds to 0 so
+	// the rescue is sticky: a subsequent player resume ping can't
+	// immediately re-cross the 90% threshold and undo the un-watch.
 	if err := s.SetWatched("v", false); err != nil {
 		t.Fatalf("set watched false: %v", err)
 	}
@@ -169,6 +171,9 @@ func TestSetResume_autoMarksWatchedAtNinetyPercent_noResetOnRewatch(t *testing.T
 	}
 	if got.WatchedAt != "" {
 		t.Fatalf("watched_at = %q, want cleared after manual un-watch", got.WatchedAt)
+	}
+	if got.ResumePositionSeconds != 0 {
+		t.Fatalf("resume_position_seconds = %v, want reset to 0 after manual un-watch", got.ResumePositionSeconds)
 	}
 }
 
@@ -206,6 +211,33 @@ func TestSetWatched_manualTrue_setsWatchedAt(t *testing.T) {
 	}
 	if !got.Watched || got.WatchedAt == "" {
 		t.Fatalf("watched=%v watched_at=%q, want true/set", got.Watched, got.WatchedAt)
+	}
+}
+
+// TestSetWatched_manualTrue_doesNotResetResumePosition ensures the sticky
+// un-watch fix (which zeroes resume_position_seconds on SetWatched(id,
+// false)) does not bleed into the true branch: manually (re-)marking a
+// video watched must leave an existing resume position untouched.
+func TestSetWatched_manualTrue_doesNotResetResumePosition(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetResume("v", 42); err != nil {
+		t.Fatalf("set resume: %v", err)
+	}
+	if err := s.SetWatched("v", true); err != nil {
+		t.Fatalf("set watched: %v", err)
+	}
+	got, err := s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !got.Watched {
+		t.Fatalf("watched = false, want true")
+	}
+	if got.ResumePositionSeconds != 42 {
+		t.Fatalf("resume_position_seconds = %v, want untouched 42", got.ResumePositionSeconds)
 	}
 }
 

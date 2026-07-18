@@ -6,8 +6,10 @@
 // watched automatically when its resume position reaches >= 90% of the
 // duration (SetResume), or manually (SetWatched(id, true)). Re-watching
 // never resets watched_at once set — no "life extension" of the retention
-// clock. Manual un-watch (SetWatched(id, false)) clears both watched and
-// watched_at, rescuing the video from the retention sweep. Tombstone keeps
+// clock. Manual un-watch (SetWatched(id, false)) clears watched, watched_at,
+// AND resume_position_seconds, rescuing the video from the retention sweep
+// and making that rescue sticky (a stale near-end resume ping can't
+// immediately re-mark it watched). Tombstone keeps
 // the row (for watched history and a future summary/transcript) but clears
 // media_path and marks status='tombstoned'; the caller is responsible for
 // unlinking the actual media/thumbnail files from disk first.
@@ -257,9 +259,13 @@ func (s *Store) SetFavorite(id string, fav bool) error {
 
 // SetWatched is the manual watched toggle. Setting true marks the video
 // watched, stamping watched_at only if it isn't already set (no life
-// extension on a manual re-confirmation). Setting false clears BOTH watched
-// and watched_at — this rescues the video from the retention sweep, per the
-// decided un-watch rule.
+// extension on a manual re-confirmation); it leaves resume_position_seconds
+// untouched. Setting false clears watched, watched_at, AND
+// resume_position_seconds — this rescues the video from the retention
+// sweep, per the decided un-watch rule. Zeroing the resume position makes
+// the rescue sticky: without it, a player resume ping still sitting at or
+// above the 90% threshold would immediately re-cross SetResume's
+// auto-watched check and undo the un-watch.
 func (s *Store) SetWatched(id string, watched bool) error {
 	var err error
 	if watched {
@@ -267,8 +273,9 @@ func (s *Store) SetWatched(id string, watched bool) error {
 UPDATE videos SET watched = 1, watched_at = COALESCE(watched_at, datetime('now'))
 WHERE id = ?`, id)
 	} else {
-		_, err = s.db.ExecContext(context.Background(),
-			`UPDATE videos SET watched = 0, watched_at = NULL WHERE id = ?`, id)
+		_, err = s.db.ExecContext(context.Background(), `
+UPDATE videos SET watched = 0, watched_at = NULL, resume_position_seconds = 0
+WHERE id = ?`, id)
 	}
 	if err != nil {
 		return fmt.Errorf("set video %s watched: %w", id, err)
