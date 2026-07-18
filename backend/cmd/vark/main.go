@@ -19,6 +19,7 @@ import (
 	"github.com/trick77/vark/internal/auth"
 	"github.com/trick77/vark/internal/config"
 	"github.com/trick77/vark/internal/httpapi"
+	"github.com/trick77/vark/internal/settings"
 	"github.com/trick77/vark/internal/store"
 	"github.com/trick77/vark/internal/version"
 	"github.com/trick77/vark/web"
@@ -96,12 +97,14 @@ func run() error {
 	}
 
 	authSvc := auth.NewService(oidcSvc, sessions, users)
+	settingsStore := settings.New(db)
 
 	deps := httpapi.Deps{
 		Version:        version.Version,
 		Static:         web.Handler(),
 		AuthService:    authSvc,
 		AuthMiddleware: authMW,
+		Settings:       settingsStore,
 		DevAuthClaims:  devClaims,
 	}
 	handler := httpapi.New(deps)

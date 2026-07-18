@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/trick77/vark/internal/auth"
+	"github.com/trick77/vark/internal/settings"
 	"github.com/trick77/vark/internal/store"
 )
 
@@ -35,6 +36,7 @@ func testDeps(t *testing.T) Deps {
 	return Deps{
 		AuthService:    auth.NewService(nil, sessions, users),
 		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Settings:       settings.New(db),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",

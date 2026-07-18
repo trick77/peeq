@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/trick77/vark/internal/auth"
+	"github.com/trick77/vark/internal/settings"
 )
 
 // Deps are the dependencies needed to build the server.
@@ -20,6 +21,8 @@ type Deps struct {
 	AuthService *auth.Service
 	// AuthMiddleware protects authenticated routes.
 	AuthMiddleware *auth.Middleware
+	// Settings is the singleton settings store backing the Settings API.
+	Settings *settings.Store
 	// DevAuthClaims, when Subject is non-empty, makes /api/auth/login create a
 	// session directly from these claims instead of redirecting to OIDC. Only
 	// ever set when VARK_AUTH_MODE=dev (see config's loopback-only guard).
@@ -31,6 +34,7 @@ type server struct {
 	static        http.Handler
 	authSvc       *auth.Service
 	authMW        *auth.Middleware
+	settings      *settings.Store
 	devAuthClaims auth.Claims
 }
 
@@ -41,6 +45,7 @@ func New(d Deps) http.Handler {
 		static:        d.Static,
 		authSvc:       d.AuthService,
 		authMW:        d.AuthMiddleware,
+		settings:      d.Settings,
 		devAuthClaims: d.DevAuthClaims,
 	}
 
@@ -51,6 +56,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/auth/logout", s.requireAuth(http.HandlerFunc(s.handleAuthLogout)))
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.handleAuthMe)))
 	mux.Handle("GET /api/videos", s.requireAuth(http.HandlerFunc(s.handleListVideos)))
+	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleGetSettings)))
+	mux.Handle("PUT /api/settings", s.requireAuth(http.HandlerFunc(s.handlePutSettings)))
+	mux.Handle("PUT /api/settings/cookie", s.requireAuth(http.HandlerFunc(s.handlePutSettingsCookie)))
+	mux.Handle("GET /api/cookie/health", s.requireAuth(http.HandlerFunc(s.handleCookieHealth)))
 	if s.static != nil {
 		mux.Handle("/", s.static)
 	}
