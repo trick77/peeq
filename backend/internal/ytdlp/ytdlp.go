@@ -1,6 +1,7 @@
 package ytdlp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -157,6 +158,15 @@ func defaultSleep(ctx context.Context, d time.Duration) error {
 // receives a bare id or unparsed user input: callers must pass fully
 // canonicalized URLs in args.
 func (r *Runner) exec(ctx context.Context, cookieText string, args ...string) ([]byte, error) {
+	return r.execWithProgress(ctx, cookieText, nil, args...)
+}
+
+// execWithProgress is exec's superset: it goes through the exact same
+// cookie-temp-file and throttle choke point, but when onLine is non-nil
+// it streams stdout line by line (for --newline progress parsing) instead
+// of buffering it silently. Download uses this so it shares the identical
+// cookie gate / throttle path as Metadata rather than a parallel one.
+func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine func(string), args ...string) ([]byte, error) {
 	cookieFile, err := writeCookieTempFile(cookieText)
 	if err != nil {
 		return nil, fmt.Errorf("ytdlp: write cookie temp file: %w", err)
@@ -169,14 +179,69 @@ func (r *Runner) exec(ctx context.Context, cookieText string, args ...string) ([
 
 	fullArgs := append([]string{"--cookies", cookieFile}, args...)
 	cmd := exec.CommandContext(ctx, r.cfg.Bin, fullArgs...)
+
+	if onLine == nil {
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if runErr := cmd.Run(); runErr != nil {
+			return nil, Classify(stderr.String(), runErr)
+		}
+		return stdout.Bytes(), nil
+	}
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("ytdlp: stdout pipe: %w", err)
+	}
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if runErr := cmd.Run(); runErr != nil {
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("ytdlp: start: %w", err)
+	}
+
+	scanner := bufio.NewScanner(stdoutPipe)
+	// yt-dlp progress lines carry carriage returns and can be long; grow
+	// the buffer past bufio's small default to avoid truncating them.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Split(scanLinesCR)
+	for scanner.Scan() {
+		line := scanner.Text()
+		stdout.WriteString(line)
+		stdout.WriteByte('\n')
+		onLine(line)
+	}
+
+	runErr := cmd.Wait()
+	if runErr != nil {
 		return nil, Classify(stderr.String(), runErr)
 	}
 	return stdout.Bytes(), nil
+}
+
+// scanLinesCR is a bufio.SplitFunc like bufio.ScanLines but also splits on
+// bare '\r' (yt-dlp overwrites its progress line with '\r', not '\n').
+func scanLinesCR(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	for i, b := range data {
+		if b == '\n' || b == '\r' {
+			return i + 1, trimCR(data[:i]), nil
+		}
+	}
+	if atEOF {
+		return len(data), trimCR(data), nil
+	}
+	return 0, nil, nil
+}
+
+func trimCR(b []byte) []byte {
+	if len(b) > 0 && b[len(b)-1] == '\r' {
+		return b[:len(b)-1]
+	}
+	return b
 }
 
 // writeCookieTempFile writes text to a new 0600 temp file and returns its
