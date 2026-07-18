@@ -36,74 +36,78 @@ export function VideoCard({
 
   return (
     <article className="card">
-      <button
-        type="button"
-        className="thumb"
-        style={{ display: "block", width: "100%", padding: 0, border: "none", background: "none", cursor: "pointer" }}
-        onClick={() => onOpen(video.id)}
-        aria-label={`Open ${video.title}`}
-      >
-        {video.has_thumbnail ? (
-          <img className="fill" src={thumbnailUrl(video.id)} alt="" loading="lazy" />
-        ) : (
-          <div className={`fill ${gradientClassFor(video.id)}`} />
-        )}
-        {isNew ? <span className="tag new">NEW</span> : null}
+      <div className="thumb">
+        <button
+          type="button"
+          className="thumb-btn"
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "block",
+            width: "100%",
+            height: "100%",
+            padding: 0,
+            border: "none",
+            background: "none",
+            cursor: "pointer",
+          }}
+          onClick={() => onOpen(video.id)}
+          aria-label={`Open ${video.title}`}
+        >
+          {video.has_thumbnail ? (
+            <img className="fill" src={thumbnailUrl(video.id)} alt="" loading="lazy" />
+          ) : (
+            <div className={`fill ${gradientClassFor(video.id)}`} />
+          )}
+          {isNew ? <span className="tag new">NEW</span> : null}
+          <span className="dur">{formatDuration(video.duration_seconds)}</span>
+          {resuming ? (
+            <div className="resume">
+              <i style={{ width: `${resumePercent}%` }} />
+            </div>
+          ) : null}
+          {downloading ? (
+            <div className="dl">
+              <div
+                className="ring"
+                data-p={`${Math.round(progress?.percent ?? 0)}%`}
+                style={{ ["--p" as string]: `${progress?.percent ?? 0}%` }}
+              />
+              {progress?.eta ? <small>{progress.eta} left</small> : null}
+            </div>
+          ) : null}
+        </button>
+
+        {/* Siblings of the thumbnail button (not nested inside it) — a
+            <button> containing role="button" spans is invalid
+            interactive-in-interactive markup. Real <button>s, absolutely
+            positioned within the same .thumb wrapper, keep the exact same
+            look while staying valid. */}
         <div className="acts">
-          <span
-            role="button"
-            tabIndex={0}
+          <button
+            type="button"
             className={`iconbtn${video.favorite ? " on" : ""}`}
             aria-label={video.favorite ? "Remove from favorites" : "Add to favorites"}
             onClick={(e) => {
               e.stopPropagation();
               onToggleFavorite(video.id);
             }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.stopPropagation();
-                onToggleFavorite(video.id);
-              }
-            }}
           >
             <Icon name={video.favorite ? "starFilled" : "star"} size="16px" />
-          </span>
-          <span
-            role="button"
-            tabIndex={0}
+          </button>
+          <button
+            type="button"
             className={`iconbtn${video.watched ? " on" : ""}`}
             aria-label={video.watched ? "Mark unwatched" : "Mark watched"}
             onClick={(e) => {
               e.stopPropagation();
               onToggleWatched(video.id);
             }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.stopPropagation();
-                onToggleWatched(video.id);
-              }
-            }}
           >
             <Icon name="check" size="16px" />
-          </span>
+          </button>
         </div>
-        <span className="dur">{formatDuration(video.duration_seconds)}</span>
-        {resuming ? (
-          <div className="resume">
-            <i style={{ width: `${resumePercent}%` }} />
-          </div>
-        ) : null}
-        {downloading ? (
-          <div className="dl">
-            <div
-              className="ring"
-              data-p={`${Math.round(progress?.percent ?? 0)}%`}
-              style={{ ["--p" as string]: `${progress?.percent ?? 0}%` }}
-            />
-            {progress?.eta ? <small>{progress.eta} left</small> : null}
-          </div>
-        ) : null}
-      </button>
+      </div>
 
       <h3>{video.title}</h3>
       <div className="by">

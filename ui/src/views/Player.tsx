@@ -23,11 +23,23 @@ export function Player({ videoId, onDeleted }: { videoId: string | null; onDelet
   const [duration, setDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastSentRef = useRef(0);
+  // positionRef tracks the latest known playhead position independent of
+  // the <video> DOM node itself. On unmount, React nulls out videoRef
+  // *before* this effect's cleanup runs, so reading videoRef.current there
+  // is unreliable — positionRef, updated on every timeupdate, is not.
+  const positionRef = useRef(0);
+  // positionRef starts at 0, which is indistinguishable from "the user
+  // really is at 0:00" — without this guard, flushing on unmount before
+  // loadedMetadata/timeupdate has ever set a real position would overwrite
+  // a legitimately stored resume_position_seconds with 0. Only flush once
+  // a real position has been observed.
+  const positionKnownRef = useRef(false);
   const resumeAppliedRef = useRef(false);
   const toastTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     resumeAppliedRef.current = false;
+    positionKnownRef.current = false;
     setVideo(null);
     setError(null);
     setCurrentTime(0);
@@ -48,18 +60,23 @@ export function Player({ videoId, onDeleted }: { videoId: string | null; onDelet
 
   // Flush the resume position immediately on tab-hide/unload, so the
   // RESUME_THROTTLE_MS window never costs more than itself worth of
-  // progress even if the tab is closed mid-throttle.
+  // progress even if the tab is closed mid-throttle. The cleanup function
+  // also flushes on unmount — e.g. clicking back to Library, the common
+  // in-SPA exit, which would otherwise silently discard up to
+  // RESUME_THROTTLE_MS worth of progress. Both paths read positionRef
+  // (not videoRef) so they always send the latest playhead position, even
+  // once React has already detached the <video> node's ref on unmount.
   useEffect(() => {
     function flush() {
-      const el = videoRef.current;
-      if (!el || !video) return;
-      setResume(video.id, el.currentTime).catch(() => {});
+      if (!video || !positionKnownRef.current) return;
+      setResume(video.id, positionRef.current).catch(() => {});
     }
     document.addEventListener("visibilitychange", flush);
     window.addEventListener("pagehide", flush);
     return () => {
       document.removeEventListener("visibilitychange", flush);
       window.removeEventListener("pagehide", flush);
+      flush();
     };
   }, [video]);
 
@@ -96,13 +113,20 @@ export function Player({ videoId, onDeleted }: { videoId: string | null; onDelet
     if (video.resume_position_seconds > 0 && (!durationKnown || video.resume_position_seconds < el.duration)) {
       el.currentTime = video.resume_position_seconds;
       setCurrentTime(video.resume_position_seconds);
+      positionRef.current = video.resume_position_seconds;
     }
+    // Metadata having loaded means el.currentTime now reflects a real
+    // position (either the applied resume above, or genuinely 0:00) —
+    // safe for the unmount/hide flush to trust from here on.
+    positionKnownRef.current = true;
   }
 
   function handleTimeUpdate() {
     const el = videoRef.current;
     if (!el || !video) return;
     setCurrentTime(el.currentTime);
+    positionRef.current = el.currentTime;
+    positionKnownRef.current = true;
 
     // SponsorBlock auto-skip: jump past whichever segment the playhead has
     // just entered. sponsorblock_segments is only ever populated once the
@@ -112,6 +136,7 @@ export function Player({ videoId, onDeleted }: { videoId: string | null; onDelet
       if (el.currentTime >= seg.start_time && el.currentTime < seg.end_time) {
         el.currentTime = seg.end_time;
         setCurrentTime(seg.end_time);
+        positionRef.current = seg.end_time;
         setSkipToast(`Skipped ${seg.category} · ${formatDuration(seg.end_time - seg.start_time)}`);
         if (toastTimerRef.current !== undefined) window.clearTimeout(toastTimerRef.current);
         toastTimerRef.current = window.setTimeout(() => setSkipToast(null), 2600);
@@ -131,6 +156,8 @@ export function Player({ videoId, onDeleted }: { videoId: string | null; onDelet
     if (!el) return;
     el.currentTime = seconds;
     setCurrentTime(seconds);
+    positionRef.current = seconds;
+    positionKnownRef.current = true;
   }
 
   async function handleToggleFavorite() {

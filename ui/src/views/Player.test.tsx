@@ -37,6 +37,58 @@ describe("Player", () => {
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
   });
 
+  it("flushes the latest position to setResume on unmount", async () => {
+    const { unmount } = render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    // First timeupdate: lastSentRef starts at 0, so this one posts
+    // immediately (a real send, not the one under test).
+    Object.defineProperty(videoEl, "currentTime", { value: 50, writable: true });
+    fireEvent.timeUpdate(videoEl);
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 50));
+    vi.mocked(setResume).mockClear();
+
+    // Second timeupdate lands inside the RESUME_THROTTLE_MS window, so on
+    // its own it would NOT post — this is the progress that would
+    // otherwise be silently discarded by unmounting (e.g. clicking back to
+    // Library, the common in-SPA exit).
+    Object.defineProperty(videoEl, "currentTime", { value: 77, writable: true });
+    fireEvent.timeUpdate(videoEl);
+    expect(setResume).not.toHaveBeenCalled();
+
+    unmount();
+
+    await waitFor(() => {
+      expect(setResume).toHaveBeenCalledWith("v1", 77);
+    });
+  });
+
+  it("does not clobber the stored resume with 0 when unmounted before any position is observed", async () => {
+    const { unmount } = render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    // Wait for the video element to mount, but never fire loadedMetadata
+    // or timeupdate — this is the quick-exit window where the playhead's
+    // real position (mockVideo.resume_position_seconds = 42, already
+    // stored server-side) is not yet known client-side.
+    await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    unmount();
+
+    // Give any queued microtasks a chance to run, then confirm the
+    // unmount flush stayed silent instead of posting a spurious 0.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setResume).not.toHaveBeenCalled();
+  });
+
   it("sets video.currentTime from resume_position_seconds once metadata loads", async () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
 

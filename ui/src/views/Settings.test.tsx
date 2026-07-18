@@ -26,14 +26,16 @@ vi.mock("../api/ytdlp", () => ({
   updateYtdlp: vi.fn(),
 }));
 
-import { getSettings, putCookie } from "../api/settings";
+import { getSettings, putCookie, updateSettings } from "../api/settings";
 
 describe("Settings", () => {
   beforeEach(() => {
     vi.mocked(getSettings).mockReset();
     vi.mocked(putCookie).mockReset();
+    vi.mocked(updateSettings).mockReset();
     vi.mocked(getSettings).mockResolvedValue(baseSettings);
     vi.mocked(putCookie).mockResolvedValue({ ...baseSettings, cookie_status: "valid" });
+    vi.mocked(updateSettings).mockResolvedValue(baseSettings);
   });
 
   it("shows the cookie status from GET, never the cookie body", async () => {
@@ -54,6 +56,23 @@ describe("Settings", () => {
 
     await waitFor(() => {
       expect(putCookie).toHaveBeenCalledWith(".youtube.com\tTRUE\t/\tTRUE\t123\tSID\tabc");
+    });
+  });
+
+  it("renders the current throttle_base_seconds value and saves it on blur", async () => {
+    const user = userEvent.setup();
+    render(<Settings />);
+    const input = (await screen.findByLabelText(
+      "Minimum delay between YouTube calls (seconds)",
+    )) as HTMLInputElement;
+    expect(input.value).toBe("20");
+
+    await user.clear(input);
+    await user.type(input, "45");
+    await user.tab();
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalledWith({ throttle_base_seconds: 45 });
     });
   });
 });

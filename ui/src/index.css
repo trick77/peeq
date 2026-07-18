@@ -626,12 +626,14 @@ button {
 .iconbtn {
   width: 30px;
   height: 30px;
+  padding: 0;
   border-radius: 8px;
   background: rgba(5, 8, 11, 0.78);
   border: 1px solid var(--color-border);
   display: grid;
   place-items: center;
   color: var(--color-ink-dim);
+  cursor: pointer;
 }
 .iconbtn:hover {
   color: var(--color-ink);
