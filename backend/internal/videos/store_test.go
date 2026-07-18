@@ -114,6 +114,222 @@ func TestSetStatus_setsErrorMessage(t *testing.T) {
 	}
 }
 
+func TestSetResume_autoMarksWatchedAtNinetyPercent_noResetOnRewatch(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// 95/100 = 95% >= 90% threshold: auto-marks watched.
+	if err := s.SetResume("v", 95); err != nil {
+		t.Fatalf("set resume: %v", err)
+	}
+	got, err := s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !got.Watched {
+		t.Fatalf("watched = false, want true after resume >= 90%%")
+	}
+	if got.WatchedAt == "" {
+		t.Fatalf("watched_at not set")
+	}
+	if got.ResumePositionSeconds != 95 {
+		t.Fatalf("resume_position_seconds = %v, want 95", got.ResumePositionSeconds)
+	}
+	firstWatchedAt := got.WatchedAt
+
+	// Re-watching (another SetResume above threshold) must NOT reset
+	// watched_at — no "life extension".
+	if err := s.SetResume("v", 98); err != nil {
+		t.Fatalf("set resume again: %v", err)
+	}
+	got, err = s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.WatchedAt != firstWatchedAt {
+		t.Fatalf("watched_at changed on re-watch: got %q, want unchanged %q", got.WatchedAt, firstWatchedAt)
+	}
+	if got.ResumePositionSeconds != 98 {
+		t.Fatalf("resume_position_seconds = %v, want 98", got.ResumePositionSeconds)
+	}
+
+	// Manual un-watch clears both watched and watched_at (rescues from the
+	// auto-delete sweep).
+	if err := s.SetWatched("v", false); err != nil {
+		t.Fatalf("set watched false: %v", err)
+	}
+	got, err = s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Watched {
+		t.Fatalf("watched = true, want false after manual un-watch")
+	}
+	if got.WatchedAt != "" {
+		t.Fatalf("watched_at = %q, want cleared after manual un-watch", got.WatchedAt)
+	}
+}
+
+func TestSetResume_belowThreshold_doesNotMarkWatched(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetResume("v", 50); err != nil {
+		t.Fatalf("set resume: %v", err)
+	}
+	got, err := s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Watched {
+		t.Fatalf("watched = true, want false below 90%% threshold")
+	}
+	if got.WatchedAt != "" {
+		t.Fatalf("watched_at = %q, want empty", got.WatchedAt)
+	}
+}
+
+func TestSetWatched_manualTrue_setsWatchedAt(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetWatched("v", true); err != nil {
+		t.Fatalf("set watched: %v", err)
+	}
+	got, err := s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !got.Watched || got.WatchedAt == "" {
+		t.Fatalf("watched=%v watched_at=%q, want true/set", got.Watched, got.WatchedAt)
+	}
+}
+
+func TestSetFavorite_toggles(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v", URL: "u"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetFavorite("v", true); err != nil {
+		t.Fatalf("set favorite: %v", err)
+	}
+	got, err := s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !got.Favorite {
+		t.Fatalf("favorite = false, want true")
+	}
+	if err := s.SetFavorite("v", false); err != nil {
+		t.Fatalf("set favorite false: %v", err)
+	}
+	got, err = s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Favorite {
+		t.Fatalf("favorite = true, want false")
+	}
+}
+
+func TestTombstone_clearsMediaPathSetsStatusKeepsRow(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v", URL: "u"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetDownloaded("v", DownloadedResult{MediaPath: "/media/v.mp4", FilesizeBytes: 10}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := s.Tombstone("v"); err != nil {
+		t.Fatalf("tombstone: %v", err)
+	}
+	got, err := s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("row was deleted, want kept")
+	}
+	if got.Status != "tombstoned" {
+		t.Fatalf("status = %q, want tombstoned", got.Status)
+	}
+	if got.MediaPath != "" {
+		t.Fatalf("media_path = %q, want cleared", got.MediaPath)
+	}
+}
+
+func TestList_filters(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "a", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDownloaded("a", DownloadedResult{MediaPath: "/m/a.mp4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Upsert(Video{ID: "b", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDownloaded("b", DownloadedResult{MediaPath: "/m/b.mp4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetWatched("b", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Upsert(Video{ID: "c", URL: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetStatus("c", "downloading", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetFavorite("a", true); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := s.List("all")
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("list all = %d, want 3", len(all))
+	}
+
+	unwatched, err := s.List("unwatched")
+	if err != nil {
+		t.Fatalf("list unwatched: %v", err)
+	}
+	if len(unwatched) != 1 || unwatched[0].ID != "a" {
+		t.Fatalf("list unwatched = %+v, want [a]", unwatched)
+	}
+
+	watched, err := s.List("watched")
+	if err != nil {
+		t.Fatalf("list watched: %v", err)
+	}
+	if len(watched) != 1 || watched[0].ID != "b" {
+		t.Fatalf("list watched = %+v, want [b]", watched)
+	}
+
+	favs, err := s.List("favorites")
+	if err != nil {
+		t.Fatalf("list favorites: %v", err)
+	}
+	if len(favs) != 1 || favs[0].ID != "a" {
+		t.Fatalf("list favorites = %+v, want [a]", favs)
+	}
+
+	downloading, err := s.List("downloading")
+	if err != nil {
+		t.Fatalf("list downloading: %v", err)
+	}
+	if len(downloading) != 1 || downloading[0].ID != "c" {
+		t.Fatalf("list downloading = %+v, want [c]", downloading)
+	}
+}
+
 func TestSetDownloaded_recordsResult(t *testing.T) {
 	s := New(openTestDB(t))
 	if err := s.Upsert(Video{ID: "v", URL: "u"}); err != nil {

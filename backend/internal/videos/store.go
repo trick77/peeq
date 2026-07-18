@@ -1,9 +1,16 @@
 // Package videos persists the videos table (migration 0001_init.sql): one
-// row per tracked YouTube video, holding its metadata and download state.
-// Task 9 needs only what the download worker touches — Upsert (seed a row
-// before enqueuing), Get (read the URL to build a download request),
-// SetStatus (mark downloading/error), and SetDownloaded (record a finished
-// download). The watched/tombstone lifecycle lands in a later task.
+// row per tracked YouTube video, holding its metadata, download state, and
+// the watched/favorite/tombstone lifecycle.
+//
+// Watched semantics (Task 11, decided product rules): a video becomes
+// watched automatically when its resume position reaches >= 90% of the
+// duration (SetResume), or manually (SetWatched(id, true)). Re-watching
+// never resets watched_at once set — no "life extension" of the retention
+// clock. Manual un-watch (SetWatched(id, false)) clears both watched and
+// watched_at, rescuing the video from the retention sweep. Tombstone keeps
+// the row (for watched history and a future summary/transcript) but clears
+// media_path and marks status='tombstoned'; the caller is responsible for
+// unlinking the actual media/thumbnail files from disk first.
 package videos
 
 import (
@@ -16,24 +23,34 @@ import (
 // writes. Fields left at their zero value on Upsert fall back to the
 // column defaults on insert.
 type Video struct {
-	ID                   string
-	URL                  string
-	Title                string
-	ChannelID            string
-	ChannelName          string
-	DurationSeconds      int64
-	PublishedAt          string
-	Description          string
-	ThumbnailPath        string
-	MediaPath            string
-	FilesizeBytes        int64
-	FormatUsed           string
-	Availability         string
-	Status               string
-	ErrorMessage         string
-	SponsorblockSegments string
-	DownloadedAt         string
+	ID                    string
+	URL                   string
+	Title                 string
+	ChannelID             string
+	ChannelName           string
+	DurationSeconds       int64
+	PublishedAt           string
+	Description           string
+	ThumbnailPath         string
+	MediaPath             string
+	FilesizeBytes         int64
+	FormatUsed            string
+	Availability          string
+	Status                string
+	ErrorMessage          string
+	SponsorblockSegments  string
+	Watched               bool
+	WatchedAt             string
+	ResumePositionSeconds float64
+	Favorite              bool
+	FavoritedAt           string
+	CreatedAt             string
+	DownloadedAt          string
 }
+
+// watchedThreshold is the fraction of a video's duration that, once
+// reached via SetResume, auto-marks it watched.
+const watchedThreshold = 0.9
 
 // DownloadedResult is the outcome of a successful download, mapped from
 // ytdlp.Result by the worker. SponsorblockSegments is the JSON text stored
@@ -89,32 +106,99 @@ ON CONFLICT(id) DO UPDATE SET
 	return nil
 }
 
-// Get returns the video row for id, or (nil, nil) if there is none.
-func (s *Store) Get(id string) (*Video, error) {
+// videoColumns is the column list shared by Get and List, in the order
+// scanRow expects.
+const videoColumns = `id, url, title, channel_id, channel_name, duration_seconds, published_at,
+	description, thumbnail_path, media_path, filesize_bytes, format_used,
+	availability, status, error_message, sponsorblock_segments,
+	watched, watched_at, resume_position_seconds, favorite, favorited_at,
+	created_at, downloaded_at`
+
+// rowScanner is satisfied by both *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanVideo scans one row in the videoColumns order into a Video.
+func scanVideo(rs rowScanner) (Video, error) {
 	var v Video
 	var duration, filesize sql.NullInt64
-	var publishedAt, downloadedAt sql.NullString
-	err := s.db.QueryRowContext(context.Background(), `
-SELECT id, url, title, channel_id, channel_name, duration_seconds, published_at,
-	description, thumbnail_path, media_path, filesize_bytes, format_used,
-	availability, status, error_message, sponsorblock_segments, downloaded_at
-FROM videos WHERE id = ?`, id,
-	).Scan(
+	var publishedAt, watchedAt, favoritedAt, downloadedAt sql.NullString
+	var watched, favorite int
+	err := rs.Scan(
 		&v.ID, &v.URL, &v.Title, &v.ChannelID, &v.ChannelName, &duration, &publishedAt,
 		&v.Description, &v.ThumbnailPath, &v.MediaPath, &filesize, &v.FormatUsed,
-		&v.Availability, &v.Status, &v.ErrorMessage, &v.SponsorblockSegments, &downloadedAt,
+		&v.Availability, &v.Status, &v.ErrorMessage, &v.SponsorblockSegments,
+		&watched, &watchedAt, &v.ResumePositionSeconds, &favorite, &favoritedAt,
+		&v.CreatedAt, &downloadedAt,
 	)
+	if err != nil {
+		return Video{}, err
+	}
+	v.DurationSeconds = duration.Int64
+	v.FilesizeBytes = filesize.Int64
+	v.PublishedAt = publishedAt.String
+	v.Watched = watched != 0
+	v.WatchedAt = watchedAt.String
+	v.Favorite = favorite != 0
+	v.FavoritedAt = favoritedAt.String
+	v.DownloadedAt = downloadedAt.String
+	return v, nil
+}
+
+// Get returns the video row for id, or (nil, nil) if there is none.
+func (s *Store) Get(id string) (*Video, error) {
+	row := s.db.QueryRowContext(context.Background(),
+		"SELECT "+videoColumns+" FROM videos WHERE id = ?", id,
+	)
+	v, err := scanVideo(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get video %s: %w", id, err)
 	}
-	v.DurationSeconds = duration.Int64
-	v.FilesizeBytes = filesize.Int64
-	v.PublishedAt = publishedAt.String
-	v.DownloadedAt = downloadedAt.String
 	return &v, nil
+}
+
+// List returns videos matching filter, newest first:
+//   - "unwatched": downloaded and not watched (available to watch now)
+//   - "watched": watched = true
+//   - "favorites": favorite = true
+//   - "downloading": status is queued or downloading
+//   - anything else (including "all"/""): every row, tombstoned included
+func (s *Store) List(filter string) ([]Video, error) {
+	where := ""
+	switch filter {
+	case "unwatched":
+		where = "WHERE status = 'downloaded' AND watched = 0"
+	case "watched":
+		where = "WHERE watched = 1"
+	case "favorites":
+		where = "WHERE favorite = 1"
+	case "downloading":
+		where = "WHERE status IN ('queued', 'downloading')"
+	}
+	rows, err := s.db.QueryContext(context.Background(),
+		"SELECT "+videoColumns+" FROM videos "+where+" ORDER BY created_at DESC, id DESC",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list videos (filter=%s): %w", filter, err)
+	}
+	defer rows.Close()
+
+	out := []Video{}
+	for rows.Next() {
+		v, err := scanVideo(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list videos (filter=%s): %w", filter, err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list videos (filter=%s): %w", filter, err)
+	}
+	return out, nil
 }
 
 // SetStatus sets a video's status and error_message. Used by the worker to
@@ -150,6 +234,103 @@ WHERE id = ?`,
 	)
 	if err != nil {
 		return fmt.Errorf("set video %s downloaded: %w", id, err)
+	}
+	return nil
+}
+
+// SetFavorite sets a video's favorite flag, stamping (or clearing)
+// favorited_at to match.
+func (s *Store) SetFavorite(id string, fav bool) error {
+	var err error
+	if fav {
+		_, err = s.db.ExecContext(context.Background(),
+			`UPDATE videos SET favorite = 1, favorited_at = datetime('now') WHERE id = ?`, id)
+	} else {
+		_, err = s.db.ExecContext(context.Background(),
+			`UPDATE videos SET favorite = 0, favorited_at = NULL WHERE id = ?`, id)
+	}
+	if err != nil {
+		return fmt.Errorf("set video %s favorite: %w", id, err)
+	}
+	return nil
+}
+
+// SetWatched is the manual watched toggle. Setting true marks the video
+// watched, stamping watched_at only if it isn't already set (no life
+// extension on a manual re-confirmation). Setting false clears BOTH watched
+// and watched_at — this rescues the video from the retention sweep, per the
+// decided un-watch rule.
+func (s *Store) SetWatched(id string, watched bool) error {
+	var err error
+	if watched {
+		_, err = s.db.ExecContext(context.Background(), `
+UPDATE videos SET watched = 1, watched_at = COALESCE(watched_at, datetime('now'))
+WHERE id = ?`, id)
+	} else {
+		_, err = s.db.ExecContext(context.Background(),
+			`UPDATE videos SET watched = 0, watched_at = NULL WHERE id = ?`, id)
+	}
+	if err != nil {
+		return fmt.Errorf("set video %s watched: %w", id, err)
+	}
+	return nil
+}
+
+// SetResume records the player's resume position and, per the decided
+// watched rule, auto-marks the video watched once position reaches >= 90%
+// of its duration (this also covers "reaches the end", since position can't
+// exceed duration in practice). watched_at is stamped only the first time —
+// a later call at or above the threshold (re-watching) never resets it.
+// Duration 0/unknown never auto-marks watched (there is no ratio to check).
+func (s *Store) SetResume(id string, position float64) error {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set video %s resume: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var duration sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT duration_seconds FROM videos WHERE id = ?`, id,
+	).Scan(&duration); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("set video %s resume: not found", id)
+		}
+		return fmt.Errorf("set video %s resume: %w", id, err)
+	}
+
+	autoWatched := duration.Valid && duration.Int64 > 0 &&
+		position >= watchedThreshold*float64(duration.Int64)
+
+	if autoWatched {
+		_, err = tx.ExecContext(ctx, `
+UPDATE videos
+SET resume_position_seconds = ?, watched = 1, watched_at = COALESCE(watched_at, datetime('now'))
+WHERE id = ?`, position, id)
+	} else {
+		_, err = tx.ExecContext(ctx,
+			`UPDATE videos SET resume_position_seconds = ? WHERE id = ?`, position, id)
+	}
+	if err != nil {
+		return fmt.Errorf("set video %s resume: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set video %s resume: %w", id, err)
+	}
+	return nil
+}
+
+// Tombstone marks a video deleted-but-remembered: media_path is cleared and
+// status becomes 'tombstoned', but the row (and its watched history) is
+// kept — a future badge can offer re-download. Tombstone only updates the
+// database; the caller must unlink the actual media/thumbnail files first
+// (it needs config.MediaDir and path-safety checks the store doesn't have).
+func (s *Store) Tombstone(id string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET media_path = '', status = 'tombstoned' WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("tombstone video %s: %w", id, err)
 	}
 	return nil
 }

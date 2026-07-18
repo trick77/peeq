@@ -170,6 +170,7 @@ func run() error {
 		DevAuthClaims:  devClaims,
 		Jobs:           jobsStore,
 		Videos:         videosStore,
+		MediaDir:       cfg.MediaDir,
 		Runner:         runner,
 		Worker:         worker,
 		SSEHub:         sseHub,

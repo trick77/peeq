@@ -1,6 +1,7 @@
 // Package httpapi builds vark's HTTP handler: the JSON API plus the embedded
-// SPA. Phase 1 wires health, auth (dev auto-login + OIDC), and a placeholder
-// videos listing; the archiving pipeline endpoints land in later phases.
+// SPA. Phase 1 wires health, auth (dev auto-login + OIDC), the downloads
+// queue, and the videos API (list/get/delete/stream/favorite/watched/
+// resume); further archiving pipeline endpoints land in later phases.
 package httpapi
 
 import (
@@ -35,6 +36,10 @@ type Deps struct {
 	Jobs *jobs.Store
 	// Videos is the video metadata store backing the downloads API.
 	Videos *videos.Store
+	// MediaDir is the root directory downloaded media lives under. The
+	// videos API resolves every stored media_path against it (rejecting
+	// traversal/escape) before streaming or unlinking a file.
+	MediaDir string
 	// Runner fetches metadata for a video before it is enqueued. May be a
 	// fake in tests; the real *ytdlp.Runner satisfies DownloadsRunner.
 	Runner DownloadsRunner
@@ -54,11 +59,12 @@ type server struct {
 	settings      *settings.Store
 	devAuthClaims auth.Claims
 
-	jobs   *jobs.Store
-	videos *videos.Store
-	runner DownloadsRunner
-	worker DownloadsWorker
-	sseHub *sse.Hub
+	jobs     *jobs.Store
+	videos   *videos.Store
+	mediaDir string
+	runner   DownloadsRunner
+	worker   DownloadsWorker
+	sseHub   *sse.Hub
 }
 
 // New returns the fully wired HTTP handler.
@@ -72,6 +78,7 @@ func New(d Deps) http.Handler {
 		devAuthClaims: d.DevAuthClaims,
 		jobs:          d.Jobs,
 		videos:        d.Videos,
+		mediaDir:      d.MediaDir,
 		runner:        d.Runner,
 		worker:        d.Worker,
 		sseHub:        d.SSEHub,
@@ -84,6 +91,12 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/auth/logout", s.requireAuth(http.HandlerFunc(s.handleAuthLogout)))
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.handleAuthMe)))
 	mux.Handle("GET /api/videos", s.requireAuth(http.HandlerFunc(s.handleListVideos)))
+	mux.Handle("GET /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleGetVideo)))
+	mux.Handle("DELETE /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleDeleteVideo)))
+	mux.Handle("POST /api/videos/{id}/favorite", s.requireAuth(http.HandlerFunc(s.handleFavoriteVideo)))
+	mux.Handle("POST /api/videos/{id}/watched", s.requireAuth(http.HandlerFunc(s.handleWatchedVideo)))
+	mux.Handle("POST /api/videos/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleResumeVideo)))
+	mux.Handle("GET /api/videos/{id}/stream", s.requireAuth(http.HandlerFunc(s.handleStreamVideo)))
 	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleGetSettings)))
 	mux.Handle("PUT /api/settings", s.requireAuth(http.HandlerFunc(s.handlePutSettings)))
 	mux.Handle("PUT /api/settings/cookie", s.requireAuth(http.HandlerFunc(s.handlePutSettingsCookie)))
@@ -110,11 +123,4 @@ func (s *server) requireAuth(next http.Handler) http.Handler {
 		})
 	}
 	return s.authMW.RequireAuth(next)
-}
-
-// handleListVideos is a Phase 1 placeholder: the archiving pipeline and its
-// storage land in a later task. It proves the authenticated route table and
-// the "empty library" boot milestone.
-func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, []any{})
 }
