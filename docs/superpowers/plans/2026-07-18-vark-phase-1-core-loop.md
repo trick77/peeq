@@ -475,6 +475,26 @@ Also assert a bare `-`-leading id string is only accepted as part of a full URL 
 - **Placeholder scan:** loom/tubearchivist references are concrete source files to port, not TODOs; each task has real test code + exact commands.
 - **Type consistency:** `Runner`/`RunnerConfig`/`Meta`/`DownloadReq`/`Result` (T7–8), `jobs.Store`/`Job`/`ClaimNext`/`Bump` (T9), `videos.Store.SetResume`/`Tombstone` (T11) referenced consistently across tasks.
 
+## Phase 3 design notes (subtitles / summaries — captured now, built in P3)
+- **Long-transcript / MiMo context-window safety:** do NOT single-pass a raw transcript into MiMo. A
+  4-hour podcast is only ~40–50k tokens of cue text, but raw VTT (timestamps + auto-caption
+  rolling-window duplication) bloats that 2–3×. Use **map-reduce summarization**: reuse the VTT-cue
+  chunks already produced for embeddings → summarize each chunk → reduce the chunk-summaries into the
+  final summary/chapters/key-points. This makes the exact MiMo window irrelevant and improves quality
+  on long content. Strip VTT timestamps and dedup auto-caption repeated lines before sending. Verify
+  MiMo-V2.5-Pro's real context window at build time; design assumes we never rely on it being large.
+  **Reasoning effort: HIGH for ALL MiMo summarization calls** (map and reduce) — user decision; it's an
+  offline background job so latency is free, and loom already hardcodes MiMo at `reasoning_effort=high`.
+- **Caption display during playback (P3):** once the audio-language VTT is downloaded, serve it via
+  `GET /api/videos/{id}/subtitles` (path-safe, like the thumbnail/stream endpoints) and wire an HTML5
+  `<track kind="subtitles" srclang=... default?>` + a CC toggle into the Player so subtitles show on
+  screen while watching. Small addition on top of the P3 VTT download; not in P1.
+- **Highlights / key points:** the MiMo pass produces THREE artifacts, not two — a prose **summary**,
+  a structured timestamped **chapter index/TOC**, and a short list of **key points / "eyebrow-raisers"**
+  (notable, surprising, or quotable moments), each with a jump-to timestamp. Store `summary`,
+  `chapters` (JSON), and `key_points` (JSON, `[{ts, text}]`) on the video row. The Player shows a
+  **Highlights** panel alongside Summary and Contents.
+
 ## Notes carried forward (from the gap review, not yet full P1 tasks)
 - SSE reconnect/backfill (reconnect gets current state) and an explicit "processing/merging" phase during ffmpeg mux — implement inside T10/T9 progress emission; add a focused test if time allows.
 - Per-job `log_tail` (last N stderr lines) is stored (T9) and surfaced in the Settings/queue UI — minimal viewer in T14 acceptable; richer log view can slip to a P1.1 follow-up.

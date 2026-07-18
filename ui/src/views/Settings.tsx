@@ -1,0 +1,315 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { Icon } from "../icons";
+import { getSettings, updateSettings, putCookie } from "../api/settings";
+import { getYtdlpVersion, updateYtdlp } from "../api/ytdlp";
+import type { Settings as SettingsType } from "../api/types";
+
+// PRESETS mirrors ytdlp.Presets exactly (backend/internal/ytdlp/format.go)
+// plus the "custom" id Resolve special-cases — the format string shown
+// under each preset here must stay byte-for-byte in sync with that table.
+const PRESETS: { id: string; label: string; format: string }[] = [
+  {
+    id: "apple-1080p",
+    label: "Apple 1080p",
+    format: "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
+  },
+  {
+    id: "apple-720p",
+    label: "Apple 720p",
+    format: "bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
+  },
+  { id: "best-mp4", label: "Best available MP4", format: "bestvideo+bestaudio/best" },
+  { id: "custom", label: "Custom…", format: "write your own format string" },
+];
+
+// looksLikeNetscapeCookie is a client-side sanity check only — the
+// authoritative check is cookie.Validate on the backend (see
+// PUT /api/settings/cookie), whose error is surfaced separately below.
+function looksLikeNetscapeCookie(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed === "") return false;
+  return trimmed.split("\n").some((line) => line.includes(".youtube.com") && line.split("\t").length >= 7);
+}
+
+// Settings — cookie / format preset / rate-limit / retention / yt-dlp
+// version, per the mockup's `.settings` block. The cookie body is never
+// echoed back by the backend, so this view never pre-fills the textarea —
+// only cookie_status/cookie_updated_at (via GET /api/settings) are ever
+// displayed.
+export function Settings() {
+  const [settings, setSettingsState] = useState<SettingsType | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const [cookieText, setCookieText] = useState("");
+  const [cookieSaving, setCookieSaving] = useState(false);
+  const [cookieError, setCookieError] = useState<string | null>(null);
+
+  const [customFormat, setCustomFormat] = useState("");
+  const [limitRate, setLimitRate] = useState("");
+  const [throttleBase, setThrottleBase] = useState(20);
+  const [retentionDays, setRetentionDays] = useState(14);
+
+  const [ytdlpVersion, setYtdlpVersion] = useState<string | null>(null);
+  const [ytdlpBusy, setYtdlpBusy] = useState(false);
+  const [ytdlpError, setYtdlpError] = useState<string | null>(null);
+
+  function load() {
+    getSettings()
+      .then((s) => {
+        setSettingsState(s);
+        setCustomFormat(s.format_custom);
+        setLimitRate(s.limit_rate);
+        setThrottleBase(s.throttle_base_seconds);
+        setRetentionDays(s.retention_days);
+        setError(null);
+      })
+      .catch((e: Error) => setError(e.message));
+  }
+
+  useEffect(() => {
+    load();
+    getYtdlpVersion()
+      .then(setYtdlpVersion)
+      .catch(() => {});
+  }, []);
+
+  async function handleSaveCookie(e: FormEvent) {
+    e.preventDefault();
+    setCookieSaving(true);
+    setCookieError(null);
+    try {
+      const s = await putCookie(cookieText);
+      setSettingsState(s);
+      setCookieText("");
+    } catch (err) {
+      setCookieError((err as Error).message ?? "Failed to save cookie.");
+    } finally {
+      setCookieSaving(false);
+    }
+  }
+
+  async function handlePickPreset(id: string) {
+    if (!settings) return;
+    const patch = id === "custom" ? { format_preset: id, format_custom: customFormat } : { format_preset: id };
+    try {
+      const s = await updateSettings(patch);
+      setSettingsState(s);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function handleSaveCustomFormat() {
+    try {
+      const s = await updateSettings({ format_preset: "custom", format_custom: customFormat });
+      setSettingsState(s);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function handleSaveLimitRate() {
+    try {
+      const s = await updateSettings({ limit_rate: limitRate });
+      setSettingsState(s);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function handleSaveThrottleBase() {
+    try {
+      const s = await updateSettings({ throttle_base_seconds: throttleBase });
+      setSettingsState(s);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  // commitRetention saves retentionDays via PUT /api/settings. Deliberately
+  // NOT called from the range input's onChange (which fires on every
+  // integer step while dragging — up to ~80 PUTs for a single drag from 14
+  // to 90); onChange only updates the displayed value locally, and this
+  // fires once the user releases the slider (onMouseUp/onKeyUp/onTouchEnd).
+  async function commitRetention() {
+    try {
+      const s = await updateSettings({ retention_days: retentionDays });
+      setSettingsState(s);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function handleUpdateYtdlp() {
+    setYtdlpBusy(true);
+    setYtdlpError(null);
+    try {
+      const v = await updateYtdlp();
+      setYtdlpVersion(v);
+    } catch (err) {
+      setYtdlpError((err as Error).message ?? "Update failed.");
+    } finally {
+      setYtdlpBusy(false);
+    }
+  }
+
+  if (error && !settings) {
+    return <div className="errline">{error}</div>;
+  }
+  if (!settings) {
+    return <p style={{ color: "var(--color-faint)" }}>Loading…</p>;
+  }
+
+  const cookieHealthy = settings.cookie_status === "valid";
+  const looksValid = looksLikeNetscapeCookie(cookieText);
+
+  return (
+    <div className="settings">
+      <section className="sect">
+        <h2>
+          YouTube cookie
+          <span className={`status-line${cookieHealthy ? "" : " warn"}`}>
+            <span className="led" />
+            {cookieHealthy ? "Active" : settings.cookie_status}
+            {settings.cookie_updated_at ? ` · updated ${new Date(settings.cookie_updated_at).toLocaleString()}` : ""}
+          </span>
+        </h2>
+        <p className="desc">
+          Paste your browser's YouTube cookies (Netscape format). vark keeps yt-dlp's rotated cookie fresh
+          automatically. The pasted text is never shown back to you — only its status is.
+        </p>
+        <form onSubmit={handleSaveCookie}>
+          <textarea
+            className="cookiebox"
+            spellCheck={false}
+            value={cookieText}
+            onChange={(e) => setCookieText(e.target.value)}
+            placeholder={"# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t...\tSID\t..."}
+            aria-label="YouTube cookie"
+          />
+          <div className="field-row">
+            <button type="submit" className="btn primary" disabled={cookieSaving || cookieText.trim() === ""}>
+              {cookieSaving ? "Saving…" : "Save cookie"}
+            </button>
+            {cookieText.trim() !== "" ? (
+              <span style={{ fontSize: 12.5, color: looksValid ? "var(--color-online)" : "var(--color-danger)" }}>
+                {looksValid ? "Looks like a valid Netscape cookie file." : "Doesn't look like a Netscape cookie file yet."}
+              </span>
+            ) : null}
+          </div>
+          {cookieError ? <div className="errline">{cookieError}</div> : null}
+        </form>
+        <div className="warnline">
+          <Icon name="warning" size="16px" style={{ color: "var(--color-danger)" }} />
+          <span>
+            <b>No cookie, no calls.</b> vark never touches YouTube without a valid cookie — it pauses the queue and
+            asks you to re-paste instead.
+          </span>
+        </div>
+      </section>
+
+      <section className="sect">
+        <h2>Download format</h2>
+        <p className="desc">
+          A yt-dlp format selector. Apple presets pick H.264 / AAC so videos play natively — no transcoding.
+        </p>
+        <div className="presets">
+          {PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className={`preset${settings.format_preset === preset.id ? " on" : ""}`}
+              onClick={() => handlePickPreset(preset.id)}
+            >
+              <span className="pn">{preset.label}</span>
+              <code>{preset.format}</code>
+            </button>
+          ))}
+        </div>
+        {settings.format_preset === "custom" ? (
+          <div className="ctrl" style={{ marginTop: 14 }}>
+            <span className="lab">Custom format string</span>
+            <input
+              type="text"
+              value={customFormat}
+              onChange={(e) => setCustomFormat(e.target.value)}
+              onBlur={handleSaveCustomFormat}
+              placeholder="bestvideo+bestaudio/best"
+            />
+          </div>
+        ) : null}
+      </section>
+
+      <section className="sect">
+        <div className="row2">
+          <div className="ctrl">
+            <span className="lab">Download speed limit</span>
+            <input
+              type="text"
+              value={limitRate}
+              onChange={(e) => setLimitRate(e.target.value)}
+              onBlur={handleSaveLimitRate}
+              placeholder="4.5M"
+            />
+            <p className="retain-note">
+              Passed to yt-dlp as <b>--limit-rate</b>. Leave blank for no cap.
+            </p>
+          </div>
+          <div className="ctrl">
+            <span className="lab">Minimum delay between YouTube calls (seconds)</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={throttleBase}
+              onChange={(e) => setThrottleBase(Number(e.target.value))}
+              onBlur={handleSaveThrottleBase}
+              aria-label="Minimum delay between YouTube calls (seconds)"
+            />
+            <p className="retain-note">
+              The backend enforces a <b>20s hard floor</b> regardless of this value.
+            </p>
+          </div>
+          <div className="ctrl">
+            <span className="lab">yt-dlp version</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="mono" style={{ fontSize: 13.5 }}>
+                {ytdlpVersion ?? "unknown"}
+              </span>
+              <button type="button" className="btn ghost" style={{ minHeight: 34, padding: "0 14px" }} onClick={handleUpdateYtdlp} disabled={ytdlpBusy}>
+                {ytdlpBusy ? "Updating…" : "Update"}
+              </button>
+            </div>
+            {ytdlpError ? <p className="retain-note">{ytdlpError}</p> : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="sect">
+        <h2>Automatic cleanup</h2>
+        <p className="desc">Keep the library from filling up — watched videos age out on their own.</p>
+        <div className="slider-row">
+          <span className="lab" style={{ margin: 0 }}>
+            Delete watched after
+          </span>
+          <input
+            type="range"
+            min={1}
+            max={90}
+            value={retentionDays}
+            onChange={(e) => setRetentionDays(Number(e.target.value))}
+            onMouseUp={commitRetention}
+            onTouchEnd={commitRetention}
+            onKeyUp={commitRetention}
+            aria-label="Retention days"
+          />
+          <span className="val">{retentionDays} days</span>
+        </div>
+        <p className="retain-note">
+          <b>Unwatched videos are never deleted.</b> <b>Favorites are kept forever</b>, even after you watch them.
+          Only watched, un-favorited videos expire.
+        </p>
+      </section>
+    </div>
+  );
+}

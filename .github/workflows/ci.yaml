@@ -1,0 +1,50 @@
+name: CI
+
+# Tests run on pull requests (feature branches). Master does not run tests — it
+# builds and pushes the image (see release.yaml). No image build happens here.
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (build + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      # The race detector needs cgo; this is independent of the app's
+      # CGO_ENABLED=0 build invariant enforced by the `go build` step above.
+      - run: go test -race ./...
+        env:
+          CGO_ENABLED: "1"
+
+  ui:
+    name: UI (build + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test -- --run
