@@ -70,16 +70,19 @@ func TestMetadata_withCookie_callsBinary(t *testing.T) {
 }
 
 // TestMetadata_throttle_sleepsWithinBounds locks the throttle invariant:
-// Sleep is called once per invocation with a duration in [0.5, 1.5] *
-// ThrottleBase.
+// Sleep is called once per invocation with a duration in
+// [floor, floor+jitter), where floor is clamped to >= 20s.
 func TestMetadata_throttle_sleepsWithinBounds(t *testing.T) {
 	var got time.Duration
 	calls := 0
-	base := 200 * time.Millisecond
+	floor := 30 * time.Second
+	jitter := 5 * time.Second
 	r := New(RunnerConfig{
 		Bin:            fakeBinPath(t),
 		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
-		ThrottleBase:   base,
+		ThrottleFloor:  floor,
+		ThrottleJitter: jitter,
+		RandFloat64:    func() float64 { return 0.5 },
 		Sleep: func(d time.Duration) {
 			got = d
 			calls++
@@ -92,10 +95,86 @@ func TestMetadata_throttle_sleepsWithinBounds(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("Sleep called %d times, want 1", calls)
 	}
-	min := time.Duration(float64(base) * 0.5)
-	max := time.Duration(float64(base) * 1.5)
-	if got < min || got > max {
-		t.Fatalf("Sleep(%v) outside [%v, %v]", got, min, max)
+	if got < floor || got >= floor+jitter {
+		t.Fatalf("Sleep(%v) outside [%v, %v)", got, floor, floor+jitter)
+	}
+}
+
+// TestThrottle_floorAlwaysAtLeast20Seconds locks the hard product
+// invariant: the minimum wait between YouTube calls is 20 seconds,
+// regardless of a low or zero configured floor.
+func TestThrottle_floorAlwaysAtLeast20Seconds(t *testing.T) {
+	cases := []struct {
+		name          string
+		throttleFloor time.Duration
+	}{
+		{"unset/zero", 0},
+		{"below 20s (stored default 10s)", 10 * time.Second},
+		{"5s", 5 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got time.Duration
+			r := New(RunnerConfig{
+				ThrottleFloor:  tc.throttleFloor,
+				ThrottleJitter: 0, // still must not push below 20s
+				RandFloat64:    func() float64 { return 0 },
+				Sleep:          func(d time.Duration) { got = d },
+			})
+			r.throttle()
+			if got < minThrottleFloor {
+				t.Fatalf("Sleep(%v) below hard floor %v (configured floor was %v)", got, minThrottleFloor, tc.throttleFloor)
+			}
+		})
+	}
+}
+
+// TestThrottle_jitterAddsRandomComponent proves the wait is never a bare
+// fixed floor: with jitter > 0, differing random draws produce differing
+// waits, and each draw falls in [floor, floor+jitter).
+func TestThrottle_jitterAddsRandomComponent(t *testing.T) {
+	floor := minThrottleFloor
+	jitter := 15 * time.Second
+
+	draw := func(f float64) time.Duration {
+		var got time.Duration
+		r := New(RunnerConfig{
+			ThrottleFloor:  floor,
+			ThrottleJitter: jitter,
+			RandFloat64:    func() float64 { return f },
+			Sleep:          func(d time.Duration) { got = d },
+		})
+		r.throttle()
+		return got
+	}
+
+	low := draw(0)
+	high := draw(0.999999)
+
+	if low != floor {
+		t.Fatalf("draw(0) = %v, want exactly floor %v", low, floor)
+	}
+	if high < floor || high >= floor+jitter {
+		t.Fatalf("draw(~1) = %v outside [%v, %v)", high, floor, floor+jitter)
+	}
+	if low == high {
+		t.Fatal("expected differing random draws to produce differing waits")
+	}
+}
+
+// TestThrottle_defaultJitterAppliedWhenUnset locks the default: an unset
+// ThrottleJitter must not degenerate into a bare fixed wait.
+func TestThrottle_defaultJitterAppliedWhenUnset(t *testing.T) {
+	var got time.Duration
+	r := New(RunnerConfig{
+		ThrottleFloor: 20 * time.Second,
+		RandFloat64:   func() float64 { return 0.5 },
+		Sleep:         func(d time.Duration) { got = d },
+	})
+	r.throttle()
+	want := minThrottleFloor + time.Duration(0.5*float64(defaultThrottleJitter))
+	if got != want {
+		t.Fatalf("Sleep(%v), want %v (default jitter %v applied)", got, want, defaultThrottleJitter)
 	}
 }
 

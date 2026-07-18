@@ -4,11 +4,23 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"time"
 )
+
+// minThrottleFloor is the hard, non-negotiable minimum wait time between
+// YouTube calls. This applies to everything that talks to YouTube through
+// the Runner (Metadata today; Download and channel-scan later), because
+// they all funnel through exec/throttle. No configuration value, however
+// low (including zero), may push the effective floor below this.
+const minThrottleFloor = 20 * time.Second
+
+// defaultThrottleJitter is used when RunnerConfig.ThrottleJitter is left
+// unset (zero). The floor alone must never be a bare fixed wait, so a
+// random component is always added on top of the floor.
+const defaultThrottleJitter = 15 * time.Second
 
 // RunnerConfig configures a Runner. Every external dependency (the binary
 // path, the cookie source, the sleep function) is injectable so tests
@@ -22,10 +34,25 @@ type RunnerConfig struct {
 	// its status string (e.g. "valid", "expired", "absent"). An empty text
 	// means no cookie is configured.
 	CookieProvider func() (text string, status string)
-	// ThrottleBase is the base duration for the pre-invocation throttle.
-	// The actual sleep is a random value in [0.5, 1.5] * ThrottleBase. Zero
-	// disables throttling (used in tests).
-	ThrottleBase time.Duration
+	// ThrottleFloor is the configured minimum wait between YouTube calls.
+	// It maps to the settings.throttle_base_seconds column. It is always
+	// clamped up to minThrottleFloor (20s) in New/effectiveFloor: a stored
+	// value below 20s (including the historical default of 10s, or zero)
+	// still yields waits of at least 20s. This is a firm product
+	// invariant, not a tunable that can be lowered below 20s.
+	ThrottleFloor time.Duration
+	// ThrottleJitter is the size of the random window added on top of
+	// ThrottleFloor: the actual wait is ThrottleFloor + rand[0, ThrottleJitter).
+	// Zero (unset) defaults to defaultThrottleJitter (15s) so the wait is
+	// never a bare fixed duration. Set a non-zero negative-free value
+	// explicitly if a smaller jitter window is ever needed; there is no
+	// way to disable jitter entirely short of passing a near-zero value.
+	ThrottleJitter time.Duration
+	// RandFloat64 returns a float64 in [0, 1) and drives the jitter
+	// component. Injectable/seedable so tests can assert exact bounds and
+	// observe variation without depending on math/rand's global state.
+	// Defaults to math/rand/v2's auto-seeded Float64.
+	RandFloat64 func() float64
 	// Sleep is called with the computed throttle duration before every
 	// binary invocation. Defaults to time.Sleep; tests inject a no-op.
 	Sleep func(time.Duration)
@@ -54,7 +81,23 @@ func New(cfg RunnerConfig) *Runner {
 	if cfg.CookieProvider == nil {
 		cfg.CookieProvider = func() (string, string) { return "", "absent" }
 	}
+	if cfg.ThrottleJitter == 0 {
+		cfg.ThrottleJitter = defaultThrottleJitter
+	}
+	if cfg.RandFloat64 == nil {
+		cfg.RandFloat64 = rand.Float64
+	}
 	return &Runner{cfg: cfg}
+}
+
+// effectiveThrottleFloor clamps the configured floor up to the hard 20s
+// minimum. Nothing — not a low or zero settings value — may push the
+// effective floor below minThrottleFloor.
+func (r *Runner) effectiveThrottleFloor() time.Duration {
+	if r.cfg.ThrottleFloor < minThrottleFloor {
+		return minThrottleFloor
+	}
+	return r.cfg.ThrottleFloor
 }
 
 // cookieGate is the single choke point that enforces the cookie
@@ -68,13 +111,18 @@ func (r *Runner) cookieGate() (string, error) {
 	return text, nil
 }
 
-// throttle sleeps a random duration in [0.5, 1.5] * ThrottleBase via the
-// injected Sleep function. A zero ThrottleBase disables throttling
-// entirely (still calls Sleep(0) so callers can assert invocation count).
+// throttle sleeps floor + rand[0, jitter) via the injected Sleep function,
+// where floor is the configured throttle floor clamped up to the hard 20s
+// minimum (see effectiveThrottleFloor) and jitter is ThrottleJitter. This
+// runs before EVERY yt-dlp invocation (exec is the single choke point), so
+// it covers every call that touches YouTube: Metadata today, and any
+// future Download / channel-scan calls that go through the same Runner.
+// The wait is never a bare fixed duration — the random component is
+// always added on top of the floor.
 func (r *Runner) throttle() {
-	factor := 0.5 + rand.Float64()
-	d := time.Duration(float64(r.cfg.ThrottleBase) * factor)
-	r.cfg.Sleep(d)
+	floor := r.effectiveThrottleFloor()
+	jitter := time.Duration(r.cfg.RandFloat64() * float64(r.cfg.ThrottleJitter))
+	r.cfg.Sleep(floor + jitter)
 }
 
 // exec runs the yt-dlp binary with args, after writing cookieText to a
