@@ -582,6 +582,18 @@ func (w *Worker) checkDiskSpace(ctx context.Context) bool {
 		w.deps.Logger.Error("download worker: disk check: load settings failed", "err", err)
 		return true
 	}
+	// A non-positive floor disables the guard. Guarding here is defense in
+	// depth against a bad settings value slipping past the API validation:
+	// uint64(negative) wraps to an enormous floor that would freeze the queue
+	// permanently, so treat MinFreeGB <= 0 as "guard disabled" (always enough
+	// space) and clear any prior low-disk state rather than wrap.
+	if set.MinFreeGB <= 0 {
+		w.mu.Lock()
+		w.lowDisk = false
+		w.mu.Unlock()
+		return true
+	}
+
 	free, err := w.deps.FreeBytes(w.deps.MediaDir)
 	if err != nil {
 		w.deps.Logger.Error("download worker: disk check: statfs failed", "dir", w.deps.MediaDir, "err", err)

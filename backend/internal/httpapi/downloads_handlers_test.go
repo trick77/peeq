@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,70 @@ import (
 	"github.com/trick77/vark/internal/videos"
 	"github.com/trick77/vark/internal/ytdlp"
 )
+
+// fakeWorker is a DownloadsWorker whose Resume calls are counted and whose
+// paused/low-disk state is fixed by the test, so handler wiring (finding 1)
+// and the status endpoint (finding 3) can be exercised without a real worker
+// goroutine.
+type fakeWorker struct {
+	mu          sync.Mutex
+	resumeCalls int
+	paused      bool
+	lowDisk     bool
+}
+
+func (f *fakeWorker) Cancel(int64) bool { return false }
+func (f *fakeWorker) Resume() {
+	f.mu.Lock()
+	f.resumeCalls++
+	f.mu.Unlock()
+}
+func (f *fakeWorker) Paused() bool  { return f.paused }
+func (f *fakeWorker) LowDisk() bool { return f.lowDisk }
+
+func (f *fakeWorker) resumes() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.resumeCalls
+}
+
+// TestDownloads_statusReportsPausedAndLowDisk asserts GET /api/downloads/status
+// surfaces the worker's paused/low-disk flags (finding 3), and reports the
+// not-stalled default when no worker is wired.
+func TestDownloads_statusReportsPausedAndLowDisk(t *testing.T) {
+	getStatus := func(t *testing.T, h http.Handler, c *http.Cookie) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/downloads/status", nil)
+		req.AddCookie(c)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /api/downloads/status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("unmarshal status: %v", err)
+		}
+		return got
+	}
+
+	// Worker paused + low on disk: both flags surface as true.
+	deps := downloadsTestDeps(t, &fakeDownloadsRunner{})
+	deps.Worker = &fakeWorker{paused: true, lowDisk: true}
+	h := New(deps)
+	got := getStatus(t, h, loginAndGetCookie(t, h))
+	if got["paused"] != true || got["low_disk"] != true {
+		t.Fatalf("status = %v, want paused=true low_disk=true", got)
+	}
+
+	// No worker wired: not-stalled default, 200 (not 503).
+	depsNil := downloadsTestDeps(t, &fakeDownloadsRunner{})
+	hNil := New(depsNil)
+	gotNil := getStatus(t, hNil, loginAndGetCookie(t, hNil))
+	if gotNil["paused"] != false || gotNil["low_disk"] != false {
+		t.Fatalf("status (no worker) = %v, want paused=false low_disk=false", gotNil)
+	}
+}
 
 // fakeDownloadsRunner is a DownloadsRunner whose Metadata behavior is
 // scripted per test, so these tests never shell out to yt-dlp. calls counts

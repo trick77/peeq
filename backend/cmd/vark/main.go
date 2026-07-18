@@ -131,7 +131,9 @@ func run() error {
 		return err
 	}
 	runner := ytdlp.New(ytdlp.RunnerConfig{
-		Bin: resolveYtdlpBin(cfg.YtdlpDir),
+		// Resolve the binary fresh on every invocation so the 24h self-update
+		// (which writes into cfg.YtdlpDir) is picked up without a restart.
+		BinResolver: func() string { return resolveYtdlpBin(cfg.YtdlpDir) },
 		CookieProvider: func() (string, string) {
 			// Read fresh on every call (not just at boot) so a cookie pasted
 			// or invalidated while the worker is running takes effect on the
@@ -211,7 +213,7 @@ func run() error {
 		Worker:         worker,
 		SSEHub:         sseHub,
 		StreamAccess:   streamTracker,
-		YTDLP:          ytdlpVersioner{bin: resolveYtdlpBin(cfg.YtdlpDir), dir: cfg.YtdlpDir},
+		YTDLP:          ytdlpVersioner{dir: cfg.YtdlpDir},
 	}
 	handler := httpapi.New(deps)
 
@@ -230,16 +232,16 @@ func run() error {
 
 // ytdlpVersioner adapts the ytdlp package's free functions (Version,
 // UpdateLatest) to the httpapi.YTDLPVersioner interface the Settings page's
-// version display/Update button need. bin is the resolved binary path used
-// for Version; dir is the yt-dlp install directory UpdateLatest downloads
-// the new release into (see resolveYtdlpBin — dir/yt-dlp).
+// version display/Update button need. dir is the yt-dlp install directory:
+// Version resolves the binary from it fresh on every call (so a self-updated
+// binary is reported without a restart), and UpdateLatest downloads the new
+// release into it (see resolveYtdlpBin — dir/yt-dlp).
 type ytdlpVersioner struct {
-	bin string
 	dir string
 }
 
 func (v ytdlpVersioner) Version(ctx context.Context) (string, error) {
-	return ytdlp.Version(ctx, v.bin)
+	return ytdlp.Version(ctx, resolveYtdlpBin(v.dir))
 }
 
 func (v ytdlpVersioner) UpdateLatest(ctx context.Context) (string, error) {
@@ -285,14 +287,22 @@ func runYtdlpSelfUpdateTicker(ctx context.Context, dir string, interval time.Dur
 }
 
 // resolveYtdlpBin returns the path to the yt-dlp binary: <dir>/yt-dlp if it
-// exists there, otherwise the bare "yt-dlp" name so exec falls back to
-// resolving it from PATH.
+// exists there as an executable regular file, otherwise the bare "yt-dlp"
+// name so exec falls back to resolving it from PATH. It is called fresh on
+// every yt-dlp invocation (via RunnerConfig.BinResolver and ytdlpVersioner),
+// so once the self-update writes a binary into dir it is picked up without a
+// restart.
+//
+// On Linux (the container target) the self-update writes exactly "yt-dlp"
+// (see ytdlp.binaryName), so this matches. On macOS the self-update writes
+// "yt-dlp_macos", so a dev box relies on the PATH binary rather than the
+// self-updated one — acceptable, as production runs on Linux.
 func resolveYtdlpBin(dir string) string {
 	if dir == "" {
 		return "yt-dlp"
 	}
 	candidate := filepath.Join(dir, "yt-dlp")
-	if _, err := os.Stat(candidate); err == nil {
+	if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
 		return candidate
 	}
 	return "yt-dlp"

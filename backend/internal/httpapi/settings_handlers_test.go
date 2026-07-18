@@ -133,6 +133,83 @@ func TestSettingsHandlers_putSettingsUpdatesFields(t *testing.T) {
 	}
 }
 
+// TestSettingsHandlers_putCookieResumesWorker is the wiring guarantee for
+// finding 1: a SUCCESSFUL cookie PUT must call Worker.Resume() (so a queue
+// paused on a blocked/expired cookie un-wedges when the user re-pastes), while
+// a REJECTED cookie must not — the queue should stay paused on bad input.
+func TestSettingsHandlers_putCookieResumesWorker(t *testing.T) {
+	deps := testDeps(t)
+	fw := &fakeWorker{}
+	deps.Worker = fw
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	putCookie := func(t *testing.T, body string) int {
+		t.Helper()
+		payload, _ := json.Marshal(map[string]string{"cookie": body})
+		req := httptest.NewRequest(http.MethodPut, "/api/settings/cookie", bytes.NewReader(payload))
+		req.AddCookie(sessionCookie)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// Rejected cookie: 400, worker must NOT be resumed.
+	if code := putCookie(t, "garbage"); code != http.StatusBadRequest {
+		t.Fatalf("PUT invalid cookie status = %d, want 400", code)
+	}
+	if n := fw.resumes(); n != 0 {
+		t.Fatalf("Resume called %d times after a rejected cookie, want 0", n)
+	}
+
+	// Valid cookie: 200, worker resumed exactly once.
+	if code := putCookie(t, validYouTubeCookieBody); code != http.StatusOK {
+		t.Fatalf("PUT valid cookie status = %d, want 200", code)
+	}
+	if n := fw.resumes(); n != 1 {
+		t.Fatalf("Resume called %d times after a valid cookie, want 1", n)
+	}
+}
+
+// TestSettingsHandlers_putRejectsNegativeNumbers is finding 4's API guard: a
+// negative retention_days / min_free_gb / throttle_base_seconds must be
+// rejected with 400 and NEVER persisted (a negative retention_days would
+// otherwise tombstone the whole library on the next sweep; a negative
+// min_free_gb would freeze the queue permanently).
+func TestSettingsHandlers_putRejectsNegativeNumbers(t *testing.T) {
+	for _, field := range []string{"retention_days", "min_free_gb", "throttle_base_seconds"} {
+		t.Run(field, func(t *testing.T) {
+			h := New(testDeps(t))
+			sessionCookie := loginAndGetCookie(t, h)
+
+			putBody, _ := json.Marshal(map[string]any{field: -1})
+			putReq := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(putBody))
+			putReq.AddCookie(sessionCookie)
+			putReq.Header.Set("Content-Type", "application/json")
+			putRec := httptest.NewRecorder()
+			h.ServeHTTP(putRec, putReq)
+			if putRec.Code != http.StatusBadRequest {
+				t.Fatalf("PUT %s=-1 status = %d, want 400, body = %s", field, putRec.Code, putRec.Body.String())
+			}
+
+			// The rejected value must not have been persisted: the stored
+			// settings keep their (non-negative) defaults.
+			getReq := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+			getReq.AddCookie(sessionCookie)
+			getRec := httptest.NewRecorder()
+			h.ServeHTTP(getRec, getReq)
+			var got map[string]any
+			if err := json.Unmarshal(getRec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("unmarshal GET /api/settings: %v", err)
+			}
+			if v, ok := got[field].(float64); !ok || v < 0 {
+				t.Fatalf("%s persisted as %v after a rejected negative PUT, want a non-negative default", field, got[field])
+			}
+		})
+	}
+}
+
 func TestSettingsHandlers_cookieHealth(t *testing.T) {
 	h := New(testDeps(t))
 	sessionCookie := loginAndGetCookie(t, h)

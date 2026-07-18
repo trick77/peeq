@@ -184,7 +184,7 @@ export function Settings() {
             spellCheck={false}
             value={cookieText}
             onChange={(e) => setCookieText(e.target.value)}
-            placeholder="# Netscape HTTP Cookie File&#10;.youtube.com\tTRUE\t/\tTRUE\t...\tSID\t..."
+            placeholder={"# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t...\tSID\t..."}
             aria-label="YouTube cookie"
           />
           <div className="field-row">

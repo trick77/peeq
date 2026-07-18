@@ -29,8 +29,16 @@ const defaultThrottleJitter = 15 * time.Second
 // process could later implement the same Runner surface without changing
 // callers.
 type RunnerConfig struct {
-	// Bin is the path to (or name of) the yt-dlp executable.
+	// Bin is the path to (or name of) the yt-dlp executable. It is used only
+	// when BinResolver is nil (New wraps it in a constant resolver). Prefer
+	// BinResolver for production so a self-updated binary is picked up.
 	Bin string
+	// BinResolver, when set, is called ONCE PER INVOCATION to resolve the
+	// yt-dlp executable path, so a binary written to disk after boot (e.g. by
+	// the 24h self-update) takes effect on the very next call without a
+	// restart. When nil, New defaults it to a constant resolver returning Bin
+	// (or "yt-dlp"). Injectable so tests can point it at a stub binary.
+	BinResolver func() string
 	// CookieProvider returns the current cookie text (Netscape format) and
 	// its status string (e.g. "valid", "expired", "absent"). An empty text
 	// means no cookie is configured.
@@ -76,8 +84,12 @@ type Runner struct {
 // New builds a Runner from cfg, filling in safe defaults for any
 // injectable dependency that was left unset.
 func New(cfg RunnerConfig) *Runner {
-	if cfg.Bin == "" {
-		cfg.Bin = "yt-dlp"
+	if cfg.BinResolver == nil {
+		bin := cfg.Bin
+		if bin == "" {
+			bin = "yt-dlp"
+		}
+		cfg.BinResolver = func() string { return bin }
 	}
 	if cfg.Sleep == nil {
 		cfg.Sleep = defaultSleep
@@ -178,7 +190,10 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 	}
 
 	fullArgs := append([]string{"--cookies", cookieFile}, args...)
-	cmd := exec.CommandContext(ctx, r.cfg.Bin, fullArgs...)
+	// Resolve the binary path fresh on every invocation (not once at boot),
+	// so a self-updated yt-dlp written to disk after startup is used without
+	// requiring a restart.
+	cmd := exec.CommandContext(ctx, r.cfg.BinResolver(), fullArgs...)
 
 	if onLine == nil {
 		var stdout, stderr bytes.Buffer

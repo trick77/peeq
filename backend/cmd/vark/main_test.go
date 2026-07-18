@@ -6,11 +6,47 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/trick77/vark/internal/sse"
 )
+
+// TestResolveYtdlpBin_picksUpNewlyAppearedBinary proves the resolver used on
+// every yt-dlp invocation (finding 2) reflects the current state of YtdlpDir:
+// before a binary exists there it falls back to the bare PATH name, and once
+// an executable <dir>/yt-dlp appears (as the self-update would write on the
+// Linux target) the very next resolution returns that path — no restart, no
+// value cached at boot.
+func TestResolveYtdlpBin_picksUpNewlyAppearedBinary(t *testing.T) {
+	dir := t.TempDir()
+
+	// Nothing installed yet: fall back to PATH lookup by bare name.
+	if got := resolveYtdlpBin(dir); got != "yt-dlp" {
+		t.Fatalf("resolveYtdlpBin(empty dir) = %q, want %q (PATH fallback)", got, "yt-dlp")
+	}
+
+	// A non-executable file must NOT be picked up (present+executable is the
+	// bar), so a half-written download still falls back to PATH.
+	binPath := filepath.Join(dir, "yt-dlp")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatalf("write non-exec binary: %v", err)
+	}
+	if got := resolveYtdlpBin(dir); got != "yt-dlp" {
+		t.Fatalf("resolveYtdlpBin(non-exec) = %q, want PATH fallback %q", got, "yt-dlp")
+	}
+
+	// Make it executable, as the self-update's atomic install does: the next
+	// resolution must return the on-disk path.
+	if err := os.Chmod(binPath, 0o755); err != nil {
+		t.Fatalf("chmod binary: %v", err)
+	}
+	if got := resolveYtdlpBin(dir); got != binPath {
+		t.Fatalf("resolveYtdlpBin(installed) = %q, want %q", got, binPath)
+	}
+}
 
 // serveOnListener mirrors serve's shutdown behavior (hub.Close() before
 // srv.Shutdown; see serve's doc comment) but serves on a pre-bound listener

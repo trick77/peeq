@@ -42,6 +42,20 @@ export async function listDownloads(): Promise<Job[]> {
   return api.get<Job[]>("/api/downloads", "failed to load downloads");
 }
 
+// DownloadsStatus mirrors httpapi.downloadsStatusResponse — why the queue may
+// be stalled, so the UI can explain a frozen queue instead of leaving the user
+// guessing. paused: the worker paused on a cookie problem (re-paste to
+// resume); low_disk: paused because free space fell below the configured
+// min_free_gb floor.
+export type DownloadsStatus = {
+  paused: boolean;
+  low_disk: boolean;
+};
+
+export async function downloadsStatus(): Promise<DownloadsStatus> {
+  return api.get<DownloadsStatus>("/api/downloads/status", "failed to load download status");
+}
+
 export async function cancelDownload(jobId: number): Promise<void> {
   await api.post(`/api/downloads/${jobId}/cancel`, undefined, "failed to cancel download");
 }

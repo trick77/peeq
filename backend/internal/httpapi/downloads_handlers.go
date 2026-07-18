@@ -28,14 +28,23 @@ type DownloadsRunner interface {
 	Metadata(ctx context.Context, url string) (*ytdlp.Meta, error)
 }
 
-// DownloadsWorker is the subset of *download.Worker the downloads API
-// needs: cancelling a running or pending job. It is optional — when unset,
-// cancel falls back to marking a pending job canceled directly in the
-// store (see handleDownloadsCancel). Cancel reports whether a pending/running
-// job was actually cancelled, so the handler can distinguish an unknown or
-// already-finished job (404) from a real cancel (200).
+// DownloadsWorker is the subset of *download.Worker the downloads API and the
+// settings cookie handler need. It is optional — when unset, cancel falls back
+// to marking a pending job canceled directly in the store (see
+// handleDownloadsCancel), and Resume/Paused/LowDisk have no effect.
+//
+//   - Cancel reports whether a pending/running job was actually cancelled, so
+//     the handler can distinguish an unknown or already-finished job (404)
+//     from a real cancel (200).
+//   - Resume clears a cookie-block pause so a freshly re-pasted valid cookie
+//     un-wedges the queue (see handlePutSettingsCookie).
+//   - Paused / LowDisk surface the worker's stalled-queue state so the UI can
+//     tell the user why nothing is downloading (see handleDownloadsStatus).
 type DownloadsWorker interface {
 	Cancel(jobID int64) bool
+	Resume()
+	Paused() bool
+	LowDisk() bool
 }
 
 // downloadsPostRequest is the body of POST /api/downloads.
@@ -174,6 +183,27 @@ func (s *server) handleDownloadsList(w http.ResponseWriter, r *http.Request) {
 		items = append(items, item)
 	}
 	writeJSON(w, items)
+}
+
+// downloadsStatusResponse reports why the download queue may be stalled, so
+// the UI can show a diagnostic banner instead of leaving the user staring at
+// a frozen queue with no explanation.
+type downloadsStatusResponse struct {
+	Paused  bool `json:"paused"`
+	LowDisk bool `json:"low_disk"`
+}
+
+// handleDownloadsStatus surfaces the worker's paused (cookie-blocked) and
+// low-disk state. When no worker is wired it reports the not-stalled default
+// (200, both false) rather than 503 — the queue simply has no worker to be
+// stalled.
+func (s *server) handleDownloadsStatus(w http.ResponseWriter, r *http.Request) {
+	resp := downloadsStatusResponse{}
+	if s.worker != nil {
+		resp.Paused = s.worker.Paused()
+		resp.LowDisk = s.worker.LowDisk()
+	}
+	writeJSON(w, resp)
 }
 
 // handleDownloadsCancel cancels one job by id. If a worker is wired, it owns

@@ -259,6 +259,48 @@ func TestWorker_blockPausesAndStopsClaiming(t *testing.T) {
 	waitFor(t, "job2 done", func() bool { return h.jobState(t, job2).State == "done" })
 }
 
+// TestWorker_resumeAfterCookieRepasteUnwedgesQueue is the integration proof
+// for finding 1: a download that hits a blocked cookie pauses the worker (the
+// queue stalls, nothing else is claimed), and calling Resume() — which the
+// cookie PUT handler now does after a valid re-paste — un-wedges the queue so
+// the worker claims and processes the next job. Simulates the cookie PUT by
+// calling Resume() directly, per the task.
+func TestWorker_resumeAfterCookieRepasteUnwedgesQueue(t *testing.T) {
+	runner := &fakeRunner{
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			if call == 0 {
+				// First attempt is blocked (expired/absent cookie); the worker
+				// pauses and requeues without burning an attempt.
+				return nil, ytdlp.ErrBlocked
+			}
+			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h := newHarness(t, runner, nil)
+	const validCookie = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1789000000\tSID\tabc\n"
+	if err := h.settings.SetCookie(context.Background(), validCookie, "valid"); err != nil {
+		t.Fatalf("set cookie: %v", err)
+	}
+
+	job1 := h.enqueue(t, "one", 0)
+	job2 := h.enqueue(t, "two", 0)
+	runWorker(t, h.worker)
+
+	// The block stalls the queue: worker paused, neither job progresses.
+	waitFor(t, "worker paused", func() bool { return h.worker.Paused() })
+	time.Sleep(30 * time.Millisecond)
+	if h.jobState(t, job2).State != "pending" {
+		t.Fatal("job2 was claimed while the queue was wedged on a blocked cookie")
+	}
+
+	// Simulate the valid cookie re-paste: the handler calls Resume().
+	h.worker.Resume()
+
+	// The queue un-wedges: both jobs are now claimed and processed.
+	waitFor(t, "job1 done after resume", func() bool { return h.jobState(t, job1).State == "done" })
+	waitFor(t, "job2 done after resume", func() bool { return h.jobState(t, job2).State == "done" })
+}
+
 // --- Scenario C: terminal error fails immediately, no retry -----------------
 
 func TestWorker_terminalFailsImmediately(t *testing.T) {
@@ -545,4 +587,36 @@ func TestWorker_lowDiskPausesClaimingAndResumesWhenFreed(t *testing.T) {
 
 	waitFor(t, "job done after disk freed", func() bool { return h.jobState(t, id).State == "done" })
 	waitFor(t, "worker clears low disk", func() bool { return !h.worker.LowDisk() })
+}
+
+// TestWorker_nonPositiveMinFreeDisablesGuard is finding 4's defense in depth
+// for the disk guard: a non-positive min_free_gb (which uint64() would wrap
+// into an enormous floor, freezing the queue forever) must instead disable the
+// guard — the worker treats it as "always enough space" and processes the job
+// even with almost no free space reported.
+func TestWorker_nonPositiveMinFreeDisablesGuard(t *testing.T) {
+	runner := &fakeRunner{
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h := newHarness(t, runner, func(d *Deps) {
+		d.MediaDir = "/media"
+		d.FreeBytes = func(dir string) (uint64, error) { return 1, nil } // 1 byte free
+	})
+	// Force a non-positive floor directly in the store (the API rejects this,
+	// but the worker must not wedge if a bad value ever lands there).
+	zero := 0
+	if err := h.settings.Update(context.Background(), settings.Patch{MinFreeGB: &zero}); err != nil {
+		t.Fatalf("set min_free_gb: %v", err)
+	}
+	id := h.enqueue(t, "vid", 0)
+	runWorker(t, h.worker)
+
+	// The guard is disabled, so the job runs to completion despite ~no free
+	// space, and the worker never reports low disk.
+	waitFor(t, "job done with guard disabled", func() bool { return h.jobState(t, id).State == "done" })
+	if h.worker.LowDisk() {
+		t.Fatal("LowDisk() = true with a non-positive min_free_gb, want the guard disabled")
+	}
 }

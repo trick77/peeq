@@ -52,6 +52,25 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// Reject negative numeric settings before they can be persisted: a
+	// negative retention_days moves the sweep cutoff into the future and
+	// tombstones the whole library on the next pass; a negative min_free_gb
+	// wraps (uint64) into a huge free-space floor that permanently freezes the
+	// download queue; a negative throttle_base_seconds is simply nonsensical.
+	// These are unrecoverable/queue-breaking, so fail closed with a 400.
+	for _, f := range []struct {
+		name string
+		val  *int
+	}{
+		{"retention_days", req.RetentionDays},
+		{"min_free_gb", req.MinFreeGB},
+		{"throttle_base_seconds", req.ThrottleBaseSeconds},
+	} {
+		if f.val != nil && *f.val < 0 {
+			writeJSONError(w, http.StatusBadRequest, f.name+" must not be negative")
+			return
+		}
+	}
 	patch := settings.Patch{
 		FormatPreset:        req.FormatPreset,
 		FormatCustom:        req.FormatCustom,
@@ -92,6 +111,13 @@ func (s *server) handlePutSettingsCookie(w http.ResponseWriter, r *http.Request)
 	if err := s.settings.SetCookie(r.Context(), req.Cookie, "valid"); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid cookie: "+err.Error())
 		return
+	}
+	// A valid cookie is now stored: un-wedge the download worker if it paused
+	// on a blocked/expired/absent cookie (this is the "re-paste and it
+	// resumes" promise the Settings UI makes). Nil-safe: no worker wired in a
+	// test/deployment without one just skips this.
+	if s.worker != nil {
+		s.worker.Resume()
 	}
 	got, err := s.settings.Get(r.Context())
 	if err != nil {

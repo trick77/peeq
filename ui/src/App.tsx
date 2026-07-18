@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
 import { TopBar } from "./shell/TopBar";
-import { getMe, listDownloads, cookieHealth, streamDownloads } from "./api";
+import { getMe, listDownloads, cookieHealth, downloadsStatus, streamDownloads } from "./api";
+import type { DownloadsStatus } from "./api/downloads";
 import type { Job, User } from "./api/types";
 import { Library } from "./views/Library";
 import { Add } from "./views/Add";
@@ -27,6 +28,7 @@ export function App() {
   const [authError, setAuthError] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [cookieStatus, setCookieStatus] = useState<string | undefined>(undefined);
+  const [downloadStatus, setDownloadStatus] = useState<DownloadsStatus>({ paused: false, low_disk: false });
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
   const [progressByJobId, setProgressByJobId] = useState<
     Record<number, { percent: number; speed: string; eta: string }>
@@ -69,10 +71,31 @@ export function App() {
         if (active) setCookieStatus(h.status);
       })
       .catch(() => {});
+    downloadsStatus()
+      .then((s) => {
+        if (active) setDownloadStatus(s);
+      })
+      .catch(() => {});
     return () => {
       active = false;
     };
   }, [authChecked, user]);
+
+  // When the worker reports it is paused (a cookie problem stalled the queue),
+  // refresh the cookie status so the rail's indicator reflects the current
+  // blocked/expired/absent state rather than a stale "active".
+  useEffect(() => {
+    if (!downloadStatus.paused) return;
+    let active = true;
+    cookieHealth()
+      .then((h) => {
+        if (active) setCookieStatus(h.status);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [downloadStatus.paused]);
 
   // Poll the queue every 3s while any job is pending/running. There is no
   // SSE "job finished" event (the worker only ever publishes "progress"),
@@ -87,6 +110,11 @@ export function App() {
     const id = window.setInterval(() => {
       listDownloads()
         .then((j) => setJobs(j))
+        .catch(() => {});
+      // Refresh the stalled-queue state alongside the queue so the diagnostic
+      // banner clears/appears as the worker pauses or resumes.
+      downloadsStatus()
+        .then((s) => setDownloadStatus(s))
         .catch(() => {});
     }, 3000);
     return () => window.clearInterval(id);
@@ -164,11 +192,48 @@ export function App() {
       <main className="main">
         <TopBar title={meta.title} subtitle={meta.subtitle} showSearch={view === "library"} />
         <section className="page">
+          <DownloadStatusBanner status={downloadStatus} onFixCookie={() => setView("settings")} />
           <ViewSwitch view={view} selectedVideoId={selectedVideoId} onOpenVideo={openVideo} setView={setView} />
         </section>
       </main>
     </div>
   );
+}
+
+// DownloadStatusBanner shows why the download queue is stalled, so a paused
+// queue is diagnosable at a glance instead of looking silently broken. Renders
+// nothing when the queue is healthy. Low disk takes precedence over the cookie
+// pause (a full disk blocks downloads regardless of cookie state).
+function DownloadStatusBanner({
+  status,
+  onFixCookie,
+}: {
+  status: DownloadsStatus;
+  onFixCookie: () => void;
+}) {
+  if (status.low_disk) {
+    return (
+      <div className="errline" role="status">
+        Downloads paused — low disk space. Free up space to resume.
+      </div>
+    );
+  }
+  if (status.paused) {
+    return (
+      <div className="errline" role="status">
+        Downloads paused — re-paste your YouTube cookie in{" "}
+        <button
+          type="button"
+          onClick={onFixCookie}
+          style={{ background: "none", border: "none", padding: 0, color: "inherit", textDecoration: "underline", cursor: "pointer", font: "inherit" }}
+        >
+          Settings
+        </button>
+        .
+      </div>
+    );
+  }
+  return null;
 }
 
 function ViewSwitch({

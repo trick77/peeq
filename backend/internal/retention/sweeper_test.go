@@ -162,6 +162,37 @@ func TestSweepOnce_deletesOnlyWatchedNonFavoriteAgedAndNotPlaying(t *testing.T) 
 	}
 }
 
+// TestSweepOnce_negativeRetentionSkipsSweep is finding 4's defense in depth:
+// a negative retention_days (which would move the cutoff into the future and
+// match EVERY watched non-favorite video) must NOT tombstone anything — the
+// sweep is skipped entirely rather than wiping the library.
+func TestSweepOnce_negativeRetentionSkipsSweep(t *testing.T) {
+	h := newHarness(t, -1) // negative retention: a future cutoff if not guarded
+	if err := h.vs.Upsert(videos.Video{ID: "victim", URL: "https://youtu.be/victim"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := h.vs.SetDownloaded("victim", videos.DownloadedResult{MediaPath: "victim.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := h.vs.SetWatched("victim", true); err != nil {
+		t.Fatalf("set watched: %v", err)
+	}
+	// Watched right now (well inside any sane window); only a future cutoff
+	// from a negative retention would ever select it.
+	h.backdateWatchedAt(t, "victim", "2026-07-18 11:00:00")
+
+	if err := h.sw.SweepOnce(); err != nil {
+		t.Fatalf("sweep once: %v", err)
+	}
+	v, err := h.vs.Get("victim")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.Status != "downloaded" {
+		t.Fatalf("status = %q, want downloaded (negative retention must not tombstone)", v.Status)
+	}
+}
+
 // TestSweepOnce_recentlyWatchedIsKept is the age-boundary companion: a
 // video watched well within the retention window must survive a sweep even
 // though it otherwise matches every other deletion criterion.

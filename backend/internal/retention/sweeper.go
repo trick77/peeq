@@ -125,6 +125,16 @@ func (s *Sweeper) SweepOnce() error {
 		return err
 	}
 
+	// Defense in depth against a bad retention value slipping past the API
+	// validation: a negative retention_days would move the cutoff into the
+	// FUTURE, so EVERY watched non-favorite video would match and be
+	// tombstoned in one pass (unrecoverable). Skip the sweep entirely rather
+	// than delete the whole library.
+	if cfg.RetentionDays < 0 {
+		s.deps.Logger.Warn("retention sweep: skipping, retention_days is negative", "retention_days", cfg.RetentionDays)
+		return nil
+	}
+
 	cutoff := s.deps.Now().Add(-time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 	cutoffUTC := cutoff.UTC().Format("2006-01-02 15:04:05")
 
