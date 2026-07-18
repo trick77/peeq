@@ -181,6 +181,7 @@ func TestDownload_argsIncludeRequiredFlags(t *testing.T) {
 	}
 	argLine := string(out)
 
+	stagingDir := filepath.Join(mediaDir, ".staging", "abcDEFghi12")
 	for _, want := range []string{
 		"--cookies",
 		"--limit-rate 5M",
@@ -193,10 +194,17 @@ func TestDownload_argsIncludeRequiredFlags(t *testing.T) {
 		"--socket-timeout 30",
 		"--continue",
 		"-f " + Presets["apple-1080p"],
+		"-o " + filepath.Join(stagingDir, "%(id)s.%(ext)s"),
 	} {
 		if !strings.Contains(argLine, want) {
 			t.Fatalf("args %q missing %q", argLine, want)
 		}
+	}
+
+	// Regression guard: yt-dlp keeps its own headers, so --user-agent must
+	// never be passed (a decided invariant, not an oversight).
+	if strings.Contains(argLine, "--user-agent") {
+		t.Fatalf("args %q must not contain --user-agent", argLine)
 	}
 }
 
@@ -258,6 +266,103 @@ func TestDownload_terminalFailure_cleansUpStaging(t *testing.T) {
 	}
 	if _, e := os.Stat(filepath.Join(mediaDir, ".staging", id)); !os.IsNotExist(e) {
 		t.Fatalf("staging dir should be cleaned up on terminal failure, stat err = %v", e)
+	}
+}
+
+// TestDownload_customFormat_reachesResolve locks in that DownloadReq.Format
+// == "custom" actually reaches yt-dlp via CustomFormat, rather than always
+// erroring (Resolve("custom", "") is always an error since custom must be
+// non-empty).
+func TestDownload_customFormat_reachesResolve(t *testing.T) {
+	mediaDir := t.TempDir()
+	captureOut := filepath.Join(t.TempDir(), "capture.out")
+	captureScript := filepath.Join(t.TempDir(), "capture.sh")
+	fake := fakeBinPath(t)
+	content := "#!/bin/sh\n" +
+		"echo \"$@\" > '" + captureOut + "'\n" +
+		"exec '" + fake + "' \"$@\"\n"
+	if err := os.WriteFile(captureScript, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("FAKE_YTDLP_ID", "customFmt01")
+	t.Setenv("FAKE_YTDLP_CHANNEL_ID", "UCcustom")
+
+	r := New(RunnerConfig{
+		Bin:            captureScript,
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		MediaDir:       mediaDir,
+	})
+	res, err := r.Download(context.Background(), DownloadReq{
+		URL:          "https://youtu.be/customFmt01",
+		VideoID:      "customFmt01",
+		Format:       "custom",
+		CustomFormat: "bestvideo+bestaudio",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if res.FormatUsed != "bestvideo+bestaudio" {
+		t.Fatalf("FormatUsed = %q, want %q", res.FormatUsed, "bestvideo+bestaudio")
+	}
+
+	out, err := os.ReadFile(captureOut)
+	if err != nil {
+		t.Fatalf("read capture: %v", err)
+	}
+	if !strings.Contains(string(out), "-f bestvideo+bestaudio") {
+		t.Fatalf("args %q missing %q", string(out), "-f bestvideo+bestaudio")
+	}
+}
+
+// TestDownload_reDownload_overwritesExistingFinalDir: finalDir is unique to
+// a given video id, so if it already exists (e.g. a prior download of the
+// same video), a re-download must overwrite it rather than fail and lose
+// the freshly downloaded file.
+func TestDownload_reDownload_overwritesExistingFinalDir(t *testing.T) {
+	mediaDir := t.TempDir()
+	const id = "redownload1"
+	t.Setenv("FAKE_YTDLP_ID", id)
+	t.Setenv("FAKE_YTDLP_CHANNEL_ID", "UCredownload")
+
+	// Pre-create the final dir with an old file in it, simulating a prior
+	// completed download of this same video.
+	finalDir := filepath.Join(mediaDir, "UCredownload", id)
+	if err := os.MkdirAll(finalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(finalDir, id+".mp4"), []byte("old content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(finalDir, "stale-leftover.txt"), []byte("leftover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		MediaDir:       mediaDir,
+	})
+	res, err := r.Download(context.Background(), DownloadReq{
+		URL:     "https://youtu.be/" + id,
+		VideoID: id,
+		Format:  "best-mp4",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+
+	content, err := os.ReadFile(res.MediaPath)
+	if err != nil {
+		t.Fatalf("read final media file: %v", err)
+	}
+	if string(content) != "dummy video content\n" {
+		t.Fatalf("final file content = %q, want the fresh download's content, not the stale one", string(content))
+	}
+	if _, e := os.Stat(filepath.Join(finalDir, "stale-leftover.txt")); !os.IsNotExist(e) {
+		t.Fatalf("stale leftover file should be gone after overwrite, stat err = %v", e)
 	}
 }
 

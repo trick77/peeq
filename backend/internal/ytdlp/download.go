@@ -22,10 +22,13 @@ type DownloadReq struct {
 	// in the resulting *.info.json.
 	VideoID string
 	// Format is a format preset id (see Presets) resolved via Resolve.
-	// "custom" is accepted but currently always errors here, since
-	// DownloadReq carries no separate custom-format field; custom formats
-	// are a later extension point.
+	// "custom" is accepted and uses CustomFormat as the verbatim -f
+	// selector string.
 	Format string
+	// CustomFormat is the verbatim yt-dlp -f selector string used when
+	// Format == "custom" (see Resolve). Ignored for any other Format
+	// value.
+	CustomFormat string
 	// LimitRate is a yt-dlp --limit-rate value (e.g. "5M"). Left empty,
 	// --limit-rate is omitted entirely (no rate limiting).
 	LimitRate string
@@ -146,7 +149,7 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		return nil, fmt.Errorf("ytdlp: canonicalize url: %w", err)
 	}
 
-	formatSelector, err := Resolve(req.Format, "")
+	formatSelector, err := Resolve(req.Format, req.CustomFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -223,6 +226,15 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 	finalDir := filepath.Join(mediaDir, info.ChannelID, videoID)
 	if err := os.MkdirAll(filepath.Dir(finalDir), 0o755); err != nil {
 		return nil, fmt.Errorf("ytdlp: create channel dir: %w", err)
+	}
+	// finalDir is unique to this video id, so if it already exists it can
+	// only be a prior copy of THIS SAME video (e.g. a re-download). Remove
+	// it first: os.Rename onto a pre-existing non-empty directory fails
+	// with ENOTEMPTY, which would otherwise leave the fresh download
+	// stranded in staging and then deleted by the caller's cleanup path,
+	// silently losing the new file. Overwriting is always correct here.
+	if err := os.RemoveAll(finalDir); err != nil {
+		return nil, fmt.Errorf("ytdlp: remove stale final dir: %w", err)
 	}
 	// Atomic placement: os.Rename of the whole staging/<id> directory
 	// straight into its final <channelID>/<id> home. This is a single

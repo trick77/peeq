@@ -213,9 +213,20 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 		onLine(line)
 	}
 
+	scanErr := scanner.Err()
+
 	runErr := cmd.Wait()
 	if runErr != nil {
 		return nil, Classify(stderr.String(), runErr)
+	}
+	// cmd.Wait() succeeding doesn't mean the stdout scan actually saw
+	// everything: a mid-stream read error (scanner.Err()) would otherwise
+	// be silently swallowed, truncating output without any error being
+	// reported. Surface it, but only once the command itself is confirmed
+	// not to have failed (a real yt-dlp failure, classified above, always
+	// takes precedence over a scan error).
+	if scanErr != nil {
+		return nil, fmt.Errorf("ytdlp: read stdout: %w", scanErr)
 	}
 	return stdout.Bytes(), nil
 }
