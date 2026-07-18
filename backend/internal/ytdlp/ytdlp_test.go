@@ -38,7 +38,7 @@ func TestMetadata_noCookie_doesNotCallBinary(t *testing.T) {
 	r := New(RunnerConfig{
 		Bin:            fakeBinTouching(called),
 		CookieProvider: func() (string, string) { return "", "" },
-		Sleep:          func(time.Duration) {},
+		Sleep:          func(context.Context, time.Duration) error { return nil },
 	})
 	_, err := r.Metadata(context.Background(), "https://youtu.be/abc")
 	if !errors.Is(err, ErrNoCookie) {
@@ -54,7 +54,7 @@ func TestMetadata_withCookie_callsBinary(t *testing.T) {
 	r := New(RunnerConfig{
 		Bin:            fakeBinTouching(called),
 		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
-		Sleep:          func(time.Duration) {},
+		Sleep:          func(context.Context, time.Duration) error { return nil },
 	})
 	_, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ")
 	// The touch-only fake prints no JSON, so parsing may fail — that's fine
@@ -83,9 +83,10 @@ func TestMetadata_throttle_sleepsWithinBounds(t *testing.T) {
 		ThrottleFloor:  floor,
 		ThrottleJitter: jitter,
 		RandFloat64:    func() float64 { return 0.5 },
-		Sleep: func(d time.Duration) {
+		Sleep: func(_ context.Context, d time.Duration) error {
 			got = d
 			calls++
+			return nil
 		},
 	})
 	t.Setenv("FAKE_YTDLP_JSON", `{"id":"dQw4w9WgXcQ","title":"t"}`)
@@ -119,9 +120,9 @@ func TestThrottle_floorAlwaysAtLeast20Seconds(t *testing.T) {
 				ThrottleFloor:  tc.throttleFloor,
 				ThrottleJitter: 0, // still must not push below 20s
 				RandFloat64:    func() float64 { return 0 },
-				Sleep:          func(d time.Duration) { got = d },
+				Sleep:          func(_ context.Context, d time.Duration) error { got = d; return nil },
 			})
-			r.throttle()
+			r.throttle(context.Background())
 			if got < minThrottleFloor {
 				t.Fatalf("Sleep(%v) below hard floor %v (configured floor was %v)", got, minThrottleFloor, tc.throttleFloor)
 			}
@@ -142,9 +143,9 @@ func TestThrottle_jitterAddsRandomComponent(t *testing.T) {
 			ThrottleFloor:  floor,
 			ThrottleJitter: jitter,
 			RandFloat64:    func() float64 { return f },
-			Sleep:          func(d time.Duration) { got = d },
+			Sleep:          func(_ context.Context, d time.Duration) error { got = d; return nil },
 		})
-		r.throttle()
+		r.throttle(context.Background())
 		return got
 	}
 
@@ -169,22 +170,113 @@ func TestThrottle_defaultJitterAppliedWhenUnset(t *testing.T) {
 	r := New(RunnerConfig{
 		ThrottleFloor: 20 * time.Second,
 		RandFloat64:   func() float64 { return 0.5 },
-		Sleep:         func(d time.Duration) { got = d },
+		Sleep:         func(_ context.Context, d time.Duration) error { got = d; return nil },
 	})
-	r.throttle()
+	r.throttle(context.Background())
 	want := minThrottleFloor + time.Duration(0.5*float64(defaultThrottleJitter))
 	if got != want {
 		t.Fatalf("Sleep(%v), want %v (default jitter %v applied)", got, want, defaultThrottleJitter)
 	}
 }
 
+// TestThrottle_cancelledContextReturnsPromptly proves the production
+// (default) sleeper is cancellable: throttling with an already-cancelled
+// context must return ctx.Err() immediately, not block for the full
+// floor+jitter wait. This is what lets the download worker cancel a queued
+// download during its pre-call throttle wait.
+func TestThrottle_cancelledContextReturnsPromptly(t *testing.T) {
+	r := New(RunnerConfig{
+		ThrottleFloor:  minThrottleFloor,
+		ThrottleJitter: 15 * time.Second,
+		RandFloat64:    func() float64 { return 0.999999 },
+		// Sleep left unset: exercises the real defaultSleep production
+		// sleeper, not a test no-op.
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	err := r.throttle(ctx)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("throttle(cancelled ctx) error = %v, want context.Canceled", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("throttle(cancelled ctx) took %v, want prompt return well under the ~20-35s floor+jitter wait", elapsed)
+	}
+}
+
+// TestMetadata_cookieStatusExpired_doesNotCallBinary locks the pre-exec
+// short-circuit: a "expired" cookie status must stop the run (with
+// ErrCookieExpired) before the binary is ever invoked and before the
+// throttle sleep, saving a burned 20s+ wait on a cookie already known bad.
+func TestMetadata_cookieStatusExpired_doesNotCallBinary(t *testing.T) {
+	called := filepath.Join(t.TempDir(), "called")
+	r := New(RunnerConfig{
+		Bin:            fakeBinTouching(called),
+		CookieProvider: func() (string, string) { return "cookie-text", "expired" },
+		Sleep: func(context.Context, time.Duration) error {
+			t.Fatal("throttle must not sleep when the cookie status is already known bad")
+			return nil
+		},
+	})
+	_, err := r.Metadata(context.Background(), "https://youtu.be/abc")
+	if !errors.Is(err, ErrCookieExpired) {
+		t.Fatalf("want ErrCookieExpired, got %v", err)
+	}
+	if _, e := os.Stat(called); e == nil {
+		t.Fatal("binary must not run when the cookie status is expired")
+	}
+}
+
+// TestMetadata_cookieStatusBlocked_doesNotCallBinary mirrors
+// TestMetadata_cookieStatusExpired_doesNotCallBinary for the "blocked"
+// status.
+func TestMetadata_cookieStatusBlocked_doesNotCallBinary(t *testing.T) {
+	called := filepath.Join(t.TempDir(), "called")
+	r := New(RunnerConfig{
+		Bin:            fakeBinTouching(called),
+		CookieProvider: func() (string, string) { return "cookie-text", "blocked" },
+		Sleep: func(context.Context, time.Duration) error {
+			t.Fatal("throttle must not sleep when the cookie status is already known bad")
+			return nil
+		},
+	})
+	_, err := r.Metadata(context.Background(), "https://youtu.be/abc")
+	if !errors.Is(err, ErrBlocked) {
+		t.Fatalf("want ErrBlocked, got %v", err)
+	}
+	if _, e := os.Stat(called); e == nil {
+		t.Fatal("binary must not run when the cookie status is blocked")
+	}
+}
+
 // TestMetadata_writesCookieToRestrictedTempFile locks the cookie-file
 // invariant: cookie text lands in a 0600 temp file that is removed after
-// the run, and the binary receives it via --cookies.
+// the run, and the binary receives it via --cookies. The stub also stats
+// the cookie file's mode (while it still exists, mid-run) and reports it,
+// so this test can assert the permission bits directly rather than only
+// asserting the file's eventual absence.
 func TestMetadata_writesCookieToRestrictedTempFile(t *testing.T) {
 	captureScript := filepath.Join(t.TempDir(), "capture.sh")
 	captureOut := filepath.Join(t.TempDir(), "capture.out")
-	content := "#!/bin/sh\necho \"$@\" > '" + captureOut + "'\necho '{}'\nexit 0\n"
+	modeOut := filepath.Join(t.TempDir(), "mode.out")
+	// stat's flag for "just the permission bits" differs between BSD/macOS
+	// (-f '%Lp') and GNU/Linux (-c '%a'); try macOS first and fall back.
+	content := "#!/bin/sh\n" +
+		"echo \"$@\" > '" + captureOut + "'\n" +
+		"cookiefile=\"\"\n" +
+		"prev=\"\"\n" +
+		"for arg in \"$@\"; do\n" +
+		"  if [ \"$prev\" = \"--cookies\" ]; then cookiefile=\"$arg\"; fi\n" +
+		"  prev=\"$arg\"\n" +
+		"done\n" +
+		"if [ -n \"$cookiefile\" ]; then\n" +
+		"  (stat -f '%Lp' \"$cookiefile\" 2>/dev/null || stat -c '%a' \"$cookiefile\" 2>/dev/null) > '" + modeOut + "'\n" +
+		"fi\n" +
+		"echo '{}'\nexit 0\n"
 	if err := os.WriteFile(captureScript, []byte(content), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +284,7 @@ func TestMetadata_writesCookieToRestrictedTempFile(t *testing.T) {
 	r := New(RunnerConfig{
 		Bin:            captureScript,
 		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
-		Sleep:          func(time.Duration) {},
+		Sleep:          func(context.Context, time.Duration) error { return nil },
 	})
 	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err != nil {
 		t.Fatalf("Metadata: %v", err)
@@ -207,16 +299,33 @@ func TestMetadata_writesCookieToRestrictedTempFile(t *testing.T) {
 		t.Fatalf("args %q missing --cookies", argLine)
 	}
 
+	// Assert the cookie mode was actually captured (i.e. --cookies had a
+	// following path argument in argv), so the mode assertion below can't
+	// pass vacuously on an empty/missing modeOut.
+	modeBytes, err := os.ReadFile(modeOut)
+	if err != nil {
+		t.Fatalf("read mode capture (means --cookies path was never seen in argv): %v", err)
+	}
+	mode := strings.TrimSpace(string(modeBytes))
+	if mode != "600" {
+		t.Fatalf("cookie temp file mode = %q, want %q (0600)", mode, "600")
+	}
+
 	// The cookie temp file must be gone once Metadata returns.
+	sawCookiePath := false
 	for _, field := range strings.Fields(argLine) {
 		if field == captureScript || field == "-J" || field == "--skip-download" || field == "--no-playlist" || field == "--cookies" {
 			continue
 		}
 		if strings.Contains(field, "vark-cookie-") {
+			sawCookiePath = true
 			if _, statErr := os.Stat(field); statErr == nil {
 				t.Fatalf("cookie temp file %q still exists after Metadata returned", field)
 			}
 		}
+	}
+	if !sawCookiePath {
+		t.Fatal("no vark-cookie- path found in argv; cookie path assertion above would be vacuous")
 	}
 }
 
@@ -236,7 +345,7 @@ func TestMetadata_parsesCannedJSON(t *testing.T) {
 	r := New(RunnerConfig{
 		Bin:            fakeBinPath(t),
 		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
-		Sleep:          func(time.Duration) {},
+		Sleep:          func(context.Context, time.Duration) error { return nil },
 	})
 	meta, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ")
 	if err != nil {
@@ -271,7 +380,7 @@ func TestMetadata_classifiesBlockedError(t *testing.T) {
 	r := New(RunnerConfig{
 		Bin:            fakeBinPath(t),
 		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
-		Sleep:          func(time.Duration) {},
+		Sleep:          func(context.Context, time.Duration) error { return nil },
 	})
 	_, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ")
 	if !errors.Is(err, ErrBlocked) {

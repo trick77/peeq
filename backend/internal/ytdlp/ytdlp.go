@@ -54,8 +54,11 @@ type RunnerConfig struct {
 	// Defaults to math/rand/v2's auto-seeded Float64.
 	RandFloat64 func() float64
 	// Sleep is called with the computed throttle duration before every
-	// binary invocation. Defaults to time.Sleep; tests inject a no-op.
-	Sleep func(time.Duration)
+	// binary invocation. It must respect ctx cancellation, returning
+	// ctx.Err() if ctx is done before d elapses. Defaults to a production
+	// sleeper that selects between a timer and ctx.Done(); tests inject a
+	// no-op (still taking ctx so a cancellation test can exercise it).
+	Sleep func(ctx context.Context, d time.Duration) error
 	// MediaDir is the directory downloads are written into. Not used by
 	// Metadata, but part of the shared config so download-related methods
 	// added later don't need a second constructor.
@@ -76,7 +79,7 @@ func New(cfg RunnerConfig) *Runner {
 		cfg.Bin = "yt-dlp"
 	}
 	if cfg.Sleep == nil {
-		cfg.Sleep = time.Sleep
+		cfg.Sleep = defaultSleep
 	}
 	if cfg.CookieProvider == nil {
 		cfg.CookieProvider = func() (string, string) { return "", "absent" }
@@ -101,10 +104,17 @@ func (r *Runner) effectiveThrottleFloor() time.Duration {
 }
 
 // cookieGate is the single choke point that enforces the cookie
-// invariant: every run must first observe a non-empty cookie, or it must
-// stop before the binary is ever invoked.
+// invariant: every run must first observe a non-empty, non-flagged cookie,
+// or it must stop before the binary is ever invoked (and before the
+// throttle sleep, so a known-bad cookie never burns a 20s+ wait).
 func (r *Runner) cookieGate() (string, error) {
-	text, _ := r.cfg.CookieProvider()
+	text, status := r.cfg.CookieProvider()
+	switch status {
+	case "expired":
+		return "", ErrCookieExpired
+	case "blocked":
+		return "", ErrBlocked
+	}
 	if text == "" {
 		return "", ErrNoCookie
 	}
@@ -118,11 +128,28 @@ func (r *Runner) cookieGate() (string, error) {
 // it covers every call that touches YouTube: Metadata today, and any
 // future Download / channel-scan calls that go through the same Runner.
 // The wait is never a bare fixed duration — the random component is
-// always added on top of the floor.
-func (r *Runner) throttle() {
+// always added on top of the floor. The wait is cancellable: if ctx is
+// cancelled before the wait elapses, throttle returns ctx.Err() without
+// completing the full sleep, so a queued download can be cancelled during
+// its pre-call wait instead of blocking until it ends.
+func (r *Runner) throttle(ctx context.Context) error {
 	floor := r.effectiveThrottleFloor()
 	jitter := time.Duration(r.cfg.RandFloat64() * float64(r.cfg.ThrottleJitter))
-	r.cfg.Sleep(floor + jitter)
+	return r.cfg.Sleep(ctx, floor+jitter)
+}
+
+// defaultSleep is the production Sleep implementation. It waits d unless
+// ctx is cancelled first, in which case it returns ctx.Err() immediately
+// instead of blocking for the full duration.
+func defaultSleep(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // exec runs the yt-dlp binary with args, after writing cookieText to a
@@ -136,7 +163,9 @@ func (r *Runner) exec(ctx context.Context, cookieText string, args ...string) ([
 	}
 	defer os.Remove(cookieFile)
 
-	r.throttle()
+	if err := r.throttle(ctx); err != nil {
+		return nil, err
+	}
 
 	fullArgs := append([]string{"--cookies", cookieFile}, args...)
 	cmd := exec.CommandContext(ctx, r.cfg.Bin, fullArgs...)
