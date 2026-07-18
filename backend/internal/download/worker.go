@@ -1,0 +1,444 @@
+// Package download drives the single-concurrency download worker: the one
+// goroutine that claims queued jobs, runs them through the yt-dlp Runner,
+// and classifies the outcome into retry / fail / pause. It is serial by
+// design — YouTube tolerates only so many calls, and the Runner already
+// enforces a 20s+ floor between them, so there is no benefit to (and real
+// risk in) downloading two videos at once.
+package download
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/trick77/vark/internal/jobs"
+	"github.com/trick77/vark/internal/settings"
+	"github.com/trick77/vark/internal/videos"
+	"github.com/trick77/vark/internal/ytdlp"
+)
+
+// Runner is the subset of *ytdlp.Runner the worker needs. Declaring it here
+// (rather than importing the concrete type) keeps the worker testable with
+// a fake that never shells out to yt-dlp; the real *ytdlp.Runner satisfies
+// it.
+type Runner interface {
+	Download(ctx context.Context, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error)
+}
+
+// Deps are the worker's collaborators and tunables. The stores and Runner
+// are required; the rest have safe defaults applied in New.
+type Deps struct {
+	Jobs     *jobs.Store
+	Videos   *videos.Store
+	Settings *settings.Store
+	Runner   Runner
+
+	// Watchdog is the inactivity timeout: if a running download produces no
+	// progress for this long, its context is cancelled (killing the child)
+	// and the job is retried. Zero disables the watchdog.
+	Watchdog time.Duration
+	// PollInterval is how long the loop waits before re-checking the queue
+	// when it found nothing to claim.
+	PollInterval time.Duration
+	// Backoff returns how long to wait before requeueing a job after a
+	// retryable failure, given the job's new attempts count.
+	Backoff func(attempts int) time.Duration
+	// OnProgress, if set, is called for every progress update of every job
+	// (the SSE fan-out hooks in here later).
+	OnProgress func(jobID int64, p ytdlp.Progress)
+	// Logger is used for recovered panics and unexpected store errors.
+	Logger *slog.Logger
+}
+
+// Worker is the download loop. Construct with New and drive with Run; other
+// goroutines (the API layer) may call Cancel and Resume concurrently.
+type Worker struct {
+	deps Deps
+
+	mu       sync.Mutex
+	paused   bool
+	resumeCh chan struct{}
+	// The single running job's control. curJobID is 0 when idle.
+	curJobID        int64
+	curCancel       context.CancelFunc
+	cancelRequested bool
+}
+
+// New builds a Worker, filling in defaults for the optional Deps fields.
+func New(deps Deps) *Worker {
+	if deps.PollInterval <= 0 {
+		deps.PollInterval = 1 * time.Second
+	}
+	if deps.Watchdog == 0 {
+		deps.Watchdog = 10 * time.Minute
+	}
+	if deps.Backoff == nil {
+		deps.Backoff = defaultBackoff
+	}
+	if deps.Logger == nil {
+		deps.Logger = slog.Default()
+	}
+	return &Worker{
+		deps:     deps,
+		resumeCh: make(chan struct{}),
+	}
+}
+
+// defaultBackoff is a capped exponential backoff: 5s, 10s, 20s, ... up to
+// 5 minutes.
+func defaultBackoff(attempts int) time.Duration {
+	d := 5 * time.Second
+	for i := 1; i < attempts; i++ {
+		d *= 2
+		if d >= 5*time.Minute {
+			return 5 * time.Minute
+		}
+	}
+	return d
+}
+
+// Run is the worker loop; it blocks until ctx is cancelled. It first resets
+// any orphaned running jobs left by a previous process, then repeatedly
+// claims and processes the next job, pausing (and not claiming) while a
+// blocked/expired cookie is unresolved.
+func (w *Worker) Run(ctx context.Context) {
+	if err := w.deps.Jobs.ResetOrphans(); err != nil {
+		w.deps.Logger.Error("download worker: reset orphans failed", "err", err)
+	}
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		if !w.waitWhilePaused(ctx) {
+			return
+		}
+
+		job, err := w.deps.Jobs.ClaimNext()
+		if err != nil {
+			w.deps.Logger.Error("download worker: claim failed", "err", err)
+			if !w.sleep(ctx, w.deps.PollInterval) {
+				return
+			}
+			continue
+		}
+		if job == nil {
+			// Queue empty: wait a beat and re-check.
+			if !w.sleep(ctx, w.deps.PollInterval) {
+				return
+			}
+			continue
+		}
+
+		w.safely(job.ID, func() { w.process(ctx, job) })
+	}
+}
+
+// safely runs fn, recovering from any panic so one pathological job can
+// never kill the worker goroutine and silently stop all downloads.
+func (w *Worker) safely(jobID int64, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.deps.Logger.Error("download worker: recovered from panic", "job_id", jobID, "panic", r)
+		}
+	}()
+	fn()
+}
+
+// process runs one claimed job end to end: build the request, run the
+// download under a watchdog, then classify the result into
+// success / cancel / pause / terminal-fail / retry.
+func (w *Worker) process(ctx context.Context, job *jobs.Job) {
+	video, err := w.deps.Videos.Get(job.VideoID)
+	if err != nil {
+		w.deps.Logger.Error("download worker: load video failed", "job_id", job.ID, "err", err)
+		w.fail(job, video, "load video: "+err.Error())
+		return
+	}
+	if video == nil {
+		w.fail(job, nil, "video row missing")
+		return
+	}
+
+	set, err := w.deps.Settings.Get(ctx)
+	if err != nil {
+		// Requeue without burning an attempt: this is our fault, not the job's.
+		w.deps.Logger.Error("download worker: load settings failed", "job_id", job.ID, "err", err)
+		_ = w.deps.Jobs.Bump(job.ID, job.Attempts, "load settings: "+err.Error())
+		return
+	}
+
+	_ = w.deps.Videos.SetStatus(video.ID, "downloading", "")
+
+	req := ytdlp.DownloadReq{
+		URL:          video.URL,
+		VideoID:      video.ID,
+		Format:       set.FormatPreset,
+		CustomFormat: set.FormatCustom,
+		LimitRate:    set.LimitRate,
+	}
+
+	jobCtx, cancel := context.WithCancel(ctx)
+	// Panic-safe context cleanup: even if a later step panics (recovered at
+	// the loop level), the child context is always cancelled rather than
+	// leaked. cancel is idempotent, so the explicit teardown below is fine.
+	defer cancel()
+	w.mu.Lock()
+	w.curJobID = job.ID
+	w.curCancel = cancel
+	w.cancelRequested = false
+	w.mu.Unlock()
+
+	// Inactivity watchdog: reset on every progress update; if it fires, it
+	// cancels jobCtx (killing the child), which surfaces as a retry below.
+	var watchdog *time.Timer
+	if w.deps.Watchdog > 0 {
+		watchdog = time.AfterFunc(w.deps.Watchdog, cancel)
+	}
+	onProgress := func(p ytdlp.Progress) {
+		if watchdog != nil {
+			watchdog.Reset(w.deps.Watchdog)
+		}
+		if w.deps.OnProgress != nil {
+			w.deps.OnProgress(job.ID, p)
+		}
+	}
+
+	res, dlErr := w.deps.Runner.Download(jobCtx, req, onProgress)
+
+	if watchdog != nil {
+		watchdog.Stop()
+	}
+	// Capture whether jobCtx was cancelled (by the watchdog or a user
+	// Cancel) BEFORE our own cleanup cancel() below, so the check reflects
+	// only a real interruption, not our teardown.
+	ctxInterrupted := jobCtx.Err() != nil
+	// Unregister the running job and read whether a user cancel came in.
+	w.mu.Lock()
+	canceled := w.cancelRequested
+	w.curJobID = 0
+	w.curCancel = nil
+	w.mu.Unlock()
+	cancel()
+
+	// Order matters: settle user-cancel and shutdown BEFORE interpreting
+	// dlErr, because a killed child returns an unclassified/context error
+	// that must not be run through the ytdlp taxonomy.
+	switch {
+	case canceled:
+		// Single writer: Cancel() only requested the stop; this goroutine
+		// (the loop) is the one that writes the terminal state, so a user
+		// cancel and the loop can never race two writes onto the same row.
+		if err := w.deps.Jobs.Cancel(job.ID); err != nil {
+			w.deps.Logger.Error("download worker: mark canceled failed", "job_id", job.ID, "err", err)
+		}
+		_ = w.deps.Videos.SetStatus(video.ID, "new", "")
+		return
+	case ctx.Err() != nil:
+		// Parent shutdown mid-download: leave the job 'running' so the next
+		// boot's ResetOrphans reclaims it. Do not write a terminal state.
+		return
+	case dlErr == nil:
+		w.succeed(job, video, res)
+		return
+	case ctxInterrupted:
+		// Not a user cancel, not shutdown, yet the context was cancelled →
+		// the watchdog fired. Treat as a retryable timeout.
+		w.retry(ctx, job, video, "watchdog timeout: no progress")
+		return
+	default:
+		w.classify(ctx, job, video, dlErr)
+	}
+}
+
+// classify maps a real download error to an outcome.
+func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Video, err error) {
+	var terminal *ytdlp.TerminalError
+	switch {
+	case errors.Is(err, ytdlp.ErrBlocked):
+		w.pause(job, "blocked", err.Error())
+	case errors.Is(err, ytdlp.ErrCookieExpired):
+		w.pause(job, "stale", err.Error())
+	case errors.Is(err, ytdlp.ErrNoCookie):
+		// No cookie at all: pausing (rather than failing the job) lets the
+		// user paste a cookie and resume without losing the queue. Cookie
+		// status is already 'absent'; leave it.
+		w.pause(job, "", err.Error())
+	case errors.As(err, &terminal):
+		w.fail(job, video, err.Error())
+	default:
+		// RetryableError and any unexpected error (network, exec) get the
+		// bounded retry treatment.
+		w.retry(ctx, job, video, err.Error())
+	}
+}
+
+// pause requeues the job without burning an attempt, flips cookie_status
+// (when status != ""), and pauses the loop so nothing else is claimed until
+// Resume is called.
+func (w *Worker) pause(job *jobs.Job, cookieStatus, msg string) {
+	if cookieStatus != "" {
+		if err := w.deps.Settings.SetCookie(context.Background(), "", cookieStatus); err != nil {
+			w.deps.Logger.Error("download worker: set cookie status failed", "status", cookieStatus, "err", err)
+		}
+	}
+	// Same attempts count: a pause is not the job's fault.
+	if err := w.deps.Jobs.Bump(job.ID, job.Attempts, msg); err != nil {
+		w.deps.Logger.Error("download worker: requeue on pause failed", "job_id", job.ID, "err", err)
+	}
+	w.mu.Lock()
+	if !w.paused {
+		w.paused = true
+	}
+	w.mu.Unlock()
+	w.deps.Logger.Warn("download worker: paused", "reason", msg)
+}
+
+// retry either requeues the job after backoff (attempts++), or, once the
+// per-job max is reached, fails it terminally.
+func (w *Worker) retry(ctx context.Context, job *jobs.Job, video *videos.Video, msg string) {
+	newAttempts := job.Attempts + 1
+	if newAttempts >= job.MaxAttempts {
+		// Record the final attempt count, then fail terminally.
+		_ = w.deps.Jobs.Bump(job.ID, newAttempts, msg)
+		w.fail(job, video, msg)
+		return
+	}
+	// Record the attempt, then wait out the backoff before it can be
+	// reclaimed. (The job is already pending after Bump, but the same
+	// goroutine won't reclaim it until this returns.)
+	if err := w.deps.Jobs.Bump(job.ID, newAttempts, msg); err != nil {
+		w.deps.Logger.Error("download worker: bump failed", "job_id", job.ID, "err", err)
+	}
+	w.sleep(ctx, w.deps.Backoff(newAttempts))
+}
+
+// succeed persists a finished download and marks the job done.
+func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) {
+	if err := w.deps.Videos.SetDownloaded(video.ID, videos.DownloadedResult{
+		MediaPath:            res.MediaPath,
+		ThumbnailPath:        res.ThumbnailPath,
+		FilesizeBytes:        res.FilesizeBytes,
+		FormatUsed:           res.FormatUsed,
+		SponsorblockSegments: marshalSegments(res.SponsorblockSegments),
+	}); err != nil {
+		w.deps.Logger.Error("download worker: set downloaded failed", "video_id", video.ID, "err", err)
+	}
+	if err := w.deps.Jobs.Finish(job.ID, "done", "", ""); err != nil {
+		w.deps.Logger.Error("download worker: finish done failed", "job_id", job.ID, "err", err)
+	}
+}
+
+// fail marks both the job and its video terminally failed.
+func (w *Worker) fail(job *jobs.Job, video *videos.Video, msg string) {
+	if err := w.deps.Jobs.Finish(job.ID, "failed", msg, ""); err != nil {
+		w.deps.Logger.Error("download worker: finish failed", "job_id", job.ID, "err", err)
+	}
+	if video != nil {
+		if err := w.deps.Videos.SetStatus(video.ID, "error", msg); err != nil {
+			w.deps.Logger.Error("download worker: set error status failed", "video_id", video.ID, "err", err)
+		}
+	}
+}
+
+// segmentJSON is the stored shape of one SponsorBlock segment in the
+// sponsorblock_segments TEXT column (ytdlp.Segment carries no json tags).
+type segmentJSON struct {
+	Category  string  `json:"category"`
+	StartTime float64 `json:"start_time"`
+	EndTime   float64 `json:"end_time"`
+}
+
+// marshalSegments renders the download's SponsorBlock segments as the JSON
+// array text stored in videos.sponsorblock_segments. It always returns a
+// valid JSON array ("[]" when there are none).
+func marshalSegments(segs []ytdlp.Segment) string {
+	out := make([]segmentJSON, 0, len(segs))
+	for _, s := range segs {
+		out = append(out, segmentJSON{Category: s.Category, StartTime: s.StartTime, EndTime: s.EndTime})
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// Cancel stops job jobID. If it is the running job, its context is cancelled
+// (killing the child) and the worker's completion path writes the canceled
+// state — the single-writer rule avoids a double write racing the loop. A
+// merely pending job is canceled directly in the store.
+func (w *Worker) Cancel(jobID int64) {
+	w.mu.Lock()
+	if jobID == w.curJobID && w.curCancel != nil {
+		w.cancelRequested = true
+		cancel := w.curCancel
+		w.mu.Unlock()
+		// Kill the child; the loop's completion path is the single writer
+		// that will mark the job canceled once Download returns.
+		cancel()
+		return
+	}
+	w.mu.Unlock()
+	if err := w.deps.Jobs.Cancel(jobID); err != nil {
+		w.deps.Logger.Error("download worker: cancel pending job failed", "job_id", jobID, "err", err)
+	}
+}
+
+// Resume clears a pause (from a blocked/expired cookie) and wakes the loop
+// so it starts claiming again — typically called after the user re-validates
+// their cookie.
+func (w *Worker) Resume() {
+	w.mu.Lock()
+	if w.paused {
+		w.paused = false
+		close(w.resumeCh)
+		w.resumeCh = make(chan struct{})
+	}
+	w.mu.Unlock()
+}
+
+// Paused reports whether the worker is currently paused.
+func (w *Worker) Paused() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.paused
+}
+
+// waitWhilePaused blocks until the worker is resumed or ctx is cancelled. It
+// returns false only when ctx is done (the caller should then stop).
+func (w *Worker) waitWhilePaused(ctx context.Context) bool {
+	for {
+		w.mu.Lock()
+		if !w.paused {
+			w.mu.Unlock()
+			return true
+		}
+		ch := w.resumeCh
+		w.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ch:
+		}
+	}
+}
+
+// sleep waits d unless ctx is cancelled first. It returns false if ctx was
+// cancelled (the caller should stop), true if the full wait elapsed.
+func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
