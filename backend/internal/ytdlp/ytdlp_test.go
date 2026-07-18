@@ -264,7 +264,11 @@ func TestMetadata_writesCookieToRestrictedTempFile(t *testing.T) {
 	captureOut := filepath.Join(t.TempDir(), "capture.out")
 	modeOut := filepath.Join(t.TempDir(), "mode.out")
 	// stat's flag for "just the permission bits" differs between BSD/macOS
-	// (-f '%Lp') and GNU/Linux (-c '%a'); try macOS first and fall back.
+	// (-f '%Lp') and GNU/Linux (-c '%a'). Try the GNU form FIRST: on macOS
+	// `stat -c` is an invalid flag and exits non-zero (falling back to -f),
+	// whereas on GNU/Linux `stat -f` is a VALID flag meaning "filesystem info"
+	// that succeeds with the wrong output — so trying -f first silently
+	// captures garbage on Linux CI. GNU-first is the only correct order.
 	content := "#!/bin/sh\n" +
 		"echo \"$@\" > '" + captureOut + "'\n" +
 		"cookiefile=\"\"\n" +
@@ -274,7 +278,7 @@ func TestMetadata_writesCookieToRestrictedTempFile(t *testing.T) {
 		"  prev=\"$arg\"\n" +
 		"done\n" +
 		"if [ -n \"$cookiefile\" ]; then\n" +
-		"  (stat -f '%Lp' \"$cookiefile\" 2>/dev/null || stat -c '%a' \"$cookiefile\" 2>/dev/null) > '" + modeOut + "'\n" +
+		"  (stat -c '%a' \"$cookiefile\" 2>/dev/null || stat -f '%Lp' \"$cookiefile\" 2>/dev/null) > '" + modeOut + "'\n" +
 		"fi\n" +
 		"echo '{}'\nexit 0\n"
 	if err := os.WriteFile(captureScript, []byte(content), 0o755); err != nil {
