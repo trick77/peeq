@@ -108,16 +108,31 @@ func run() error {
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler}
 
-	go func() {
-		slog.Info("listening", "addr", cfg.Addr, "version", version.Version)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("server error", "err", err)
-		}
-	}()
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	<-ctx.Done()
+
+	return serve(ctx, srv)
+}
+
+// serve starts srv and blocks until either the server fails to start/serve
+// (in which case that error is returned immediately, without waiting for
+// ctx) or ctx is cancelled (in which case srv is shut down gracefully).
+func serve(ctx context.Context, srv *http.Server) error {
+	errCh := make(chan error, 1)
+	go func() {
+		slog.Info("listening", "addr", srv.Addr, "version", version.Version)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
