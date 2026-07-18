@@ -223,6 +223,10 @@ func (s *server) handleResumeVideo(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "position (number) is required")
 		return
 	}
+	if *req.Position < 0 {
+		writeJSONError(w, http.StatusBadRequest, "position must not be negative")
+		return
+	}
 	if err := s.videos.SetResume(v.ID, *req.Position); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "set resume failed")
 		return
@@ -325,7 +329,11 @@ func safeMediaPath(mediaDir, storedPath string) (string, error) {
 		return "", err
 	}
 
-	return candidate, nil
+	// Return the resolved path, not the unresolved candidate: callers open
+	// or remove exactly what was validated above, closing the TOCTOU window
+	// where a path component could otherwise be swapped for a symlink
+	// between this check and the filesystem operation.
+	return resolvedCandidate, nil
 }
 
 // requireWithin errors unless candidate is root or a descendant of root

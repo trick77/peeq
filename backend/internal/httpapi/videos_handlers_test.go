@@ -232,6 +232,109 @@ func TestSafeMediaPath_allowsPathWithinMediaDir(t *testing.T) {
 	}
 }
 
+// TestSafeMediaPath_rejectsSymlinkEscape is the non-lexical companion to
+// TestSafeMediaPath_rejectsTraversalAndEscape: a symlink that itself lives
+// inside MediaDir but resolves to a target outside it must be rejected by
+// safeMediaPath, and the stream endpoint must never serve the outside
+// file's contents through it.
+func TestSafeMediaPath_rejectsSymlinkEscape(t *testing.T) {
+	deps, mediaDir := videosTestDeps(t)
+
+	outsidePath := filepath.Join(t.TempDir(), "secret.mp4")
+	if err := os.WriteFile(outsidePath, []byte("top secret bytes"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	escapeLink := filepath.Join(mediaDir, "escape.mp4")
+	if err := os.Symlink(outsidePath, escapeLink); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
+
+	// Unit-level: safeMediaPath itself must reject the symlink, not just the
+	// higher-level stream handler.
+	if _, err := safeMediaPath(mediaDir, escapeLink); err == nil {
+		t.Fatalf("safeMediaPath(%q) = nil error, want rejection of symlink escape", escapeLink)
+	}
+
+	// HTTP-level: GET .../stream must not leak the outside file's contents
+	// through the symlink either.
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: escapeLink}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/stream", nil)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("GET stream via symlink escape = 200, want an error status")
+	}
+	if rec.Body.String() == "top secret bytes" {
+		t.Fatalf("GET stream served the outside file's contents through a symlink escape")
+	}
+}
+
+// TestSafeMediaPath_allowsRegularFileInsideMediaDir is the positive
+// counterpart to the symlink-escape test above: a plain (non-symlink) file
+// inside MediaDir must be served normally.
+func TestSafeMediaPath_allowsRegularFileInsideMediaDir(t *testing.T) {
+	deps, mediaDir := videosTestDeps(t)
+	videoDir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mediaPath := filepath.Join(videoDir, "v1.mp4")
+	content := []byte("regular file bytes")
+	if err := os.WriteFile(mediaPath, content, 0o644); err != nil {
+		t.Fatalf("write media file: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/stream", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET stream status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != string(content) {
+		t.Fatalf("body = %q, want %q", got, string(content))
+	}
+}
+
+// TestVideosResume_rejectsNegativePosition covers the handler-level guard
+// against a buggy player writing a negative resume position.
+func TestVideosResume_rejectsNegativePosition(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	body, _ := json.Marshal(map[string]float64{"position": -5})
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/resume", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST resume (negative) status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := deps.Videos.Get("v1")
+	if err != nil || got == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.ResumePositionSeconds != 0 {
+		t.Fatalf("resume_position_seconds = %v, want unchanged (0) after rejected negative position", got.ResumePositionSeconds)
+	}
+}
+
 // TestVideosFavorite_toggle covers the toggle-without-body behavior.
 func TestVideosFavorite_toggle(t *testing.T) {
 	deps, _ := videosTestDeps(t)
