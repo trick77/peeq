@@ -38,7 +38,8 @@ type Deps struct {
 
 	// Watchdog is the inactivity timeout: if a running download produces no
 	// progress for this long, its context is cancelled (killing the child)
-	// and the job is retried. Zero disables the watchdog.
+	// and the job is retried. Zero selects the 10-minute default; a negative
+	// value disables the watchdog entirely.
 	Watchdog time.Duration
 	// PollInterval is how long the loop waits before re-checking the queue
 	// when it found nothing to claim.
@@ -51,6 +52,13 @@ type Deps struct {
 	OnProgress func(jobID int64, p ytdlp.Progress)
 	// Logger is used for recovered panics and unexpected store errors.
 	Logger *slog.Logger
+
+	// onClaim, if set, is invoked in the worker goroutine right after a
+	// claimed job has been registered as the running job and BEFORE its
+	// preflight reads (Videos.Get / Settings.Get). It is a test seam for
+	// exercising the early-cancel window deterministically; it is unset in
+	// production.
+	onClaim func(jobID int64)
 }
 
 // Worker is the download loop. Construct with New and drive with Run; other
@@ -72,8 +80,13 @@ func New(deps Deps) *Worker {
 	if deps.PollInterval <= 0 {
 		deps.PollInterval = 1 * time.Second
 	}
-	if deps.Watchdog == 0 {
+	switch {
+	case deps.Watchdog == 0:
 		deps.Watchdog = 10 * time.Minute
+	case deps.Watchdog < 0:
+		// Negative disables the watchdog; normalize to 0 so the download path
+		// (which starts the timer only when Watchdog > 0) skips it.
+		deps.Watchdog = 0
 	}
 	if deps.Backoff == nil {
 		deps.Backoff = defaultBackoff
@@ -152,22 +165,65 @@ func (w *Worker) safely(jobID int64, fn func()) {
 // download under a watchdog, then classify the result into
 // success / cancel / pause / terminal-fail / retry.
 func (w *Worker) process(ctx context.Context, job *jobs.Job) {
-	video, err := w.deps.Videos.Get(job.VideoID)
-	if err != nil {
-		w.deps.Logger.Error("download worker: load video failed", "job_id", job.ID, "err", err)
-		w.fail(job, video, "load video: "+err.Error())
+	// Register this job as the running one IMMEDIATELY — before any metadata
+	// or settings reads — so a Cancel arriving during that preflight window
+	// targets this job (taking the in-process flag path) and aborts the
+	// download promptly, rather than racing the store and being overwritten
+	// to done. Create the cancellable job context up front for the same
+	// reason: an early Cancel cancels it, so a slow preflight read or the
+	// Download call aborts.
+	jobCtx, cancel := context.WithCancel(ctx)
+	// Panic-safe context cleanup: even if a later step panics (recovered at
+	// the loop level), the child context is always cancelled rather than
+	// leaked. cancel is idempotent, so the explicit teardown below is fine.
+	defer cancel()
+	w.mu.Lock()
+	w.curJobID = job.ID
+	w.curCancel = cancel
+	w.cancelRequested = false
+	w.mu.Unlock()
+	// Panic backstop (finding 4): if a later step panics and is recovered at
+	// the loop level, this clears the registration so curJobID can never be
+	// left pointing at a finished job. The normal path clears it explicitly
+	// (under the same lock as the cancel read) BEFORE any terminal write, so a
+	// late Cancel takes the store path where the guarded write cannot
+	// resurrect the row; this defer only covers the panic case.
+	defer w.unregister(job.ID)
+
+	// Test seam: fired after registration, before the preflight reads, so a
+	// test can deterministically inject a Cancel into the early window.
+	if w.deps.onClaim != nil {
+		w.deps.onClaim(job.ID)
+	}
+
+	video, verr := w.deps.Videos.Get(job.VideoID)
+	set, serr := w.deps.Settings.Get(ctx)
+
+	// If a Cancel landed during preflight it took the flag path; honor it
+	// before writing any other state (single writer, cancel wins) and before
+	// SetStatus/Download, so a canceled job never starts downloading.
+	if w.wasCanceled() {
+		w.settleCanceled(job, video)
+		return
+	}
+	if verr != nil {
+		w.deps.Logger.Error("download worker: load video failed", "job_id", job.ID, "err", verr)
+		w.fail(job, video, job.Attempts, "load video: "+verr.Error())
 		return
 	}
 	if video == nil {
-		w.fail(job, nil, "video row missing")
+		w.fail(job, nil, job.Attempts, "video row missing")
 		return
 	}
-
-	set, err := w.deps.Settings.Get(ctx)
-	if err != nil {
+	if serr != nil {
 		// Requeue without burning an attempt: this is our fault, not the job's.
-		w.deps.Logger.Error("download worker: load settings failed", "job_id", job.ID, "err", err)
-		_ = w.deps.Jobs.Bump(job.ID, job.Attempts, "load settings: "+err.Error())
+		w.deps.Logger.Error("download worker: load settings failed", "job_id", job.ID, "err", serr)
+		switch err := w.deps.Jobs.Bump(job.ID, job.Attempts, "load settings: "+serr.Error()); {
+		case errors.Is(err, jobs.ErrNotRunning):
+			w.settleCanceled(job, video)
+		case err != nil:
+			w.deps.Logger.Error("download worker: requeue after settings error failed", "job_id", job.ID, "err", err)
+		}
 		return
 	}
 
@@ -180,17 +236,6 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		CustomFormat: set.FormatCustom,
 		LimitRate:    set.LimitRate,
 	}
-
-	jobCtx, cancel := context.WithCancel(ctx)
-	// Panic-safe context cleanup: even if a later step panics (recovered at
-	// the loop level), the child context is always cancelled rather than
-	// leaked. cancel is idempotent, so the explicit teardown below is fine.
-	defer cancel()
-	w.mu.Lock()
-	w.curJobID = job.ID
-	w.curCancel = cancel
-	w.cancelRequested = false
-	w.mu.Unlock()
 
 	// Inactivity watchdog: reset on every progress update; if it fires, it
 	// cancels jobCtx (killing the child), which surfaces as a retry below.
@@ -216,7 +261,11 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	// Cancel) BEFORE our own cleanup cancel() below, so the check reflects
 	// only a real interruption, not our teardown.
 	ctxInterrupted := jobCtx.Err() != nil
-	// Unregister the running job and read whether a user cancel came in.
+	// Read the cancel flag and clear the registration in the SAME critical
+	// section, BEFORE any terminal write: after this a late Cancel can no
+	// longer find curJobID and must take the store path, where the guarded
+	// Finish/Bump/Fail refuses to resurrect the canceled row (which we then
+	// observe as ErrNotRunning and settle as canceled).
 	w.mu.Lock()
 	canceled := w.cancelRequested
 	w.curJobID = 0
@@ -229,28 +278,56 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	// that must not be run through the ytdlp taxonomy.
 	switch {
 	case canceled:
-		// Single writer: Cancel() only requested the stop; this goroutine
-		// (the loop) is the one that writes the terminal state, so a user
-		// cancel and the loop can never race two writes onto the same row.
-		if err := w.deps.Jobs.Cancel(job.ID); err != nil {
-			w.deps.Logger.Error("download worker: mark canceled failed", "job_id", job.ID, "err", err)
-		}
-		_ = w.deps.Videos.SetStatus(video.ID, "new", "")
-		return
+		w.settleCanceled(job, video)
 	case ctx.Err() != nil:
 		// Parent shutdown mid-download: leave the job 'running' so the next
 		// boot's ResetOrphans reclaims it. Do not write a terminal state.
 		return
 	case dlErr == nil:
 		w.succeed(job, video, res)
-		return
 	case ctxInterrupted:
 		// Not a user cancel, not shutdown, yet the context was cancelled →
 		// the watchdog fired. Treat as a retryable timeout.
 		w.retry(ctx, job, video, "watchdog timeout: no progress")
-		return
 	default:
 		w.classify(ctx, job, video, dlErr)
+	}
+}
+
+// wasCanceled reports whether a Cancel has been requested for the running job.
+func (w *Worker) wasCanceled() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.cancelRequested
+}
+
+// unregister clears the running-job registration, but only if it still points
+// at jobID. The normal path clears it explicitly before the terminal write, so
+// this deferred call is a no-op there; it only matters when a panic skipped
+// the explicit clear (finding 4). The jobID guard keeps it from clobbering a
+// later job's registration.
+func (w *Worker) unregister(jobID int64) {
+	w.mu.Lock()
+	if w.curJobID == jobID {
+		w.curJobID = 0
+		w.curCancel = nil
+	}
+	w.mu.Unlock()
+}
+
+// settleCanceled writes the canceled outcome for a job: it marks the job
+// canceled in the store (idempotent — a store-path Cancel may already have
+// done so) and returns its video to 'new'. It is the single funnel for every
+// cancel path — the flag path and every ErrNotRunning from a guarded write —
+// so the job/video end state can never diverge across those paths.
+func (w *Worker) settleCanceled(job *jobs.Job, video *videos.Video) {
+	if err := w.deps.Jobs.Cancel(job.ID); err != nil {
+		w.deps.Logger.Error("download worker: mark canceled failed", "job_id", job.ID, "err", err)
+	}
+	if video != nil {
+		if err := w.deps.Videos.SetStatus(video.ID, "new", ""); err != nil {
+			w.deps.Logger.Error("download worker: reset video status failed", "video_id", video.ID, "err", err)
+		}
 	}
 }
 
@@ -268,7 +345,8 @@ func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Vide
 		// status is already 'absent'; leave it.
 		w.pause(job, "", err.Error())
 	case errors.As(err, &terminal):
-		w.fail(job, video, err.Error())
+		// Terminal ytdlp error: fail without changing the attempt count.
+		w.fail(job, video, job.Attempts, err.Error())
 	default:
 		// RetryableError and any unexpected error (network, exec) get the
 		// bounded retry treatment.
@@ -285,15 +363,20 @@ func (w *Worker) pause(job *jobs.Job, cookieStatus, msg string) {
 			w.deps.Logger.Error("download worker: set cookie status failed", "status", cookieStatus, "err", err)
 		}
 	}
+	// Finding 5 (lost-wakeup ordering): set the paused flag BEFORE the requeue
+	// write, so a Resume() arriving between the write and the flag-set is not
+	// lost (Resume only wakes the loop when it observes paused == true).
+	w.mu.Lock()
+	w.paused = true
+	w.mu.Unlock()
 	// Same attempts count: a pause is not the job's fault.
-	if err := w.deps.Jobs.Bump(job.ID, job.Attempts, msg); err != nil {
+	switch err := w.deps.Jobs.Bump(job.ID, job.Attempts, msg); {
+	case errors.Is(err, jobs.ErrNotRunning):
+		// Canceled out from under us: nothing to requeue, but the pause (a
+		// cookie-state signal, not about this job) still stands.
+	case err != nil:
 		w.deps.Logger.Error("download worker: requeue on pause failed", "job_id", job.ID, "err", err)
 	}
-	w.mu.Lock()
-	if !w.paused {
-		w.paused = true
-	}
-	w.mu.Unlock()
 	w.deps.Logger.Warn("download worker: paused", "reason", msg)
 }
 
@@ -302,22 +385,42 @@ func (w *Worker) pause(job *jobs.Job, cookieStatus, msg string) {
 func (w *Worker) retry(ctx context.Context, job *jobs.Job, video *videos.Video, msg string) {
 	newAttempts := job.Attempts + 1
 	if newAttempts >= job.MaxAttempts {
-		// Record the final attempt count, then fail terminally.
-		_ = w.deps.Jobs.Bump(job.ID, newAttempts, msg)
-		w.fail(job, video, msg)
+		// Terminal failure: record the final attempt count AND fail in one
+		// guarded write (via fail → Jobs.Fail), so there is no intermediate
+		// 'pending' window in which another claimer could grab a job that is
+		// about to be failed (finding 3).
+		w.fail(job, video, newAttempts, msg)
 		return
 	}
 	// Record the attempt, then wait out the backoff before it can be
 	// reclaimed. (The job is already pending after Bump, but the same
 	// goroutine won't reclaim it until this returns.)
-	if err := w.deps.Jobs.Bump(job.ID, newAttempts, msg); err != nil {
+	switch err := w.deps.Jobs.Bump(job.ID, newAttempts, msg); {
+	case errors.Is(err, jobs.ErrNotRunning):
+		// Canceled out from under us: settle as canceled and do not requeue.
+		w.settleCanceled(job, video)
+		return
+	case err != nil:
 		w.deps.Logger.Error("download worker: bump failed", "job_id", job.ID, "err", err)
 	}
 	w.sleep(ctx, w.deps.Backoff(newAttempts))
 }
 
-// succeed persists a finished download and marks the job done.
+// succeed persists a finished download and marks the job done. The job's 'done'
+// write is attempted FIRST and is guarded (state = 'running'): if a Cancel
+// raced in after our cancel-flag read — taking the store path and marking the
+// row canceled — Finish returns ErrNotRunning and we settle as canceled
+// instead of persisting the download, so a canceled job is never resurrected
+// to done.
 func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) {
+	switch err := w.deps.Jobs.Finish(job.ID, "done", "", ""); {
+	case errors.Is(err, jobs.ErrNotRunning):
+		w.settleCanceled(job, video)
+		return
+	case err != nil:
+		w.deps.Logger.Error("download worker: finish done failed", "job_id", job.ID, "err", err)
+		return
+	}
 	if err := w.deps.Videos.SetDownloaded(video.ID, videos.DownloadedResult{
 		MediaPath:            res.MediaPath,
 		ThumbnailPath:        res.ThumbnailPath,
@@ -327,14 +430,18 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 	}); err != nil {
 		w.deps.Logger.Error("download worker: set downloaded failed", "video_id", video.ID, "err", err)
 	}
-	if err := w.deps.Jobs.Finish(job.ID, "done", "", ""); err != nil {
-		w.deps.Logger.Error("download worker: finish done failed", "job_id", job.ID, "err", err)
-	}
 }
 
-// fail marks both the job and its video terminally failed.
-func (w *Worker) fail(job *jobs.Job, video *videos.Video, msg string) {
-	if err := w.deps.Jobs.Finish(job.ID, "failed", msg, ""); err != nil {
+// fail marks both the job and its video terminally failed, recording attempts
+// in the same guarded write. If the job was canceled out from under us
+// (ErrNotRunning), it settles as canceled instead — leaving the video in 'new'
+// rather than 'error'.
+func (w *Worker) fail(job *jobs.Job, video *videos.Video, attempts int, msg string) {
+	switch err := w.deps.Jobs.Fail(job.ID, attempts, msg); {
+	case errors.Is(err, jobs.ErrNotRunning):
+		w.settleCanceled(job, video)
+		return
+	case err != nil:
 		w.deps.Logger.Error("download worker: finish failed", "job_id", job.ID, "err", err)
 	}
 	if video != nil {
@@ -367,10 +474,15 @@ func marshalSegments(segs []ytdlp.Segment) string {
 	return string(b)
 }
 
-// Cancel stops job jobID. If it is the running job, its context is cancelled
-// (killing the child) and the worker's completion path writes the canceled
-// state — the single-writer rule avoids a double write racing the loop. A
-// merely pending job is canceled directly in the store.
+// Cancel stops job jobID. If it is the running job — registered from the
+// moment it is claimed, through preflight and the download — the cancel flag
+// is set and its context is cancelled (killing any child), and the worker's
+// completion path writes the canceled state; the single-writer rule avoids a
+// double write racing the loop. Otherwise (a merely pending job, or the tiny
+// window after the worker has cleared its registration but before its guarded
+// terminal write) the job is canceled directly in the store, where the
+// state = 'running' guard on Finish/Bump/Fail stops that write from
+// resurrecting the now-canceled row.
 func (w *Worker) Cancel(jobID int64) {
 	w.mu.Lock()
 	if jobID == w.curJobID && w.curCancel != nil {

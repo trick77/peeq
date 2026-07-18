@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -149,6 +150,91 @@ func TestFinish_marksFailedTerminally(t *testing.T) {
 	}
 	if jobs[0].State != "failed" {
 		t.Fatalf("state = %q, want failed", jobs[0].State)
+	}
+	if jobs[0].FinishedAt == "" {
+		t.Fatalf("finished_at not stamped")
+	}
+}
+
+// A row that was moved to 'canceled' out from under the worker must never be
+// resurrected: the state = 'running' guard makes Finish, Bump, and Fail
+// no-ops (0 rows), reported as ErrNotRunning, leaving the canceled state and
+// attempts count untouched.
+func TestGuardedWrites_noOpWhenNotRunning(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	insertVideo(t, db, "a")
+
+	id, err := s.Enqueue("a", 0)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := s.ClaimNext(); err != nil { // -> running
+		t.Fatalf("claim: %v", err)
+	}
+	if err := s.Cancel(id); err != nil { // running -> canceled (store path)
+		t.Fatalf("cancel: %v", err)
+	}
+
+	if err := s.Finish(id, "done", "", ""); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("Finish on canceled row = %v, want ErrNotRunning", err)
+	}
+	if err := s.Bump(id, 7, "requeue"); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("Bump on canceled row = %v, want ErrNotRunning", err)
+	}
+	if err := s.Fail(id, 7, "boom"); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("Fail on canceled row = %v, want ErrNotRunning", err)
+	}
+
+	jobs, err := s.List()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("list len = %d, want 1", len(jobs))
+	}
+	if jobs[0].State != "canceled" {
+		t.Fatalf("state = %q, want canceled (guarded writes must not resurrect it)", jobs[0].State)
+	}
+	if jobs[0].Attempts != 0 {
+		t.Fatalf("attempts = %d, want 0 (no-op writes must not mutate the row)", jobs[0].Attempts)
+	}
+}
+
+// Fail records the final attempts count and marks a running job failed in one
+// guarded write (the max-attempts path relies on this).
+func TestFail_recordsAttemptsAndFails(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	insertVideo(t, db, "a")
+
+	id, err := s.Enqueue("a", 0)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := s.ClaimNext(); err != nil { // -> running
+		t.Fatalf("claim: %v", err)
+	}
+	if err := s.Fail(id, 3, "gave up"); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+
+	// Not claimable and recorded terminally with the final attempt count.
+	if job, err := s.ClaimNext(); err != nil || job != nil {
+		t.Fatalf("claim after fail: job=%v err=%v, want nil,nil", job, err)
+	}
+	jobs, err := s.List()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if jobs[0].State != "failed" {
+		t.Fatalf("state = %q, want failed", jobs[0].State)
+	}
+	if jobs[0].Attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", jobs[0].Attempts)
+	}
+	if jobs[0].LastError != "gave up" {
+		t.Fatalf("last_error = %q, want %q", jobs[0].LastError, "gave up")
 	}
 	if jobs[0].FinishedAt == "" {
 		t.Fatalf("finished_at not stamped")

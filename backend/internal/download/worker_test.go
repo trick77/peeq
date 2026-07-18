@@ -71,7 +71,7 @@ func newHarness(t *testing.T, runner *fakeRunner, tune func(*Deps)) *harness {
 		Settings:     h.settings,
 		Runner:       runner,
 		PollInterval: 2 * time.Millisecond,
-		Watchdog:     0, // off by default; watchdog test enables it
+		Watchdog:     -1, // disabled here; the watchdog tests set their own via tune
 		Backoff:      func(int) time.Duration { return 0 },
 	}
 	if tune != nil {
@@ -347,6 +347,54 @@ func TestWorker_cancelRunningJob(t *testing.T) {
 	v, _ := h.videos.Get("vid")
 	if v.Status == "error" {
 		t.Fatalf("canceled job wrongly marked video as error")
+	}
+}
+
+// --- Cancel during the EARLY window: canceled, never overwritten to done ----
+
+// A Cancel issued while the worker is still in preflight (metadata/settings
+// reads, before Download starts) must end the job 'canceled' and must NOT be
+// overwritten to 'done' — and the download must never run. The onClaim seam
+// fires the Cancel deterministically inside that early window.
+func TestWorker_cancelDuringEarlyWindowNotOverwritten(t *testing.T) {
+	runner := &fakeRunner{
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			// Must never be reached: the cancel lands in preflight, before the
+			// download starts. If it runs, it would (wrongly) report success.
+			return &ytdlp.Result{MediaPath: "/should/not/happen.mp4", FormatUsed: "f"}, nil
+		},
+	}
+	var w *Worker
+	var once sync.Once
+	h := newHarness(t, runner, func(d *Deps) {
+		d.onClaim = func(jobID int64) {
+			once.Do(func() { w.Cancel(jobID) })
+		}
+	})
+	w = h.worker
+	id := h.enqueue(t, "vid", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job canceled", func() bool { return h.jobState(t, id).State == "canceled" })
+
+	// Give the loop time to (wrongly) overwrite the canceled row if the fix
+	// regressed; it must stay canceled.
+	time.Sleep(30 * time.Millisecond)
+	if st := h.jobState(t, id).State; st != "canceled" {
+		t.Fatalf("job state = %q, want canceled (early cancel must not be overwritten)", st)
+	}
+
+	// The download must never have started: a canceled-in-preflight job does
+	// not complete a successful write.
+	if c := runner.calls(); c != 0 {
+		t.Fatalf("runner called %d times, want 0 (cancel in preflight must abort before download)", c)
+	}
+	v, err := h.videos.Get("vid")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.Status == "downloaded" || v.Status == "error" {
+		t.Fatalf("canceled-in-preflight video status = %q, want neither downloaded nor error", v.Status)
 	}
 }
 

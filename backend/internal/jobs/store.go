@@ -10,8 +10,16 @@ package jobs
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
+
+// ErrNotRunning is returned by Finish, Bump, and Fail when their guarded
+// UPDATE affects no rows because the target job is no longer in the 'running'
+// state — typically because a concurrent Cancel moved it to 'canceled' out
+// from under the worker. It is not a failure: it tells the caller the job was
+// settled elsewhere and it must not write any further terminal state.
+var ErrNotRunning = errors.New("jobs: job not in running state")
 
 // Job mirrors one row of the download_jobs table. StartedAt and FinishedAt
 // are empty strings when the underlying column is NULL (job not yet
@@ -106,16 +114,51 @@ RETURNING `+selectColumns)
 
 // Finish marks a claimed job terminal (state must be one of done, failed,
 // canceled), recording the final error text and log tail and stamping
-// finished_at.
+// finished_at. The WHERE clause is guarded by state = 'running': a row that
+// was externally moved to 'canceled' can never be resurrected to done/failed.
+// Returns ErrNotRunning (and writes nothing) when the guard matches no row.
 func (s *Store) Finish(id int64, state, lastErr, logTail string) error {
-	_, err := s.db.ExecContext(context.Background(), `
+	res, err := s.db.ExecContext(context.Background(), `
 UPDATE download_jobs
 SET state = ?, last_error = ?, log_tail = ?, finished_at = datetime('now')
-WHERE id = ?`,
+WHERE id = ? AND state = 'running'`,
 		state, lastErr, logTail, id,
 	)
 	if err != nil {
 		return fmt.Errorf("finish job %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("finish job %d: rows affected: %w", id, err)
+	}
+	if n == 0 {
+		return ErrNotRunning
+	}
+	return nil
+}
+
+// Fail marks a running job terminally failed, recording the final attempts
+// count and error text in the SAME guarded write (state must still be
+// 'running'). Doing it in one statement — rather than Bump-to-pending then
+// Finish — means there is never an intermediate 'pending' window in which
+// another claimer could grab a job that is about to be failed. Returns
+// ErrNotRunning (and writes nothing) when the row is no longer running.
+func (s *Store) Fail(id int64, attempts int, lastErr string) error {
+	res, err := s.db.ExecContext(context.Background(), `
+UPDATE download_jobs
+SET state = 'failed', attempts = ?, last_error = ?, finished_at = datetime('now')
+WHERE id = ? AND state = 'running'`,
+		attempts, lastErr, id,
+	)
+	if err != nil {
+		return fmt.Errorf("fail job %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("fail job %d: rows affected: %w", id, err)
+	}
+	if n == 0 {
+		return ErrNotRunning
 	}
 	return nil
 }
@@ -124,16 +167,25 @@ WHERE id = ?`,
 // value (the caller passes job.Attempts+1 for a real retry, or the
 // unchanged job.Attempts to requeue without burning an attempt — e.g. when
 // the worker pauses on a blocked cookie). started_at is cleared so the job
-// looks freshly queued.
+// looks freshly queued. The WHERE clause is guarded by state = 'running' so a
+// job canceled out from under the worker is not resurrected to pending;
+// returns ErrNotRunning (and writes nothing) when the guard matches no row.
 func (s *Store) Bump(id int64, attempts int, lastErr string) error {
-	_, err := s.db.ExecContext(context.Background(), `
+	res, err := s.db.ExecContext(context.Background(), `
 UPDATE download_jobs
 SET state = 'pending', attempts = ?, last_error = ?, started_at = NULL
-WHERE id = ?`,
+WHERE id = ? AND state = 'running'`,
 		attempts, lastErr, id,
 	)
 	if err != nil {
 		return fmt.Errorf("bump job %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("bump job %d: rows affected: %w", id, err)
+	}
+	if n == 0 {
+		return ErrNotRunning
 	}
 	return nil
 }
