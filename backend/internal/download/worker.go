@@ -59,6 +59,15 @@ type Deps struct {
 	// exercising the early-cancel window deterministically; it is unset in
 	// production.
 	onClaim func(jobID int64)
+
+	// MediaDir is the directory the disk-space guard checks free space on
+	// before claiming a job (config.MediaDir in production). Empty disables
+	// the guard entirely (used by tests that don't care about it).
+	MediaDir string
+	// FreeBytes reports free space on dir; defaults to the real statfs-backed
+	// freeBytes. Overridable so tests can simulate a full disk without
+	// actually filling one.
+	FreeBytes func(dir string) (uint64, error)
 }
 
 // Worker is the download loop. Construct with New and drive with Run; other
@@ -69,6 +78,12 @@ type Worker struct {
 	mu       sync.Mutex
 	paused   bool
 	resumeCh chan struct{}
+	// lowDisk mirrors the outcome of the most recent disk-space precheck
+	// (see waitWhileLowDisk / LowDisk). Distinct from paused: paused is the
+	// cookie-blocked banner, lowDisk is the disk-space banner, and unlike
+	// paused, a low-disk condition does not require an explicit Resume() —
+	// it self-clears the moment a later precheck sees enough free space.
+	lowDisk bool
 	// The single running job's control. curJobID is 0 when idle.
 	curJobID        int64
 	curCancel       context.CancelFunc
@@ -93,6 +108,9 @@ func New(deps Deps) *Worker {
 	}
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
+	}
+	if deps.FreeBytes == nil {
+		deps.FreeBytes = freeBytes
 	}
 	return &Worker{
 		deps:     deps,
@@ -128,6 +146,18 @@ func (w *Worker) Run(ctx context.Context) {
 		}
 		if !w.waitWhilePaused(ctx) {
 			return
+		}
+		if !w.checkDiskSpace(ctx) {
+			return
+		}
+		if w.LowDisk() {
+			// Refuse to start a job while below the configured free-space
+			// floor: skip claiming entirely (the job stays pending, so
+			// nothing needs to be un-claimed) and re-check after a beat.
+			if !w.sleep(ctx, w.deps.PollInterval) {
+				return
+			}
+			continue
 		}
 
 		job, err := w.deps.Jobs.ClaimNext()
@@ -527,6 +557,59 @@ func (w *Worker) Paused() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.paused
+}
+
+// gibibyte is the unit settings.MinFreeGB is expressed in.
+const gibibyte = 1024 * 1024 * 1024
+
+// checkDiskSpace runs the disk-space precheck: it reads the current
+// min_free_gb setting and free space on MediaDir, updating the lowDisk flag
+// to reflect the outcome. A settings-read error or an empty MediaDir (the
+// guard is disabled) leaves lowDisk unchanged rather than blocking the
+// worker on an unrelated failure; a FreeBytes error is treated the same
+// way, failing open, since a broken statfs call must not permanently wedge
+// downloads. It returns false only when ctx is already done (the caller
+// should stop), matching the other wait* helpers' convention.
+func (w *Worker) checkDiskSpace(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if w.deps.MediaDir == "" {
+		return true
+	}
+	set, err := w.deps.Settings.Get(ctx)
+	if err != nil {
+		w.deps.Logger.Error("download worker: disk check: load settings failed", "err", err)
+		return true
+	}
+	free, err := w.deps.FreeBytes(w.deps.MediaDir)
+	if err != nil {
+		w.deps.Logger.Error("download worker: disk check: statfs failed", "dir", w.deps.MediaDir, "err", err)
+		return true
+	}
+
+	minFree := uint64(set.MinFreeGB) * gibibyte
+	low := free < minFree
+
+	w.mu.Lock()
+	wasLow := w.lowDisk
+	w.lowDisk = low
+	w.mu.Unlock()
+
+	if low && !wasLow {
+		w.deps.Logger.Warn("download worker: low disk space, pausing claims", "free_bytes", free, "min_free_gb", set.MinFreeGB)
+	} else if !low && wasLow {
+		w.deps.Logger.Info("download worker: disk space recovered, resuming claims", "free_bytes", free)
+	}
+	return true
+}
+
+// LowDisk reports whether the most recent disk-space precheck found free
+// space below the configured min_free_gb floor.
+func (w *Worker) LowDisk() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.lowDisk
 }
 
 // waitWhilePaused blocks until the worker is resumed or ctx is cancelled. It

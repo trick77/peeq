@@ -2,13 +2,11 @@ package httpapi
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/trick77/vark/internal/media"
 	"github.com/trick77/vark/internal/videos"
 )
 
@@ -107,50 +105,13 @@ func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if v.MediaPath != "" {
-		if safe, err := safeMediaPath(s.mediaDir, v.MediaPath); err == nil {
-			removeMediaAndSidecars(safe)
-		}
-	}
-	if v.ThumbnailPath != "" {
-		// A queued-but-not-yet-downloaded video may have a remote thumbnail
-		// URL here instead of a local path; safeMediaPath rejecting that (or
-		// the file simply not existing under MediaDir) is harmless — there
-		// is nothing on local disk to remove in that case.
-		if safe, err := safeMediaPath(s.mediaDir, v.ThumbnailPath); err == nil {
-			_ = os.Remove(safe)
-		}
-	}
+	media.RemoveVideoFiles(s.mediaDir, v.MediaPath, v.ThumbnailPath)
 
 	if err := s.videos.Tombstone(v.ID); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "delete video failed")
 		return
 	}
 	writeJSON(w, map[string]string{"status": "tombstoned"})
-}
-
-// removeMediaAndSidecars unlinks the media file itself plus any sibling
-// subtitle (.vtt) files in the same directory. Best-effort: a missing file
-// is not an error (it may already be gone), and any single removal failure
-// doesn't stop the others.
-func removeMediaAndSidecars(mediaPath string) {
-	_ = os.Remove(mediaPath)
-
-	dir := filepath.Dir(mediaPath)
-	base := strings.TrimSuffix(filepath.Base(mediaPath), filepath.Ext(mediaPath))
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if strings.HasPrefix(name, base) && strings.HasSuffix(name, ".vtt") {
-			_ = os.Remove(filepath.Join(dir, name))
-		}
-	}
 }
 
 // favoriteRequest is the optional body of POST .../favorite. When absent or
@@ -246,7 +207,15 @@ func (s *server) handleStreamVideo(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "no media for this video")
 		return
 	}
-	safe, err := safeMediaPath(s.mediaDir, v.MediaPath)
+	// Record this access before serving so the retention sweeper's
+	// now-playing guard (Task 12) sees an in-progress stream and skips this
+	// video, even though the sweeper runs in a wholly separate package. A
+	// player re-issues range requests throughout playback, so this keeps
+	// firing for as long as the video is actually being watched.
+	if s.streamAccess != nil {
+		s.streamAccess.RecordAccess(v.ID)
+	}
+	safe, err := media.SafeMediaPath(s.mediaDir, v.MediaPath)
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "media not available")
 		return
@@ -287,83 +256,3 @@ func (s *server) lookupVideo(w http.ResponseWriter, r *http.Request) (*videos.Vi
 	return v, true
 }
 
-// safeMediaPath resolves a stored media_path safely under mediaDir. It
-// rejects paths (relative or absolute) that traverse or otherwise resolve
-// outside mediaDir, and rejects symlink escapes by evaluating symlinks on
-// both mediaDir and the candidate path (or its nearest existing ancestor,
-// for a not-yet-existing file such as a rename target) before confirming
-// containment. This is the single place the stream and delete/tombstone
-// handlers trust a database-stored path enough to touch the filesystem.
-func safeMediaPath(mediaDir, storedPath string) (string, error) {
-	if mediaDir == "" {
-		return "", errors.New("media dir not configured")
-	}
-	if storedPath == "" {
-		return "", errors.New("empty media path")
-	}
-
-	absMediaDir, err := filepath.Abs(mediaDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve media dir: %w", err)
-	}
-
-	var candidate string
-	if filepath.IsAbs(storedPath) {
-		candidate = filepath.Clean(storedPath)
-	} else {
-		candidate = filepath.Join(absMediaDir, storedPath)
-	}
-	if err := requireWithin(absMediaDir, candidate); err != nil {
-		return "", err
-	}
-
-	resolvedMediaDir, err := filepath.EvalSymlinks(absMediaDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve media dir symlinks: %w", err)
-	}
-	resolvedCandidate, err := resolveExistingOrAncestor(candidate)
-	if err != nil {
-		return "", err
-	}
-	if err := requireWithin(resolvedMediaDir, resolvedCandidate); err != nil {
-		return "", err
-	}
-
-	// Return the resolved path, not the unresolved candidate: callers open
-	// or remove exactly what was validated above, closing the TOCTOU window
-	// where a path component could otherwise be swapped for a symlink
-	// between this check and the filesystem operation.
-	return resolvedCandidate, nil
-}
-
-// requireWithin errors unless candidate is root or a descendant of root
-// (lexically — no filesystem access).
-func requireWithin(root, candidate string) error {
-	rel, err := filepath.Rel(root, candidate)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("path %q escapes media dir %q", candidate, root)
-	}
-	return nil
-}
-
-// resolveExistingOrAncestor evaluates symlinks on path, walking up to the
-// nearest existing ancestor if path itself doesn't exist yet (e.g. a file
-// about to be created), then rejoins the non-existing suffix.
-func resolveExistingOrAncestor(path string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		return resolved, nil
-	}
-	if !os.IsNotExist(err) {
-		return "", fmt.Errorf("resolve symlinks: %w", err)
-	}
-	parent := filepath.Dir(path)
-	if parent == path {
-		return "", fmt.Errorf("resolve symlinks: %w", err)
-	}
-	resolvedParent, err := resolveExistingOrAncestor(parent)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(resolvedParent, filepath.Base(path)), nil
-}

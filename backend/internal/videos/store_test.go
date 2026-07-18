@@ -377,3 +377,81 @@ func TestSetDownloaded_recordsResult(t *testing.T) {
 		t.Fatalf("thumbnail_path = %q", got.ThumbnailPath)
 	}
 }
+
+// TestSetResume_negativePositionClampedToZero is the store-level
+// defense-in-depth: the HTTP handler already rejects a negative resume
+// position with 400, but the store must never persist one either, in case
+// some other caller (a future internal job, a bug) skips the handler.
+func TestSetResume_negativePositionClampedToZero(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetResume("v", -42); err != nil {
+		t.Fatalf("set resume: %v", err)
+	}
+	got, err := s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ResumePositionSeconds != 0 {
+		t.Fatalf("resume_position_seconds = %v, want clamped to 0", got.ResumePositionSeconds)
+	}
+	if got.Watched {
+		t.Fatalf("watched = true, want false for a clamped-to-0 position")
+	}
+}
+
+// TestSweepCandidates_filtersByWatchedFavoriteTombstoneAndCutoff exercises
+// the retention sweeper's underlying query directly: only a watched,
+// non-favorite, non-tombstoned video whose watched_at is strictly before
+// cutoff comes back.
+func TestSweepCandidates_filtersByWatchedFavoriteTombstoneAndCutoff(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+
+	seed := func(id string, watched, favorite bool, watchedAt string, tombstoned bool) {
+		t.Helper()
+		if err := s.Upsert(Video{ID: id, URL: "u-" + id}); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+		status := "downloaded"
+		if tombstoned {
+			status = "tombstoned"
+		}
+		watchedInt := 0
+		if watched {
+			watchedInt = 1
+		}
+		favInt := 0
+		if favorite {
+			favInt = 1
+		}
+		_, err := db.Exec(
+			`UPDATE videos SET watched = ?, favorite = ?, watched_at = ?, status = ? WHERE id = ?`,
+			watchedInt, favInt, nullStr(watchedAt), status, id,
+		)
+		if err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+
+	const cutoff = "2026-01-01 00:00:00"
+	seed("old-eligible", true, false, "2025-01-01 00:00:00", false)  // before cutoff, watched, not fav -> candidate
+	seed("old-favorite", true, true, "2025-01-01 00:00:00", false)   // favorite -> excluded
+	seed("unwatched", false, false, "", false)                       // not watched -> excluded
+	seed("old-tombstoned", true, false, "2025-01-01 00:00:00", true) // already gone -> excluded
+	seed("recent", true, false, "2026-06-01 00:00:00", false)        // after cutoff -> excluded
+
+	got, err := s.SweepCandidates(cutoff)
+	if err != nil {
+		t.Fatalf("sweep candidates: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "old-eligible" {
+		ids := make([]string, len(got))
+		for i, v := range got {
+			ids[i] = v.ID
+		}
+		t.Fatalf("sweep candidates = %v, want [old-eligible]", ids)
+	}
+}

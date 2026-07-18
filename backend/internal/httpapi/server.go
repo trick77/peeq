@@ -49,6 +49,20 @@ type Deps struct {
 	// SSEHub fans out download progress/queue events to /api/downloads/stream
 	// subscribers. Optional: when nil, the stream endpoint returns 503.
 	SSEHub *sse.Hub
+	// StreamAccess is notified on every /api/videos/{id}/stream request, so
+	// the retention sweeper's now-playing guard (Task 12) can tell a
+	// currently-playing video apart from a merely-eligible one. Optional:
+	// when nil, the hook is skipped (no now-playing protection).
+	StreamAccess StreamAccessRecorder
+}
+
+// StreamAccessRecorder is the narrow interface handleStreamVideo needs to
+// feed the retention sweeper's now-playing guard. httpapi deliberately
+// defines this itself (rather than importing the retention package) so the
+// dependency points the other way: retention may depend on httpapi-shaped
+// concepts, httpapi never depends on retention.
+type StreamAccessRecorder interface {
+	RecordAccess(id string)
 }
 
 type server struct {
@@ -65,6 +79,8 @@ type server struct {
 	runner   DownloadsRunner
 	worker   DownloadsWorker
 	sseHub   *sse.Hub
+
+	streamAccess StreamAccessRecorder
 }
 
 // New returns the fully wired HTTP handler.
@@ -82,6 +98,7 @@ func New(d Deps) http.Handler {
 		runner:        d.Runner,
 		worker:        d.Worker,
 		sseHub:        d.SSEHub,
+		streamAccess:  d.StreamAccess,
 	}
 
 	mux := http.NewServeMux()

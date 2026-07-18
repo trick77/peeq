@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/trick77/vark/internal/auth"
+	"github.com/trick77/vark/internal/media"
 	"github.com/trick77/vark/internal/settings"
 	"github.com/trick77/vark/internal/videos"
 )
@@ -182,6 +183,53 @@ func TestVideosStream_rangeRequest(t *testing.T) {
 	}
 }
 
+// fakeStreamAccessRecorder is a StreamAccessRecorder that just remembers the
+// ids it was called with, so a test can assert the stream handler actually
+// invokes the hook (Task 12's now-playing guard is only as good as this
+// wire).
+type fakeStreamAccessRecorder struct {
+	recorded []string
+}
+
+func (f *fakeStreamAccessRecorder) RecordAccess(id string) {
+	f.recorded = append(f.recorded, id)
+}
+
+// TestVideosStream_recordsStreamAccess is the httpapi side of the Task 12
+// now-playing guard: GET .../stream must call Deps.StreamAccess.RecordAccess
+// with the video id, since that is the only signal the retention sweeper's
+// guard has to protect a currently-playing video from deletion.
+func TestVideosStream_recordsStreamAccess(t *testing.T) {
+	deps, mediaDir := videosTestDeps(t)
+	videoDir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mediaPath := filepath.Join(videoDir, "v1.mp4")
+	if err := os.WriteFile(mediaPath, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write media file: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	recorder := &fakeStreamAccessRecorder{}
+	deps.StreamAccess = recorder
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/stream", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET stream status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if len(recorder.recorded) != 1 || recorder.recorded[0] != "v1" {
+		t.Fatalf("RecordAccess calls = %v, want exactly [v1]", recorder.recorded)
+	}
+}
+
 // TestSafeMediaPath_rejectsTraversalAndEscape is the path-safety guard: a
 // stored media_path containing ".." or otherwise resolving outside
 // MediaDir must be rejected, never served or unlinked.
@@ -203,8 +251,8 @@ func TestSafeMediaPath_rejectsTraversalAndEscape(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := safeMediaPath(mediaDir, tc.stored); err == nil {
-				t.Fatalf("safeMediaPath(%q) = nil error, want rejection", tc.stored)
+			if _, err := media.SafeMediaPath(mediaDir, tc.stored); err == nil {
+				t.Fatalf("media.SafeMediaPath(%q) = nil error, want rejection", tc.stored)
 			}
 		})
 	}
@@ -223,7 +271,7 @@ func TestSafeMediaPath_allowsPathWithinMediaDir(t *testing.T) {
 	if err := os.WriteFile(mediaPath, []byte("x"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	got, err := safeMediaPath(mediaDir, mediaPath)
+	got, err := media.SafeMediaPath(mediaDir, mediaPath)
 	if err != nil {
 		t.Fatalf("safeMediaPath: %v", err)
 	}
@@ -252,8 +300,8 @@ func TestSafeMediaPath_rejectsSymlinkEscape(t *testing.T) {
 
 	// Unit-level: safeMediaPath itself must reject the symlink, not just the
 	// higher-level stream handler.
-	if _, err := safeMediaPath(mediaDir, escapeLink); err == nil {
-		t.Fatalf("safeMediaPath(%q) = nil error, want rejection of symlink escape", escapeLink)
+	if _, err := media.SafeMediaPath(mediaDir, escapeLink); err == nil {
+		t.Fatalf("media.SafeMediaPath(%q) = nil error, want rejection of symlink escape", escapeLink)
 	}
 
 	// HTTP-level: GET .../stream must not leak the outside file's contents

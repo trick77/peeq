@@ -282,7 +282,14 @@ WHERE id = ?`, id)
 // exceed duration in practice). watched_at is stamped only the first time —
 // a later call at or above the threshold (re-watching) never resets it.
 // Duration 0/unknown never auto-marks watched (there is no ratio to check).
+//
+// A negative position is clamped to 0 rather than stored as-is: the HTTP
+// handler already rejects negative positions with a 400, but the store
+// clamps too as defense-in-depth against any other caller.
 func (s *Store) SetResume(id string, position float64) error {
+	if position < 0 {
+		position = 0
+	}
 	ctx := context.Background()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -319,6 +326,39 @@ WHERE id = ?`, position, id)
 		return fmt.Errorf("set video %s resume: %w", id, err)
 	}
 	return nil
+}
+
+// SweepCandidates returns videos eligible for the retention sweeper
+// (Task 12): watched, not favorited, not already tombstoned, and last
+// watched strictly before cutoff (an absolute point in time, formatted
+// "2006-01-02 15:04:05" UTC to match the format datetime('now') stores in
+// watched_at — the caller computes cutoff from settings.RetentionDays and
+// its own clock, so the sweeper stays testable without depending on
+// SQLite's notion of "now"). Oldest-watched first, so the sweeper's log
+// order reads chronologically.
+func (s *Store) SweepCandidates(cutoffUTC string) ([]Video, error) {
+	rows, err := s.db.QueryContext(context.Background(),
+		"SELECT "+videoColumns+` FROM videos
+WHERE watched = 1 AND favorite = 0 AND status != 'tombstoned' AND watched_at < ?
+ORDER BY watched_at ASC`, cutoffUTC,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sweep candidates: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Video{}
+	for rows.Next() {
+		v, err := scanVideo(rows)
+		if err != nil {
+			return nil, fmt.Errorf("sweep candidates: %w", err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sweep candidates: %w", err)
+	}
+	return out, nil
 }
 
 // Tombstone marks a video deleted-but-remembered: media_path is cleared and

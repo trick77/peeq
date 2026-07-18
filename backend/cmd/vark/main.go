@@ -24,6 +24,7 @@ import (
 	"github.com/trick77/vark/internal/download"
 	"github.com/trick77/vark/internal/httpapi"
 	"github.com/trick77/vark/internal/jobs"
+	"github.com/trick77/vark/internal/retention"
 	"github.com/trick77/vark/internal/settings"
 	"github.com/trick77/vark/internal/sse"
 	"github.com/trick77/vark/internal/store"
@@ -136,6 +137,7 @@ func run() error {
 		Videos:   videosStore,
 		Settings: settingsStore,
 		Runner:   runner,
+		MediaDir: cfg.MediaDir,
 		OnProgress: func(jobID int64, p ytdlp.Progress) {
 			data, err := json.Marshal(map[string]any{
 				"job_id":  jobID,
@@ -149,16 +151,31 @@ func run() error {
 			sseHub.Publish("progress", string(data))
 		},
 	})
-	// Bound the worker goroutine's lifetime to the process: wg.Wait() below
-	// (after serve returns, i.e. after ctx is cancelled) blocks until Run has
-	// actually observed ctx.Done() and returned, rather than exiting the
-	// process out from under it. Run's own loop already exits promptly on
-	// ctx.Done(), so this wait is short.
+	// streamTracker is the retention sweeper's now-playing guard: the videos
+	// stream handler records access here, and the sweeper consults it before
+	// tombstoning a video that would otherwise qualify by age.
+	streamTracker := retention.NewStreamAccessTracker()
+	sweeper := retention.New(retention.Deps{
+		Videos:   videosStore,
+		Settings: settingsStore,
+		MediaDir: cfg.MediaDir,
+		Guard:    streamTracker,
+	})
+
+	// Bound the worker and sweeper goroutines' lifetimes to the process:
+	// wg.Wait() below (after serve returns, i.e. after ctx is cancelled)
+	// blocks until both have actually observed ctx.Done() and returned,
+	// rather than exiting the process out from under them. Both loops exit
+	// promptly on ctx.Done(), so this wait is short.
 	var workerWG sync.WaitGroup
-	workerWG.Add(1)
+	workerWG.Add(2)
 	go func() {
 		defer workerWG.Done()
 		worker.Run(ctx)
+	}()
+	go func() {
+		defer workerWG.Done()
+		sweeper.Run(ctx)
 	}()
 
 	deps := httpapi.Deps{
@@ -174,6 +191,7 @@ func run() error {
 		Runner:         runner,
 		Worker:         worker,
 		SSEHub:         sseHub,
+		StreamAccess:   streamTracker,
 	}
 	handler := httpapi.New(deps)
 

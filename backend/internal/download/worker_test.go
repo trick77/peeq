@@ -472,3 +472,54 @@ func TestWorker_progressResetsWatchdog(t *testing.T) {
 		t.Fatalf("runner called %d times, want 1 (steady progress must not trip the watchdog)", c)
 	}
 }
+
+// --- Disk-space guard (Task 12) --------------------------------------------
+
+// TestWorker_lowDiskPausesClaimingAndResumesWhenFreed drives the worker's
+// disk-space precheck: while FreeBytes reports below settings.min_free_gb,
+// the worker must never claim the pending job (it stays 'pending', the
+// runner is never called) and LowDisk() must report true. Once FreeBytes
+// reports enough free space again, the worker must resume claiming and
+// finish the job, and LowDisk() must clear.
+func TestWorker_lowDiskPausesClaimingAndResumesWhenFreed(t *testing.T) {
+	runner := &fakeRunner{
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
+		},
+	}
+
+	var freeMu sync.Mutex
+	free := uint64(1) // start starved: 1 byte free
+
+	h := newHarness(t, runner, func(d *Deps) {
+		d.MediaDir = "/media"
+		d.FreeBytes = func(dir string) (uint64, error) {
+			freeMu.Lock()
+			defer freeMu.Unlock()
+			return free, nil
+		}
+	})
+	// min_free_gb defaults to 5 (migration default); 1 byte free is well below it.
+	id := h.enqueue(t, "vid", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "worker reports low disk", func() bool { return h.worker.LowDisk() })
+
+	// Give the paused loop a moment to (not) do anything, then assert the
+	// job was never claimed and the runner was never invoked.
+	time.Sleep(30 * time.Millisecond)
+	if got := h.jobState(t, id).State; got != "pending" {
+		t.Fatalf("job state = %q, want pending (must not be claimed while low on disk)", got)
+	}
+	if c := runner.calls(); c != 0 {
+		t.Fatalf("runner called %d times while low on disk, want 0", c)
+	}
+
+	// Free up space: the worker should resume claiming and finish the job.
+	freeMu.Lock()
+	free = 100 * 1024 * 1024 * 1024 // 100 GiB, comfortably above the 5 GB default
+	freeMu.Unlock()
+
+	waitFor(t, "job done after disk freed", func() bool { return h.jobState(t, id).State == "done" })
+	waitFor(t, "worker clears low disk", func() bool { return !h.worker.LowDisk() })
+}
