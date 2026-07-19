@@ -42,7 +42,12 @@ export function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [cookieStatus, setCookieStatus] = useState<string | undefined>(undefined);
-  const [downloadStatus, setDownloadStatus] = useState<DownloadsStatus>({ paused: false, low_disk: false });
+  const [downloadStatus, setDownloadStatus] = useState<DownloadsStatus>({
+    paused: false,
+    low_disk: false,
+    youtube_paused: false,
+    youtube_pause_reason: "",
+  });
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(
     restored?.playing ? restored.videoId : null,
   );

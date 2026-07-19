@@ -46,10 +46,14 @@ export async function listDownloads(): Promise<Job[]> {
 // be stalled, so the UI can explain a frozen queue instead of leaving the user
 // guessing. paused: the worker paused on a cookie problem (re-paste to
 // resume); low_disk: paused because free space fell below the configured
-// min_free_gb floor.
+// min_free_gb floor. youtube_paused/youtube_pause_reason: the global
+// kill-switch state (Task 10) — all YouTube activity halted, with a reason
+// string suitable for direct display.
 export type DownloadsStatus = {
   paused: boolean;
   low_disk: boolean;
+  youtube_paused: boolean;
+  youtube_pause_reason: string;
 };
 
 export async function downloadsStatus(): Promise<DownloadsStatus> {
@@ -58,6 +62,14 @@ export async function downloadsStatus(): Promise<DownloadsStatus> {
 
 export async function cancelDownload(jobId: number): Promise<void> {
   await api.post(`/api/downloads/${jobId}/cancel`, undefined, "failed to cancel download");
+}
+
+// pauseYoutube / resumeYoutube drive the global kill-switch (202/empty).
+export async function pauseYoutube(): Promise<void> {
+  await api.postNoContent("/api/youtube/pause", undefined, "failed to pause YouTube activity");
+}
+export async function resumeYoutube(): Promise<void> {
+  await api.postNoContent("/api/youtube/resume", undefined, "failed to resume YouTube activity");
 }
 
 // streamDownloads subscribes to the SSE download progress/queue feed. The

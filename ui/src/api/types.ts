@@ -113,6 +113,12 @@ export type Settings = {
   min_free_gb: number;
   min_video_duration_seconds: number;
   ytdlp_version: string;
+  // youtube_paused/youtube_pause_reason mirror the Task 10 global kill-switch
+  // fields — user-writable, but only via the dedicated POST
+  // /api/youtube/pause|resume endpoints (downloads.ts), never through
+  // SettingsPatch/PUT.
+  youtube_paused: boolean;
+  youtube_pause_reason: string;
 };
 
 // SettingsPatch mirrors settingsPatchRequest — every field optional, PUT

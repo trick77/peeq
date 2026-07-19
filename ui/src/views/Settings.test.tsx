@@ -15,6 +15,8 @@ const baseSettings: SettingsType = {
   min_free_gb: 5,
   min_video_duration_seconds: 60,
   ytdlp_version: "2026.01.01",
+  youtube_paused: false,
+  youtube_pause_reason: "",
 };
 
 vi.mock("../api/settings", () => ({
