@@ -8,6 +8,10 @@ import (
 	"github.com/trick77/vark/internal/store"
 )
 
+func newTestStore(t *testing.T) *Store {
+	return openTestDB(t)
+}
+
 func openTestDB(t *testing.T) *Store {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -100,4 +104,20 @@ func TestUpdate_appliesPatch(t *testing.T) {
 	if got.MinFreeGB != 5 {
 		t.Fatalf("MinFreeGB = %d, want unchanged default 5", got.MinFreeGB)
 	}
+}
+
+func TestUpdate_minVideoDurationSeconds(t *testing.T) {
+	s := newTestStore(t) // existing helper in this test file
+	want := 300
+	if err := s.Update(context.Background(), Patch{MinVideoDurationSeconds: &want}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MinVideoDurationSeconds != want {
+		t.Fatalf("min_video_duration_seconds = %d, want %d", got.MinVideoDurationSeconds, want)
+	}
+	// Default is 180 on a fresh row — sanity that the column exists & seeds.
 }

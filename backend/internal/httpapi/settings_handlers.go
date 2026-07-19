@@ -10,12 +10,13 @@ import (
 // settingsPatchRequest is the request body for PUT /api/settings. It never
 // includes the cookie — that only ever moves through PUT /api/settings/cookie.
 type settingsPatchRequest struct {
-	FormatPreset        *string `json:"format_preset"`
-	FormatCustom        *string `json:"format_custom"`
-	LimitRate           *string `json:"limit_rate"`
-	ThrottleBaseSeconds *int    `json:"throttle_base_seconds"`
-	RetentionDays       *int    `json:"retention_days"`
-	MinFreeGB           *int    `json:"min_free_gb"`
+	FormatPreset            *string `json:"format_preset"`
+	FormatCustom            *string `json:"format_custom"`
+	LimitRate               *string `json:"limit_rate"`
+	ThrottleBaseSeconds     *int    `json:"throttle_base_seconds"`
+	RetentionDays           *int    `json:"retention_days"`
+	MinFreeGB               *int    `json:"min_free_gb"`
+	MinVideoDurationSeconds *int    `json:"min_video_duration_seconds"`
 }
 
 // cookiePutRequest is the request body for PUT /api/settings/cookie.
@@ -65,6 +66,7 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		{"retention_days", req.RetentionDays},
 		{"min_free_gb", req.MinFreeGB},
 		{"throttle_base_seconds", req.ThrottleBaseSeconds},
+		{"min_video_duration_seconds", req.MinVideoDurationSeconds},
 	} {
 		if f.val != nil && *f.val < 0 {
 			writeJSONError(w, http.StatusBadRequest, f.name+" must not be negative")
@@ -72,12 +74,13 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	patch := settings.Patch{
-		FormatPreset:        req.FormatPreset,
-		FormatCustom:        req.FormatCustom,
-		LimitRate:           req.LimitRate,
-		ThrottleBaseSeconds: req.ThrottleBaseSeconds,
-		RetentionDays:       req.RetentionDays,
-		MinFreeGB:           req.MinFreeGB,
+		FormatPreset:            req.FormatPreset,
+		FormatCustom:            req.FormatCustom,
+		LimitRate:               req.LimitRate,
+		ThrottleBaseSeconds:     req.ThrottleBaseSeconds,
+		RetentionDays:           req.RetentionDays,
+		MinFreeGB:               req.MinFreeGB,
+		MinVideoDurationSeconds: req.MinVideoDurationSeconds,
 	}
 	if err := s.settings.Update(r.Context(), patch); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to update settings")
