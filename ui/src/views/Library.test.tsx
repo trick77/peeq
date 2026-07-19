@@ -20,6 +20,12 @@ function baseVideo(overrides: Partial<Video> = {}): Video {
     watched: false,
     resume_position_seconds: 0,
     favorite: false,
+    summary: "",
+    chapters: [],
+    key_points: [],
+    summary_status: "",
+    audio_language: "",
+    has_subtitles: false,
     ...overrides,
   };
 }

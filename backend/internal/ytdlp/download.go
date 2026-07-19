@@ -32,6 +32,9 @@ type DownloadReq struct {
 	// LimitRate is a yt-dlp --limit-rate value (e.g. "5M"). Left empty,
 	// --limit-rate is omitted entirely (no rate limiting).
 	LimitRate string
+	// SubLang is the --sub-langs value passed to yt-dlp. Left empty, "en"
+	// is used as the default.
+	SubLang string
 }
 
 // Segment is one SponsorBlock-marked chapter parsed out of the
@@ -56,6 +59,16 @@ type Result struct {
 	// yt-dlp.
 	FormatUsed           string
 	SponsorblockSegments []Segment
+	// SubtitleRelPath is the MediaDir-relative path to the downloaded
+	// subtitle .vtt file, or "" if none was found.
+	SubtitleRelPath string
+	// AudioLanguage is yt-dlp's reported "language" for the video (from its
+	// own *.info.json), or "" if it didn't report one.
+	AudioLanguage string
+	// ChaptersJSON is yt-dlp's own (non-SponsorBlock) chapters, encoded as
+	// `[{"ts":int,"title":string,"source":"yt-dlp"}]`, or "" if the video
+	// had none.
+	ChaptersJSON string
 }
 
 // Progress is one parsed --newline progress update.
@@ -95,7 +108,9 @@ func parseProgressLine(line string) (Progress, bool) {
 type downloadInfoJSON struct {
 	ID        string `json:"id"`
 	ChannelID string `json:"channel_id"`
-	Chapters  []struct {
+	// Language is yt-dlp's reported audio/video language for the download.
+	Language string `json:"language"`
+	Chapters []struct {
 		StartTime float64 `json:"start_time"`
 		EndTime   float64 `json:"end_time"`
 		Title     string  `json:"title"`
@@ -159,6 +174,11 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		return nil, fmt.Errorf("ytdlp: create staging dir: %w", err)
 	}
 
+	subLang := req.SubLang
+	if subLang == "" {
+		subLang = "en"
+	}
+
 	args := []string{"-f", formatSelector}
 	if req.LimitRate != "" {
 		args = append(args, "--limit-rate", req.LimitRate)
@@ -169,6 +189,10 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		"--write-thumbnail",
 		"--write-info-json",
 		"--sponsorblock-mark", "all",
+		"--write-subs",
+		"--write-auto-subs",
+		"--sub-langs", subLang,
+		"--convert-subs", "vtt",
 		"--no-playlist",
 		"--newline",
 		"--socket-timeout", "30",
@@ -251,12 +275,42 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 		return nil, fmt.Errorf("ytdlp: expected merged media file missing: %w", err)
 	}
 
+	var subtitleRelPath string
+	if matches, err := filepath.Glob(filepath.Join(finalDir, videoID+"*.vtt")); err == nil && len(matches) > 0 {
+		if rel, err := filepath.Rel(mediaDir, matches[0]); err == nil {
+			subtitleRelPath = rel
+		}
+	}
+
+	// non-SponsorBlock chapters become the provisional yt-dlp TOC
+	type chapterOut struct {
+		TS     int    `json:"ts"`
+		Title  string `json:"title"`
+		Source string `json:"source"`
+	}
+	var chs []chapterOut
+	for _, c := range info.Chapters {
+		if strings.HasPrefix(c.Title, sponsorblockChapterPrefix) {
+			continue
+		}
+		chs = append(chs, chapterOut{TS: int(c.StartTime), Title: c.Title, Source: "yt-dlp"})
+	}
+	var chaptersJSON string
+	if len(chs) > 0 {
+		if b, err := json.Marshal(chs); err == nil {
+			chaptersJSON = string(b)
+		}
+	}
+
 	return &Result{
 		MediaPath:            mediaPath,
 		ThumbnailPath:        findThumbnail(finalDir, videoID),
 		FilesizeBytes:        fi.Size(),
 		FormatUsed:           formatUsed,
 		SponsorblockSegments: sponsorblockSegmentsFromInfo(info),
+		SubtitleRelPath:      subtitleRelPath,
+		AudioLanguage:        info.Language,
+		ChaptersJSON:         chaptersJSON,
 	}, nil
 }
 

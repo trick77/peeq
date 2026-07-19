@@ -12,6 +12,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
@@ -72,6 +73,29 @@ type Deps struct {
 	// Ledger is the per-channel scan ledger (channel_videos) backing the
 	// pending API. Optional: when nil, the pending endpoints return 503.
 	Ledger *channelvideos.Store
+
+	// Rag is the transcript-chunk/embedding store backing semantic search
+	// and the delete-purge path. Optional: when nil, /api/search returns
+	// 503.
+	Rag *rag.Store
+	// Embedder turns search query text into an embedding vector to match
+	// against Rag. Optional: when nil, /api/search returns 503.
+	Embedder SearchEmbedder
+	// SummaryJobs enqueues a (re)summarize job for a video. Optional: when
+	// nil, /api/videos/{id}/resummarize returns 503.
+	SummaryJobs SummaryEnqueuer
+}
+
+// SearchEmbedder embeds free-text search queries into vectors comparable
+// against Rag's stored chunk embeddings.
+type SearchEmbedder interface {
+	Embed(ctx context.Context, inputs []string) ([][]float32, error)
+}
+
+// SummaryEnqueuer schedules a (re)summarize job for a video, returning the
+// enqueued job's id.
+type SummaryEnqueuer interface {
+	Enqueue(videoID string) (int64, error)
 }
 
 // YTDLPVersioner is the subset of *ytdlp.Runner the settings API needs to
@@ -114,6 +138,10 @@ type server struct {
 	channelResolver ChannelResolver
 
 	ledger *channelvideos.Store
+
+	rag         *rag.Store
+	embedder    SearchEmbedder
+	summaryJobs SummaryEnqueuer
 }
 
 // New returns the fully wired HTTP handler.
@@ -138,6 +166,10 @@ func New(d Deps) http.Handler {
 		channelResolver: d.ChannelResolver,
 
 		ledger: d.Ledger,
+
+		rag:         d.Rag,
+		embedder:    d.Embedder,
+		summaryJobs: d.SummaryJobs,
 	}
 
 	mux := http.NewServeMux()
@@ -154,6 +186,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/videos/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleResumeVideo)))
 	mux.Handle("GET /api/videos/{id}/stream", s.requireAuth(http.HandlerFunc(s.handleStreamVideo)))
 	mux.Handle("GET /api/videos/{id}/thumbnail", s.requireAuth(http.HandlerFunc(s.handleVideoThumbnail)))
+	mux.Handle("GET /api/videos/{id}/subtitles", s.requireAuth(http.HandlerFunc(s.handleVideoSubtitles)))
 	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleGetSettings)))
 	mux.Handle("PUT /api/settings", s.requireAuth(http.HandlerFunc(s.handlePutSettings)))
 	mux.Handle("PUT /api/settings/cookie", s.requireAuth(http.HandlerFunc(s.handlePutSettingsCookie)))
@@ -174,6 +207,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/pending", s.requireAuth(http.HandlerFunc(s.handlePendingList)))
 	mux.Handle("POST /api/pending/{id}/download", s.requireAuth(http.HandlerFunc(s.handlePendingDownload)))
 	mux.Handle("POST /api/pending/{id}/ignore", s.requireAuth(http.HandlerFunc(s.handlePendingIgnore)))
+	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
+	mux.Handle("POST /api/videos/{id}/resummarize", s.requireAuth(http.HandlerFunc(s.handleResummarize)))
 	if s.static != nil {
 		mux.Handle("/", s.static)
 	}

@@ -10,11 +10,14 @@ import { Player } from "./views/Player";
 import { Settings } from "./views/Settings";
 import { Channels } from "./views/Channels";
 import { Pending } from "./views/Pending";
+import { Search } from "./views/Search";
+import { readNowPlaying } from "./nowPlaying";
 
 // Page titles/subtitles per view, per the mockup's `titles` map.
 const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
   library: { title: "Library" },
   player: { title: "Now playing" },
+  search: { title: "Search" },
   add: { title: "Add a video" },
   pending: { title: "Pending" },
   channels: { title: "Channels" },
@@ -25,7 +28,14 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
 // views. Routing is manual view-state, no router lib — matches loom's
 // pattern for a single-page app this size.
 export function App() {
-  const [view, setView] = useState<ViewId>("library");
+  // Reload-restore: if a video was actively playing when the page was last
+  // torn down (a reload, not an in-app navigation — Player clears the marker
+  // on unmount), reopen the Player on it. It opens paused at the server-side
+  // resume position via Player's existing handleLoadedMetadata seek — no
+  // autoplay. Read once, synchronously, so the very first render already
+  // routes to the Player instead of flashing Library. See nowPlaying.ts.
+  const restored = readNowPlaying();
+  const [view, setView] = useState<ViewId>(restored?.playing ? "player" : "library");
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState(false);
@@ -33,7 +43,20 @@ export function App() {
   const [pendingCount, setPendingCount] = useState(0);
   const [cookieStatus, setCookieStatus] = useState<string | undefined>(undefined);
   const [downloadStatus, setDownloadStatus] = useState<DownloadsStatus>({ paused: false, low_disk: false });
-  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(
+    restored?.playing ? restored.videoId : null,
+  );
+  // pendingSeek is the jump-to-moment target set by Search's onOpen (Task
+  // 18): Player consumes it once on the loadedmetadata handler that already
+  // applies the resume position, taking priority over resume. openVideo
+  // (Library/Channels' plain "open" path) clears it up front, so navigating
+  // to a video that way never applies a stale seek from an earlier search.
+  // The Player's onSeekConsumed callback below also clears it the moment the
+  // seek is actually applied, so a later remount of the Player (e.g. via the
+  // rail's "Now playing" without going through openVideo/openVideoAt again —
+  // the Player unmounts whenever the view navigates away) can never replay
+  // it and override the user's real resume position.
+  const [pendingSeek, setPendingSeek] = useState<number | undefined>(undefined);
   const [progressByJobId, setProgressByJobId] = useState<
     Record<number, { percent: number; speed: string; eta: string }>
   >({});
@@ -197,6 +220,15 @@ export function App() {
 
   function openVideo(id: string) {
     setSelectedVideoId(id);
+    setPendingSeek(undefined);
+    setView("player");
+  }
+
+  // openVideoAt — Search's onOpen: jumps into the Player at a specific
+  // moment (a matched transcript/summary chunk's start_seconds).
+  function openVideoAt(id: string, startSeconds: number) {
+    setSelectedVideoId(id);
+    setPendingSeek(startSeconds);
     setView("player");
   }
 
@@ -217,7 +249,10 @@ export function App() {
           <ViewSwitch
             view={view}
             selectedVideoId={selectedVideoId}
+            pendingSeek={pendingSeek}
             onOpenVideo={openVideo}
+            onOpenVideoAt={openVideoAt}
+            onSeekConsumed={() => setPendingSeek(undefined)}
             setView={setView}
             setPendingCount={setPendingCount}
           />
@@ -266,13 +301,19 @@ function DownloadStatusBanner({
 function ViewSwitch({
   view,
   selectedVideoId,
+  pendingSeek,
   onOpenVideo,
+  onOpenVideoAt,
+  onSeekConsumed,
   setView,
   setPendingCount,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
+  pendingSeek: number | undefined;
   onOpenVideo: (id: string) => void;
+  onOpenVideoAt: (id: string, startSeconds: number) => void;
+  onSeekConsumed: () => void;
   setView: (v: ViewId) => void;
   setPendingCount: (n: number) => void;
 }) {
@@ -280,7 +321,16 @@ function ViewSwitch({
     case "library":
       return <Library onOpenVideo={onOpenVideo} />;
     case "player":
-      return <Player videoId={selectedVideoId} onDeleted={() => setView("library")} />;
+      return (
+        <Player
+          videoId={selectedVideoId}
+          seekTo={pendingSeek}
+          onSeekConsumed={onSeekConsumed}
+          onDeleted={() => setView("library")}
+        />
+      );
+    case "search":
+      return <Search onOpen={onOpenVideoAt} />;
     case "add":
       // Stay on the Add page after queuing (per the mockup — the preview
       // card confirms the queue, it doesn't jump into Player before the

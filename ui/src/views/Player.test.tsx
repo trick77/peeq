@@ -17,6 +17,12 @@ const mockVideo: Video = {
   watched: false,
   resume_position_seconds: 42,
   favorite: false,
+  summary: "",
+  chapters: [],
+  key_points: [],
+  summary_status: "",
+  audio_language: "",
+  has_subtitles: false,
 };
 
 vi.mock("../api/videos", () => ({
@@ -28,13 +34,27 @@ vi.mock("../api/videos", () => ({
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
 }));
 
+vi.mock("../api/search", () => ({
+  subtitlesUrl: (id: string) => `/api/videos/${id}/subtitles`,
+  resummarize: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { getVideo, setResume } from "../api/videos";
+import { resummarize } from "../api/search";
+import { readNowPlaying } from "../nowPlaying";
+
+function makeVideo(overrides: Partial<Video> = {}): Video {
+  return { ...mockVideo, ...overrides };
+}
 
 describe("Player", () => {
   beforeEach(() => {
     vi.mocked(getVideo).mockReset();
     vi.mocked(setResume).mockClear();
+    vi.mocked(resummarize).mockClear();
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
+    vi.unstubAllGlobals();
+    sessionStorage.clear();
   });
 
   it("flushes the latest position to setResume on unmount", async () => {
@@ -103,6 +123,124 @@ describe("Player", () => {
     expect(videoEl.currentTime).toBeCloseTo(42, 0);
   });
 
+  it("seeks to seekTo instead of resume_position_seconds when set (Task 18 jump-to-moment)", async () => {
+    render(<Player videoId="v1" seekTo={560} onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    fireEvent.loadedMetadata(videoEl);
+
+    expect(videoEl.currentTime).toBeCloseTo(560, 0);
+  });
+
+  it("calls onSeekConsumed exactly once right after applying seekTo", async () => {
+    const onSeekConsumed = vi.fn();
+    render(<Player videoId="v1" seekTo={560} onSeekConsumed={onSeekConsumed} onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    fireEvent.loadedMetadata(videoEl);
+
+    expect(videoEl.currentTime).toBeCloseTo(560, 0);
+    expect(onSeekConsumed).toHaveBeenCalledTimes(1);
+
+    // A second loadedmetadata on the same mount must not re-apply or
+    // re-consume — handleLoadedMetadata's resumeAppliedRef guard already
+    // makes this a no-op regardless of seekTo.
+    fireEvent.loadedMetadata(videoEl);
+    expect(onSeekConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it("regression: a remount without seekTo (the stale-pendingSeek scenario) uses resume, not the earlier seek", async () => {
+    // Simulates the real bug: a search jump seeks to 560s and the parent
+    // clears its pendingSeek via onSeekConsumed. If the Player is later
+    // remounted (e.g. via the rail's "Now playing" link) with no seekTo
+    // prop — because the parent's pendingSeek was actually cleared — it
+    // must resume at resume_position_seconds (42), never replay the old
+    // 560s jump.
+    const onSeekConsumed = vi.fn();
+    const { unmount } = render(
+      <Player videoId="v1" seekTo={560} onSeekConsumed={onSeekConsumed} onDeleted={() => {}} />,
+    );
+
+    const firstEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    fireEvent.loadedMetadata(firstEl);
+    expect(firstEl.currentTime).toBeCloseTo(560, 0);
+    expect(onSeekConsumed).toHaveBeenCalledTimes(1);
+
+    unmount();
+
+    // Remount with no seekTo — the one-shot consumption means a parent
+    // wired to onSeekConsumed would have cleared pendingSeek by now, so
+    // this is exactly what a rail "Now playing" remount looks like.
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const secondEl = await waitFor(() => {
+      const els = document.querySelectorAll("video");
+      if (els.length === 0) throw new Error("video element not mounted yet");
+      return els[els.length - 1];
+    });
+    fireEvent.loadedMetadata(secondEl);
+
+    expect(secondEl.currentTime).toBeCloseTo(42, 0);
+  });
+
+  it("marks nowPlaying playing=true on play and false on pause/ended", async () => {
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    fireEvent.play(videoEl);
+    expect(readNowPlaying()).toEqual({ videoId: "v1", playing: true });
+
+    fireEvent.pause(videoEl);
+    expect(readNowPlaying()).toEqual({ videoId: "v1", playing: false });
+
+    fireEvent.play(videoEl);
+    fireEvent.ended(videoEl);
+    expect(readNowPlaying()).toEqual({ videoId: "v1", playing: false });
+  });
+
+  it("records nowPlaying paused (playing=false) once metadata loads", async () => {
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    fireEvent.loadedMetadata(videoEl);
+    expect(readNowPlaying()).toEqual({ videoId: "v1", playing: false });
+  });
+
+  it("clears the nowPlaying marker on unmount (in-app navigation away)", async () => {
+    const { unmount } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    fireEvent.play(videoEl);
+    expect(readNowPlaying()).not.toBeNull();
+
+    unmount();
+    expect(readNowPlaying()).toBeNull();
+  });
+
   it("posts the current position to setResume on timeupdate", async () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
 
@@ -131,5 +269,111 @@ describe("Player", () => {
   it("shows a placeholder message with nothing selected", () => {
     render(<Player videoId={null} onDeleted={() => {}} />);
     expect(screen.getByText(/Pick a video from the Library/i)).toBeInTheDocument();
+  });
+
+  it("renders the summary paragraphs when summary_status is done", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ summary_status: "done", summary: "Prose one.\n\nProse two." }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    expect(await screen.findByText("Prose one.")).toBeInTheDocument();
+    expect(screen.getByText("Prose two.")).toBeInTheDocument();
+  });
+
+  it("shows No transcript available for a no_transcript summary status", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ summary_status: "no_transcript" }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    expect(await screen.findByText(/No transcript available/i)).toBeInTheDocument();
+  });
+
+  it("shows a Re-summarize button on error status and calls resummarize", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ summary_status: "error" }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const btn = await screen.findByRole("button", { name: /Re-summarize/i });
+    fireEvent.click(btn);
+    await waitFor(() => expect(resummarize).toHaveBeenCalledWith("v1"));
+  });
+
+  it("clicking a chapter seeks the video to its timestamp", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ chapters: [{ ts: 108, title: "Frame", source: "yt-dlp" }] }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const chapterBtn = await screen.findByRole("button", { name: /Frame/ });
+    const vid = document.querySelector("video") as HTMLVideoElement;
+    const seekSpy = vi.spyOn(vid, "currentTime", "set");
+    fireEvent.click(chapterBtn);
+    expect(seekSpy).toHaveBeenCalledWith(108);
+  });
+
+  it("clicking a highlight seeks the video to its timestamp", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ key_points: [{ ts: 12, text: "wow moment" }] }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const hlBtn = await screen.findByRole("button", { name: /wow moment/ });
+    const vid = document.querySelector("video") as HTMLVideoElement;
+    const seekSpy = vi.spyOn(vid, "currentTime", "set");
+    fireEvent.click(hlBtn);
+    expect(seekSpy).toHaveBeenCalledWith(12);
+  });
+
+  it("toggles the CC track mode between hidden and showing", async () => {
+    // jsdom never populates HTMLMediaElement.textTracks from a <track>
+    // child, so the mode flip is exercised against a stubbed TextTrackList
+    // (mirroring how the existing tests stub `currentTime`).
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const ccBtn = await screen.findByRole("button", { name: /^CC$/ });
+    const vid = document.querySelector("video") as HTMLVideoElement;
+    const fakeTrack = { mode: "hidden" } as unknown as TextTrack;
+    Object.defineProperty(vid, "textTracks", { value: [fakeTrack], configurable: true });
+
+    fireEvent.click(ccBtn);
+    expect(fakeTrack.mode).toBe("showing");
+    fireEvent.click(ccBtn);
+    expect(fakeTrack.mode).toBe("hidden");
+  });
+
+  it("fetches and shows the transcript, seeking on cue click, once expanded", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    const vtt = "WEBVTT\n\n00:00:05.000 --> 00:00:08.000\nHello there\n\n00:00:10.000 --> 00:00:12.000\nBattery life is great\n";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(vtt) }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const toggle = await screen.findByRole("button", { name: /Transcript/i });
+    fireEvent.click(toggle);
+    expect(await screen.findByText(/Battery life is great/i)).toBeInTheDocument();
+
+    const cueBtn = screen.getByRole("button", { name: /Battery life is great/i });
+    const vid = document.querySelector("video") as HTMLVideoElement;
+    const seekSpy = vi.spyOn(vid, "currentTime", "set");
+    fireEvent.click(cueBtn);
+    expect(seekSpy).toHaveBeenCalledWith(10);
+  });
+
+  it("highlights matching transcript rows via the find box", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    const vtt = "WEBVTT\n\n00:00:05.000 --> 00:00:08.000\nHello there\n\n00:00:10.000 --> 00:00:12.000\nBattery life is great\n";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(vtt) }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const toggle = await screen.findByRole("button", { name: /Transcript/i });
+    fireEvent.click(toggle);
+    await screen.findByText(/Battery life is great/i);
+
+    const findBox = screen.getByPlaceholderText(/Find in transcript/i);
+    fireEvent.change(findBox, { target: { value: "battery" } });
+
+    const markEl = await screen.findByText(/battery/i, { selector: "mark" });
+    expect(markEl).toBeInTheDocument();
+    const cueBtn = markEl.closest("button");
+    expect(cueBtn).toHaveClass("hit");
+    const helloRow = screen.getByText("Hello there").closest("button");
+    expect(helloRow).not.toHaveClass("hit");
   });
 });

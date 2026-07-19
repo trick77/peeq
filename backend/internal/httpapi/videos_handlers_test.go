@@ -512,6 +512,67 @@ func TestVideosGet_omitsEmptySponsorblockSegments(t *testing.T) {
 	}
 }
 
+// TestVideosGet_unsummarizedVideoAlwaysEmitsSummaryFields is the wire-contract
+// regression for the Phase-3 summary fields: an unsummarized video (summary,
+// audio_language never set) must still emit summary/summary_status/
+// audio_language as present strings (never omitted/undefined on the
+// frontend) and chapters/key_points as present JSON arrays, matching the
+// required (non-optional) TS types in ui/src/api/types.ts.
+func TestVideosGet_unsummarizedVideoAlwaysEmitsSummaryFields(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
+	var dto map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("unmarshal video: %v", err)
+	}
+
+	summary, present := dto["summary"]
+	if !present {
+		t.Fatalf("summary field missing entirely, want present empty string")
+	}
+	if summary != "" {
+		t.Fatalf("summary = %v, want empty string", summary)
+	}
+
+	audioLang, present := dto["audio_language"]
+	if !present {
+		t.Fatalf("audio_language field missing entirely, want present empty string")
+	}
+	if audioLang != "" {
+		t.Fatalf("audio_language = %v, want empty string", audioLang)
+	}
+
+	status, present := dto["summary_status"]
+	if !present {
+		t.Fatalf("summary_status field missing entirely, want present")
+	}
+	if status != "pending" {
+		t.Fatalf("summary_status = %v, want %q", status, "pending")
+	}
+
+	chapters, ok := dto["chapters"].([]any)
+	if !ok {
+		t.Fatalf("chapters = %#v, want a JSON array", dto["chapters"])
+	}
+	if len(chapters) != 0 {
+		t.Fatalf("chapters = %#v, want empty array", chapters)
+	}
+
+	keyPoints, ok := dto["key_points"].([]any)
+	if !ok {
+		t.Fatalf("key_points = %#v, want a JSON array", dto["key_points"])
+	}
+	if len(keyPoints) != 0 {
+		t.Fatalf("key_points = %#v, want empty array", keyPoints)
+	}
+}
+
 // TestVideosResume_rejectsNegativePosition covers the handler-level guard
 // against a buggy player writing a negative resume position.
 func TestVideosResume_rejectsNegativePosition(t *testing.T) {

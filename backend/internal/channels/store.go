@@ -94,18 +94,53 @@ func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 }
 
 // DeleteCascade removes a channel and everything belonging to it in one
-// transaction. videos has no foreign key to channels, so its rows are deleted
-// explicitly by channel_id (this FK-cascades their download_jobs). Deleting
-// the channel row then FK-cascades the subscription and channel_videos ledger
-// rows. This intentionally removes ALL of the channel's videos, including
-// favorited "Kept forever" ones — the explicit delete-channel action overrides
-// the retention invariant (the UI guards it behind a confirm).
+// transaction. vec_chunks (a vec0 virtual table) cannot ride an FK cascade or
+// trigger, so its rows for this channel's videos are purged explicitly FIRST,
+// by rowid (== transcript_chunks.id) — before the videos delete cascades away
+// the transcript_chunks rows that rowid comes from. videos itself has no
+// foreign key to channels, so its rows are deleted explicitly by channel_id
+// (this FK-cascades their download_jobs, transcript_chunks, and summary_jobs).
+// Deleting the channel row then FK-cascades the subscription and
+// channel_videos ledger rows. This intentionally removes ALL of the channel's
+// videos, including favorited "Kept forever" ones — the explicit
+// delete-channel action overrides the retention invariant (the UI guards it
+// behind a confirm).
 func (s *Store) DeleteCascade(channelID string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+
+	// vec_chunks (vec0) can't ride an FK cascade, so purge its rows for this
+	// channel's videos explicitly, by rowid, BEFORE the videos delete cascades
+	// their transcript_chunks away (which would strand the vec rows forever).
+	rows, err := tx.Query(`
+SELECT tc.id FROM transcript_chunks tc
+JOIN videos v ON v.id = tc.video_id
+WHERE v.channel_id = ?`, channelID)
+	if err != nil {
+		return fmt.Errorf("select vec_chunks rowids for channel: %w", err)
+	}
+	var vecIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan vec_chunks rowid: %w", err)
+		}
+		vecIDs = append(vecIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate vec_chunks rowids for channel: %w", err)
+	}
+	for _, id := range vecIDs {
+		if _, err := tx.Exec(`DELETE FROM vec_chunks WHERE rowid = ?`, id); err != nil {
+			return fmt.Errorf("delete vec_chunks row %d: %w", id, err)
+		}
+	}
+
 	if _, err := tx.Exec(`DELETE FROM videos WHERE channel_id = ?`, channelID); err != nil {
 		return fmt.Errorf("delete videos for channel: %w", err)
 	}
