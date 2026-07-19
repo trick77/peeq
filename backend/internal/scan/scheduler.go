@@ -17,7 +17,6 @@ import (
 
 	"github.com/trick77/vark/internal/channels"
 	"github.com/trick77/vark/internal/channelvideos"
-	"github.com/trick77/vark/internal/jobs"
 	"github.com/trick77/vark/internal/settings"
 	"github.com/trick77/vark/internal/videos"
 	"github.com/trick77/vark/internal/ytdlp"
@@ -41,13 +40,20 @@ type ChannelLister interface {
 	ChannelVideos(ctx context.Context, ucid string, n int) ([]ytdlp.ChannelEntry, error)
 }
 
+// JobEnqueuer is the subset of *jobs.Store scanOnce needs. Narrowed to an
+// interface (rather than the concrete store) so tests can inject a
+// transient-failure fake; the real *jobs.Store satisfies it.
+type JobEnqueuer interface {
+	Enqueue(videoID string, priority int) (int64, error)
+}
+
 // Deps are the scheduler's collaborators and tunables. The stores, Lister,
 // and CookieStatus are required; the rest have safe defaults applied in New.
 type Deps struct {
 	Channels     *channels.Store
 	Ledger       *channelvideos.Store
 	Videos       *videos.Store
-	Jobs         *jobs.Store
+	Jobs         JobEnqueuer
 	Settings     *settings.Store
 	Lister       ChannelLister
 	CookieStatus func(ctx context.Context) string // settings.CookieStatus
@@ -123,15 +129,34 @@ func (s *Scheduler) Run(ctx context.Context) {
 			}
 		}
 		s.lastScanTime = s.d.Now()
-		s.safely(sub.ChannelID, func() {
-			if err := s.scanOnce(ctx, sub); err != nil {
-				s.d.Logger.Warn("scan failed; backing off", "channel", sub.ChannelID, "err", err)
-				next := s.d.Now().Add(scanBackoff).UTC().Format(sqlTimeLayout)
-				if berr := s.d.Channels.Backoff(sub.ChannelID, next); berr != nil {
-					s.d.Logger.Error("scan: backoff failed", "channel", sub.ChannelID, "err", berr)
-				}
-			}
-		})
+		s.scanChannel(ctx, sub)
+	}
+}
+
+// scanChannel runs one channel's scan under a panic guard. On a scan error OR
+// a recovered panic it backs the subscription off by scanBackoff (without
+// advancing baselined_at), so a persistently-failing or panicking channel is
+// bounded to roughly one attempt per hour rather than being re-claimed every
+// betweenChannels forever.
+func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.d.Logger.Error("scan: recovered from panic", "channel", sub.ChannelID, "panic", r)
+			s.backoff(sub.ChannelID)
+		}
+	}()
+	if err := s.scanOnce(ctx, sub); err != nil {
+		s.d.Logger.Warn("scan failed; backing off", "channel", sub.ChannelID, "err", err)
+		s.backoff(sub.ChannelID)
+	}
+}
+
+// backoff pushes a subscription's next_scan_at out by scanBackoff, leaving
+// baselined_at and last_scanned_at untouched.
+func (s *Scheduler) backoff(channelID string) {
+	next := s.d.Now().Add(scanBackoff).UTC().Format(sqlTimeLayout)
+	if err := s.d.Channels.Backoff(channelID, next); err != nil {
+		s.d.Logger.Error("scan: backoff failed", "channel", channelID, "err", err)
 	}
 }
 
@@ -179,13 +204,19 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		default:
 			entry.State = "pending"
 		}
-		if err := s.d.Ledger.Insert(entry); err != nil {
-			return err
-		}
+		// Autodownload: enqueue FIRST, then record the ledger row LAST. If
+		// enqueueAuto fails part-way, the ledger row is never written, so the
+		// next scan re-encounters the id and the videos-table dedup (the row
+		// enqueueAuto Upserted) catches the half-done id — rather than a
+		// premature 'queued' ledger row permanently masking a video that was
+		// never actually enqueued.
 		if entry.State == "queued" {
 			if err := s.enqueueAuto(e, sub); err != nil {
 				return err
 			}
+		}
+		if err := s.d.Ledger.Insert(entry); err != nil {
+			return err
 		}
 	}
 	next := s.d.Now().Add(s.jitteredInterval()).UTC().Format(sqlTimeLayout)
@@ -238,17 +269,6 @@ func (s *Scheduler) jitteredInterval() time.Duration {
 		d = time.Hour
 	}
 	return d
-}
-
-// safely runs fn, recovering from any panic so one pathological channel can
-// never kill the scan goroutine and silently stop all discovery.
-func (s *Scheduler) safely(channelID string, fn func()) {
-	defer func() {
-		if r := recover(); r != nil {
-			s.d.Logger.Error("scan: recovered from panic", "channel", channelID, "panic", r)
-		}
-	}()
-	fn()
 }
 
 // sleep waits d unless ctx is cancelled first. It returns false if ctx was

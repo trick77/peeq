@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -17,13 +18,19 @@ import (
 	"github.com/trick77/vark/internal/ytdlp"
 )
 
+// fixedNow is the harness's frozen wall clock, so next_scan_at / backoff math
+// is deterministic across tests.
+var fixedNow = time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+
 // fakeLister is a canned ChannelLister: it records how many times it was
-// called and returns pre-seeded entries per ucid. It is safe for concurrent
+// called and returns pre-seeded entries per ucid. When panicMsg is set it
+// panics instead (exercising the scan panic guard). It is safe for concurrent
 // use so the goroutine-driven no-cookie test stays race-clean.
 type fakeLister struct {
-	mu      sync.Mutex
-	entries map[string][]ytdlp.ChannelEntry
-	calls   int
+	mu       sync.Mutex
+	entries  map[string][]ytdlp.ChannelEntry
+	calls    int
+	panicMsg string
 }
 
 func newFakeLister() *fakeLister {
@@ -40,7 +47,25 @@ func (f *fakeLister) ChannelVideos(_ context.Context, ucid string, _ int) ([]ytd
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	if f.panicMsg != "" {
+		panic(f.panicMsg)
+	}
 	return f.entries[ucid], nil
+}
+
+// failOnceJobs wraps a real jobs store and fails the first Enqueue, then
+// delegates — a transient enqueue failure for the reorder/self-heal test.
+type failOnceJobs struct {
+	inner  *jobs.Store
+	failed bool
+}
+
+func (f *failOnceJobs) Enqueue(videoID string, priority int) (int64, error) {
+	if !f.failed {
+		f.failed = true
+		return 0, fmt.Errorf("transient enqueue failure")
+	}
+	return f.inner.Enqueue(videoID, priority)
 }
 
 // scanHarness wires a migrated temp DB, all five stores over that same DB, a
@@ -82,26 +107,34 @@ func newScanHarness(t *testing.T) *scanHarness {
 		lister:       newFakeLister(),
 		cookieStatus: "valid",
 	}
-	// Fixed clock keeps next_scan_at math deterministic; scanOnce only reads
-	// Now for the schedule stamps, which the tests don't assert on.
-	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
-	h.sched = New(Deps{
+	h.sched = h.buildSched(h.jobs)
+	return h
+}
+
+// buildSched constructs a Scheduler over the harness's stores with the given
+// job enqueuer and the frozen clock.
+func (h *scanHarness) buildSched(j JobEnqueuer) *Scheduler {
+	return New(Deps{
 		Channels:     h.channels,
 		Ledger:       h.ledger,
 		Videos:       h.videos,
-		Jobs:         h.jobs,
+		Jobs:         j,
 		Settings:     h.settings,
 		Lister:       h.lister,
 		CookieStatus: func(context.Context) string { return h.cookieStatus },
-		Now:          func() time.Time { return now },
+		Now:          func() time.Time { return fixedNow },
 		PollInterval: 5 * time.Millisecond,
 	})
-	return h
+}
+
+// useJobs rebuilds h.sched with a custom job enqueuer (e.g. a failing fake).
+func (h *scanHarness) useJobs(j JobEnqueuer) {
+	h.sched = h.buildSched(j)
 }
 
 // nowStr is the harness's fixed clock in SQLite text form.
 func (h *scanHarness) nowStr() string {
-	return time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC).Format(sqlTimeLayout)
+	return fixedNow.Format(sqlTimeLayout)
 }
 
 // trackAndSubscribe tracks ucid and subscribes it with a next_scan_at in the
@@ -139,6 +172,19 @@ func (h *scanHarness) markBaselined(ucid string, seenIDs []string) {
 	}
 }
 
+// ledgerState returns the ledger state for videoID (fails the test if absent).
+func (h *scanHarness) ledgerState(videoID string) string {
+	h.t.Helper()
+	e, err := h.ledger.Get(videoID)
+	if err != nil {
+		h.t.Fatalf("get ledger %s: %v", videoID, err)
+	}
+	if e == nil {
+		h.t.Fatalf("ledger row for %s missing", videoID)
+	}
+	return e.State
+}
+
 func TestScan_firstRunBaseline_queuesNothing(t *testing.T) {
 	h := newScanHarness(t)
 	h.trackAndSubscribe("UC1", false /*autodownload*/, "" /*format*/)
@@ -157,10 +203,11 @@ func TestScan_firstRunBaseline_queuesNothing(t *testing.T) {
 	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
 		t.Fatalf("baseline jobs = %d, want 0", len(jobsList))
 	}
-	ok1, _ := h.ledger.Exists("v1")
-	ok2, _ := h.ledger.Exists("v2")
-	if !ok1 || !ok2 {
-		t.Fatal("baseline must record all current ids as seen")
+	if st := h.ledgerState("v1"); st != "seen" {
+		t.Fatalf("v1 state = %q, want seen", st)
+	}
+	if st := h.ledgerState("v2"); st != "seen" {
+		t.Fatalf("v2 state = %q, want seen", st)
 	}
 	// baselined_at now set.
 	sub2, _ := h.channels.ClaimDue("2999-01-01 00:00:00")
@@ -187,6 +234,14 @@ func TestScan_subsequentNewVideo_pendingVsAutodownload(t *testing.T) {
 	p, _ := h.ledger.ListPending()
 	if len(p) != 1 || p[0].VideoID != "newp" {
 		t.Fatalf("pending = %+v, want [newp]", p)
+	}
+	// Filtered-out ids must be 'seen' specifically (not merely non-pending:
+	// 'ignored' would also pass ListPending but means something else).
+	if st := h.ledgerState("short"); st != "seen" {
+		t.Fatalf("short state = %q, want seen", st)
+	}
+	if st := h.ledgerState("up"); st != "seen" {
+		t.Fatalf("up state = %q, want seen", st)
 	}
 	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
 		t.Fatalf("non-autodownload must not enqueue; got %d jobs", len(jobsList))
@@ -216,6 +271,77 @@ func TestScan_autodownloadEnqueuesWithFormatOverride(t *testing.T) {
 	// ledger marked queued (not pending).
 	if p, _ := h.ledger.ListPending(); len(p) != 0 {
 		t.Fatalf("autodownloaded id must not be pending; got %+v", p)
+	}
+	if st := h.ledgerState("newv"); st != "queued" {
+		t.Fatalf("newv state = %q, want queued", st)
+	}
+}
+
+// TestScan_autodownloadEnqueueFailure_notMaskedByLedger proves the write
+// reorder: when enqueueAuto fails, no ledger row is written (so the id is not
+// permanently masked by an invisible 'queued' ledger row); the Upserted video
+// row remains, keeping the half-done id visible and catchable by the
+// videos-table dedup on the next scan.
+func TestScan_autodownloadEnqueueFailure_notMaskedByLedger(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", true, "bestvideo+bestaudio")
+	h.markBaselined("UC1", nil)
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "newv", Title: "N", URL: "https://www.youtube.com/watch?v=newv", DurationSeconds: 600, LiveStatus: "not_live"},
+	})
+	h.useJobs(&failOnceJobs{inner: h.jobs}) // Enqueue fails once
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err == nil {
+		t.Fatal("expected scanOnce to surface the transient enqueue failure")
+	}
+	// The ledger must NOT hold a masking row for the failed id.
+	if ok, _ := h.ledger.Exists("newv"); ok {
+		t.Fatal("failed enqueue must not leave a masking ledger row")
+	}
+	// The video row exists (enqueueAuto Upserts before enqueuing), so the id
+	// is visible and the next scan's videos-dedup catches it.
+	if v, _ := h.videos.Get("newv"); v == nil {
+		t.Fatal("enqueueAuto should have Upserted the video row before failing")
+	}
+	// Next scan (enqueue now works) must dedup via the videos table — no
+	// ledger 'queued' row resurrected.
+	sub2, _ := h.channels.ClaimDue(h.nowStr())
+	if sub2 == nil {
+		t.Fatal("subscription should still be due after a failed scan (no MarkScanned)")
+	}
+	if err := h.sched.scanOnce(context.Background(), sub2); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := h.ledger.Exists("newv"); ok {
+		t.Fatal("retry must dedup via videos table, not create a ledger row")
+	}
+}
+
+// TestScan_panicDuringScan_backsOff proves the panic guard backs the
+// subscription off (bounding a persistently-panicking channel to ~1/hour)
+// without clearing its baseline.
+func TestScan_panicDuringScan_backsOff(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil) // baselined_at set
+	h.lister.panicMsg = "boom"  // ChannelVideos panics
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+	// Must not propagate the panic; must back off internally.
+	h.sched.scanChannel(context.Background(), sub)
+
+	// Backed off: no longer due at now (next_scan_at pushed ~1h out).
+	if s2, _ := h.channels.ClaimDue(h.nowStr()); s2 != nil {
+		t.Fatalf("panic must back the subscription off; still due: %+v", s2)
+	}
+	// Baseline preserved.
+	s3, _ := h.channels.ClaimDue("2999-01-01 00:00:00")
+	if s3 == nil || s3.BaselinedAt == "" {
+		t.Fatalf("backoff must not clear baselined_at; sub=%+v", s3)
 	}
 }
 
