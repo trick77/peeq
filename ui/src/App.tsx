@@ -8,6 +8,7 @@ import { Library } from "./views/Library";
 import { Add } from "./views/Add";
 import { Player } from "./views/Player";
 import { Settings } from "./views/Settings";
+import { Channels } from "./views/Channels";
 
 // Page titles/subtitles per view, per the mockup's `titles` map.
 const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
@@ -15,6 +16,7 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
   player: { title: "Now playing" },
   add: { title: "Add a video" },
   pending: { title: "New & pending" },
+  channels: { title: "Channels" },
   settings: { title: "Settings" },
 };
 
@@ -259,6 +261,8 @@ function ViewSwitch({
       return <Add onQueued={() => {}} />;
     case "pending":
       return <p>New &amp; pending — coming in a later phase.</p>;
+    case "channels":
+      return <Channels />;
     case "settings":
       return <Settings />;
   }

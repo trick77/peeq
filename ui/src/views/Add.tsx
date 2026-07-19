@@ -1,36 +1,55 @@
 import { useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { addDownload, CookieRequiredError, InvalidUrlError } from "../api/downloads";
+import { addChannel } from "../api/channels";
+
+// channelURLRe detects a channel URL client-side, mirroring the backend's
+// ytdlp.Canonicalize kind switch (backend/internal/ytdlp/url.go): a
+// youtube.com path starting with channel/, @, c/, or user/. Kept in sync by
+// hand — Canonicalize is the source of truth, this is only a routing hint so
+// Add can pick addChannel vs addDownload before hitting the server.
+const channelURLRe = /youtube\.com\/(channel\/|@|c\/|user\/)/i;
 
 // Add — the paste-a-URL view. The mockup shows a live metadata preview
 // before the user confirms; Task 14's backend (POST /api/downloads) has no
 // separate "peek at metadata" endpoint, so this queues the download
 // directly on submit and shows the resulting queue entry as confirmation
-// instead of a pre-download preview.
+// instead of a pre-download preview. Task 13 adds channel-URL routing: a
+// pasted channel link tracks the channel (POST /api/channels) instead of
+// queuing a video download — subscribing is left to the Channels view.
 export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [queued, setQueued] = useState<{ title?: string; channel_name?: string } | null>(null);
+  const [tracked, setTracked] = useState<{ name: string } | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!url.trim() || busy) return;
+    const trimmed = url.trim();
+    if (!trimmed || busy) return;
     setBusy(true);
     setError(null);
     setQueued(null);
+    setTracked(null);
     try {
-      const job = await addDownload(url.trim());
-      setQueued({ title: job.title, channel_name: job.channel_name });
-      onQueued(job.video_id);
-      setUrl("");
+      if (channelURLRe.test(trimmed)) {
+        const channel = await addChannel(trimmed, false);
+        setTracked({ name: channel.name });
+        setUrl("");
+      } else {
+        const job = await addDownload(trimmed);
+        setQueued({ title: job.title, channel_name: job.channel_name });
+        onQueued(job.video_id);
+        setUrl("");
+      }
     } catch (err) {
       if (err instanceof CookieRequiredError) {
         setError("No YouTube cookie configured yet. Paste one on the Settings page before adding a video.");
       } else if (err instanceof InvalidUrlError) {
         setError(err.message || "That link isn't a single downloadable video (playlists and live streams aren't supported).");
       } else {
-        setError((err as Error).message ?? "Failed to add download.");
+        setError((err as Error).message ?? "Failed to add.");
       }
     } finally {
       setBusy(false);
@@ -52,7 +71,7 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
         </label>
         <button className="btn primary" type="submit" disabled={busy || !url.trim()}>
           <Icon name="download" size="18px" />
-          {busy ? "Adding…" : "Download now"}
+          {busy ? "Adding…" : channelURLRe.test(url.trim()) ? "Track channel" : "Download now"}
         </button>
       </form>
 
@@ -74,6 +93,21 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
             <div className="by">{queued.channel_name || "Added to the download queue"}</div>
             <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)" }}>
               Watch progress in the download dock, or open the video from the Library once it's done.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      {tracked ? (
+        <div className="preview">
+          <div>
+            <div className="pt g4" />
+          </div>
+          <div>
+            <h2>Tracked {tracked.name}</h2>
+            <div className="by">Not subscribed — new uploads won't auto-download yet.</div>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)" }}>
+              Subscribe or set an autodownload format from the Channels page.
             </p>
           </div>
         </div>

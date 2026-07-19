@@ -17,6 +17,7 @@ import {
   ExternalLink,
   ListTree,
   Play,
+  Tv,
   type LucideIcon,
 } from "lucide-react";
 
@@ -49,6 +50,7 @@ const COMPONENTS = {
   externalLink: ExternalLink,
   listTree: ListTree,
   play: Play,
+  tv: Tv,
   playFilled: Play, // rendered solid via the FILLED set below — rail logo + player play button
 } satisfies Record<string, LucideIcon>;
 
