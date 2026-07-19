@@ -45,6 +45,66 @@ func TestParseVTTDedupsAndTimestamps(t *testing.T) {
 	}
 }
 
+const slidingWindowSample = `WEBVTT
+
+00:00:01.000 --> 00:00:03.000
+the titanium frame is
+lighter this year
+
+00:00:03.000 --> 00:00:05.000
+lighter this year
+by twelve grams
+
+00:00:05.000 --> 00:00:07.000
+by twelve grams
+over the last model
+`
+
+func TestParseVTTCollapsesSlidingWindow(t *testing.T) {
+	p, err := ParseVTT(strings.NewReader(slidingWindowSample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"the titanium frame is",
+		"lighter this year",
+		"by twelve grams",
+		"over the last model",
+	} {
+		if c := strings.Count(p.Transcript, line); c != 1 {
+			t.Fatalf("expected %q exactly once, got %d in:\n%s", line, c, p.Transcript)
+		}
+	}
+}
+
+const distantRepeatSample = `WEBVTT
+
+00:00:01.000 --> 00:00:03.000
+the chorus repeats here
+
+00:00:03.000 --> 00:00:05.000
+some unrelated verse line
+
+00:00:05.000 --> 00:00:07.000
+another different line entirely
+
+00:00:07.000 --> 00:00:09.000
+yet another distinct thought
+
+00:00:09.000 --> 00:00:11.000
+the chorus repeats here
+`
+
+func TestParseVTTKeepsDistantRepeat(t *testing.T) {
+	p, err := ParseVTT(strings.NewReader(distantRepeatSample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := strings.Count(p.Transcript, "the chorus repeats here"); c != 2 {
+		t.Fatalf("expected distant repeat to survive twice, got %d in:\n%s", c, p.Transcript)
+	}
+}
+
 func TestParseVTTEmpty(t *testing.T) {
 	p, err := ParseVTT(strings.NewReader("WEBVTT\n"))
 	if err != nil {

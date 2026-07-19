@@ -29,6 +29,19 @@ var (
 	tagRe    = regexp.MustCompile(`<[^>]*>`)
 )
 
+// equalLines reports whether two line slices contain the same strings in order.
+func equalLines(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // ParseVTT reads WebVTT and returns the deduplicated transcript + cue index.
 func ParseVTT(r io.Reader) (Parsed, error) {
 	sc := bufio.NewScanner(r)
@@ -37,25 +50,55 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 	var cues []Cue
 	var curStart = -1
 	var curLines []string
-	var last string // last emitted line, for rolling-dup collapse
+	var last string        // joined text of the last emitted/merged cue, for whole-cue-dup collapse
+	var lastLines []string // lines of the last emitted/merged cue, for sliding-window line collapse
 
 	flush := func() {
 		if curStart < 0 {
 			return
 		}
-		text := strings.TrimSpace(strings.Join(curLines, " "))
-		curLines = curLines[:0]
+		lines := curLines
+		curLines = nil
+		if len(lines) == 0 {
+			return
+		}
+
+		// Collapse a sliding-window duplicate: YouTube auto-captions often repeat
+		// the tail line(s) of the previous cue as the leading line(s) of this one
+		// (a rolling window). Drop the longest run of leading lines here that
+		// exactly matches the trailing lines of the previously emitted cue.
+		if len(lastLines) > 0 {
+			maxK := len(lines)
+			if len(lastLines) < maxK {
+				maxK = len(lastLines)
+			}
+			for k := maxK; k >= 1; k-- {
+				if equalLines(lines[:k], lastLines[len(lastLines)-k:]) {
+					lines = lines[k:]
+					break
+				}
+			}
+		}
+		if len(lines) == 0 {
+			// every line in this cue was a rolling repeat of the previous cue —
+			// nothing new to emit.
+			return
+		}
+
+		text := strings.TrimSpace(strings.Join(lines, " "))
 		if text == "" {
 			return
 		}
-		// Collapse a rolling duplicate: if this cue's text is the previous line
-		// with more appended (or identical), keep only the longer form.
+
+		// Collapse a whole-cue rolling duplicate (e.g. a caption that re-grows a
+		// single line word-by-word): if this cue's text is the previous cue's
+		// text with more appended (or identical), keep only the longer form.
 		if last != "" && (text == last || strings.HasPrefix(text, last)) {
-			// replace the previous cue's text with the extended one
 			if len(cues) > 0 {
 				cues[len(cues)-1].Text = text
 			}
 			last = text
+			lastLines = lines
 			return
 		}
 		if last != "" && strings.HasPrefix(last, text) {
@@ -64,6 +107,7 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 		}
 		cues = append(cues, Cue{StartSeconds: curStart, Text: text})
 		last = text
+		lastLines = lines
 	}
 
 	for sc.Scan() {
