@@ -157,6 +157,45 @@ func (s *Store) Retrieve(ctx context.Context, queryEmbedding []float32, k int) (
 	return out, rows.Err()
 }
 
+// SearchFTS returns up to n chunks whose text matches the FTS5 expression,
+// best (lowest bm25) first. match must already be sanitized by BuildFTSMatch;
+// an empty match yields no hits without touching the DB. Distance is left 0 —
+// FTS rank is positional, and the caller fuses by rank, not score.
+//
+// bm25() must reference the FTS5 table by its real name, not the "f" alias
+// (SQLite resolves it as a hidden column lookup on the vtab itself, and
+// aliases aren't recognized there) — verified empirically against the
+// sqlite3 CLI (bm25(f) errors "no such column: f"; bm25(fts_chunks) works).
+func (s *Store) SearchFTS(ctx context.Context, match string, n int) ([]Hit, error) {
+	if strings.TrimSpace(match) == "" {
+		return nil, nil
+	}
+	if n <= 0 {
+		n = 10
+	}
+	const q = `
+		SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds
+		FROM fts_chunks f
+		JOIN transcript_chunks c ON c.id = f.rowid
+		WHERE f.text MATCH ?
+		ORDER BY bm25(fts_chunks)
+		LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, q, match, n)
+	if err != nil {
+		return nil, fmt.Errorf("fts search: %w", err)
+	}
+	defer rows.Close()
+	var out []Hit
+	for rows.Next() {
+		var h Hit
+		if err := rows.Scan(&h.VideoID, &h.Ordinal, &h.Text, &h.Kind, &h.StartSeconds); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 // BuiltDim reports the dimension the vec_chunks table was created with, so the
 // boot reconcile can detect an embed-model/dim change that invalidates it.
 //

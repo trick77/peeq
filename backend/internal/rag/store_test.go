@@ -130,3 +130,39 @@ func TestReplaceVideoChunksWritesFTSAndKind(t *testing.T) {
 		t.Fatalf("fts rows after re-index = %d, want 1 (no orphan)", total)
 	}
 }
+
+// TestSearchFTSMatchesKeyword asserts SearchFTS finds a chunk by an exact
+// keyword (e.g. "Fibonacci") that a purely semantic/vector search could
+// plausibly miss, and that it round-trips kind/start_seconds.
+func TestSearchFTSMatchesKeyword(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := store.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	dim := 1536
+	seedVec := func() []float32 {
+		out := make([]float32, dim)
+		out[0] = 0.5
+		return out
+	}
+	if _, err := db.Exec(`INSERT INTO videos (id, url) VALUES ('v1','u')`); err != nil {
+		t.Fatal(err)
+	}
+	st := NewStore(db)
+	ctx := context.Background()
+	rows := []ChunkRow{{Ordinal: 0, Text: "the Fibonacci sequence explained", Kind: "transcript", StartSeconds: 42}}
+	if err := st.ReplaceVideoChunks(ctx, "v1", "m", dim, rows, [][]float32{seedVec()}); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := st.SearchFTS(ctx, BuildFTSMatch("fibonacci"), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].StartSeconds != 42 || hits[0].Kind != "transcript" {
+		t.Fatalf("hits = %+v, want one transcript hit at 42s", hits)
+	}
+}
