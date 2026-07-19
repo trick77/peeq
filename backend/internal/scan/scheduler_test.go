@@ -442,12 +442,12 @@ func TestScanSkipsWhilePaused(t *testing.T) {
 	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "v1", DurationSeconds: 600}})
 	h.sched = New(Deps{
 		Channels: h.channels, Ledger: h.ledger, Videos: h.videos, Jobs: h.jobs,
-		Settings:     h.settings,
-		Lister:       h.lister,
-		CookieStatus: func(context.Context) string { return h.cookieStatus },
+		Settings:      h.settings,
+		Lister:        h.lister,
+		CookieStatus:  func(context.Context) string { return h.cookieStatus },
 		YoutubePaused: func(context.Context) bool { return true },
-		Now:          func() time.Time { return fixedNow },
-		PollInterval: 5 * time.Millisecond,
+		Now:           func() time.Time { return fixedNow },
+		PollInterval:  5 * time.Millisecond,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
