@@ -121,6 +121,20 @@ describe("Player", () => {
     expect(videoEl.currentTime).toBeCloseTo(42, 0);
   });
 
+  it("seeks to seekTo instead of resume_position_seconds when set (Task 18 jump-to-moment)", async () => {
+    render(<Player videoId="v1" seekTo={560} onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    fireEvent.loadedMetadata(videoEl);
+
+    expect(videoEl.currentTime).toBeCloseTo(560, 0);
+  });
+
   it("posts the current position to setResume on timeupdate", async () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
 

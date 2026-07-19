@@ -89,7 +89,19 @@ const DONE_STATUSES = new Set(["done", "no_transcript", "pending", "running", "e
 // the approved Phase 3 mockup (mixed layout: Summary + Highlights sit beside
 // the video in a sticky sidebar; Contents and the collapsible Transcript run
 // full-width below it).
-export function Player({ videoId, onDeleted }: { videoId: string | null; onDeleted: () => void }) {
+export function Player({
+  videoId,
+  seekTo,
+  onDeleted,
+}: {
+  videoId: string | null;
+  // seekTo — the Task 18 jump-to-moment target (Search's onOpen, via App's
+  // pendingSeek). Applied once in handleLoadedMetadata, in place of the
+  // stored resume position, the same way resume itself is applied only
+  // once per video load.
+  seekTo?: number;
+  onDeleted: () => void;
+}) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [skipToast, setSkipToast] = useState<string | null>(null);
@@ -234,7 +246,11 @@ export function Player({ videoId, onDeleted }: { videoId: string | null; onDelet
     // too-far resume once it's a known finite number; a not-yet-known
     // duration must never block applying resume.
     const durationKnown = Number.isFinite(el.duration);
-    if (video.resume_position_seconds > 0 && (!durationKnown || video.resume_position_seconds < el.duration)) {
+    if (seekTo !== undefined && (!durationKnown || seekTo < el.duration)) {
+      el.currentTime = seekTo;
+      setCurrentTime(seekTo);
+      positionRef.current = seekTo;
+    } else if (video.resume_position_seconds > 0 && (!durationKnown || video.resume_position_seconds < el.duration)) {
       el.currentTime = video.resume_position_seconds;
       setCurrentTime(video.resume_position_seconds);
       positionRef.current = video.resume_position_seconds;

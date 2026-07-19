@@ -1581,6 +1581,163 @@ textarea.cookiebox:focus {
   border-color: var(--color-accent);
 }
 
+/* ── Search (Task 18): global semantic-search view — hero query box +
+   results grouped by video, each a `.result` card listing matched moments.
+   Ported from the approved mockup's `.gsearch-hero`/`.bigsearch`/`.result`/
+   `.match` rules, mapped onto peeq's existing design tokens (--panel ->
+   --color-panel, --border -> --color-border, --acc/--acc-strong ->
+   --color-accent/--color-accent-strong, --bg -> --color-bg, --ink ->
+   --color-ink, --muted -> --color-muted, --r -> --radius-ui, --serif ->
+   --font-serif) rather than redefining the palette. .thumb/.thumb .dur/.fill
+   are already defined above (Library); only `.thumb .play` is new here. ── */
+.gsearch-hero {
+  border: 1px solid var(--color-border);
+  background: var(--color-panel);
+  border-radius: var(--radius-ui);
+  padding: 22px 22px 24px;
+  margin-bottom: 22px;
+}
+.gsearch-hero .lead {
+  font-family: var(--font-serif);
+  font-size: 19px;
+  font-weight: 500;
+  margin: 0 0 4px;
+}
+.gsearch-hero .hint {
+  color: var(--color-muted);
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+.bigsearch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-ui-lg);
+  background: var(--color-bg);
+}
+.bigsearch:focus-within {
+  border-color: var(--color-accent);
+}
+.bigsearch svg {
+  color: var(--color-accent-strong);
+}
+.bigsearch input {
+  flex: 1;
+  border: none;
+  background: none;
+  color: var(--color-ink);
+  outline: none;
+  font-size: 16px;
+  font-family: inherit;
+}
+.bigsearch kbd {
+  font-size: 11px;
+  color: var(--color-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 2px 6px;
+  background: var(--color-panel);
+}
+.semantic-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.semantic-note svg {
+  color: var(--color-accent-strong);
+}
+
+.results-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 6px 2px 14px;
+}
+.results-head .n {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+.result {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  gap: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-ui);
+  background: var(--color-panel);
+  padding: 14px;
+  margin-bottom: 14px;
+}
+.result:hover {
+  border-color: var(--color-accent);
+}
+.thumb .play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.85);
+}
+.rmeta h3 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: 17px;
+  margin: 0 0 3px;
+}
+.rmeta .ch {
+  color: var(--color-muted);
+  font-size: 12.5px;
+  margin-bottom: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.matches {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.match {
+  display: flex;
+  gap: 11px;
+  align-items: baseline;
+  padding: 7px 10px;
+  border-radius: var(--radius-ui-sm);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  text-align: left;
+  width: 100%;
+  color: inherit;
+  cursor: pointer;
+}
+.match:hover {
+  border-color: var(--color-accent-strong);
+}
+.match .ts {
+  color: var(--color-accent-strong);
+  font-size: 12px;
+  flex: none;
+  width: 46px;
+}
+.match .snip {
+  font-size: 13px;
+  color: var(--color-ink-dim);
+  line-height: 1.5;
+}
+.match .score {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--color-muted);
+  align-self: center;
+  flex: none;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;

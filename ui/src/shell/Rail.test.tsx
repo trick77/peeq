@@ -10,10 +10,11 @@ function renderRail() {
 }
 
 describe("Rail", () => {
-  it("renders the five nav items", () => {
+  it("renders the six nav items", () => {
     const html = renderRail();
     expect(html).toContain("Library");
     expect(html).toContain("Now playing");
+    expect(html).toContain("Search");
     expect(html).toContain("Add a video");
     expect(html).toContain("Pending");
     expect(html).toContain("Settings");
