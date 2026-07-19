@@ -68,3 +68,21 @@ func TestSchemaHasKindAndFTS(t *testing.T) {
 		t.Fatalf("MATCH count = %d, want 1", n)
 	}
 }
+
+func TestSchemaHasYoutubePauseColumns(t *testing.T) {
+	db, err := Open(t.TempDir() + "/s.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, col := range []string{"youtube_paused", "youtube_pause_reason", "youtube_paused_at"} {
+		var name string
+		err := db.QueryRow(`SELECT name FROM pragma_table_info('settings') WHERE name = ?`, col).Scan(&name)
+		if err != nil {
+			t.Fatalf("settings.%s missing: %v", col, err)
+		}
+	}
+}

@@ -11,7 +11,10 @@ CREATE TABLE settings (
     retention_days         INTEGER NOT NULL DEFAULT 14,
     min_free_gb            INTEGER NOT NULL DEFAULT 5,
     min_video_duration_seconds INTEGER NOT NULL DEFAULT 180,
-    ytdlp_version          TEXT NOT NULL DEFAULT ''
+    ytdlp_version          TEXT NOT NULL DEFAULT '',
+    youtube_paused         INTEGER NOT NULL DEFAULT 0,
+    youtube_pause_reason   TEXT NOT NULL DEFAULT '',
+    youtube_paused_at      TEXT
 );
 
 INSERT OR IGNORE INTO settings (id, format_preset, retention_days, throttle_base_seconds, min_free_gb, cookie_status, min_video_duration_seconds)
