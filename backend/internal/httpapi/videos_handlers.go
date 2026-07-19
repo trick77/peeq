@@ -36,11 +36,11 @@ type videoDTO struct {
 	Favorite              bool                     `json:"favorite"`
 	DownloadedAt          string                   `json:"downloaded_at,omitempty"`
 	SponsorblockSegments  []sponsorblockSegmentDTO `json:"sponsorblock_segments,omitempty"`
-	Summary               string                   `json:"summary,omitempty"`
+	Summary               string                   `json:"summary"`
 	Chapters              json.RawMessage          `json:"chapters,omitempty"`
 	KeyPoints             json.RawMessage          `json:"key_points,omitempty"`
-	SummaryStatus         string                   `json:"summary_status,omitempty"`
-	AudioLanguage         string                   `json:"audio_language,omitempty"`
+	SummaryStatus         string                   `json:"summary_status"`
+	AudioLanguage         string                   `json:"audio_language"`
 	HasSubtitles          bool                     `json:"has_subtitles"`
 }
 
@@ -70,11 +70,14 @@ func parseSponsorblockSegments(raw string) []sponsorblockSegmentDTO {
 
 // rawJSONOrNil turns a stored JSON-text column (chapters/key_points) into a
 // json.RawMessage so the client receives an actual array, not a
-// double-encoded string. A blank or malformed value yields nil, which
-// omitempty then drops from the response entirely.
+// double-encoded string. A blank or malformed value yields a JSON RawMessage
+// of an empty array ("[]") rather than nil — belt-and-suspenders so the
+// frontend's `chapters: Chapter[]` / `key_points: string[]` types can always
+// safely .map() the field, even if a row ever stored "" or something
+// unparsable, without relying solely on the migration's '[]' column default.
 func rawJSONOrNil(raw string) json.RawMessage {
 	if raw == "" || !json.Valid([]byte(raw)) {
-		return nil
+		return json.RawMessage("[]")
 	}
 	return json.RawMessage(raw)
 }

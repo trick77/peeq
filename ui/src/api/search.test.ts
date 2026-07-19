@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { searchVideos, resummarize, subtitlesUrl } from "./search";
+import { AuthExpiredError } from "./http";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -27,14 +28,17 @@ describe("search api", () => {
     expect(await searchVideos("nothing")).toEqual([]);
   });
 
-  it("resummarize POSTs to /api/videos/{id}/resummarize", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ status: "queued" }), { status: 202 }),
-    );
-    await resummarize("v1");
+  it("resummarize POSTs to /api/videos/{id}/resummarize and resolves on an empty 202 body", async () => {
+    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    await expect(resummarize("v1")).resolves.toBeUndefined();
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/videos/v1/resummarize");
     expect(init!.method).toBe("POST");
+  });
+
+  it("resummarize throws AuthExpiredError on a 401", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 401 }));
+    await expect(resummarize("v1")).rejects.toBeInstanceOf(AuthExpiredError);
   });
 
   it("subtitlesUrl builds the subtitles endpoint", () => {

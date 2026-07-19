@@ -35,6 +35,20 @@ export async function expectJSON<T>(response: Response, fallbackMessage: string)
   return response.json() as Promise<T>;
 }
 
+// expectNoContent is expectJSON's sibling for endpoints that reply 2xx with
+// an empty (or irrelevant) body — e.g. 202 Accepted for a fire-and-forget
+// job. It preserves the same 401 -> AuthExpiredError / non-2xx -> ApiError
+// mapping but deliberately never calls response.json() on the success path,
+// so an empty body doesn't throw a SyntaxError.
+export async function expectNoContent(response: Response, fallbackMessage: string): Promise<void> {
+  if (response.status === 401) {
+    throw new AuthExpiredError();
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, await readErrorMessage(response, fallbackMessage));
+  }
+}
+
 async function readErrorMessage(response: Response, fallback: string): Promise<string> {
   try {
     const body = (await response.json()) as { error?: unknown };
@@ -67,6 +81,13 @@ export const api = {
   async post<T>(path: string, body?: unknown, fallbackMessage = `POST ${path} failed`): Promise<T> {
     const response = await fetch(path, jsonInit("POST", body));
     return expectJSON<T>(response, fallbackMessage);
+  },
+  // postNoContent is for endpoints that reply 2xx with an empty body (e.g.
+  // 202 Accepted for a queued job) — see expectNoContent above for why this
+  // must not decode JSON on the success path.
+  async postNoContent(path: string, body?: unknown, fallbackMessage = `POST ${path} failed`): Promise<void> {
+    const response = await fetch(path, jsonInit("POST", body));
+    return expectNoContent(response, fallbackMessage);
   },
   async put<T>(path: string, body?: unknown, fallbackMessage = `PUT ${path} failed`): Promise<T> {
     const response = await fetch(path, jsonInit("PUT", body));

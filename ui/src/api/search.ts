@@ -29,8 +29,15 @@ export async function searchVideos(q: string): Promise<SearchResult[]> {
   return res.results ?? [];
 }
 
+// resummarize POSTs to the resummarize endpoint, which replies 202 Accepted
+// with an EMPTY body (the summary itself is produced asynchronously). It
+// uses `api.postNoContent` rather than `api.post`: the latter always calls
+// response.json() on a 2xx response, which throws SyntaxError on an empty
+// body and would make every successful resummarize request look like a
+// failure to the caller. postNoContent still preserves the shared
+// 401 -> AuthExpiredError / non-2xx -> ApiError handling.
 export async function resummarize(id: string): Promise<void> {
-  await api.post(`/api/videos/${encodeURIComponent(id)}/resummarize`, undefined, "failed to resummarize video");
+  await api.postNoContent(`/api/videos/${encodeURIComponent(id)}/resummarize`, undefined, "failed to resummarize video");
 }
 
 // subtitlesUrl is just a string builder (no request) — callers render it as
