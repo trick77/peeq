@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
 import { TopBar } from "./shell/TopBar";
-import { getMe, listDownloads, cookieHealth, downloadsStatus, streamDownloads } from "./api";
+import { getMe, listDownloads, cookieHealth, downloadsStatus, streamDownloads, listPending } from "./api";
 import type { DownloadsStatus } from "./api/downloads";
 import type { Job, User } from "./api/types";
 import { Library } from "./views/Library";
@@ -9,6 +9,7 @@ import { Add } from "./views/Add";
 import { Player } from "./views/Player";
 import { Settings } from "./views/Settings";
 import { Channels } from "./views/Channels";
+import { Pending } from "./views/Pending";
 
 // Page titles/subtitles per view, per the mockup's `titles` map.
 const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
@@ -29,6 +30,7 @@ export function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const [cookieStatus, setCookieStatus] = useState<string | undefined>(undefined);
   const [downloadStatus, setDownloadStatus] = useState<DownloadsStatus>({ paused: false, low_disk: false });
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
@@ -82,6 +84,24 @@ export function App() {
       active = false;
     };
   }, [authChecked, user]);
+
+  // The rail's "New & pending" badge reflects the channel_videos ledger's
+  // pending count (Task 14), not the download-jobs queue — loaded once on
+  // sign-in and refetched whenever the user navigates into the Pending view
+  // itself, so acting on an item (download/ignore) there updates the badge
+  // without a manual refresh.
+  useEffect(() => {
+    if (!authChecked || !user) return;
+    let active = true;
+    listPending()
+      .then((p) => {
+        if (active) setPendingCount(p.length);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [authChecked, user, view]);
 
   // When the worker reports it is paused (a cookie problem stalled the queue),
   // refresh the cookie status so the rail's indicator reflects the current
@@ -174,7 +194,6 @@ export function App() {
   }
 
   const meta = VIEW_META[view];
-  const pendingCount = jobs.filter((j) => j.state === "pending" || j.state === "running").length;
 
   function openVideo(id: string) {
     setSelectedVideoId(id);
@@ -260,7 +279,7 @@ function ViewSwitch({
       // download has even started); onOpenVideo is Library's job.
       return <Add onQueued={() => {}} />;
     case "pending":
-      return <p>New &amp; pending — coming in a later phase.</p>;
+      return <Pending />;
     case "channels":
       return <Channels />;
     case "settings":
