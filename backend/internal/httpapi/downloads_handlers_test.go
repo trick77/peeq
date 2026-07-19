@@ -247,6 +247,30 @@ func TestDownloads_postPlaylist_400(t *testing.T) {
 	}
 }
 
+// TestDownloads_postChannel_400 asserts a channel url is rejected before
+// enqueueing (and before ever calling Metadata) — channels are added under
+// the Channels feature, not through the single-video downloads endpoint.
+func TestDownloads_postChannel_400(t *testing.T) {
+	runner := &fakeDownloadsRunner{err: context.DeadlineExceeded} // must never be called
+	h := New(downloadsTestDeps(t, runner))
+	sessionCookie := loginAndGetCookie(t, h)
+
+	rec := postDownload(t, h, sessionCookie, "https://www.youtube.com/@SomeHandle")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/downloads (channel) status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 0 {
+		t.Fatalf("Metadata calls = %d, want 0 (channel must be rejected before metadata fetch)", runner.calls)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	if got["error"] != "That's a channel link — add it under Channels, not here" {
+		t.Fatalf("error = %q, want the channel rejection message", got["error"])
+	}
+}
+
 // TestDownloads_cancelMarksCanceled asserts POST /api/downloads/{id}/cancel
 // moves a pending job to canceled.
 func TestDownloads_cancelMarksCanceled(t *testing.T) {

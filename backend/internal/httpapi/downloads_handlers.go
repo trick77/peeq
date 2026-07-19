@@ -96,6 +96,9 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	case "live":
 		writeJSONError(w, http.StatusBadRequest, "Live videos and premieres aren't supported; paste the link again once it has finished and is a regular video")
 		return
+	case "channel":
+		writeJSONError(w, http.StatusBadRequest, "That's a channel link — add it under Channels, not here")
+		return
 	}
 	meta, err := s.runner.Metadata(r.Context(), watchURL)
 	if err != nil {
