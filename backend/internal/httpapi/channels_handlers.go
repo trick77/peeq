@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/trick77/vark/internal/channels"
+	"github.com/trick77/vark/internal/videos"
 	"github.com/trick77/vark/internal/ytdlp"
 )
 
@@ -254,4 +255,109 @@ func (s *server) handleChannelsUnsubscribe(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, map[string]string{"status": "unsubscribed"})
+}
+
+// pendingItem is the JSON shape returned by GET /api/pending: one ledger
+// entry awaiting a keep/ignore decision. It has no local media yet — a
+// pending item lives only in the channel_videos ledger, never in the videos
+// table, so there is no thumbnail_path here, only the remote thumbnail_url.
+type pendingItem struct {
+	VideoID         string `json:"video_id"`
+	ChannelID       string `json:"channel_id"`
+	Title           string `json:"title"`
+	DurationSeconds int    `json:"duration_seconds"`
+	URL             string `json:"url"`
+	ThumbnailURL    string `json:"thumbnail_url"`
+}
+
+// handlePendingList returns every ledger entry in state 'pending'. Mirrors
+// handleChannelsList's nil-503 behavior: an unconfigured ledger must report
+// unavailable, not silently return an empty list (a 200+[] response is
+// indistinguishable from "genuinely nothing pending").
+func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
+	if s.ledger == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		return
+	}
+	items, err := s.ledger.ListPending()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "list pending failed")
+		return
+	}
+	out := make([]pendingItem, 0, len(items))
+	for _, e := range items {
+		out = append(out, pendingItem{
+			VideoID:         e.VideoID,
+			ChannelID:       e.ChannelID,
+			Title:           e.Title,
+			DurationSeconds: e.DurationSeconds,
+			URL:             e.URL,
+			ThumbnailURL:    e.ThumbnailURL,
+		})
+	}
+	writeJSON(w, out)
+}
+
+// handlePendingDownload promotes a pending ledger entry to a real download:
+// upsert the videos row from the ledger's metadata (deliberately leaving
+// ThumbnailPath empty — the ledger's thumbnail_url is a remote url, not a
+// locally-downloaded file path), mark it queued, enqueue a job at the
+// standard manual priority, and flip the ledger row out of 'pending' so it
+// no longer shows up in the pending list. 404s if the ledger row doesn't
+// exist or is no longer pending (e.g. already downloaded or ignored).
+func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
+	if s.ledger == nil || s.videos == nil || s.jobs == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		return
+	}
+	id := r.PathValue("id")
+	e, err := s.ledger.Get(id)
+	if err != nil || e == nil || e.State != "pending" {
+		writeJSONError(w, http.StatusNotFound, "pending item not found")
+		return
+	}
+	if err := s.videos.Upsert(videos.Video{
+		ID:              e.VideoID,
+		URL:             e.URL,
+		Title:           e.Title,
+		ChannelID:       e.ChannelID,
+		DurationSeconds: int64(e.DurationSeconds),
+	}); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "save video failed")
+		return
+	}
+	if err := s.videos.SetStatus(e.VideoID, "queued", ""); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "save video failed")
+		return
+	}
+	if _, err := s.jobs.Enqueue(e.VideoID, downloadPriority); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "enqueue failed")
+		return
+	}
+	if err := s.ledger.SetState(e.VideoID, "queued"); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "update pending failed")
+		return
+	}
+	writeJSON(w, map[string]string{"status": "queued"})
+}
+
+// handlePendingIgnore marks a pending ledger entry as ignored, removing it
+// from the pending list without ever creating a videos row. 404s if the
+// ledger row doesn't exist.
+func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
+	if s.ledger == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		return
+	}
+	id := r.PathValue("id")
+	e, err := s.ledger.Get(id)
+	if err != nil || e == nil {
+		writeJSONError(w, http.StatusNotFound, "pending item not found")
+		return
+	}
+	if err := s.ledger.SetState(id, "ignored"); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "ignore failed")
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ignored"})
 }

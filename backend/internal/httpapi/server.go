@@ -10,6 +10,7 @@ import (
 
 	"github.com/trick77/vark/internal/auth"
 	"github.com/trick77/vark/internal/channels"
+	"github.com/trick77/vark/internal/channelvideos"
 	"github.com/trick77/vark/internal/jobs"
 	"github.com/trick77/vark/internal/settings"
 	"github.com/trick77/vark/internal/sse"
@@ -67,6 +68,10 @@ type Deps struct {
 	// ChannelResolver resolves a channel url to its authoritative UCID via
 	// yt-dlp. Optional: when nil, POST /api/channels returns 503.
 	ChannelResolver ChannelResolver
+
+	// Ledger is the per-channel scan ledger (channel_videos) backing the
+	// pending API. Optional: when nil, the pending endpoints return 503.
+	Ledger *channelvideos.Store
 }
 
 // YTDLPVersioner is the subset of *ytdlp.Runner the settings API needs to
@@ -107,6 +112,8 @@ type server struct {
 
 	channels        *channels.Store
 	channelResolver ChannelResolver
+
+	ledger *channelvideos.Store
 }
 
 // New returns the fully wired HTTP handler.
@@ -129,6 +136,8 @@ func New(d Deps) http.Handler {
 
 		channels:        d.Channels,
 		channelResolver: d.ChannelResolver,
+
+		ledger: d.Ledger,
 	}
 
 	mux := http.NewServeMux()
@@ -161,6 +170,9 @@ func New(d Deps) http.Handler {
 	mux.Handle("PUT /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsPut)))
 	mux.Handle("POST /api/channels/{id}/subscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsSubscribe)))
 	mux.Handle("POST /api/channels/{id}/unsubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsUnsubscribe)))
+	mux.Handle("GET /api/pending", s.requireAuth(http.HandlerFunc(s.handlePendingList)))
+	mux.Handle("POST /api/pending/{id}/download", s.requireAuth(http.HandlerFunc(s.handlePendingDownload)))
+	mux.Handle("POST /api/pending/{id}/ignore", s.requireAuth(http.HandlerFunc(s.handlePendingIgnore)))
 	if s.static != nil {
 		mux.Handle("/", s.static)
 	}

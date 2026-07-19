@@ -11,6 +11,7 @@ import (
 
 	"github.com/trick77/vark/internal/auth"
 	"github.com/trick77/vark/internal/channels"
+	"github.com/trick77/vark/internal/channelvideos"
 	"github.com/trick77/vark/internal/jobs"
 	"github.com/trick77/vark/internal/settings"
 	"github.com/trick77/vark/internal/videos"
@@ -336,5 +337,143 @@ func TestDownloadsPost_autoTracksChannel(t *testing.T) {
 	list := getJSON(t, h, "/api/channels?filter=tracked")
 	if !strings.Contains(list, "UCauto") {
 		t.Fatalf("channel not auto-tracked: %s", list)
+	}
+}
+
+// pendingTestHarness wires the pending API's full dependency set (channels,
+// ledger, videos, jobs) against one shared db, and embeds http.Handler so it
+// can be passed directly to the getJSON/postJSON request helpers.
+type pendingTestHarness struct {
+	http.Handler
+	channels *channels.Store
+	ledger   *channelvideos.Store
+	videos   *videos.Store
+	jobs     *jobs.Store
+}
+
+// seedChannel tracks id as a bare channel row, satisfying channel_videos'
+// foreign key on channel_id before a ledger entry referencing it is
+// inserted.
+func (h *pendingTestHarness) seedChannel(id string) {
+	if err := h.channels.Upsert(channels.Channel{ID: id, Name: id}); err != nil {
+		panic(err)
+	}
+}
+
+// newPendingTestServer builds a pendingTestHarness with dev auth plus real
+// channels, ledger, videos, and jobs stores — everything the pending API
+// needs, wired against one db so a promoted download is visible across all
+// of them.
+func newPendingTestServer(t *testing.T) *pendingTestHarness {
+	t.Helper()
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	channelsStore := channels.New(db)
+	ledgerStore := channelvideos.New(db)
+	videosStore := videos.New(db)
+	jobsStore := jobs.New(db)
+	deps := Deps{
+		AuthService:    auth.NewService(nil, sessions, users),
+		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Settings:       settings.New(db),
+		Channels:       channelsStore,
+		Ledger:         ledgerStore,
+		Videos:         videosStore,
+		Jobs:           jobsStore,
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}
+	return &pendingTestHarness{
+		Handler:  New(deps),
+		channels: channelsStore,
+		ledger:   ledgerStore,
+		videos:   videosStore,
+		jobs:     jobsStore,
+	}
+}
+
+// TestPending_listDownloadIgnore covers the full pending lifecycle: a scan's
+// pending entries appear in GET /api/pending, downloading one promotes it
+// to a queued videos row plus a manual-priority job and drops it from the
+// pending list, and ignoring another also drops it from the pending list
+// without ever creating a videos row.
+func TestPending_listDownloadIgnore(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p2", ChannelID: "UC1", Title: "B", URL: "https://www.youtube.com/watch?v=p2", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p2: %v", err)
+	}
+
+	if body := getJSON(t, h, "/api/pending"); !strings.Contains(body, "p1") || !strings.Contains(body, "p2") {
+		t.Fatalf("pending list = %s", body)
+	}
+	// Download p1 -> videos row queued + job at priority 10 + ledger no longer pending.
+	if rr := postJSON(t, h, "/api/pending/p1/download", nil); rr.Code != http.StatusOK {
+		t.Fatalf("download status = %d", rr.Code)
+	}
+	v, _ := h.videos.Get("p1")
+	if v == nil || v.Status != "queued" {
+		t.Fatalf("p1 video = %+v", v)
+	}
+	jl, _ := h.jobs.List()
+	if len(jl) != 1 || jl[0].VideoID != "p1" || jl[0].Priority != 10 {
+		t.Fatalf("jobs = %+v", jl)
+	}
+	// Ignore p2 -> gone from pending.
+	if rr := postJSON(t, h, "/api/pending/p2/ignore", nil); rr.Code != http.StatusOK {
+		t.Fatalf("ignore status = %d", rr.Code)
+	}
+	if body := getJSON(t, h, "/api/pending"); strings.Contains(body, "p2") || strings.Contains(body, "p1") {
+		t.Fatalf("pending should be empty: %s", body)
+	}
+}
+
+// TestPending_unconfigured_503 mirrors handleChannelsList's nil-503
+// contract: with no Ledger store wired, list/download/ignore must all
+// report unavailable rather than a silently-empty list or a 404.
+func TestPending_unconfigured_503(t *testing.T) {
+	h := New(testDeps(t))
+	cookie := loginAndGetCookie(t, h)
+
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/api/pending", nil),
+		httptest.NewRequest(http.MethodPost, "/api/pending/p1/download", nil),
+		httptest.NewRequest(http.MethodPost, "/api/pending/p1/ignore", nil),
+	} {
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s %s (unconfigured) status = %d, want 503, body = %s", req.Method, req.URL.Path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestPendingDownload_notPending_404 asserts downloading a video id that
+// isn't in the ledger at all (or already moved past 'pending') is a clean
+// 404, not a silent success or a 500.
+func TestPendingDownload_notPending_404(t *testing.T) {
+	h := newPendingTestServer(t)
+	rr := postJSON(t, h, "/api/pending/nope/download", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("download unknown id status = %d, want 404, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestPendingIgnore_notFound_404 asserts ignoring an unknown ledger id is a
+// clean 404, not a silent success.
+func TestPendingIgnore_notFound_404(t *testing.T) {
+	h := newPendingTestServer(t)
+	rr := postJSON(t, h, "/api/pending/nope/ignore", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("ignore unknown id status = %d, want 404, body=%s", rr.Code, rr.Body.String())
 	}
 }
