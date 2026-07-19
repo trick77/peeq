@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/trick77/vark/internal/auth"
@@ -285,6 +286,7 @@ func TestChannels_requireAuth(t *testing.T) {
 		httptest.NewRequest(http.MethodPost, "/api/channels", bytes.NewReader([]byte("{}"))),
 		httptest.NewRequest(http.MethodGet, "/api/channels", nil),
 		httptest.NewRequest(http.MethodPut, "/api/channels/UC1", bytes.NewReader([]byte("{}"))),
+		httptest.NewRequest(http.MethodDelete, "/api/channels/UC1", nil),
 		httptest.NewRequest(http.MethodPost, "/api/channels/UC1/subscribe", nil),
 		httptest.NewRequest(http.MethodPost, "/api/channels/UC1/unsubscribe", nil),
 	} {
@@ -394,6 +396,120 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 		ledger:   ledgerStore,
 		videos:   videosStore,
 		jobs:     jobsStore,
+	}
+}
+
+// recordingWorker is a DownloadsWorker that records which job ids Cancel was
+// called with, so the delete-channel test can assert a mid-download job was
+// cancelled before the rows were removed. The mutex keeps -race quiet even
+// though the handler calls Cancel synchronously.
+type recordingWorker struct {
+	mu       sync.Mutex
+	canceled map[int64]bool
+}
+
+func newRecordingWorker() *recordingWorker {
+	return &recordingWorker{canceled: map[int64]bool{}}
+}
+
+func (w *recordingWorker) Cancel(id int64) bool {
+	w.mu.Lock()
+	w.canceled[id] = true
+	w.mu.Unlock()
+	return true
+}
+func (w *recordingWorker) Resume()       {}
+func (w *recordingWorker) Paused() bool  { return false }
+func (w *recordingWorker) LowDisk() bool { return false }
+
+// channelsDeleteHarness wires the delete-channel API's full dependency set
+// (channels, videos, jobs) against one shared db plus a recording fake worker,
+// and embeds http.Handler so it can drive requests directly.
+type channelsDeleteHarness struct {
+	http.Handler
+	channels *channels.Store
+	videos   *videos.Store
+	jobs     *jobs.Store
+	worker   *recordingWorker
+}
+
+func (h *channelsDeleteHarness) seedChannel(id string) {
+	if err := h.channels.Upsert(channels.Channel{ID: id, Name: id}); err != nil {
+		panic(err)
+	}
+}
+
+// seedDownloadedVideo inserts a downloaded video row for the channel with the
+// given local media path, so a delete has a file ref to unlink.
+func (h *channelsDeleteHarness) seedDownloadedVideo(channelID, videoID, mediaPath string) {
+	if err := h.videos.Upsert(videos.Video{ID: videoID, URL: "u", ChannelID: channelID}); err != nil {
+		panic(err)
+	}
+	if err := h.videos.SetDownloaded(videoID, videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
+		panic(err)
+	}
+}
+
+func newChannelsDeleteServer(t *testing.T) *channelsDeleteHarness {
+	t.Helper()
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	channelsStore := channels.New(db)
+	videosStore := videos.New(db)
+	jobsStore := jobs.New(db)
+	worker := newRecordingWorker()
+	deps := Deps{
+		AuthService:    auth.NewService(nil, sessions, users),
+		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Settings:       settings.New(db),
+		Channels:       channelsStore,
+		Videos:         videosStore,
+		Jobs:           jobsStore,
+		Worker:         worker,
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}
+	return &channelsDeleteHarness{
+		Handler:  New(deps),
+		channels: channelsStore,
+		videos:   videosStore,
+		jobs:     jobsStore,
+		worker:   worker,
+	}
+}
+
+func doDelete(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodDelete, path, nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestChannelsDelete_cancelsAndCascades asserts DELETE /api/channels/{id}
+// cancels any active job for the channel's videos (killing a live download)
+// and then removes the channel and everything belonging to it.
+func TestChannelsDelete_cancelsAndCascades(t *testing.T) {
+	h := newChannelsDeleteServer(t)
+	h.seedChannel("UC1")
+	h.seedDownloadedVideo("UC1", "v1", "/tmp/does-not-matter.mp4")
+	jid, _ := h.jobs.Enqueue("v1", 0) // pending job for a channel video
+
+	rr := doDelete(t, h, "/api/channels/UC1")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !h.worker.canceled[jid] {
+		t.Fatalf("worker.Cancel(%d) was not called", jid)
+	}
+	if c, _ := h.channels.Get("UC1"); c != nil {
+		t.Fatal("channel still present after delete")
 	}
 }
 

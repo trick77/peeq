@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/trick77/vark/internal/channels"
+	"github.com/trick77/vark/internal/media"
 	"github.com/trick77/vark/internal/videos"
 	"github.com/trick77/vark/internal/ytdlp"
 )
@@ -255,6 +256,60 @@ func (s *server) handleChannelsUnsubscribe(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, map[string]string{"status": "unsubscribed"})
+}
+
+// handleChannelsDelete destructively removes a channel and EVERYTHING
+// belonging to it: its subscription, its scan-ledger rows, and all of its
+// downloaded videos (their jobs and on-disk media files included) — even
+// favorited "Kept forever" ones. This intentionally overrides the Phase-1
+// retention invariant for this one explicit, user-confirmed action.
+//
+// Order matters. Worker.Cancel settles asynchronously, so the steps are:
+//  1. Read the video refs BEFORE deleting — once the rows are gone their
+//     media paths are unrecoverable.
+//  2. Cancel any active (pending/running) jobs for those videos, killing a
+//     live download child. The worker's late settle-write is harmless: we
+//     delete the rows next, so it hits zero rows.
+//  3. Delete the rows (one tx; FK-cascades jobs, subscription, ledger).
+//  4. Unlink the media/thumbnail files using the refs captured in step 1.
+func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	id := r.PathValue("id")
+	// 1. Read refs BEFORE deleting (we need media paths after the rows are gone).
+	refs, err := s.channels.VideoRefs(id)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	// 2. Cancel any active jobs for those videos (kills a live child). The
+	//    worker settles asynchronously; that's fine — we delete the rows next,
+	//    and its late settle-write hits zero rows.
+	if s.worker != nil && s.jobs != nil {
+		vids := make([]string, len(refs))
+		for i, rf := range refs {
+			vids[i] = rf.VideoID
+		}
+		if jobIDs, err := s.jobs.ActiveIDsForVideos(vids); err == nil {
+			for _, jid := range jobIDs {
+				s.worker.Cancel(jid)
+			}
+		}
+	}
+	// 3. Delete rows (FK-cascades jobs, subscription, ledger).
+	if err := s.channels.DeleteCascade(id); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	// 4. Unlink media/thumbnail files (plus subtitle sidecars) using the refs
+	//    captured in step 1, via the same path-safe helper handleDeleteVideo
+	//    uses so the two deletion paths can never diverge.
+	for _, rf := range refs {
+		media.RemoveVideoFiles(s.mediaDir, rf.MediaPath, rf.ThumbnailPath)
+	}
+	writeJSON(w, map[string]string{"status": "deleted"})
 }
 
 // pendingItem is the JSON shape returned by GET /api/pending: one ledger

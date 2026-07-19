@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -59,6 +60,52 @@ func TestChannels_trackSubscribeClaim(t *testing.T) {
 	}
 	if len(items) != 2 {
 		t.Fatalf("subscribed count = %d, want 2", len(items))
+	}
+}
+
+// mustExec runs a statement against the raw db handle, failing the test on
+// error. Used to seed rows the channels Store has no writer for (videos,
+// download_jobs, channel_videos) directly in a cascade test.
+func mustExec(t *testing.T, db *sql.DB, query string, args ...any) {
+	t.Helper()
+	if _, err := db.Exec(query, args...); err != nil {
+		t.Fatalf("exec %q: %v", query, err)
+	}
+}
+
+// TestDeleteCascade_removesEverything asserts DeleteCascade removes the
+// channel and every row that belongs to it — its subscription, ledger rows,
+// downloaded videos, and (via videos' FK cascade) their download jobs — in one
+// go. VideoRefs must first surface the video's media path so the caller can
+// unlink the file after the row is gone.
+func TestDeleteCascade_removesEverything(t *testing.T) {
+	st := newTestStore(t)
+	db := st.DB()
+	st.Upsert(Channel{ID: "UC1", Name: "One"})
+	st.Subscribe("UC1", "2000-01-01 00:00:00")
+	// A downloaded video + a job + a ledger row, all for UC1.
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status,media_path) VALUES ('v1','u','UC1','downloaded','/m/v1.mp4')`)
+	mustExec(t, db, `INSERT INTO download_jobs (video_id, state) VALUES ('v1','done')`)
+	mustExec(t, db, `INSERT INTO channel_videos (video_id, channel_id, state) VALUES ('v1','UC1','queued')`)
+
+	refs, err := st.VideoRefs("UC1")
+	if err != nil || len(refs) != 1 || refs[0].MediaPath != "/m/v1.mp4" {
+		t.Fatalf("refs = %+v err=%v", refs, err)
+	}
+	if err := st.DeleteCascade("UC1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`SELECT count(*) FROM channels WHERE id='UC1'`,
+		`SELECT count(*) FROM subscriptions WHERE channel_id='UC1'`,
+		`SELECT count(*) FROM channel_videos WHERE channel_id='UC1'`,
+		`SELECT count(*) FROM videos WHERE channel_id='UC1'`,
+		`SELECT count(*) FROM download_jobs WHERE video_id='v1'`,
+	} {
+		var n int
+		if err := db.QueryRow(q).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("%q → n=%d err=%v, want 0", q, n, err)
+		}
 	}
 }
 

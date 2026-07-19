@@ -56,6 +56,65 @@ func New(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+// DB exposes the underlying handle so tests can seed rows the channels Store
+// itself has no writer for (videos, download_jobs, channel_videos) when
+// exercising the delete cascade.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
+// VideoRef identifies one of a channel's downloaded videos and the on-disk
+// files that belong to it. It is read BEFORE a cascade delete so the HTTP
+// handler can unlink media/thumbnail files after the videos rows are gone.
+type VideoRef struct {
+	VideoID       string
+	MediaPath     string
+	ThumbnailPath string
+}
+
+// VideoRefs returns a VideoRef for every videos row belonging to channelID.
+// Callers read these before DeleteCascade so the media/thumbnail paths (lost
+// once the rows are deleted) are still available for unlinking the files.
+func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT id, media_path, thumbnail_path FROM videos WHERE channel_id = ?`, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("video refs: %w", err)
+	}
+	defer rows.Close()
+	var out []VideoRef
+	for rows.Next() {
+		var r VideoRef
+		if err := rows.Scan(&r.VideoID, &r.MediaPath, &r.ThumbnailPath); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DeleteCascade removes a channel and everything belonging to it in one
+// transaction. videos has no foreign key to channels, so its rows are deleted
+// explicitly by channel_id (this FK-cascades their download_jobs). Deleting
+// the channel row then FK-cascades the subscription and channel_videos ledger
+// rows. This intentionally removes ALL of the channel's videos, including
+// favorited "Kept forever" ones — the explicit delete-channel action overrides
+// the retention invariant (the UI guards it behind a confirm).
+func (s *Store) DeleteCascade(channelID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM videos WHERE channel_id = ?`, channelID); err != nil {
+		return fmt.Errorf("delete videos for channel: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM channels WHERE id = ?`, channelID); err != nil {
+		return fmt.Errorf("delete channel: %w", err)
+	}
+	return tx.Commit()
+}
+
 // Upsert tracks a channel: inserts it if new, or refreshes handle/name if it
 // already exists. avatar_path and added_at are left untouched on conflict.
 func (s *Store) Upsert(c Channel) error {
