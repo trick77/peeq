@@ -493,11 +493,16 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 		ChaptersJSON:         res.ChaptersJSON,
 	}); err != nil {
 		w.deps.Logger.Error("download worker: set downloaded failed", "video_id", video.ID, "err", err)
+		// Do not enqueue a summary job: the video row was not updated with
+		// subtitle_path/audio_language/chapters, so a summary job would run
+		// against stale/incomplete data.
+		return
 	}
 
 	// Enqueue a summary job as a downstream consequence of every successful
 	// download (initial or re-download). SummaryJobs is nil in tests that
-	// don't care about summaries; production always sets it.
+	// don't care about summaries; production always sets it. Only reached
+	// when SetDownloaded above succeeded.
 	if w.deps.SummaryJobs != nil {
 		if _, err := w.deps.SummaryJobs.Enqueue(video.ID); err != nil {
 			w.deps.Logger.Error("download worker: enqueue summary job failed", "video_id", video.ID, "err", err)
