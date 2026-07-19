@@ -52,6 +52,25 @@ and queues nothing, so subscribing never triggers a bulk backfill. The scan itse
 same throttle as everything else: at least 60s between channels and a 20s+ randomized delay per
 yt-dlp call, so a large subscription list is scanned gradually rather than in a burst.
 
+## Subtitles, summaries & search
+
+Phase 3 adds AI-powered captions, summaries, chapter extraction, and vector search across video
+transcripts. This requires two external endpoints: a **MiMo chat API** for generating artifacts
+(summaries, chapters, highlights) and an **embeddings API** for indexing and searching.
+
+**Required env vars (peeq will not boot without these):**
+- `BACKEND_MIMO_BASE_URL` — MiMo chat endpoint (e.g. `http://localhost:8000/v1`)
+- `BACKEND_MIMO_API_KEY` — authentication token for MiMo
+- `BACKEND_EMBED_BASE_URL` — embeddings endpoint (e.g. `http://localhost:8001/v1`)
+- `BACKEND_EMBED_API_KEY` — authentication token for embeddings
+- `BACKEND_EMBED_MODEL` — model name (e.g. `text-embedding-3-small`)
+- `BACKEND_EMBED_DIM` — vector dimension (e.g. `1536`); **changing this requires recreating the
+  database** because the `vec_chunks` table's dimension is fixed at DDL time. To reset:
+  ```bash
+  rm ./data/peeq.db*
+  ```
+- `BACKEND_DEFAULT_SUB_LANG` — fallback subtitle language if none is auto-detected (default `en`)
+
 ## Two hard invariants
 
 - **No YouTube call ever fires without a valid cookie.** Every yt-dlp invocation (metadata fetch,
@@ -97,6 +116,22 @@ download pipeline:
    mid-download cancels the running job for that channel.
 8. With multiple subscribed channels, watch the logs across a scan cycle and confirm at least 60s
    between channels and a 20s+ delay per yt-dlp call.
+
+## Manual verification checklist (Phase 3: AI, captions, summaries & search)
+
+After any change to Phase 3 (captions, embeddings, summaries, chapters, or global search):
+
+1. Boot with a real YouTube cookie, a running **MiMo endpoint** (`BACKEND_MIMO_BASE_URL` + 
+   `BACKEND_MIMO_API_KEY`), and a running **embeddings endpoint** (`BACKEND_EMBED_BASE_URL` + 
+   `BACKEND_EMBED_API_KEY` + `BACKEND_EMBED_MODEL` + `BACKEND_EMBED_DIM`). peeq will refuse to 
+   start without all three.
+2. Download a real video and confirm its captions are present:
+   - Check that VTT captions are extracted (if the video has YouTube-hosted captions or subtitles).
+   - Confirm CC (closed captions) file(s) are generated and stored alongside the video.
+3. Wait for artifact generation (summaries, chapters, highlights) to complete. Verify all three 
+   appear in the video detail panel.
+4. Perform a **global search** (search box, top of page) using a keyword from the video's transcript. 
+   Confirm the result appears and links to the correct timestamp within the video.
 
 ## Legal note
 
