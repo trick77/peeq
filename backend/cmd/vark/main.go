@@ -20,11 +20,14 @@ import (
 	"time"
 
 	"github.com/trick77/vark/internal/auth"
+	"github.com/trick77/vark/internal/channels"
+	"github.com/trick77/vark/internal/channelvideos"
 	"github.com/trick77/vark/internal/config"
 	"github.com/trick77/vark/internal/download"
 	"github.com/trick77/vark/internal/httpapi"
 	"github.com/trick77/vark/internal/jobs"
 	"github.com/trick77/vark/internal/retention"
+	"github.com/trick77/vark/internal/scan"
 	"github.com/trick77/vark/internal/settings"
 	"github.com/trick77/vark/internal/sse"
 	"github.com/trick77/vark/internal/store"
@@ -120,6 +123,8 @@ func run() error {
 	settingsStore := settings.New(db)
 	jobsStore := jobs.New(db)
 	videosStore := videos.New(db)
+	channelsStore := channels.New(db)
+	ledgerStore := channelvideos.New(db)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -180,8 +185,18 @@ func run() error {
 	// blocks until both have actually observed ctx.Done() and returned,
 	// rather than exiting the process out from under them. Both loops exit
 	// promptly on ctx.Done(), so this wait is short.
+	scheduler := scan.New(scan.Deps{
+		Channels:     channelsStore,
+		Ledger:       ledgerStore,
+		Videos:       videosStore,
+		Jobs:         jobsStore,
+		Settings:     settingsStore,
+		Lister:       runner,
+		CookieStatus: func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
+	})
+
 	var workerWG sync.WaitGroup
-	workerWG.Add(3)
+	workerWG.Add(4)
 	go func() {
 		defer workerWG.Done()
 		slog.Info("download worker started")
@@ -195,6 +210,11 @@ func run() error {
 	go func() {
 		defer workerWG.Done()
 		runYtdlpSelfUpdateTicker(ctx, cfg.YtdlpDir, ytdlpSelfUpdateInterval)
+	}()
+	go func() {
+		defer workerWG.Done()
+		slog.Info("scan scheduler started")
+		scheduler.Run(ctx)
 	}()
 
 	slog.Info("SSE hub ready")
@@ -214,6 +234,10 @@ func run() error {
 		SSEHub:         sseHub,
 		StreamAccess:   streamTracker,
 		YTDLP:          ytdlpVersioner{dir: cfg.YtdlpDir},
+
+		Channels:        channelsStore,
+		ChannelResolver: runner,
+		Ledger:          ledgerStore,
 	}
 	handler := httpapi.New(deps)
 
