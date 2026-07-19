@@ -154,6 +154,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/videos/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleResumeVideo)))
 	mux.Handle("GET /api/videos/{id}/stream", s.requireAuth(http.HandlerFunc(s.handleStreamVideo)))
 	mux.Handle("GET /api/videos/{id}/thumbnail", s.requireAuth(http.HandlerFunc(s.handleVideoThumbnail)))
+	mux.Handle("GET /api/videos/{id}/subtitles", s.requireAuth(http.HandlerFunc(s.handleVideoSubtitles)))
 	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleGetSettings)))
 	mux.Handle("PUT /api/settings", s.requireAuth(http.HandlerFunc(s.handlePutSettings)))
 	mux.Handle("PUT /api/settings/cookie", s.requireAuth(http.HandlerFunc(s.handlePutSettingsCookie)))
