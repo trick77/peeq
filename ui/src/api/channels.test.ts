@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { listChannels, addChannel } from "./channels";
+import { listChannels, addChannel, updateChannel, subscribeChannel, unsubscribeChannel, deleteChannel } from "./channels";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -20,5 +20,46 @@ describe("channels api", () => {
     const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
     await listChannels("subscribed");
     expect(f.mock.calls[0][0]).toContain("filter=subscribed");
+  });
+
+  it("updateChannel PUTs the patch body to /api/channels/{id}", async () => {
+    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "UC1", autodownload: true, format_override: "" }), { status: 200 }),
+    );
+    await updateChannel("UC1", { autodownload: true });
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/channels/UC1");
+    expect(init!.method).toBe("PUT");
+    expect(JSON.parse(init!.body as string)).toEqual({ autodownload: true });
+  });
+
+  it("subscribeChannel POSTs to /api/channels/{id}/subscribe", async () => {
+    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ status: "subscribed" }), { status: 200 }),
+    );
+    await subscribeChannel("UC1");
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/channels/UC1/subscribe");
+    expect(init!.method).toBe("POST");
+  });
+
+  it("unsubscribeChannel POSTs to /api/channels/{id}/unsubscribe", async () => {
+    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ status: "unsubscribed" }), { status: 200 }),
+    );
+    await unsubscribeChannel("UC1");
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/channels/UC1/unsubscribe");
+    expect(init!.method).toBe("POST");
+  });
+
+  it("deleteChannel DELETEs /api/channels/{id}", async () => {
+    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ status: "deleted" }), { status: 200 }),
+    );
+    await deleteChannel("UC1");
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/channels/UC1");
+    expect(init!.method).toBe("DELETE");
   });
 });

@@ -20,11 +20,22 @@ export async function addChannel(
   );
 }
 
+// ChannelConfigUpdate mirrors handleChannelsPut's actual response body
+// (channels_handlers.go: writeJSON(w, map[string]any{"id", "autodownload",
+// "format_override"})) — deliberately NOT the full Channel shape. The
+// handler never re-reads name/subscribed/pending_count/downloaded_count
+// after the update, so callers must not assume this return value has them.
+export type ChannelConfigUpdate = {
+  id: string;
+  autodownload: boolean;
+  format_override: string;
+};
+
 export async function updateChannel(
   id: string,
   patch: { autodownload?: boolean; format_override?: string },
-): Promise<Channel> {
-  return api.put<Channel>(`/api/channels/${encodeURIComponent(id)}`, patch, "failed to update channel");
+): Promise<ChannelConfigUpdate> {
+  return api.put<ChannelConfigUpdate>(`/api/channels/${encodeURIComponent(id)}`, patch, "failed to update channel");
 }
 
 export async function subscribeChannel(id: string): Promise<{ status: string }> {
