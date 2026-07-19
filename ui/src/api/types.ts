@@ -87,6 +87,7 @@ export type Settings = {
   throttle_base_seconds: number;
   retention_days: number;
   min_free_gb: number;
+  min_video_duration_seconds: number;
   ytdlp_version: string;
 };
 
@@ -100,7 +101,34 @@ export type SettingsPatch = Partial<{
   throttle_base_seconds: number;
   retention_days: number;
   min_free_gb: number;
+  min_video_duration_seconds: number;
 }>;
+
+// Channel mirrors httpapi.channelItem — one tracked channel, joined with
+// its (optional) subscription state and video counts.
+export type Channel = {
+  id: string;
+  handle?: string;
+  name: string;
+  subscribed: boolean;
+  autodownload: boolean;
+  format_override?: string;
+  pending_count: number;
+  downloaded_count: number;
+};
+
+// PendingItem mirrors httpapi.pendingItem — one channel_videos ledger entry
+// awaiting a keep/ignore decision. No local media yet, so only the remote
+// thumbnail_url is present (no thumbnail_path).
+export type PendingItem = {
+  video_id: string;
+  channel_id: string;
+  channel_name: string;
+  title: string;
+  duration_seconds: number;
+  url: string;
+  thumbnail_url: string;
+};
 
 // CookieHealth mirrors httpapi.cookieHealthResponse — distinct from
 // Settings.cookie_status: this is the dedicated health-check shape used by

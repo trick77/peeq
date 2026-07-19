@@ -3,10 +3,10 @@ import { DownloadDock } from "./DownloadDock";
 import { CookieStatus } from "./CookieStatus";
 import type { Job } from "../api/types";
 
-// ViewId enumerates the five destinations the rail routes to. App.tsx owns
+// ViewId enumerates the six destinations the rail routes to. App.tsx owns
 // the actual view-state (manual, no router lib — see App.tsx); Rail is
 // purely presentational plus the onNavigate callback.
-export type ViewId = "library" | "player" | "add" | "pending" | "settings";
+export type ViewId = "library" | "player" | "add" | "pending" | "channels" | "settings";
 
 type NavItem = {
   id: ViewId;
@@ -30,6 +30,7 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     items: [
       { id: "add", label: "Add a video", icon: "plus" },
       { id: "pending", label: "New & pending", icon: "clock", hot: true },
+      { id: "channels", label: "Channels", icon: "tv" },
     ],
   },
   {

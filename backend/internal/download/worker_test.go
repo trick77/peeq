@@ -205,6 +205,43 @@ func TestWorker_success(t *testing.T) {
 	}
 }
 
+func TestWorker_prefersRequestedFormat(t *testing.T) {
+	// Seed a video with a per-channel override; the fake Runner records the
+	// DownloadReq it receives.
+	var gotReq ytdlp.DownloadReq
+	var rmu sync.Mutex
+
+	runner := &fakeRunner{
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			rmu.Lock()
+			gotReq = req
+			rmu.Unlock()
+			return &ytdlp.Result{MediaPath: "/media/v1/v1.mp4"}, nil
+		},
+	}
+	h := newHarness(t, runner, nil)
+	if err := h.videos.Upsert(videos.Video{
+		ID:              "v1",
+		URL:             "https://www.youtube.com/watch?v=v1",
+		RequestedFormat: "bestvideo+bestaudio",
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v1", 0); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	runWorker(t, h.worker)
+
+	waitForVideoStatus(t, h, "v1", "downloaded")
+
+	rmu.Lock()
+	req := gotReq
+	rmu.Unlock()
+	if req.Format != "custom" || req.CustomFormat != "bestvideo+bestaudio" {
+		t.Fatalf("req = {Format:%q Custom:%q}, want custom/bestvideo+bestaudio", req.Format, req.CustomFormat)
+	}
+}
+
 // --- Scenario B: block pauses and stops claiming ----------------------------
 
 func TestWorker_blockPausesAndStopsClaiming(t *testing.T) {

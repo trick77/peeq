@@ -73,3 +73,27 @@ func TestCanonicalize_emptyInput(t *testing.T) {
 		t.Fatal("expected error for empty input")
 	}
 }
+
+// TestCanonicalize_channelKinds asserts channel URLs in their various
+// YouTube shapes (UCID, @handle, legacy /c/, legacy /user/) canonicalize
+// to kind "channel" and return early, before the 11-char video-id check.
+func TestCanonicalize_channelKinds(t *testing.T) {
+	cases := map[string]struct{ url, id string }{
+		"https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv": {"https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv", "UCabcdefghijklmnopqrstuv"},
+		"https://www.youtube.com/@SomeHandle":                      {"https://www.youtube.com/@SomeHandle", "@SomeHandle"},
+		"https://www.youtube.com/c/SomeName":                       {"https://www.youtube.com/c/SomeName", "SomeName"},
+		"https://www.youtube.com/user/LegacyName":                  {"https://www.youtube.com/user/LegacyName", "LegacyName"},
+	}
+	for in, want := range cases {
+		gotURL, gotID, kind, err := Canonicalize(in)
+		if err != nil {
+			t.Fatalf("%s: unexpected err %v", in, err)
+		}
+		if kind != "channel" {
+			t.Fatalf("%s: kind = %q, want channel", in, kind)
+		}
+		if gotURL != want.url || gotID != want.id {
+			t.Fatalf("%s: got (%q,%q), want (%q,%q)", in, gotURL, gotID, want.url, want.id)
+		}
+	}
+}

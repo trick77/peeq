@@ -55,6 +55,17 @@ func Canonicalize(raw string) (watchURL, id, kind string, err error) {
 		case path == "playlist":
 			id = u.Query().Get("list")
 			kind = "playlist"
+		case strings.HasPrefix(path, "channel/"):
+			id = strings.TrimPrefix(path, "channel/")
+			return "https://www.youtube.com/channel/" + id, id, "channel", nil
+		case strings.HasPrefix(path, "@"):
+			return "https://www.youtube.com/" + path, path, "channel", nil
+		case strings.HasPrefix(path, "c/"):
+			id = strings.TrimPrefix(path, "c/")
+			return "https://www.youtube.com/c/" + id, id, "channel", nil
+		case strings.HasPrefix(path, "user/"):
+			id = strings.TrimPrefix(path, "user/")
+			return "https://www.youtube.com/user/" + id, id, "channel", nil
 		default:
 			return "", "", "unknown", fmt.Errorf("ytdlp: unrecognized youtube.com path %q", u.Path)
 		}

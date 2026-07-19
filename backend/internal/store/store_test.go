@@ -35,6 +35,25 @@ func TestMigrate_createsCoreTables(t *testing.T) {
 	}
 }
 
+func TestMigrate_createsPhase2Tables(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, tbl := range []string{"channels", "subscriptions", "channel_videos", "users", "sessions"} {
+		var n int
+		if err := db.QueryRow(
+			"select count(*) from sqlite_master where type='table' and name=?", tbl,
+		).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("table %s missing (n=%d err=%v)", tbl, n, err)
+		}
+	}
+}
+
 func TestMigrate_idempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "t.db")
 

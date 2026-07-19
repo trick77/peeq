@@ -1306,6 +1306,56 @@ textarea.cookiebox:focus {
   flex: none;
 }
 
+.channel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.channel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+}
+.channel-info h3 {
+  font-family: var(--font-serif);
+}
+.channel-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.channel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--color-ink-dim);
+  white-space: nowrap;
+}
+.channel-toggle input[type="checkbox"] {
+  accent-color: var(--color-accent);
+  width: 15px;
+  height: 15px;
+}
+.channel-format-input {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 8px 11px;
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  outline: none;
+  width: 200px;
+}
+.channel-format-input:focus {
+  border-color: var(--color-accent);
+}
+
 @media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;

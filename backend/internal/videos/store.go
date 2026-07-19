@@ -37,6 +37,7 @@ type Video struct {
 	MediaPath             string
 	FilesizeBytes         int64
 	FormatUsed            string
+	RequestedFormat       string
 	Availability          string
 	Status                string
 	ErrorMessage          string
@@ -78,8 +79,13 @@ func New(db *sql.DB) *Store {
 // Upsert inserts a video row or, if it already exists, refreshes only its
 // metadata columns. It deliberately does NOT touch download-owned columns
 // (status, media_path, filesize_bytes, format_used, downloaded_at,
-// sponsorblock_segments): re-running metadata for an already-downloaded
-// video must not wipe its downloaded state.
+// sponsorblock_segments) or requested_format: re-running metadata for an
+// already-downloaded video must not wipe its downloaded state, and a
+// metadata-only re-sync must not clobber a per-channel format override set
+// via SetRequestedFormat. requested_format IS included in the INSERT
+// column list, so a fresh row still carries the value the caller passed
+// (e.g. an initial channel scan seeding both metadata and the override in
+// one Upsert); it is simply excluded from the ON CONFLICT UPDATE SET.
 func (s *Store) Upsert(v Video) error {
 	availability := v.Availability
 	if availability == "" {
@@ -87,8 +93,8 @@ func (s *Store) Upsert(v Video) error {
 	}
 	_, err := s.db.ExecContext(context.Background(), `
 INSERT INTO videos (id, url, title, channel_id, channel_name, duration_seconds,
-	published_at, description, thumbnail_path, availability)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	published_at, description, thumbnail_path, availability, requested_format)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	url             = excluded.url,
 	title           = excluded.title,
@@ -100,7 +106,7 @@ ON CONFLICT(id) DO UPDATE SET
 	thumbnail_path  = excluded.thumbnail_path,
 	availability    = excluded.availability`,
 		v.ID, v.URL, v.Title, v.ChannelID, v.ChannelName, nullInt(v.DurationSeconds),
-		nullStr(v.PublishedAt), v.Description, v.ThumbnailPath, availability,
+		nullStr(v.PublishedAt), v.Description, v.ThumbnailPath, availability, v.RequestedFormat,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert video %s: %w", v.ID, err)
@@ -111,7 +117,7 @@ ON CONFLICT(id) DO UPDATE SET
 // videoColumns is the column list shared by Get and List, in the order
 // scanRow expects.
 const videoColumns = `id, url, title, channel_id, channel_name, duration_seconds, published_at,
-	description, thumbnail_path, media_path, filesize_bytes, format_used,
+	description, thumbnail_path, media_path, filesize_bytes, format_used, requested_format,
 	availability, status, error_message, sponsorblock_segments,
 	watched, watched_at, resume_position_seconds, favorite, favorited_at,
 	created_at, downloaded_at`
@@ -129,7 +135,7 @@ func scanVideo(rs rowScanner) (Video, error) {
 	var watched, favorite int
 	err := rs.Scan(
 		&v.ID, &v.URL, &v.Title, &v.ChannelID, &v.ChannelName, &duration, &publishedAt,
-		&v.Description, &v.ThumbnailPath, &v.MediaPath, &filesize, &v.FormatUsed,
+		&v.Description, &v.ThumbnailPath, &v.MediaPath, &filesize, &v.FormatUsed, &v.RequestedFormat,
 		&v.Availability, &v.Status, &v.ErrorMessage, &v.SponsorblockSegments,
 		&watched, &watchedAt, &v.ResumePositionSeconds, &favorite, &favoritedAt,
 		&v.CreatedAt, &downloadedAt,
@@ -213,6 +219,18 @@ func (s *Store) SetStatus(id, status, errMsg string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("set video %s status: %w", id, err)
+	}
+	return nil
+}
+
+// SetRequestedFormat overrides the yt-dlp format string used for this
+// video's next download (empty = use the global preset). Set by the scan
+// scheduler from a channel's format_override before enqueueing.
+func (s *Store) SetRequestedFormat(id, format string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET requested_format = ? WHERE id = ?`, format, id)
+	if err != nil {
+		return fmt.Errorf("set requested_format %s: %w", id, err)
 	}
 	return nil
 }

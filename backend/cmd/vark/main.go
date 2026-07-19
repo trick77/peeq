@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,11 +21,14 @@ import (
 	"time"
 
 	"github.com/trick77/vark/internal/auth"
+	"github.com/trick77/vark/internal/channels"
+	"github.com/trick77/vark/internal/channelvideos"
 	"github.com/trick77/vark/internal/config"
 	"github.com/trick77/vark/internal/download"
 	"github.com/trick77/vark/internal/httpapi"
 	"github.com/trick77/vark/internal/jobs"
 	"github.com/trick77/vark/internal/retention"
+	"github.com/trick77/vark/internal/scan"
 	"github.com/trick77/vark/internal/settings"
 	"github.com/trick77/vark/internal/sse"
 	"github.com/trick77/vark/internal/store"
@@ -67,6 +71,15 @@ func run() error {
 
 	if err := store.Migrate(db); err != nil {
 		return err
+	}
+
+	// Fail loud on a stale (un-migrated) DB. The migrations were squashed, so a
+	// leftover Phase-1 database boots past Migrate but lacks the Phase-2 tables,
+	// which then surfaces as confusing runtime 500s. Probe one Phase-2 table
+	// (channel_videos): an empty table (sql.ErrNoRows) is HEALTHY — only a
+	// "no such table" error means the schema is stale, which is fatal.
+	if err := db.QueryRowContext(context.Background(), "SELECT 1 FROM channel_videos LIMIT 1").Scan(new(int)); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("database schema is stale (missing Phase-2 tables): %w; recreate it with `rm ./data/vark.db*` and restart", err)
 	}
 
 	// Secure (HTTPS-only) cookies whenever the app is reachable over https;
@@ -120,6 +133,8 @@ func run() error {
 	settingsStore := settings.New(db)
 	jobsStore := jobs.New(db)
 	videosStore := videos.New(db)
+	channelsStore := channels.New(db)
+	ledgerStore := channelvideos.New(db)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -175,13 +190,25 @@ func run() error {
 		Guard:    streamTracker,
 	})
 
-	// Bound the worker and sweeper goroutines' lifetimes to the process:
-	// wg.Wait() below (after serve returns, i.e. after ctx is cancelled)
-	// blocks until both have actually observed ctx.Done() and returned,
-	// rather than exiting the process out from under them. Both loops exit
-	// promptly on ctx.Done(), so this wait is short.
+	scheduler := scan.New(scan.Deps{
+		Channels:     channelsStore,
+		Ledger:       ledgerStore,
+		Videos:       videosStore,
+		Jobs:         jobsStore,
+		Settings:     settingsStore,
+		Lister:       runner,
+		CookieStatus: func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
+	})
+
+	// Bound all four background goroutines' lifetimes to the process: the
+	// download worker, the retention sweeper, the yt-dlp self-update ticker,
+	// and the scan scheduler. workerWG.Wait() below (after serve returns,
+	// i.e. after ctx is cancelled) blocks until all four have actually
+	// observed ctx.Done() and returned, rather than exiting the process out
+	// from under them. All four loops exit promptly on ctx.Done(), so this
+	// wait is short.
 	var workerWG sync.WaitGroup
-	workerWG.Add(3)
+	workerWG.Add(4)
 	go func() {
 		defer workerWG.Done()
 		slog.Info("download worker started")
@@ -195,6 +222,11 @@ func run() error {
 	go func() {
 		defer workerWG.Done()
 		runYtdlpSelfUpdateTicker(ctx, cfg.YtdlpDir, ytdlpSelfUpdateInterval)
+	}()
+	go func() {
+		defer workerWG.Done()
+		slog.Info("scan scheduler started")
+		scheduler.Run(ctx)
 	}()
 
 	slog.Info("SSE hub ready")
@@ -214,6 +246,10 @@ func run() error {
 		SSEHub:         sseHub,
 		StreamAccess:   streamTracker,
 		YTDLP:          ytdlpVersioner{dir: cfg.YtdlpDir},
+
+		Channels:        channelsStore,
+		ChannelResolver: runner,
+		Ledger:          ledgerStore,
 	}
 	handler := httpapi.New(deps)
 

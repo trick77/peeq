@@ -9,6 +9,8 @@ import (
 	"net/http"
 
 	"github.com/trick77/vark/internal/auth"
+	"github.com/trick77/vark/internal/channels"
+	"github.com/trick77/vark/internal/channelvideos"
 	"github.com/trick77/vark/internal/jobs"
 	"github.com/trick77/vark/internal/settings"
 	"github.com/trick77/vark/internal/sse"
@@ -59,6 +61,17 @@ type Deps struct {
 	// button. Optional: when nil, both endpoints return 503 rather than
 	// panic — a deployment without a resolvable yt-dlp binary still boots.
 	YTDLP YTDLPVersioner
+
+	// Channels is the tracked-channels/subscriptions store backing the
+	// channels API. Optional: when nil, the channels endpoints return 503.
+	Channels *channels.Store
+	// ChannelResolver resolves a channel url to its authoritative UCID via
+	// yt-dlp. Optional: when nil, POST /api/channels returns 503.
+	ChannelResolver ChannelResolver
+
+	// Ledger is the per-channel scan ledger (channel_videos) backing the
+	// pending API. Optional: when nil, the pending endpoints return 503.
+	Ledger *channelvideos.Store
 }
 
 // YTDLPVersioner is the subset of *ytdlp.Runner the settings API needs to
@@ -96,6 +109,11 @@ type server struct {
 
 	streamAccess StreamAccessRecorder
 	ytdlp        YTDLPVersioner
+
+	channels        *channels.Store
+	channelResolver ChannelResolver
+
+	ledger *channelvideos.Store
 }
 
 // New returns the fully wired HTTP handler.
@@ -115,6 +133,11 @@ func New(d Deps) http.Handler {
 		sseHub:        d.SSEHub,
 		streamAccess:  d.StreamAccess,
 		ytdlp:         d.YTDLP,
+
+		channels:        d.Channels,
+		channelResolver: d.ChannelResolver,
+
+		ledger: d.Ledger,
 	}
 
 	mux := http.NewServeMux()
@@ -142,6 +165,15 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/downloads/stream", s.requireAuth(http.HandlerFunc(s.handleDownloadsStream)))
 	mux.Handle("GET /api/ytdlp/version", s.requireAuth(http.HandlerFunc(s.handleYTDLPVersion)))
 	mux.Handle("POST /api/ytdlp/update", s.requireAuth(http.HandlerFunc(s.handleYTDLPUpdate)))
+	mux.Handle("POST /api/channels", s.requireAuth(http.HandlerFunc(s.handleChannelsPost)))
+	mux.Handle("GET /api/channels", s.requireAuth(http.HandlerFunc(s.handleChannelsList)))
+	mux.Handle("PUT /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsPut)))
+	mux.Handle("DELETE /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsDelete)))
+	mux.Handle("POST /api/channels/{id}/subscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsSubscribe)))
+	mux.Handle("POST /api/channels/{id}/unsubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsUnsubscribe)))
+	mux.Handle("GET /api/pending", s.requireAuth(http.HandlerFunc(s.handlePendingList)))
+	mux.Handle("POST /api/pending/{id}/download", s.requireAuth(http.HandlerFunc(s.handlePendingDownload)))
+	mux.Handle("POST /api/pending/{id}/ignore", s.requireAuth(http.HandlerFunc(s.handlePendingIgnore)))
 	if s.static != nil {
 		mux.Handle("/", s.static)
 	}

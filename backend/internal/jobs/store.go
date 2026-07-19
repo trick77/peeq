@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrNotRunning is returned by Finish, Bump, and Fail when their guarded
@@ -221,6 +222,37 @@ UPDATE download_jobs SET state = 'pending', started_at = NULL WHERE state = 'run
 		return fmt.Errorf("reset orphan jobs: %w", err)
 	}
 	return nil
+}
+
+// ActiveIDsForVideos returns the ids of every still-active (pending or
+// running) job for the given video ids. The delete-channel handler uses it to
+// find the live jobs it must cancel before removing a channel's videos. An
+// empty input returns nil without touching the database.
+func (s *Store) ActiveIDsForVideos(videoIDs []string) ([]int64, error) {
+	if len(videoIDs) == 0 {
+		return nil, nil
+	}
+	ph := strings.Repeat("?,", len(videoIDs))
+	ph = ph[:len(ph)-1]
+	args := make([]any, len(videoIDs))
+	for i, v := range videoIDs {
+		args[i] = v
+	}
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT id FROM download_jobs WHERE state IN ('pending','running') AND video_id IN (`+ph+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("active job ids: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // List returns all jobs in claim order (priority DESC, enqueued_at ASC, id

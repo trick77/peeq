@@ -48,6 +48,7 @@ export function Settings() {
   const [limitRate, setLimitRate] = useState("");
   const [throttleBase, setThrottleBase] = useState(20);
   const [retentionDays, setRetentionDays] = useState(14);
+  const [minVideoDuration, setMinVideoDuration] = useState(0);
 
   const [ytdlpVersion, setYtdlpVersion] = useState<string | null>(null);
   const [ytdlpBusy, setYtdlpBusy] = useState(false);
@@ -61,6 +62,7 @@ export function Settings() {
         setLimitRate(s.limit_rate);
         setThrottleBase(s.throttle_base_seconds);
         setRetentionDays(s.retention_days);
+        setMinVideoDuration(s.min_video_duration_seconds);
         setError(null);
       })
       .catch((e: Error) => setError(e.message));
@@ -134,6 +136,15 @@ export function Settings() {
   async function commitRetention() {
     try {
       const s = await updateSettings({ retention_days: retentionDays });
+      setSettingsState(s);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function handleSaveMinVideoDuration() {
+    try {
+      const s = await updateSettings({ min_video_duration_seconds: minVideoDuration });
       setSettingsState(s);
     } catch (err) {
       setError((err as Error).message);
@@ -268,6 +279,21 @@ export function Settings() {
             />
             <p className="retain-note">
               The backend enforces a <b>20s hard floor</b> regardless of this value.
+            </p>
+          </div>
+          <div className="ctrl">
+            <span className="lab">Ignore channel videos shorter than (seconds)</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={minVideoDuration}
+              onChange={(e) => setMinVideoDuration(Number(e.target.value))}
+              onBlur={handleSaveMinVideoDuration}
+              aria-label="Ignore channel videos shorter than (seconds)"
+            />
+            <p className="retain-note">
+              Channel scans skip videos shorter than this (e.g. Shorts). <b>0</b> disables the filter.
             </p>
           </div>
           <div className="ctrl">

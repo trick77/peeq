@@ -52,6 +52,55 @@ func TestUpsert_insertThenGet(t *testing.T) {
 	}
 }
 
+func TestUpsert_requestedFormat(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v1", URL: "u", RequestedFormat: "bestvideo+bestaudio"}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Get("v1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.RequestedFormat != "bestvideo+bestaudio" {
+		t.Fatalf("requested_format = %q", v.RequestedFormat)
+	}
+	if err := s.SetRequestedFormat("v1", "worst"); err != nil {
+		t.Fatal(err)
+	}
+	v, err = s.Get("v1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.RequestedFormat != "worst" {
+		t.Fatalf("after set, requested_format = %q", v.RequestedFormat)
+	}
+}
+
+// TestUpsert_requestedFormatSurvivesMetadataResync guards against Upsert
+// clobbering an already-set requested_format override: a later
+// metadata-only re-sync (e.g. the channel scanner refreshing title/
+// duration/etc.) always calls Upsert with a zero-value RequestedFormat,
+// and that must NOT wipe an override previously written by
+// SetRequestedFormat. requested_format is only ever changed via
+// SetRequestedFormat once a row exists.
+func TestUpsert_requestedFormatSurvivesMetadataResync(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v1", URL: "u", RequestedFormat: "bestvideo+bestaudio"}); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a metadata-only re-sync: same id, empty RequestedFormat.
+	if err := s.Upsert(Video{ID: "v1", URL: "u", Title: "Updated Title"}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Get("v1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.RequestedFormat != "bestvideo+bestaudio" {
+		t.Fatalf("requested_format = %q, want preserved bestvideo+bestaudio", v.RequestedFormat)
+	}
+}
+
 func TestGet_missing(t *testing.T) {
 	s := New(openTestDB(t))
 	got, err := s.Get("nope")

@@ -32,6 +32,41 @@ func insertVideo(t *testing.T, db *sql.DB, id string) {
 	}
 }
 
+// TestActiveIDsForVideos asserts only pending/running jobs for the given
+// video ids are returned: v1's pending job is included, v2's done job is
+// excluded, and an unknown id (v3) contributes nothing.
+func TestActiveIDsForVideos(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	insertVideo(t, db, "v1")
+	insertVideo(t, db, "v2")
+
+	id1, err := s.Enqueue("v1", 0) // pending
+	if err != nil {
+		t.Fatalf("enqueue v1: %v", err)
+	}
+	if _, err := s.Enqueue("v2", 0); err != nil {
+		t.Fatalf("enqueue v2: %v", err)
+	}
+	// Mark v2's job done so the pending|running filter must exclude it.
+	if _, err := db.Exec(`UPDATE download_jobs SET state='done' WHERE video_id='v2'`); err != nil {
+		t.Fatalf("mark v2 done: %v", err)
+	}
+
+	ids, err := s.ActiveIDsForVideos([]string{"v1", "v2", "v3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != id1 {
+		t.Fatalf("ids = %v, want [%d]", ids, id1)
+	}
+
+	// Empty input returns nil without querying.
+	if ids, err := s.ActiveIDsForVideos(nil); err != nil || ids != nil {
+		t.Fatalf("ActiveIDsForVideos(nil) = %v err=%v, want nil,nil", ids, err)
+	}
+}
+
 func TestClaimNext_priorityThenFIFO(t *testing.T) {
 	db := openTestDB(t)
 	s := New(db)

@@ -23,26 +23,28 @@ type DBTX interface {
 // write-only over the API, so it must never be a value this struct can hand
 // back to a JSON encoder.
 type Settings struct {
-	CookieStatus        string `json:"cookie_status"`
-	CookieUpdatedAt     string `json:"cookie_updated_at,omitempty"`
-	FormatPreset        string `json:"format_preset"`
-	FormatCustom        string `json:"format_custom"`
-	LimitRate           string `json:"limit_rate"`
-	ThrottleBaseSeconds int    `json:"throttle_base_seconds"`
-	RetentionDays       int    `json:"retention_days"`
-	MinFreeGB           int    `json:"min_free_gb"`
-	YTDLPVersion        string `json:"ytdlp_version"`
+	CookieStatus            string `json:"cookie_status"`
+	CookieUpdatedAt         string `json:"cookie_updated_at,omitempty"`
+	FormatPreset            string `json:"format_preset"`
+	FormatCustom            string `json:"format_custom"`
+	LimitRate               string `json:"limit_rate"`
+	ThrottleBaseSeconds     int    `json:"throttle_base_seconds"`
+	RetentionDays           int    `json:"retention_days"`
+	MinFreeGB               int    `json:"min_free_gb"`
+	MinVideoDurationSeconds int    `json:"min_video_duration_seconds"`
+	YTDLPVersion            string `json:"ytdlp_version"`
 }
 
 // Patch is a partial update to the non-secret settings fields. Nil fields
 // are left unchanged.
 type Patch struct {
-	FormatPreset        *string
-	FormatCustom        *string
-	LimitRate           *string
-	ThrottleBaseSeconds *int
-	RetentionDays       *int
-	MinFreeGB           *int
+	FormatPreset            *string
+	FormatCustom            *string
+	LimitRate               *string
+	ThrottleBaseSeconds     *int
+	RetentionDays           *int
+	MinFreeGB               *int
+	MinVideoDurationSeconds *int
 }
 
 // Store persists the settings singleton row.
@@ -62,12 +64,12 @@ func (s *Store) Get(ctx context.Context) (Settings, error) {
 	var cookieUpdatedAt sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 SELECT cookie_status, cookie_updated_at, format_preset, format_custom, limit_rate,
-       throttle_base_seconds, retention_days, min_free_gb, ytdlp_version
+       throttle_base_seconds, retention_days, min_free_gb, min_video_duration_seconds, ytdlp_version
 FROM settings
 WHERE id = 1`,
 	).Scan(
 		&st.CookieStatus, &cookieUpdatedAt, &st.FormatPreset, &st.FormatCustom, &st.LimitRate,
-		&st.ThrottleBaseSeconds, &st.RetentionDays, &st.MinFreeGB, &st.YTDLPVersion,
+		&st.ThrottleBaseSeconds, &st.RetentionDays, &st.MinFreeGB, &st.MinVideoDurationSeconds, &st.YTDLPVersion,
 	)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
@@ -88,10 +90,11 @@ SET format_preset         = COALESCE(?, format_preset),
     limit_rate            = COALESCE(?, limit_rate),
     throttle_base_seconds = COALESCE(?, throttle_base_seconds),
     retention_days        = COALESCE(?, retention_days),
-    min_free_gb           = COALESCE(?, min_free_gb)
+    min_free_gb           = COALESCE(?, min_free_gb),
+    min_video_duration_seconds = COALESCE(?, min_video_duration_seconds)
 WHERE id = 1`,
 		patch.FormatPreset, patch.FormatCustom, patch.LimitRate,
-		patch.ThrottleBaseSeconds, patch.RetentionDays, patch.MinFreeGB,
+		patch.ThrottleBaseSeconds, patch.RetentionDays, patch.MinFreeGB, patch.MinVideoDurationSeconds,
 	)
 	if err != nil {
 		return fmt.Errorf("update settings: %w", err)

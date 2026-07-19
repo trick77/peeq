@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/trick77/vark/internal/channels"
 	"github.com/trick77/vark/internal/sse"
 	"github.com/trick77/vark/internal/videos"
 	"github.com/trick77/vark/internal/ytdlp"
@@ -96,6 +98,9 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	case "live":
 		writeJSONError(w, http.StatusBadRequest, "Live videos and premieres aren't supported; paste the link again once it has finished and is a regular video")
 		return
+	case "channel":
+		writeJSONError(w, http.StatusBadRequest, "That's a channel link — add it under Channels, not here")
+		return
 	}
 	meta, err := s.runner.Metadata(r.Context(), watchURL)
 	if err != nil {
@@ -132,6 +137,15 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	if err := s.videos.SetStatus(videoID, "queued", ""); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "save video failed")
 		return
+	}
+
+	// Auto-track the video's channel using metadata already fetched above —
+	// no extra YouTube call. Non-fatal: a tracking failure must not fail the
+	// download, the video is still queued either way.
+	if s.channels != nil && meta.ChannelID != "" {
+		if err := s.channels.Upsert(channels.Channel{ID: meta.ChannelID, Name: meta.Channel}); err != nil {
+			slog.Warn("auto-track channel failed", "channel_id", meta.ChannelID, "err", err)
+		}
 	}
 
 	jobID, err := s.jobs.Enqueue(videoID, downloadPriority)
