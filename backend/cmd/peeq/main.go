@@ -151,13 +151,14 @@ func run() error {
 	defer stop()
 
 	// Boot dim-guard: if the configured embedding dim differs from the vec_chunks
-	// table's built dim, the whole vector table is invalid. Log loudly and rebuild
-	// (drop all chunks; the summarize worker re-embeds on the next resummarize /
-	// download). Recreating the dev DB is the intended remedy for a dim change.
+	// table's built dim, the whole vector table is invalid. This only warns —
+	// it does not rebuild anything; recreating the DB is the operator's job.
 	if builtDim, err := ragStore.BuiltDim(ctx); err == nil && builtDim != cfg.EmbedDim {
 		slog.Warn("embedding dimension mismatch; vector table is stale",
 			"built", builtDim, "configured", cfg.EmbedDim,
 			"action", "recreate the database (rm ./data/peeq.db*) to rebuild vec_chunks at the new dimension")
+	} else if err != nil {
+		slog.Warn("dim-guard: could not read vec_chunks dimension", "err", err)
 	}
 
 	// The throttle floor is read once at boot; the Runner clamps whatever is

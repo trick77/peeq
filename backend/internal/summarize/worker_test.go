@@ -3,6 +3,7 @@ package summarize
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,5 +198,122 @@ func TestWorkerHappyPathPersistsSummaryAndChunks(t *testing.T) {
 	}
 	if count == 0 {
 		t.Fatal("expected transcript_chunks rows to be inserted")
+	}
+}
+
+// vttCue renders one WebVTT cue block starting at startSeconds (2s long) with
+// wordCount distinct words, so the transcript spans multiple rag.Chunk chunks
+// and each cue is unambiguously identifiable by its words.
+func vttCue(startSeconds, wordCount int, word string) string {
+	start := fmtVTTTimestamp(startSeconds)
+	end := fmtVTTTimestamp(startSeconds + 2)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s --> %s\n", start, end)
+	for i := 0; i < wordCount; i++ {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		fmt.Fprintf(&b, "%s%d", word, i)
+	}
+	b.WriteString("\n\n")
+	return b.String()
+}
+
+func fmtVTTTimestamp(totalSeconds int) string {
+	h := totalSeconds / 3600
+	m := (totalSeconds % 3600) / 60
+	s := totalSeconds % 60
+	return fmt.Sprintf("%02d:%02d:%02d.000", h, m, s)
+}
+
+// TestWorkerChunkTimestampsAreExactAndMonotonic is the regression test for the
+// cueStartFor prefix-match bug: because rag.Chunk overlaps chunks by ~75
+// tokens, every non-first chunk used to start mid-cue, the old prefix match
+// against chunk text never matched, and start_seconds silently fell back to 0
+// for most chunks. The word-offset mapping (chunk.WordOffset -> cumulative
+// cue word count) fixes this exactly, independent of the overlap.
+func TestWorkerChunkTimestampsAreExactAndMonotonic(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v3/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	var vtt strings.Builder
+	vtt.WriteString("WEBVTT\n\n")
+	cueStarts := []int{0, 30, 90, 150}
+	for _, s := range cueStarts {
+		vtt.WriteString(vttCue(s, 200, fmt.Sprintf("w%ds", s)))
+	}
+	if err := os.WriteFile(full, []byte(vtt.String()), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+
+	if err := h.videos.Upsert(videos.Video{ID: "v3", URL: "https://youtu.be/v3"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v3", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v3"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(fakeWorkerCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   1536,
+	})
+
+	did, err := w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if !did {
+		t.Fatal("expected processOne to claim and process the job")
+	}
+
+	rows, err := h.db.Query(`SELECT ordinal, start_seconds FROM transcript_chunks WHERE video_id = ? ORDER BY ordinal`, "v3")
+	if err != nil {
+		t.Fatalf("query chunks: %v", err)
+	}
+	defer rows.Close()
+
+	var starts []int
+	for rows.Next() {
+		var ordinal, startSeconds int
+		if err := rows.Scan(&ordinal, &startSeconds); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		starts = append(starts, startSeconds)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	if len(starts) < 2 {
+		t.Fatalf("expected multiple chunks, got %d", len(starts))
+	}
+	if starts[0] != cueStarts[0] {
+		t.Fatalf("expected first chunk's start_seconds == first cue's start (%d), got %d", cueStarts[0], starts[0])
+	}
+	anyNonZero := false
+	for i, s := range starts {
+		if i > 0 && s < starts[i-1] {
+			t.Fatalf("start_seconds not non-decreasing at ordinal %d: %d then %d", i, starts[i-1], s)
+		}
+		if s > 0 {
+			anyNonZero = true
+		}
+	}
+	if !anyNonZero {
+		t.Fatal("expected at least one non-first chunk to have start_seconds > 0 (all zero means the old prefix-match bug regressed)")
 	}
 }

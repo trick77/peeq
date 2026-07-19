@@ -55,3 +55,27 @@ func TestRunProducesThreeArtifactsAndPrefersYtdlpChapters(t *testing.T) {
 		t.Fatalf("key points: %+v", got.KeyPoints)
 	}
 }
+
+// TestRunParsesProseWrappedJSON is the regression test for the extractJSON
+// fix: stripFences only trims a fence at exact string boundaries, so a reply
+// that prefixes prose before the ```json fence used to fail json.Unmarshal
+// silently, leaving key_points/chapters empty. extractJSON instead slices
+// from the first '{' to the last '}', which recovers the object regardless
+// of what surrounds it.
+func TestRunParsesProseWrappedJSON(t *testing.T) {
+	cues := []subtitles.Cue{{StartSeconds: 0, Text: "intro"}, {StartSeconds: 108, Text: "titanium frame"}}
+	transcript := strings.Repeat("word ", 2000)
+	fc := &fakeCompleter{replies: []string{
+		"chunk summary",          // map calls
+		"Overall prose summary.", // reduce: summary
+		"Here are the key points:\n```json\n{\"key_points\":[{\"ts\":108,\"text\":\"x\"}]}\n```", // reduce: key points, prose-wrapped
+	}}
+	s := New(fc)
+	got, err := s.Run(context.Background(), transcript, cues, []Chapter{{TS: 0, Title: "Intro", Source: "yt-dlp"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.KeyPoints) != 1 || got.KeyPoints[0].TS != 108 || got.KeyPoints[0].Text != "x" {
+		t.Fatalf("expected prose-wrapped JSON to be parsed, got: %+v", got.KeyPoints)
+	}
+}

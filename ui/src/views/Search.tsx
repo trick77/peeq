@@ -42,7 +42,7 @@ export function Search({ onOpen }: { onOpen: (videoId: string, startSeconds: num
     <>
       <div className="gsearch-hero">
         <p className="lead">Search everything you've archived — by meaning, not just words.</p>
-        <p className="hint">Semantic search over every transcript and summary. Jumps straight to the moment.</p>
+        <p className="hint">Semantic search over every transcript. Jumps straight to the moment.</p>
         <form className="bigsearch" role="search" onSubmit={handleSubmit}>
           <Icon name="search" size="20px" />
           <input
@@ -54,7 +54,7 @@ export function Search({ onOpen }: { onOpen: (videoId: string, startSeconds: num
         </form>
         {results !== null && !loading ? (
           <p className="semantic-note">
-            <Icon name="search" size="14px" /> Semantic search over every transcript and summary chunk.
+            <Icon name="search" size="14px" /> Semantic search over every transcript chunk.
           </p>
         ) : null}
       </div>

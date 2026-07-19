@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/trick77/peeq/internal/media"
@@ -155,18 +156,25 @@ func (w *Worker) failJob(job *summaryjobs.Job, videoID, msg string) error {
 	return w.d.Jobs.Fail(job.ID, job.Attempts, msg)
 }
 
-// embedAndStore chunks the transcript, maps each chunk to the nearest earlier
-// cue start-second, embeds, and replaces the video's chunks+vectors.
+// embedAndStore chunks the transcript, maps each chunk to its start-second via
+// word-offset lookup against the cue index, embeds, and replaces the video's
+// chunks+vectors.
 func (w *Worker) embedAndStore(ctx context.Context, videoID string, parsed subtitles.Parsed) error {
 	chunks := rag.Chunk(parsed.Transcript, rag.DefaultChunkOptions())
 	if len(chunks) == 0 {
 		return errors.New("no chunks")
 	}
+	cueWordStarts := cueWordStartIndex(parsed.Cues)
 	texts := make([]string, len(chunks))
 	rows := make([]rag.ChunkRow, len(chunks))
 	for i, c := range chunks {
 		texts[i] = c.Text
-		rows[i] = rag.ChunkRow{Ordinal: c.Ordinal, Text: c.Text, TokenCount: c.TokenCount, StartSeconds: cueStartFor(c.Text, parsed.Cues)}
+		rows[i] = rag.ChunkRow{
+			Ordinal:      c.Ordinal,
+			Text:         c.Text,
+			TokenCount:   c.TokenCount,
+			StartSeconds: cueStartForWordOffset(c.WordOffset, parsed.Cues, cueWordStarts),
+		}
 	}
 	vecs, err := w.d.Embedder.Embed(ctx, texts)
 	if err != nil {
@@ -175,18 +183,33 @@ func (w *Worker) embedAndStore(ctx context.Context, videoID string, parsed subti
 	return w.d.Rag.ReplaceVideoChunks(ctx, videoID, w.d.EmbedModel, w.d.EmbedDim, rows, vecs)
 }
 
-// cueStartFor finds the start-second of the first cue whose text opens this
-// chunk (chunks are built from the joined cue texts, so the chunk's first
-// words match some cue). Falls back to 0.
-func cueStartFor(chunkText string, cues []subtitles.Cue) int {
-	head := chunkText
-	if len(head) > 24 {
-		head = head[:24]
+// cueWordStartIndex returns, for each cue, the cumulative word count of all
+// preceding cues' text — i.e. the word-offset (into subtitles.Parsed.Transcript,
+// which is strings.Join(cueTexts, " ")) at which that cue's text begins. This
+// lets a chunk's WordOffset be mapped back to the cue it actually starts in,
+// which is exact and monotonic, unlike prefix-matching the chunk's (possibly
+// overlap-shifted) leading text against cue text.
+func cueWordStartIndex(cues []subtitles.Cue) []int {
+	starts := make([]int, len(cues))
+	total := 0
+	for i, c := range cues {
+		starts[i] = total
+		total += len(strings.Fields(c.Text))
 	}
-	for _, c := range cues {
-		if len(c.Text) >= len(head) && c.Text[:min(len(head), len(c.Text))] == head {
-			return c.StartSeconds
+	return starts
+}
+
+// cueStartForWordOffset returns the StartSeconds of the last cue whose
+// word-start is <= wordOffset, i.e. the cue that word belongs to. Falls back
+// to 0 when cues is empty.
+func cueStartForWordOffset(wordOffset int, cues []subtitles.Cue, cueWordStarts []int) int {
+	best := 0
+	for i, ws := range cueWordStarts {
+		if ws <= wordOffset {
+			best = cues[i].StartSeconds
+		} else {
+			break
 		}
 	}
-	return 0
+	return best
 }

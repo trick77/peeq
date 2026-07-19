@@ -7,8 +7,15 @@ import "strings"
 
 // TextChunk is one unit of indexed text with its position and an estimated token count.
 type TextChunk struct {
-	Ordinal    int
-	Text       string
+	Ordinal int
+	Text    string
+	// WordOffset is the starting index (0-based) of this chunk's first word in
+	// the whitespace-split input text, i.e. len(strings.Fields(text[:chunkStart])).
+	// Callers that know how the input text maps to some other unit (e.g. VTT
+	// cues) can use it to recover an exact position for the chunk, unlike the
+	// chunk's own leading text which after the first chunk starts mid-overlap
+	// and no longer matches any single upstream unit's prefix.
+	WordOffset int
 	TokenCount int
 }
 
@@ -87,6 +94,7 @@ func Chunk(text string, opts ChunkOptions) []TextChunk {
 		chunks = append(chunks, TextChunk{
 			Ordinal:    len(chunks),
 			Text:       text,
+			WordOffset: start,
 			TokenCount: estimateTokens(text),
 		})
 		if end >= len(words) {

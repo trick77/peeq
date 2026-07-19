@@ -91,7 +91,7 @@ func (s *Summarizer) Run(ctx context.Context, transcript string, cues []subtitle
 		Chapters  []Chapter  `json:"chapters"`
 		KeyPoints []KeyPoint `json:"key_points"`
 	}
-	_ = json.Unmarshal([]byte(stripFences(raw)), &parsed) // tolerate malformed JSON: leave empty
+	_ = json.Unmarshal([]byte(extractJSON(raw)), &parsed) // tolerate malformed JSON: leave empty
 
 	art := Artifacts{Summary: strings.TrimSpace(summary), KeyPoints: parsed.KeyPoints}
 	if wantChapters {
@@ -119,4 +119,20 @@ func stripFences(s string) string {
 	s = strings.TrimPrefix(s, "```")
 	s = strings.TrimSuffix(s, "```")
 	return strings.TrimSpace(s)
+}
+
+// extractJSON returns the substring from the first '{' to the last '}' in s,
+// which recovers the JSON object even when the model prefixes prose before a
+// ```json fence (e.g. "Here is the JSON:\n```json{...}```") — a reply
+// stripFences alone cannot handle, since it only trims fence markers at exact
+// string boundaries. Falls back to stripFences(s) when no brace pair is
+// found, so genuinely non-JSON replies still degrade to the old "leave empty"
+// behavior instead of erroring.
+func extractJSON(s string) string {
+	first := strings.IndexByte(s, '{')
+	last := strings.LastIndexByte(s, '}')
+	if first >= 0 && last > first {
+		return s[first : last+1]
+	}
+	return stripFences(s)
 }
