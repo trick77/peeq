@@ -41,6 +41,7 @@ vi.mock("../api/search", () => ({
 
 import { getVideo, setResume } from "../api/videos";
 import { resummarize } from "../api/search";
+import { readNowPlaying } from "../nowPlaying";
 
 function makeVideo(overrides: Partial<Video> = {}): Video {
   return { ...mockVideo, ...overrides };
@@ -53,6 +54,7 @@ describe("Player", () => {
     vi.mocked(resummarize).mockClear();
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
     vi.unstubAllGlobals();
+    sessionStorage.clear();
   });
 
   it("flushes the latest position to setResume on unmount", async () => {
@@ -192,6 +194,51 @@ describe("Player", () => {
     fireEvent.loadedMetadata(secondEl);
 
     expect(secondEl.currentTime).toBeCloseTo(42, 0);
+  });
+
+  it("marks nowPlaying playing=true on play and false on pause/ended", async () => {
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    fireEvent.play(videoEl);
+    expect(readNowPlaying()).toEqual({ videoId: "v1", playing: true });
+
+    fireEvent.pause(videoEl);
+    expect(readNowPlaying()).toEqual({ videoId: "v1", playing: false });
+
+    fireEvent.play(videoEl);
+    fireEvent.ended(videoEl);
+    expect(readNowPlaying()).toEqual({ videoId: "v1", playing: false });
+  });
+
+  it("records nowPlaying paused (playing=false) once metadata loads", async () => {
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    fireEvent.loadedMetadata(videoEl);
+    expect(readNowPlaying()).toEqual({ videoId: "v1", playing: false });
+  });
+
+  it("clears the nowPlaying marker on unmount (in-app navigation away)", async () => {
+    const { unmount } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    fireEvent.play(videoEl);
+    expect(readNowPlaying()).not.toBeNull();
+
+    unmount();
+    expect(readNowPlaying()).toBeNull();
   });
 
   it("posts the current position to setResume on timeupdate", async () => {

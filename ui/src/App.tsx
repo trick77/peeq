@@ -11,6 +11,7 @@ import { Settings } from "./views/Settings";
 import { Channels } from "./views/Channels";
 import { Pending } from "./views/Pending";
 import { Search } from "./views/Search";
+import { readNowPlaying } from "./nowPlaying";
 
 // Page titles/subtitles per view, per the mockup's `titles` map.
 const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
@@ -27,7 +28,14 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
 // views. Routing is manual view-state, no router lib — matches loom's
 // pattern for a single-page app this size.
 export function App() {
-  const [view, setView] = useState<ViewId>("library");
+  // Reload-restore: if a video was actively playing when the page was last
+  // torn down (a reload, not an in-app navigation — Player clears the marker
+  // on unmount), reopen the Player on it. It opens paused at the server-side
+  // resume position via Player's existing handleLoadedMetadata seek — no
+  // autoplay. Read once, synchronously, so the very first render already
+  // routes to the Player instead of flashing Library. See nowPlaying.ts.
+  const restored = readNowPlaying();
+  const [view, setView] = useState<ViewId>(restored?.playing ? "player" : "library");
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState(false);
@@ -35,7 +43,9 @@ export function App() {
   const [pendingCount, setPendingCount] = useState(0);
   const [cookieStatus, setCookieStatus] = useState<string | undefined>(undefined);
   const [downloadStatus, setDownloadStatus] = useState<DownloadsStatus>({ paused: false, low_disk: false });
-  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(
+    restored?.playing ? restored.videoId : null,
+  );
   // pendingSeek is the jump-to-moment target set by Search's onOpen (Task
   // 18): Player consumes it once on the loadedmetadata handler that already
   // applies the resume position, taking priority over resume. openVideo

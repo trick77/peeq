@@ -5,6 +5,7 @@ import { getVideo, setFavorite, setWatched, setResume, deleteVideo, streamUrl } 
 import { resummarize, subtitlesUrl } from "../api/search";
 import type { Video } from "../api/types";
 import { formatDuration } from "../format";
+import { writeNowPlaying, clearNowPlaying } from "../nowPlaying";
 
 // RESUME_THROTTLE_MS bounds how often `timeupdate` (which fires ~4x/sec)
 // is allowed to actually POST the resume position — see handleTimeUpdate.
@@ -195,6 +196,16 @@ export function Player({
     };
   }, []);
 
+  // Forget the reload-restore marker when the Player unmounts. This cleanup
+  // runs on in-app navigation away (to Library, after delete, …) but NOT on a
+  // real page reload/close — React tears the tree down without running effect
+  // cleanups then. So navigating away means a subsequent reload lands on
+  // Library, while a reload *while still on the Player* leaves the marker
+  // intact and reopens the video (see nowPlaying.ts, App.tsx).
+  useEffect(() => {
+    return () => clearNowPlaying();
+  }, []);
+
   // CC track starts hidden (captions off) — applied once per video whenever
   // its <track> becomes available, independent of the click handler below.
   useEffect(() => {
@@ -269,6 +280,23 @@ export function Player({
     // position (either the applied resume above, or genuinely 0:00) —
     // safe for the unmount/hide flush to trust from here on.
     positionKnownRef.current = true;
+    // Record the video as opened-but-paused. The play/pause/ended handlers
+    // below keep this in sync; writing false here (rather than leaving a
+    // stale true from a previous session) ensures a video that reopens paused
+    // after a reload won't itself trigger another reopen on the next reload.
+    writeNowPlaying(video.id, false);
+  }
+
+  // Keep the reload-restore marker in sync with the real <video> play state:
+  // playing=true only while media is actually advancing, false once paused or
+  // ended. App reads this on init and reopens the Player only when it reads
+  // true — i.e. the video was playing at the instant of the reload.
+  function handlePlay() {
+    if (video) writeNowPlaying(video.id, true);
+  }
+
+  function handlePauseOrEnded() {
+    if (video) writeNowPlaying(video.id, false);
   }
 
   function handleTimeUpdate() {
@@ -381,6 +409,9 @@ export function Player({
             controls
             onLoadedMetadata={handleLoadedMetadata}
             onTimeUpdate={handleTimeUpdate}
+            onPlay={handlePlay}
+            onPause={handlePauseOrEnded}
+            onEnded={handlePauseOrEnded}
           >
             {video.has_subtitles && (
               <track kind="subtitles" srcLang={video.audio_language || "en"} src={subtitlesUrl(video.id)} default={false} />
