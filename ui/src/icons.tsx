@@ -20,6 +20,7 @@ import {
   Tv,
   Captions,
   ChevronRight,
+  RefreshCw,
   type LucideIcon,
 } from "lucide-react";
 
@@ -56,6 +57,7 @@ const COMPONENTS = {
   playFilled: Play, // rendered solid via the FILLED set below — rail logo + player play button
   captions: Captions,
   chevronRight: ChevronRight,
+  refresh: RefreshCw,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof COMPONENTS;

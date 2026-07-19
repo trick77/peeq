@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoCard, type DownloadProgress } from "../components/VideoCard";
-import { listVideos, getSettings, listDownloads, streamDownloads, setFavorite, setWatched } from "../api";
+import { listVideos, getSettings, listDownloads, streamDownloads, setFavorite, setWatched, redownload } from "../api";
 import type { Video, VideoFilter, Job, Settings } from "../api/types";
 
 const CHIPS: { id: VideoFilter; label: string }[] = [
@@ -194,6 +194,17 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
     }
   }
 
+  async function handleRedownload(id: string) {
+    try {
+      await redownload(id);
+      const [all, current] = await Promise.all([listVideos("all"), listVideos(filter)]);
+      setAllVideos(all);
+      setVideos(current);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   const retentionDays = settings?.retention_days ?? 14;
 
   return (
@@ -221,6 +232,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
             onOpen={onOpenVideo}
             onToggleFavorite={handleToggleFavorite}
             onToggleWatched={handleToggleWatched}
+            onRedownload={handleRedownload}
           />
         ))}
       </div>

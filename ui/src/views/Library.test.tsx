@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { VideoCard } from "../components/VideoCard";
 import type { Video } from "../api/types";
 
@@ -98,5 +98,37 @@ describe("VideoCard lifecycle line", () => {
     );
     screen.getByRole("button", { name: /Open A Test Video/ }).click();
     expect(onOpen).toHaveBeenCalledWith("v1");
+  });
+
+  it('shows "Download failed" + a Re-download button for an errored video and calls onRedownload', () => {
+    const onRedownload = vi.fn();
+    render(
+      <VideoCard
+        video={baseVideo({ id: "v1", status: "error" })}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+        onRedownload={onRedownload}
+      />,
+    );
+    expect(screen.getByText("Download failed")).toBeInTheDocument();
+    const btn = screen.getByRole("button", { name: /re-download/i });
+    fireEvent.click(btn);
+    expect(onRedownload).toHaveBeenCalledWith("v1");
+  });
+
+  it('shows "Removed to save space · summary kept" for a tombstoned video', () => {
+    render(
+      <VideoCard
+        video={baseVideo({ id: "v1", status: "tombstoned" })}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+        onRedownload={noop}
+      />,
+    );
+    expect(screen.getByText("Removed to save space · summary kept")).toBeInTheDocument();
   });
 });
