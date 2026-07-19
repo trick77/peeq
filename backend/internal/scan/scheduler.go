@@ -48,6 +48,16 @@ type JobEnqueuer interface {
 	Enqueue(videoID string, priority int) (int64, error)
 }
 
+// FailMonitor is the subset of *failmonitor.Monitor the scheduler uses to
+// feed the auto-pause heuristic. Nil disables it (tests that don't care).
+// Mirrors the download package's FailMonitor interface of the same shape —
+// the two consumers dedup independently, keyed by their own entity kind
+// (video id for downloads, channel id for scans).
+type FailMonitor interface {
+	Fail(entityID string)
+	Reset()
+}
+
 // Deps are the scheduler's collaborators and tunables. The stores, Lister,
 // and CookieStatus are required; the rest have safe defaults applied in New.
 type Deps struct {
@@ -58,8 +68,14 @@ type Deps struct {
 	Settings     *settings.Store
 	Lister       ChannelLister
 	CookieStatus func(ctx context.Context) string // settings.CookieStatus
-	Now          func() time.Time                 // injectable clock (defaults to time.Now)
-	PollInterval time.Duration                    // idle re-check (default 30s)
+	// YoutubePaused, when set and returning true, skips scan passes (the
+	// kill-switch), beside the cookie gate.
+	YoutubePaused func(ctx context.Context) bool
+	// FailMonitor feeds the auto-pause heuristic: Fail(channelID) on a
+	// count-worthy scan failure, Reset() on a clean pass.
+	FailMonitor  FailMonitor
+	Now          func() time.Time // injectable clock (defaults to time.Now)
+	PollInterval time.Duration    // idle re-check (default 30s)
 	Logger       *slog.Logger
 
 	// listSize is a test seam: how many entries to request per channel.
@@ -103,6 +119,14 @@ func (s *Scheduler) Run(ctx context.Context) {
 		}
 		// Cookie gate: no valid cookie → don't scan (don't hammer).
 		if s.d.CookieStatus(ctx) != "valid" {
+			if !s.sleep(ctx, s.d.PollInterval) {
+				return
+			}
+			continue
+		}
+		// Kill-switch gate: youtube_paused → skip this pass. Re-checked each
+		// poll, so clearing the flag resumes scanning automatically.
+		if s.d.YoutubePaused != nil && s.d.YoutubePaused(ctx) {
 			if !s.sleep(ctx, s.d.PollInterval) {
 				return
 			}
@@ -162,6 +186,14 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 		case errors.Is(err, ytdlp.ErrCookieExpired):
 			if serr := s.d.Settings.SetCookie(ctx, "", "stale"); serr != nil {
 				s.d.Logger.Error("scan: set cookie status failed", "status", "stale", "err", serr)
+			}
+		default:
+			// Everything else (transient/unclassified failures) is
+			// count-worthy for the shared auto-pause heuristic; the two
+			// cookie-status branches above already have their own signal and
+			// are not double-counted here.
+			if s.d.FailMonitor != nil {
+				s.d.FailMonitor.Fail(sub.ChannelID)
 			}
 		}
 		s.d.Logger.Warn("scan failed; backing off", "channel", sub.ChannelID, "err", err)
@@ -239,7 +271,15 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	}
 	next := s.d.Now().Add(s.jitteredInterval()).UTC().Format(sqlTimeLayout)
 	lastScanned := s.d.Now().UTC().Format(sqlTimeLayout)
-	return s.d.Channels.MarkScanned(sub.ChannelID, baseline, lastScanned, next)
+	if err := s.d.Channels.MarkScanned(sub.ChannelID, baseline, lastScanned, next); err != nil {
+		return err
+	}
+	// Clean scan pass: reset the shared auto-pause heuristic's streak for
+	// this channel.
+	if s.d.FailMonitor != nil {
+		s.d.FailMonitor.Reset()
+	}
+	return nil
 }
 
 // passesFilters drops sub-min-duration and upcoming/live entries. Shorts and
