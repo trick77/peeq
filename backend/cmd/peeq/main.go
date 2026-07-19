@@ -27,11 +27,15 @@ import (
 	"github.com/trick77/peeq/internal/download"
 	"github.com/trick77/peeq/internal/httpapi"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/retention"
 	"github.com/trick77/peeq/internal/scan"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/store"
+	"github.com/trick77/peeq/internal/summarize"
+	"github.com/trick77/peeq/internal/summaryjobs"
 	"github.com/trick77/peeq/internal/version"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -135,9 +139,26 @@ func run() error {
 	videosStore := videos.New(db)
 	channelsStore := channels.New(db)
 	ledgerStore := channelvideos.New(db)
+	summaryJobsStore := summaryjobs.New(db)
+	ragStore := rag.NewStore(db)
+	embedClient := rag.NewEmbedClient(rag.EmbedConfig{
+		BaseURL: cfg.EmbedBaseURL, APIKey: cfg.EmbedAPIKey, Model: cfg.EmbedModel,
+	}, nil)
+	mimoClient := llm.NewClient(llm.Config{BaseURL: cfg.MimoBaseURL, APIKey: cfg.MimoAPIKey}, nil)
+	summarizer := summarize.New(mimoClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Boot dim-guard: if the configured embedding dim differs from the vec_chunks
+	// table's built dim, the whole vector table is invalid. Log loudly and rebuild
+	// (drop all chunks; the summarize worker re-embeds on the next resummarize /
+	// download). Recreating the dev DB is the intended remedy for a dim change.
+	if builtDim, err := ragStore.BuiltDim(ctx); err == nil && builtDim != cfg.EmbedDim {
+		slog.Warn("embedding dimension mismatch; vector table is stale",
+			"built", builtDim, "configured", cfg.EmbedDim,
+			"action", "recreate the database (rm ./data/peeq.db*) to rebuild vec_chunks at the new dimension")
+	}
 
 	// The throttle floor is read once at boot; the Runner clamps whatever is
 	// configured up to its own hard 20s minimum regardless.
@@ -161,11 +182,13 @@ func run() error {
 
 	sseHub := sse.NewHub()
 	worker := download.New(download.Deps{
-		Jobs:     jobsStore,
-		Videos:   videosStore,
-		Settings: settingsStore,
-		Runner:   runner,
-		MediaDir: cfg.MediaDir,
+		Jobs:           jobsStore,
+		Videos:         videosStore,
+		Settings:       settingsStore,
+		Runner:         runner,
+		MediaDir:       cfg.MediaDir,
+		SummaryJobs:    summaryJobsStore,
+		DefaultSubLang: cfg.DefaultSubLang,
 		OnProgress: func(jobID int64, p ytdlp.Progress) {
 			data, err := json.Marshal(map[string]any{
 				"job_id":  jobID,
@@ -200,15 +223,21 @@ func run() error {
 		CookieStatus: func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
 	})
 
-	// Bound all four background goroutines' lifetimes to the process: the
+	summarizeWorker := summarize.NewWorker(summarize.WorkerDeps{
+		Jobs: summaryJobsStore, Videos: videosStore, Rag: ragStore,
+		Summarizer: summarizer, Embedder: embedClient, MediaDir: cfg.MediaDir,
+		EmbedModel: cfg.EmbedModel, EmbedDim: cfg.EmbedDim,
+	})
+
+	// Bound all five background goroutines' lifetimes to the process: the
 	// download worker, the retention sweeper, the yt-dlp self-update ticker,
-	// and the scan scheduler. workerWG.Wait() below (after serve returns,
-	// i.e. after ctx is cancelled) blocks until all four have actually
-	// observed ctx.Done() and returned, rather than exiting the process out
-	// from under them. All four loops exit promptly on ctx.Done(), so this
-	// wait is short.
+	// the scan scheduler, and the summarize worker. workerWG.Wait() below
+	// (after serve returns, i.e. after ctx is cancelled) blocks until all
+	// five have actually observed ctx.Done() and returned, rather than
+	// exiting the process out from under them. All five loops exit promptly
+	// on ctx.Done(), so this wait is short.
 	var workerWG sync.WaitGroup
-	workerWG.Add(4)
+	workerWG.Add(5)
 	go func() {
 		defer workerWG.Done()
 		slog.Info("download worker started")
@@ -227,6 +256,11 @@ func run() error {
 		defer workerWG.Done()
 		slog.Info("scan scheduler started")
 		scheduler.Run(ctx)
+	}()
+	go func() {
+		defer workerWG.Done()
+		slog.Info("summarize worker started")
+		summarizeWorker.Run(ctx)
 	}()
 
 	slog.Info("SSE hub ready")
@@ -250,6 +284,10 @@ func run() error {
 		Channels:        channelsStore,
 		ChannelResolver: runner,
 		Ledger:          ledgerStore,
+
+		Rag:         ragStore,
+		Embedder:    embedClient,
+		SummaryJobs: summaryJobsStore,
 	}
 	handler := httpapi.New(deps)
 
