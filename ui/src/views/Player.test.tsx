@@ -39,9 +39,18 @@ vi.mock("../api/search", () => ({
   resummarize: vi.fn().mockResolvedValue(undefined),
 }));
 
+// streamDownloads defaults to a never-resolving promise so it doesn't
+// interfere with (or hang) any of the other Player tests, which don't care
+// about the SSE feed at all — individual tests below override this mock to
+// capture the onEvent callback and drive it directly.
+vi.mock("../api/downloads", () => ({
+  streamDownloads: vi.fn().mockImplementation(() => new Promise(() => {})),
+}));
+
 import { getVideo, setResume } from "../api/videos";
 import { resummarize } from "../api/search";
 import { readNowPlaying } from "../nowPlaying";
+import { streamDownloads } from "../api/downloads";
 
 function makeVideo(overrides: Partial<Video> = {}): Video {
   return { ...mockVideo, ...overrides };
@@ -53,6 +62,8 @@ describe("Player", () => {
     vi.mocked(setResume).mockClear();
     vi.mocked(resummarize).mockClear();
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
+    vi.mocked(streamDownloads).mockReset();
+    vi.mocked(streamDownloads).mockImplementation(() => new Promise(() => {}));
     vi.unstubAllGlobals();
     sessionStorage.clear();
   });
@@ -375,5 +386,34 @@ describe("Player", () => {
     expect(cueBtn).toHaveClass("hit");
     const helloRow = screen.getByText("Hello there").closest("button");
     expect(helloRow).not.toHaveClass("hit");
+  });
+
+  it("updates live when a summary SSE event arrives for the open video", async () => {
+    vi.mocked(getVideo)
+      .mockResolvedValueOnce(makeVideo({ id: "v1", summary_status: "running" }))
+      .mockResolvedValueOnce(makeVideo({ id: "v1", summary_status: "done", summary: "Fresh summary." }));
+    // streamSSE (the real ../api/downloads dependency) already parses each
+    // frame's JSON body before invoking onEvent — App.tsx's own "progress"
+    // handler consumes evt.data the same way, uncast-and-parsed — so the
+    // mock here hands the callback an already-parsed object, not a string.
+    let emit: (e: { event: string; data: unknown }) => void = () => {};
+    vi.mocked(streamDownloads).mockImplementation((onEvent) => {
+      emit = onEvent as (e: { event: string; data: unknown }) => void;
+      return new Promise(() => {}); // never resolves
+    });
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    expect(await screen.findByText(/summarizing/i)).toBeInTheDocument();
+
+    emit({ event: "summary", data: { video_id: "v1", status: "done", phase: "" } });
+
+    expect(await screen.findByText(/fresh summary/i)).toBeInTheDocument();
+  });
+
+  it("renders a MiMo tag on a summarizer-generated chapter", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ chapters: [{ ts: 108, title: "Frame", source: "mimo" }] }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    expect(await screen.findByText(/mimo/i)).toBeInTheDocument();
   });
 });

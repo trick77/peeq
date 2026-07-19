@@ -3,6 +3,7 @@ import { Icon } from "../icons";
 import { Scrubber } from "../components/Scrubber";
 import { getVideo, setFavorite, setWatched, setResume, deleteVideo, streamUrl } from "../api/videos";
 import { resummarize, subtitlesUrl } from "../api/search";
+import { streamDownloads } from "../api/downloads";
 import type { Video } from "../api/types";
 import { formatDuration } from "../format";
 import { writeNowPlaying, clearNowPlaying } from "../nowPlaying";
@@ -205,6 +206,31 @@ export function Player({
   useEffect(() => {
     return () => clearNowPlaying();
   }, []);
+
+  // Live summary status (Task 10): the initial getVideo load above only
+  // captures summary_status at mount time — without this, a "Summarizing…"
+  // placeholder would sit frozen until the user manually reloaded, even
+  // though the backend (Task 8) is already pushing "summary" SSE events
+  // {video_id, status, phase} on every phase transition. Subscribes for the
+  // mounted video's lifetime and reacts only to events for this videoId.
+  // Mirrors App.tsx's own streamDownloads "progress" subscription: evt.data
+  // arrives already JSON-parsed by streamSSE, so it's cast, not re-parsed.
+  useEffect(() => {
+    const controller = new AbortController();
+    streamDownloads((evt) => {
+      if (evt.event !== "summary") return;
+      const payload = evt.data as { video_id?: string; status?: string };
+      if (payload.video_id !== videoId || !payload.status) return;
+      if (payload.status === "done") {
+        // Refetch to pull the finished summary/chapters/key-points.
+        getVideo(videoId).then(setVideo).catch(() => {});
+      } else {
+        const status = payload.status;
+        setVideo((prev) => (prev ? { ...prev, summary_status: status } : prev));
+      }
+    }, controller.signal).catch(() => {});
+    return () => controller.abort();
+  }, [videoId]);
 
   // CC track starts hidden (captions off) — applied once per video whenever
   // its <track> becomes available, independent of the click handler below.
@@ -486,6 +512,7 @@ export function Player({
                         <span className="ttl">{c.title}</span>
                       </span>
                       {c.source === "yt-dlp" && <span className="src">yt-dlp</span>}
+                      {c.source === "mimo" && <span className="src">MiMo</span>}
                     </button>
                   ))}
                 </div>
