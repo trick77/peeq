@@ -1,4 +1,4 @@
-// types.ts — the JSON shapes vark's backend actually returns, mirrored
+// types.ts — the JSON shapes peeq's backend actually returns, mirrored
 // field-for-field from the Go DTOs (backend/internal/httpapi/*.go). Two
 // conventions collide here, both preserved deliberately:
 //   - videos/downloads/settings/cookie: snake_case (Go's default json tags)
@@ -68,7 +68,7 @@ export type Job = {
 };
 
 // DownloadProgressEvent mirrors the payload of the SSE "progress" event
-// published by the worker's OnProgress callback (cmd/vark/main.go).
+// published by the worker's OnProgress callback (cmd/peeq/main.go).
 export type DownloadProgressEvent = {
   job_id: number;
   percent: number;

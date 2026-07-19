@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/trick77/vark/internal/store"
+	"github.com/trick77/peeq/internal/store"
 )
 
 // newTestStore opens a migrated temp DB and returns a channelvideos Store

@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trick77/vark/internal/jobs"
-	"github.com/trick77/vark/internal/settings"
-	"github.com/trick77/vark/internal/store"
-	"github.com/trick77/vark/internal/videos"
-	"github.com/trick77/vark/internal/ytdlp"
+	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/store"
+	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // fakeRunner is a Runner whose behavior is scripted per call index, so a

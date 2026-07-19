@@ -186,7 +186,7 @@ export function Settings() {
           </span>
         </h2>
         <p className="desc">
-          Paste your browser's YouTube cookies (Netscape format). vark keeps yt-dlp's rotated cookie fresh
+          Paste your browser's YouTube cookies (Netscape format). peeq keeps yt-dlp's rotated cookie fresh
           automatically. The pasted text is never shown back to you — only its status is.
         </p>
         <form onSubmit={handleSaveCookie}>
@@ -213,7 +213,7 @@ export function Settings() {
         <div className="warnline">
           <Icon name="warning" size="16px" style={{ color: "var(--color-danger)" }} />
           <span>
-            <b>No cookie, no calls.</b> vark never touches YouTube without a valid cookie — it pauses the queue and
+            <b>No cookie, no calls.</b> peeq never touches YouTube without a valid cookie — it pauses the queue and
             asks you to re-paste instead.
           </span>
         </div>

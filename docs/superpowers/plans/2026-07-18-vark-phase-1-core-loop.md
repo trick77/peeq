@@ -1,24 +1,24 @@
-# vark Phase 1 — Core Watch-and-Download Loop — Implementation Plan
+# peeq Phase 1 — Core Watch-and-Download Loop — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the usable core loop: paste a YouTube link → it downloads in a throttled, resumable queue → watch it in-browser with resume → watched/favorite lifecycle with automatic cleanup — single-user, behind Authentik (dev auto-login locally).
 
-**Architecture:** A single Go binary (stdlib `net/http`, no framework) serves an embedded React/Vite SPA and a JSON/SSE API, backed by one SQLite file (pure-Go `ncruces/go-sqlite3`, `CGO_ENABLED=0`). Downloads are long-running jobs executed by a single-concurrency claiming worker goroutine that shells out to the `yt-dlp` binary through one wrapper package (the only place cookies, throttling, and block-detection live). The whole thing mirrors the sibling `../loom` app; infrastructure (config, store+migrations, OIDC+dev-auth, SSE, SPA embed, background worker) is ported from loom with a `VARK_` env prefix, and yt-dlp patterns are adapted from `../tubearchivist`.
+**Architecture:** A single Go binary (stdlib `net/http`, no framework) serves an embedded React/Vite SPA and a JSON/SSE API, backed by one SQLite file (pure-Go `ncruces/go-sqlite3`, `CGO_ENABLED=0`). Downloads are long-running jobs executed by a single-concurrency claiming worker goroutine that shells out to the `yt-dlp` binary through one wrapper package (the only place cookies, throttling, and block-detection live). The whole thing mirrors the sibling `../loom` app; infrastructure (config, store+migrations, OIDC+dev-auth, SSE, SPA embed, background worker) is ported from loom with a `PEEQ_` env prefix, and yt-dlp patterns are adapted from `../tubearchivist`.
 
 **Tech Stack:** Go 1.25 · `net/http` (Go 1.22 method routing) · `ncruces/go-sqlite3` v0.23.3 + `sqlite-vec-go-bindings/ncruces` v0.1.7-alpha.2 · `coreos/go-oidc/v3` + `golang.org/x/oauth2` · React 19 · Vite 8 · Tailwind v4 (CSS-first `@theme`) · `lucide-react@^1.24.0` · Vitest · yt-dlp (binary) + ffmpeg.
 
 ## Global Constraints
 
-- Module path `github.com/trick77/vark`. Go 1.25. `CGO_ENABLED=0` everywhere.
+- Module path `github.com/trick77/peeq`. Go 1.25. `CGO_ENABLED=0` everywhere.
 - Pins (do not bump): `ncruces/go-sqlite3` **v0.23.3**, `sqlite-vec-go-bindings/ncruces` **v0.1.7-alpha.2** (ABI-matched, same as loom). One SQLite file; `sqlite-vec` for vectors; no separate DB service.
-- All runtime config via `VARK_*` env vars. Required to boot: `VARK_SESSION_SECRET`. Dev-auth (`VARK_AUTH_MODE=dev`) must hard-fail unless bound to loopback (loom's `validateDevAuthLocalOnly` rule).
+- All runtime config via `PEEQ_*` env vars. Required to boot: `PEEQ_SESSION_SECRET`. Dev-auth (`PEEQ_AUTH_MODE=dev`) must hard-fail unless bound to loopback (loom's `validateDevAuthLocalOnly` rule).
 - **Hard invariant:** NO call to YouTube without a valid cookie present. Every yt-dlp invocation gates on cookie presence up front.
 - **Throttle invariant:** a randomized sleep (≈0.5–1.5× a configurable base interval) before every YouTube network action.
 - Docs/code/comments **English only**. Conventional Commits. One feature branch per phase (`feat/phase-1-...`); never commit to `master`. YAML files use `.yaml`, never `.yml`.
 - TDD: failing test first, then minimal implementation. Every DB-writing table access goes through a store method (no ad-hoc SQL in handlers).
 - Swiss German only applies to user-facing German copy (none in P1 — UI copy is English).
-- Design system = `../music` (Warm Editorial dark). Tokens/fonts/icons per the design spec in `~/.claude/plans/vark-is-a-yt-dlp-tender-moth.md`.
+- Design system = `../music` (Warm Editorial dark). Tokens/fonts/icons per the design spec in `~/.claude/plans/peeq-is-a-yt-dlp-tender-moth.md`.
 - Media path safety: always pass full URLs to yt-dlp (never bare IDs — YouTube IDs can start with `-`); `-o` templates use IDs only, never titles; reject `..`/absolute/symlink-escape on any media path.
 
 ---
@@ -26,14 +26,14 @@
 ## File Structure
 
 ```
-vark/
+peeq/
 ├── backend/
 │   ├── go.mod  go.sum
-│   ├── cmd/vark/main.go                 entrypoint: config → store → wire deps → serve + workers
+│   ├── cmd/peeq/main.go                 entrypoint: config → store → wire deps → serve + workers
 │   ├── web/embed.go                     //go:embed all:dist ; SPA fileserver + SPA fallback
 │   ├── Containerfile                    3-stage node→go→distroless (+ yt-dlp + ffmpeg)
 │   └── internal/
-│       ├── config/config.go             VARK_* env load + validation + dev-auth loopback guard
+│       ├── config/config.go             PEEQ_* env load + validation + dev-auth loopback guard
 │       ├── store/
 │       │   ├── store.go                 Open() (WAL, busy_timeout, sqlite-vec), vecLiteral helper
 │       │   ├── migrate.go               embedded numbered-SQL migration runner
@@ -84,13 +84,13 @@ vark/
 ## Task 1: Repo scaffold + buildable skeleton + CI + private GitHub repo
 
 **Files:**
-- Create: `backend/go.mod`, `backend/cmd/vark/main.go`, `backend/internal/version/version.go`, `backend/web/embed.go`, `backend/web/dist/index.html` (placeholder), `ui/package.json`, `ui/index.html`, `ui/vite.config.ts`, `ui/src/main.tsx`, `ui/src/App.tsx`, `ui/src/App.test.tsx`, `backend/Containerfile`, `Makefile`, `hack/dev.sh`, `.env.example`, `.gitignore`, `AGENTS.md`, `README.md`, `.github/dependabot.yaml`, `.github/workflows/ci.yaml`, `.github/workflows/release.yaml`, `.github/workflows/cleanup-images.yaml`.
+- Create: `backend/go.mod`, `backend/cmd/peeq/main.go`, `backend/internal/version/version.go`, `backend/web/embed.go`, `backend/web/dist/index.html` (placeholder), `ui/package.json`, `ui/index.html`, `ui/vite.config.ts`, `ui/src/main.tsx`, `ui/src/App.tsx`, `ui/src/App.test.tsx`, `backend/Containerfile`, `Makefile`, `hack/dev.sh`, `.env.example`, `.gitignore`, `AGENTS.md`, `README.md`, `.github/dependabot.yaml`, `.github/workflows/ci.yaml`, `.github/workflows/release.yaml`, `.github/workflows/cleanup-images.yaml`.
 - Reference (copy-adapt): `../loom/backend/web/embed.go`, `../loom/Makefile`, `../loom/hack/dev.sh`, `../loom/backend/Containerfile`, `../music/.github/{dependabot.yaml,workflows/{ci.yaml,release.yaml}}`, `../loom/.github/workflows/cleanup-images.yaml`.
 
 **Interfaces:**
-- Produces: `version.Version` (string, ldflags-injected, default `dev`); `web.Handler() http.Handler` (serves embedded `dist` with SPA fallback to `index.html`); a `vark` binary that serves `:8080`.
+- Produces: `version.Version` (string, ldflags-injected, default `dev`); `web.Handler() http.Handler` (serves embedded `dist` with SPA fallback to `index.html`); a `peeq` binary that serves `:8080`.
 
-- [ ] **Step 1: Init git + module.** Branch `feat/phase-1-scaffold`. `cd backend && go mod init github.com/trick77/vark`. Set `go 1.25` in `go.mod`.
+- [ ] **Step 1: Init git + module.** Branch `feat/phase-1-scaffold`. `cd backend && go mod init github.com/trick77/peeq`. Set `go 1.25` in `go.mod`.
 
 - [ ] **Step 2: Write failing test for the health-serving binary.** `backend/internal/version/version_test.go`:
 ```go
@@ -104,22 +104,22 @@ func TestVersionDefault(t *testing.T) {
 - [ ] **Step 4: Implement** `version.go`: `package version; var Version = "dev"`.
 - [ ] **Step 5: Run — expect PASS.**
 
-- [ ] **Step 6: SPA embed.** Copy `../loom/backend/web/embed.go` verbatim (it embeds `all:dist` and serves SPA fallback). Add `backend/web/dist/index.html` placeholder: `<!doctype html><title>vark</title><div id=root></div>`. Add a test `backend/web/embed_test.go` that does an `httptest` GET `/` and asserts 200 + body contains `root`.
-- [ ] **Step 7: Minimal `cmd/vark/main.go`** that listens on `:8080` and mounts `web.Handler()` at `/` plus a literal `GET /healthz` returning `200 ok`. (Config/DB/auth arrive in later tasks; keep this minimal so the image builds.)
-- [ ] **Step 8: UI skeleton.** `ui/package.json` with React 19, Vite 8, Tailwind v4, `lucide-react@^1.24.0`, Vitest (copy versions from `../music/ui/package.json`). `vite.config.ts` builds to `../backend/web/dist`. `App.tsx` renders `<div>vark</div>`. `App.test.tsx` (Vitest + Testing Library) asserts it renders "vark".
-- [ ] **Step 9: Build/test tooling.** `Makefile` targets `test` (`go test ./...`), `fe-test` (`vitest --run`), `fe-build`, `build` (fe-build then `CGO_ENABLED=0 go build -o bin/vark ./backend/cmd/vark`), `dev` (`hack/dev.sh`) — adapt from `../loom/Makefile`. `hack/dev.sh` runs backend on `127.0.0.1:8080` in dev-auth + `vite` proxying `/api` → backend (adapt `../loom/hack/dev.sh`).
+- [ ] **Step 6: SPA embed.** Copy `../loom/backend/web/embed.go` verbatim (it embeds `all:dist` and serves SPA fallback). Add `backend/web/dist/index.html` placeholder: `<!doctype html><title>peeq</title><div id=root></div>`. Add a test `backend/web/embed_test.go` that does an `httptest` GET `/` and asserts 200 + body contains `root`.
+- [ ] **Step 7: Minimal `cmd/peeq/main.go`** that listens on `:8080` and mounts `web.Handler()` at `/` plus a literal `GET /healthz` returning `200 ok`. (Config/DB/auth arrive in later tasks; keep this minimal so the image builds.)
+- [ ] **Step 8: UI skeleton.** `ui/package.json` with React 19, Vite 8, Tailwind v4, `lucide-react@^1.24.0`, Vitest (copy versions from `../music/ui/package.json`). `vite.config.ts` builds to `../backend/web/dist`. `App.tsx` renders `<div>peeq</div>`. `App.test.tsx` (Vitest + Testing Library) asserts it renders "peeq".
+- [ ] **Step 9: Build/test tooling.** `Makefile` targets `test` (`go test ./...`), `fe-test` (`vitest --run`), `fe-build`, `build` (fe-build then `CGO_ENABLED=0 go build -o bin/peeq ./backend/cmd/peeq`), `dev` (`hack/dev.sh`) — adapt from `../loom/Makefile`. `hack/dev.sh` runs backend on `127.0.0.1:8080` in dev-auth + `vite` proxying `/api` → backend (adapt `../loom/hack/dev.sh`).
 - [ ] **Step 10: Containerfile** — adapt `../loom/backend/Containerfile` 3-stage build; **add `yt-dlp` and `ffmpeg`** to the runtime stage (distroless lacks them → use a minimal glibc base such as `debian:12-slim` for runtime, install `ffmpeg`, and fetch the `yt-dlp` binary into `/usr/local/bin`; a writable `/data/bin` is used later for self-update). Document this deviation from loom's distroless-static in a comment.
-- [ ] **Step 11: CI + dependabot.** Copy `../music/.github/dependabot.yaml` verbatim (gomod `/backend`, npm `/ui`, github-actions, docker `/backend`). `ci.yaml` = music's minus the Python `sidecar` job (backend `go build/vet/test`, ui `npm ci/build/test`). `release.yaml` = music's (build+push `ghcr.io/${{github.repository}}` on push to `master`, auto-version tag). `cleanup-images.yaml` = loom's with `image-names: "vark"`.
-- [ ] **Step 12: `.env.example`** (adapt loom's): `VARK_PUBLIC_URL`, `VARK_SESSION_SECRET`, OIDC block, and the dev block (`VARK_AUTH_MODE=dev`, `VARK_ADDR=127.0.0.1:8080`). Add `VARK_DB_PATH=/data/vark.db`, `VARK_MEDIA_DIR=/data/media`, `VARK_YTDLP_DIR=/data/bin`. `.gitignore` ignores `.env`, `bin/`, `backend/web/dist/*` (except the placeholder `index.html`), `node_modules`, `/data`.
-- [ ] **Step 13: `AGENTS.md`** — lean, adapt loom's (module path, pins, commands, migration rule, security invariants, the two vark invariants: cookie-gate + throttle). `README.md` — short overview + `docker compose up`.
-- [ ] **Step 14: Verify full build.** Run: `make fe-build && make build && make test && make fe-test`. Expected: binary at `bin/vark`, all tests PASS. Run `./bin/vark &` then `curl -s localhost:8080/healthz` → `ok`; `curl -s localhost:8080/` → contains `root`.
-- [ ] **Step 15: Create the private GitHub repo + push.** Confirm with the user this targets `trick77/vark` (personal, private). Then:
+- [ ] **Step 11: CI + dependabot.** Copy `../music/.github/dependabot.yaml` verbatim (gomod `/backend`, npm `/ui`, github-actions, docker `/backend`). `ci.yaml` = music's minus the Python `sidecar` job (backend `go build/vet/test`, ui `npm ci/build/test`). `release.yaml` = music's (build+push `ghcr.io/${{github.repository}}` on push to `master`, auto-version tag). `cleanup-images.yaml` = loom's with `image-names: "peeq"`.
+- [ ] **Step 12: `.env.example`** (adapt loom's): `PEEQ_PUBLIC_URL`, `PEEQ_SESSION_SECRET`, OIDC block, and the dev block (`PEEQ_AUTH_MODE=dev`, `PEEQ_ADDR=127.0.0.1:8080`). Add `PEEQ_DB_PATH=/data/peeq.db`, `PEEQ_MEDIA_DIR=/data/media`, `PEEQ_YTDLP_DIR=/data/bin`. `.gitignore` ignores `.env`, `bin/`, `backend/web/dist/*` (except the placeholder `index.html`), `node_modules`, `/data`.
+- [ ] **Step 13: `AGENTS.md`** — lean, adapt loom's (module path, pins, commands, migration rule, security invariants, the two peeq invariants: cookie-gate + throttle). `README.md` — short overview + `docker compose up`.
+- [ ] **Step 14: Verify full build.** Run: `make fe-build && make build && make test && make fe-test`. Expected: binary at `bin/peeq`, all tests PASS. Run `./bin/peeq &` then `curl -s localhost:8080/healthz` → `ok`; `curl -s localhost:8080/` → contains `root`.
+- [ ] **Step 15: Create the private GitHub repo + push.** Confirm with the user this targets `trick77/peeq` (personal, private). Then:
 ```bash
-gh repo create trick77/vark --private --source=. --remote=origin --push=false
-git add -A && git commit -m "chore: scaffold vark (go backend, react ui, ci, containerfile)"
+gh repo create trick77/peeq --private --source=. --remote=origin --push=false
+git add -A && git commit -m "chore: scaffold peeq (go backend, react ui, ci, containerfile)"
 git push -u origin feat/phase-1-scaffold
 ```
-Open a PR to `master`; confirm CI (backend + ui jobs) goes green. Merge. (Release build on master produces the first `ghcr.io/trick77/vark` image — expected to succeed since the skeleton builds.)
+Open a PR to `master`; confirm CI (backend + ui jobs) goes green. Merge. (Release build on master produces the first `ghcr.io/trick77/peeq` image — expected to succeed since the skeleton builds.)
 
 ---
 
@@ -135,21 +135,21 @@ Open a PR to `master`; confirm CI (backend + ui jobs) goes green. Merge. (Releas
 - [ ] **Step 1: Failing test — required secret + dev loopback guard.**
 ```go
 func TestLoad_devAuthRejectsNonLoopback(t *testing.T) {
-    t.Setenv("VARK_SESSION_SECRET", "x"); t.Setenv("VARK_AUTH_MODE", "dev")
-    t.Setenv("VARK_ADDR", "0.0.0.0:8080"); t.Setenv("VARK_PUBLIC_URL", "")
+    t.Setenv("PEEQ_SESSION_SECRET", "x"); t.Setenv("PEEQ_AUTH_MODE", "dev")
+    t.Setenv("PEEQ_ADDR", "0.0.0.0:8080"); t.Setenv("PEEQ_PUBLIC_URL", "")
     if _, err := Load(); err == nil { t.Fatal("dev auth on non-loopback must fail") }
 }
 func TestLoad_devAuthLoopbackOK(t *testing.T) {
-    t.Setenv("VARK_SESSION_SECRET", "x"); t.Setenv("VARK_AUTH_MODE", "dev")
-    t.Setenv("VARK_ADDR", "127.0.0.1:8080"); t.Setenv("VARK_PUBLIC_URL", "")
+    t.Setenv("PEEQ_SESSION_SECRET", "x"); t.Setenv("PEEQ_AUTH_MODE", "dev")
+    t.Setenv("PEEQ_ADDR", "127.0.0.1:8080"); t.Setenv("PEEQ_PUBLIC_URL", "")
     if _, err := Load(); err != nil { t.Fatalf("loopback dev auth must pass: %v", err) }
 }
 func TestLoad_missingSecretFails(t *testing.T) {
-    t.Setenv("VARK_SESSION_SECRET", ""); if _, err := Load(); err == nil { t.Fatal("missing secret must fail") }
+    t.Setenv("PEEQ_SESSION_SECRET", ""); if _, err := Load(); err == nil { t.Fatal("missing secret must fail") }
 }
 ```
 - [ ] **Step 2: Run — expect FAIL** (no `Load`).
-- [ ] **Step 3: Implement** `config.go`: adapt loom's `Load()` and `validateDevAuthLocalOnly` (loopback hosts `localhost`/`127.0.0.1`/`::1`; require empty-or-loopback `PublicURL`). Defaults: `Addr=:8080`, `DBPath=/data/vark.db`, `MediaDir=/data/media`, `YtdlpDir=/data/bin`. OIDC fields required only when `AuthMode==oidc`.
+- [ ] **Step 3: Implement** `config.go`: adapt loom's `Load()` and `validateDevAuthLocalOnly` (loopback hosts `localhost`/`127.0.0.1`/`::1`; require empty-or-loopback `PublicURL`). Defaults: `Addr=:8080`, `DBPath=/data/peeq.db`, `MediaDir=/data/media`, `YtdlpDir=/data/bin`. OIDC fields required only when `AuthMode==oidc`.
 - [ ] **Step 4: Run — expect PASS.**
 - [ ] **Step 5: Commit** `feat: config loader with dev-auth loopback guard`.
 
@@ -197,7 +197,7 @@ func TestMigrate_idempotent(t *testing.T) { /* Open+Migrate twice on same file �
 
 - [ ] **Step 1: Failing test — session round-trip.** Create session from claims → look up by raw token → returns the user; expired session → not found; revoked → not found. (Adapt loom's `session_test.go`.)
 - [ ] **Step 2: Run — expect FAIL.**
-- [ ] **Step 3: Implement** by porting loom's `auth` package + `0002_auth.sql`. Drop multi-user/admin-group specifics beyond a single role field. Keep opaque 32-byte token, SHA-256 at rest, `vark_session` cookie (HttpOnly, SameSite=Lax, Secure when PublicURL https), 30-day TTL.
+- [ ] **Step 3: Implement** by porting loom's `auth` package + `0002_auth.sql`. Drop multi-user/admin-group specifics beyond a single role field. Keep opaque 32-byte token, SHA-256 at rest, `peeq_session` cookie (HttpOnly, SameSite=Lax, Secure when PublicURL https), 30-day TTL.
 - [ ] **Step 4: Run — expect PASS.**
 - [ ] **Step 5: Commit** `feat: authentik OIDC + sessions + middleware`.
 
@@ -207,7 +207,7 @@ func TestMigrate_idempotent(t *testing.T) { /* Open+Migrate twice on same file �
 
 **Files:**
 - Create: `backend/internal/httpapi/{server.go,auth_handlers.go,health_handlers.go}`, `backend/internal/sse/sse.go`, `backend/internal/httpapi/server_test.go`.
-- Modify: `backend/cmd/vark/main.go` (full wiring).
+- Modify: `backend/cmd/peeq/main.go` (full wiring).
 - Reference: `../loom/backend/internal/httpapi/server.go` (route table + `Deps` + `requireAuth`), `../loom/backend/internal/httpapi/auth_handlers.go` (dev short-circuit `handleAuthLogin`), `../loom/backend/internal/sse/sse.go`.
 
 **Interfaces:**
@@ -217,7 +217,7 @@ func TestMigrate_idempotent(t *testing.T) { /* Open+Migrate twice on same file �
 ```go
 func TestServer_devLoginThenEmptyVideos(t *testing.T) {
     h := New(testDeps(t /* dev claims set */))
-    // GET /api/auth/login (dev) sets vark_session cookie
+    // GET /api/auth/login (dev) sets peeq_session cookie
     // reuse cookie → GET /api/videos → 200, body "[]"
 }
 ```
@@ -225,7 +225,7 @@ func TestServer_devLoginThenEmptyVideos(t *testing.T) {
 - [ ] **Step 3: Implement** `server.go` (route table, `Deps`, `requireAuth` wrapper), `auth_handlers.go` (port loom incl. `if devAuthClaims.Subject != "" { createSessionFromClaims(...) }` short-circuit), `health_handlers.go`, and `sse.go` (port loom). Placeholder `handleListVideos` returns `[]`.
 - [ ] **Step 4: Wire `main.go`:** `config.Load` → `store.Open`+`Migrate` → build `auth.Service` (OIDC discovery only when `AuthMode==oidc`; build `DevAuthClaims` when `dev`) → `httpapi.New` → `http.Server` on `cfg.Addr` with `signal.NotifyContext` graceful shutdown. Log a `dev auth enabled; loopback only` warning in dev.
 - [ ] **Step 5: Run — expect PASS.**
-- [ ] **Step 6: Manual smoke:** `VARK_SESSION_SECRET=x VARK_AUTH_MODE=dev VARK_ADDR=127.0.0.1:8080 ./bin/vark`, then `curl -c j -s localhost:8080/api/auth/login` and `curl -b j -s localhost:8080/api/videos` → `[]`.
+- [ ] **Step 6: Manual smoke:** `PEEQ_SESSION_SECRET=x PEEQ_AUTH_MODE=dev PEEQ_ADDR=127.0.0.1:8080 ./bin/peeq`, then `curl -c j -s localhost:8080/api/auth/login` and `curl -b j -s localhost:8080/api/videos` → `[]`.
 - [ ] **Step 7: Commit** `feat: http server skeleton with dev auto-login and SSE`.
 
 ---
@@ -453,14 +453,14 @@ Also assert a bare `-`-leading id string is only accepted as part of a full URL 
 ## Task 15: End-to-end wire-up + verification
 
 **Files:**
-- Modify: `backend/cmd/vark/main.go` (ensure worker + sweeper + selfupdate tick started; SSE hub wired), `compose.yaml`, `compose.dev.yaml` (adapt loom's; add `VARK_MEDIA_DIR`, `VARK_YTDLP_DIR` volumes; runtime image has yt-dlp+ffmpeg), `README.md`.
+- Modify: `backend/cmd/peeq/main.go` (ensure worker + sweeper + selfupdate tick started; SSE hub wired), `compose.yaml`, `compose.dev.yaml` (adapt loom's; add `PEEQ_MEDIA_DIR`, `PEEQ_YTDLP_DIR` volumes; runtime image has yt-dlp+ffmpeg), `README.md`.
 
-- [ ] **Step 1: Full build + all tests.** Run: `make fe-build && make build && make test && make fe-test`. Expected: all PASS, `bin/vark` present.
+- [ ] **Step 1: Full build + all tests.** Run: `make fe-build && make build && make test && make fe-test`. Expected: all PASS, `bin/peeq` present.
 - [ ] **Step 2: Live end-to-end (dev auth, real cookie).** Use the `verify` skill / drive the app:
-  - `VARK_SESSION_SECRET=dev VARK_AUTH_MODE=dev VARK_ADDR=127.0.0.1:8080 VARK_DB_PATH=./data/vark.db VARK_MEDIA_DIR=./data/media VARK_YTDLP_DIR=./data/bin ./bin/vark`
+  - `PEEQ_SESSION_SECRET=dev PEEQ_AUTH_MODE=dev PEEQ_ADDR=127.0.0.1:8080 PEEQ_DB_PATH=./data/peeq.db PEEQ_MEDIA_DIR=./data/media PEEQ_YTDLP_DIR=./data/bin ./bin/peeq`
   - Open `http://localhost:8080` (dev auto-login → admin session, empty Library).
   - Settings → paste a real YouTube cookie → cookie status turns "active". Confirm a download attempt with the cookie cleared is refused (409 / banner) — the hard invariant.
-  - Add → paste a short real video URL → row appears `queued`, worker downloads it (SSE progress in the dock), file lands under `VARK_MEDIA_DIR/<channel>/<id>/`, status → `downloaded`, `--limit-rate` respected.
+  - Add → paste a short real video URL → row appears `queued`, worker downloads it (SSE progress in the dock), file lands under `PEEQ_MEDIA_DIR/<channel>/<id>/`, status → `downloaded`, `--limit-rate` respected.
   - Open Player → plays; seek works (Range 206); close mid-video, reopen → resumes at saved position; SponsorBlock segments auto-skip.
   - Set retention to 0–1 day; mark the video watched → the sweep tombstones it; favorite a watched video → it survives; confirm the tombstone row keeps metadata and offers re-download.
   - Cancel a running download → the yt-dlp child is killed, partials cleaned, job `canceled`.

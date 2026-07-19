@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/trick77/vark/internal/auth"
+	"github.com/trick77/peeq/internal/auth"
 )
 
 // handleAuthLogin starts a login. In dev mode (DevAuthClaims.Subject set) it
-// short-circuits straight to a session, never contacting OIDC — vark is
+// short-circuits straight to a session, never contacting OIDC — peeq is
 // single-user and dev auth only runs loopback-bound (enforced by config).
 func (s *server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if s.devAuthClaims.Subject != "" {

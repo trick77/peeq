@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trick77/vark/internal/channels"
-	"github.com/trick77/vark/internal/sse"
-	"github.com/trick77/vark/internal/videos"
-	"github.com/trick77/vark/internal/ytdlp"
+	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/sse"
+	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // downloadPriority is the priority every manually-added download is

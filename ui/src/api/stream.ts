@@ -1,6 +1,6 @@
 // stream.ts — a generic Server-Sent Events consumer, ported from loom's
 // api/stream.ts SSE line-parser (event:/data:/blank-line framing) but
-// stripped of loom's chat-specific event union: vark's callers get a raw
+// stripped of loom's chat-specific event union: peeq's callers get a raw
 // (event, data) pair and decode the JSON payload themselves. This also
 // means an unrecognized event name (e.g. a heartbeat comment) is simply
 // ignored rather than erroring, per sse.Hub's own heartbeat behavior.

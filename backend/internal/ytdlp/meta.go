@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// Meta is the subset of yt-dlp's -J metadata JSON vark needs.
+// Meta is the subset of yt-dlp's -J metadata JSON peeq needs.
 type Meta struct {
 	ID              string `json:"id"`
 	Title           string `json:"title"`

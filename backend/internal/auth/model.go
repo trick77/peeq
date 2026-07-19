@@ -1,5 +1,5 @@
 // Package auth implements Authentik OIDC login, opaque session tokens, and
-// the RequireAuth middleware for vark's single-user deployment model.
+// the RequireAuth middleware for peeq's single-user deployment model.
 package auth
 
 import (
@@ -7,7 +7,7 @@ import (
 	"database/sql"
 )
 
-// Role is the app-local authorization role. Vark is single-user: the one
+// Role is the app-local authorization role. Peeq is single-user: the one
 // authenticated user is always admin. The field is kept for parity with
 // upstream (loom) and to leave room for multi-user support later.
 type Role string
@@ -17,8 +17,8 @@ const (
 	RoleUser  Role = "user"
 )
 
-// User is vark's app-local user profile, created from a verified OIDC
-// identity (or the dev auto-login identity in VARK_AUTH_MODE=dev).
+// User is peeq's app-local user profile, created from a verified OIDC
+// identity (or the dev auto-login identity in PEEQ_AUTH_MODE=dev).
 type User struct {
 	ID          string `json:"id"`
 	OIDCSubject string `json:"-"`
@@ -28,7 +28,7 @@ type User struct {
 	Role        Role   `json:"role"`
 }
 
-// Claims contains the verified OIDC identity fields vark needs.
+// Claims contains the verified OIDC identity fields peeq needs.
 type Claims struct {
 	Subject           string
 	PreferredUsername string
@@ -39,7 +39,7 @@ type Claims struct {
 
 type contextKey string
 
-const userContextKey contextKey = "vark_user"
+const userContextKey contextKey = "peeq_user"
 
 // UserFromContext returns the authenticated user stored on a request context.
 func UserFromContext(ctx context.Context) (User, bool) {

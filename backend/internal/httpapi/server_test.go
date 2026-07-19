@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/vark/internal/auth"
-	"github.com/trick77/vark/internal/settings"
-	"github.com/trick77/vark/internal/store"
+	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/store"
 )
 
 func openTestDB(t *testing.T) *sql.DB {

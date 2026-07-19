@@ -1,15 +1,15 @@
-# Production stack: single vark service behind an external Traefik reverse
+# Production stack: single peeq service behind an external Traefik reverse
 # proxy that terminates TLS. Requires an external "traefik" network
 # (`docker network create traefik`) shared with your Traefik instance.
 #
-#   cp .env.example .env   # fill in the values, especially VARK_SESSION_SECRET
+#   cp .env.example .env   # fill in the values, especially PEEQ_SESSION_SECRET
 #                           # and the OIDC block
 #   docker compose up -d
 #
 # Edit the Host() rule below to your real domain before deploying.
 services:
-  vark:
-    image: ghcr.io/trick77/vark:latest
+  peeq:
+    image: ghcr.io/trick77/peeq:latest
     restart: unless-stopped
 
     user: "1000:1000"
@@ -26,21 +26,21 @@ services:
     environment:
       HOME: /tmp
       TMPDIR: /tmp
-      VARK_ADDR: ":8080"
-      VARK_PUBLIC_URL: "${VARK_PUBLIC_URL}"
-      VARK_SESSION_SECRET: "${VARK_SESSION_SECRET}"
-      VARK_AUTH_MODE: "${VARK_AUTH_MODE:-oidc}"
-      VARK_OIDC_ISSUER: "${VARK_OIDC_ISSUER}"
-      VARK_OIDC_CLIENT_ID: "${VARK_OIDC_CLIENT_ID}"
-      VARK_OIDC_CLIENT_SECRET: "${VARK_OIDC_CLIENT_SECRET}"
-      VARK_OIDC_REDIRECT_URL: "${VARK_OIDC_REDIRECT_URL}"
-      VARK_OIDC_POST_LOGOUT_REDIRECT_URL: "${VARK_OIDC_POST_LOGOUT_REDIRECT_URL}"
+      PEEQ_ADDR: ":8080"
+      PEEQ_PUBLIC_URL: "${PEEQ_PUBLIC_URL}"
+      PEEQ_SESSION_SECRET: "${PEEQ_SESSION_SECRET}"
+      PEEQ_AUTH_MODE: "${PEEQ_AUTH_MODE:-oidc}"
+      PEEQ_OIDC_ISSUER: "${PEEQ_OIDC_ISSUER}"
+      PEEQ_OIDC_CLIENT_ID: "${PEEQ_OIDC_CLIENT_ID}"
+      PEEQ_OIDC_CLIENT_SECRET: "${PEEQ_OIDC_CLIENT_SECRET}"
+      PEEQ_OIDC_REDIRECT_URL: "${PEEQ_OIDC_REDIRECT_URL}"
+      PEEQ_OIDC_POST_LOGOUT_REDIRECT_URL: "${PEEQ_OIDC_POST_LOGOUT_REDIRECT_URL}"
       # Empty = no admin-group check (matches the code default); set to your IdP group to gate admin.
-      VARK_OIDC_ADMIN_GROUP: "${VARK_OIDC_ADMIN_GROUP}"
-      VARK_DB_PATH: /data/vark.db
-      VARK_MEDIA_DIR: /data/media
-      VARK_YTDLP_DIR: /data/bin
-      VARK_LOG_LEVEL: "${VARK_LOG_LEVEL:-info}"
+      PEEQ_OIDC_ADMIN_GROUP: "${PEEQ_OIDC_ADMIN_GROUP}"
+      PEEQ_DB_PATH: /data/peeq.db
+      PEEQ_MEDIA_DIR: /data/media
+      PEEQ_YTDLP_DIR: /data/bin
+      PEEQ_LOG_LEVEL: "${PEEQ_LOG_LEVEL:-info}"
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
@@ -51,7 +51,7 @@ services:
       retries: 3
 
     volumes:
-      - ./data:/data                 # SQLite DB (/data/vark.db) + self-updating yt-dlp binary (/data/bin)
+      - ./data:/data                 # SQLite DB (/data/peeq.db) + self-updating yt-dlp binary (/data/bin)
       - /mnt/ark/peeq:/data/media    # downloaded media on the dedicated volume
 
     networks:
@@ -67,10 +67,10 @@ services:
       traefik.enable: "true"
       traefik.docker.network: traefik
       # Replace the Host() rule with your real domain.
-      traefik.http.routers.vark.rule: Host(`vark.example.com`)
-      traefik.http.routers.vark.entrypoints: websecure
-      traefik.http.routers.vark.tls: "true"
-      traefik.http.services.vark.loadbalancer.server.port: "8080"
+      traefik.http.routers.peeq.rule: Host(`peeq.example.com`)
+      traefik.http.routers.peeq.entrypoints: websecure
+      traefik.http.routers.peeq.tls: "true"
+      traefik.http.services.peeq.loadbalancer.server.port: "8080"
 
 networks:
   traefik:

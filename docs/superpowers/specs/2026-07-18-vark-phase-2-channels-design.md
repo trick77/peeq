@@ -1,4 +1,4 @@
-# vark Phase 2 — Channels & Subscriptions — Design
+# peeq Phase 2 — Channels & Subscriptions — Design
 
 **Status:** approved design (brainstorm) — precedes the TDD implementation plan.
 **Builds on:** Phase 1 (core watch-and-download loop). Branch `feat/phase-2-channels` off `master`
@@ -6,7 +6,7 @@ after PR #1 (Phase 1) merges.
 
 ## Goal
 
-Turn vark from "paste a link, download one video" into "follow channels": **track** a channel (record
+Turn peeq from "paste a link, download one video" into "follow channels": **track** a channel (record
 its identity, take no action) vs **subscribe** to it (scan once/24h for genuinely new uploads). New
 uploads on **autodownload** channels enqueue automatically at low priority; otherwise they land in a
 **New & pending** list where each item can be **Downloaded now** (manual priority) or **Ignored**.
@@ -19,7 +19,7 @@ Runner (cookie gate + throttle) and download worker reused, plus one new scan-sc
   `exec` choke point, so the cookie gate applies before any network action.
 - **20s minimum throttle floor + random jitter on every YouTube call**, enforced by the Runner's
   single exec path. The scan scheduler adds a **≥60s between-channel** spacing on top of that.
-- Module `github.com/trick77/vark`, Go 1.25, `CGO_ENABLED=0`. Conventional Commits. YAML `.yaml`.
+- Module `github.com/trick77/peeq`, Go 1.25, `CGO_ENABLED=0`. Conventional Commits. YAML `.yaml`.
   English comments only. TDD (failing test first). Every DB-writing access goes through a store
   method. Automated tests use a fake yt-dlp stub — never the real binary.
 
@@ -38,10 +38,10 @@ Runner (cookie gate + throttle) and download worker reused, plus one new scan-sc
   video rows, its ledger rows, its subscription, and the channel row. Destructive → UI confirm.
 - **Min-duration filter is a configurable setting** (`min_video_duration_seconds`, default 180), with
   a Settings control.
-- **Squashed migrations.** Until vark ships, all schema lives in a **single** `0001_init.sql`
+- **Squashed migrations.** Until peeq ships, all schema lives in a **single** `0001_init.sql`
   (Phase 1's `0002_auth.sql` is folded in and deleted, and the P2 tables + settings column are added
-  there). Dev DBs are disposable and must be recreated (`rm ./data/vark.db`) after this change. Once
-  vark is deployed, migrations return to append-only.
+  there). Dev DBs are disposable and must be recreated (`rm ./data/peeq.db`) after this change. Once
+  peeq is deployed, migrations return to append-only.
 
 ## Explicitly deferred to the NEXT phase (recorded, not built in P2)
 

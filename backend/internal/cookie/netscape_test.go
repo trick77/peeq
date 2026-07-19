@@ -3,7 +3,7 @@ package cookie_test
 import (
 	"testing"
 
-	"github.com/trick77/vark/internal/cookie"
+	"github.com/trick77/peeq/internal/cookie"
 )
 
 func TestValidate_rejectsGarbage(t *testing.T) {

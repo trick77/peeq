@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	oidcStateCookieName = "vark_oidc_state"
-	oidcNonceCookieName = "vark_oidc_nonce"
+	oidcStateCookieName = "peeq_oidc_state"
+	oidcNonceCookieName = "peeq_oidc_nonce"
 )
 
 var (

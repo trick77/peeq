@@ -1,4 +1,4 @@
-// Package config loads vark's runtime configuration from environment variables.
+// Package config loads peeq's runtime configuration from environment variables.
 package config
 
 import (
@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-// AuthMode selects how vark signs users in.
+// AuthMode selects how peeq signs users in.
 type AuthMode string
 
 const (
@@ -60,56 +60,56 @@ func env(key, def string) string {
 // Load reads configuration from the environment, applying defaults.
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:          env("VARK_ADDR", ":8080"),
-		PublicURL:     env("VARK_PUBLIC_URL", ""),
-		SessionSecret: env("VARK_SESSION_SECRET", ""),
-		DBPath:        env("VARK_DB_PATH", "/data/vark.db"),
-		MediaDir:      env("VARK_MEDIA_DIR", "/data/media"),
-		YtdlpDir:      env("VARK_YTDLP_DIR", "/data/bin"),
-		AuthMode:      AuthMode(env("VARK_AUTH_MODE", "")),
-		LogLevel:      env("VARK_LOG_LEVEL", "info"),
+		Addr:          env("PEEQ_ADDR", ":8080"),
+		PublicURL:     env("PEEQ_PUBLIC_URL", ""),
+		SessionSecret: env("PEEQ_SESSION_SECRET", ""),
+		DBPath:        env("PEEQ_DB_PATH", "/data/peeq.db"),
+		MediaDir:      env("PEEQ_MEDIA_DIR", "/data/media"),
+		YtdlpDir:      env("PEEQ_YTDLP_DIR", "/data/bin"),
+		AuthMode:      AuthMode(env("PEEQ_AUTH_MODE", "")),
+		LogLevel:      env("PEEQ_LOG_LEVEL", "info"),
 		OIDC: OIDCConfig{
-			Issuer:                env("VARK_OIDC_ISSUER", ""),
-			ClientID:              env("VARK_OIDC_CLIENT_ID", ""),
-			ClientSecret:          env("VARK_OIDC_CLIENT_SECRET", ""),
-			RedirectURL:           env("VARK_OIDC_REDIRECT_URL", ""),
-			PostLogoutRedirectURL: env("VARK_OIDC_POST_LOGOUT_REDIRECT_URL", ""),
-			AdminGroup:            env("VARK_OIDC_ADMIN_GROUP", ""),
+			Issuer:                env("PEEQ_OIDC_ISSUER", ""),
+			ClientID:              env("PEEQ_OIDC_CLIENT_ID", ""),
+			ClientSecret:          env("PEEQ_OIDC_CLIENT_SECRET", ""),
+			RedirectURL:           env("PEEQ_OIDC_REDIRECT_URL", ""),
+			PostLogoutRedirectURL: env("PEEQ_OIDC_POST_LOGOUT_REDIRECT_URL", ""),
+			AdminGroup:            env("PEEQ_OIDC_ADMIN_GROUP", ""),
 		},
 		Dev: DevUserConfig{
-			Subject:     env("VARK_DEV_USER_SUBJECT", "dev-admin"),
-			Username:    env("VARK_DEV_USER_USERNAME", "dev"),
-			Email:       env("VARK_DEV_USER_EMAIL", "dev@example.local"),
-			DisplayName: env("VARK_DEV_USER_NAME", "Dev Admin"),
+			Subject:     env("PEEQ_DEV_USER_SUBJECT", "dev-admin"),
+			Username:    env("PEEQ_DEV_USER_USERNAME", "dev"),
+			Email:       env("PEEQ_DEV_USER_EMAIL", "dev@example.local"),
+			DisplayName: env("PEEQ_DEV_USER_NAME", "Dev Admin"),
 			Role:        "admin",
 		},
 	}
 
 	if cfg.SessionSecret == "" {
-		return Config{}, fmt.Errorf("VARK_SESSION_SECRET is required")
+		return Config{}, fmt.Errorf("PEEQ_SESSION_SECRET is required")
 	}
 
 	switch cfg.AuthMode {
 	case AuthModeNone:
 	case AuthModeOIDC:
 		if cfg.OIDC.Issuer == "" {
-			return Config{}, fmt.Errorf("VARK_OIDC_ISSUER is required when VARK_AUTH_MODE=oidc")
+			return Config{}, fmt.Errorf("PEEQ_OIDC_ISSUER is required when PEEQ_AUTH_MODE=oidc")
 		}
 		if cfg.OIDC.ClientID == "" {
-			return Config{}, fmt.Errorf("VARK_OIDC_CLIENT_ID is required when VARK_AUTH_MODE=oidc")
+			return Config{}, fmt.Errorf("PEEQ_OIDC_CLIENT_ID is required when PEEQ_AUTH_MODE=oidc")
 		}
 		if cfg.OIDC.ClientSecret == "" {
-			return Config{}, fmt.Errorf("VARK_OIDC_CLIENT_SECRET is required when VARK_AUTH_MODE=oidc")
+			return Config{}, fmt.Errorf("PEEQ_OIDC_CLIENT_SECRET is required when PEEQ_AUTH_MODE=oidc")
 		}
 		if cfg.OIDC.RedirectURL == "" {
-			return Config{}, fmt.Errorf("VARK_OIDC_REDIRECT_URL is required when VARK_AUTH_MODE=oidc")
+			return Config{}, fmt.Errorf("PEEQ_OIDC_REDIRECT_URL is required when PEEQ_AUTH_MODE=oidc")
 		}
 	case AuthModeDev:
 		if err := validateDevAuthLocalOnly(cfg); err != nil {
 			return Config{}, err
 		}
 	default:
-		return Config{}, fmt.Errorf("VARK_AUTH_MODE must be one of: oidc, dev")
+		return Config{}, fmt.Errorf("PEEQ_AUTH_MODE must be one of: oidc, dev")
 	}
 
 	return cfg, nil
@@ -120,10 +120,10 @@ func Load() (Config, error) {
 // dev-login shortcut from ever being reachable from the network.
 func validateDevAuthLocalOnly(cfg Config) error {
 	if !isLoopbackAddr(cfg.Addr) {
-		return fmt.Errorf("VARK_AUTH_MODE=dev requires VARK_ADDR to bind to localhost or a loopback address")
+		return fmt.Errorf("PEEQ_AUTH_MODE=dev requires PEEQ_ADDR to bind to localhost or a loopback address")
 	}
 	if cfg.PublicURL != "" && !isLoopbackPublicURL(cfg.PublicURL) {
-		return fmt.Errorf("VARK_AUTH_MODE=dev requires VARK_PUBLIC_URL to be empty or loopback")
+		return fmt.Errorf("PEEQ_AUTH_MODE=dev requires PEEQ_PUBLIC_URL to be empty or loopback")
 	}
 	return nil
 }

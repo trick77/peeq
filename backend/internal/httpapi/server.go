@@ -1,4 +1,4 @@
-// Package httpapi builds vark's HTTP handler: the JSON API plus the embedded
+// Package httpapi builds peeq's HTTP handler: the JSON API plus the embedded
 // SPA. Phase 1 wires health, auth (dev auto-login + OIDC), the downloads
 // queue, and the videos API (list/get/delete/stream/favorite/watched/
 // resume); further archiving pipeline endpoints land in later phases.
@@ -8,13 +8,13 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/trick77/vark/internal/auth"
-	"github.com/trick77/vark/internal/channels"
-	"github.com/trick77/vark/internal/channelvideos"
-	"github.com/trick77/vark/internal/jobs"
-	"github.com/trick77/vark/internal/settings"
-	"github.com/trick77/vark/internal/sse"
-	"github.com/trick77/vark/internal/videos"
+	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/sse"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // Deps are the dependencies needed to build the server.
@@ -32,7 +32,7 @@ type Deps struct {
 	Settings *settings.Store
 	// DevAuthClaims, when Subject is non-empty, makes /api/auth/login create a
 	// session directly from these claims instead of redirecting to OIDC. Only
-	// ever set when VARK_AUTH_MODE=dev (see config's loopback-only guard).
+	// ever set when PEEQ_AUTH_MODE=dev (see config's loopback-only guard).
 	DevAuthClaims auth.Claims
 
 	// Jobs is the download queue store backing the downloads API.

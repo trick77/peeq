@@ -89,7 +89,7 @@ func parseProgressLine(line string) (Progress, bool) {
 	return Progress{Percent: pct, Speed: m[2], ETA: m[3]}, true
 }
 
-// downloadInfoJSON is the subset of yt-dlp's *.info.json vark needs after
+// downloadInfoJSON is the subset of yt-dlp's *.info.json peeq needs after
 // a download: the channel id (to place the final directory) and chapters
 // (to extract SponsorBlock segments inserted by --sponsorblock-mark).
 type downloadInfoJSON struct {

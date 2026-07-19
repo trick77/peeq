@@ -1,4 +1,4 @@
-module github.com/trick77/vark
+module github.com/trick77/peeq
 
 go 1.25.0
 

@@ -13,7 +13,7 @@ import (
 
 // SessionCookieName is the browser cookie holding the raw (unhashed) session
 // token. Only the SHA-256 hash of the token is ever persisted server-side.
-const SessionCookieName = "vark_session"
+const SessionCookieName = "peeq_session"
 
 // SessionTTL is how long a session remains valid after creation.
 const SessionTTL = 30 * 24 * time.Hour

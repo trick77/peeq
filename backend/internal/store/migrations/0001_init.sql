@@ -67,7 +67,7 @@ CREATE INDEX idx_download_jobs_video_id ON download_jobs(video_id);
 CREATE INDEX idx_download_jobs_state ON download_jobs(state);
 
 -- users: the app-local profile created from a verified Authentik OIDC
--- identity (or the dev auto-login identity). Vark is single-user; in
+-- identity (or the dev auto-login identity). Peeq is single-user; in
 -- practice only one row is ever created, but the table stays keyed by
 -- oidc_subject to support re-provisioning without changing shape later.
 CREATE TABLE users (
@@ -83,7 +83,7 @@ CREATE TABLE users (
 );
 
 -- sessions: opaque browser sessions. Only the SHA-256 hash of the session
--- token is ever stored; the raw token lives solely in the vark_session cookie.
+-- token is ever stored; the raw token lives solely in the peeq_session cookie.
 CREATE TABLE sessions (
     token_hash    TEXT PRIMARY KEY,
     user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

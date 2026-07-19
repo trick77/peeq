@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trick77/vark/internal/channels"
-	"github.com/trick77/vark/internal/media"
-	"github.com/trick77/vark/internal/videos"
-	"github.com/trick77/vark/internal/ytdlp"
+	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/media"
+	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // ChannelResolver resolves a canonicalized channel url to its authoritative

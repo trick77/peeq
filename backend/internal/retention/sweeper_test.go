@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trick77/vark/internal/settings"
-	"github.com/trick77/vark/internal/store"
-	"github.com/trick77/vark/internal/videos"
+	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/store"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // fakeGuard is a NowPlayingGuard whose active set is controlled directly by

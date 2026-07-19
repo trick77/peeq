@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/trick77/vark/internal/store"
+	"github.com/trick77/peeq/internal/store"
 )
 
 func newTestStore(t *testing.T) *Store {

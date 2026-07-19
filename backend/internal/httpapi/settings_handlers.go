@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/trick77/vark/internal/settings"
+	"github.com/trick77/peeq/internal/settings"
 )
 
 // settingsPatchRequest is the request body for PUT /api/settings. It never

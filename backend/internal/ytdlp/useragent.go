@@ -39,7 +39,7 @@ var chromeVersions = []string{
 // RandomUserAgent returns a random desktop Chrome User-Agent string.
 //
 // IMPORTANT: this is deliberately NOT used for any yt-dlp invocation. Only
-// for direct (non-yt-dlp) HTTP requests vark makes straight to YouTube.
+// for direct (non-yt-dlp) HTTP requests peeq makes straight to YouTube.
 // yt-dlp manages its own per-extractor-client headers, and overriding its
 // User-Agent while also sending cookies causes client/header mismatches
 // that YouTube can flag. This mirrors TubeArchivist's approach: it fakes a

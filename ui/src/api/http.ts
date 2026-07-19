@@ -1,6 +1,6 @@
 // http.ts — the shared fetch/JSON core every api/* module builds on. Ported
 // from loom's api/http.ts (AuthExpiredError + expectJSON), extended with a
-// generic `api` verb object (get/post/put/delete) since vark's domain
+// generic `api` verb object (get/post/put/delete) since peeq's domain
 // modules are thin enough not to need loom's one-off-per-endpoint style.
 
 // AuthExpiredError signals a 401 from an authenticated endpoint — the app

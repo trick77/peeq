@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trick77/vark/internal/sse"
+	"github.com/trick77/peeq/internal/sse"
 )
 
 // TestResolveYtdlpBin_picksUpNewlyAppearedBinary proves the resolver used on
