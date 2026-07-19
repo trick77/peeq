@@ -60,56 +60,56 @@ func env(key, def string) string {
 // Load reads configuration from the environment, applying defaults.
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:          env("PEEQ_ADDR", ":8080"),
-		PublicURL:     env("PEEQ_PUBLIC_URL", ""),
-		SessionSecret: env("PEEQ_SESSION_SECRET", ""),
-		DBPath:        env("PEEQ_DB_PATH", "/data/peeq.db"),
-		MediaDir:      env("PEEQ_MEDIA_DIR", "/data/media"),
-		YtdlpDir:      env("PEEQ_YTDLP_DIR", "/data/bin"),
-		AuthMode:      AuthMode(env("PEEQ_AUTH_MODE", "")),
-		LogLevel:      env("PEEQ_LOG_LEVEL", "info"),
+		Addr:          env("BACKEND_ADDR", ":8080"),
+		PublicURL:     env("BACKEND_PUBLIC_URL", ""),
+		SessionSecret: env("BACKEND_SESSION_SECRET", ""),
+		DBPath:        env("BACKEND_DB_PATH", "/data/peeq.db"),
+		MediaDir:      env("BACKEND_MEDIA_DIR", "/data/media"),
+		YtdlpDir:      env("BACKEND_YTDLP_DIR", "/data/bin"),
+		AuthMode:      AuthMode(env("BACKEND_AUTH_MODE", "")),
+		LogLevel:      env("BACKEND_LOG_LEVEL", "info"),
 		OIDC: OIDCConfig{
-			Issuer:                env("PEEQ_OIDC_ISSUER", ""),
-			ClientID:              env("PEEQ_OIDC_CLIENT_ID", ""),
-			ClientSecret:          env("PEEQ_OIDC_CLIENT_SECRET", ""),
-			RedirectURL:           env("PEEQ_OIDC_REDIRECT_URL", ""),
-			PostLogoutRedirectURL: env("PEEQ_OIDC_POST_LOGOUT_REDIRECT_URL", ""),
-			AdminGroup:            env("PEEQ_OIDC_ADMIN_GROUP", ""),
+			Issuer:                env("BACKEND_OIDC_ISSUER", ""),
+			ClientID:              env("BACKEND_OIDC_CLIENT_ID", ""),
+			ClientSecret:          env("BACKEND_OIDC_CLIENT_SECRET", ""),
+			RedirectURL:           env("BACKEND_OIDC_REDIRECT_URL", ""),
+			PostLogoutRedirectURL: env("BACKEND_OIDC_POST_LOGOUT_REDIRECT_URL", ""),
+			AdminGroup:            env("BACKEND_OIDC_ADMIN_GROUP", ""),
 		},
 		Dev: DevUserConfig{
-			Subject:     env("PEEQ_DEV_USER_SUBJECT", "dev-admin"),
-			Username:    env("PEEQ_DEV_USER_USERNAME", "dev"),
-			Email:       env("PEEQ_DEV_USER_EMAIL", "dev@example.local"),
-			DisplayName: env("PEEQ_DEV_USER_NAME", "Dev Admin"),
+			Subject:     env("BACKEND_DEV_USER_SUBJECT", "dev-admin"),
+			Username:    env("BACKEND_DEV_USER_USERNAME", "dev"),
+			Email:       env("BACKEND_DEV_USER_EMAIL", "dev@example.local"),
+			DisplayName: env("BACKEND_DEV_USER_NAME", "Dev Admin"),
 			Role:        "admin",
 		},
 	}
 
 	if cfg.SessionSecret == "" {
-		return Config{}, fmt.Errorf("PEEQ_SESSION_SECRET is required")
+		return Config{}, fmt.Errorf("BACKEND_SESSION_SECRET is required")
 	}
 
 	switch cfg.AuthMode {
 	case AuthModeNone:
 	case AuthModeOIDC:
 		if cfg.OIDC.Issuer == "" {
-			return Config{}, fmt.Errorf("PEEQ_OIDC_ISSUER is required when PEEQ_AUTH_MODE=oidc")
+			return Config{}, fmt.Errorf("BACKEND_OIDC_ISSUER is required when BACKEND_AUTH_MODE=oidc")
 		}
 		if cfg.OIDC.ClientID == "" {
-			return Config{}, fmt.Errorf("PEEQ_OIDC_CLIENT_ID is required when PEEQ_AUTH_MODE=oidc")
+			return Config{}, fmt.Errorf("BACKEND_OIDC_CLIENT_ID is required when BACKEND_AUTH_MODE=oidc")
 		}
 		if cfg.OIDC.ClientSecret == "" {
-			return Config{}, fmt.Errorf("PEEQ_OIDC_CLIENT_SECRET is required when PEEQ_AUTH_MODE=oidc")
+			return Config{}, fmt.Errorf("BACKEND_OIDC_CLIENT_SECRET is required when BACKEND_AUTH_MODE=oidc")
 		}
 		if cfg.OIDC.RedirectURL == "" {
-			return Config{}, fmt.Errorf("PEEQ_OIDC_REDIRECT_URL is required when PEEQ_AUTH_MODE=oidc")
+			return Config{}, fmt.Errorf("BACKEND_OIDC_REDIRECT_URL is required when BACKEND_AUTH_MODE=oidc")
 		}
 	case AuthModeDev:
 		if err := validateDevAuthLocalOnly(cfg); err != nil {
 			return Config{}, err
 		}
 	default:
-		return Config{}, fmt.Errorf("PEEQ_AUTH_MODE must be one of: oidc, dev")
+		return Config{}, fmt.Errorf("BACKEND_AUTH_MODE must be one of: oidc, dev")
 	}
 
 	return cfg, nil
@@ -120,10 +120,10 @@ func Load() (Config, error) {
 // dev-login shortcut from ever being reachable from the network.
 func validateDevAuthLocalOnly(cfg Config) error {
 	if !isLoopbackAddr(cfg.Addr) {
-		return fmt.Errorf("PEEQ_AUTH_MODE=dev requires PEEQ_ADDR to bind to localhost or a loopback address")
+		return fmt.Errorf("BACKEND_AUTH_MODE=dev requires BACKEND_ADDR to bind to localhost or a loopback address")
 	}
 	if cfg.PublicURL != "" && !isLoopbackPublicURL(cfg.PublicURL) {
-		return fmt.Errorf("PEEQ_AUTH_MODE=dev requires PEEQ_PUBLIC_URL to be empty or loopback")
+		return fmt.Errorf("BACKEND_AUTH_MODE=dev requires BACKEND_PUBLIC_URL to be empty or loopback")
 	}
 	return nil
 }

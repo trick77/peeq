@@ -32,7 +32,7 @@ type Deps struct {
 	Settings *settings.Store
 	// DevAuthClaims, when Subject is non-empty, makes /api/auth/login create a
 	// session directly from these claims instead of redirecting to OIDC. Only
-	// ever set when PEEQ_AUTH_MODE=dev (see config's loopback-only guard).
+	// ever set when BACKEND_AUTH_MODE=dev (see config's loopback-only guard).
 	DevAuthClaims auth.Claims
 
 	// Jobs is the download queue store backing the downloads API.

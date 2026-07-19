@@ -2,7 +2,7 @@
 # proxy that terminates TLS. Requires an external "traefik" network
 # (`docker network create traefik`) shared with your Traefik instance.
 #
-#   cp .env.example .env   # fill in the values, especially PEEQ_SESSION_SECRET
+#   cp .env.example .env   # fill in the values, especially BACKEND_SESSION_SECRET
 #                           # and the OIDC block
 #   docker compose up -d
 #
@@ -26,21 +26,21 @@ services:
     environment:
       HOME: /tmp
       TMPDIR: /tmp
-      PEEQ_ADDR: ":8080"
-      PEEQ_PUBLIC_URL: "${PEEQ_PUBLIC_URL}"
-      PEEQ_SESSION_SECRET: "${PEEQ_SESSION_SECRET}"
-      PEEQ_AUTH_MODE: "${PEEQ_AUTH_MODE:-oidc}"
-      PEEQ_OIDC_ISSUER: "${PEEQ_OIDC_ISSUER}"
-      PEEQ_OIDC_CLIENT_ID: "${PEEQ_OIDC_CLIENT_ID}"
-      PEEQ_OIDC_CLIENT_SECRET: "${PEEQ_OIDC_CLIENT_SECRET}"
-      PEEQ_OIDC_REDIRECT_URL: "${PEEQ_OIDC_REDIRECT_URL}"
-      PEEQ_OIDC_POST_LOGOUT_REDIRECT_URL: "${PEEQ_OIDC_POST_LOGOUT_REDIRECT_URL}"
+      BACKEND_ADDR: ":8080"
+      BACKEND_PUBLIC_URL: "${BACKEND_PUBLIC_URL}"
+      BACKEND_SESSION_SECRET: "${BACKEND_SESSION_SECRET}"
+      BACKEND_AUTH_MODE: "${BACKEND_AUTH_MODE:-oidc}"
+      BACKEND_OIDC_ISSUER: "${BACKEND_OIDC_ISSUER}"
+      BACKEND_OIDC_CLIENT_ID: "${BACKEND_OIDC_CLIENT_ID}"
+      BACKEND_OIDC_CLIENT_SECRET: "${BACKEND_OIDC_CLIENT_SECRET}"
+      BACKEND_OIDC_REDIRECT_URL: "${BACKEND_OIDC_REDIRECT_URL}"
+      BACKEND_OIDC_POST_LOGOUT_REDIRECT_URL: "${BACKEND_OIDC_POST_LOGOUT_REDIRECT_URL}"
       # Empty = no admin-group check (matches the code default); set to your IdP group to gate admin.
-      PEEQ_OIDC_ADMIN_GROUP: "${PEEQ_OIDC_ADMIN_GROUP}"
-      PEEQ_DB_PATH: /data/peeq.db
-      PEEQ_MEDIA_DIR: /data/media
-      PEEQ_YTDLP_DIR: /data/bin
-      PEEQ_LOG_LEVEL: "${PEEQ_LOG_LEVEL:-info}"
+      BACKEND_OIDC_ADMIN_GROUP: "${BACKEND_OIDC_ADMIN_GROUP}"
+      BACKEND_DB_PATH: /data/peeq.db
+      BACKEND_MEDIA_DIR: /data/media
+      BACKEND_YTDLP_DIR: /data/bin
+      BACKEND_LOG_LEVEL: "${BACKEND_LOG_LEVEL:-info}"
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]

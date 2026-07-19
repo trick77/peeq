@@ -6,7 +6,7 @@ external services required.
 ## Run
 
 ```bash
-cp .env.example .env   # fill in the values, especially PEEQ_SESSION_SECRET and the OIDC block
+cp .env.example .env   # fill in the values, especially BACKEND_SESSION_SECRET and the OIDC block
 docker compose up -d --build
 ```
 
@@ -64,7 +64,7 @@ yt-dlp call, so a large subscription list is scanned gradually rather than in a 
 
 ## Database backup
 
-`PEEQ_DB_PATH` (default `/data/peeq.db`) is the single source of truth for everything that isn't
+`BACKEND_DB_PATH` (default `/data/peeq.db`) is the single source of truth for everything that isn't
 the media file itself: watch/resume position, favorites, tombstones, the download queue, and
 settings (including the stored cookie). **Back this file up.** If it's lost, re-downloading the
 media does not restore any of that state — favorited and watched videos, resume positions, and

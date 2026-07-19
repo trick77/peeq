@@ -16,7 +16,7 @@ import (
 func fakeBinPrinting(t *testing.T, stdout string) string {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "fake-ytdlp-print.sh")
-	content := "#!/bin/sh\ncat <<'PEEQ_EOF'\n" + stdout + "\nPEEQ_EOF\nexit 0\n"
+	content := "#!/bin/sh\ncat <<'BACKEND_EOF'\n" + stdout + "\nBACKEND_EOF\nexit 0\n"
 	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
 		t.Fatalf("write fake bin: %v", err)
 	}

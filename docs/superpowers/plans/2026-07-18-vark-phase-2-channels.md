@@ -1674,8 +1674,8 @@ Change `workerWG.Add(3)` to `workerWG.Add(4)` and add a fourth goroutine:
 - [ ] **Step 5: Manual smoke (no cookie path).** 
 ```bash
 cd backend && CGO_ENABLED=0 go build -o ../bin/peeq ./cmd/peeq
-PEEQ_SESSION_SECRET=dev PEEQ_AUTH_MODE=dev PEEQ_ADDR=127.0.0.1:8080 \
-  PEEQ_DB_PATH=./data/peeq.db PEEQ_MEDIA_DIR=./data/media PEEQ_YTDLP_DIR=./data/bin ../bin/peeq &
+BACKEND_SESSION_SECRET=dev BACKEND_AUTH_MODE=dev BACKEND_ADDR=127.0.0.1:8080 \
+  BACKEND_DB_PATH=./data/peeq.db BACKEND_MEDIA_DIR=./data/media BACKEND_YTDLP_DIR=./data/bin ../bin/peeq &
 sleep 1
 curl -c j -s localhost:8080/api/auth/login >/dev/null
 curl -b j -s localhost:8080/api/channels?filter=all   # → []

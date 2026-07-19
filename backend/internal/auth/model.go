@@ -18,7 +18,7 @@ const (
 )
 
 // User is peeq's app-local user profile, created from a verified OIDC
-// identity (or the dev auto-login identity in PEEQ_AUTH_MODE=dev).
+// identity (or the dev auto-login identity in BACKEND_AUTH_MODE=dev).
 type User struct {
 	ID          string `json:"id"`
 	OIDCSubject string `json:"-"`

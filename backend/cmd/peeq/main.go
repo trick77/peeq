@@ -126,7 +126,7 @@ func run() error {
 		// but every route peeq serves is requireAuth-gated, so a server that
 		// boots with no way to ever obtain a session is just broken with
 		// extra steps. Reject at boot rather than come up silently inert.
-		return fmt.Errorf("PEEQ_AUTH_MODE must be %q or %q (got %q)", config.AuthModeOIDC, config.AuthModeDev, cfg.AuthMode)
+		return fmt.Errorf("BACKEND_AUTH_MODE must be %q or %q (got %q)", config.AuthModeOIDC, config.AuthModeDev, cfg.AuthMode)
 	}
 
 	authSvc := auth.NewService(oidcSvc, sessions, users)
