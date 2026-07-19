@@ -113,6 +113,13 @@ func (s *server) handleResummarize(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "video not found")
 		return
 	}
+	// A tombstoned or subtitle-less video has no transcript to (re)summarize;
+	// re-enqueuing would only flip a valid summary to no_transcript. Point the
+	// caller at re-download (Phase 3.1b) instead of corrupting the summary.
+	if v.Status == "tombstoned" || v.MediaPath == "" || v.SubtitlePath == "" {
+		writeJSONError(w, http.StatusConflict, "media not present; re-download to restore before resummarizing")
+		return
+	}
 	if s.summaryJobs == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "summaries are not configured")
 		return

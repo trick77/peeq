@@ -438,14 +438,15 @@ ORDER BY watched_at ASC`, cutoffUTC,
 	return out, nil
 }
 
-// Tombstone marks a video deleted-but-remembered: media_path is cleared and
-// status becomes 'tombstoned', but the row (and its watched history) is
-// kept — a future badge can offer re-download. Tombstone only updates the
-// database; the caller must unlink the actual media/thumbnail files first
-// (it needs config.MediaDir and path-safety checks the store doesn't have).
+// Tombstone marks a video deleted-but-remembered: media_path and
+// subtitle_path are cleared and status becomes 'tombstoned', but the row
+// (and its watched history) is kept — a future badge can offer
+// re-download. Tombstone only updates the database; the caller must unlink
+// the actual media/thumbnail/subtitle files first (it needs
+// config.MediaDir and path-safety checks the store doesn't have).
 func (s *Store) Tombstone(id string) error {
 	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET media_path = '', status = 'tombstoned' WHERE id = ?`, id)
+		`UPDATE videos SET media_path = '', subtitle_path = '', status = 'tombstoned' WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("tombstone video %s: %w", id, err)
 	}

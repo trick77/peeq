@@ -70,14 +70,16 @@ type VideoRef struct {
 	VideoID       string
 	MediaPath     string
 	ThumbnailPath string
+	SubtitlePath  string
 }
 
 // VideoRefs returns a VideoRef for every videos row belonging to channelID.
-// Callers read these before DeleteCascade so the media/thumbnail paths (lost
-// once the rows are deleted) are still available for unlinking the files.
+// Callers read these before DeleteCascade so the media/thumbnail/subtitle
+// paths (lost once the rows are deleted) are still available for unlinking
+// the files.
 func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT id, media_path, thumbnail_path FROM videos WHERE channel_id = ?`, channelID)
+		`SELECT id, media_path, thumbnail_path, subtitle_path FROM videos WHERE channel_id = ?`, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("video refs: %w", err)
 	}
@@ -85,7 +87,7 @@ func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 	var out []VideoRef
 	for rows.Next() {
 		var r VideoRef
-		if err := rows.Scan(&r.VideoID, &r.MediaPath, &r.ThumbnailPath); err != nil {
+		if err := rows.Scan(&r.VideoID, &r.MediaPath, &r.ThumbnailPath, &r.SubtitlePath); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

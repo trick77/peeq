@@ -209,6 +209,14 @@ func TestResummarizeEnqueues(t *testing.T) {
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
+	// The resummarize guard requires media + a subtitle to be present, so
+	// seed a normal downloaded-with-subtitle video (the positive path).
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath:       "/media/v1.mp4",
+		SubtitleRelPath: "v1.en.vtt",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
 	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
 		t.Fatalf("seed summary status: %v", err)
 	}
@@ -262,6 +270,14 @@ func TestResummarize_noJobsConfigured503(t *testing.T) {
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
+	// Media + subtitle present so the new resummarize guard doesn't shadow
+	// the 503-on-unconfigured-SummaryJobs path this test exercises.
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath:       "/media/v1.mp4",
+		SubtitleRelPath: "v1.en.vtt",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
@@ -272,5 +288,110 @@ func TestResummarize_noJobsConfigured503(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+// TestResummarize_tombstonedReturns409 asserts a tombstoned video (no media,
+// no subtitle on disk) is rejected rather than enqueued: re-enqueuing would
+// only flip its valid, kept summary to no_transcript for lack of a
+// transcript to summarize.
+func TestResummarize_tombstonedReturns409(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
+		t.Fatalf("seed summary status: %v", err)
+	}
+	if err := deps.Videos.Tombstone("v1"); err != nil {
+		t.Fatalf("tombstone v1: %v", err)
+	}
+	spy := &spySummaryJobs{}
+	deps.SummaryJobs = spy
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
+	}
+	if spy.lastID != "" {
+		t.Fatalf("SummaryJobs.Enqueue called with %q, want not called", spy.lastID)
+	}
+	got, err := deps.Videos.Get("v1")
+	if err != nil || got == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.SummaryStatus != "done" {
+		t.Fatalf("summary_status = %q, want unchanged 'done'", got.SummaryStatus)
+	}
+}
+
+// TestResummarize_missingSubtitleReturns409 asserts a video that still has
+// its media file but lost its subtitle (e.g. partial cleanup) is also
+// rejected: there is no transcript to (re)summarize either way.
+func TestResummarize_missingSubtitleReturns409(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath: "/media/v1.mp4",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
+	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
+		t.Fatalf("seed summary status: %v", err)
+	}
+	deps.SummaryJobs = &spySummaryJobs{}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestResummarize_downloadedWithSubtitleReturns202 is the positive
+// companion: a normal downloaded video with a subtitle present must still
+// be enqueued for (re)summarization.
+func TestResummarize_downloadedWithSubtitleReturns202(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath:       "/media/v1.mp4",
+		SubtitleRelPath: "v1.en.vtt",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
+	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
+		t.Fatalf("seed summary status: %v", err)
+	}
+	spy := &spySummaryJobs{}
+	deps.SummaryJobs = spy
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
+	}
+	if spy.lastID != "v1" {
+		t.Fatalf("SummaryJobs.Enqueue called with %q, want v1", spy.lastID)
 	}
 }

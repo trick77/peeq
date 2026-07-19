@@ -157,7 +157,7 @@ func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	media.RemoveVideoFiles(s.mediaDir, v.MediaPath, v.ThumbnailPath)
+	media.RemoveVideoFiles(s.mediaDir, v.MediaPath, v.ThumbnailPath, v.SubtitlePath)
 
 	if err := s.videos.Tombstone(v.ID); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "delete video failed")
