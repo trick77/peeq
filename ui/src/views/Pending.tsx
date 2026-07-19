@@ -4,7 +4,7 @@ import { listPending, downloadPending, ignorePending } from "../api/pending";
 import type { PendingItem } from "../api/types";
 import { formatDuration } from "../format";
 
-// Pending — the channel_videos ledger's "New & pending" grid: reuses
+// Pending — the channel_videos ledger's "Pending" grid: reuses
 // Library's `.grid`/`.card`/`.thumb`/`.dur` visual language, but the
 // thumbnail is the remote `thumbnail_url` (no local media exists yet — an
 // item here has never been downloaded), and the two actions are Download

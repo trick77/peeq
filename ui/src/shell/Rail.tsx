@@ -29,7 +29,7 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     label: "Collect",
     items: [
       { id: "add", label: "Add a video", icon: "plus" },
-      { id: "pending", label: "New & pending", icon: "clock", hot: true },
+      { id: "pending", label: "Pending", icon: "clock", hot: true },
       { id: "channels", label: "Channels", icon: "tv" },
     ],
   },
@@ -50,7 +50,7 @@ export function Rail({
 }: {
   active: ViewId;
   onNavigate: (view: ViewId) => void;
-  /** Badge count for "New & pending". */
+  /** Badge count for "Pending". */
   pendingCount?: number;
   jobs?: Job[];
   /** Live per-job percent/speed/eta from the download SSE feed. */
@@ -66,9 +66,8 @@ export function Rail({
         </div>
         <div>
           <b>
-            v<span>a</span>rk
+            p<span>ee</span>q
           </b>
-          <small>video archive</small>
         </div>
       </div>
 

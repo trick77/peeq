@@ -10,9 +10,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/trick77/vark/internal/media"
-	"github.com/trick77/vark/internal/settings"
-	"github.com/trick77/vark/internal/videos"
+	"github.com/trick77/peeq/internal/media"
+	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // NowPlayingGuard reports whether a video is currently being streamed, so

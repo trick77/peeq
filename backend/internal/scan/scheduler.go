@@ -16,11 +16,11 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/trick77/vark/internal/channels"
-	"github.com/trick77/vark/internal/channelvideos"
-	"github.com/trick77/vark/internal/settings"
-	"github.com/trick77/vark/internal/videos"
-	"github.com/trick77/vark/internal/ytdlp"
+	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 const (

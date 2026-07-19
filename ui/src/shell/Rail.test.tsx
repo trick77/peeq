@@ -15,7 +15,7 @@ describe("Rail", () => {
     expect(html).toContain("Library");
     expect(html).toContain("Now playing");
     expect(html).toContain("Add a video");
-    expect(html).toContain("New &amp; pending");
+    expect(html).toContain("Pending");
     expect(html).toContain("Settings");
   });
 

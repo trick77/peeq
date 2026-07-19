@@ -1,4 +1,4 @@
-# vark Phase 2 — Channels & Subscriptions — Implementation Plan
+# peeq Phase 2 — Channels & Subscriptions — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,14 +10,14 @@
 
 ## Global Constraints
 
-- Module `github.com/trick77/vark`. Go 1.25. `CGO_ENABLED=0` everywhere.
+- Module `github.com/trick77/peeq`. Go 1.25. `CGO_ENABLED=0` everywhere.
 - **Hard invariant:** NO call to YouTube without a valid cookie. Both new wrapper methods funnel through `Runner.exec`, which calls `cookieGate()` before anything.
 - **Throttle invariant:** the 20s minimum floor + random jitter runs before every yt-dlp invocation via `Runner.exec`. The scan scheduler adds a **≥60s between-channel** spacing on top.
 - Branch `feat/phase-2-channels` (off `master`, already created). Never commit to `master`. Conventional Commits. YAML `.yaml`. English comments only.
 - TDD: failing test first, then minimal implementation. Every DB-writing table access goes through a store method (no ad-hoc SQL in handlers, except the delete-cascade orchestration which is explicitly a store method).
 - Automated tests use a **fake yt-dlp stub** — never the real binary. The full authenticated e2e (real cookie) is a manual step.
 - Design system = `../music` (Warm Editorial dark), lucide icons stroke-width 1.9, Anthropic fonts. UI copy English.
-- **Squashed migrations:** until vark ships, ALL schema lives in a single `0001_init.sql`. Dev DBs are disposable and must be recreated (`rm ./data/vark.db`) after Task 1.
+- **Squashed migrations:** until peeq ships, ALL schema lives in a single `0001_init.sql`. Dev DBs are disposable and must be recreated (`rm ./data/peeq.db`) after Task 1.
 - **NOT in P2 (Phase 3):** subtitles, summaries, embeddings, transcript/caption display. Autodownloaded videos are ordinary downloads (no subtitles).
 - **Deferred to the NEXT phase (do NOT build):** auto-unsubscribe of channels idle > N weeks (3-month default) + the stale-channel filter.
 
@@ -41,7 +41,7 @@
 - `backend/internal/download/worker.go` — prefer `video.RequestedFormat`.
 - `backend/internal/httpapi/downloads_handlers.go` — reject `channel` kind; auto-track hook.
 - `backend/internal/httpapi/server.go` — register routes + `Deps` fields.
-- `backend/cmd/vark/main.go` — start scheduler goroutine, wire new stores/runner.
+- `backend/cmd/peeq/main.go` — start scheduler goroutine, wire new stores/runner.
 
 **Frontend (new):** `ui/src/api/channels.ts`, `ui/src/api/pending.ts`, `ui/src/views/Channels.tsx`, `ui/src/views/Pending.tsx`.
 **Frontend (modified):** `ui/src/api/types.ts`, `ui/src/api/index.ts`, `ui/src/shell/Rail.tsx`, `ui/src/App.tsx`, `ui/src/views/Add.tsx`, `ui/src/views/Settings.tsx`.
@@ -953,12 +953,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/trick77/vark/internal/channels"
-	"github.com/trick77/vark/internal/channelvideos"
-	"github.com/trick77/vark/internal/jobs"
-	"github.com/trick77/vark/internal/settings"
-	"github.com/trick77/vark/internal/videos"
-	"github.com/trick77/vark/internal/ytdlp"
+	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 const (
@@ -1628,7 +1628,7 @@ git commit -m "feat: delete channel cascade (cancel jobs, remove videos+media+le
 ## Task 11: main.go wiring — start the scheduler, wire stores + runner
 
 **Files:**
-- Modify: `backend/cmd/vark/main.go`
+- Modify: `backend/cmd/peeq/main.go`
 - Test: manual smoke (no unit test — this is process wiring; the handlers/scheduler are already unit-tested)
 
 **Interfaces:**
@@ -1639,7 +1639,7 @@ git commit -m "feat: delete channel cascade (cancel jobs, remove videos+media+le
 	channelsStore := channels.New(db)
 	ledgerStore := channelvideos.New(db)
 ```
-(Add imports `github.com/trick77/vark/internal/channels`, `.../channelvideos`, `.../scan`.)
+(Add imports `github.com/trick77/peeq/internal/channels`, `.../channelvideos`, `.../scan`.)
 
 - [ ] **Step 2: Build the scheduler and start it under the worker WaitGroup.** After the sweeper is constructed, before `workerWG.Add(3)`, build:
 ```go
@@ -1673,9 +1673,9 @@ Change `workerWG.Add(3)` to `workerWG.Add(4)` and add a fourth goroutine:
 
 - [ ] **Step 5: Manual smoke (no cookie path).** 
 ```bash
-cd backend && CGO_ENABLED=0 go build -o ../bin/vark ./cmd/vark
-VARK_SESSION_SECRET=dev VARK_AUTH_MODE=dev VARK_ADDR=127.0.0.1:8080 \
-  VARK_DB_PATH=./data/vark.db VARK_MEDIA_DIR=./data/media VARK_YTDLP_DIR=./data/bin ../bin/vark &
+cd backend && CGO_ENABLED=0 go build -o ../bin/peeq ./cmd/peeq
+PEEQ_SESSION_SECRET=dev PEEQ_AUTH_MODE=dev PEEQ_ADDR=127.0.0.1:8080 \
+  PEEQ_DB_PATH=./data/peeq.db PEEQ_MEDIA_DIR=./data/media PEEQ_YTDLP_DIR=./data/bin ../bin/peeq &
 sleep 1
 curl -c j -s localhost:8080/api/auth/login >/dev/null
 curl -b j -s localhost:8080/api/channels?filter=all   # → []
@@ -1686,7 +1686,7 @@ Expected: both return `[]` (or `[]`-equivalent), no panic, log shows "scan sched
 
 - [ ] **Step 6: Commit.**
 ```bash
-git add backend/cmd/vark/main.go
+git add backend/cmd/peeq/main.go
 git commit -m "feat: wire channel stores + scan scheduler goroutine into main"
 ```
 
@@ -1834,15 +1834,15 @@ git commit -m "feat(ui): new & pending view + rail badge from ledger pending cou
 ## Task 15: End-to-end wire-up + verification + docs
 
 **Files:**
-- Modify: `README.md` (dev-DB-recreate note; channels/subscriptions overview), `compose.yaml`/`compose.dev.yaml` (no new volumes needed — channels reuse the same DB/media; only touch if a var is missing), `docs/superpowers/plans/2026-07-18-vark-phase-2-channels.md` (check off steps)
+- Modify: `README.md` (dev-DB-recreate note; channels/subscriptions overview), `compose.yaml`/`compose.dev.yaml` (no new volumes needed — channels reuse the same DB/media; only touch if a var is missing), `docs/superpowers/plans/2026-07-18-peeq-phase-2-channels.md` (check off steps)
 
 - [ ] **Step 1: Full build + all tests.** 
 ```bash
 make fe-build && make build && make test && make fe-test
 ```
-Expected: all PASS, `bin/vark` present, `-race` clean.
+Expected: all PASS, `bin/peeq` present, `-race` clean.
 
-- [ ] **Step 2: README note — recreate dev DB.** Add a short "Phase 2 upgrade" note: because migrations were squashed into `0001_init.sql`, an existing dev database won't pick up the new tables — delete it (`rm ./data/vark.db*`) and restart to re-migrate. Add a one-paragraph "Channels & subscriptions" overview (track vs subscribe, autodownload, New & pending, daily scan cadence + throttle).
+- [ ] **Step 2: README note — recreate dev DB.** Add a short "Phase 2 upgrade" note: because migrations were squashed into `0001_init.sql`, an existing dev database won't pick up the new tables — delete it (`rm ./data/peeq.db*`) and restart to re-migrate. Add a one-paragraph "Channels & subscriptions" overview (track vs subscribe, autodownload, New & pending, daily scan cadence + throttle).
 
 - [ ] **Step 3: Live end-to-end (dev auth, real cookie — MANUAL).** Drive the app (see the `verify`/`run` skills):
   - Boot with a real DB/media dir; sign in (dev auto-login); paste a real cookie in Settings → status "active".
@@ -1855,7 +1855,7 @@ Expected: all PASS, `bin/vark` present, `-race` clean.
   - Confirm the ≥60s spacing + 20s throttle by watching the logs across multiple subscribed channels.
 - [ ] **Step 4: Commit.**
 ```bash
-git add README.md docs/superpowers/plans/2026-07-18-vark-phase-2-channels.md compose.yaml compose.dev.yaml
+git add README.md docs/superpowers/plans/2026-07-18-peeq-phase-2-channels.md compose.yaml compose.dev.yaml
 git commit -m "docs: phase-2 channels e2e verification + dev-db-recreate note"
 ```
 - [ ] **Step 5: Open PR** `feat/phase-2-channels` → `master`; confirm CI (backend + UI, `-race`) green; the whole-branch Fable review + `finishing-a-development-branch` gate the merge.

@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/trick77/vark/internal/media"
-	"github.com/trick77/vark/internal/videos"
+	"github.com/trick77/peeq/internal/media"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // videoDTO is the JSON shape returned by the videos API. It mirrors

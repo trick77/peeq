@@ -1,4 +1,4 @@
-// Command vark is the all-in-one server: API + embedded SPA, backed by
+// Command peeq is the all-in-one server: API + embedded SPA, backed by
 // SQLite. This is the Task-5 boot milestone: config, DB, and auth are wired
 // end to end (dev auto-login or OIDC) in front of an empty video library; the
 // actual YouTube archiving pipeline arrives in later tasks.
@@ -20,26 +20,26 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/trick77/vark/internal/auth"
-	"github.com/trick77/vark/internal/channels"
-	"github.com/trick77/vark/internal/channelvideos"
-	"github.com/trick77/vark/internal/config"
-	"github.com/trick77/vark/internal/download"
-	"github.com/trick77/vark/internal/httpapi"
-	"github.com/trick77/vark/internal/jobs"
-	"github.com/trick77/vark/internal/retention"
-	"github.com/trick77/vark/internal/scan"
-	"github.com/trick77/vark/internal/settings"
-	"github.com/trick77/vark/internal/sse"
-	"github.com/trick77/vark/internal/store"
-	"github.com/trick77/vark/internal/version"
-	"github.com/trick77/vark/internal/videos"
-	"github.com/trick77/vark/internal/ytdlp"
-	"github.com/trick77/vark/web"
+	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/config"
+	"github.com/trick77/peeq/internal/download"
+	"github.com/trick77/peeq/internal/httpapi"
+	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/retention"
+	"github.com/trick77/peeq/internal/scan"
+	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/sse"
+	"github.com/trick77/peeq/internal/store"
+	"github.com/trick77/peeq/internal/version"
+	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/peeq/web"
 )
 
 func main() {
-	slog.Info("starting vark", "version", version.Version)
+	slog.Info("starting peeq", "version", version.Version)
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -79,7 +79,7 @@ func run() error {
 	// (channel_videos): an empty table (sql.ErrNoRows) is HEALTHY — only a
 	// "no such table" error means the schema is stale, which is fatal.
 	if err := db.QueryRowContext(context.Background(), "SELECT 1 FROM channel_videos LIMIT 1").Scan(new(int)); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("database schema is stale (missing Phase-2 tables): %w; recreate it with `rm ./data/vark.db*` and restart", err)
+		return fmt.Errorf("database schema is stale (missing Phase-2 tables): %w; recreate it with `rm ./data/peeq.db*` and restart", err)
 	}
 
 	// Secure (HTTPS-only) cookies whenever the app is reachable over https;
@@ -123,10 +123,10 @@ func run() error {
 	default:
 		// AuthMode is unset. config.Load() accepts this without error (it
 		// stays permissive so callers can validate at whichever layer fits),
-		// but every route vark serves is requireAuth-gated, so a server that
+		// but every route peeq serves is requireAuth-gated, so a server that
 		// boots with no way to ever obtain a session is just broken with
 		// extra steps. Reject at boot rather than come up silently inert.
-		return fmt.Errorf("VARK_AUTH_MODE must be %q or %q (got %q)", config.AuthModeOIDC, config.AuthModeDev, cfg.AuthMode)
+		return fmt.Errorf("PEEQ_AUTH_MODE must be %q or %q (got %q)", config.AuthModeOIDC, config.AuthModeDev, cfg.AuthMode)
 	}
 
 	authSvc := auth.NewService(oidcSvc, sessions, users)

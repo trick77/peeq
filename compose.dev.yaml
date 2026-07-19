@@ -5,19 +5,19 @@
 #   docker compose -f compose.dev.yaml down
 #
 # Auto-signs in as a fixed "dev" admin user (see internal/config's Dev
-# block). The dev-auth guard requires a loopback VARK_ADDR, which is why
+# block). The dev-auth guard requires a loopback PEEQ_ADDR, which is why
 # this uses network_mode: host instead of published ports (a 127.0.0.1
 # bind inside a bridge-network container is unreachable via -p).
 services:
   # Pre-creates ./data with the right ownership for the container's non-root
-  # uid:gid (matches the "user: 1000:1000" set on vark below).
-  vark-init:
+  # uid:gid (matches the "user: 1000:1000" set on peeq below).
+  peeq-init:
     image: alpine
     command: chown -R 1000:1000 /data
     volumes:
       - ./data:/data
 
-  vark:
+  peeq:
     build:
       context: .
       dockerfile: backend/Containerfile
@@ -26,20 +26,20 @@ services:
     environment:
       HOME: /tmp
       TMPDIR: /tmp
-      VARK_AUTH_MODE: dev
-      VARK_ADDR: "127.0.0.1:8080"
-      VARK_PUBLIC_URL: "http://localhost:8080"
-      VARK_SESSION_SECRET: dev-secret-please-change
-      VARK_DB_PATH: /data/vark.db
-      VARK_MEDIA_DIR: /data/media
-      VARK_YTDLP_DIR: /data/bin
-      VARK_LOG_LEVEL: "${VARK_LOG_LEVEL:-debug}"
+      PEEQ_AUTH_MODE: dev
+      PEEQ_ADDR: "127.0.0.1:8080"
+      PEEQ_PUBLIC_URL: "http://localhost:8080"
+      PEEQ_SESSION_SECRET: dev-secret-please-change
+      PEEQ_DB_PATH: /data/peeq.db
+      PEEQ_MEDIA_DIR: /data/media
+      PEEQ_YTDLP_DIR: /data/bin
+      PEEQ_LOG_LEVEL: "${PEEQ_LOG_LEVEL:-debug}"
     volumes:
       - ./data:/data
-      - vark-dev-tmp:/tmp
+      - peeq-dev-tmp:/tmp
     depends_on:
-      vark-init:
+      peeq-init:
         condition: service_completed_successfully
 
 volumes:
-  vark-dev-tmp:
+  peeq-dev-tmp:

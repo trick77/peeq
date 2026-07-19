@@ -18,7 +18,7 @@ func NewUserStore(db DBTX) *UserStore {
 }
 
 // UpsertFromClaims creates or refreshes the local user from verified OIDC
-// claims. Vark is single-user, so the authenticated identity is always the
+// claims. Peeq is single-user, so the authenticated identity is always the
 // admin; the role field is kept only for parity with a possible future
 // multi-user mode.
 func (s *UserStore) UpsertFromClaims(ctx context.Context, claims Claims) (User, error) {

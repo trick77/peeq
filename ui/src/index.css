@@ -17,11 +17,11 @@
 }
 /* Icons are provided by lucide-react (self-contained SVG) — no icon font. */
 
-/* vark design tokens — Warm Editorial, dark (matches ../music, per the
+/* peeq design tokens — Warm Editorial, dark (matches ../music, per the
    approved mockup). Ported from music's @theme block; extended with the
    tokens the mockup's rail/dock/cookie/settings surfaces need that music
    didn't expose (faint, ink-dim, line-soft, panel-3/elevated, accent-dim/
-   glow) plus vark's own --kept (favorite) token. */
+   glow) plus peeq's own --kept (favorite) token. */
 @theme {
   --color-bg: #1f1f1e;
   --color-panel: #1b1b1a;
@@ -39,7 +39,7 @@
   --color-accent-dim: #5a3527;
   --color-online: #5aa06a;
   --color-danger: #c14638;
-  /* kept = the favorite/"kept forever" accent — vark-specific, not in music. */
+  /* kept = the favorite/"kept forever" accent — peeq-specific, not in music. */
   --color-kept: #d6a15a;
   /* elevated surface for menus/popovers/panel-3 tint. */
   --color-elevated: #363632;

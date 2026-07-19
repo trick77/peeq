@@ -97,7 +97,7 @@ func TestOIDCService_CallbackRejectsNonceMismatch(t *testing.T) {
 func TestOIDCService_LoginSetsStateAndNonceCookies(t *testing.T) {
 	service := NewOIDCService(OIDCServiceConfig{
 		ClientID:    "client",
-		RedirectURL: "https://vark.example.com/api/auth/callback",
+		RedirectURL: "https://peeq.example.com/api/auth/callback",
 		Backend:     fakeOIDCBackend{authURL: "https://auth.example.com/authorize"},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/login", nil)

@@ -16,7 +16,7 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
   library: { title: "Library" },
   player: { title: "Now playing" },
   add: { title: "Add a video" },
-  pending: { title: "New & pending" },
+  pending: { title: "Pending" },
   channels: { title: "Channels" },
   settings: { title: "Settings" },
 };
@@ -85,7 +85,7 @@ export function App() {
     };
   }, [authChecked, user]);
 
-  // The rail's "New & pending" badge reflects the channel_videos ledger's
+  // The rail's "Pending" badge reflects the channel_videos ledger's
   // pending count (Task 14), not the download-jobs queue — loaded once on
   // sign-in and refetched whenever the user navigates into the Pending view
   // itself, so acting on an item (download/ignore) there updates the badge
@@ -176,7 +176,7 @@ export function App() {
   if (!authChecked) {
     return (
       <div style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}>
-        <b>vark</b>
+        <b>peeq</b>
       </div>
     );
   }
@@ -184,7 +184,7 @@ export function App() {
   if (!user) {
     return (
       <div style={{ display: "grid", placeItems: "center", minHeight: "100vh", gap: 12 }}>
-        <b>vark</b>
+        <b>peeq</b>
         {authError ? (
           <p style={{ color: "var(--color-danger)" }}>Couldn't reach the server. Try reloading.</p>
         ) : null}

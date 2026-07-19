@@ -9,7 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/trick77/vark/internal/cookie"
+	"github.com/trick77/peeq/internal/cookie"
 )
 
 // DBTX is the subset of *sql.DB used by the settings store.

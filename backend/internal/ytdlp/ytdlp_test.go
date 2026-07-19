@@ -321,7 +321,7 @@ func TestMetadata_writesCookieToRestrictedTempFile(t *testing.T) {
 		if field == captureScript || field == "-J" || field == "--skip-download" || field == "--no-playlist" || field == "--cookies" {
 			continue
 		}
-		if strings.Contains(field, "vark-cookie-") {
+		if strings.Contains(field, "peeq-cookie-") {
 			sawCookiePath = true
 			if _, statErr := os.Stat(field); statErr == nil {
 				t.Fatalf("cookie temp file %q still exists after Metadata returned", field)
@@ -329,12 +329,12 @@ func TestMetadata_writesCookieToRestrictedTempFile(t *testing.T) {
 		}
 	}
 	if !sawCookiePath {
-		t.Fatal("no vark-cookie- path found in argv; cookie path assertion above would be vacuous")
+		t.Fatal("no peeq-cookie- path found in argv; cookie path assertion above would be vacuous")
 	}
 }
 
 // TestMetadata_parsesCannedJSON drives the fake yt-dlp stub with a canned
-// -J JSON payload and checks the fields vark actually needs are parsed.
+// -J JSON payload and checks the fields peeq actually needs are parsed.
 func TestMetadata_parsesCannedJSON(t *testing.T) {
 	t.Setenv("FAKE_YTDLP_JSON", `{
 		"id": "dQw4w9WgXcQ",

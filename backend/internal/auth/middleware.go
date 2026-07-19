@@ -16,7 +16,7 @@ type UserLookup interface {
 	FindByID(context.Context, string) (User, bool, error)
 }
 
-// Middleware protects authenticated routes. Vark is single-user, so there is
+// Middleware protects authenticated routes. Peeq is single-user, so there is
 // no separate admin-only gate: any authenticated session is the admin.
 type Middleware struct {
 	sessions SessionLookup
@@ -28,7 +28,7 @@ func NewMiddleware(sessions SessionLookup, users UserLookup) *Middleware {
 	return &Middleware{sessions: sessions, users: users}
 }
 
-// RequireAuth rejects requests without a valid vark session.
+// RequireAuth rejects requests without a valid peeq session.
 func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(SessionCookieName)

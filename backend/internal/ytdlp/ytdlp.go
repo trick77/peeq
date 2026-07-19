@@ -75,7 +75,7 @@ type RunnerConfig struct {
 }
 
 // Runner wraps the yt-dlp binary: cookie gate, throttle, and error
-// classification for every invocation. Runner is the ONLY thing in vark
+// classification for every invocation. Runner is the ONLY thing in peeq
 // that shells out to yt-dlp.
 type Runner struct {
 	cfg RunnerConfig
@@ -273,7 +273,7 @@ func trimCR(b []byte) []byte {
 // writeCookieTempFile writes text to a new 0600 temp file and returns its
 // path. Callers MUST defer os.Remove(path) on the result.
 func writeCookieTempFile(text string) (string, error) {
-	f, err := os.CreateTemp("", "vark-cookie-*.txt")
+	f, err := os.CreateTemp("", "peeq-cookie-*.txt")
 	if err != nil {
 		return "", err
 	}

@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/trick77/vark/internal/auth"
-	"github.com/trick77/vark/internal/media"
-	"github.com/trick77/vark/internal/settings"
-	"github.com/trick77/vark/internal/videos"
+	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/media"
+	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // videosTestDeps builds Deps wired for the videos API: dev auth plus a

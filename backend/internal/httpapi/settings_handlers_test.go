@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/vark/internal/auth"
+	"github.com/trick77/peeq/internal/auth"
 )
 
 const validYouTubeCookieBody = "# Netscape HTTP Cookie File\n" +

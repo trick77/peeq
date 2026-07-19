@@ -1,4 +1,4 @@
-# vark
+# peeq
 
 Self-hosted YouTube archiver. Go backend (JSON API + embedded React SPA), single SQLite file, no
 external services required.
@@ -6,11 +6,11 @@ external services required.
 ## Run
 
 ```bash
-cp .env.example .env   # fill in the values, especially VARK_SESSION_SECRET and the OIDC block
+cp .env.example .env   # fill in the values, especially PEEQ_SESSION_SECRET and the OIDC block
 docker compose up -d --build
 ```
 
-This starts a single hardened `vark` container (non-root, read-only rootfs, all capabilities
+This starts a single hardened `peeq` container (non-root, read-only rootfs, all capabilities
 dropped) behind an external Traefik network — see `compose.yaml`. The SQLite DB and the yt-dlp
 binary live under `./data`; downloaded media lives on its own bind mount (`/mnt/ark/peeq` by
 default — adjust to your host).
@@ -33,10 +33,10 @@ See `AGENTS.md` for conventions, locked technical choices, and commands.
 
 Phase 2 (channels & subscriptions) squashed all migrations into a single `0001_init.sql`, so an
 existing dev database predating this change won't pick up the new tables on startup. Delete it and
-let vark re-migrate from scratch:
+let peeq re-migrate from scratch:
 
 ```bash
-rm ./data/vark.db*
+rm ./data/peeq.db*
 ```
 
 (This is a dev-only concern — a fresh volume/deploy just migrates cleanly.)
@@ -45,7 +45,7 @@ rm ./data/vark.db*
 
 Adding a channel URL or `@handle` **tracks** it (it shows up under Channels, but nothing is
 downloaded automatically). **Subscribing** to a tracked channel opts it into the daily scan, which
-looks for new uploads and either lists them under **New & pending** for a manual decision, or — if
+looks for new uploads and either lists them under **Pending** for a manual decision, or — if
 the channel has **autodownload** enabled — enqueues them automatically (optionally with a
 per-channel format override). A channel's first scan only records a baseline (its current videos)
 and queues nothing, so subscribing never triggers a bulk backfill. The scan itself respects the
@@ -64,11 +64,11 @@ yt-dlp call, so a large subscription list is scanned gradually rather than in a 
 
 ## Database backup
 
-`VARK_DB_PATH` (default `/data/vark.db`) is the single source of truth for everything that isn't
+`PEEQ_DB_PATH` (default `/data/peeq.db`) is the single source of truth for everything that isn't
 the media file itself: watch/resume position, favorites, tombstones, the download queue, and
 settings (including the stored cookie). **Back this file up.** If it's lost, re-downloading the
 media does not restore any of that state — favorited and watched videos, resume positions, and
-tombstoned entries are gone for good. SQLite runs in WAL mode; use `sqlite3 vark.db ".backup
+tombstoned entries are gone for good. SQLite runs in WAL mode; use `sqlite3 peeq.db ".backup
 backup.db"` (or a continuous tool like Litestream) rather than copying the file directly while the
 process is running.
 
@@ -85,7 +85,7 @@ download pipeline:
 3. Wait for (or force) the scheduler's first pass on that channel — it should show `baselined_at`
    set and queue **nothing** (first-run baseline, no backfill).
 4. Once a genuinely new upload exists on a subscribed, non-autodownload channel, confirm it lands
-   in **New & pending** on the next scan. **Download now** should enqueue it (progress visible in
+   in **Pending** on the next scan. **Download now** should enqueue it (progress visible in
    the dock) and it should land in Library as `downloaded`. **Ignore** on another pending item
    should remove it from the list.
 5. Flip a channel to **Autodownload** with a format override — the next new upload on that channel

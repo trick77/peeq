@@ -1,4 +1,4 @@
-// Package ytdlp is the only place in vark that shells out to the yt-dlp
+// Package ytdlp is the only place in peeq that shells out to the yt-dlp
 // binary. errors.go classifies the binary's stderr output into a small,
 // stable error taxonomy so callers (the download worker, the API layer)
 // can branch on Go errors instead of parsing yt-dlp's free-text output
