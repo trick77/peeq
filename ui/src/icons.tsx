@@ -18,6 +18,8 @@ import {
   ListTree,
   Play,
   Tv,
+  Captions,
+  ChevronRight,
   type LucideIcon,
 } from "lucide-react";
 
@@ -52,6 +54,8 @@ const COMPONENTS = {
   play: Play,
   tv: Tv,
   playFilled: Play, // rendered solid via the FILLED set below — rail logo + player play button
+  captions: Captions,
+  chevronRight: ChevronRight,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof COMPONENTS;

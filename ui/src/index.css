@@ -1090,34 +1090,259 @@ button {
   font-style: italic;
 }
 
-.toc {
-  list-style: none;
-  margin: 4px 0 0;
-  padding: 0;
+/* ── Player intelligence panels (Task 17): mixed layout — Summary +
+   Highlights sit beside the video in a sticky sidebar (.side, above);
+   Contents + the collapsible Transcript run full-width below it
+   (.leftcol/.belowvideo). Ported from the approved mockup's `.card`/
+   `.toc-grid`/`.hl`/`.transcript` rules, reusing peeq's existing tokens. ── */
+
+.leftcol {
   display: flex;
   flex-direction: column;
+  gap: 20px;
+  min-width: 0;
 }
-.toc li {
-  border-top: 1px solid var(--color-border-soft);
+.belowvideo {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
 }
-.toc li:first-child {
-  border-top: none;
+
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-ui);
+  background: var(--color-panel);
+  overflow: hidden;
 }
-.toc a {
+.card .hd {
   display: flex;
-  gap: 11px;
-  padding: 8px 0;
-  font-size: 13px;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+.card .hd.hd-btn {
+  width: 100%;
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.card .hd svg {
+  color: var(--color-accent-strong);
+  flex: none;
+}
+.card .hd .lbl {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: 15px;
+}
+.card .hd .meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-muted);
+}
+.card .tabbody {
+  padding: 16px;
+}
+
+.summ-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-online);
+  margin-bottom: 12px;
+}
+.summ p {
+  margin: 0 0 12px;
   color: var(--color-ink-dim);
-  text-decoration: none;
+  font-size: 13.5px;
+  line-height: 1.62;
+}
+.summ p:first-of-type {
+  color: var(--color-ink);
+}
+.summ p:last-child {
+  margin-bottom: 0;
+}
+
+/* Contents / chapters */
+.toc {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.toc.toc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 14px;
+}
+@media (max-width: 620px) {
+  .toc.toc-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.toc .row {
+  display: flex;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  text-align: left;
+  background: none;
+  width: 100%;
   align-items: baseline;
+  color: inherit;
+  font: inherit;
+}
+.toc .row:hover {
+  background: var(--color-active);
+  border-color: var(--color-border);
 }
 .toc .ts {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--color-accent);
+  color: var(--color-accent-strong);
+  font-size: 12.5px;
   flex: none;
-  min-width: 36px;
+  width: 44px;
+}
+.toc .ttl {
+  font-size: 13.5px;
+  color: var(--color-ink);
+}
+.toc .src {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--color-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  align-self: center;
+}
+
+/* Highlights */
+.hl {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.hl .row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  padding: 12px 13px;
+  text-align: left;
+  width: 100%;
+  color: inherit;
+  font: inherit;
+}
+.hl .row:hover {
+  border-color: var(--color-accent);
+}
+.hl .ts {
+  color: var(--color-kept);
+  font-size: 12.5px;
+  flex: none;
+  width: 44px;
+  padding-top: 1px;
+}
+.hl .txt {
+  font-size: 13.5px;
+  color: var(--color-ink-dim);
+  line-height: 1.55;
+}
+
+/* Transcript search + cues */
+.tsearch {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+.searchbox {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-ui);
+  background: var(--color-panel);
+}
+.searchbox svg {
+  color: var(--color-muted);
+  flex: none;
+}
+.searchbox input {
+  border: none;
+  background: none;
+  color: var(--color-ink);
+  outline: none;
+  flex: 1;
+  font-size: 13.5px;
+  font-family: inherit;
+}
+.searchbox .count {
+  font-size: 11px;
+  color: var(--color-muted);
+}
+.transcript-body {
+  max-height: 340px;
+  overflow-y: auto;
+}
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.transcript .cue {
+  display: flex;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  text-align: left;
+  background: none;
+  border: none;
+  width: 100%;
+  align-items: baseline;
+  color: inherit;
+  font: inherit;
+}
+.transcript .cue:hover {
+  background: var(--color-active);
+}
+.transcript .cue.hit {
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+.transcript .ts {
+  color: var(--color-muted);
+  font-size: 11.5px;
+  flex: none;
+  width: 40px;
+}
+.transcript .line {
+  font-size: 13px;
+  color: var(--color-ink-dim);
+  line-height: 1.5;
+}
+.transcript mark {
+  background: color-mix(in srgb, var(--color-accent-strong) 32%, transparent);
+  color: var(--color-ink);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* CC toggle (playacts row) */
+.abtn.cc-btn.on {
+  background: var(--color-accent-fill);
+  border-color: var(--color-accent);
+  color: var(--color-ink);
 }
 
 /* ── Settings (Task 14). ───────────────────────────────────────────────── */
