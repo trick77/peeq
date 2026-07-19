@@ -28,6 +28,13 @@ type Runner interface {
 	Download(ctx context.Context, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error)
 }
 
+// FailMonitor is the subset of *failmonitor.Monitor the worker uses to feed
+// the auto-pause heuristic. Nil disables it (tests that don't care).
+type FailMonitor interface {
+	Fail(entityID string)
+	Reset()
+}
+
 // SummaryEnqueuer is the subset of *summaryjobs.Store the worker needs to
 // queue a summary job after a successful download. Declaring it here (rather
 // than importing the concrete type) keeps the worker testable with a spy and
@@ -86,6 +93,15 @@ type Deps struct {
 	// freeBytes. Overridable so tests can simulate a full disk without
 	// actually filling one.
 	FreeBytes func(dir string) (uint64, error)
+
+	// YoutubePaused, when set and returning true, parks the loop before
+	// claiming a job (the kill-switch poll-gate). It reads the settings flag
+	// each poll, so clearing it resumes automatically — decoupled from the
+	// cookie/disk in-memory pause.
+	YoutubePaused func() bool
+	// FailMonitor, when set, is fed a Fail(videoID) on each count-worthy
+	// failure and Reset() on each success, driving auto-pause.
+	FailMonitor FailMonitor
 }
 
 // Worker is the download loop. Construct with New and drive with Run; other
@@ -172,6 +188,14 @@ func (w *Worker) Run(ctx context.Context) {
 			// Refuse to start a job while below the configured free-space
 			// floor: skip claiming entirely (the job stays pending, so
 			// nothing needs to be un-claimed) and re-check after a beat.
+			if !w.sleep(ctx, w.deps.PollInterval) {
+				return
+			}
+			continue
+		}
+		if w.deps.YoutubePaused != nil && w.deps.YoutubePaused() {
+			// Kill-switch engaged: don't claim or run anything. Re-check each
+			// poll so a resume proceeds automatically.
 			if !w.sleep(ctx, w.deps.PollInterval) {
 				return
 			}
@@ -405,10 +429,21 @@ func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Vide
 		// user paste a cookie and resume without losing the queue. Cookie
 		// status is already 'absent'; leave it.
 		w.pause(job, "", err.Error())
+	case errors.Is(err, ytdlp.ErrPaused):
+		// Kill-switch tripped mid-download: requeue without burning an
+		// attempt and WITHOUT the cookie-pause flag — the loop's
+		// YoutubePaused gate parks it next iteration; a resume clears the
+		// flag and it proceeds.
+		w.requeuePaused(job)
 	case errors.As(err, &terminal):
 		// Terminal ytdlp error: fail without changing the attempt count.
 		w.fail(job, video, job.Attempts, err.Error())
 	default:
+		// Count-worthy (unclassified exec/extractor + RetryableError) for
+		// auto-pause; per-video terminal errors above never reach here.
+		if w.deps.FailMonitor != nil {
+			w.deps.FailMonitor.Fail(video.ID)
+		}
 		// RetryableError and any unexpected error (network, exec) get the
 		// bounded retry treatment.
 		w.retry(ctx, job, video, err.Error())
@@ -439,6 +474,17 @@ func (w *Worker) pause(job *jobs.Job, cookieStatus, msg string) {
 		w.deps.Logger.Error("download worker: requeue on pause failed", "job_id", job.ID, "err", err)
 	}
 	w.deps.Logger.Warn("download worker: paused", "reason", msg)
+}
+
+// requeuePaused requeues a job that hit the youtube_paused kill-switch: same
+// attempts (a pause is not the job's fault), no cookie flip, no in-memory
+// paused flag. The loop's YoutubePaused gate does the parking.
+func (w *Worker) requeuePaused(job *jobs.Job) {
+	switch err := w.deps.Jobs.Bump(job.ID, job.Attempts, "youtube paused"); {
+	case errors.Is(err, jobs.ErrNotRunning):
+	case err != nil:
+		w.deps.Logger.Error("download worker: requeue on youtube-pause failed", "job_id", job.ID, "err", err)
+	}
 }
 
 // retry either requeues the job after backoff (attempts++), or, once the
@@ -507,6 +553,9 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 		if _, err := w.deps.SummaryJobs.Enqueue(video.ID); err != nil {
 			w.deps.Logger.Error("download worker: enqueue summary job failed", "video_id", video.ID, "err", err)
 		}
+	}
+	if w.deps.FailMonitor != nil {
+		w.deps.FailMonitor.Reset()
 	}
 }
 
