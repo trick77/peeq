@@ -45,6 +45,10 @@ type ytdlpJSON struct {
 // passes through the cookie gate (see cookieGate): if no cookie is
 // configured, this returns ErrNoCookie and the binary is never invoked.
 func (r *Runner) Metadata(ctx context.Context, rawURL string) (*Meta, error) {
+	if err := r.pauseGate(); err != nil {
+		return nil, err
+	}
+
 	cookieText, err := r.cookieGate()
 	if err != nil {
 		return nil, err
