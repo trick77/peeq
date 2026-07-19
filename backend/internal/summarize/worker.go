@@ -3,6 +3,7 @@ package summarize
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -151,9 +152,18 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	return true, nil
 }
 
+// failJob records the failure on both the video and the job, and always
+// returns a non-nil error so the caller (processOne) surfaces the failure
+// to the Run loop, which logs it. Jobs.Fail's own return is often nil on
+// the common path, so it must never be returned as-is.
 func (w *Worker) failJob(job *summaryjobs.Job, videoID, msg string) error {
-	_ = w.d.Videos.SetSummaryStatus(videoID, "error", msg)
-	return w.d.Jobs.Fail(job.ID, job.Attempts, msg)
+	if err := w.d.Videos.SetSummaryStatus(videoID, "error", msg); err != nil {
+		w.d.Logger.Error("summarize worker: set error status", "video_id", videoID, "err", err)
+	}
+	if err := w.d.Jobs.Fail(job.ID, job.Attempts, msg); err != nil {
+		return fmt.Errorf("summarize job %d failed (%s); also fail-record error: %w", job.ID, msg, err)
+	}
+	return fmt.Errorf("summarize job %d failed: %s", job.ID, msg)
 }
 
 // embedAndStore chunks the transcript, maps each chunk to its start-second via
