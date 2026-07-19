@@ -35,6 +35,11 @@ type WorkerDeps struct {
 	EmbedDim     int
 	PollInterval time.Duration
 	Logger       *slog.Logger
+
+	// OnPhase, when set, is called at each summary state transition so an SSE
+	// hub can push live progress to the Player. videoID is always set so the
+	// client can filter to the open video.
+	OnPhase func(videoID, status, phase string)
 }
 
 // Worker is the single-concurrency summarization+embedding loop: the twin of
@@ -105,11 +110,13 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// No subtitles => clean terminal no_transcript state, not an error.
 	if video.SubtitlePath == "" {
 		_ = w.d.Videos.SetSummaryStatus(video.ID, "no_transcript", "")
+		w.emit(video.ID, "no_transcript", "")
 		_ = w.d.Jobs.Finish(job.ID, "done", "")
 		return true, nil
 	}
 
 	_ = w.d.Videos.SetSummaryStatus(video.ID, "running", "")
+	w.emit(video.ID, "running", "summarizing")
 
 	safe, err := media.SafeMediaPath(w.d.MediaDir, video.SubtitlePath)
 	if err != nil {
@@ -118,6 +125,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	f, err := os.Open(safe)
 	if err != nil {
 		_ = w.d.Videos.SetSummaryStatus(video.ID, "no_transcript", "")
+		w.emit(video.ID, "no_transcript", "")
 		_ = w.d.Jobs.Finish(job.ID, "done", "")
 		return true, nil
 	}
@@ -128,6 +136,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	}
 	if parsed.Transcript == "" {
 		_ = w.d.Videos.SetSummaryStatus(video.ID, "no_transcript", "")
+		w.emit(video.ID, "no_transcript", "")
 		_ = w.d.Jobs.Finish(job.ID, "done", "")
 		return true, nil
 	}
@@ -139,6 +148,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		return true, w.failJob(job, video.ID, err.Error())
 	}
 
+	w.emit(video.ID, "running", "embedding")
 	if err := w.embedAndStore(ctx, video.ID, parsed, art.Summary); err != nil {
 		return true, w.failJob(job, video.ID, err.Error())
 	}
@@ -148,8 +158,17 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	if err := w.d.Videos.SetSummary(video.ID, art.Summary, chJSON, kpJSON); err != nil {
 		return true, w.failJob(job, video.ID, err.Error())
 	}
+	w.emit(video.ID, "done", "")
 	_ = w.d.Jobs.Finish(job.ID, "done", "")
 	return true, nil
+}
+
+// emit calls OnPhase when set, so an SSE hub can push live summarize
+// progress to the Player. It is a no-op when OnPhase is nil.
+func (w *Worker) emit(videoID, status, phase string) {
+	if w.d.OnPhase != nil {
+		w.d.OnPhase(videoID, status, phase)
+	}
 }
 
 // failJob records the failure on both the video and the job, and always
@@ -160,6 +179,7 @@ func (w *Worker) failJob(job *summaryjobs.Job, videoID, msg string) error {
 	if err := w.d.Videos.SetSummaryStatus(videoID, "error", msg); err != nil {
 		w.d.Logger.Error("summarize worker: set error status", "video_id", videoID, "err", err)
 	}
+	w.emit(videoID, "error", "")
 	if err := w.d.Jobs.Fail(job.ID, job.Attempts, msg); err != nil {
 		return fmt.Errorf("summarize job %d failed (%s); also fail-record error: %w", job.ID, msg, err)
 	}

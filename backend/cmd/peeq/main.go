@@ -228,6 +228,17 @@ func run() error {
 		Jobs: summaryJobsStore, Videos: videosStore, Rag: ragStore,
 		Summarizer: summarizer, Embedder: embedClient, MediaDir: cfg.MediaDir,
 		EmbedModel: cfg.EmbedModel, EmbedDim: cfg.EmbedDim,
+		OnPhase: func(videoID, status, phase string) {
+			data, err := json.Marshal(map[string]any{
+				"video_id": videoID,
+				"status":   status,
+				"phase":    phase,
+			})
+			if err != nil {
+				return
+			}
+			sseHub.Publish("summary", string(data))
+		},
 	})
 
 	// Bound all five background goroutines' lifetimes to the process: the

@@ -328,6 +328,81 @@ func TestProcessOneIndexesSummaryChunk(t *testing.T) {
 	}
 }
 
+// contains reports whether s is present in list.
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// containsPrefix reports whether any element of list has prefix as a prefix.
+func containsPrefix(list []string, prefix string) bool {
+	for _, v := range list {
+		if strings.HasPrefix(v, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestProcessOneEmitsPhaseEvents asserts a happy-path processOne run emits
+// SSE phase events (via WorkerDeps.OnPhase) so the Player can show live
+// summarize progress instead of a static "Summarizing…" label.
+func TestProcessOneEmitsPhaseEvents(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v1/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n\n" +
+		"00:00:02.000 --> 00:00:04.000\nToday we will talk about testing Go workers.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "https://youtu.be/v1"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v1", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v1"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	var events []string // "videoID:status:phase"
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(fakeWorkerCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   1536,
+		OnPhase: func(id, status, phase string) {
+			events = append(events, id+":"+status+":"+phase)
+		},
+	})
+
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Must include a running/summarizing event for v1 and a terminal done event.
+	if !containsPrefix(events, "v1:running:") {
+		t.Errorf("no running event for v1: %v", events)
+	}
+	if !contains(events, "v1:done:") {
+		t.Errorf("no done event for v1: %v", events)
+	}
+}
+
 // vttCue renders one WebVTT cue block starting at startSeconds (2s long) with
 // wordCount distinct words, so the transcript spans multiple rag.Chunk chunks
 // and each cue is unambiguously identifiable by its words.
