@@ -13,6 +13,7 @@ const baseSettings: SettingsType = {
   throttle_base_seconds: 20,
   retention_days: 14,
   min_free_gb: 5,
+  min_video_duration_seconds: 60,
   ytdlp_version: "2026.01.01",
 };
 
@@ -73,6 +74,23 @@ describe("Settings", () => {
 
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalledWith({ throttle_base_seconds: 45 });
+    });
+  });
+
+  it("renders the current min_video_duration_seconds value and saves it on blur", async () => {
+    const user = userEvent.setup();
+    render(<Settings />);
+    const input = (await screen.findByLabelText(
+      "Ignore channel videos shorter than (seconds)",
+    )) as HTMLInputElement;
+    expect(input.value).toBe("60");
+
+    await user.clear(input);
+    await user.type(input, "90");
+    await user.tab();
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalledWith({ min_video_duration_seconds: 90 });
     });
   });
 });
