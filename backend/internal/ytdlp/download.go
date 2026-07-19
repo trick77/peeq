@@ -150,6 +150,10 @@ func sponsorblockSegmentsFromInfo(info downloadInfoJSON) []Segment {
 // blocked/cookie errors, or ctx cancellation — the staging directory is
 // removed; there is nothing usable to resume.
 func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(Progress)) (*Result, error) {
+	if err := r.pauseGate(); err != nil {
+		return nil, err
+	}
+
 	cookieText, err := r.cookieGate()
 	if err != nil {
 		return nil, err

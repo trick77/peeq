@@ -203,21 +203,56 @@ func (s *server) handleDownloadsList(w http.ResponseWriter, r *http.Request) {
 // the UI can show a diagnostic banner instead of leaving the user staring at
 // a frozen queue with no explanation.
 type downloadsStatusResponse struct {
-	Paused  bool `json:"paused"`
-	LowDisk bool `json:"low_disk"`
+	Paused             bool   `json:"paused"`
+	LowDisk            bool   `json:"low_disk"`
+	YoutubePaused      bool   `json:"youtube_paused"`
+	YoutubePauseReason string `json:"youtube_pause_reason"`
 }
 
 // handleDownloadsStatus surfaces the worker's paused (cookie-blocked) and
-// low-disk state. When no worker is wired it reports the not-stalled default
-// (200, both false) rather than 503 — the queue simply has no worker to be
-// stalled.
+// low-disk state, plus the global YouTube kill-switch. When no worker is
+// wired it reports the not-stalled default (200, both false) rather than
+// 503 — the queue simply has no worker to be stalled.
 func (s *server) handleDownloadsStatus(w http.ResponseWriter, r *http.Request) {
 	resp := downloadsStatusResponse{}
 	if s.worker != nil {
 		resp.Paused = s.worker.Paused()
 		resp.LowDisk = s.worker.LowDisk()
 	}
+	if s.settings != nil {
+		resp.YoutubePaused, resp.YoutubePauseReason = s.settings.YoutubePaused(r.Context())
+	}
 	writeJSON(w, resp)
+}
+
+// handlePauseYoutube engages the kill-switch manually (reason '').
+func (s *server) handlePauseYoutube(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "settings not configured")
+		return
+	}
+	if err := s.settings.SetYoutubePaused(r.Context(), true, ""); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "pause failed")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleResumeYoutube clears the kill-switch and resets the failure monitor
+// so the user gets a fresh auto-pause window.
+func (s *server) handleResumeYoutube(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "settings not configured")
+		return
+	}
+	if err := s.settings.SetYoutubePaused(r.Context(), false, ""); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "resume failed")
+		return
+	}
+	if s.onResumeYoutube != nil {
+		s.onResumeYoutube()
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // handleDownloadsCancel cancels one job by id. If a worker is wired, it owns

@@ -47,6 +47,10 @@ type flatListing struct {
 // shorts and livestreams (separate tabs) are excluded by construction. The
 // call goes through the cookie gate + throttle like every other Runner call.
 func (r *Runner) ChannelVideos(ctx context.Context, ucid string, n int) ([]ChannelEntry, error) {
+	if err := r.pauseGate(); err != nil {
+		return nil, err
+	}
+
 	cookieText, err := r.cookieGate()
 	if err != nil {
 		return nil, err
@@ -86,6 +90,10 @@ func (r *Runner) ChannelVideos(ctx context.Context, ucid string, n int) ([]Chann
 // URL) to its UCID + display name via a metadata-only flat call
 // (--playlist-items 0 fetches no entries). Used at explicit channel-add time.
 func (r *Runner) ResolveChannel(ctx context.Context, channelURL string) (ucid, name string, err error) {
+	if perr := r.pauseGate(); perr != nil {
+		return "", "", perr
+	}
+
 	cookieText, gerr := r.cookieGate()
 	if gerr != nil {
 		return "", "", gerr

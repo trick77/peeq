@@ -72,6 +72,10 @@ type RunnerConfig struct {
 	// Metadata, but part of the shared config so download-related methods
 	// added later don't need a second constructor.
 	MediaDir string
+	// PauseProvider reports the global youtube_paused kill-switch. When it
+	// returns true, every call is refused with ErrPaused before the binary
+	// runs and before the throttle sleep — the strongest enforcement point.
+	PauseProvider func() (paused bool, reason string)
 }
 
 // Runner wraps the yt-dlp binary: cookie gate, throttle, and error
@@ -96,6 +100,9 @@ func New(cfg RunnerConfig) *Runner {
 	}
 	if cfg.CookieProvider == nil {
 		cfg.CookieProvider = func() (string, string) { return "", "absent" }
+	}
+	if cfg.PauseProvider == nil {
+		cfg.PauseProvider = func() (bool, string) { return false, "" }
 	}
 	if cfg.ThrottleJitter == 0 {
 		cfg.ThrottleJitter = defaultThrottleJitter
@@ -132,6 +139,16 @@ func (r *Runner) cookieGate() (string, error) {
 		return "", ErrNoCookie
 	}
 	return text, nil
+}
+
+// pauseGate enforces the youtube_paused kill-switch. Like cookieGate, it stops
+// before the binary and before the throttle sleep — a paused peeq makes zero
+// yt-dlp calls.
+func (r *Runner) pauseGate() error {
+	if paused, _ := r.cfg.PauseProvider(); paused {
+		return ErrPaused
+	}
+	return nil
 }
 
 // throttle sleeps floor + rand[0, jitter) via the injected Sleep function,
@@ -179,6 +196,10 @@ func (r *Runner) exec(ctx context.Context, cookieText string, args ...string) ([
 // of buffering it silently. Download uses this so it shares the identical
 // cookie gate / throttle path as Metadata rather than a parallel one.
 func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine func(string), args ...string) ([]byte, error) {
+	if paused, _ := r.cfg.PauseProvider(); paused {
+		return nil, ErrPaused
+	}
+
 	cookieFile, err := writeCookieTempFile(cookieText)
 	if err != nil {
 		return nil, fmt.Errorf("ytdlp: write cookie temp file: %w", err)

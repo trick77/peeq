@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -414,6 +415,53 @@ func TestDownloads_listReturnsQueue(t *testing.T) {
 	}
 }
 
+// doRequest performs an authenticated request against h and returns the
+// recorded response.
+func doRequest(t *testing.T, h http.Handler, sessionCookie *http.Cookie, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestYoutubePauseResume is the core Task 10 flow: POST /api/youtube/pause
+// engages the kill-switch (surfaced immediately on the status poll), and
+// POST /api/youtube/resume clears it and resets the shared failure monitor
+// via the injected OnResumeYoutube callback exactly once.
+func TestYoutubePauseResume(t *testing.T) {
+	resetCalls := 0
+	deps := downloadsTestDeps(t, &fakeDownloadsRunner{})
+	deps.OnResumeYoutube = func() { resetCalls++ }
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	if rec := doRequest(t, h, sessionCookie, http.MethodPost, "/api/youtube/pause"); rec.Code != http.StatusAccepted {
+		t.Fatalf("pause status = %d, want 202, body = %s", rec.Code, rec.Body.String())
+	}
+	if paused, _ := deps.Settings.YoutubePaused(context.Background()); !paused {
+		t.Fatal("not paused after POST /api/youtube/pause")
+	}
+
+	// Status reflects it.
+	rec := doRequest(t, h, sessionCookie, http.MethodGet, "/api/downloads/status")
+	if !strings.Contains(rec.Body.String(), `"youtube_paused":true`) {
+		t.Errorf("status body = %s", rec.Body.String())
+	}
+
+	// Resume clears it AND resets the failure monitor.
+	if rec := doRequest(t, h, sessionCookie, http.MethodPost, "/api/youtube/resume"); rec.Code != http.StatusAccepted {
+		t.Fatalf("resume status = %d, want 202, body = %s", rec.Code, rec.Body.String())
+	}
+	if paused, _ := deps.Settings.YoutubePaused(context.Background()); paused {
+		t.Fatal("still paused after resume")
+	}
+	if resetCalls != 1 {
+		t.Fatalf("OnResumeYoutube called %d times, want 1", resetCalls)
+	}
+}
+
 // TestDownloads_requireAuth asserts every downloads route is behind
 // requireAuth.
 func TestDownloads_requireAuth(t *testing.T) {
@@ -424,6 +472,8 @@ func TestDownloads_requireAuth(t *testing.T) {
 		httptest.NewRequest(http.MethodGet, "/api/downloads", nil),
 		httptest.NewRequest(http.MethodPost, "/api/downloads/1/cancel", nil),
 		httptest.NewRequest(http.MethodGet, "/api/downloads/stream", nil),
+		httptest.NewRequest(http.MethodPost, "/api/youtube/pause", nil),
+		httptest.NewRequest(http.MethodPost, "/api/youtube/resume", nil),
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)

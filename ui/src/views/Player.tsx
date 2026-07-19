@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../icons";
 import { Scrubber } from "../components/Scrubber";
-import { getVideo, setFavorite, setWatched, setResume, deleteVideo, streamUrl } from "../api/videos";
+import { getVideo, setFavorite, setWatched, setResume, deleteVideo, redownload, streamUrl } from "../api/videos";
 import { resummarize, subtitlesUrl } from "../api/search";
 import { streamDownloads } from "../api/downloads";
 import type { Video } from "../api/types";
@@ -125,6 +125,7 @@ export function Player({
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [find, setFind] = useState("");
   const [resummarizing, setResummarizing] = useState(false);
+  const [redownloading, setRedownloading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastSentRef = useRef(0);
   // positionRef tracks the latest known playhead position independent of
@@ -433,6 +434,18 @@ export function Player({
     }
   }
 
+  async function handleRedownload() {
+    if (!video) return;
+    setRedownloading(true);
+    try {
+      await redownload(video.id);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRedownloading(false);
+    }
+  }
+
   const hitCount = find ? cues.filter((c) => matchesFind(c.text, find)).length : 0;
 
   return (
@@ -498,6 +511,11 @@ export function Player({
             <a className="abtn" href={video.url} target="_blank" rel="noreferrer">
               <Icon name="externalLink" size="17px" /> Watch on YouTube
             </a>
+            {(video.status === "error" || video.status === "tombstoned") && (
+              <button type="button" className="abtn accent" onClick={handleRedownload} disabled={redownloading}>
+                <Icon name="refresh" size="15px" /> {redownloading ? "Queuing…" : "Re-download"}
+              </button>
+            )}
           </div>
         </div>
 

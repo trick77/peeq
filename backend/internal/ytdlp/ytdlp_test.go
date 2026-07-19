@@ -375,6 +375,101 @@ func TestMetadata_parsesCannedJSON(t *testing.T) {
 	}
 }
 
+// TestPausedRunnerMakesNoCall locks the youtube_paused kill-switch
+// invariant at the strongest enforcement point: when PauseProvider reports
+// paused, Metadata must return ErrPaused before the cookie gate, the
+// throttle sleep, or the binary are ever reached.
+func TestPausedRunnerMakesNoCall(t *testing.T) {
+	called := filepath.Join(t.TempDir(), "called")
+	r := New(RunnerConfig{
+		PauseProvider:  func() (bool, string) { return true, "paused" },
+		Bin:            fakeBinTouching(called),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep: func(context.Context, time.Duration) error {
+			t.Fatal("throttle must not sleep while youtube_paused is set")
+			return nil
+		},
+	})
+	_, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ")
+	if !errors.Is(err, ErrPaused) {
+		t.Fatalf("err = %v, want ErrPaused", err)
+	}
+	if _, e := os.Stat(called); e == nil {
+		t.Fatal("binary must not run while youtube_paused is set — a yt-dlp process would have spawned")
+	}
+}
+
+// TestPausedRunnerMakesNoCall_allEntryPoints extends
+// TestPausedRunnerMakesNoCall's invariant to the other three Runner methods
+// that shell out to yt-dlp: ChannelVideos, ResolveChannel, and Download.
+// Each must return ErrPaused (via errors.Is) and never spawn the binary,
+// locking the zero-calls IP-protection invariant across every entry point,
+// not just Metadata.
+func TestPausedRunnerMakesNoCall_allEntryPoints(t *testing.T) {
+	fatalSleep := func(t *testing.T) func(context.Context, time.Duration) error {
+		return func(context.Context, time.Duration) error {
+			t.Fatal("throttle must not sleep while youtube_paused is set")
+			return nil
+		}
+	}
+
+	t.Run("ChannelVideos", func(t *testing.T) {
+		called := filepath.Join(t.TempDir(), "called")
+		r := New(RunnerConfig{
+			PauseProvider:  func() (bool, string) { return true, "paused" },
+			Bin:            fakeBinTouching(called),
+			CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+			Sleep:          fatalSleep(t),
+		})
+		_, err := r.ChannelVideos(context.Background(), "UCuAXFkgsw1L7xaCfnd5JJOw", 10)
+		if !errors.Is(err, ErrPaused) {
+			t.Fatalf("err = %v, want ErrPaused", err)
+		}
+		if _, e := os.Stat(called); e == nil {
+			t.Fatal("binary must not run while youtube_paused is set — a yt-dlp process would have spawned")
+		}
+	})
+
+	t.Run("ResolveChannel", func(t *testing.T) {
+		called := filepath.Join(t.TempDir(), "called")
+		r := New(RunnerConfig{
+			PauseProvider:  func() (bool, string) { return true, "paused" },
+			Bin:            fakeBinTouching(called),
+			CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+			Sleep:          fatalSleep(t),
+		})
+		_, _, err := r.ResolveChannel(context.Background(), "https://www.youtube.com/@someone")
+		if !errors.Is(err, ErrPaused) {
+			t.Fatalf("err = %v, want ErrPaused", err)
+		}
+		if _, e := os.Stat(called); e == nil {
+			t.Fatal("binary must not run while youtube_paused is set — a yt-dlp process would have spawned")
+		}
+	})
+
+	t.Run("Download", func(t *testing.T) {
+		called := filepath.Join(t.TempDir(), "called")
+		r := New(RunnerConfig{
+			PauseProvider:  func() (bool, string) { return true, "paused" },
+			Bin:            fakeBinTouching(called),
+			CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+			Sleep:          fatalSleep(t),
+			MediaDir:       t.TempDir(),
+		})
+		_, err := r.Download(context.Background(), DownloadReq{
+			URL:     "https://youtu.be/dQw4w9WgXcQ",
+			VideoID: "dQw4w9WgXcQ",
+			Format:  "best-mp4",
+		}, nil)
+		if !errors.Is(err, ErrPaused) {
+			t.Fatalf("err = %v, want ErrPaused", err)
+		}
+		if _, e := os.Stat(called); e == nil {
+			t.Fatal("binary must not run while youtube_paused is set — a yt-dlp process would have spawned")
+		}
+	})
+}
+
 // TestMetadata_classifiesBlockedError proves an error surfaced by the
 // binary flows through Classify end-to-end (not just unit-tested in
 // isolation in errors_test.go).

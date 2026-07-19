@@ -21,6 +21,11 @@ var (
 	ErrCookieExpired = errors.New("ytdlp: cookie expired or invalid")
 	// ErrBlocked means YouTube's bot detection rejected the request.
 	ErrBlocked = errors.New("ytdlp: blocked by bot detection")
+	// ErrPaused means the global youtube_paused kill-switch is set. The
+	// pause gate in ytdlp.go returns this before the cookie gate, the
+	// throttle sleep, or the binary are ever reached — never derived from
+	// stderr, so Classify does not need to know about it.
+	ErrPaused = errors.New("ytdlp: youtube paused")
 )
 
 // TerminalError is a permanent, non-retryable failure for one specific

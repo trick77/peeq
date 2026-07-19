@@ -84,6 +84,12 @@ type Deps struct {
 	// SummaryJobs enqueues a (re)summarize job for a video. Optional: when
 	// nil, /api/videos/{id}/resummarize returns 503.
 	SummaryJobs SummaryEnqueuer
+
+	// OnResumeYoutube is invoked after POST /api/youtube/resume clears the
+	// kill-switch, so the shared failure monitor gets reset and the user gets
+	// a fresh auto-pause window. Optional: when nil, resume only clears the
+	// settings flag.
+	OnResumeYoutube func()
 }
 
 // SearchEmbedder embeds free-text search queries into vectors comparable
@@ -142,6 +148,8 @@ type server struct {
 	rag         *rag.Store
 	embedder    SearchEmbedder
 	summaryJobs SummaryEnqueuer
+
+	onResumeYoutube func()
 }
 
 // New returns the fully wired HTTP handler.
@@ -170,6 +178,8 @@ func New(d Deps) http.Handler {
 		rag:         d.Rag,
 		embedder:    d.Embedder,
 		summaryJobs: d.SummaryJobs,
+
+		onResumeYoutube: d.OnResumeYoutube,
 	}
 
 	mux := http.NewServeMux()
@@ -184,6 +194,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/videos/{id}/favorite", s.requireAuth(http.HandlerFunc(s.handleFavoriteVideo)))
 	mux.Handle("POST /api/videos/{id}/watched", s.requireAuth(http.HandlerFunc(s.handleWatchedVideo)))
 	mux.Handle("POST /api/videos/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleResumeVideo)))
+	mux.Handle("POST /api/videos/{id}/redownload", s.requireAuth(http.HandlerFunc(s.handleRedownloadVideo)))
 	mux.Handle("GET /api/videos/{id}/stream", s.requireAuth(http.HandlerFunc(s.handleStreamVideo)))
 	mux.Handle("GET /api/videos/{id}/thumbnail", s.requireAuth(http.HandlerFunc(s.handleVideoThumbnail)))
 	mux.Handle("GET /api/videos/{id}/subtitles", s.requireAuth(http.HandlerFunc(s.handleVideoSubtitles)))
@@ -196,6 +207,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/downloads/status", s.requireAuth(http.HandlerFunc(s.handleDownloadsStatus)))
 	mux.Handle("POST /api/downloads/{id}/cancel", s.requireAuth(http.HandlerFunc(s.handleDownloadsCancel)))
 	mux.Handle("GET /api/downloads/stream", s.requireAuth(http.HandlerFunc(s.handleDownloadsStream)))
+	mux.Handle("POST /api/youtube/pause", s.requireAuth(http.HandlerFunc(s.handlePauseYoutube)))
+	mux.Handle("POST /api/youtube/resume", s.requireAuth(http.HandlerFunc(s.handleResumeYoutube)))
 	mux.Handle("GET /api/ytdlp/version", s.requireAuth(http.HandlerFunc(s.handleYTDLPVersion)))
 	mux.Handle("POST /api/ytdlp/update", s.requireAuth(http.HandlerFunc(s.handleYTDLPUpdate)))
 	mux.Handle("POST /api/channels", s.requireAuth(http.HandlerFunc(s.handleChannelsPost)))

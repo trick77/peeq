@@ -3,6 +3,7 @@ package download
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -153,6 +154,54 @@ func runWorker(t *testing.T, w *Worker) context.CancelFunc {
 		}
 	})
 	return cancel
+}
+
+// fakeMonitor is a FailMonitor test double: it records Fail/Reset calls via
+// caller-supplied callbacks (nil callbacks are simply no-ops).
+type fakeMonitor struct {
+	onFail  func(string)
+	onReset func()
+}
+
+func (f *fakeMonitor) Fail(id string) {
+	if f.onFail != nil {
+		f.onFail(id)
+	}
+}
+
+func (f *fakeMonitor) Reset() {
+	if f.onReset != nil {
+		f.onReset()
+	}
+}
+
+// withFailMonitor is a newTestWorker option that injects a FailMonitor.
+func withFailMonitor(fm FailMonitor) func(*Deps) {
+	return func(d *Deps) { d.FailMonitor = fm }
+}
+
+// newTestWorker builds a worker via the standard harness (real store, fake
+// Runner that always succeeds), applying opts to Deps. It also seeds video
+// rows "v1"/"v2" so classify tests that pass hand-built *videos.Video structs
+// (not fetched from the store) can still Get() the row back afterward.
+func newTestWorker(t *testing.T, opts ...func(*Deps)) *Worker {
+	t.Helper()
+	runner := &fakeRunner{
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h := newHarness(t, runner, func(d *Deps) {
+		for _, opt := range opts {
+			opt(d)
+		}
+	})
+	for _, id := range []string{"v1", "v2"} {
+		if err := h.videos.Upsert(videos.Video{ID: id, URL: "https://youtu.be/" + id}); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+	}
+	return h.worker
 }
 
 // --- Scenario A: happy path -------------------------------------------------
@@ -656,4 +705,165 @@ func TestWorker_nonPositiveMinFreeDisablesGuard(t *testing.T) {
 	if h.worker.LowDisk() {
 		t.Fatal("LowDisk() = true with a non-positive min_free_gb, want the guard disabled")
 	}
+}
+
+// --- youtube_paused kill-switch: poll-gate, ErrPaused, failmonitor (Task 8) -
+
+// TestClassifyErrPausedRequeuesWithoutAttempt asserts the kill-switch pause
+// path is fully decoupled from the cookie/disk in-memory pause: it must
+// requeue at the SAME attempts count, must NOT mark the video 'error', and
+// must NOT set the worker's in-memory Paused() flag (that flag is reserved
+// for the cookie machinery; the kill-switch is parked solely by the
+// YoutubePaused poll-gate in Run).
+func TestClassifyErrPausedRequeuesWithoutAttempt(t *testing.T) {
+	w := newTestWorker(t)
+	job := &jobs.Job{ID: 1, VideoID: "v1", Attempts: 0}
+	video := &videos.Video{ID: "v1"}
+	w.classify(context.Background(), job, video, ytdlp.ErrPaused)
+
+	if w.Paused() {
+		t.Error("kill-switch pause must not set the cookie-pause flag")
+	}
+	v, err := w.deps.Videos.Get("v1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.Status == "error" {
+		t.Error("ErrPaused must not mark the video error")
+	}
+}
+
+// TestClassifyErrPaused_StoreBacked drives the same case against a real
+// claimed store row (rather than a hand-built *jobs.Job that Bump would just
+// no-op against as ErrNotRunning), so it actually proves requeuePaused's core
+// contract: the job goes back to 'pending' with attempts UNCHANGED — a
+// kill-switch pause never burns an attempt.
+func TestClassifyErrPaused_StoreBacked(t *testing.T) {
+	h := newHarness(t, &fakeRunner{fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		return &ytdlp.Result{MediaPath: "/x.mp4", FormatUsed: "f"}, nil
+	}}, nil)
+	id := h.enqueue(t, "vid", 0)
+
+	claimed, err := h.jobs.ClaimNext()
+	if err != nil || claimed == nil {
+		t.Fatalf("claim: job=%v err=%v", claimed, err)
+	}
+	video, err := h.videos.Get("vid")
+	if err != nil || video == nil {
+		t.Fatalf("get video: video=%v err=%v", video, err)
+	}
+
+	h.worker.classify(context.Background(), claimed, video, ytdlp.ErrPaused)
+
+	j := h.jobState(t, id)
+	if j.State != "pending" {
+		t.Fatalf("job state = %q, want pending", j.State)
+	}
+	if j.Attempts != 0 {
+		t.Fatalf("attempts = %d, want 0 (kill-switch pause must not burn an attempt)", j.Attempts)
+	}
+	v, _ := h.videos.Get("vid")
+	if v.Status == "error" {
+		t.Fatal("ErrPaused must not mark the video error")
+	}
+}
+
+// TestFailMonitorFailedOnCountWorthy_ResetOnSuccess asserts the FailMonitor
+// hooks: an unclassified error (the default/count-worthy branch) feeds
+// Fail(videoID), while a terminal error (per-video, not a systemic YouTube
+// problem) must not count towards auto-pause.
+func TestFailMonitorFailedOnCountWorthy_ResetOnSuccess(t *testing.T) {
+	var fails []string
+	reset := 0
+	fm := &fakeMonitor{
+		onFail:  func(id string) { fails = append(fails, id) },
+		onReset: func() { reset++ },
+	}
+	w := newTestWorker(t, withFailMonitor(fm))
+
+	// An unclassified exec error (default branch) -> Fail(videoID).
+	w.classify(context.Background(), &jobs.Job{ID: 1, VideoID: "v1", MaxAttempts: 3}, &videos.Video{ID: "v1"}, errors.New("boom: some new extractor error"))
+	if len(fails) != 1 || fails[0] != "v1" {
+		t.Fatalf("fails=%v, want [v1]", fails)
+	}
+
+	// A terminal error must NOT count.
+	w.classify(context.Background(), &jobs.Job{ID: 2, VideoID: "v2"}, &videos.Video{ID: "v2"}, &ytdlp.TerminalError{Reason: "private"})
+	if len(fails) != 1 {
+		t.Fatalf("terminal error counted: fails=%v", fails)
+	}
+}
+
+// TestWorker_success_ResetsFailMonitor drives a real successful download
+// end-to-end through succeed() and asserts FailMonitor.Reset() is called.
+func TestWorker_success_ResetsFailMonitor(t *testing.T) {
+	var resetCount int
+	var mu sync.Mutex
+	fm := &fakeMonitor{onReset: func() {
+		mu.Lock()
+		resetCount++
+		mu.Unlock()
+	}}
+
+	runner := &fakeRunner{
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			return &ytdlp.Result{MediaPath: "/m/vid.mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h := newHarness(t, runner, func(d *Deps) {
+		d.FailMonitor = fm
+	})
+	id := h.enqueue(t, "vid", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	waitFor(t, "fail monitor reset", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return resetCount == 1
+	})
+}
+
+// TestWorker_youtubePausedGateBlocksClaiming asserts the poll-gate: while
+// YoutubePaused() returns true, the loop never claims a pending job (it stays
+// 'pending', the runner is never invoked), and it does NOT set the worker's
+// in-memory Paused() flag — the kill-switch and the cookie pause are
+// independent signals. Clearing the predicate lets the queue drain.
+func TestWorker_youtubePausedGateBlocksClaiming(t *testing.T) {
+	runner := &fakeRunner{
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
+		},
+	}
+	var mu sync.Mutex
+	paused := true
+	h := newHarness(t, runner, func(d *Deps) {
+		d.YoutubePaused = func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return paused
+		}
+	})
+	id := h.enqueue(t, "vid", 0)
+	runWorker(t, h.worker)
+
+	// Give the gated loop a moment to (not) do anything.
+	time.Sleep(30 * time.Millisecond)
+	if got := h.jobState(t, id).State; got != "pending" {
+		t.Fatalf("job state = %q, want pending (must not be claimed while youtube_paused)", got)
+	}
+	if c := runner.calls(); c != 0 {
+		t.Fatalf("runner called %d times while youtube_paused, want 0", c)
+	}
+	if h.worker.Paused() {
+		t.Fatal("YoutubePaused gate must not set the cookie-pause flag")
+	}
+
+	// Clear the kill-switch: the loop resumes claiming on its own, no Resume()
+	// call needed (decoupled from the cookie machinery).
+	mu.Lock()
+	paused = false
+	mu.Unlock()
+
+	waitFor(t, "job done after youtube_paused cleared", func() bool { return h.jobState(t, id).State == "done" })
 }

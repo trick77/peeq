@@ -16,6 +16,7 @@ export function VideoCard({
   onOpen,
   onToggleFavorite,
   onToggleWatched,
+  onRedownload,
 }: {
   video: Video;
   /** settings.retention_days — needed to compute "Expires in N days". */
@@ -25,6 +26,8 @@ export function VideoCard({
   onOpen: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   onToggleWatched: (id: string) => void;
+  /** Re-queues a failed or tombstoned video's download; Library owns the actual call. */
+  onRedownload?: (id: string) => void;
 }) {
   const downloading = video.status === "queued" || video.status === "downloading";
   const isNew = !downloading && !video.watched && video.resume_position_seconds === 0 && video.has_media;
@@ -119,7 +122,13 @@ export function VideoCard({
           </>
         ) : null}
       </div>
-      <Lifecycle video={video} retentionDays={retentionDays} progress={progress} downloading={downloading} />
+      <Lifecycle
+        video={video}
+        retentionDays={retentionDays}
+        progress={progress}
+        downloading={downloading}
+        onRedownload={onRedownload}
+      />
     </article>
   );
 }
@@ -129,12 +138,29 @@ function Lifecycle({
   retentionDays,
   progress,
   downloading,
+  onRedownload,
 }: {
   video: Video;
   retentionDays: number;
   progress?: DownloadProgress;
   downloading: boolean;
+  onRedownload?: (id: string) => void;
 }) {
+  if (video.status === "error" || video.status === "tombstoned") {
+    return (
+      <div className="card-foot">
+        <div className={`life ${video.status === "error" ? "err" : "tomb"}`}>
+          <span className="led" />
+          {video.status === "error" ? "Download failed" : "Removed to save space · summary kept"}
+        </div>
+        {onRedownload && (
+          <button type="button" className="abtn accent" onClick={() => onRedownload(video.id)}>
+            <Icon name="refresh" size="15px" /> Re-download
+          </button>
+        )}
+      </div>
+    );
+  }
   if (downloading) {
     return (
       <div className="life fresh">

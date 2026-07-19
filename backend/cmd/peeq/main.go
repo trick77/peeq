@@ -25,6 +25,7 @@ import (
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/config"
 	"github.com/trick77/peeq/internal/download"
+	"github.com/trick77/peeq/internal/failmonitor"
 	"github.com/trick77/peeq/internal/httpapi"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/llm"
@@ -167,6 +168,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// failMonitor is shared between the download worker and scan scheduler:
+	// it tracks consecutive distinct-entity failures across both, and once
+	// threshold distinct videos/channels have failed in a row it engages the
+	// youtube_paused kill-switch automatically (yt-dlp is most likely broken
+	// against a YouTube change, not any single video/channel).
+	const autoPauseReason = "Auto-paused after repeated extractor failures — yt-dlp may need updating. Update yt-dlp, then resume."
+	failMonitor := failmonitor.New(3, func() {
+		if err := settingsStore.SetYoutubePaused(context.Background(), true, autoPauseReason); err != nil {
+			slog.Error("auto-pause: set youtube_paused failed", "err", err)
+		}
+	})
+
 	runner := ytdlp.New(ytdlp.RunnerConfig{
 		// Resolve the binary fresh on every invocation so the 24h self-update
 		// (which writes into cfg.YtdlpDir) is picked up without a restart.
@@ -176,6 +189,9 @@ func run() error {
 			// or invalidated while the worker is running takes effect on the
 			// very next yt-dlp invocation.
 			return settingsStore.CookieCredentials(context.Background())
+		},
+		PauseProvider: func() (bool, string) {
+			return settingsStore.YoutubePaused(context.Background())
 		},
 		ThrottleFloor: time.Duration(initialSettings.ThrottleBaseSeconds) * time.Second,
 		MediaDir:      cfg.MediaDir,
@@ -190,6 +206,8 @@ func run() error {
 		MediaDir:       cfg.MediaDir,
 		SummaryJobs:    summaryJobsStore,
 		DefaultSubLang: cfg.DefaultSubLang,
+		YoutubePaused:  func() bool { p, _ := settingsStore.YoutubePaused(context.Background()); return p },
+		FailMonitor:    failMonitor,
 		OnProgress: func(jobID int64, p ytdlp.Progress) {
 			data, err := json.Marshal(map[string]any{
 				"job_id":  jobID,
@@ -215,13 +233,15 @@ func run() error {
 	})
 
 	scheduler := scan.New(scan.Deps{
-		Channels:     channelsStore,
-		Ledger:       ledgerStore,
-		Videos:       videosStore,
-		Jobs:         jobsStore,
-		Settings:     settingsStore,
-		Lister:       runner,
-		CookieStatus: func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
+		Channels:      channelsStore,
+		Ledger:        ledgerStore,
+		Videos:        videosStore,
+		Jobs:          jobsStore,
+		Settings:      settingsStore,
+		Lister:        runner,
+		CookieStatus:  func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
+		YoutubePaused: func(ctx context.Context) bool { p, _ := settingsStore.YoutubePaused(ctx); return p },
+		FailMonitor:   failMonitor,
 	})
 
 	summarizeWorker := summarize.NewWorker(summarize.WorkerDeps{
@@ -278,20 +298,21 @@ func run() error {
 	slog.Info("SSE hub ready")
 
 	deps := httpapi.Deps{
-		Version:        version.Version,
-		Static:         web.Handler(),
-		AuthService:    authSvc,
-		AuthMiddleware: authMW,
-		Settings:       settingsStore,
-		DevAuthClaims:  devClaims,
-		Jobs:           jobsStore,
-		Videos:         videosStore,
-		MediaDir:       cfg.MediaDir,
-		Runner:         runner,
-		Worker:         worker,
-		SSEHub:         sseHub,
-		StreamAccess:   streamTracker,
-		YTDLP:          ytdlpVersioner{dir: cfg.YtdlpDir},
+		Version:         version.Version,
+		Static:          web.Handler(),
+		AuthService:     authSvc,
+		AuthMiddleware:  authMW,
+		Settings:        settingsStore,
+		DevAuthClaims:   devClaims,
+		Jobs:            jobsStore,
+		Videos:          videosStore,
+		MediaDir:        cfg.MediaDir,
+		Runner:          runner,
+		Worker:          worker,
+		SSEHub:          sseHub,
+		StreamAccess:    streamTracker,
+		YTDLP:           ytdlpVersioner{dir: cfg.YtdlpDir},
+		OnResumeYoutube: failMonitor.Reset,
 
 		Channels:        channelsStore,
 		ChannelResolver: runner,

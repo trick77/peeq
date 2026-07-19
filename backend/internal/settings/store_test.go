@@ -106,6 +106,32 @@ func TestUpdate_appliesPatch(t *testing.T) {
 	}
 }
 
+func TestSetAndReadYoutubePaused(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+
+	if paused, reason := s.YoutubePaused(ctx); paused || reason != "" {
+		t.Fatalf("default = (%v,%q), want (false,\"\")", paused, reason)
+	}
+	if err := s.SetYoutubePaused(ctx, true, "extractor broke"); err != nil {
+		t.Fatal(err)
+	}
+	paused, reason := s.YoutubePaused(ctx)
+	if !paused || reason != "extractor broke" {
+		t.Fatalf("after set = (%v,%q), want (true,\"extractor broke\")", paused, reason)
+	}
+	st, _ := s.Get(ctx)
+	if !st.YoutubePaused || st.YoutubePauseReason != "extractor broke" {
+		t.Fatalf("Get() didn't reflect pause: %+v", st)
+	}
+	if err := s.SetYoutubePaused(ctx, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if paused, _ := s.YoutubePaused(ctx); paused {
+		t.Fatal("still paused after resume")
+	}
+}
+
 func TestUpdate_minVideoDurationSeconds(t *testing.T) {
 	s := newTestStore(t) // existing helper in this test file
 	want := 300

@@ -322,6 +322,45 @@ func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filepath.Base(safe), stat.ModTime(), f)
 }
 
+// handleRedownloadVideo re-queues a failed or tombstoned video for download.
+// A fresh job row (attempts=0) is the "reset"; the worker's success path
+// re-populates media and auto-enqueues a summary job, so re-download also
+// re-indexes. Only error/tombstoned videos are eligible — re-downloading a
+// queued/downloading video would double-enqueue, and a downloaded one is a
+// no-op.
+func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.lookupVideo(w, r)
+	if !ok {
+		return
+	}
+	if v.Status != "error" && v.Status != "tombstoned" {
+		writeJSONError(w, http.StatusConflict, "only failed or removed videos can be re-downloaded")
+		return
+	}
+	if s.jobs == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "downloads are not configured")
+		return
+	}
+	// A tombstoned video is always watched=1 and aged (that's how it got
+	// tombstoned by the retention sweeper); resetting the watched state here
+	// rescues it from SweepCandidates so the sweeper doesn't delete the
+	// freshly re-downloaded media within its next hourly pass. Mirrors the
+	// existing "un-watch rescues from the auto-delete sweep" rule from P1.
+	if err := s.videos.SetWatched(v.ID, false); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "reset watched state failed")
+		return
+	}
+	if err := s.videos.SetStatus(v.ID, "queued", ""); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "requeue failed")
+		return
+	}
+	if _, err := s.jobs.Enqueue(v.ID, downloadPriority); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "enqueue failed")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // lookupVideo resolves {id} from the route and fetches the video, writing
 // the appropriate error response (503 if the store isn't wired, 404 if the
 // id is unknown) and returning ok=false if the caller should stop.
