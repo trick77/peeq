@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
@@ -642,5 +643,174 @@ func TestVideosList_filtersByQueryParam(t *testing.T) {
 	}
 	if len(got) != 1 || got[0]["id"] != "v1" {
 		t.Fatalf("filtered list = %+v, want [v1]", got)
+	}
+}
+
+// redownloadTestHarness wires the videos API plus a real jobs store, so a
+// redownload test can assert both the video's status flip and that a job
+// was actually enqueued at manual priority.
+type redownloadTestHarness struct {
+	http.Handler
+	videos *videos.Store
+	jobs   *jobs.Store
+}
+
+func newRedownloadTestServer(t *testing.T) *redownloadTestHarness {
+	t.Helper()
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	videosStore := videos.New(db)
+	jobsStore := jobs.New(db)
+	deps := Deps{
+		AuthService:    auth.NewService(nil, sessions, users),
+		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Settings:       settings.New(db),
+		Videos:         videosStore,
+		Jobs:           jobsStore,
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}
+	return &redownloadTestHarness{
+		Handler: New(deps),
+		videos:  videosStore,
+		jobs:    jobsStore,
+	}
+}
+
+// TestRedownloadErroredVideoEnqueues covers the primary re-download path: a
+// video stuck in 'error' can be re-queued via one POST, which flips it back
+// to 'queued' and enqueues a fresh job at the standard manual priority (10)
+// so the existing download worker picks it up.
+func TestRedownloadErroredVideoEnqueues(t *testing.T) {
+	h := newRedownloadTestServer(t)
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := h.videos.SetStatus("v1", "error", "boom"); err != nil {
+		t.Fatalf("seed error status: %v", err)
+	}
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/redownload", nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := h.videos.Get("v1")
+	if err != nil || got == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.Status != "queued" {
+		t.Fatalf("status = %q, want queued", got.Status)
+	}
+
+	list, err := h.jobs.List()
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("jobs = %+v, want exactly one enqueued job", list)
+	}
+	if list[0].VideoID != "v1" {
+		t.Fatalf("job video_id = %q, want v1", list[0].VideoID)
+	}
+	if list[0].Priority != downloadPriority {
+		t.Fatalf("job priority = %d, want %d", list[0].Priority, downloadPriority)
+	}
+}
+
+// TestRedownloadTombstonedVideoEnqueues covers the other eligible status: a
+// tombstoned (manually deleted) video must also be re-downloadable.
+func TestRedownloadTombstonedVideoEnqueues(t *testing.T) {
+	h := newRedownloadTestServer(t)
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := h.videos.Tombstone("v1"); err != nil {
+		t.Fatalf("seed tombstoned status: %v", err)
+	}
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/redownload", nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := h.videos.Get("v1")
+	if err != nil || got == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.Status != "queued" {
+		t.Fatalf("status = %q, want queued", got.Status)
+	}
+}
+
+// TestRedownloadDownloadedVideoRejected covers the guard: a video that is
+// already downloaded (or queued/downloading) must not be re-downloadable —
+// doing so would double-enqueue or clobber a perfectly good file.
+func TestRedownloadDownloadedVideoRejected(t *testing.T) {
+	h := newRedownloadTestServer(t)
+	if err := h.videos.Upsert(videos.Video{ID: "v2", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := h.videos.SetDownloaded("v2", videos.DownloadedResult{}); err != nil {
+		t.Fatalf("seed downloaded status: %v", err)
+	}
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v2/redownload", nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
+	}
+
+	list, err := h.jobs.List()
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("jobs = %+v, want none enqueued on rejection", list)
+	}
+}
+
+// TestRedownloadQueuedVideoRejected covers the double-enqueue hazard the
+// guard exists to prevent: a video already queued (or downloading) must not
+// be re-downloadable a second time.
+func TestRedownloadQueuedVideoRejected(t *testing.T) {
+	h := newRedownloadTestServer(t)
+	if err := h.videos.Upsert(videos.Video{ID: "v3", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := h.videos.SetStatus("v3", "queued", ""); err != nil {
+		t.Fatalf("seed queued status: %v", err)
+	}
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v3/redownload", nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
+	}
+
+	list, err := h.jobs.List()
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("jobs = %+v, want none enqueued on rejection", list)
+	}
+}
+
+// TestRedownloadUnknownVideo_404 covers the not-found path via lookupVideo.
+func TestRedownloadUnknownVideo_404(t *testing.T) {
+	h := newRedownloadTestServer(t)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/missing/redownload", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body = %s", rec.Code, rec.Body.String())
 	}
 }

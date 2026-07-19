@@ -322,6 +322,32 @@ func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filepath.Base(safe), stat.ModTime(), f)
 }
 
+// handleRedownloadVideo re-queues a failed or tombstoned video for download.
+// A fresh job row (attempts=0) is the "reset"; the worker's success path
+// re-populates media and auto-enqueues a summary job, so re-download also
+// re-indexes. Only error/tombstoned videos are eligible — re-downloading a
+// queued/downloading video would double-enqueue, and a downloaded one is a
+// no-op.
+func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.lookupVideo(w, r)
+	if !ok {
+		return
+	}
+	if v.Status != "error" && v.Status != "tombstoned" {
+		writeJSONError(w, http.StatusConflict, "only failed or removed videos can be re-downloaded")
+		return
+	}
+	if err := s.videos.SetStatus(v.ID, "queued", ""); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "requeue failed")
+		return
+	}
+	if _, err := s.jobs.Enqueue(v.ID, downloadPriority); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "enqueue failed")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // lookupVideo resolves {id} from the route and fetches the video, writing
 // the appropriate error response (503 if the store isn't wired, 404 if the
 // id is unknown) and returning ok=false if the caller should stop.
