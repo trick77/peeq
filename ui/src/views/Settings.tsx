@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { getSettings, updateSettings, putCookie } from "../api/settings";
 import { getYtdlpVersion, updateYtdlp } from "../api/ytdlp";
+import { pauseYoutube, resumeYoutube } from "../api/downloads";
 import type { Settings as SettingsType } from "../api/types";
 
 // PRESETS mirrors ytdlp.Presets exactly (backend/internal/ytdlp/format.go)
@@ -174,8 +175,52 @@ export function Settings() {
   const cookieHealthy = settings.cookie_status === "valid";
   const looksValid = looksLikeNetscapeCookie(cookieText);
 
+  async function handleToggleYoutubePause(paused: boolean) {
+    try {
+      if (paused) await pauseYoutube();
+      else await resumeYoutube();
+      setSettingsState(await getSettings());
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   return (
     <div className="settings">
+      <section className="sect">
+        <h2>
+          YouTube activity
+          <span className={`status-line${settings.youtube_paused ? " warn" : ""}`}>
+            <span className="led" />
+            {settings.youtube_paused ? (settings.youtube_pause_reason ? "Paused · auto" : "Paused") : "Active"}
+          </span>
+        </h2>
+        <p className="desc">
+          Pause all downloads, channel scans, and metadata fetches. Nothing leaves peeq while paused.
+        </p>
+        <label className="channel-toggle">
+          <input
+            type="checkbox"
+            checked={settings.youtube_paused}
+            onChange={(e) => handleToggleYoutubePause(e.target.checked)}
+          />
+          {settings.youtube_paused ? "YouTube activity is paused" : "Pause all YouTube activity"}
+        </label>
+        {settings.youtube_paused && settings.youtube_pause_reason ? (
+          <div className="warnline">
+            <Icon name="warning" size="16px" style={{ color: "var(--color-danger)" }} />
+            <span>{settings.youtube_pause_reason}</span>
+          </div>
+        ) : null}
+        {settings.youtube_paused ? (
+          <div className="field-row" style={{ marginTop: 12 }}>
+            <button type="button" className="btn primary" onClick={() => handleToggleYoutubePause(false)}>
+              Resume
+            </button>
+          </div>
+        ) : null}
+      </section>
+
       <section className="sect">
         <h2>
           YouTube cookie

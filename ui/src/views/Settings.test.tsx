@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Settings } from "./Settings";
 import type { Settings as SettingsType } from "../api/types";
@@ -28,22 +28,33 @@ vi.mock("../api/ytdlp", () => ({
   getYtdlpVersion: vi.fn().mockResolvedValue("2026.01.01"),
   updateYtdlp: vi.fn(),
 }));
+vi.mock("../api/downloads", () => ({
+  pauseYoutube: vi.fn(),
+  resumeYoutube: vi.fn(),
+}));
 
 import { getSettings, putCookie, updateSettings } from "../api/settings";
+import { pauseYoutube, resumeYoutube } from "../api/downloads";
 
 describe("Settings", () => {
   beforeEach(() => {
     vi.mocked(getSettings).mockReset();
     vi.mocked(putCookie).mockReset();
     vi.mocked(updateSettings).mockReset();
+    vi.mocked(pauseYoutube).mockReset();
+    vi.mocked(resumeYoutube).mockReset();
     vi.mocked(getSettings).mockResolvedValue(baseSettings);
     vi.mocked(putCookie).mockResolvedValue({ ...baseSettings, cookie_status: "valid" });
     vi.mocked(updateSettings).mockResolvedValue(baseSettings);
+    vi.mocked(pauseYoutube).mockResolvedValue(undefined);
+    vi.mocked(resumeYoutube).mockResolvedValue(undefined);
   });
 
   it("shows the cookie status from GET, never the cookie body", async () => {
     render(<Settings />);
-    expect(await screen.findByText(/Active/)).toBeInTheDocument();
+    const cookieHeading = await screen.findByText("YouTube cookie");
+    const cookieSection = cookieHeading.closest("section") as HTMLElement;
+    expect(within(cookieSection).getByText(/Active/)).toBeInTheDocument();
     // Nothing resembling a pasted cookie value should ever render.
     expect(screen.queryByText(/SID/)).toBeNull();
     const textarea = screen.getByLabelText("YouTube cookie") as HTMLTextAreaElement;
@@ -94,5 +105,23 @@ describe("Settings", () => {
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalledWith({ min_video_duration_seconds: 90 });
     });
+  });
+
+  it("toggles the YouTube kill-switch", async () => {
+    vi.mocked(getSettings).mockResolvedValue({ ...baseSettings, youtube_paused: false, youtube_pause_reason: "" });
+    render(<Settings />);
+    const toggle = await screen.findByRole("checkbox", { name: /pause all youtube/i });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(pauseYoutube).toHaveBeenCalled());
+  });
+
+  it("shows the auto-pause reason when auto-engaged", async () => {
+    vi.mocked(getSettings).mockResolvedValue({
+      ...baseSettings,
+      youtube_paused: true,
+      youtube_pause_reason: "Auto-paused after repeated extractor failures.",
+    });
+    render(<Settings />);
+    expect(await screen.findByText(/auto-paused after repeated/i)).toBeInTheDocument();
   });
 });
