@@ -24,6 +24,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 type ChunkRow struct {
 	Ordinal      int
 	Text         string
+	Kind         string
 	StartSeconds int
 	TokenCount   int
 }
@@ -33,6 +34,7 @@ type Hit struct {
 	VideoID      string
 	Ordinal      int
 	Text         string
+	Kind         string
 	StartSeconds int
 	Distance     float64
 }
@@ -61,6 +63,9 @@ func deleteVideoTx(ctx context.Context, tx *sql.Tx, videoID string) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM vec_chunks WHERE rowid = ?`, id); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM fts_chunks WHERE rowid = ?`, id); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM transcript_chunks WHERE video_id = ?`, videoID); err != nil {
 		return err
@@ -83,9 +88,13 @@ func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID, model string, d
 		return err
 	}
 	for i, r := range rows {
+		kind := r.Kind
+		if kind == "" {
+			kind = "transcript"
+		}
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO transcript_chunks (video_id, ordinal, text, start_seconds, token_count) VALUES (?,?,?,?,?)`,
-			videoID, r.Ordinal, r.Text, r.StartSeconds, r.TokenCount)
+			`INSERT INTO transcript_chunks (video_id, ordinal, text, kind, start_seconds, token_count) VALUES (?,?,?,?,?,?)`,
+			videoID, r.Ordinal, r.Text, kind, r.StartSeconds, r.TokenCount)
 		if err != nil {
 			return err
 		}
@@ -95,6 +104,10 @@ func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID, model string, d
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO vec_chunks (rowid, embedding) VALUES (?, ?)`, id, store.VecLiteral(vectors[i])); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO fts_chunks (rowid, text) VALUES (?, ?)`, id, r.Text); err != nil {
 			return err
 		}
 	}
@@ -123,7 +136,7 @@ func (s *Store) Retrieve(ctx context.Context, queryEmbedding []float32, k int) (
 		k = 10
 	}
 	const q = `
-		SELECT c.video_id, c.ordinal, c.text, c.start_seconds, v.distance
+		SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds, v.distance
 		FROM vec_chunks v
 		JOIN transcript_chunks c ON c.id = v.rowid
 		WHERE v.embedding MATCH ? AND k = ?
@@ -136,7 +149,7 @@ func (s *Store) Retrieve(ctx context.Context, queryEmbedding []float32, k int) (
 	var out []Hit
 	for rows.Next() {
 		var h Hit
-		if err := rows.Scan(&h.VideoID, &h.Ordinal, &h.Text, &h.StartSeconds, &h.Distance); err != nil {
+		if err := rows.Scan(&h.VideoID, &h.Ordinal, &h.Text, &h.Kind, &h.StartSeconds, &h.Distance); err != nil {
 			return nil, err
 		}
 		out = append(out, h)

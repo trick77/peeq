@@ -69,3 +69,64 @@ func TestReplaceRetrieveAndDelete(t *testing.T) {
 		t.Fatalf("BuiltDim = %d, want %d", got, dim)
 	}
 }
+
+// TestReplaceVideoChunksWritesFTSAndKind asserts ReplaceVideoChunks mirrors
+// each row's text into fts_chunks (keyed by the same rowid as vec_chunks)
+// and persists the row's kind, and that re-indexing a video leaves no fts
+// orphan (mirroring the vec_chunks replace-cleanly behavior).
+func TestReplaceVideoChunksWritesFTSAndKind(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := store.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	dim := 1536
+	seedVec := func() []float32 {
+		out := make([]float32, dim)
+		out[0] = 0.5
+		return out
+	}
+	if _, err := db.Exec(`INSERT INTO videos (id, url) VALUES ('v1','u')`); err != nil {
+		t.Fatal(err)
+	}
+	st := NewStore(db)
+	ctx := context.Background()
+	rows := []ChunkRow{
+		{Ordinal: 0, Text: "intro about sourdough", Kind: "transcript", StartSeconds: 0},
+		{Ordinal: 1, Text: "whole video summary", Kind: "summary", StartSeconds: 0},
+	}
+	vecs := [][]float32{seedVec(), seedVec()}
+	if err := st.ReplaceVideoChunks(ctx, "v1", "m", dim, rows, vecs); err != nil {
+		t.Fatal(err)
+	}
+	// fts_chunks has both rows and MATCH works.
+	var ftsN int
+	if err := st.db.QueryRow(`SELECT count(*) FROM fts_chunks WHERE fts_chunks MATCH 'sourdough'`).Scan(&ftsN); err != nil {
+		t.Fatal(err)
+	}
+	if ftsN != 1 {
+		t.Fatalf("fts MATCH sourdough = %d, want 1", ftsN)
+	}
+	// kind persisted.
+	var kind string
+	if err := st.db.QueryRow(`SELECT kind FROM transcript_chunks WHERE video_id='v1' AND ordinal=1`).Scan(&kind); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "summary" {
+		t.Fatalf("kind = %q, want summary", kind)
+	}
+	// Re-index replaces cleanly: no fts orphan.
+	if err := st.ReplaceVideoChunks(ctx, "v1", "m", dim, rows[:1], vecs[:1]); err != nil {
+		t.Fatal(err)
+	}
+	var total int
+	if err := st.db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("fts rows after re-index = %d, want 1 (no orphan)", total)
+	}
+}

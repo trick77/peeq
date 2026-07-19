@@ -96,10 +96,11 @@ func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 }
 
 // DeleteCascade removes a channel and everything belonging to it in one
-// transaction. vec_chunks (a vec0 virtual table) cannot ride an FK cascade or
-// trigger, so its rows for this channel's videos are purged explicitly FIRST,
-// by rowid (== transcript_chunks.id) — before the videos delete cascades away
-// the transcript_chunks rows that rowid comes from. videos itself has no
+// transaction. vec_chunks (a vec0 virtual table) and fts_chunks (an fts5
+// virtual table) cannot ride an FK cascade or trigger, so their rows for
+// this channel's videos are purged explicitly FIRST, by rowid (==
+// transcript_chunks.id) — before the videos delete cascades away the
+// transcript_chunks rows that rowid comes from. videos itself has no
 // foreign key to channels, so its rows are deleted explicitly by channel_id
 // (this FK-cascades their download_jobs, transcript_chunks, and summary_jobs).
 // Deleting the channel row then FK-cascades the subscription and
@@ -114,9 +115,10 @@ func (s *Store) DeleteCascade(channelID string) error {
 	}
 	defer tx.Rollback()
 
-	// vec_chunks (vec0) can't ride an FK cascade, so purge its rows for this
-	// channel's videos explicitly, by rowid, BEFORE the videos delete cascades
-	// their transcript_chunks away (which would strand the vec rows forever).
+	// vec_chunks (vec0) and fts_chunks (fts5) can't ride an FK cascade, so
+	// purge their rows for this channel's videos explicitly, by rowid,
+	// BEFORE the videos delete cascades their transcript_chunks away (which
+	// would strand the vec/fts rows forever).
 	rows, err := tx.Query(`
 SELECT tc.id FROM transcript_chunks tc
 JOIN videos v ON v.id = tc.video_id
@@ -140,6 +142,9 @@ WHERE v.channel_id = ?`, channelID)
 	for _, id := range vecIDs {
 		if _, err := tx.Exec(`DELETE FROM vec_chunks WHERE rowid = ?`, id); err != nil {
 			return fmt.Errorf("delete vec_chunks row %d: %w", id, err)
+		}
+		if _, err := tx.Exec(`DELETE FROM fts_chunks WHERE rowid = ?`, id); err != nil {
+			return fmt.Errorf("delete fts_chunks row %d: %w", id, err)
 		}
 	}
 
