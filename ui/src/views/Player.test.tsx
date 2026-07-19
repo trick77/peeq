@@ -17,6 +17,12 @@ const mockVideo: Video = {
   watched: false,
   resume_position_seconds: 42,
   favorite: false,
+  summary: "",
+  chapters: [],
+  key_points: [],
+  summary_status: "",
+  audio_language: "",
+  has_subtitles: false,
 };
 
 vi.mock("../api/videos", () => ({

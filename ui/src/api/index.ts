@@ -13,3 +13,4 @@ export * from "./settings";
 export * from "./ytdlp";
 export * from "./channels";
 export * from "./pending";
+export * from "./search";
