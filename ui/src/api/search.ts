@@ -7,6 +7,7 @@ export type SearchMatch = {
   start_seconds: number;
   snippet: string;
   distance: number;
+  kind: string;
 };
 
 // SearchResult mirrors one httpapi.searchResultItem — a video joined with
