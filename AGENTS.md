@@ -8,6 +8,8 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
 - TDD: write the failing test first, then the minimal implementation.
 - Keep files focused — one clear responsibility each.
 - YAML files use the `.yaml` extension (never `.yml`).
+- Phase 3 requires MiMo + embeddings endpoints (`BACKEND_MIMO_*`, `BACKEND_EMBED_*`); tests fake
+  them with httptest — never call a real LLM/embeddings endpoint or the real yt-dlp binary.
 
 ## Commands
 - `make test` — backend Go tests (`go test ./...`)

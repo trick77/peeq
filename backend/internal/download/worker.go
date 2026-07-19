@@ -28,6 +28,14 @@ type Runner interface {
 	Download(ctx context.Context, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error)
 }
 
+// SummaryEnqueuer is the subset of *summaryjobs.Store the worker needs to
+// queue a summary job after a successful download. Declaring it here (rather
+// than importing the concrete type) keeps the worker testable with a spy and
+// avoids an import cycle back to the summaryjobs package.
+type SummaryEnqueuer interface {
+	Enqueue(videoID string) (int64, error)
+}
+
 // Deps are the worker's collaborators and tunables. The stores and Runner
 // are required; the rest have safe defaults applied in New.
 type Deps struct {
@@ -35,6 +43,16 @@ type Deps struct {
 	Videos   *videos.Store
 	Settings *settings.Store
 	Runner   Runner
+
+	// SummaryJobs, when set, is enqueued for every successful download
+	// (initial or re-download) right after SetDownloaded persists. Nil
+	// (the default in tests that don't care about summaries) skips the
+	// enqueue entirely; production always sets it.
+	SummaryJobs SummaryEnqueuer
+	// DefaultSubLang is the --sub-langs value used when a video's
+	// AudioLanguage is not yet known (e.g. its first download). Once a video
+	// has a resolved AudioLanguage, that takes precedence.
+	DefaultSubLang string
 
 	// Watchdog is the inactivity timeout: if a running download produces no
 	// progress for this long, its context is cancelled (killing the child)
@@ -267,12 +285,17 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		format = "custom"
 		custom = video.RequestedFormat
 	}
+	subLang := video.AudioLanguage
+	if subLang == "" {
+		subLang = w.deps.DefaultSubLang
+	}
 	req := ytdlp.DownloadReq{
 		URL:          video.URL,
 		VideoID:      video.ID,
 		Format:       format,
 		CustomFormat: custom,
 		LimitRate:    set.LimitRate,
+		SubLang:      subLang,
 	}
 
 	// Inactivity watchdog: reset on every progress update; if it fires, it
@@ -465,8 +488,25 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 		FilesizeBytes:        res.FilesizeBytes,
 		FormatUsed:           res.FormatUsed,
 		SponsorblockSegments: marshalSegments(res.SponsorblockSegments),
+		SubtitleRelPath:      res.SubtitleRelPath,
+		AudioLanguage:        res.AudioLanguage,
+		ChaptersJSON:         res.ChaptersJSON,
 	}); err != nil {
 		w.deps.Logger.Error("download worker: set downloaded failed", "video_id", video.ID, "err", err)
+		// Do not enqueue a summary job: the video row was not updated with
+		// subtitle_path/audio_language/chapters, so a summary job would run
+		// against stale/incomplete data.
+		return
+	}
+
+	// Enqueue a summary job as a downstream consequence of every successful
+	// download (initial or re-download). SummaryJobs is nil in tests that
+	// don't care about summaries; production always sets it. Only reached
+	// when SetDownloaded above succeeded.
+	if w.deps.SummaryJobs != nil {
+		if _, err := w.deps.SummaryJobs.Enqueue(video.ID); err != nil {
+			w.deps.Logger.Error("download worker: enqueue summary job failed", "video_id", video.ID, "err", err)
+		}
 	}
 }
 

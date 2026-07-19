@@ -42,7 +42,16 @@ CREATE TABLE videos (
     favorite                 INTEGER NOT NULL DEFAULT 0,
     favorited_at             TEXT,
     created_at               TEXT NOT NULL DEFAULT (datetime('now')),
-    downloaded_at            TEXT
+    downloaded_at            TEXT,
+    audio_language           TEXT NOT NULL DEFAULT '',
+    subtitle_path            TEXT NOT NULL DEFAULT '',
+    summary                  TEXT NOT NULL DEFAULT '',
+    chapters                 TEXT NOT NULL DEFAULT '[]',
+    key_points               TEXT NOT NULL DEFAULT '[]',
+    summary_status           TEXT NOT NULL DEFAULT 'pending' CHECK (summary_status IN ('pending','running','done','error','no_transcript')),
+    summary_error            TEXT NOT NULL DEFAULT '',
+    embed_model              TEXT NOT NULL DEFAULT '',
+    embed_dim                INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_videos_status ON videos(status);
@@ -130,3 +139,39 @@ CREATE TABLE channel_videos (
 );
 CREATE INDEX idx_channel_videos_channel ON channel_videos(channel_id);
 CREATE INDEX idx_channel_videos_state ON channel_videos(state);
+
+-- transcript_chunks: one embedded transcript window per video. id IS the rowid,
+-- so it bridges directly to vec_chunks.rowid (vec0 requires an INTEGER rowid).
+CREATE TABLE transcript_chunks (
+    id            INTEGER PRIMARY KEY,
+    video_id      TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    ordinal       INTEGER NOT NULL,
+    text          TEXT NOT NULL,
+    start_seconds INTEGER NOT NULL DEFAULT 0,
+    token_count   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_transcript_chunks_video ON transcript_chunks(video_id, ordinal);
+
+-- vec_chunks: embeddings, keyed 1:1 to transcript_chunks.id via rowid. Peeq is
+-- single-user so there are no partition/metadata columns. The dimension is fixed
+-- at DDL time; a model/dim change invalidates the whole table (see rag.Store
+-- reconcile). vec0 cannot appear in triggers/FK cascades, so the store deletes
+-- matching rows in the same transaction as transcript_chunks deletes.
+CREATE VIRTUAL TABLE vec_chunks USING vec0(
+    embedding float[1536]
+);
+
+-- summary_jobs: offline summarization+embedding queue (twin of download_jobs).
+CREATE TABLE summary_jobs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id     TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    state        TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','running','done','failed')),
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    last_error   TEXT NOT NULL DEFAULT '',
+    enqueued_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at   TEXT,
+    finished_at  TEXT
+);
+CREATE INDEX idx_summary_jobs_state ON summary_jobs(state);
+CREATE INDEX idx_summary_jobs_video ON summary_jobs(video_id);

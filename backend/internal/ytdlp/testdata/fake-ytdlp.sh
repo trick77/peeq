@@ -46,11 +46,13 @@ if [ -n "$outtmpl" ]; then
 
   echo "dummy video content" > "$outdir/$id.mp4"
   echo "dummy thumbnail" > "$outdir/$id.jpg"
+  printf 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n' > "$outdir/$id.${FAKE_YTDLP_SUBLANG:-en}.vtt"
   cat > "$outdir/$id.info.json" <<EOF
 {
   "id": "$id",
   "channel_id": "${FAKE_YTDLP_CHANNEL_ID:-UCabc}",
   "ext": "mp4",
+  "language": "${FAKE_YTDLP_SUBLANG:-en}",
   "chapters": [
     {"start_time": 0, "end_time": 10, "title": "Intro"},
     {"start_time": 10, "end_time": 25, "title": "[SponsorBlock]: Sponsor"}

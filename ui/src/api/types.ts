@@ -51,6 +51,30 @@ export type Video = {
   // from the stored JSON column. Absent (undefined, via omitempty) when
   // there are none. Player.tsx auto-skips [start_time, end_time) ranges.
   sponsorblock_segments?: { category: string; start_time: number; end_time: number }[];
+  // summary/chapters/key_points/summary_status/audio_language/has_subtitles
+  // mirror the Task 14 summarization fields added to httpapi.videoDTO —
+  // chapters/key_points arrive as arrays (never omitted, just empty).
+  summary: string;
+  chapters: Chapter[];
+  key_points: KeyPoint[];
+  summary_status: string;
+  audio_language: string;
+  has_subtitles: boolean;
+};
+
+// Chapter mirrors httpapi's per-video chapter DTO — source distinguishes
+// yt-dlp-provided chapters from ones inferred by the summarizer.
+export type Chapter = {
+  ts: number;
+  title: string;
+  source: string;
+};
+
+// KeyPoint mirrors httpapi's per-video key-point DTO — a timestamped
+// highlight extracted during summarization.
+export type KeyPoint = {
+  ts: number;
+  text: string;
 };
 
 // Job mirrors httpapi.downloadItem — one download-queue entry, optionally

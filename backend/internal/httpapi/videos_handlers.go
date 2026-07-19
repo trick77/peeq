@@ -36,6 +36,12 @@ type videoDTO struct {
 	Favorite              bool                     `json:"favorite"`
 	DownloadedAt          string                   `json:"downloaded_at,omitempty"`
 	SponsorblockSegments  []sponsorblockSegmentDTO `json:"sponsorblock_segments,omitempty"`
+	Summary               string                   `json:"summary"`
+	Chapters              json.RawMessage          `json:"chapters,omitempty"`
+	KeyPoints             json.RawMessage          `json:"key_points,omitempty"`
+	SummaryStatus         string                   `json:"summary_status"`
+	AudioLanguage         string                   `json:"audio_language"`
+	HasSubtitles          bool                     `json:"has_subtitles"`
 }
 
 // sponsorblockSegmentDTO is one entry of the parsed sponsorblock_segments
@@ -60,6 +66,20 @@ func parseSponsorblockSegments(raw string) []sponsorblockSegmentDTO {
 		return nil
 	}
 	return segs
+}
+
+// rawJSONOrNil turns a stored JSON-text column (chapters/key_points) into a
+// json.RawMessage so the client receives an actual array, not a
+// double-encoded string. A blank or malformed value yields a JSON RawMessage
+// of an empty array ("[]") rather than nil — belt-and-suspenders so the
+// frontend's `chapters: Chapter[]` / `key_points: string[]` types can always
+// safely .map() the field, even if a row ever stored "" or something
+// unparsable, without relying solely on the migration's '[]' column default.
+func rawJSONOrNil(raw string) json.RawMessage {
+	if raw == "" || !json.Valid([]byte(raw)) {
+		return json.RawMessage("[]")
+	}
+	return json.RawMessage(raw)
 }
 
 // toVideoDTO maps a store row to its JSON shape. media_path itself is
@@ -88,6 +108,12 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		Favorite:              v.Favorite,
 		DownloadedAt:          v.DownloadedAt,
 		SponsorblockSegments:  parseSponsorblockSegments(v.SponsorblockSegments),
+		Summary:               v.Summary,
+		Chapters:              rawJSONOrNil(v.Chapters),
+		KeyPoints:             rawJSONOrNil(v.KeyPoints),
+		SummaryStatus:         v.SummaryStatus,
+		AudioLanguage:         v.AudioLanguage,
+		HasSubtitles:          v.SubtitlePath != "",
 	}
 }
 

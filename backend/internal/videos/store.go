@@ -49,6 +49,15 @@ type Video struct {
 	FavoritedAt           string
 	CreatedAt             string
 	DownloadedAt          string
+	AudioLanguage         string
+	SubtitlePath          string
+	Summary               string
+	Chapters              string
+	KeyPoints             string
+	SummaryStatus         string
+	SummaryError          string
+	EmbedModel            string
+	EmbedDim              int
 }
 
 // watchedThreshold is the fraction of a video's duration that, once
@@ -64,6 +73,9 @@ type DownloadedResult struct {
 	FilesizeBytes        int64
 	FormatUsed           string
 	SponsorblockSegments string
+	SubtitleRelPath      string
+	AudioLanguage        string
+	ChaptersJSON         string
 }
 
 // Store persists video rows.
@@ -120,7 +132,8 @@ const videoColumns = `id, url, title, channel_id, channel_name, duration_seconds
 	description, thumbnail_path, media_path, filesize_bytes, format_used, requested_format,
 	availability, status, error_message, sponsorblock_segments,
 	watched, watched_at, resume_position_seconds, favorite, favorited_at,
-	created_at, downloaded_at`
+	created_at, downloaded_at,
+	audio_language, subtitle_path, summary, chapters, key_points, summary_status, summary_error, embed_model, embed_dim`
 
 // rowScanner is satisfied by both *sql.Row and *sql.Rows.
 type rowScanner interface {
@@ -139,6 +152,8 @@ func scanVideo(rs rowScanner) (Video, error) {
 		&v.Availability, &v.Status, &v.ErrorMessage, &v.SponsorblockSegments,
 		&watched, &watchedAt, &v.ResumePositionSeconds, &favorite, &favoritedAt,
 		&v.CreatedAt, &downloadedAt,
+		&v.AudioLanguage, &v.SubtitlePath, &v.Summary, &v.Chapters, &v.KeyPoints,
+		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim,
 	)
 	if err != nil {
 		return Video{}, err
@@ -248,12 +263,49 @@ func (s *Store) SetDownloaded(id string, res DownloadedResult) error {
 UPDATE videos
 SET media_path = ?, thumbnail_path = COALESCE(NULLIF(?, ''), thumbnail_path),
 	filesize_bytes = ?, format_used = ?, sponsorblock_segments = ?,
+	subtitle_path = ?, audio_language = ?,
+	chapters = CASE WHEN ? != '' THEN ? ELSE chapters END,
 	status = 'downloaded', error_message = '', downloaded_at = datetime('now')
 WHERE id = ?`,
-		res.MediaPath, res.ThumbnailPath, res.FilesizeBytes, res.FormatUsed, segments, id,
+		res.MediaPath, res.ThumbnailPath, res.FilesizeBytes, res.FormatUsed, segments,
+		res.SubtitleRelPath, res.AudioLanguage,
+		res.ChaptersJSON, res.ChaptersJSON,
+		id,
 	)
 	if err != nil {
 		return fmt.Errorf("set video %s downloaded: %w", id, err)
+	}
+	return nil
+}
+
+// SetSubtitle records the downloaded subtitle relpath and resolved audio
+// language.
+func (s *Store) SetSubtitle(id, relPath, audioLang string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET subtitle_path=?, audio_language=? WHERE id=?`, relPath, audioLang, id)
+	if err != nil {
+		return fmt.Errorf("set video %s subtitle: %w", id, err)
+	}
+	return nil
+}
+
+// SetSummaryStatus updates the summarization lifecycle state and error.
+func (s *Store) SetSummaryStatus(id, status, errMsg string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET summary_status=?, summary_error=? WHERE id=?`, status, errMsg, id)
+	if err != nil {
+		return fmt.Errorf("set video %s summary status: %w", id, err)
+	}
+	return nil
+}
+
+// SetSummary persists the three artifacts and marks the summary done.
+func (s *Store) SetSummary(id, summary, chaptersJSON, keyPointsJSON string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET summary=?, chapters=?, key_points=?, summary_status='done', summary_error='' WHERE id=?`,
+		summary, chaptersJSON, keyPointsJSON, id)
+	if err != nil {
+		return fmt.Errorf("set video %s summary: %w", id, err)
 	}
 	return nil
 }

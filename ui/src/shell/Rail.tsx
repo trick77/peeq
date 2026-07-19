@@ -6,7 +6,7 @@ import type { Job } from "../api/types";
 // ViewId enumerates the six destinations the rail routes to. App.tsx owns
 // the actual view-state (manual, no router lib — see App.tsx); Rail is
 // purely presentational plus the onNavigate callback.
-export type ViewId = "library" | "player" | "add" | "pending" | "channels" | "settings";
+export type ViewId = "library" | "player" | "search" | "add" | "pending" | "channels" | "settings";
 
 type NavItem = {
   id: ViewId;
@@ -23,6 +23,7 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     items: [
       { id: "library", label: "Library", icon: "library" },
       { id: "player", label: "Now playing", icon: "circlePlay" },
+      { id: "search", label: "Search", icon: "search" },
     ],
   },
   {

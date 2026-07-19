@@ -18,6 +18,11 @@ type Meta struct {
 	// as YYYYMMDD).
 	PublishedAt  string `json:"published_at"`
 	Availability string `json:"availability"`
+	// Language is yt-dlp's reported audio/video language, if any. Not yet
+	// consumed at Add time (see handleDownloadsPost) — the post-download
+	// Result.AudioLanguage from Download's own *.info.json is the source
+	// of truth stored on the video record.
+	Language string `json:"language"`
 }
 
 // ytdlpJSON mirrors the fields of yt-dlp's own -J JSON schema that Meta is
@@ -32,6 +37,7 @@ type ytdlpJSON struct {
 	Thumbnail    string  `json:"thumbnail"`
 	UploadDate   string  `json:"upload_date"`
 	Availability string  `json:"availability"`
+	Language     string  `json:"language"`
 }
 
 // Metadata fetches metadata for a single video URL by running
@@ -68,6 +74,7 @@ func (r *Runner) Metadata(ctx context.Context, rawURL string) (*Meta, error) {
 		Thumbnail:       raw.Thumbnail,
 		PublishedAt:     normalizeUploadDate(raw.UploadDate),
 		Availability:    raw.Availability,
+		Language:        raw.Language,
 	}, nil
 }
 
