@@ -31,6 +31,7 @@ vi.mock("../api/videos", () => ({
   setWatched: vi.fn().mockResolvedValue(true),
   setResume: vi.fn().mockResolvedValue(42),
   deleteVideo: vi.fn().mockResolvedValue(undefined),
+  redownload: vi.fn().mockResolvedValue(undefined),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
 }));
 
@@ -47,7 +48,7 @@ vi.mock("../api/downloads", () => ({
   streamDownloads: vi.fn().mockImplementation(() => new Promise(() => {})),
 }));
 
-import { getVideo, setResume } from "../api/videos";
+import { getVideo, setResume, redownload } from "../api/videos";
 import { resummarize } from "../api/search";
 import { readNowPlaying } from "../nowPlaying";
 import { streamDownloads } from "../api/downloads";
@@ -61,6 +62,7 @@ describe("Player", () => {
     vi.mocked(getVideo).mockReset();
     vi.mocked(setResume).mockClear();
     vi.mocked(resummarize).mockClear();
+    vi.mocked(redownload).mockClear();
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
     vi.mocked(streamDownloads).mockReset();
     vi.mocked(streamDownloads).mockImplementation(() => new Promise(() => {}));
@@ -415,5 +417,21 @@ describe("Player", () => {
     );
     render(<Player videoId="v1" onDeleted={() => {}} />);
     expect(await screen.findByText(/mimo/i)).toBeInTheDocument();
+  });
+
+  it("shows Re-download for an errored video and queues it", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ id: "v1", status: "error" }));
+    vi.mocked(redownload).mockResolvedValue(undefined);
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const btn = await screen.findByRole("button", { name: /re-download/i });
+    fireEvent.click(btn);
+    await waitFor(() => expect(redownload).toHaveBeenCalledWith("v1"));
+  });
+
+  it("hides Re-download for a downloaded video", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ id: "v1", status: "downloaded" }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByText(/watch on youtube/i); // wait for load
+    expect(screen.queryByRole("button", { name: /re-download/i })).toBeNull();
   });
 });
