@@ -36,6 +36,12 @@ type videoDTO struct {
 	Favorite              bool                     `json:"favorite"`
 	DownloadedAt          string                   `json:"downloaded_at,omitempty"`
 	SponsorblockSegments  []sponsorblockSegmentDTO `json:"sponsorblock_segments,omitempty"`
+	Summary               string                   `json:"summary,omitempty"`
+	Chapters              json.RawMessage          `json:"chapters,omitempty"`
+	KeyPoints             json.RawMessage          `json:"key_points,omitempty"`
+	SummaryStatus         string                   `json:"summary_status,omitempty"`
+	AudioLanguage         string                   `json:"audio_language,omitempty"`
+	HasSubtitles          bool                     `json:"has_subtitles"`
 }
 
 // sponsorblockSegmentDTO is one entry of the parsed sponsorblock_segments
@@ -60,6 +66,17 @@ func parseSponsorblockSegments(raw string) []sponsorblockSegmentDTO {
 		return nil
 	}
 	return segs
+}
+
+// rawJSONOrNil turns a stored JSON-text column (chapters/key_points) into a
+// json.RawMessage so the client receives an actual array, not a
+// double-encoded string. A blank or malformed value yields nil, which
+// omitempty then drops from the response entirely.
+func rawJSONOrNil(raw string) json.RawMessage {
+	if raw == "" || !json.Valid([]byte(raw)) {
+		return nil
+	}
+	return json.RawMessage(raw)
 }
 
 // toVideoDTO maps a store row to its JSON shape. media_path itself is
@@ -88,6 +105,12 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		Favorite:              v.Favorite,
 		DownloadedAt:          v.DownloadedAt,
 		SponsorblockSegments:  parseSponsorblockSegments(v.SponsorblockSegments),
+		Summary:               v.Summary,
+		Chapters:              rawJSONOrNil(v.Chapters),
+		KeyPoints:             rawJSONOrNil(v.KeyPoints),
+		SummaryStatus:         v.SummaryStatus,
+		AudioLanguage:         v.AudioLanguage,
+		HasSubtitles:          v.SubtitlePath != "",
 	}
 }
 

@@ -1,0 +1,276 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/rag"
+	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/videos"
+)
+
+// searchTestDeps builds Deps wired for the search/resummarize API: dev auth
+// plus videos + rag stores sharing one test database.
+func searchTestDeps(t *testing.T) Deps {
+	t.Helper()
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	return Deps{
+		AuthService:    auth.NewService(nil, sessions, users),
+		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Settings:       settings.New(db),
+		Videos:         videos.New(db),
+		Rag:            rag.NewStore(db),
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}
+}
+
+// fakeEmbedder is a stub SearchEmbedder that returns a fixed vector (or
+// records that it was never supposed to be called).
+type fakeEmbedder struct {
+	called bool
+	vec    []float32
+	err    error
+}
+
+func (f *fakeEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, error) {
+	f.called = true
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make([][]float32, len(inputs))
+	for i := range inputs {
+		out[i] = f.vec
+	}
+	return out, nil
+}
+
+// spySummaryJobs is a stub SummaryEnqueuer that records the last enqueued id.
+type spySummaryJobs struct {
+	lastID string
+	nextID int64
+	err    error
+}
+
+func (s *spySummaryJobs) Enqueue(videoID string) (int64, error) {
+	s.lastID = videoID
+	if s.err != nil {
+		return 0, s.err
+	}
+	s.nextID++
+	return s.nextID, nil
+}
+
+func dim1536(near float32) []float32 {
+	v := make([]float32, 1536)
+	v[0] = near
+	return v
+}
+
+// TestSearchGroupsByVideo seeds two videos with chunks/vectors, issues a
+// query whose embedding is nearest v1's chunk, and asserts the response
+// groups hits by video with match details.
+func TestSearchGroupsByVideo(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "iPhone review"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v2", URL: "u2", Title: "unrelated"}); err != nil {
+		t.Fatalf("seed v2: %v", err)
+	}
+
+	ctx := context.Background()
+	v1Vec := dim1536(1.0)
+	v2Vec := dim1536(-1.0)
+	if err := deps.Rag.ReplaceVideoChunks(ctx, "v1", "test-model", 1536,
+		[]rag.ChunkRow{{Ordinal: 0, Text: "talking about the new iphone camera", StartSeconds: 10, TokenCount: 5}},
+		[][]float32{v1Vec}); err != nil {
+		t.Fatalf("seed v1 chunks: %v", err)
+	}
+	if err := deps.Rag.ReplaceVideoChunks(ctx, "v2", "test-model", 1536,
+		[]rag.ChunkRow{{Ordinal: 0, Text: "something else entirely", StartSeconds: 20, TokenCount: 5}},
+		[][]float32{v2Vec}); err != nil {
+		t.Fatalf("seed v2 chunks: %v", err)
+	}
+
+	embedder := &fakeEmbedder{vec: dim1536(1.0)}
+	deps.Embedder = embedder
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=iphone", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/search status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !embedder.called {
+		t.Fatalf("expected embedder to be called for non-blank query")
+	}
+
+	var resp struct {
+		Results []struct {
+			Video struct {
+				ID string `json:"id"`
+			} `json:"video"`
+			Matches []struct {
+				StartSeconds int     `json:"start_seconds"`
+				Snippet      string  `json:"snippet"`
+				Distance     float64 `json:"distance"`
+			} `json:"matches"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v, body = %s", err, rec.Body.String())
+	}
+	if len(resp.Results) == 0 {
+		t.Fatalf("expected at least one result, got none; body = %s", rec.Body.String())
+	}
+	if resp.Results[0].Video.ID != "v1" {
+		t.Fatalf("results[0].video.id = %q, want v1", resp.Results[0].Video.ID)
+	}
+	if len(resp.Results[0].Matches) == 0 {
+		t.Fatalf("expected matches on results[0]")
+	}
+	if resp.Results[0].Matches[0].StartSeconds != 10 {
+		t.Fatalf("matches[0].start_seconds = %d, want 10", resp.Results[0].Matches[0].StartSeconds)
+	}
+	if resp.Results[0].Matches[0].Snippet == "" {
+		t.Fatalf("expected non-empty snippet")
+	}
+}
+
+// TestSearchBlankQueryReturnsEmpty asserts a blank q short-circuits to an
+// empty result set without ever calling the embedder.
+func TestSearchBlankQueryReturnsEmpty(t *testing.T) {
+	deps := searchTestDeps(t)
+	embedder := &fakeEmbedder{vec: dim1536(1.0)}
+	deps.Embedder = embedder
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp struct {
+		Results []any `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Results) != 0 {
+		t.Fatalf("results = %v, want empty", resp.Results)
+	}
+	if embedder.called {
+		t.Fatalf("embedder must not be called for a blank query")
+	}
+}
+
+// TestSearchUnavailable_returns503 asserts that without Rag/Embedder wired
+// the endpoint fails closed rather than panicking.
+func TestSearchUnavailable_returns503(t *testing.T) {
+	deps := searchTestDeps(t)
+	deps.Rag = nil
+	deps.Embedder = nil
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=iphone", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+// TestResummarizeEnqueues asserts POST .../resummarize resets summary_status
+// to pending and hands the video id to SummaryJobs, returning 202.
+func TestResummarizeEnqueues(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
+		t.Fatalf("seed summary status: %v", err)
+	}
+	spy := &spySummaryJobs{}
+	deps.SummaryJobs = spy
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
+	}
+	if spy.lastID != "v1" {
+		t.Fatalf("SummaryJobs.Enqueue called with %q, want v1", spy.lastID)
+	}
+	got, err := deps.Videos.Get("v1")
+	if err != nil || got == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.SummaryStatus != "pending" {
+		t.Fatalf("summary_status = %q, want pending", got.SummaryStatus)
+	}
+}
+
+// TestResummarize_missingVideo404 asserts unknown ids 404 rather than
+// silently enqueueing.
+func TestResummarize_missingVideo404(t *testing.T) {
+	deps := searchTestDeps(t)
+	deps.SummaryJobs = &spySummaryJobs{}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/missing/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestResummarize_noJobsConfigured503 asserts the endpoint fails closed when
+// SummaryJobs isn't wired.
+func TestResummarize_noJobsConfigured503(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
