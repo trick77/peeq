@@ -52,6 +52,30 @@ func TestUpsert_insertThenGet(t *testing.T) {
 	}
 }
 
+func TestUpsert_requestedFormat(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v1", URL: "u", RequestedFormat: "bestvideo+bestaudio"}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Get("v1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.RequestedFormat != "bestvideo+bestaudio" {
+		t.Fatalf("requested_format = %q", v.RequestedFormat)
+	}
+	if err := s.SetRequestedFormat("v1", "worst"); err != nil {
+		t.Fatal(err)
+	}
+	v, err = s.Get("v1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.RequestedFormat != "worst" {
+		t.Fatalf("after set, requested_format = %q", v.RequestedFormat)
+	}
+}
+
 func TestGet_missing(t *testing.T) {
 	s := New(openTestDB(t))
 	got, err := s.Get("nope")

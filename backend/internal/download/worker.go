@@ -259,11 +259,19 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 
 	_ = w.deps.Videos.SetStatus(video.ID, "downloading", "")
 
+	format := set.FormatPreset
+	custom := set.FormatCustom
+	if video.RequestedFormat != "" {
+		// A per-channel format override is a free-form yt-dlp format string;
+		// route it through the "custom" preset slot (format.Resolve("custom",x)==x).
+		format = "custom"
+		custom = video.RequestedFormat
+	}
 	req := ytdlp.DownloadReq{
 		URL:          video.URL,
 		VideoID:      video.ID,
-		Format:       set.FormatPreset,
-		CustomFormat: set.FormatCustom,
+		Format:       format,
+		CustomFormat: custom,
 		LimitRate:    set.LimitRate,
 	}
 
