@@ -20,7 +20,7 @@ describe("Search", () => {
     mockedSearchVideos.mockResolvedValue([
       {
         video: { id: "v1", title: "iPhone 27 review" } as never,
-        matches: [{ start_seconds: 560, snippet: "the new iPhone", distance: 0.1 }],
+        matches: [{ start_seconds: 560, snippet: "the new iPhone", distance: 0.1, kind: "transcript" }],
       },
     ]);
     const onOpen = vi.fn();
@@ -32,6 +32,21 @@ describe("Search", () => {
     expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
     fireEvent.click(screen.getByText(/the new iPhone/));
     expect(onOpen).toHaveBeenCalledWith("v1", 560);
+  });
+
+  it("badges a summary-kind match", async () => {
+    mockedSearchVideos.mockResolvedValue([
+      {
+        video: { id: "v1", title: "T" } as never,
+        matches: [{ start_seconds: 0, snippet: "the platypus lives here", distance: 0.1, kind: "summary" }],
+      },
+    ]);
+    render(<Search onOpen={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "platypus" } });
+    fireEvent.submit(screen.getByRole("search"));
+
+    expect(await screen.findByText("Summary")).toBeInTheDocument();
   });
 
   it("shows a hint state for a blank query", () => {
@@ -60,7 +75,7 @@ describe("Search", () => {
     mockedSearchVideos.mockResolvedValueOnce([
       {
         video: { id: "v1", title: "iPhone 27 review" } as never,
-        matches: [{ start_seconds: 560, snippet: "the new iPhone", distance: 0.1 }],
+        matches: [{ start_seconds: 560, snippet: "the new iPhone", distance: 0.1, kind: "transcript" }],
       },
     ]);
     render(<Search onOpen={vi.fn()} />);

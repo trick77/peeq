@@ -3,6 +3,7 @@ package summarize
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,6 +50,15 @@ func (fakeWorkerCompleter) Complete(ctx context.Context, m []llm.Message) (strin
 		}
 	}
 	return "chunk summary", nil
+}
+
+// failingEmbedder always errors: used to prove processOne surfaces a
+// non-nil error (via failJob) when embedding fails, instead of silently
+// swallowing it (regression test for the silent summarize-worker error).
+type failingEmbedder struct{}
+
+func (failingEmbedder) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
+	return nil, errors.New("boom")
 }
 
 // fakeWorkerEmbedder returns a dim-length vector per input.
@@ -201,6 +211,198 @@ func TestWorkerHappyPathPersistsSummaryAndChunks(t *testing.T) {
 	}
 }
 
+// TestProcessOneReturnsErrorOnEmbedFailure is the regression test for the
+// silent summarize-worker error (Item 8): failJob used to return
+// Jobs.Fail's result, which is nil on the common path, so processOne
+// returned (true, nil) even though the job failed and the worker's Run
+// loop (which only logs when err != nil) stayed silent. failJob must now
+// surface a non-nil error while leaving the DB outcome (job failed, video
+// summary_status=error) unchanged.
+func TestProcessOneReturnsErrorOnEmbedFailure(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v4/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n\n" +
+		"00:00:02.000 --> 00:00:04.000\nToday we will talk about testing Go workers.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+
+	if err := h.videos.Upsert(videos.Video{ID: "v4", URL: "https://youtu.be/v4"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v4", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v4"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(fakeWorkerCompleter{}),
+		Embedder:   failingEmbedder{},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   1536,
+	})
+
+	did, err := w.processOne(context.Background())
+	if !did {
+		t.Fatal("did = false, want true")
+	}
+	if err == nil {
+		t.Fatal("err = nil, want non-nil so Run logs the failure")
+	}
+
+	v, getErr := h.videos.Get("v4")
+	if getErr != nil {
+		t.Fatalf("get video: %v", getErr)
+	}
+	if v.SummaryStatus != "error" {
+		t.Errorf("summary_status = %q, want error", v.SummaryStatus)
+	}
+}
+
+// TestProcessOneIndexesSummaryChunk asserts the video's overall summary is
+// indexed as one extra transcript_chunks row with kind='summary' and
+// start_seconds=0, so hybrid search also matches against summaries (spec §7).
+func TestProcessOneIndexesSummaryChunk(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v5/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n\n" +
+		"00:00:02.000 --> 00:00:04.000\nToday we will talk about testing Go workers.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+
+	if err := h.videos.Upsert(videos.Video{ID: "v5", URL: "https://youtu.be/v5"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v5", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v5"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(fakeWorkerCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   1536,
+	})
+
+	did, err := w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if !did {
+		t.Fatal("expected processOne to claim and process the job")
+	}
+
+	var kind string
+	var start int
+	err = h.db.QueryRow(
+		`SELECT kind, start_seconds FROM transcript_chunks WHERE video_id='v5' AND kind='summary'`).Scan(&kind, &start)
+	if err != nil {
+		t.Fatalf("no summary chunk indexed: %v", err)
+	}
+	if start != 0 {
+		t.Errorf("summary chunk start_seconds = %d, want 0", start)
+	}
+}
+
+// contains reports whether s is present in list.
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// containsPrefix reports whether any element of list has prefix as a prefix.
+func containsPrefix(list []string, prefix string) bool {
+	for _, v := range list {
+		if strings.HasPrefix(v, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestProcessOneEmitsPhaseEvents asserts a happy-path processOne run emits
+// SSE phase events (via WorkerDeps.OnPhase) so the Player can show live
+// summarize progress instead of a static "Summarizing…" label.
+func TestProcessOneEmitsPhaseEvents(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v1/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n\n" +
+		"00:00:02.000 --> 00:00:04.000\nToday we will talk about testing Go workers.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "https://youtu.be/v1"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v1", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v1"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	var events []string // "videoID:status:phase"
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(fakeWorkerCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   1536,
+		OnPhase: func(id, status, phase string) {
+			events = append(events, id+":"+status+":"+phase)
+		},
+	})
+
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Must include a running/summarizing event for v1 and a terminal done event.
+	if !containsPrefix(events, "v1:running:") {
+		t.Errorf("no running event for v1: %v", events)
+	}
+	if !contains(events, "v1:done:") {
+		t.Errorf("no done event for v1: %v", events)
+	}
+}
+
 // vttCue renders one WebVTT cue block starting at startSeconds (2s long) with
 // wordCount distinct words, so the transcript spans multiple rag.Chunk chunks
 // and each cue is unambiguously identifiable by its words.
@@ -280,7 +482,10 @@ func TestWorkerChunkTimestampsAreExactAndMonotonic(t *testing.T) {
 		t.Fatal("expected processOne to claim and process the job")
 	}
 
-	rows, err := h.db.Query(`SELECT ordinal, start_seconds FROM transcript_chunks WHERE video_id = ? ORDER BY ordinal`, "v3")
+	// kind='transcript' excludes the trailing summary chunk (Task 6), which is
+	// appended after all transcript chunks with start_seconds=0 by design and
+	// would otherwise look like a monotonicity regression here.
+	rows, err := h.db.Query(`SELECT ordinal, start_seconds FROM transcript_chunks WHERE video_id = ? AND kind = 'transcript' ORDER BY ordinal`, "v3")
 	if err != nil {
 		t.Fatalf("query chunks: %v", err)
 	}

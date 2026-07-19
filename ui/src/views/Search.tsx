@@ -41,7 +41,9 @@ export function Search({ onOpen }: { onOpen: (videoId: string, startSeconds: num
   return (
     <>
       <div className="gsearch-hero">
-        <p className="lead">Search everything you've archived — by meaning, not just words.</p>
+        <p className="lead">
+          Search everything you've archived — by keyword and meaning, across transcripts and summaries.
+        </p>
         <p className="hint">Semantic search over every transcript. Jumps straight to the moment.</p>
         <form className="bigsearch" role="search" onSubmit={handleSubmit}>
           <Icon name="search" size="20px" />
@@ -98,7 +100,11 @@ export function Search({ onOpen }: { onOpen: (videoId: string, startSeconds: num
                         className="match"
                         onClick={() => onOpen(r.video.id, m.start_seconds)}
                       >
-                        <span className="ts mono">{formatDuration(m.start_seconds)}</span>
+                        {m.kind === "summary" ? (
+                          <span className="badge">Summary</span>
+                        ) : (
+                          <span className="ts mono">{formatDuration(m.start_seconds)}</span>
+                        )}
                         <span className="snip">{m.snippet}</span>
                         <span className="score">{m.distance.toFixed(2)}</span>
                       </button>

@@ -70,14 +70,16 @@ type VideoRef struct {
 	VideoID       string
 	MediaPath     string
 	ThumbnailPath string
+	SubtitlePath  string
 }
 
 // VideoRefs returns a VideoRef for every videos row belonging to channelID.
-// Callers read these before DeleteCascade so the media/thumbnail paths (lost
-// once the rows are deleted) are still available for unlinking the files.
+// Callers read these before DeleteCascade so the media/thumbnail/subtitle
+// paths (lost once the rows are deleted) are still available for unlinking
+// the files.
 func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT id, media_path, thumbnail_path FROM videos WHERE channel_id = ?`, channelID)
+		`SELECT id, media_path, thumbnail_path, subtitle_path FROM videos WHERE channel_id = ?`, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("video refs: %w", err)
 	}
@@ -85,7 +87,7 @@ func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 	var out []VideoRef
 	for rows.Next() {
 		var r VideoRef
-		if err := rows.Scan(&r.VideoID, &r.MediaPath, &r.ThumbnailPath); err != nil {
+		if err := rows.Scan(&r.VideoID, &r.MediaPath, &r.ThumbnailPath, &r.SubtitlePath); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -94,10 +96,11 @@ func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 }
 
 // DeleteCascade removes a channel and everything belonging to it in one
-// transaction. vec_chunks (a vec0 virtual table) cannot ride an FK cascade or
-// trigger, so its rows for this channel's videos are purged explicitly FIRST,
-// by rowid (== transcript_chunks.id) — before the videos delete cascades away
-// the transcript_chunks rows that rowid comes from. videos itself has no
+// transaction. vec_chunks (a vec0 virtual table) and fts_chunks (an fts5
+// virtual table) cannot ride an FK cascade or trigger, so their rows for
+// this channel's videos are purged explicitly FIRST, by rowid (==
+// transcript_chunks.id) — before the videos delete cascades away the
+// transcript_chunks rows that rowid comes from. videos itself has no
 // foreign key to channels, so its rows are deleted explicitly by channel_id
 // (this FK-cascades their download_jobs, transcript_chunks, and summary_jobs).
 // Deleting the channel row then FK-cascades the subscription and
@@ -112,32 +115,36 @@ func (s *Store) DeleteCascade(channelID string) error {
 	}
 	defer tx.Rollback()
 
-	// vec_chunks (vec0) can't ride an FK cascade, so purge its rows for this
-	// channel's videos explicitly, by rowid, BEFORE the videos delete cascades
-	// their transcript_chunks away (which would strand the vec rows forever).
+	// vec_chunks (vec0) and fts_chunks (fts5) can't ride an FK cascade, so
+	// purge their rows for this channel's videos explicitly, by rowid,
+	// BEFORE the videos delete cascades their transcript_chunks away (which
+	// would strand the vec/fts rows forever).
 	rows, err := tx.Query(`
 SELECT tc.id FROM transcript_chunks tc
 JOIN videos v ON v.id = tc.video_id
 WHERE v.channel_id = ?`, channelID)
 	if err != nil {
-		return fmt.Errorf("select vec_chunks rowids for channel: %w", err)
+		return fmt.Errorf("select chunk rowids for channel: %w", err)
 	}
-	var vecIDs []int64
+	var chunkIDs []int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return fmt.Errorf("scan vec_chunks rowid: %w", err)
+			return fmt.Errorf("scan chunk rowid: %w", err)
 		}
-		vecIDs = append(vecIDs, id)
+		chunkIDs = append(chunkIDs, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate vec_chunks rowids for channel: %w", err)
+		return fmt.Errorf("iterate chunk rowids for channel: %w", err)
 	}
-	for _, id := range vecIDs {
+	for _, id := range chunkIDs {
 		if _, err := tx.Exec(`DELETE FROM vec_chunks WHERE rowid = ?`, id); err != nil {
 			return fmt.Errorf("delete vec_chunks row %d: %w", id, err)
+		}
+		if _, err := tx.Exec(`DELETE FROM fts_chunks WHERE rowid = ?`, id); err != nil {
+			return fmt.Errorf("delete fts_chunks row %d: %w", id, err)
 		}
 	}
 

@@ -111,12 +111,13 @@ func TestDeleteCascade_removesEverything(t *testing.T) {
 	}
 }
 
-// TestDeleteCascade_purgesVecChunks asserts DeleteCascade also removes the
-// vec_chunks (vec0 virtual table) rows belonging to the channel's videos.
-// vec0 cannot ride an FK cascade or trigger, so without an explicit purge
-// these rows are orphaned forever once their transcript_chunks parent is
-// gone — this test fails (vec count stays 1) before the fix.
-func TestDeleteCascade_purgesVecChunks(t *testing.T) {
+// TestDeleteCascade_purgesVecAndFTSChunks asserts DeleteCascade also removes
+// the vec_chunks (vec0 virtual table) and fts_chunks (fts5 virtual table) rows
+// belonging to the channel's videos. Neither virtual table can ride an FK
+// cascade or trigger, so without an explicit purge these rows are orphaned
+// forever once their transcript_chunks parent is gone — this test fails
+// (vec/fts counts stay 1) before the fix.
+func TestDeleteCascade_purgesVecAndFTSChunks(t *testing.T) {
 	st := newTestStore(t)
 	db := st.DB()
 	ctx := context.Background()
@@ -131,18 +132,24 @@ func TestDeleteCascade_purgesVecChunks(t *testing.T) {
 		t.Fatalf("seed chunks: %v", err)
 	}
 
-	var before int
-	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&before); err != nil || before != 1 {
-		t.Fatalf("vec_chunks before delete = %d err=%v, want 1", before, err)
+	var beforeVec, beforeFTS int
+	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&beforeVec); err != nil || beforeVec != 1 {
+		t.Fatalf("vec_chunks before delete = %d err=%v, want 1", beforeVec, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&beforeFTS); err != nil || beforeFTS != 1 {
+		t.Fatalf("fts_chunks before delete = %d err=%v, want 1", beforeFTS, err)
 	}
 
 	if err := st.DeleteCascade("UC1"); err != nil {
 		t.Fatal(err)
 	}
 
-	var afterVec, afterChunks, afterVideos int
+	var afterVec, afterFTS, afterChunks, afterVideos int
 	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&afterVec); err != nil || afterVec != 0 {
 		t.Fatalf("vec_chunks after delete = %d err=%v, want 0 (orphaned rows leaked)", afterVec, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&afterFTS); err != nil || afterFTS != 0 {
+		t.Fatalf("fts_chunks after delete = %d err=%v, want 0 (orphaned rows leaked)", afterFTS, err)
 	}
 	if err := db.QueryRow(`SELECT count(*) FROM transcript_chunks WHERE video_id='v1'`).Scan(&afterChunks); err != nil || afterChunks != 0 {
 		t.Fatalf("transcript_chunks after delete = %d err=%v, want 0", afterChunks, err)

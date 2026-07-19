@@ -343,6 +343,45 @@ func TestTombstone_clearsMediaPathSetsStatusKeepsRow(t *testing.T) {
 	}
 }
 
+// TestTombstoneClearsSubtitlePathKeepsSummary guards against a stale
+// subtitle_path (and its .vtt) surviving a tombstone: the DTO derives
+// has_subtitles from subtitle_path, so a leftover value would lie about
+// transcript availability, and a subsequent resummarize must not flip a
+// valid, kept summary to no_transcript.
+func TestTombstoneClearsSubtitlePathKeepsSummary(t *testing.T) {
+	s := New(openTestDB(t))
+	const id = "vid1"
+	if err := s.Upsert(Video{ID: id, URL: "u"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetDownloaded(id, DownloadedResult{
+		MediaPath:       "/media/vid1.mp4",
+		FilesizeBytes:   10,
+		SubtitleRelPath: "vid1.en.vtt",
+	}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := s.SetSummary(id, "a summary", `[]`, `[]`); err != nil {
+		t.Fatalf("set summary: %v", err)
+	}
+	if err := s.Tombstone(id); err != nil {
+		t.Fatalf("tombstone: %v", err)
+	}
+	v, err := s.Get(id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.SubtitlePath != "" {
+		t.Errorf("subtitle_path = %q, want empty after tombstone", v.SubtitlePath)
+	}
+	if v.Summary != "a summary" {
+		t.Errorf("summary = %q, want kept after tombstone", v.Summary)
+	}
+	if v.Status != "tombstoned" {
+		t.Errorf("status = %q, want tombstoned", v.Status)
+	}
+}
+
 func TestList_filters(t *testing.T) {
 	s := New(openTestDB(t))
 	if err := s.Upsert(Video{ID: "a", URL: "u", DurationSeconds: 100}); err != nil {

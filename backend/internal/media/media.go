@@ -120,14 +120,14 @@ func RemoveMediaAndSidecars(mediaPath string) {
 	}
 }
 
-// RemoveVideoFiles removes a video's media file (plus sidecars) and
-// thumbnail from disk under mediaDir, resolving each path safely first.
+// RemoveVideoFiles removes a video's media file (plus sidecars), thumbnail,
+// and subtitle from disk under mediaDir, resolving each path safely first.
 // It mirrors exactly what the manual DELETE endpoint does, so the
 // retention sweeper's automatic tombstone can never diverge from it.
-// Best-effort: an unresolvable (already-gone, or not a local path) media
-// or thumbnail path is silently skipped rather than treated as an error —
-// there is nothing on disk to remove in that case.
-func RemoveVideoFiles(mediaDir, mediaPath, thumbnailPath string) {
+// Best-effort: an unresolvable (already-gone, or not a local path) media,
+// thumbnail, or subtitle path is silently skipped rather than treated as
+// an error — there is nothing on disk to remove in that case.
+func RemoveVideoFiles(mediaDir, mediaPath, thumbnailPath, subtitlePath string) {
 	if mediaPath != "" {
 		if safe, err := SafeMediaPath(mediaDir, mediaPath); err == nil {
 			RemoveMediaAndSidecars(safe)
@@ -139,6 +139,11 @@ func RemoveVideoFiles(mediaDir, mediaPath, thumbnailPath string) {
 		// the file simply not existing under mediaDir) is harmless — there
 		// is nothing on local disk to remove in that case.
 		if safe, err := SafeMediaPath(mediaDir, thumbnailPath); err == nil {
+			_ = os.Remove(safe)
+		}
+	}
+	if subtitlePath != "" {
+		if safe, err := SafeMediaPath(mediaDir, subtitlePath); err == nil {
 			_ = os.Remove(safe)
 		}
 	}

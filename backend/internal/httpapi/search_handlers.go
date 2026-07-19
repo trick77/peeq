@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/trick77/peeq/internal/rag"
 )
 
 // searchMatch is one hit within a search result's video, in the shape the
@@ -12,6 +15,7 @@ type searchMatch struct {
 	StartSeconds int     `json:"start_seconds"`
 	Snippet      string  `json:"snippet"`
 	Distance     float64 `json:"distance"`
+	Kind         string  `json:"kind"`
 }
 
 // searchResult groups every retrieved chunk for a single video, in
@@ -26,15 +30,20 @@ const defaultSearchK = 20
 
 // handleSearch answers GET /api/search?q=&k=: blank q short-circuits to an
 // empty result set without ever calling the embedder (cheap, and avoids
-// spending an embed call on a no-op query). Otherwise it embeds q, retrieves
-// the k nearest transcript chunks, and groups them by video.
+// spending an embed call on a no-op query). Otherwise it runs a hybrid
+// search: FTS5 keyword search (always, needs no external service) plus
+// semantic vector search (best-effort — the embedder is optional and any
+// failure just degrades to FTS-only), fused via reciprocal rank fusion and
+// grouped by video.
 func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		writeJSON(w, map[string]any{"results": []any{}})
 		return
 	}
-	if s.rag == nil || s.embedder == nil {
+	// FTS lives in the rag store and needs no external service; it is the
+	// floor. The embedder (semantic) is optional and best-effort.
+	if s.rag == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "search is not configured")
 		return
 	}
@@ -46,17 +55,27 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	vecs, err := s.embedder.Embed(r.Context(), []string{q})
-	if err != nil || len(vecs) == 0 {
-		writeJSONError(w, http.StatusBadGateway, "embed query failed")
-		return
+	lists := make([][]rag.Hit, 0, 2)
+	if ftsHits, err := s.rag.SearchFTS(r.Context(), rag.BuildFTSMatch(q), k); err == nil && len(ftsHits) > 0 {
+		lists = append(lists, ftsHits)
+	} else if err != nil {
+		slog.Warn("search: FTS degraded", "err", err)
+	}
+	if s.embedder != nil {
+		if vecs, err := s.embedder.Embed(r.Context(), []string{q}); err == nil && len(vecs) > 0 {
+			if semHits, err := s.rag.Retrieve(r.Context(), vecs[0], k); err == nil && len(semHits) > 0 {
+				lists = append(lists, semHits)
+			} else if err != nil {
+				slog.Warn("search: semantic retrieve degraded", "err", err)
+			}
+		} else if err != nil {
+			// Semantic unavailable (endpoint down/misconfigured); fall back to
+			// FTS-only rather than failing the whole search.
+			slog.Warn("search: semantic degraded, using FTS only", "err", err)
+		}
 	}
 
-	hits, err := s.rag.Retrieve(r.Context(), vecs[0], k)
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "search failed")
-		return
-	}
+	hits := rag.FuseRRF(lists, k)
 
 	order := make([]string, 0)
 	byVideo := make(map[string]*searchResult)
@@ -75,6 +94,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			StartSeconds: h.StartSeconds,
 			Snippet:      snippet(h.Text),
 			Distance:     h.Distance,
+			Kind:         h.Kind,
 		})
 	}
 
@@ -111,6 +131,13 @@ func (s *server) handleResummarize(w http.ResponseWriter, r *http.Request) {
 	}
 	if v == nil {
 		writeJSONError(w, http.StatusNotFound, "video not found")
+		return
+	}
+	// A tombstoned or subtitle-less video has no transcript to (re)summarize;
+	// re-enqueuing would only flip a valid summary to no_transcript. Point the
+	// caller at re-download (Phase 3.1b) instead of corrupting the summary.
+	if v.Status == "tombstoned" || v.MediaPath == "" || v.SubtitlePath == "" {
+		writeJSONError(w, http.StatusConflict, "media not present; re-download to restore before resummarizing")
 		return
 	}
 	if s.summaryJobs == nil {

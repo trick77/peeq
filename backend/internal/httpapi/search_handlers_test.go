@@ -3,8 +3,10 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/auth"
@@ -75,6 +77,22 @@ func dim1536(near float32) []float32 {
 	v := make([]float32, 1536)
 	v[0] = near
 	return v
+}
+
+// seedChunks writes rows into the rag store's transcript_chunks/vec_chunks/
+// fts_chunks tables via ReplaceVideoChunks, so both FTS and semantic search
+// have something to find. The vectors themselves are irrelevant to the FTS
+// path; a fixed dummy vector satisfies ReplaceVideoChunks' equal-length
+// rows/vectors requirement.
+func seedChunks(t *testing.T, deps Deps, videoID string, rows []rag.ChunkRow) {
+	t.Helper()
+	vecs := make([][]float32, len(rows))
+	for i := range rows {
+		vecs[i] = dim1536(1.0)
+	}
+	if err := deps.Rag.ReplaceVideoChunks(context.Background(), videoID, "test-model", 1536, rows, vecs); err != nil {
+		t.Fatalf("seedChunks(%s): %v", videoID, err)
+	}
 }
 
 // TestSearchGroupsByVideo seeds two videos with chunks/vectors, issues a
@@ -183,6 +201,62 @@ func TestSearchBlankQueryReturnsEmpty(t *testing.T) {
 	}
 }
 
+// TestSearchDegradesToFTSWhenEmbedFails asserts that a failing embedder no
+// longer 502s the whole search: FTS is the floor and keeps working, so a
+// transcript-kind keyword hit still comes back with 200.
+func TestSearchDegradesToFTSWhenEmbedFails(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "physics talk"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	seedChunks(t, deps, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "quantum entanglement basics", Kind: "transcript", StartSeconds: 5},
+		{Ordinal: 1, Text: "a summary of the whole talk", Kind: "summary", StartSeconds: 0},
+	})
+	deps.Embedder = &fakeEmbedder{err: errors.New("embed endpoint down")}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=entanglement", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (FTS-only, not 502), body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind":"transcript"`) {
+		t.Errorf("body missing transcript kind: %s", rec.Body.String())
+	}
+}
+
+// TestSearchSummaryHitHasKindAndZeroTs asserts a summary chunk that matches
+// is tagged kind "summary" (rather than defaulting to "transcript").
+func TestSearchSummaryHitHasKindAndZeroTs(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "wildlife doc"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	seedChunks(t, deps, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "a summary mentioning platypus", Kind: "summary", StartSeconds: 0},
+	})
+	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=platypus", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind":"summary"`) {
+		t.Errorf("body missing summary kind: %s", rec.Body.String())
+	}
+}
+
 // TestSearchUnavailable_returns503 asserts that without Rag/Embedder wired
 // the endpoint fails closed rather than panicking.
 func TestSearchUnavailable_returns503(t *testing.T) {
@@ -208,6 +282,14 @@ func TestResummarizeEnqueues(t *testing.T) {
 	deps := searchTestDeps(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
+	}
+	// The resummarize guard requires media + a subtitle to be present, so
+	// seed a normal downloaded-with-subtitle video (the positive path).
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath:       "/media/v1.mp4",
+		SubtitleRelPath: "v1.en.vtt",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
 	}
 	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
 		t.Fatalf("seed summary status: %v", err)
@@ -262,6 +344,14 @@ func TestResummarize_noJobsConfigured503(t *testing.T) {
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
+	// Media + subtitle present so the new resummarize guard doesn't shadow
+	// the 503-on-unconfigured-SummaryJobs path this test exercises.
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath:       "/media/v1.mp4",
+		SubtitleRelPath: "v1.en.vtt",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
@@ -272,5 +362,110 @@ func TestResummarize_noJobsConfigured503(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+// TestResummarize_tombstonedReturns409 asserts a tombstoned video (no media,
+// no subtitle on disk) is rejected rather than enqueued: re-enqueuing would
+// only flip its valid, kept summary to no_transcript for lack of a
+// transcript to summarize.
+func TestResummarize_tombstonedReturns409(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
+		t.Fatalf("seed summary status: %v", err)
+	}
+	if err := deps.Videos.Tombstone("v1"); err != nil {
+		t.Fatalf("tombstone v1: %v", err)
+	}
+	spy := &spySummaryJobs{}
+	deps.SummaryJobs = spy
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
+	}
+	if spy.lastID != "" {
+		t.Fatalf("SummaryJobs.Enqueue called with %q, want not called", spy.lastID)
+	}
+	got, err := deps.Videos.Get("v1")
+	if err != nil || got == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.SummaryStatus != "done" {
+		t.Fatalf("summary_status = %q, want unchanged 'done'", got.SummaryStatus)
+	}
+}
+
+// TestResummarize_missingSubtitleReturns409 asserts a video that still has
+// its media file but lost its subtitle (e.g. partial cleanup) is also
+// rejected: there is no transcript to (re)summarize either way.
+func TestResummarize_missingSubtitleReturns409(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath: "/media/v1.mp4",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
+	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
+		t.Fatalf("seed summary status: %v", err)
+	}
+	deps.SummaryJobs = &spySummaryJobs{}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestResummarize_downloadedWithSubtitleReturns202 is the positive
+// companion: a normal downloaded video with a subtitle present must still
+// be enqueued for (re)summarization.
+func TestResummarize_downloadedWithSubtitleReturns202(t *testing.T) {
+	deps := searchTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath:       "/media/v1.mp4",
+		SubtitleRelPath: "v1.en.vtt",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
+	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
+		t.Fatalf("seed summary status: %v", err)
+	}
+	spy := &spySummaryJobs{}
+	deps.SummaryJobs = spy
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
+	}
+	if spy.lastID != "v1" {
+		t.Fatalf("SummaryJobs.Enqueue called with %q, want v1", spy.lastID)
 	}
 }

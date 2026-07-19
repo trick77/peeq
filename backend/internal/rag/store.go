@@ -24,6 +24,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 type ChunkRow struct {
 	Ordinal      int
 	Text         string
+	Kind         string
 	StartSeconds int
 	TokenCount   int
 }
@@ -33,12 +34,16 @@ type Hit struct {
 	VideoID      string
 	Ordinal      int
 	Text         string
+	Kind         string
 	StartSeconds int
 	Distance     float64
 }
 
-// deleteVideoTx removes a video's chunk + vec rows within tx. vec_chunks.rowid ==
-// transcript_chunks.id, so the ids are gathered first, then both tables purged.
+// deleteVideoTx removes a video's rows from all three chunk tables
+// (transcript_chunks, vec_chunks, fts_chunks) within tx. vec_chunks.rowid ==
+// fts_chunks.rowid == transcript_chunks.id, so the ids are gathered first,
+// then vec_chunks and fts_chunks are purged by rowid before transcript_chunks
+// itself is deleted.
 func deleteVideoTx(ctx context.Context, tx *sql.Tx, videoID string) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM transcript_chunks WHERE video_id = ?`, videoID)
 	if err != nil {
@@ -59,6 +64,9 @@ func deleteVideoTx(ctx context.Context, tx *sql.Tx, videoID string) error {
 	}
 	for _, id := range ids {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM vec_chunks WHERE rowid = ?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM fts_chunks WHERE rowid = ?`, id); err != nil {
 			return err
 		}
 	}
@@ -83,9 +91,13 @@ func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID, model string, d
 		return err
 	}
 	for i, r := range rows {
+		kind := r.Kind
+		if kind == "" {
+			kind = "transcript"
+		}
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO transcript_chunks (video_id, ordinal, text, start_seconds, token_count) VALUES (?,?,?,?,?)`,
-			videoID, r.Ordinal, r.Text, r.StartSeconds, r.TokenCount)
+			`INSERT INTO transcript_chunks (video_id, ordinal, text, kind, start_seconds, token_count) VALUES (?,?,?,?,?,?)`,
+			videoID, r.Ordinal, r.Text, kind, r.StartSeconds, r.TokenCount)
 		if err != nil {
 			return err
 		}
@@ -95,6 +107,10 @@ func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID, model string, d
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO vec_chunks (rowid, embedding) VALUES (?, ?)`, id, store.VecLiteral(vectors[i])); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO fts_chunks (rowid, text) VALUES (?, ?)`, id, r.Text); err != nil {
 			return err
 		}
 	}
@@ -123,7 +139,7 @@ func (s *Store) Retrieve(ctx context.Context, queryEmbedding []float32, k int) (
 		k = 10
 	}
 	const q = `
-		SELECT c.video_id, c.ordinal, c.text, c.start_seconds, v.distance
+		SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds, v.distance
 		FROM vec_chunks v
 		JOIN transcript_chunks c ON c.id = v.rowid
 		WHERE v.embedding MATCH ? AND k = ?
@@ -136,7 +152,46 @@ func (s *Store) Retrieve(ctx context.Context, queryEmbedding []float32, k int) (
 	var out []Hit
 	for rows.Next() {
 		var h Hit
-		if err := rows.Scan(&h.VideoID, &h.Ordinal, &h.Text, &h.StartSeconds, &h.Distance); err != nil {
+		if err := rows.Scan(&h.VideoID, &h.Ordinal, &h.Text, &h.Kind, &h.StartSeconds, &h.Distance); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// SearchFTS returns up to n chunks whose text matches the FTS5 expression,
+// best (lowest bm25) first. match must already be sanitized by BuildFTSMatch;
+// an empty match yields no hits without touching the DB. Distance is left 0 —
+// FTS rank is positional, and the caller fuses by rank, not score.
+//
+// bm25() must reference the FTS5 table by its real name, not the "f" alias
+// (SQLite resolves it as a hidden column lookup on the vtab itself, and
+// aliases aren't recognized there) — verified empirically against the
+// sqlite3 CLI (bm25(f) errors "no such column: f"; bm25(fts_chunks) works).
+func (s *Store) SearchFTS(ctx context.Context, match string, n int) ([]Hit, error) {
+	if strings.TrimSpace(match) == "" {
+		return nil, nil
+	}
+	if n <= 0 {
+		n = 10
+	}
+	const q = `
+		SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds
+		FROM fts_chunks f
+		JOIN transcript_chunks c ON c.id = f.rowid
+		WHERE f.text MATCH ?
+		ORDER BY bm25(fts_chunks)
+		LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, q, match, n)
+	if err != nil {
+		return nil, fmt.Errorf("fts search: %w", err)
+	}
+	defer rows.Close()
+	var out []Hit
+	for rows.Next() {
+		var h Hit
+		if err := rows.Scan(&h.VideoID, &h.Ordinal, &h.Text, &h.Kind, &h.StartSeconds); err != nil {
 			return nil, err
 		}
 		out = append(out, h)

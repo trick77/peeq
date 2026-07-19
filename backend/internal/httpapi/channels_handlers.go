@@ -307,7 +307,7 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 	//    captured in step 1, via the same path-safe helper handleDeleteVideo
 	//    uses so the two deletion paths can never diverge.
 	for _, rf := range refs {
-		media.RemoveVideoFiles(s.mediaDir, rf.MediaPath, rf.ThumbnailPath)
+		media.RemoveVideoFiles(s.mediaDir, rf.MediaPath, rf.ThumbnailPath, rf.SubtitlePath)
 	}
 	writeJSON(w, map[string]string{"status": "deleted"})
 }

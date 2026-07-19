@@ -147,6 +147,7 @@ CREATE TABLE transcript_chunks (
     video_id      TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
     ordinal       INTEGER NOT NULL,
     text          TEXT NOT NULL,
+    kind          TEXT NOT NULL DEFAULT 'transcript',
     start_seconds INTEGER NOT NULL DEFAULT 0,
     token_count   INTEGER NOT NULL DEFAULT 0
 );
@@ -160,6 +161,14 @@ CREATE INDEX idx_transcript_chunks_video ON transcript_chunks(video_id, ordinal)
 CREATE VIRTUAL TABLE vec_chunks USING vec0(
     embedding float[1536]
 );
+
+-- fts_chunks: full-text keyword index over the SAME chunk text, keyed 1:1 by
+-- rowid == transcript_chunks.id (identical bridging to vec_chunks). Standalone
+-- (stores its own copy of text) so it is mirror-managed in the same tx as
+-- vec_chunks: delete-old-by-rowid then insert-new. Hybrid search fuses this
+-- with the vec0 nearest-neighbor results. FTS5 is compiled into the sqlite-vec
+-- WASM build (verified).
+CREATE VIRTUAL TABLE fts_chunks USING fts5(text);
 
 -- summary_jobs: offline summarization+embedding queue (twin of download_jobs).
 CREATE TABLE summary_jobs (
