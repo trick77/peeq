@@ -20,6 +20,12 @@ type ChannelResolver interface {
 	ResolveChannel(ctx context.Context, url string) (ucid, name string, err error)
 }
 
+// var _ ChannelResolver = (*ytdlp.Runner)(nil) proves at compile time that
+// the real Runner still satisfies ChannelResolver, so a signature drift in
+// either type breaks the build immediately rather than rotting silently
+// until the (currently unwired) main.go ties them together.
+var _ ChannelResolver = (*ytdlp.Runner)(nil)
+
 // channelsPostRequest is the body of POST /api/channels.
 type channelsPostRequest struct {
 	URL       string `json:"url"`
@@ -115,16 +121,23 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 // ?filter= query param ("all" default, "subscribed", or "tracked").
 func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSON(w, []channelItem{})
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	filter := r.URL.Query().Get("filter")
 	if filter == "" {
 		filter = "all"
 	}
+	switch filter {
+	case "all", "subscribed", "tracked":
+		// valid
+	default:
+		writeJSONError(w, http.StatusBadRequest, "invalid filter: "+filter)
+		return
+	}
 	items, err := s.channels.List(filter)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "list channels failed: "+err.Error())
+		writeJSONError(w, http.StatusInternalServerError, "list channels failed")
 		return
 	}
 	out := make([]channelItem, 0, len(items))

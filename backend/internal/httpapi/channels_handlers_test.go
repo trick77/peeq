@@ -184,6 +184,38 @@ func TestChannelsPost_multiSegmentHandle_trimmed(t *testing.T) {
 	}
 }
 
+// TestChannelsList_unconfigured_503 covers the fail-safe default: no
+// Channels store wired means the endpoint reports unavailable rather than
+// the empty list a nil-safe-but-silent implementation would return —
+// mirroring how every other optional dependency in this package (worker,
+// ytdlp, sseHub) reports 503 when unconfigured.
+func TestChannelsList_unconfigured_503(t *testing.T) {
+	h := New(testDeps(t))
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/channels", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /api/channels (unconfigured) status = %d, want 503, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelsList_invalidFilter_400 asserts an unrecognized ?filter= value
+// is rejected with 400 before ever reaching the store, distinguishing a bad
+// request from a genuine store error (which would be a 500).
+func TestChannelsList_invalidFilter_400(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{})
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channels?filter=bogus", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("GET /api/channels?filter=bogus status = %d, want 400, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 // TestChannelsPut_notSubscribed_400 asserts updating config on a channel
 // that is tracked but not subscribed is a clean 400, not a silent no-op.
 func TestChannelsPut_notSubscribed_400(t *testing.T) {
