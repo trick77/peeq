@@ -79,8 +79,13 @@ func New(db *sql.DB) *Store {
 // Upsert inserts a video row or, if it already exists, refreshes only its
 // metadata columns. It deliberately does NOT touch download-owned columns
 // (status, media_path, filesize_bytes, format_used, downloaded_at,
-// sponsorblock_segments): re-running metadata for an already-downloaded
-// video must not wipe its downloaded state.
+// sponsorblock_segments) or requested_format: re-running metadata for an
+// already-downloaded video must not wipe its downloaded state, and a
+// metadata-only re-sync must not clobber a per-channel format override set
+// via SetRequestedFormat. requested_format IS included in the INSERT
+// column list, so a fresh row still carries the value the caller passed
+// (e.g. an initial channel scan seeding both metadata and the override in
+// one Upsert); it is simply excluded from the ON CONFLICT UPDATE SET.
 func (s *Store) Upsert(v Video) error {
 	availability := v.Availability
 	if availability == "" {
@@ -99,8 +104,7 @@ ON CONFLICT(id) DO UPDATE SET
 	published_at    = excluded.published_at,
 	description     = excluded.description,
 	thumbnail_path  = excluded.thumbnail_path,
-	availability    = excluded.availability,
-	requested_format = excluded.requested_format`,
+	availability    = excluded.availability`,
 		v.ID, v.URL, v.Title, v.ChannelID, v.ChannelName, nullInt(v.DurationSeconds),
 		nullStr(v.PublishedAt), v.Description, v.ThumbnailPath, availability, v.RequestedFormat,
 	)
