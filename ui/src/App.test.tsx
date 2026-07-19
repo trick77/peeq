@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { App } from "./App";
+import { downloadsStatus, resumeYoutube } from "./api";
 import type { Video } from "./api/types";
 
 describe("App (static)", () => {
@@ -19,6 +20,7 @@ vi.mock("./api", () => ({
   listDownloads: vi.fn().mockResolvedValue([]),
   cookieHealth: vi.fn().mockResolvedValue({ status: "active" }),
   downloadsStatus: vi.fn().mockResolvedValue({ paused: false, low_disk: false }),
+  resumeYoutube: vi.fn().mockResolvedValue(undefined),
   listPending: vi.fn().mockResolvedValue([]),
   streamDownloads: vi.fn().mockResolvedValue(undefined),
   listVideos: vi.fn().mockResolvedValue([]),
@@ -89,5 +91,23 @@ describe("App reload-restore", () => {
     render(<App />);
     await screen.findByPlaceholderText(/Search titles/i);
     expect(document.querySelector("video")).toBeNull();
+  });
+});
+
+// Task 13: global YouTube-paused banner. youtube_paused takes precedence
+// over the healthy default and offers a one-click Resume that calls the
+// kill-switch endpoint and refetches status.
+describe("App youtube-paused banner", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  it("shows the YouTube-paused banner with a Resume action", async () => {
+    vi.mocked(downloadsStatus).mockResolvedValue({ paused: false, low_disk: false, youtube_paused: true, youtube_pause_reason: "" });
+    vi.mocked(resumeYoutube).mockResolvedValue(undefined);
+    render(<App />);
+    const resume = await screen.findByRole("button", { name: /resume/i });
+    fireEvent.click(resume);
+    await waitFor(() => expect(resumeYoutube).toHaveBeenCalled());
   });
 });

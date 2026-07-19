@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
 import { TopBar } from "./shell/TopBar";
-import { getMe, listDownloads, cookieHealth, downloadsStatus, streamDownloads, listPending } from "./api";
+import { getMe, listDownloads, cookieHealth, downloadsStatus, streamDownloads, listPending, resumeYoutube } from "./api";
 import type { DownloadsStatus } from "./api/downloads";
 import type { Job, User } from "./api/types";
 import { Library } from "./views/Library";
@@ -250,7 +250,11 @@ export function App() {
       <main className="main">
         <TopBar title={meta.title} subtitle={meta.subtitle} showSearch={view === "library"} />
         <section className="page">
-          <DownloadStatusBanner status={downloadStatus} onFixCookie={() => setView("settings")} />
+          <DownloadStatusBanner
+            status={downloadStatus}
+            onFixCookie={() => setView("settings")}
+            onResume={async () => { await resumeYoutube(); setDownloadStatus(await downloadsStatus()); }}
+          />
           <ViewSwitch
             view={view}
             selectedVideoId={selectedVideoId}
@@ -274,10 +278,24 @@ export function App() {
 function DownloadStatusBanner({
   status,
   onFixCookie,
+  onResume,
 }: {
   status: DownloadsStatus;
   onFixCookie: () => void;
+  onResume: () => void;
 }) {
+  if (status.youtube_paused) {
+    const auto = status.youtube_pause_reason !== "";
+    return (
+      <div className="errline" role="status">
+        <span className="msg">
+          <b>YouTube activity is paused.</b>{" "}
+          {auto ? status.youtube_pause_reason : "You paused all downloads and channel scans."}
+        </span>
+        <button type="button" className="btn primary" onClick={onResume}>Resume</button>
+      </div>
+    );
+  }
   if (status.low_disk) {
     return (
       <div className="errline" role="status">
