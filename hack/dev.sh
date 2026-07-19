@@ -2,7 +2,7 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-DB_PATH=${PEEQ_DB_PATH:-/tmp/peeq-dev.db}
+DB_PATH=${BACKEND_DB_PATH:-/tmp/peeq-dev.db}
 
 cleanup() {
   if [ -n "${BACKEND_PID:-}" ]; then
@@ -13,11 +13,11 @@ trap cleanup EXIT INT TERM
 
 (
   cd "$ROOT/backend"
-  PEEQ_SESSION_SECRET=${PEEQ_SESSION_SECRET:-dev-secret} \
-  PEEQ_AUTH_MODE=dev \
-  PEEQ_ADDR=127.0.0.1:8080 \
-  PEEQ_PUBLIC_URL=http://127.0.0.1:8080 \
-  PEEQ_DB_PATH="$DB_PATH" \
+  BACKEND_SESSION_SECRET=${BACKEND_SESSION_SECRET:-dev-secret} \
+  BACKEND_AUTH_MODE=dev \
+  BACKEND_ADDR=127.0.0.1:8080 \
+  BACKEND_PUBLIC_URL=http://127.0.0.1:8080 \
+  BACKEND_DB_PATH="$DB_PATH" \
   go run ./cmd/peeq
 ) &
 BACKEND_PID=$!

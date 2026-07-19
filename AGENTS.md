@@ -28,7 +28,7 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
   deviates from loom's distroless-static runtime.
 
 ## Config
-- All runtime config comes from `PEEQ_*` env vars — see `.env.example`.
+- All runtime config comes from `BACKEND_*` env vars — see `.env.example`.
 - Secrets via env only; never commit them.
 
 ## Database / migrations

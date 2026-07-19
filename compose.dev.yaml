@@ -5,7 +5,7 @@
 #   docker compose -f compose.dev.yaml down
 #
 # Auto-signs in as a fixed "dev" admin user (see internal/config's Dev
-# block). The dev-auth guard requires a loopback PEEQ_ADDR, which is why
+# block). The dev-auth guard requires a loopback BACKEND_ADDR, which is why
 # this uses network_mode: host instead of published ports (a 127.0.0.1
 # bind inside a bridge-network container is unreachable via -p).
 services:
@@ -26,14 +26,14 @@ services:
     environment:
       HOME: /tmp
       TMPDIR: /tmp
-      PEEQ_AUTH_MODE: dev
-      PEEQ_ADDR: "127.0.0.1:8080"
-      PEEQ_PUBLIC_URL: "http://localhost:8080"
-      PEEQ_SESSION_SECRET: dev-secret-please-change
-      PEEQ_DB_PATH: /data/peeq.db
-      PEEQ_MEDIA_DIR: /data/media
-      PEEQ_YTDLP_DIR: /data/bin
-      PEEQ_LOG_LEVEL: "${PEEQ_LOG_LEVEL:-debug}"
+      BACKEND_AUTH_MODE: dev
+      BACKEND_ADDR: "127.0.0.1:8080"
+      BACKEND_PUBLIC_URL: "http://localhost:8080"
+      BACKEND_SESSION_SECRET: dev-secret-please-change
+      BACKEND_DB_PATH: /data/peeq.db
+      BACKEND_MEDIA_DIR: /data/media
+      BACKEND_YTDLP_DIR: /data/bin
+      BACKEND_LOG_LEVEL: "${BACKEND_LOG_LEVEL:-debug}"
     volumes:
       - ./data:/data
       - peeq-dev-tmp:/tmp

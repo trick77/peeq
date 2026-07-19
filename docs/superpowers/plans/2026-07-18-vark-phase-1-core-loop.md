@@ -4,7 +4,7 @@
 
 **Goal:** Ship the usable core loop: paste a YouTube link → it downloads in a throttled, resumable queue → watch it in-browser with resume → watched/favorite lifecycle with automatic cleanup — single-user, behind Authentik (dev auto-login locally).
 
-**Architecture:** A single Go binary (stdlib `net/http`, no framework) serves an embedded React/Vite SPA and a JSON/SSE API, backed by one SQLite file (pure-Go `ncruces/go-sqlite3`, `CGO_ENABLED=0`). Downloads are long-running jobs executed by a single-concurrency claiming worker goroutine that shells out to the `yt-dlp` binary through one wrapper package (the only place cookies, throttling, and block-detection live). The whole thing mirrors the sibling `../loom` app; infrastructure (config, store+migrations, OIDC+dev-auth, SSE, SPA embed, background worker) is ported from loom with a `PEEQ_` env prefix, and yt-dlp patterns are adapted from `../tubearchivist`.
+**Architecture:** A single Go binary (stdlib `net/http`, no framework) serves an embedded React/Vite SPA and a JSON/SSE API, backed by one SQLite file (pure-Go `ncruces/go-sqlite3`, `CGO_ENABLED=0`). Downloads are long-running jobs executed by a single-concurrency claiming worker goroutine that shells out to the `yt-dlp` binary through one wrapper package (the only place cookies, throttling, and block-detection live). The whole thing mirrors the sibling `../loom` app; infrastructure (config, store+migrations, OIDC+dev-auth, SSE, SPA embed, background worker) is ported from loom with a `BACKEND_` env prefix, and yt-dlp patterns are adapted from `../tubearchivist`.
 
 **Tech Stack:** Go 1.25 · `net/http` (Go 1.22 method routing) · `ncruces/go-sqlite3` v0.23.3 + `sqlite-vec-go-bindings/ncruces` v0.1.7-alpha.2 · `coreos/go-oidc/v3` + `golang.org/x/oauth2` · React 19 · Vite 8 · Tailwind v4 (CSS-first `@theme`) · `lucide-react@^1.24.0` · Vitest · yt-dlp (binary) + ffmpeg.
 
@@ -12,7 +12,7 @@
 
 - Module path `github.com/trick77/peeq`. Go 1.25. `CGO_ENABLED=0` everywhere.
 - Pins (do not bump): `ncruces/go-sqlite3` **v0.23.3**, `sqlite-vec-go-bindings/ncruces` **v0.1.7-alpha.2** (ABI-matched, same as loom). One SQLite file; `sqlite-vec` for vectors; no separate DB service.
-- All runtime config via `PEEQ_*` env vars. Required to boot: `PEEQ_SESSION_SECRET`. Dev-auth (`PEEQ_AUTH_MODE=dev`) must hard-fail unless bound to loopback (loom's `validateDevAuthLocalOnly` rule).
+- All runtime config via `BACKEND_*` env vars. Required to boot: `BACKEND_SESSION_SECRET`. Dev-auth (`BACKEND_AUTH_MODE=dev`) must hard-fail unless bound to loopback (loom's `validateDevAuthLocalOnly` rule).
 - **Hard invariant:** NO call to YouTube without a valid cookie present. Every yt-dlp invocation gates on cookie presence up front.
 - **Throttle invariant:** a randomized sleep (≈0.5–1.5× a configurable base interval) before every YouTube network action.
 - Docs/code/comments **English only**. Conventional Commits. One feature branch per phase (`feat/phase-1-...`); never commit to `master`. YAML files use `.yaml`, never `.yml`.
@@ -33,7 +33,7 @@ peeq/
 │   ├── web/embed.go                     //go:embed all:dist ; SPA fileserver + SPA fallback
 │   ├── Containerfile                    3-stage node→go→distroless (+ yt-dlp + ffmpeg)
 │   └── internal/
-│       ├── config/config.go             PEEQ_* env load + validation + dev-auth loopback guard
+│       ├── config/config.go             BACKEND_* env load + validation + dev-auth loopback guard
 │       ├── store/
 │       │   ├── store.go                 Open() (WAL, busy_timeout, sqlite-vec), vecLiteral helper
 │       │   ├── migrate.go               embedded numbered-SQL migration runner
@@ -110,7 +110,7 @@ func TestVersionDefault(t *testing.T) {
 - [ ] **Step 9: Build/test tooling.** `Makefile` targets `test` (`go test ./...`), `fe-test` (`vitest --run`), `fe-build`, `build` (fe-build then `CGO_ENABLED=0 go build -o bin/peeq ./backend/cmd/peeq`), `dev` (`hack/dev.sh`) — adapt from `../loom/Makefile`. `hack/dev.sh` runs backend on `127.0.0.1:8080` in dev-auth + `vite` proxying `/api` → backend (adapt `../loom/hack/dev.sh`).
 - [ ] **Step 10: Containerfile** — adapt `../loom/backend/Containerfile` 3-stage build; **add `yt-dlp` and `ffmpeg`** to the runtime stage (distroless lacks them → use a minimal glibc base such as `debian:12-slim` for runtime, install `ffmpeg`, and fetch the `yt-dlp` binary into `/usr/local/bin`; a writable `/data/bin` is used later for self-update). Document this deviation from loom's distroless-static in a comment.
 - [ ] **Step 11: CI + dependabot.** Copy `../music/.github/dependabot.yaml` verbatim (gomod `/backend`, npm `/ui`, github-actions, docker `/backend`). `ci.yaml` = music's minus the Python `sidecar` job (backend `go build/vet/test`, ui `npm ci/build/test`). `release.yaml` = music's (build+push `ghcr.io/${{github.repository}}` on push to `master`, auto-version tag). `cleanup-images.yaml` = loom's with `image-names: "peeq"`.
-- [ ] **Step 12: `.env.example`** (adapt loom's): `PEEQ_PUBLIC_URL`, `PEEQ_SESSION_SECRET`, OIDC block, and the dev block (`PEEQ_AUTH_MODE=dev`, `PEEQ_ADDR=127.0.0.1:8080`). Add `PEEQ_DB_PATH=/data/peeq.db`, `PEEQ_MEDIA_DIR=/data/media`, `PEEQ_YTDLP_DIR=/data/bin`. `.gitignore` ignores `.env`, `bin/`, `backend/web/dist/*` (except the placeholder `index.html`), `node_modules`, `/data`.
+- [ ] **Step 12: `.env.example`** (adapt loom's): `BACKEND_PUBLIC_URL`, `BACKEND_SESSION_SECRET`, OIDC block, and the dev block (`BACKEND_AUTH_MODE=dev`, `BACKEND_ADDR=127.0.0.1:8080`). Add `BACKEND_DB_PATH=/data/peeq.db`, `BACKEND_MEDIA_DIR=/data/media`, `BACKEND_YTDLP_DIR=/data/bin`. `.gitignore` ignores `.env`, `bin/`, `backend/web/dist/*` (except the placeholder `index.html`), `node_modules`, `/data`.
 - [ ] **Step 13: `AGENTS.md`** — lean, adapt loom's (module path, pins, commands, migration rule, security invariants, the two peeq invariants: cookie-gate + throttle). `README.md` — short overview + `docker compose up`.
 - [ ] **Step 14: Verify full build.** Run: `make fe-build && make build && make test && make fe-test`. Expected: binary at `bin/peeq`, all tests PASS. Run `./bin/peeq &` then `curl -s localhost:8080/healthz` → `ok`; `curl -s localhost:8080/` → contains `root`.
 - [ ] **Step 15: Create the private GitHub repo + push.** Confirm with the user this targets `trick77/peeq` (personal, private). Then:
@@ -135,17 +135,17 @@ Open a PR to `master`; confirm CI (backend + ui jobs) goes green. Merge. (Releas
 - [ ] **Step 1: Failing test — required secret + dev loopback guard.**
 ```go
 func TestLoad_devAuthRejectsNonLoopback(t *testing.T) {
-    t.Setenv("PEEQ_SESSION_SECRET", "x"); t.Setenv("PEEQ_AUTH_MODE", "dev")
-    t.Setenv("PEEQ_ADDR", "0.0.0.0:8080"); t.Setenv("PEEQ_PUBLIC_URL", "")
+    t.Setenv("BACKEND_SESSION_SECRET", "x"); t.Setenv("BACKEND_AUTH_MODE", "dev")
+    t.Setenv("BACKEND_ADDR", "0.0.0.0:8080"); t.Setenv("BACKEND_PUBLIC_URL", "")
     if _, err := Load(); err == nil { t.Fatal("dev auth on non-loopback must fail") }
 }
 func TestLoad_devAuthLoopbackOK(t *testing.T) {
-    t.Setenv("PEEQ_SESSION_SECRET", "x"); t.Setenv("PEEQ_AUTH_MODE", "dev")
-    t.Setenv("PEEQ_ADDR", "127.0.0.1:8080"); t.Setenv("PEEQ_PUBLIC_URL", "")
+    t.Setenv("BACKEND_SESSION_SECRET", "x"); t.Setenv("BACKEND_AUTH_MODE", "dev")
+    t.Setenv("BACKEND_ADDR", "127.0.0.1:8080"); t.Setenv("BACKEND_PUBLIC_URL", "")
     if _, err := Load(); err != nil { t.Fatalf("loopback dev auth must pass: %v", err) }
 }
 func TestLoad_missingSecretFails(t *testing.T) {
-    t.Setenv("PEEQ_SESSION_SECRET", ""); if _, err := Load(); err == nil { t.Fatal("missing secret must fail") }
+    t.Setenv("BACKEND_SESSION_SECRET", ""); if _, err := Load(); err == nil { t.Fatal("missing secret must fail") }
 }
 ```
 - [ ] **Step 2: Run — expect FAIL** (no `Load`).
@@ -225,7 +225,7 @@ func TestServer_devLoginThenEmptyVideos(t *testing.T) {
 - [ ] **Step 3: Implement** `server.go` (route table, `Deps`, `requireAuth` wrapper), `auth_handlers.go` (port loom incl. `if devAuthClaims.Subject != "" { createSessionFromClaims(...) }` short-circuit), `health_handlers.go`, and `sse.go` (port loom). Placeholder `handleListVideos` returns `[]`.
 - [ ] **Step 4: Wire `main.go`:** `config.Load` → `store.Open`+`Migrate` → build `auth.Service` (OIDC discovery only when `AuthMode==oidc`; build `DevAuthClaims` when `dev`) → `httpapi.New` → `http.Server` on `cfg.Addr` with `signal.NotifyContext` graceful shutdown. Log a `dev auth enabled; loopback only` warning in dev.
 - [ ] **Step 5: Run — expect PASS.**
-- [ ] **Step 6: Manual smoke:** `PEEQ_SESSION_SECRET=x PEEQ_AUTH_MODE=dev PEEQ_ADDR=127.0.0.1:8080 ./bin/peeq`, then `curl -c j -s localhost:8080/api/auth/login` and `curl -b j -s localhost:8080/api/videos` → `[]`.
+- [ ] **Step 6: Manual smoke:** `BACKEND_SESSION_SECRET=x BACKEND_AUTH_MODE=dev BACKEND_ADDR=127.0.0.1:8080 ./bin/peeq`, then `curl -c j -s localhost:8080/api/auth/login` and `curl -b j -s localhost:8080/api/videos` → `[]`.
 - [ ] **Step 7: Commit** `feat: http server skeleton with dev auto-login and SSE`.
 
 ---
@@ -453,14 +453,14 @@ Also assert a bare `-`-leading id string is only accepted as part of a full URL 
 ## Task 15: End-to-end wire-up + verification
 
 **Files:**
-- Modify: `backend/cmd/peeq/main.go` (ensure worker + sweeper + selfupdate tick started; SSE hub wired), `compose.yaml`, `compose.dev.yaml` (adapt loom's; add `PEEQ_MEDIA_DIR`, `PEEQ_YTDLP_DIR` volumes; runtime image has yt-dlp+ffmpeg), `README.md`.
+- Modify: `backend/cmd/peeq/main.go` (ensure worker + sweeper + selfupdate tick started; SSE hub wired), `compose.yaml`, `compose.dev.yaml` (adapt loom's; add `BACKEND_MEDIA_DIR`, `BACKEND_YTDLP_DIR` volumes; runtime image has yt-dlp+ffmpeg), `README.md`.
 
 - [ ] **Step 1: Full build + all tests.** Run: `make fe-build && make build && make test && make fe-test`. Expected: all PASS, `bin/peeq` present.
 - [ ] **Step 2: Live end-to-end (dev auth, real cookie).** Use the `verify` skill / drive the app:
-  - `PEEQ_SESSION_SECRET=dev PEEQ_AUTH_MODE=dev PEEQ_ADDR=127.0.0.1:8080 PEEQ_DB_PATH=./data/peeq.db PEEQ_MEDIA_DIR=./data/media PEEQ_YTDLP_DIR=./data/bin ./bin/peeq`
+  - `BACKEND_SESSION_SECRET=dev BACKEND_AUTH_MODE=dev BACKEND_ADDR=127.0.0.1:8080 BACKEND_DB_PATH=./data/peeq.db BACKEND_MEDIA_DIR=./data/media BACKEND_YTDLP_DIR=./data/bin ./bin/peeq`
   - Open `http://localhost:8080` (dev auto-login → admin session, empty Library).
   - Settings → paste a real YouTube cookie → cookie status turns "active". Confirm a download attempt with the cookie cleared is refused (409 / banner) — the hard invariant.
-  - Add → paste a short real video URL → row appears `queued`, worker downloads it (SSE progress in the dock), file lands under `PEEQ_MEDIA_DIR/<channel>/<id>/`, status → `downloaded`, `--limit-rate` respected.
+  - Add → paste a short real video URL → row appears `queued`, worker downloads it (SSE progress in the dock), file lands under `BACKEND_MEDIA_DIR/<channel>/<id>/`, status → `downloaded`, `--limit-rate` respected.
   - Open Player → plays; seek works (Range 206); close mid-video, reopen → resumes at saved position; SponsorBlock segments auto-skip.
   - Set retention to 0–1 day; mark the video watched → the sweep tombstones it; favorite a watched video → it survives; confirm the tombstone row keeps metadata and offers re-download.
   - Cancel a running download → the yt-dlp child is killed, partials cleaned, job `canceled`.
