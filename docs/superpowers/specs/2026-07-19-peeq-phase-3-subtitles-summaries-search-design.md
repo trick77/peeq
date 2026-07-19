@@ -19,7 +19,7 @@ display; a new global search view answers "which video mentioned X?" by meaning,
 
 **AI is integral, not a bolt-on.** Summaries and semantic search are core product surfaces, not
 optional extras. Peeq **refuses to start** without the MiMo (chat) and embeddings endpoints
-configured — the same fail-loud contract as `PEEQ_SESSION_SECRET` and the OIDC vars today.
+configured — the same fail-loud contract as `BACKEND_SESSION_SECRET` and the OIDC vars today.
 
 This slice mirrors the sibling `../loom` app: it ports loom's `llm/client.go` (MiMo chat) and its
 entire `rag/` stack (chunk → embed → `vec0` KNN), minus loom's multi-user scoping (Peeq is
@@ -50,7 +50,7 @@ single-user). yt-dlp subtitle flags are added at the existing Runner choke point
 5. Global semantic search (`vec0` KNN across transcripts + summaries) → video + jump-to timestamp.
 6. Player: fill the three intelligence panels (stacked, glanceable) + collapsible transcript with
    in-player find; `<track>` captions + CC toggle.
-7. New env config (`PEEQ_MIMO_*`, `PEEQ_EMBED_*`, `PEEQ_DEFAULT_SUB_LANG`), required at boot.
+7. New env config (`BACKEND_MIMO_*`, `BACKEND_EMBED_*`, `BACKEND_DEFAULT_SUB_LANG`), required at boot.
 
 **Explicitly deferred to Phase 3.1 (own brainstorm→plan→SDD slices — NOT this branch):**
 - **(3.1-a) API token** — auto-generated on first boot, regenerable in Settings (masked/show/copy);
@@ -110,11 +110,11 @@ CREATE INDEX idx_transcript_chunks_video ON transcript_chunks(video_id, ordinal)
 
 ### `vec_chunks` — new `vec0` virtual table (single-user; no partition keys)
 ```sql
-CREATE VIRTUAL TABLE vec_chunks USING vec0( embedding float[<PEEQ_EMBED_DIM default 1536>] );
+CREATE VIRTUAL TABLE vec_chunks USING vec0( embedding float[<BACKEND_EMBED_DIM default 1536>] );
 ```
 - The dimension is **fixed at DDL time**. It is written into `0001_init.sql` as the default (1536).
-- **Dim guard (boot reconcile, loom pattern):** on startup, compare the configured `PEEQ_EMBED_DIM`
-  and `PEEQ_EMBED_MODEL` against what's stored. If the configured dim differs from the built
+- **Dim guard (boot reconcile, loom pattern):** on startup, compare the configured `BACKEND_EMBED_DIM`
+  and `BACKEND_EMBED_MODEL` against what's stored. If the configured dim differs from the built
   `vec_chunks` dimension, the whole vector table is invalid — log loudly, drop `transcript_chunks` +
   `vec_chunks` content, and re-enqueue summary jobs to re-embed. Because a model/dim change
   invalidates the entire `vec0` table, `embed_model`/`embed_dim` are stored per video row so the
@@ -147,18 +147,22 @@ Boot resets orphaned `running` → `pending` (loom's `ResetStuckIngestions` patt
 
 ## 4. Config (env-based, required at boot)
 
+> **Env prefix:** a prerequisite PR (`chore/env-prefix-backend`) renames all existing `PEEQ_*` vars →
+> `BACKEND_*` before this phase (matching loom's `BACKEND_EMBED_*`), so the app can be renamed later
+> without touching env config. All vars below are in the `BACKEND_` form.
+
 New vars in `config.go`, validated in the existing `validate()` (fatal on missing, like
-`PEEQ_SESSION_SECRET`):
+`BACKEND_SESSION_SECRET`):
 
 | Var | Required | Default | Notes |
 |---|---|---|---|
-| `PEEQ_MIMO_BASE_URL` | **yes** | — | OpenAI-compatible chat endpoint. |
-| `PEEQ_MIMO_API_KEY` | no | `""` | Optional bearer. |
-| `PEEQ_EMBED_BASE_URL` | **yes** | — | OpenAI-compatible `/embeddings` endpoint. |
-| `PEEQ_EMBED_MODEL` | **yes** | — | Embedding model id. |
-| `PEEQ_EMBED_DIM` | no | `1536` | Must match the `vec0` DDL dim; drives the boot dim-guard. |
-| `PEEQ_EMBED_API_KEY` | no | `""` | Optional bearer. |
-| `PEEQ_DEFAULT_SUB_LANG` | no | `en` | Fallback when info-json has no audio language. |
+| `BACKEND_MIMO_BASE_URL` | **yes** | — | OpenAI-compatible chat endpoint. |
+| `BACKEND_MIMO_API_KEY` | no | `""` | Optional bearer. |
+| `BACKEND_EMBED_BASE_URL` | **yes** | — | OpenAI-compatible `/embeddings` endpoint. |
+| `BACKEND_EMBED_MODEL` | **yes** | — | Embedding model id. |
+| `BACKEND_EMBED_DIM` | no | `1536` | Must match the `vec0` DDL dim; drives the boot dim-guard. |
+| `BACKEND_EMBED_API_KEY` | no | `""` | Optional bearer. |
+| `BACKEND_DEFAULT_SUB_LANG` | no | `en` | Fallback when info-json has no audio language. |
 
 Chat model is **hardcoded** `mimo-v2.5-pro` at `reasoning_effort=high` for **all** summarization
 calls (map and reduce), ported from loom — an offline job, latency is free, quality is the priority.
@@ -173,7 +177,7 @@ not boot without them.
 `--write-subs --write-auto-subs --sub-langs <lang> --convert-subs vtt`.
 
 - `<lang>` resolution: prefer the download info-json's audio `language` field; else
-  `PEEQ_DEFAULT_SUB_LANG`. (Audio-language VTT only — never comment subs.)
+  `BACKEND_DEFAULT_SUB_LANG`. (Audio-language VTT only — never comment subs.)
 - yt-dlp writes the `.vtt` into the staging dir; on the existing atomic-rename success path it lands
   in the video's media dir alongside the `.mp4`/`.jpg`. `subtitle_path` + `audio_language` persisted.
 - **On download success (any origin — initial or a 3.1 re-download):** enqueue a `summary_jobs` row.
