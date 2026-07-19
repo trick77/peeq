@@ -55,4 +55,25 @@ describe("Search", () => {
     fireEvent.submit(screen.getByRole("search"));
     expect(await screen.findByText(/no matches/i)).toBeInTheDocument();
   });
+
+  it("clears stale results when a later search fails", async () => {
+    mockedSearchVideos.mockResolvedValueOnce([
+      {
+        video: { id: "v1", title: "iPhone 27 review" } as never,
+        matches: [{ start_seconds: 560, snippet: "the new iPhone", distance: 0.1 }],
+      },
+    ]);
+    render(<Search onOpen={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "iphone" } });
+    fireEvent.submit(screen.getByRole("search"));
+    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+
+    mockedSearchVideos.mockRejectedValueOnce(new Error("search backend down"));
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "battery" } });
+    fireEvent.submit(screen.getByRole("search"));
+
+    expect(await screen.findByText(/search backend down/i)).toBeInTheDocument();
+    expect(screen.queryByText("iPhone 27 review")).not.toBeInTheDocument();
+  });
 });

@@ -27,7 +27,12 @@ export function Search({ onOpen }: { onOpen: (videoId: string, startSeconds: num
     setError(null);
     searchVideos(q)
       .then((r) => setResults(r))
-      .catch((err: Error) => setError(err.message))
+      .catch((err: Error) => {
+        setError(err.message);
+        // Clear any previous query's results so the error state doesn't
+        // render stale result cards underneath the error line.
+        setResults(null);
+      })
       .finally(() => setLoading(false));
   }
 

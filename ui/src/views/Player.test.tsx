@@ -135,6 +135,65 @@ describe("Player", () => {
     expect(videoEl.currentTime).toBeCloseTo(560, 0);
   });
 
+  it("calls onSeekConsumed exactly once right after applying seekTo", async () => {
+    const onSeekConsumed = vi.fn();
+    render(<Player videoId="v1" seekTo={560} onSeekConsumed={onSeekConsumed} onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    fireEvent.loadedMetadata(videoEl);
+
+    expect(videoEl.currentTime).toBeCloseTo(560, 0);
+    expect(onSeekConsumed).toHaveBeenCalledTimes(1);
+
+    // A second loadedmetadata on the same mount must not re-apply or
+    // re-consume — handleLoadedMetadata's resumeAppliedRef guard already
+    // makes this a no-op regardless of seekTo.
+    fireEvent.loadedMetadata(videoEl);
+    expect(onSeekConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it("regression: a remount without seekTo (the stale-pendingSeek scenario) uses resume, not the earlier seek", async () => {
+    // Simulates the real bug: a search jump seeks to 560s and the parent
+    // clears its pendingSeek via onSeekConsumed. If the Player is later
+    // remounted (e.g. via the rail's "Now playing" link) with no seekTo
+    // prop — because the parent's pendingSeek was actually cleared — it
+    // must resume at resume_position_seconds (42), never replay the old
+    // 560s jump.
+    const onSeekConsumed = vi.fn();
+    const { unmount } = render(
+      <Player videoId="v1" seekTo={560} onSeekConsumed={onSeekConsumed} onDeleted={() => {}} />,
+    );
+
+    const firstEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    fireEvent.loadedMetadata(firstEl);
+    expect(firstEl.currentTime).toBeCloseTo(560, 0);
+    expect(onSeekConsumed).toHaveBeenCalledTimes(1);
+
+    unmount();
+
+    // Remount with no seekTo — the one-shot consumption means a parent
+    // wired to onSeekConsumed would have cleared pendingSeek by now, so
+    // this is exactly what a rail "Now playing" remount looks like.
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const secondEl = await waitFor(() => {
+      const els = document.querySelectorAll("video");
+      if (els.length === 0) throw new Error("video element not mounted yet");
+      return els[els.length - 1];
+    });
+    fireEvent.loadedMetadata(secondEl);
+
+    expect(secondEl.currentTime).toBeCloseTo(42, 0);
+  });
+
   it("posts the current position to setResume on timeupdate", async () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
 

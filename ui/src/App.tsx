@@ -39,8 +39,13 @@ export function App() {
   // pendingSeek is the jump-to-moment target set by Search's onOpen (Task
   // 18): Player consumes it once on the loadedmetadata handler that already
   // applies the resume position, taking priority over resume. openVideo
-  // (Library/Channels' plain "open" path) clears it, so navigating to a
-  // video that way never replays a stale seek from an earlier search.
+  // (Library/Channels' plain "open" path) clears it up front, so navigating
+  // to a video that way never applies a stale seek from an earlier search.
+  // The Player's onSeekConsumed callback below also clears it the moment the
+  // seek is actually applied, so a later remount of the Player (e.g. via the
+  // rail's "Now playing" without going through openVideo/openVideoAt again —
+  // the Player unmounts whenever the view navigates away) can never replay
+  // it and override the user's real resume position.
   const [pendingSeek, setPendingSeek] = useState<number | undefined>(undefined);
   const [progressByJobId, setProgressByJobId] = useState<
     Record<number, { percent: number; speed: string; eta: string }>
@@ -237,6 +242,7 @@ export function App() {
             pendingSeek={pendingSeek}
             onOpenVideo={openVideo}
             onOpenVideoAt={openVideoAt}
+            onSeekConsumed={() => setPendingSeek(undefined)}
             setView={setView}
             setPendingCount={setPendingCount}
           />
@@ -288,6 +294,7 @@ function ViewSwitch({
   pendingSeek,
   onOpenVideo,
   onOpenVideoAt,
+  onSeekConsumed,
   setView,
   setPendingCount,
 }: {
@@ -296,6 +303,7 @@ function ViewSwitch({
   pendingSeek: number | undefined;
   onOpenVideo: (id: string) => void;
   onOpenVideoAt: (id: string, startSeconds: number) => void;
+  onSeekConsumed: () => void;
   setView: (v: ViewId) => void;
   setPendingCount: (n: number) => void;
 }) {
@@ -303,7 +311,14 @@ function ViewSwitch({
     case "library":
       return <Library onOpenVideo={onOpenVideo} />;
     case "player":
-      return <Player videoId={selectedVideoId} seekTo={pendingSeek} onDeleted={() => setView("library")} />;
+      return (
+        <Player
+          videoId={selectedVideoId}
+          seekTo={pendingSeek}
+          onSeekConsumed={onSeekConsumed}
+          onDeleted={() => setView("library")}
+        />
+      );
     case "search":
       return <Search onOpen={onOpenVideoAt} />;
     case "add":

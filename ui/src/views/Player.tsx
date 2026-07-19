@@ -92,6 +92,7 @@ const DONE_STATUSES = new Set(["done", "no_transcript", "pending", "running", "e
 export function Player({
   videoId,
   seekTo,
+  onSeekConsumed,
   onDeleted,
 }: {
   videoId: string | null;
@@ -100,6 +101,14 @@ export function Player({
   // stored resume position, the same way resume itself is applied only
   // once per video load.
   seekTo?: number;
+  // onSeekConsumed — fired exactly once, right after seekTo is applied in
+  // handleLoadedMetadata. This makes the seek one-shot: without it, a stale
+  // seekTo left set in the parent (e.g. App's pendingSeek) would replay and
+  // yank the playhead back on any later remount of this component (say,
+  // navigating away then back to "Now playing" via the rail), overriding
+  // the user's real resume position. The parent should clear its stored
+  // seek target from this callback.
+  onSeekConsumed?: () => void;
   onDeleted: () => void;
 }) {
   const [video, setVideo] = useState<Video | null>(null);
@@ -250,6 +259,7 @@ export function Player({
       el.currentTime = seekTo;
       setCurrentTime(seekTo);
       positionRef.current = seekTo;
+      onSeekConsumed?.();
     } else if (video.resume_position_seconds > 0 && (!durationKnown || video.resume_position_seconds < el.duration)) {
       el.currentTime = video.resume_position_seconds;
       setCurrentTime(video.resume_position_seconds);
