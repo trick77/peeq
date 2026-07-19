@@ -33,6 +33,9 @@ type Settings struct {
 	MinFreeGB               int    `json:"min_free_gb"`
 	MinVideoDurationSeconds int    `json:"min_video_duration_seconds"`
 	YTDLPVersion            string `json:"ytdlp_version"`
+	YoutubePaused           bool   `json:"youtube_paused"`
+	YoutubePauseReason      string `json:"youtube_pause_reason"`
+	YoutubePausedAt         string `json:"youtube_paused_at,omitempty"`
 }
 
 // Patch is a partial update to the non-secret settings fields. Nil fields
@@ -62,20 +65,26 @@ func New(db DBTX) *Store {
 func (s *Store) Get(ctx context.Context) (Settings, error) {
 	var st Settings
 	var cookieUpdatedAt sql.NullString
+	var pausedAt sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 SELECT cookie_status, cookie_updated_at, format_preset, format_custom, limit_rate,
-       throttle_base_seconds, retention_days, min_free_gb, min_video_duration_seconds, ytdlp_version
+       throttle_base_seconds, retention_days, min_free_gb, min_video_duration_seconds, ytdlp_version,
+       youtube_paused, youtube_pause_reason, youtube_paused_at
 FROM settings
 WHERE id = 1`,
 	).Scan(
 		&st.CookieStatus, &cookieUpdatedAt, &st.FormatPreset, &st.FormatCustom, &st.LimitRate,
 		&st.ThrottleBaseSeconds, &st.RetentionDays, &st.MinFreeGB, &st.MinVideoDurationSeconds, &st.YTDLPVersion,
+		&st.YoutubePaused, &st.YoutubePauseReason, &pausedAt,
 	)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
 	}
 	if cookieUpdatedAt.Valid {
 		st.CookieUpdatedAt = cookieUpdatedAt.String
+	}
+	if pausedAt.Valid {
+		st.YoutubePausedAt = pausedAt.String
 	}
 	return st, nil
 }
@@ -165,4 +174,38 @@ func (s *Store) CookieStatus(ctx context.Context) string {
 		return "absent"
 	}
 	return status
+}
+
+// SetYoutubePaused sets or clears the global YouTube kill-switch. reason is
+// the auto-pause explanation ('' for a manual pause). When pausing, the
+// timestamp is stamped; when resuming, all three columns are cleared.
+func (s *Store) SetYoutubePaused(ctx context.Context, paused bool, reason string) error {
+	if !paused {
+		_, err := s.db.ExecContext(ctx, `
+UPDATE settings SET youtube_paused = 0, youtube_pause_reason = '', youtube_paused_at = NULL WHERE id = 1`)
+		if err != nil {
+			return fmt.Errorf("resume youtube: %w", err)
+		}
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+UPDATE settings SET youtube_paused = 1, youtube_pause_reason = ?, youtube_paused_at = datetime('now') WHERE id = 1`, reason)
+	if err != nil {
+		return fmt.Errorf("pause youtube: %w", err)
+	}
+	return nil
+}
+
+// YoutubePaused reports the kill-switch state for the Runner pause-gate and
+// the worker/scan poll-gates. Fails safe to not-paused on read error (a DB
+// blip must never silently freeze all downloads forever).
+func (s *Store) YoutubePaused(ctx context.Context) (bool, string) {
+	var paused bool
+	var reason string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT youtube_paused, youtube_pause_reason FROM settings WHERE id = 1`).Scan(&paused, &reason)
+	if err != nil {
+		return false, ""
+	}
+	return paused, reason
 }
