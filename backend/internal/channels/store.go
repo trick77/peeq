@@ -124,22 +124,22 @@ SELECT tc.id FROM transcript_chunks tc
 JOIN videos v ON v.id = tc.video_id
 WHERE v.channel_id = ?`, channelID)
 	if err != nil {
-		return fmt.Errorf("select vec_chunks rowids for channel: %w", err)
+		return fmt.Errorf("select chunk rowids for channel: %w", err)
 	}
-	var vecIDs []int64
+	var chunkIDs []int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return fmt.Errorf("scan vec_chunks rowid: %w", err)
+			return fmt.Errorf("scan chunk rowid: %w", err)
 		}
-		vecIDs = append(vecIDs, id)
+		chunkIDs = append(chunkIDs, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate vec_chunks rowids for channel: %w", err)
+		return fmt.Errorf("iterate chunk rowids for channel: %w", err)
 	}
-	for _, id := range vecIDs {
+	for _, id := range chunkIDs {
 		if _, err := tx.Exec(`DELETE FROM vec_chunks WHERE rowid = ?`, id); err != nil {
 			return fmt.Errorf("delete vec_chunks row %d: %w", id, err)
 		}

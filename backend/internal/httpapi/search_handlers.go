@@ -58,11 +58,15 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	lists := make([][]rag.Hit, 0, 2)
 	if ftsHits, err := s.rag.SearchFTS(r.Context(), rag.BuildFTSMatch(q), k); err == nil && len(ftsHits) > 0 {
 		lists = append(lists, ftsHits)
+	} else if err != nil {
+		slog.Warn("search: FTS degraded", "err", err)
 	}
 	if s.embedder != nil {
 		if vecs, err := s.embedder.Embed(r.Context(), []string{q}); err == nil && len(vecs) > 0 {
 			if semHits, err := s.rag.Retrieve(r.Context(), vecs[0], k); err == nil && len(semHits) > 0 {
 				lists = append(lists, semHits)
+			} else if err != nil {
+				slog.Warn("search: semantic retrieve degraded", "err", err)
 			}
 		} else if err != nil {
 			// Semantic unavailable (endpoint down/misconfigured); fall back to

@@ -111,13 +111,13 @@ func TestDeleteCascade_removesEverything(t *testing.T) {
 	}
 }
 
-// TestDeleteCascade_purgesVecChunks asserts DeleteCascade also removes the
-// vec_chunks (vec0 virtual table) and fts_chunks (fts5 virtual table) rows
+// TestDeleteCascade_purgesVecAndFTSChunks asserts DeleteCascade also removes
+// the vec_chunks (vec0 virtual table) and fts_chunks (fts5 virtual table) rows
 // belonging to the channel's videos. Neither virtual table can ride an FK
 // cascade or trigger, so without an explicit purge these rows are orphaned
 // forever once their transcript_chunks parent is gone — this test fails
 // (vec/fts counts stay 1) before the fix.
-func TestDeleteCascade_purgesVecChunks(t *testing.T) {
+func TestDeleteCascade_purgesVecAndFTSChunks(t *testing.T) {
 	st := newTestStore(t)
 	db := st.DB()
 	ctx := context.Background()

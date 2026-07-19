@@ -216,20 +216,30 @@ export function Player({
   // Mirrors App.tsx's own streamDownloads "progress" subscription: evt.data
   // arrives already JSON-parsed by streamSSE, so it's cast, not re-parsed.
   useEffect(() => {
+    let cancelled = false;
     const controller = new AbortController();
     streamDownloads((evt) => {
       if (evt.event !== "summary") return;
       const payload = evt.data as { video_id?: string; status?: string };
       if (payload.video_id !== videoId || !payload.status) return;
       if (payload.status === "done") {
-        // Refetch to pull the finished summary/chapters/key-points.
-        getVideo(videoId).then(setVideo).catch(() => {});
+        // Refetch to pull the finished summary/chapters/key-points. Guarded
+        // against a stale videoId change (v1 -> v2) racing this refetch in,
+        // which would otherwise overwrite v2's video with v1's data.
+        getVideo(videoId)
+          .then((v) => {
+            if (!cancelled) setVideo(v);
+          })
+          .catch(() => {});
       } else {
         const status = payload.status;
         setVideo((prev) => (prev ? { ...prev, summary_status: status } : prev));
       }
     }, controller.signal).catch(() => {});
-    return () => controller.abort();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [videoId]);
 
   // CC track starts hidden (captions off) — applied once per video whenever

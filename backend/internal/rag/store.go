@@ -39,8 +39,11 @@ type Hit struct {
 	Distance     float64
 }
 
-// deleteVideoTx removes a video's chunk + vec rows within tx. vec_chunks.rowid ==
-// transcript_chunks.id, so the ids are gathered first, then both tables purged.
+// deleteVideoTx removes a video's rows from all three chunk tables
+// (transcript_chunks, vec_chunks, fts_chunks) within tx. vec_chunks.rowid ==
+// fts_chunks.rowid == transcript_chunks.id, so the ids are gathered first,
+// then vec_chunks and fts_chunks are purged by rowid before transcript_chunks
+// itself is deleted.
 func deleteVideoTx(ctx context.Context, tx *sql.Tx, videoID string) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM transcript_chunks WHERE video_id = ?`, videoID)
 	if err != nil {
