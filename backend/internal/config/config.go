@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 )
 
 // AuthMode selects how peeq signs users in.
@@ -29,6 +30,15 @@ type Config struct {
 	OIDC          OIDCConfig
 	Dev           DevUserConfig
 	LogLevel      string
+
+	// AI integration: MiMo chat + embeddings endpoints (required at boot).
+	MimoBaseURL    string
+	MimoAPIKey     string
+	EmbedBaseURL   string
+	EmbedAPIKey    string
+	EmbedModel     string
+	EmbedDim       int
+	DefaultSubLang string
 }
 
 // OIDCConfig holds OpenID Connect settings.
@@ -85,8 +95,33 @@ func Load() (Config, error) {
 		},
 	}
 
+	cfg.MimoBaseURL = env("BACKEND_MIMO_BASE_URL", "")
+	cfg.MimoAPIKey = env("BACKEND_MIMO_API_KEY", "")
+	cfg.EmbedBaseURL = env("BACKEND_EMBED_BASE_URL", "")
+	cfg.EmbedAPIKey = env("BACKEND_EMBED_API_KEY", "")
+	cfg.EmbedModel = env("BACKEND_EMBED_MODEL", "")
+	cfg.DefaultSubLang = env("BACKEND_DEFAULT_SUB_LANG", "en")
+	cfg.EmbedDim = 1536
+	if v := env("BACKEND_EMBED_DIM", ""); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return Config{}, fmt.Errorf("BACKEND_EMBED_DIM must be a positive integer")
+		}
+		cfg.EmbedDim = n
+	}
+
 	if cfg.SessionSecret == "" {
 		return Config{}, fmt.Errorf("BACKEND_SESSION_SECRET is required")
+	}
+
+	if cfg.MimoBaseURL == "" {
+		return Config{}, fmt.Errorf("BACKEND_MIMO_BASE_URL is required")
+	}
+	if cfg.EmbedBaseURL == "" {
+		return Config{}, fmt.Errorf("BACKEND_EMBED_BASE_URL is required")
+	}
+	if cfg.EmbedModel == "" {
+		return Config{}, fmt.Errorf("BACKEND_EMBED_MODEL is required")
 	}
 
 	switch cfg.AuthMode {
