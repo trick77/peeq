@@ -345,6 +345,73 @@ func TestScan_panicDuringScan_backsOff(t *testing.T) {
 	}
 }
 
+// errLister is a ChannelLister that always returns a fixed error, exercising
+// the scan error path (cookie-status flip + backoff).
+type errLister struct{ err error }
+
+func (l errLister) ChannelVideos(context.Context, string, int) ([]ytdlp.ChannelEntry, error) {
+	return nil, l.err
+}
+
+// TestScan_blockedCookie_flipsStatus proves FIX 1: when a SCAN surfaces
+// ytdlp.ErrBlocked (a bot-block, not a download), the scheduler flips
+// cookie_status to "blocked" so its own cookie gate trips on the next pass and
+// stops hammering YouTube on a dead cookie.
+func TestScan_blockedCookie_flipsStatus(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	// Seed cookie_status="valid" via the status-only path (empty text skips
+	// cookie validation), so we can observe the flip away from "valid".
+	if err := h.settings.SetCookie(context.Background(), "", "valid"); err != nil {
+		t.Fatalf("seed cookie status: %v", err)
+	}
+	h.sched = New(Deps{
+		Channels: h.channels, Ledger: h.ledger, Videos: h.videos, Jobs: h.jobs,
+		Settings:     h.settings,
+		Lister:       errLister{err: ytdlp.ErrBlocked},
+		CookieStatus: func(context.Context) string { return h.cookieStatus },
+		Now:          func() time.Time { return fixedNow },
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+	h.sched.scanChannel(context.Background(), sub)
+
+	if st := h.settings.CookieStatus(context.Background()); st != "blocked" {
+		t.Fatalf("cookie_status = %q, want blocked (gate must trip next pass)", st)
+	}
+}
+
+// TestScan_expiredCookie_flipsStale proves the ErrCookieExpired branch of FIX
+// 1 flips cookie_status to "stale".
+func TestScan_expiredCookie_flipsStale(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	if err := h.settings.SetCookie(context.Background(), "", "valid"); err != nil {
+		t.Fatalf("seed cookie status: %v", err)
+	}
+	h.sched = New(Deps{
+		Channels: h.channels, Ledger: h.ledger, Videos: h.videos, Jobs: h.jobs,
+		Settings:     h.settings,
+		Lister:       errLister{err: ytdlp.ErrCookieExpired},
+		CookieStatus: func(context.Context) string { return h.cookieStatus },
+		Now:          func() time.Time { return fixedNow },
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	h.sched.scanChannel(context.Background(), sub)
+
+	if st := h.settings.CookieStatus(context.Background()); st != "stale" {
+		t.Fatalf("cookie_status = %q, want stale", st)
+	}
+}
+
 func TestScan_noCookie_skipsScan(t *testing.T) {
 	h := newScanHarness(t)
 	h.cookieStatus = "absent" // harness wires CookieStatus to return this

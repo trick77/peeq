@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,6 +71,15 @@ func run() error {
 
 	if err := store.Migrate(db); err != nil {
 		return err
+	}
+
+	// Fail loud on a stale (un-migrated) DB. The migrations were squashed, so a
+	// leftover Phase-1 database boots past Migrate but lacks the Phase-2 tables,
+	// which then surfaces as confusing runtime 500s. Probe one Phase-2 table
+	// (channel_videos): an empty table (sql.ErrNoRows) is HEALTHY — only a
+	// "no such table" error means the schema is stale, which is fatal.
+	if err := db.QueryRowContext(context.Background(), "SELECT 1 FROM channel_videos LIMIT 1").Scan(new(int)); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("database schema is stale (missing Phase-2 tables): %w; recreate it with `rm ./data/vark.db*` and restart", err)
 	}
 
 	// Secure (HTTPS-only) cookies whenever the app is reachable over https;

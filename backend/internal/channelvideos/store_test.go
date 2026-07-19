@@ -31,6 +31,37 @@ func seedChannel(t *testing.T, st *Store, id string) {
 	}
 }
 
+// seedChannelNamed inserts a channels row with an explicit name, so a test can
+// assert ListPending joins that name into each entry.
+func seedChannelNamed(t *testing.T, st *Store, id, name string) {
+	t.Helper()
+	if _, err := st.db.Exec(`INSERT INTO channels (id,name) VALUES (?, ?)`, id, name); err != nil {
+		t.Fatalf("seed channel %s: %v", id, err)
+	}
+}
+
+// TestLedger_listPendingJoinsChannelName proves FIX 6: ListPending LEFT JOINs
+// channels so each pending entry carries the human-readable channel name (the
+// Pending UI shows the name, not the raw UCID).
+func TestLedger_listPendingJoinsChannelName(t *testing.T) {
+	st := newTestStore(t)
+	seedChannelNamed(t, st, "UC1", "Cool Channel")
+
+	if err := st.Insert(Entry{VideoID: "v1", ChannelID: "UC1", Title: "A", State: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	pend, err := st.ListPending()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pend) != 1 {
+		t.Fatalf("pending = %d, want 1", len(pend))
+	}
+	if pend[0].ChannelName != "Cool Channel" {
+		t.Fatalf("ChannelName = %q, want %q", pend[0].ChannelName, "Cool Channel")
+	}
+}
+
 func TestLedger_insertPendingAndDecide(t *testing.T) {
 	st := newTestStore(t) // migrated temp DB; a channels row UC1 must exist first (FK)
 	seedChannel(t, st, "UC1")

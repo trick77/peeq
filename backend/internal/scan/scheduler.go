@@ -10,6 +10,7 @@ package scan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -146,6 +147,23 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 		}
 	}()
 	if err := s.scanOnce(ctx, sub); err != nil {
+		// A bot-block or a dead cookie surfaced by a SCAN (not a download) must
+		// flip cookie_status the same way the download worker's pause() does —
+		// otherwise the scheduler's own cookie gate (CookieStatus != "valid")
+		// never trips and it keeps polling YouTube on a dead cookie forever
+		// while the UI stays green. The normal Backoff still applies below; it
+		// is harmless, since the flipped status stops all scanning next pass
+		// until the user re-pastes a cookie.
+		switch {
+		case errors.Is(err, ytdlp.ErrBlocked):
+			if serr := s.d.Settings.SetCookie(ctx, "", "blocked"); serr != nil {
+				s.d.Logger.Error("scan: set cookie status failed", "status", "blocked", "err", serr)
+			}
+		case errors.Is(err, ytdlp.ErrCookieExpired):
+			if serr := s.d.Settings.SetCookie(ctx, "", "stale"); serr != nil {
+				s.d.Logger.Error("scan: set cookie status failed", "status", "stale", "err", serr)
+			}
+		}
 		s.d.Logger.Warn("scan failed; backing off", "channel", sub.ChannelID, "err", err)
 		s.backoff(sub.ChannelID)
 	}
@@ -245,6 +263,14 @@ func passesFilters(e ytdlp.ChannelEntry, minDuration int) bool {
 // call, to respect the throttle budget); thumbnail_path stays empty (a local
 // path), while the remote thumbnail lives on the ledger row.
 func (s *Scheduler) enqueueAuto(e ytdlp.ChannelEntry, sub *channels.Subscription) error {
+	// Best-effort narrowing of the delete-vs-scan window: if the channel was
+	// deleted mid-scan, skip creating a download for it (videos has no FK to
+	// channels, so only the later ledger Insert would fail — leaving a stray
+	// videos row + job for a just-deleted channel). This is not fully atomic
+	// across stores; full atomicity is a documented follow-up.
+	if c, err := s.d.Channels.Get(sub.ChannelID); err != nil || c == nil {
+		return nil
+	}
 	if err := s.d.Videos.Upsert(videos.Video{
 		ID: e.ID, URL: e.URL, Title: e.Title, ChannelID: sub.ChannelID,
 		DurationSeconds: int64(e.DurationSeconds), RequestedFormat: sub.FormatOverride,

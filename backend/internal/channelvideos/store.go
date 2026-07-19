@@ -18,6 +18,7 @@ import (
 type Entry struct {
 	VideoID         string
 	ChannelID       string
+	ChannelName     string
 	Title           string
 	DurationSeconds int
 	URL             string
@@ -40,6 +41,10 @@ func New(db *sql.DB) *Store {
 // selectColumns is the shared column list for every row read, in Entry field
 // order, so scanRow can be reused by Get and ListPending.
 const selectColumns = `video_id, channel_id, title, duration_seconds, url, thumbnail_url, state, discovered_at, decided_at`
+
+// pendingColumns is selectColumns aliased to the channel_videos table (cv), for
+// the ListPending JOIN where an unqualified column list would be ambiguous.
+const pendingColumns = `cv.video_id, cv.channel_id, cv.title, cv.duration_seconds, cv.url, cv.thumbnail_url, cv.state, cv.discovered_at, cv.decided_at`
 
 // scanRow scans one channel_videos row (in selectColumns order) into an
 // Entry, mapping NULL duration_seconds/decided_at to 0/"".
@@ -120,10 +125,17 @@ func (s *Store) Get(videoID string) (*Entry, error) {
 }
 
 // ListPending returns every entry in state 'pending', newest discovered
-// first (ties broken by video_id descending for determinism).
+// first (ties broken by video_id descending for determinism). It LEFT JOINs
+// channels so each entry carries the human-readable channel name (empty when
+// the channel row is somehow absent) — the Pending UI shows the name rather
+// than the raw UCID. The join keeps this a single query (no N+1).
 func (s *Store) ListPending() ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT `+selectColumns+` FROM channel_videos WHERE state = 'pending' ORDER BY discovered_at DESC, video_id DESC`)
+		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name
+FROM channel_videos cv
+LEFT JOIN channels c ON c.id = cv.channel_id
+WHERE cv.state = 'pending'
+ORDER BY cv.discovered_at DESC, cv.video_id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list pending channel videos: %w", err)
 	}
@@ -131,7 +143,7 @@ func (s *Store) ListPending() ([]Entry, error) {
 
 	var out []Entry
 	for rows.Next() {
-		e, err := scanRow(rows)
+		e, err := scanPendingRow(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan channel video: %w", err)
 		}
@@ -141,4 +153,21 @@ func (s *Store) ListPending() ([]Entry, error) {
 		return nil, fmt.Errorf("iterate pending channel videos: %w", err)
 	}
 	return out, nil
+}
+
+// scanPendingRow scans one ListPending row: the selectColumns set (in Entry
+// field order, minus ChannelName) followed by the joined channel_name.
+func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
+	var e Entry
+	var duration sql.NullInt64
+	var decidedAt sql.NullString
+	if err := sc.Scan(
+		&e.VideoID, &e.ChannelID, &e.Title, &duration, &e.URL, &e.ThumbnailURL,
+		&e.State, &e.DiscoveredAt, &decidedAt, &e.ChannelName,
+	); err != nil {
+		return Entry{}, err
+	}
+	e.DurationSeconds = int(duration.Int64)
+	e.DecidedAt = decidedAt.String
+	return e, nil
 }

@@ -584,6 +584,45 @@ func TestPendingDownload_notPending_404(t *testing.T) {
 	}
 }
 
+// TestPendingDownload_alreadyDownloaded_noDuplicate proves FIX 4: a video that
+// was already downloaded while still sitting on the Pending list must NOT be
+// re-enqueued on Download-now. Instead it is cleared from Pending and reported
+// as already downloaded, with no new job created.
+func TestPendingDownload_alreadyDownloaded_noDuplicate(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	// A downloaded videos row for the same id that a pending ledger row points at.
+	if err := h.videos.Upsert(videos.Video{ID: "p1", URL: "https://www.youtube.com/watch?v=p1", ChannelID: "UC1"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetDownloaded("p1", videos.DownloadedResult{MediaPath: "/tmp/p1.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/pending/p1/download", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("download status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "already_downloaded") {
+		t.Fatalf("body = %s, want already_downloaded", rr.Body.String())
+	}
+	// No new job may have been enqueued.
+	if jl, _ := h.jobs.List(); len(jl) != 0 {
+		t.Fatalf("jobs = %+v, want none (already-downloaded must not re-enqueue)", jl)
+	}
+	// The video row must remain 'downloaded' (not flipped back to queued).
+	if v, _ := h.videos.Get("p1"); v == nil || v.Status != "downloaded" {
+		t.Fatalf("video = %+v, want status downloaded", v)
+	}
+	// It must be cleared from Pending.
+	if body := getJSON(t, h, "/api/pending"); strings.Contains(body, "p1") {
+		t.Fatalf("p1 should be cleared from pending: %s", body)
+	}
+}
+
 // TestPendingIgnore_notFound_404 asserts ignoring an unknown ledger id is a
 // clean 404, not a silent success.
 func TestPendingIgnore_notFound_404(t *testing.T) {

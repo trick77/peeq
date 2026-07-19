@@ -319,6 +319,7 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 type pendingItem struct {
 	VideoID         string `json:"video_id"`
 	ChannelID       string `json:"channel_id"`
+	ChannelName     string `json:"channel_name"`
 	Title           string `json:"title"`
 	DurationSeconds int    `json:"duration_seconds"`
 	URL             string `json:"url"`
@@ -344,6 +345,7 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, pendingItem{
 			VideoID:         e.VideoID,
 			ChannelID:       e.ChannelID,
+			ChannelName:     e.ChannelName,
 			Title:           e.Title,
 			DurationSeconds: e.DurationSeconds,
 			URL:             e.URL,
@@ -369,6 +371,24 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	e, err := s.ledger.Get(id)
 	if err != nil || e == nil || e.State != "pending" {
 		writeJSONError(w, http.StatusNotFound, "pending item not found")
+		return
+	}
+	// Format decision: a manual "Download now" from Pending deliberately uses
+	// the GLOBAL format preset (RequestedFormat left empty below), NOT the
+	// channel's format_override. The per-channel override is an autodownload
+	// policy; a manual pick from Pending is a one-off that follows the global
+	// preset.
+	//
+	// If this video was already downloaded while still sitting on the Pending
+	// list (e.g. added manually via the video URL), do NOT re-enqueue a
+	// duplicate: just clear it from Pending and report it back as already
+	// downloaded.
+	if v, verr := s.videos.Get(e.VideoID); verr == nil && v != nil && v.Status == "downloaded" {
+		if err := s.ledger.SetState(e.VideoID, "queued"); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "update pending failed")
+			return
+		}
+		writeJSON(w, map[string]string{"status": "already_downloaded"})
 		return
 	}
 	if err := s.videos.Upsert(videos.Video{
