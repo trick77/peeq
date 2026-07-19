@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -653,6 +654,7 @@ type redownloadTestHarness struct {
 	http.Handler
 	videos *videos.Store
 	jobs   *jobs.Store
+	db     *sql.DB
 }
 
 func newRedownloadTestServer(t *testing.T) *redownloadTestHarness {
@@ -679,6 +681,7 @@ func newRedownloadTestServer(t *testing.T) *redownloadTestHarness {
 		Handler: New(deps),
 		videos:  videosStore,
 		jobs:    jobsStore,
+		db:      db,
 	}
 }
 
@@ -747,6 +750,61 @@ func TestRedownloadTombstonedVideoEnqueues(t *testing.T) {
 	}
 	if got.Status != "queued" {
 		t.Fatalf("status = %q, want queued", got.Status)
+	}
+}
+
+// TestRedownloadTombstonedVideoRescuesFromSweep is the regression test for
+// the critical bug the final fix wave addresses: a tombstoned video is
+// always watched=1 with an aged watched_at (that's how the retention
+// sweeper got it there in the first place), so simply flipping its status
+// to 'queued' on re-download left it still matching SweepCandidates — the
+// hourly sweeper would delete the freshly re-downloaded media within about
+// an hour. handleRedownloadVideo must reset the watched state so the video
+// no longer matches SweepCandidates' WHERE clause.
+func TestRedownloadTombstonedVideoRescuesFromSweep(t *testing.T) {
+	h := newRedownloadTestServer(t)
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := h.videos.Tombstone("v1"); err != nil {
+		t.Fatalf("seed tombstoned status: %v", err)
+	}
+	// Simulate the retention sweeper's prior state: watched, aged watched_at.
+	const agedWatchedAt = "2020-01-01 00:00:00"
+	if _, err := h.db.Exec(
+		`UPDATE videos SET watched = 1, watched_at = ? WHERE id = ?`, agedWatchedAt, "v1",
+	); err != nil {
+		t.Fatalf("seed watched state: %v", err)
+	}
+
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/redownload", nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := h.videos.Get("v1")
+	if err != nil || got == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.Watched {
+		t.Fatalf("watched = true after redownload, want false (rescued)")
+	}
+	if got.WatchedAt != "" {
+		t.Fatalf("watched_at = %q after redownload, want cleared", got.WatchedAt)
+	}
+
+	// The real assertion: a cutoff well after the aged watched_at (and even
+	// after "now") must not return v1 from SweepCandidates any more.
+	const futureCutoff = "2099-01-01 00:00:00"
+	candidates, err := h.videos.SweepCandidates(futureCutoff)
+	if err != nil {
+		t.Fatalf("sweep candidates: %v", err)
+	}
+	for _, c := range candidates {
+		if c.ID == "v1" {
+			t.Fatalf("v1 still a sweep candidate after redownload; sweeper would delete the fresh media")
+		}
 	}
 }
 

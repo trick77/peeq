@@ -274,7 +274,9 @@ export function App() {
 // DownloadStatusBanner shows why the download queue is stalled, so a paused
 // queue is diagnosable at a glance instead of looking silently broken. Renders
 // nothing when the queue is healthy. Low disk takes precedence over the cookie
-// pause (a full disk blocks downloads regardless of cookie state).
+// pause (a full disk blocks downloads regardless of cookie state). The
+// YouTube kill-switch pause (youtube_paused) outranks both and is checked
+// first, since it is a deliberate all-activity stop the user asked for.
 function DownloadStatusBanner({
   status,
   onFixCookie,

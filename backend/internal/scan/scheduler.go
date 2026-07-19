@@ -178,6 +178,7 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 		// while the UI stays green. The normal Backoff still applies below; it
 		// is harmless, since the flipped status stops all scanning next pass
 		// until the user re-pastes a cookie.
+		var terminal *ytdlp.TerminalError
 		switch {
 		case errors.Is(err, ytdlp.ErrBlocked):
 			if serr := s.d.Settings.SetCookie(ctx, "", "blocked"); serr != nil {
@@ -187,6 +188,16 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 			if serr := s.d.Settings.SetCookie(ctx, "", "stale"); serr != nil {
 				s.d.Logger.Error("scan: set cookie status failed", "status", "stale", "err", serr)
 			}
+		case errors.Is(err, ytdlp.ErrPaused):
+			// Kill-switch tripped mid-scan: not a real failure, so don't
+			// feed FailMonitor. The YoutubePaused gate in Run parks the
+			// loop next iteration; the plain backoff below still applies
+			// (harmless, since scanning is gated off anyway).
+		case errors.As(err, &terminal):
+			// Terminal ytdlp error (members-only/deleted/private/age/geo
+			// channel): permanent and per-channel-expected, mirroring the
+			// download worker's classify — don't count it toward the
+			// shared auto-pause heuristic.
 		default:
 			// Everything else (transient/unclassified failures) is
 			// count-worthy for the shared auto-pause heuristic; the two
@@ -274,8 +285,8 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	if err := s.d.Channels.MarkScanned(sub.ChannelID, baseline, lastScanned, next); err != nil {
 		return err
 	}
-	// Clean scan pass: reset the shared auto-pause heuristic's streak for
-	// this channel.
+	// Clean scan pass: reset the shared failure streak (Reset() clears the
+	// whole shared streak globally, not just for this channel).
 	if s.d.FailMonitor != nil {
 		s.d.FailMonitor.Reset()
 	}

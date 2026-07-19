@@ -506,6 +506,81 @@ func TestScanCountsDistinctChannelFailures(t *testing.T) {
 	}
 }
 
+// TestScanTerminalErrorDoesNotCountFailure mirrors the download worker's
+// classify: a *ytdlp.TerminalError (members-only/deleted/private/age/geo
+// channel) is a permanent, per-channel-expected condition, not a real scan
+// failure, so it must NOT feed FailMonitor.Fail — only unclassified errors
+// (exec/extractor, RetryableError) should count toward the shared
+// auto-pause heuristic.
+func TestScanTerminalErrorDoesNotCountFailure(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+
+	var fails []string
+	fm := &fakeMonitor{
+		onFail: func(id string) { fails = append(fails, id) },
+	}
+	h.sched = New(Deps{
+		Channels:     h.channels,
+		Ledger:       h.ledger,
+		Videos:       h.videos,
+		Jobs:         h.jobs,
+		Settings:     h.settings,
+		Lister:       errLister{err: &ytdlp.TerminalError{Reason: "members"}},
+		CookieStatus: func(context.Context) string { return h.cookieStatus },
+		FailMonitor:  fm,
+		Now:          func() time.Time { return fixedNow },
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+	h.sched.scanChannel(context.Background(), sub)
+
+	if len(fails) != 0 {
+		t.Fatalf("fails = %+v, want none for a TerminalError", fails)
+	}
+}
+
+// TestScanPausedErrorDoesNotCountFailure mirrors the download worker's
+// classify for ytdlp.ErrPaused: the kill-switch tripping mid-scan is not a
+// real failure and must not feed FailMonitor.Fail.
+func TestScanPausedErrorDoesNotCountFailure(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+
+	var fails []string
+	fm := &fakeMonitor{
+		onFail: func(id string) { fails = append(fails, id) },
+	}
+	h.sched = New(Deps{
+		Channels:     h.channels,
+		Ledger:       h.ledger,
+		Videos:       h.videos,
+		Jobs:         h.jobs,
+		Settings:     h.settings,
+		Lister:       errLister{err: ytdlp.ErrPaused},
+		CookieStatus: func(context.Context) string { return h.cookieStatus },
+		FailMonitor:  fm,
+		Now:          func() time.Time { return fixedNow },
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+	h.sched.scanChannel(context.Background(), sub)
+
+	if len(fails) != 0 {
+		t.Fatalf("fails = %+v, want none for ErrPaused", fails)
+	}
+}
+
 func TestScanCleanPassResetsFailMonitor(t *testing.T) {
 	h := newScanHarness(t)
 	h.trackAndSubscribe("UC1", false, "")

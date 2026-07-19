@@ -472,6 +472,8 @@ func TestDownloads_requireAuth(t *testing.T) {
 		httptest.NewRequest(http.MethodGet, "/api/downloads", nil),
 		httptest.NewRequest(http.MethodPost, "/api/downloads/1/cancel", nil),
 		httptest.NewRequest(http.MethodGet, "/api/downloads/stream", nil),
+		httptest.NewRequest(http.MethodPost, "/api/youtube/pause", nil),
+		httptest.NewRequest(http.MethodPost, "/api/youtube/resume", nil),
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)

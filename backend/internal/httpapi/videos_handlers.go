@@ -337,6 +337,19 @@ func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusConflict, "only failed or removed videos can be re-downloaded")
 		return
 	}
+	if s.jobs == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "downloads are not configured")
+		return
+	}
+	// A tombstoned video is always watched=1 and aged (that's how it got
+	// tombstoned by the retention sweeper); resetting the watched state here
+	// rescues it from SweepCandidates so the sweeper doesn't delete the
+	// freshly re-downloaded media within its next hourly pass. Mirrors the
+	// existing "un-watch rescues from the auto-delete sweep" rule from P1.
+	if err := s.videos.SetWatched(v.ID, false); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "reset watched state failed")
+		return
+	}
 	if err := s.videos.SetStatus(v.ID, "queued", ""); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "requeue failed")
 		return
