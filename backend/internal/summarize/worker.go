@@ -139,7 +139,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		return true, w.failJob(job, video.ID, err.Error())
 	}
 
-	if err := w.embedAndStore(ctx, video.ID, parsed); err != nil {
+	if err := w.embedAndStore(ctx, video.ID, parsed, art.Summary); err != nil {
 		return true, w.failJob(job, video.ID, err.Error())
 	}
 
@@ -169,22 +169,35 @@ func (w *Worker) failJob(job *summaryjobs.Job, videoID, msg string) error {
 // embedAndStore chunks the transcript, maps each chunk to its start-second via
 // word-offset lookup against the cue index, embeds, and replaces the video's
 // chunks+vectors.
-func (w *Worker) embedAndStore(ctx context.Context, videoID string, parsed subtitles.Parsed) error {
+func (w *Worker) embedAndStore(ctx context.Context, videoID string, parsed subtitles.Parsed, summaryText string) error {
 	chunks := rag.Chunk(parsed.Transcript, rag.DefaultChunkOptions())
 	if len(chunks) == 0 {
 		return errors.New("no chunks")
 	}
 	cueWordStarts := cueWordStartIndex(parsed.Cues)
-	texts := make([]string, len(chunks))
-	rows := make([]rag.ChunkRow, len(chunks))
-	for i, c := range chunks {
-		texts[i] = c.Text
-		rows[i] = rag.ChunkRow{
+	texts := make([]string, 0, len(chunks)+1)
+	rows := make([]rag.ChunkRow, 0, len(chunks)+1)
+	for _, c := range chunks {
+		texts = append(texts, c.Text)
+		rows = append(rows, rag.ChunkRow{
 			Ordinal:      c.Ordinal,
 			Text:         c.Text,
+			Kind:         "transcript",
 			TokenCount:   c.TokenCount,
 			StartSeconds: cueStartForWordOffset(c.WordOffset, parsed.Cues, cueWordStarts),
-		}
+		})
+	}
+	// Index the summary as one extra chunk so keyword+semantic search also
+	// matches against it (spec §7). It describes the whole video, so it has no
+	// timestamp (start_seconds = 0); the search UI badges it and opens at 0.
+	if s := strings.TrimSpace(summaryText); s != "" {
+		texts = append(texts, s)
+		rows = append(rows, rag.ChunkRow{
+			Ordinal:      len(chunks),
+			Text:         s,
+			Kind:         "summary",
+			StartSeconds: 0,
+		})
 	}
 	vecs, err := w.d.Embedder.Embed(ctx, texts)
 	if err != nil {

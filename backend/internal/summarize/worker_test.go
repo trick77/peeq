@@ -270,6 +270,64 @@ func TestProcessOneReturnsErrorOnEmbedFailure(t *testing.T) {
 	}
 }
 
+// TestProcessOneIndexesSummaryChunk asserts the video's overall summary is
+// indexed as one extra transcript_chunks row with kind='summary' and
+// start_seconds=0, so hybrid search also matches against summaries (spec §7).
+func TestProcessOneIndexesSummaryChunk(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v5/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n\n" +
+		"00:00:02.000 --> 00:00:04.000\nToday we will talk about testing Go workers.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+
+	if err := h.videos.Upsert(videos.Video{ID: "v5", URL: "https://youtu.be/v5"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v5", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v5"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(fakeWorkerCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   1536,
+	})
+
+	did, err := w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if !did {
+		t.Fatal("expected processOne to claim and process the job")
+	}
+
+	var kind string
+	var start int
+	err = h.db.QueryRow(
+		`SELECT kind, start_seconds FROM transcript_chunks WHERE video_id='v5' AND kind='summary'`).Scan(&kind, &start)
+	if err != nil {
+		t.Fatalf("no summary chunk indexed: %v", err)
+	}
+	if start != 0 {
+		t.Errorf("summary chunk start_seconds = %d, want 0", start)
+	}
+}
+
 // vttCue renders one WebVTT cue block starting at startSeconds (2s long) with
 // wordCount distinct words, so the transcript spans multiple rag.Chunk chunks
 // and each cue is unambiguously identifiable by its words.
@@ -349,7 +407,10 @@ func TestWorkerChunkTimestampsAreExactAndMonotonic(t *testing.T) {
 		t.Fatal("expected processOne to claim and process the job")
 	}
 
-	rows, err := h.db.Query(`SELECT ordinal, start_seconds FROM transcript_chunks WHERE video_id = ? ORDER BY ordinal`, "v3")
+	// kind='transcript' excludes the trailing summary chunk (Task 6), which is
+	// appended after all transcript chunks with start_seconds=0 by design and
+	// would otherwise look like a monotonicity regression here.
+	rows, err := h.db.Query(`SELECT ordinal, start_seconds FROM transcript_chunks WHERE video_id = ? AND kind = 'transcript' ORDER BY ordinal`, "v3")
 	if err != nil {
 		t.Fatalf("query chunks: %v", err)
 	}
