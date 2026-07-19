@@ -9,7 +9,7 @@ import { formatDuration } from "../format";
 // thumbnail is the remote `thumbnail_url` (no local media exists yet — an
 // item here has never been downloaded), and the two actions are Download
 // now / Ignore rather than favorite/watched.
-export function Pending() {
+export function Pending({ onCountChange }: { onCountChange?: (n: number) => void } = {}) {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -17,19 +17,27 @@ export function Pending() {
   function load() {
     setError(null);
     listPending()
-      .then(setItems)
+      .then((list) => {
+        setItems(list);
+        onCountChange?.(list.length);
+      })
       .catch((e: Error) => setError(e.message));
   }
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleDownload(item: PendingItem) {
     setBusyId(item.video_id);
     try {
       await downloadPending(item.video_id);
-      setItems((prev) => prev.filter((i) => i.video_id !== item.video_id));
+      setItems((prev) => {
+        const next = prev.filter((i) => i.video_id !== item.video_id);
+        onCountChange?.(next.length);
+        return next;
+      });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -41,7 +49,11 @@ export function Pending() {
     setBusyId(item.video_id);
     try {
       await ignorePending(item.video_id);
-      setItems((prev) => prev.filter((i) => i.video_id !== item.video_id));
+      setItems((prev) => {
+        const next = prev.filter((i) => i.video_id !== item.video_id);
+        onCountChange?.(next.length);
+        return next;
+      });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -60,7 +72,7 @@ export function Pending() {
               <span className="dur">{formatDuration(item.duration_seconds)}</span>
             </div>
             <h3>{item.title}</h3>
-            <div className="by">{item.channel_id}</div>
+            <div className="by">{item.channel_name || item.channel_id}</div>
             <div className="acts-row" style={{ display: "flex", gap: 8, marginTop: 8 }}>
               <button
                 type="button"

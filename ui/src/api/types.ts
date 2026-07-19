@@ -123,6 +123,7 @@ export type Channel = {
 export type PendingItem = {
   video_id: string;
   channel_id: string;
+  channel_name: string;
   title: string;
   duration_seconds: number;
   url: string;

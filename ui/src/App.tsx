@@ -214,7 +214,13 @@ export function App() {
         <TopBar title={meta.title} subtitle={meta.subtitle} showSearch={view === "library"} />
         <section className="page">
           <DownloadStatusBanner status={downloadStatus} onFixCookie={() => setView("settings")} />
-          <ViewSwitch view={view} selectedVideoId={selectedVideoId} onOpenVideo={openVideo} setView={setView} />
+          <ViewSwitch
+            view={view}
+            selectedVideoId={selectedVideoId}
+            onOpenVideo={openVideo}
+            setView={setView}
+            setPendingCount={setPendingCount}
+          />
         </section>
       </main>
     </div>
@@ -262,11 +268,13 @@ function ViewSwitch({
   selectedVideoId,
   onOpenVideo,
   setView,
+  setPendingCount,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
   onOpenVideo: (id: string) => void;
   setView: (v: ViewId) => void;
+  setPendingCount: (n: number) => void;
 }) {
   switch (view) {
     case "library":
@@ -279,7 +287,11 @@ function ViewSwitch({
       // download has even started); onOpenVideo is Library's job.
       return <Add onQueued={() => {}} />;
     case "pending":
-      return <Pending />;
+      // onCountChange keeps the rail badge in sync while the user acts on
+      // items (Download now/Ignore) without leaving this view — the
+      // nav-refetch effect above only covers count changes that happen
+      // while the user is elsewhere.
+      return <Pending onCountChange={setPendingCount} />;
     case "channels":
       return <Channels />;
     case "settings":

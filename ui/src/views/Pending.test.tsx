@@ -8,6 +8,7 @@ function baseItem(overrides: Partial<PendingItem> = {}): PendingItem {
   return {
     video_id: "v1",
     channel_id: "c1",
+    channel_name: "Channel One",
     title: "First pending video",
     duration_seconds: 125,
     url: "https://youtube.com/watch?v=v1",
@@ -20,6 +21,7 @@ const itemA = baseItem();
 const itemB = baseItem({
   video_id: "v2",
   channel_id: "c2",
+  channel_name: "Channel Two",
   title: "Second pending video",
   thumbnail_url: "https://img.example/v2.jpg",
 });
@@ -53,6 +55,30 @@ describe("Pending", () => {
     );
   });
 
+  it("renders the channel name, not the raw channel id", async () => {
+    render(<Pending />);
+    await screen.findByText("First pending video");
+    expect(screen.getByText("Channel One")).toBeInTheDocument();
+    expect(screen.getByText("Channel Two")).toBeInTheDocument();
+    expect(screen.queryByText("c1")).not.toBeInTheDocument();
+    expect(screen.queryByText("c2")).not.toBeInTheDocument();
+  });
+
+  it("falls back to channel_id when channel_name is empty", async () => {
+    vi.mocked(listPending).mockResolvedValue([baseItem({ channel_name: "" })]);
+    render(<Pending />);
+    expect(await screen.findByText("c1")).toBeInTheDocument();
+  });
+
+  it("calls onCountChange with the item count after initial load", async () => {
+    const onCountChange = vi.fn();
+    render(<Pending onCountChange={onCountChange} />);
+    await screen.findByText("First pending video");
+    await waitFor(() => {
+      expect(onCountChange).toHaveBeenCalledWith(2);
+    });
+  });
+
   it("clicking Download now calls downloadPending and removes the row", async () => {
     const user = userEvent.setup();
     render(<Pending />);
@@ -81,6 +107,32 @@ describe("Pending", () => {
       expect(screen.queryByText("Second pending video")).not.toBeInTheDocument();
     });
     expect(screen.getByText("First pending video")).toBeInTheDocument();
+  });
+
+  it("calls onCountChange with the decremented count after Download now removes a row", async () => {
+    const user = userEvent.setup();
+    const onCountChange = vi.fn();
+    render(<Pending onCountChange={onCountChange} />);
+    await screen.findByText("First pending video");
+    onCountChange.mockClear();
+    const row = screen.getByText("First pending video").closest(".card") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: /download now/i }));
+    await waitFor(() => {
+      expect(onCountChange).toHaveBeenCalledWith(1);
+    });
+  });
+
+  it("calls onCountChange with the decremented count after Ignore removes a row", async () => {
+    const user = userEvent.setup();
+    const onCountChange = vi.fn();
+    render(<Pending onCountChange={onCountChange} />);
+    await screen.findByText("Second pending video");
+    onCountChange.mockClear();
+    const row = screen.getByText("Second pending video").closest(".card") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: /ignore/i }));
+    await waitFor(() => {
+      expect(onCountChange).toHaveBeenCalledWith(1);
+    });
   });
 });
 
