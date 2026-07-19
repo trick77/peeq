@@ -165,15 +165,22 @@ func (s *Store) Unsubscribe(channelID string) (bool, error) {
 }
 
 // UpdateConfig sets a subscription's autodownload flag and format override.
-func (s *Store) UpdateConfig(channelID string, autodownload bool, formatOverride string) error {
-	_, err := s.db.ExecContext(context.Background(),
+// Returns whether a subscription row actually existed (and was updated) —
+// callers use this to distinguish a real config update from a silent no-op
+// on a channel that is tracked but not subscribed.
+func (s *Store) UpdateConfig(channelID string, autodownload bool, formatOverride string) (bool, error) {
+	res, err := s.db.ExecContext(context.Background(),
 		`UPDATE subscriptions SET autodownload = ?, format_override = ? WHERE channel_id = ?`,
 		autodownload, formatOverride, channelID,
 	)
 	if err != nil {
-		return fmt.Errorf("update config %s: %w", channelID, err)
+		return false, fmt.Errorf("update config %s: %w", channelID, err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("update config %s: rows affected: %w", channelID, err)
+	}
+	return n > 0, nil
 }
 
 // ClaimDue returns the subscription with the oldest next_scan_at <= now, or

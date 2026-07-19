@@ -50,8 +50,8 @@ func TestChannels_trackSubscribeClaim(t *testing.T) {
 		t.Fatalf("new subscription must have NULL baselined_at, got %q", sub.BaselinedAt)
 	}
 	// Config update reflected in List.
-	if err := st.UpdateConfig("UC1", true, "bestvideo+bestaudio"); err != nil {
-		t.Fatal(err)
+	if ok, err := st.UpdateConfig("UC1", true, "bestvideo+bestaudio"); err != nil || !ok {
+		t.Fatalf("update config: ok=%v err=%v", ok, err)
 	}
 	items, err := st.List("subscribed")
 	if err != nil {
