@@ -180,11 +180,6 @@ func run() error {
 		Guard:    streamTracker,
 	})
 
-	// Bound the worker and sweeper goroutines' lifetimes to the process:
-	// wg.Wait() below (after serve returns, i.e. after ctx is cancelled)
-	// blocks until both have actually observed ctx.Done() and returned,
-	// rather than exiting the process out from under them. Both loops exit
-	// promptly on ctx.Done(), so this wait is short.
 	scheduler := scan.New(scan.Deps{
 		Channels:     channelsStore,
 		Ledger:       ledgerStore,
@@ -195,6 +190,13 @@ func run() error {
 		CookieStatus: func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
 	})
 
+	// Bound all four background goroutines' lifetimes to the process: the
+	// download worker, the retention sweeper, the yt-dlp self-update ticker,
+	// and the scan scheduler. workerWG.Wait() below (after serve returns,
+	// i.e. after ctx is cancelled) blocks until all four have actually
+	// observed ctx.Done() and returned, rather than exiting the process out
+	// from under them. All four loops exit promptly on ctx.Done(), so this
+	// wait is short.
 	var workerWG sync.WaitGroup
 	workerWG.Add(4)
 	go func() {

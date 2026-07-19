@@ -11,8 +11,9 @@ docker compose up -d --build
 ```
 
 This starts a single hardened `vark` container (non-root, read-only rootfs, all capabilities
-dropped) behind an external Traefik network — see `compose.yaml`. Data (SQLite DB, downloaded
-media, the yt-dlp binary) lives under `./data`.
+dropped) behind an external Traefik network — see `compose.yaml`. The SQLite DB and the yt-dlp
+binary live under `./data`; downloaded media lives on its own bind mount (`/mnt/ark/peeq` by
+default — adjust to your host).
 
 For local development without OIDC (dev auto-login, host networking):
 
@@ -27,6 +28,29 @@ make dev   # backend on 127.0.0.1:8080 + Vite dev server proxying /api
 ```
 
 See `AGENTS.md` for conventions, locked technical choices, and commands.
+
+### Phase 2 upgrade note
+
+Phase 2 (channels & subscriptions) squashed all migrations into a single `0001_init.sql`, so an
+existing dev database predating this change won't pick up the new tables on startup. Delete it and
+let vark re-migrate from scratch:
+
+```bash
+rm ./data/vark.db*
+```
+
+(This is a dev-only concern — a fresh volume/deploy just migrates cleanly.)
+
+## Channels & subscriptions
+
+Adding a channel URL or `@handle` **tracks** it (it shows up under Channels, but nothing is
+downloaded automatically). **Subscribing** to a tracked channel opts it into the daily scan, which
+looks for new uploads and either lists them under **New & pending** for a manual decision, or — if
+the channel has **autodownload** enabled — enqueues them automatically (optionally with a
+per-channel format override). A channel's first scan only records a baseline (its current videos)
+and queues nothing, so subscribing never triggers a bulk backfill. The scan itself respects the
+same throttle as everything else: at least 60s between channels and a 20s+ randomized delay per
+yt-dlp call, so a large subscription list is scanned gradually rather than in a burst.
 
 ## Two hard invariants
 
@@ -47,6 +71,32 @@ media does not restore any of that state — favorited and watched videos, resum
 tombstoned entries are gone for good. SQLite runs in WAL mode; use `sqlite3 vark.db ".backup
 backup.db"` (or a continuous tool like Litestream) rather than copying the file directly while the
 process is running.
+
+## Manual verification checklist (channels & subscriptions)
+
+The full channels/subscriptions flow needs a real YouTube cookie and is not covered by automated
+tests. Run this checklist by hand after any change that touches channels, scanning, or the
+download pipeline:
+
+1. Boot with a real DB/media dir; sign in; paste a real cookie in Settings and confirm status
+   shows "active".
+2. **Add** a channel by `@handle` under Channels — it should appear tracked with the resolved
+   channel name. **Subscribe** to it.
+3. Wait for (or force) the scheduler's first pass on that channel — it should show `baselined_at`
+   set and queue **nothing** (first-run baseline, no backfill).
+4. Once a genuinely new upload exists on a subscribed, non-autodownload channel, confirm it lands
+   in **New & pending** on the next scan. **Download now** should enqueue it (progress visible in
+   the dock) and it should land in Library as `downloaded`. **Ignore** on another pending item
+   should remove it from the list.
+5. Flip a channel to **Autodownload** with a format override — the next new upload on that channel
+   should enqueue automatically at low priority and download using the override format.
+6. Paste a **video** URL (not a channel URL) into Add — confirm its channel is silently tracked
+   (appears under Channels → Tracked) without being subscribed.
+7. **Delete** a channel that has a downloaded, favorited video — confirm the video row and its
+   media file are both gone (cascade delete overrides the favorite), and that deleting a channel
+   mid-download cancels the running job for that channel.
+8. With multiple subscribed channels, watch the logs across a scan cycle and confirm at least 60s
+   between channels and a 20s+ delay per yt-dlp call.
 
 ## Legal note
 

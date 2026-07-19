@@ -316,4 +316,3 @@ func (s *server) lookupVideo(w http.ResponseWriter, r *http.Request) (*videos.Vi
 	}
 	return v, true
 }
-

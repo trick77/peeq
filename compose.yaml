@@ -12,33 +12,18 @@ services:
     image: ghcr.io/trick77/vark:latest
     restart: unless-stopped
 
-    # --- Container hardening ---------------------------------------------
-    # Run as a fixed, non-root uid:gid. Matches the ownership `data-init`
-    # (see compose.dev.yaml) or a one-off `chown -R 1000:1000 ./data` gives
-    # the bind-mounted volume.
     user: "1000:1000"
-    # Drop every Linux capability; vark only listens on a TCP port and
-    # shells out to yt-dlp/ffmpeg as a plain child process, none of which
-    # needs any capability at all.
     cap_drop:
       - ALL
-    # Block privilege escalation via setuid/setgid binaries even if one
-    # somehow ended up in the image.
     security_opt:
       - no-new-privileges:true
-    # Root filesystem is immutable; every path the process (or yt-dlp/ffmpeg
-    # as its children) writes to is called out explicitly below.
     read_only: true
     tmpfs:
-      # yt-dlp's cookie file (written fresh per invocation, see
-      # internal/ytdlp/ytdlp.go writeCookieTempFile) and its own XDG cache
-      # dir both land in $TMPDIR/$HOME; HOME is pointed at /tmp below so
-      # both stay inside this tmpfs instead of needing a writable rootfs.
+      # HOME/TMPDIR (set below) must be writable for yt-dlp's cookie temp
+      # file + cache dir since the rootfs is read-only.
       - /tmp:size=256m
 
     environment:
-      # See the tmpfs comment above: HOME/TMPDIR must be a writable path
-      # when the rootfs is read-only. /tmp is the tmpfs mounted above.
       HOME: /tmp
       TMPDIR: /tmp
       VARK_ADDR: ":8080"
@@ -66,18 +51,12 @@ services:
       retries: 3
 
     volumes:
-      # SQLite DB + downloaded media + the self-updating yt-dlp binary all
-      # live under one bind mount so a single directory backup covers state.
-      - ./data:/data
+      - ./data:/data                 # SQLite DB (/data/vark.db) + self-updating yt-dlp binary (/data/bin)
+      - /mnt/ark/peeq:/data/media    # downloaded media on the dedicated volume
 
     networks:
       - traefik
 
-    # Soft resource ceiling: yt-dlp+ffmpeg transcoding/muxing is the only
-    # CPU-heavy step and vark runs at most one download at a time (single-
-    # concurrency worker), so this is generous headroom, not a tight limit.
-    # Adjust to your host; docker compose applies deploy.resources.limits
-    # even outside Swarm mode.
     deploy:
       resources:
         limits:
@@ -85,11 +64,9 @@ services:
           memory: 1g
 
     labels:
-      # The single vark image serves both the API and the embedded SPA on
-      # :8080, so it is the public service; Traefik terminates TLS in front
-      # of it. Replace the Host() rule with your real domain.
       traefik.enable: "true"
       traefik.docker.network: traefik
+      # Replace the Host() rule with your real domain.
       traefik.http.routers.vark.rule: Host(`vark.example.com`)
       traefik.http.routers.vark.entrypoints: websecure
       traefik.http.routers.vark.tls: "true"
