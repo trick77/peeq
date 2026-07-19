@@ -71,6 +71,16 @@ transcripts. This requires two external endpoints: a **MiMo chat API** for gener
   ```
 - `BACKEND_DEFAULT_SUB_LANG` — fallback subtitle language if none is auto-detected (default `en`)
 
+**Phase 3.1a — hybrid search:** search now matches by **keyword** (SQLite FTS5) *and* **meaning**
+(vector similarity), fused into one ranked list, and also indexes each video's **summary**. Keyword
+search needs no external service, so if the embeddings endpoint is unavailable, search **degrades
+gracefully to keyword-only** (HTTP 200 with a logged warning) instead of failing. Phase 3.1a also
+adds a `kind` column to `transcript_chunks` and an `fts_chunks` table via a **final in-place edit of
+`0001_init.sql`** — the migration runner will not re-apply an edited `0001` to an existing database,
+so **upgrading an existing dev DB requires recreating it** (`rm ./data/peeq.db*`). On a stale DB,
+search silently returns no results (now logged as a warning). Append-only migrations resume from
+Phase 3.2 onward.
+
 ## Two hard invariants
 
 - **No YouTube call ever fires without a valid cookie.** Every yt-dlp invocation (metadata fetch,
