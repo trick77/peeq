@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cookieLine, toNetscape, isYouTubeDomain } from "./shared.js";
+import {
+  GATE_COOKIE_NAMES, DISPLAY_COOKIE_NAMES,
+  selectYouTubeCookies, hasSessionCookie, countDisplayCookies,
+} from "./shared.js";
 
 // Chrome's real cookie shape: expirationDate is a FLOAT, session cookies omit
 // it entirely, domain carries a leading dot, and httpOnly/secure are distinct.
@@ -70,4 +74,59 @@ test("isYouTubeDomain accepts youtube.com and subdomains, rejects lookalikes", (
   assert.equal(isYouTubeDomain("notyoutube.com"), false);
   assert.equal(isYouTubeDomain("youtube.com.evil.test"), false);
   assert.equal(isYouTubeDomain("google.com"), false);
+});
+
+const yt = (name) => ({
+  domain: ".youtube.com", path: "/", name, value: "v",
+  secure: true, httpOnly: true, expirationDate: 1819099943.5,
+});
+
+test("the gate is exactly Validate's trio", () => {
+  assert.deepEqual([...GATE_COOKIE_NAMES].sort(),
+    ["SID", "__Secure-1PSID", "__Secure-3PSID"].sort());
+});
+
+test("the display set is the five reported names", () => {
+  assert.equal(DISPLAY_COOKIE_NAMES.length, 5);
+  for (const gated of GATE_COOKIE_NAMES) {
+    assert.ok(DISPLAY_COOKIE_NAMES.includes(gated),
+      `${gated} gates the button so it must also be displayed`);
+  }
+});
+
+test("selectYouTubeCookies keeps only YouTube entries", () => {
+  const mixed = [yt("SID"), { ...yt("SID"), domain: ".google.com" }];
+  const kept = selectYouTubeCookies(mixed);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].domain, ".youtube.com");
+});
+
+test("hasSessionCookie is true for any one of the trio", () => {
+  for (const name of GATE_COOKIE_NAMES) {
+    assert.equal(hasSessionCookie([yt(name)]), true, `${name} should gate open`);
+  }
+});
+
+test("hasSessionCookie is false for a jar with no session cookie", () => {
+  // The anonymous-jar case: sending this would overwrite peeq's good cookie.
+  assert.equal(hasSessionCookie([yt("PREF"), yt("VISITOR_INFO1_LIVE")]), false);
+  assert.equal(hasSessionCookie([]), false);
+});
+
+test("hasSessionCookie ignores a session cookie on a non-YouTube domain", () => {
+  assert.equal(hasSessionCookie([{ ...yt("SID"), domain: ".google.com" }]), false);
+});
+
+test("countDisplayCookies counts only display-set members, without double counting", () => {
+  assert.equal(countDisplayCookies([yt("SID"), yt("SAPISID"), yt("PREF")]), 2);
+  assert.equal(countDisplayCookies([yt("SID"), yt("SID")]), 1, "duplicates count once");
+  assert.equal(countDisplayCookies([]), 0);
+});
+
+test("a 3-of-5 jar still passes the gate", () => {
+  // The display set is informational; only the trio gates. A jar missing
+  // SAPISID/LOGIN_INFO is perfectly valid and must not disable the button.
+  const jar = [yt("SID"), yt("__Secure-1PSID"), yt("__Secure-3PSID")];
+  assert.equal(countDisplayCookies(jar), 3);
+  assert.equal(hasSessionCookie(jar), true);
 });

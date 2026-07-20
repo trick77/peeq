@@ -39,3 +39,31 @@ export function isYouTubeDomain(domain) {
   const bare = domain.startsWith(".") ? domain.slice(1) : domain;
   return bare === "youtube.com" || bare.endsWith(".youtube.com");
 }
+
+// The gate: backend/internal/cookie/netscape.go Validate accepts a jar when
+// at least ONE of these is present on a YouTube domain. This and only this
+// decides whether the send button is enabled.
+export const GATE_COOKIE_NAMES = ["SID", "__Secure-1PSID", "__Secure-3PSID"];
+
+// The display set is INFORMATIONAL ONLY — the "N of 5" readout. It is a
+// superset of the gate. A 3-of-5 jar is valid and must never be blocked.
+export const DISPLAY_COOKIE_NAMES = [
+  "SID", "__Secure-1PSID", "__Secure-3PSID", "SAPISID", "LOGIN_INFO",
+];
+
+export function selectYouTubeCookies(cookies) {
+  return cookies.filter((c) => isYouTubeDomain(c.domain));
+}
+
+export function hasSessionCookie(cookies) {
+  return selectYouTubeCookies(cookies).some((c) => GATE_COOKIE_NAMES.includes(c.name));
+}
+
+export function countDisplayCookies(cookies) {
+  const present = new Set(
+    selectYouTubeCookies(cookies)
+      .map((c) => c.name)
+      .filter((name) => DISPLAY_COOKIE_NAMES.includes(name)),
+  );
+  return present.size;
+}
