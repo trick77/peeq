@@ -224,9 +224,10 @@
   <section>
     <h2>Why the base image isn't the constraint</h2>
     <p>An earlier draft of this design framed the problem as “deno isn't in Debian, so we must
-      curl it.” That was the wrong frame. <strong>peeq ships a container</strong> — the image is
-      ours to compose, and a runtime can simply be copied in from an image that already has one.
-      No base-image change, no download logic, no checksum to maintain:</p>
+      curl it.” That was the wrong frame twice over. peeq's <em>host</em> is Debian; peeq itself
+      <strong>ships a container</strong>, so the image is ours to compose and a runtime can simply
+      be copied in from an image that already has one. No base-image change, no download logic,
+      no checksum to maintain:</p>
     <div class="code">COPY --from=denoland/deno:bin-2.9.3 /deno /usr/local/bin/deno</div>
     <p>Verified: builds clean, and yt-dlp reports <code>JS runtimes: deno-2.9.3</code>. This also
       removes the boot-time-network and partial-install failure modes that the fetch-at-runtime
@@ -367,8 +368,15 @@ GAINED with runtime: ______________________</div>
     <div class="code"><span class="dim"># yt-dlp must execute YouTube's player JS to solve the sig/n challenges;</span>
 <span class="dim"># without a runtime it falls back to a deprecated path where formats</span>
 <span class="dim"># silently disappear. deno is the only runtime yt-dlp auto-detects, so</span>
-<span class="dim"># no --js-runtimes flag is needed. amd64 only, matching the release build.</span>
-<span class="good">COPY --from=denoland/deno:bin-2.9.3 /deno /usr/local/bin/deno</span></div>
+<span class="dim"># no --js-runtimes flag is needed. Pinned by DIGEST, not just tag: this</span>
+<span class="dim"># binary executes JS that YouTube serves us, so the bytes must be exactly</span>
+<span class="dim"># the ones reviewed. The digest is a multi-arch manifest list.</span>
+<span class="good">COPY --from=denoland/deno:bin-2.9.3@sha256:eb93e70bd53efec4be113d9974107840756551bc1a59a8258892d7bbe5fb4ab0 \
+     /deno /usr/local/bin/deno</span></div>
+    <p>The digest pin is deliberate. A tag is mutable in principle, and this is the one binary in
+      the image whose whole job is to execute code an external party controls — the case where
+      reproducibility earns its keep. The bump ritual becomes: change tag <em>and</em> digest
+      together.</p>
     <h3>Plus one boot log line — confirmed in scope</h3>
     <p>A runtime can go missing from a future or hand-built image, and the failure is silent by
       nature. One probe at startup makes it visible, and confirms the runtime is genuinely
@@ -405,8 +413,13 @@ GAINED with runtime: ______________________</div>
         <li><strong>Version drift.</strong> Bumping deno needs a Containerfile edit — accepted,
           since the part that actually chases YouTube (<code>yt-dlp-ejs</code>) lives inside the
           self-updating yt-dlp binary.</li>
-        <li><strong>amd64 only</strong>, matching the release build. Noted in a comment so a future
-          multi-arch build doesn't silently pull the wrong binary.</li>
+        <li><strong>Build-time dependency shifts to Docker Hub</strong> for the <code>COPY --from</code>
+          image, where the rejected curl approach depended on GitHub. Same risk class, not a new one.
+          Minor upside: an official multi-arch image travels better than a hardcoded
+          <code>x86_64</code> URL if peeq ever builds for arm64.</li>
+        <li><strong>The boot probe runs in dev too</strong>, where there is no deno. It must log the
+          <code>NONE</code> warning and continue — never fatal, never blocking <code>make dev</code>.
+          That warning is the feature: it is the dev/prod divergence made visible rather than silent.</li>
       </ul>
     </div>
     <h3>Deliberately not in this slice</h3>
