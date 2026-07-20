@@ -209,3 +209,49 @@ func (s *Store) YoutubePaused(ctx context.Context) (bool, string) {
 	}
 	return paused, reason
 }
+
+// SetAPITokenHash stores the SHA-256 hash of the machine API token and
+// stamps api_token_created_at. The token plaintext is never persisted: it
+// exists only in the response that creates it (see internal/apitoken).
+// Calling this again replaces the previous hash, which is how regeneration
+// invalidates the old token immediately.
+func (s *Store) SetAPITokenHash(ctx context.Context, hash string) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE settings
+SET api_token_hash = ?, api_token_created_at = datetime('now')
+WHERE id = 1`, hash)
+	if err != nil {
+		return fmt.Errorf("set api token hash: %w", err)
+	}
+	return nil
+}
+
+// APITokenHash returns the stored token hash for the RequireToken
+// middleware. Returns "" if unset or on read error, so an unconfigured or
+// unreadable peeq fails safe: an empty hash never authenticates anything.
+func (s *Store) APITokenHash(ctx context.Context) string {
+	var hash string
+	err := s.db.QueryRowContext(ctx, `SELECT api_token_hash FROM settings WHERE id = 1`).Scan(&hash)
+	if err != nil {
+		return ""
+	}
+	return hash
+}
+
+// APITokenInfo reports whether a token exists and when it was created,
+// without exposing the hash. This backs GET /api/settings/token, which must
+// never return anything secret.
+func (s *Store) APITokenInfo(ctx context.Context) (bool, string, error) {
+	var hash string
+	var createdAt sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT api_token_hash, api_token_created_at FROM settings WHERE id = 1`,
+	).Scan(&hash, &createdAt)
+	if err != nil {
+		return false, "", fmt.Errorf("get api token info: %w", err)
+	}
+	if !createdAt.Valid {
+		return hash != "", "", nil
+	}
+	return hash != "", createdAt.String, nil
+}

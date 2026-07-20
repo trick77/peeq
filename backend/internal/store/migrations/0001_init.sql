@@ -14,7 +14,11 @@ CREATE TABLE settings (
     ytdlp_version          TEXT NOT NULL DEFAULT '',
     youtube_paused         INTEGER NOT NULL DEFAULT 0,
     youtube_pause_reason   TEXT NOT NULL DEFAULT '',
-    youtube_paused_at      TEXT
+    youtube_paused_at      TEXT,
+    -- api_token_hash: SHA-256 (hex) of the machine API token. The token
+    -- itself is write-only and never persisted — see internal/apitoken.
+    api_token_hash         TEXT NOT NULL DEFAULT '',
+    api_token_created_at   TEXT
 );
 
 INSERT OR IGNORE INTO settings (id, format_preset, retention_days, throttle_base_seconds, min_free_gb, cookie_status, min_video_duration_seconds)
