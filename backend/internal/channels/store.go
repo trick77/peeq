@@ -1,10 +1,12 @@
-// Package channels persists tracked YouTube channels (the channels table)
-// and their optional subscriptions (the subscriptions table) from migration
-// 0001_init.sql. A channel row means "tracked" (its identity is known,
-// videos may reference it); a subscription row means "subscribed" (the
-// scheduler periodically scans it for new videos). A channel can be tracked
-// without being subscribed, but a subscription always implies a tracked
-// channel (subscriptions.channel_id references channels.id).
+// Package channels persists a metadata cache of YouTube channels (the
+// channels table) and their optional subscriptions (the subscriptions
+// table) from migration 0001_init.sql. A channels row does NOT mean
+// "tracked" — it exists for any channel peeq has ever looked at, including
+// ones the user never explicitly added. Tracking is tracked_at IS NOT NULL,
+// set via Track. A subscription row means "subscribed" (the scheduler
+// periodically scans it for new videos); a channel can be tracked without
+// being subscribed, but a subscription always implies a tracked channel
+// (subscriptions.channel_id references channels.id).
 package channels
 
 import (
