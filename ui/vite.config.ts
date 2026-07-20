@@ -15,5 +15,19 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
+    coverage: {
+      provider: "v8",
+      // json-summary is what hack/coverage-gate.sh reads; text-summary is for humans.
+      reporter: ["text-summary", "json-summary"],
+      reportsDirectory: "../coverage/ui",
+      // Pure type declarations, app bootstrap and test scaffolding — nothing
+      // here is behaviour a test could meaningfully assert.
+      exclude: [
+        "src/main.tsx",
+        "src/test-setup.ts",
+        "src/api/types.ts",
+        "**/*.test.{ts,tsx}",
+      ],
+    },
   },
 });

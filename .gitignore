@@ -1,5 +1,6 @@
 bin/
 node_modules/
+coverage/
 # Playwright run output from extension/e2e.
 test-results/
 playwright-report/
