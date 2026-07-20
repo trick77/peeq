@@ -63,8 +63,8 @@ func TestParse_extensionOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if len(cookies) != 7 {
-		t.Fatalf("parsed %d cookies, want 7", len(cookies))
+	if len(cookies) != 9 {
+		t.Fatalf("parsed %d cookies, want 9", len(cookies))
 	}
 
 	byName := make(map[string]cookie.Cookie, len(cookies))
@@ -95,6 +95,13 @@ func TestParse_extensionOutput(t *testing.T) {
 	// The #HttpOnly_ prefix must be stripped, leaving a clean domain.
 	if got := byName["SID"].Domain; got != ".youtube.com" {
 		t.Errorf("SID: Domain = %q, want %q", got, ".youtube.com")
+	}
+
+	// Real YouTube SID carries no Secure flag. Pinning it here keeps the
+	// fixture honest: an over-tidy fixture is what hid the https-only
+	// host_permissions bug.
+	if byName["SID"].Secure {
+		t.Error("SID: Secure = true, want false — the fixture has been tidied away from reality")
 	}
 
 	// The parsed Domain is identical whether or not #HttpOnly_ was emitted,

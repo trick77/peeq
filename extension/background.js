@@ -8,7 +8,13 @@ const api = globalThis.browser ?? globalThis.chrome;
 
 // Reads only THIS profile's store. Never getAllCookieStores(): merging stores
 // can put two different sessions' __Secure-1PSID into one jar and let a dead
-// session shadow a live one.
+// session shadow a live one. The manifest's host_permissions must stay
+// "*://*.youtube.com/*", not "https://*.youtube.com/*": Chrome filters
+// chrome.cookies.getAll() results against host permissions by building each
+// cookie's URL with scheme https only if that cookie has the Secure
+// attribute, otherwise http. Non-Secure YouTube cookies such as SID, HSID
+// and APISID would then resolve to an http:// URL that an https-only
+// permission does not cover, silently hiding them from the extension.
 const getCookies = () => api.cookies.getAll({ domain: ".youtube.com" });
 
 async function realDeps() {

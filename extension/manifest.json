@@ -4,7 +4,7 @@
   "description": "Send a YouTube sign-in to your peeq server.",
   "version": "0.1.0",
   "permissions": ["cookies", "storage"],
-  "host_permissions": ["https://*.youtube.com/*"],
+  "host_permissions": ["*://*.youtube.com/*"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "action": { "default_popup": "popup.html" },
   "options_page": "options.html",
