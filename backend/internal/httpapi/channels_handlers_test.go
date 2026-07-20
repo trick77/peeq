@@ -352,6 +352,103 @@ func TestChannels_requireAuth(t *testing.T) {
 	}
 }
 
+// TestChannelDetail_untrackedChannel_200 asserts a channel that exists only
+// because the user downloaded one of its videos by URL still has a page.
+// This is the whole point of splitting the cache from the tracking list.
+func TestChannelDetail_untrackedChannel_200(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCloose", "Deep Field Radio")
+
+	body := getJSON(t, h, "/api/channels/UCloose")
+	if !strings.Contains(body, `"tracked":false`) {
+		t.Fatalf("want tracked:false, got %s", body)
+	}
+	if !strings.Contains(body, "Deep Field Radio") {
+		t.Fatalf("want the channel name from its videos, got %s", body)
+	}
+}
+
+// TestChannelDetail_stats asserts the four header numbers count only
+// downloaded videos — a queued or errored row is not on disk and must not be
+// claimed as archived.
+func TestChannelDetail_stats(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	h := New(deps)
+	seedVideoRowFull(t, deps, seedVideo{ID: "v1", ChannelID: "UCa", ChannelName: "A", Status: "downloaded", Duration: 600, Bytes: 1000})
+	seedVideoRowFull(t, deps, seedVideo{ID: "v2", ChannelID: "UCa", ChannelName: "A", Status: "downloaded", Duration: 300, Bytes: 2000})
+	seedVideoRowFull(t, deps, seedVideo{ID: "v3", ChannelID: "UCa", ChannelName: "A", Status: "queued", Duration: 999, Bytes: 9999})
+
+	body := getJSON(t, h, "/api/channels/UCa")
+	if !strings.Contains(body, `"archived_count":2`) {
+		t.Fatalf("want archived_count 2, got %s", body)
+	}
+	if !strings.Contains(body, `"runtime_seconds":900`) {
+		t.Fatalf("want runtime_seconds 900, got %s", body)
+	}
+	if !strings.Contains(body, `"disk_bytes":3000`) {
+		t.Fatalf("want disk_bytes 3000, got %s", body)
+	}
+}
+
+// TestChannelDetail_unknownChannel_404 asserts an id matching neither a
+// cached channel nor any video is a 404, not an empty page.
+func TestChannelDetail_unknownChannel_404(t *testing.T) {
+	h := New(channelsTestDeps(t, &testResolver{}))
+	req := httptest.NewRequest(http.MethodGet, "/api/channels/UCnope", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestChannelDetail_subscribed_includesSchedule asserts the page can tell the
+// user when peeq last checked and when it will check next.
+func TestChannelDetail_subscribed_includesSchedule(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "Subbed"}})
+	h := New(deps)
+	rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@s", "subscribe": true})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("setup: status %d body %s", rec.Code, rec.Body.String())
+	}
+
+	body := getJSON(t, h, "/api/channels/UCs")
+	for _, want := range []string{`"tracked":true`, `"subscribed":true`, `"next_scan_at"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("want %s in %s", want, body)
+		}
+	}
+}
+
+type seedVideo struct {
+	ID          string
+	ChannelID   string
+	ChannelName string
+	Status      string
+	Duration    int
+	Bytes       int64
+	PublishedAt string
+}
+
+func seedVideoRowFull(t *testing.T, deps Deps, v seedVideo) {
+	t.Helper()
+	_, err := deps.Channels.DB().Exec(`
+INSERT INTO videos (id, url, title, channel_id, channel_name, duration_seconds, filesize_bytes, status, published_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, "https://y/"+v.ID, "title "+v.ID, v.ChannelID, v.ChannelName,
+		v.Duration, v.Bytes, v.Status, v.PublishedAt)
+	if err != nil {
+		t.Fatalf("seed video %s: %v", v.ID, err)
+	}
+}
+
+func seedVideoRow(t *testing.T, deps Deps, id, channelID, channelName string) {
+	t.Helper()
+	seedVideoRowFull(t, deps, seedVideo{ID: id, ChannelID: channelID, ChannelName: channelName, Status: "downloaded"})
+}
+
 // TestDownloadsPost_doesNotTrackChannel asserts adding a single video via
 // POST /api/downloads leaves the Channels view untouched. Tracking is an
 // explicit action on the Channels page; grabbing one video must not

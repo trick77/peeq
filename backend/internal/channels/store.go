@@ -372,6 +372,80 @@ LIMIT 1`, now)
 	return &sub, nil
 }
 
+// GetSubscription returns the subscription row for channelID, or (nil, nil)
+// when the channel is not subscribed. ClaimDue is due-based and cannot answer
+// "what is this one channel's schedule", which the channel page needs.
+func (s *Store) GetSubscription(channelID string) (*Subscription, error) {
+	row := s.db.QueryRowContext(context.Background(), `
+SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at
+FROM subscriptions WHERE channel_id = ?`, channelID)
+
+	var sub Subscription
+	var baselinedAt, lastScannedAt sql.NullString
+	err := row.Scan(&sub.ChannelID, &sub.Autodownload, &sub.FormatOverride,
+		&baselinedAt, &lastScannedAt, &sub.NextScanAt, &sub.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get subscription %s: %w", channelID, err)
+	}
+	sub.BaselinedAt = baselinedAt.String
+	sub.LastScannedAt = lastScannedAt.String
+	return &sub, nil
+}
+
+// Stats are the channel page's four header numbers. They count only
+// downloaded videos: a queued, errored, or tombstoned row is not on disk, so
+// counting it would overstate what the user actually has.
+type Stats struct {
+	ArchivedCount     int
+	RuntimeSeconds    int64
+	DiskBytes         int64
+	NewestPublishedAt string
+}
+
+// Stats computes the header numbers for one channel. channelName is the
+// fallback for videos written before channel ids were recorded; pass "" to
+// match on channel_id alone.
+func (s *Store) Stats(channelID, channelName string) (Stats, error) {
+	where := "channel_id = ?"
+	args := []any{channelID}
+	if channelName != "" {
+		where = "(channel_id = ? OR (channel_id = '' AND channel_name = ?))"
+		args = []any{channelID, channelName}
+	}
+	row := s.db.QueryRowContext(context.Background(), `
+SELECT count(*),
+       COALESCE(sum(duration_seconds), 0),
+       COALESCE(sum(filesize_bytes), 0),
+       COALESCE(max(published_at), '')
+FROM videos WHERE status = 'downloaded' AND `+where, args...)
+
+	var st Stats
+	if err := row.Scan(&st.ArchivedCount, &st.RuntimeSeconds, &st.DiskBytes, &st.NewestPublishedAt); err != nil {
+		return Stats{}, fmt.Errorf("channel stats %s: %w", channelID, err)
+	}
+	return st, nil
+}
+
+// NameFromVideos returns the channel name recorded on this channel's videos,
+// used when there is no cached channels row yet — the untracked case, where
+// the only thing peeq knows about the channel is what its videos say.
+func (s *Store) NameFromVideos(channelID string) (string, error) {
+	row := s.db.QueryRowContext(context.Background(),
+		`SELECT COALESCE(channel_name, '') FROM videos WHERE channel_id = ? AND channel_name != '' LIMIT 1`,
+		channelID)
+	var name string
+	if err := row.Scan(&name); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("channel name from videos %s: %w", channelID, err)
+	}
+	return name, nil
+}
+
 // MarkScanned records the result of a scan: last_scanned_at and next_scan_at
 // are always updated. When baseline is true, baselined_at is stamped with
 // lastScannedAt via COALESCE — a first scan sets it, and later scans (which

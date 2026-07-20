@@ -214,6 +214,119 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+// channelDetail is the JSON shape returned by GET /api/channels/{id}. It
+// covers both a tracked channel and one the user has merely visited: Tracked
+// and Subscribed are the flags the page branches on, and the subscription
+// fields are zero when Subscribed is false.
+type channelDetail struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Handle      string `json:"handle,omitempty"`
+	Description string `json:"description,omitempty"`
+	HasAvatar   bool   `json:"has_avatar"`
+	HasBanner   bool   `json:"has_banner"`
+
+	Tracked   bool   `json:"tracked"`
+	TrackedAt string `json:"tracked_at,omitempty"`
+
+	ArchivedCount     int    `json:"archived_count"`
+	RuntimeSeconds    int64  `json:"runtime_seconds"`
+	DiskBytes         int64  `json:"disk_bytes"`
+	NewestPublishedAt string `json:"newest_published_at,omitempty"`
+
+	Subscribed     bool   `json:"subscribed"`
+	Autodownload   bool   `json:"autodownload"`
+	FormatOverride string `json:"format_override,omitempty"`
+	LastScannedAt  string `json:"last_scanned_at,omitempty"`
+	NextScanAt     string `json:"next_scan_at,omitempty"`
+	PendingCount   int    `json:"pending_count"`
+}
+
+// handleChannelDetail returns the data behind the channel page: identity,
+// the four header stats, and (if tracked) the subscription/schedule state.
+// It serves both a tracked channel AND one the user never tracked but whose
+// videos live in the library (added by URL) — videos.channel_id has no
+// foreign key to channels, so that case is real. 404 is reserved for an id
+// that names nothing at all: neither a cached channels row nor any video.
+func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	id := r.PathValue("id")
+
+	c, err := s.channels.Get(id)
+	if err != nil {
+		serverError(w, r, err, "load channel failed")
+		return
+	}
+
+	// No cached row: fall back to what this channel's own videos say. If
+	// there are none either, the id names nothing peeq knows about.
+	name := ""
+	if c != nil {
+		name = c.Name
+	}
+	if name == "" {
+		name, err = s.channels.NameFromVideos(id)
+		if err != nil {
+			serverError(w, r, err, "load channel failed")
+			return
+		}
+	}
+	stats, err := s.channels.Stats(id, name)
+	if err != nil {
+		serverError(w, r, err, "load channel failed")
+		return
+	}
+	if c == nil && stats.ArchivedCount == 0 {
+		writeJSONError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+
+	out := channelDetail{
+		ID:                id,
+		Name:              name,
+		ArchivedCount:     stats.ArchivedCount,
+		RuntimeSeconds:    stats.RuntimeSeconds,
+		DiskBytes:         stats.DiskBytes,
+		NewestPublishedAt: stats.NewestPublishedAt,
+	}
+	if c != nil {
+		out.Handle = c.Handle
+		out.Description = c.Description
+		out.HasAvatar = c.AvatarPath != ""
+		out.HasBanner = c.BannerPath != ""
+		out.Tracked = c.TrackedAt != ""
+		out.TrackedAt = c.TrackedAt
+	}
+
+	if out.Tracked {
+		sub, serr := s.channels.GetSubscription(id)
+		if serr != nil {
+			serverError(w, r, serr, "load subscription failed")
+			return
+		}
+		if sub != nil {
+			out.Subscribed = true
+			out.Autodownload = sub.Autodownload
+			out.FormatOverride = sub.FormatOverride
+			out.LastScannedAt = sub.LastScannedAt
+			out.NextScanAt = sub.NextScanAt
+		}
+		if s.ledger != nil {
+			pending, perr := s.ledger.ListPendingForChannel(id)
+			if perr != nil {
+				serverError(w, r, perr, "load pending failed")
+				return
+			}
+			out.PendingCount = len(pending)
+		}
+	}
+
+	writeJSON(w, out)
+}
+
 // handleChannelsPut updates a subscribed channel's autodownload flag and/or
 // format override. Only subscribed channels have a config to update; a
 // merely-tracked channel yields a clean 400 rather than a silent no-op.
