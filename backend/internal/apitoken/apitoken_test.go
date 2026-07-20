@@ -99,7 +99,9 @@ func TestHash_isStableAndNotThePlaintext(t *testing.T) {
 	if len(h1) != 64 {
 		t.Fatalf("len(Hash) = %d, want 64 hex chars", len(h1))
 	}
-	if strings.Contains(h1, token) {
-		t.Fatalf("hash %q contains the plaintext token", h1)
+	// Known-answer test: verifies algorithm (SHA-256), encoding (hex), and lowercasing.
+	const wantHash = "8f1e7ed590311056659024d557dfa37f5d9a55a12196c63cdabb0b5bb780c072"
+	if h1 != wantHash {
+		t.Fatalf("Hash(%q) = %q, want %q", token, h1, wantHash)
 	}
 }
