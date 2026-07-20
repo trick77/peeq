@@ -150,9 +150,15 @@ with `includeSubdomains = TRUE` iff the domain starts with `.`, and
 ### Client-side precheck
 
 Before enabling the button, the extension applies the same rule as `cookie.Validate`: at
-least one `.youtube.com` entry, and at least one of `SID`, `__Secure-1PSID`,
-`__Secure-3PSID`. This drives the popup's "Sign-in cookies: N of 5 present" line, so a failed
-send tells the user something they did not already know.
+least one `.youtube.com` entry, and at least one of `SID`, `__Secure-1PSID`, `__Secure-3PSID`.
+That trio — and only that trio — is the gate; the button is enabled iff the gate passes.
+
+The popup additionally *reports* presence across a fixed display set of five names that
+together indicate a healthy signed-in session: `SID`, `__Secure-1PSID`, `__Secure-3PSID`,
+`SAPISID`, `LOGIN_INFO`. Hence "Sign-in cookies: N of 5 present". The distinction matters and
+must not be collapsed in implementation: the **display set is informational**, the **gate is
+`Validate`'s trio**. A jar with 3 of 5 can still be perfectly valid, and the button must not
+be disabled for it.
 
 ## Popup states
 
