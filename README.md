@@ -105,9 +105,22 @@ Once:
    the tab. This stops a YouTube app page from rotating the cookie underneath
    you.
 3. In peeq: Settings → Access token → create one and copy it.
-4. Load `extension/` at `chrome://extensions` (Developer mode → Load
-   unpacked) in that profile, open its options, paste peeq's address and the
-   token, and allow the permission prompt.
+4. Install the extension in that profile at `chrome://extensions` (Developer
+   mode → Load unpacked), pointing it at either:
+   - the `extension/` directory of a checkout, or
+   - the unzipped `peeq-companion-<version>.zip` from a
+     [release](https://github.com/trick77/peeq/releases) — the same build, no
+     checkout needed.
+
+   Then open its options, paste peeq's address and the token, and allow the
+   permission prompt.
+
+   The extension is deliberately **not** on the Chrome Web Store: it talks to
+   one self-hosted server, so the store's discovery and auto-update buy
+   nothing, while `cookies` plus a user-configured host permission would make
+   for a long and uncertain review. Keep a checkout at a stable path — Chrome
+   derives the extension ID from it, so moving the directory registers it as a
+   new extension and the address and token must be re-entered.
 
 Whenever peeq reports the cookie is no longer valid:
 

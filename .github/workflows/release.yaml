@@ -85,3 +85,37 @@ jobs:
           gh api "repos/${{ github.repository }}/git/refs" \
             -f ref="refs/tags/${{ steps.ver.outputs.version }}" \
             -f sha="${{ github.sha }}"
+
+      # The browser extension is not distributed via the Chrome Web Store — it
+      # talks to one self-hosted server and needs no discovery or auto-update —
+      # so the release asset is how a user gets a loadable build. The release
+      # version is stamped into the manifest by package.sh, so a downloaded zip
+      # always reports the release it came from.
+      - name: Package extension
+        run: ./extension/package.sh "${{ steps.ver.outputs.version }}" "peeq-companion-${{ steps.ver.outputs.version }}.zip"
+
+      # Runs after the tag exists, so the release attaches to it rather than
+      # creating a second pointer at the same commit.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          cat > /tmp/release-notes.md <<NOTES
+          Container image: \`ghcr.io/${{ github.repository }}:$VERSION\`
+
+          **peeq Companion** browser extension — download \`peeq-companion-$VERSION.zip\`,
+          unzip it, then load the unzipped folder at \`chrome://extensions\` with Developer
+          mode enabled.
+
+          Install it in a dedicated Chrome profile signed into a dedicated YouTube account,
+          and never browse YouTube in that profile — YouTube rotates account cookies on open
+          YouTube tabs, which is what kills an exported cookie. See the README.
+          NOTES
+          # The heredoc is indented to stay inside this block scalar; strip that
+          # indentation back out before the notes are published.
+          sed -i 's/^          //' /tmp/release-notes.md
+          gh release create "$VERSION" \
+            "peeq-companion-$VERSION.zip" \
+            --title "$VERSION" \
+            --notes-file /tmp/release-notes.md
