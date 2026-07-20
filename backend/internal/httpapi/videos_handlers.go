@@ -40,6 +40,7 @@ type videoDTO struct {
 	Chapters              json.RawMessage          `json:"chapters,omitempty"`
 	KeyPoints             json.RawMessage          `json:"key_points,omitempty"`
 	SummaryStatus         string                   `json:"summary_status"`
+	Category              string                   `json:"category"`
 	AudioLanguage         string                   `json:"audio_language"`
 	HasSubtitles          bool                     `json:"has_subtitles"`
 }
@@ -112,6 +113,7 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		Chapters:              rawJSONOrNil(v.Chapters),
 		KeyPoints:             rawJSONOrNil(v.KeyPoints),
 		SummaryStatus:         v.SummaryStatus,
+		Category:              v.Category,
 		AudioLanguage:         v.AudioLanguage,
 		HasSubtitles:          v.SubtitlePath != "",
 	}
@@ -119,13 +121,16 @@ func toVideoDTO(v *videos.Video) videoDTO {
 
 // handleListVideos returns the video library, optionally narrowed by
 // ?filter=all|unwatched|watched|favorites|downloading (see videos.Store.List
-// for exact filter semantics; an unrecognized/empty filter means "all").
+// for exact filter semantics; an unrecognized/empty filter means "all") and
+// independently by ?category=<id>, which is ANDed with ?filter= rather than
+// replacing it. An empty or unrecognized category value means "all
+// categories" (see videos.Store.List).
 func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 	if s.videos == nil {
 		writeJSON(w, []videoDTO{})
 		return
 	}
-	all, err := s.videos.List(r.URL.Query().Get("filter"))
+	all, err := s.videos.List(r.URL.Query().Get("filter"), r.URL.Query().Get("category"))
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "list videos failed")
 		return

@@ -40,6 +40,21 @@ type Summarizer struct{ c Completer }
 
 func New(c Completer) *Summarizer { return &Summarizer{c: c} }
 
+// Classify asks the model to pick exactly one category id from allowed,
+// given the video title and its generated summary. It returns the model's
+// raw reply unchanged; the caller normalizes it against the enum (an invalid
+// or empty reply must degrade to "uncategorized", not error). This is a
+// cheap call: the input is the short summary, not the full transcript.
+func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowed []string) (string, error) {
+	sys := "You classify a video into exactly one category id from this list: " +
+		strings.Join(allowed, ", ") +
+		". Reply with a single category id from the list and nothing else. If none fits, reply uncategorized."
+	return s.c.Complete(ctx, []llm.Message{
+		{Role: "system", Content: sys},
+		{Role: "user", Content: "TITLE: " + title + "\n\nSUMMARY:\n" + summary},
+	})
+}
+
 func (s *Summarizer) Run(ctx context.Context, transcript string, cues []subtitles.Cue, ytdlpChapters []Chapter) (Artifacts, error) {
 	chunks := rag.Chunk(transcript, rag.DefaultChunkOptions())
 	if len(chunks) == 0 {

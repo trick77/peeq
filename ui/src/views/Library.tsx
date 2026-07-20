@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { VideoCard, type DownloadProgress } from "../components/VideoCard";
 import { listVideos, getSettings, listDownloads, streamDownloads, setFavorite, setWatched, redownload } from "../api";
 import type { Video, VideoFilter, Job, Settings } from "../api/types";
+import { CATEGORIES } from "../categories";
 
 const CHIPS: { id: VideoFilter; label: string }[] = [
   { id: "all", label: "All" },
@@ -34,6 +35,7 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
 // mockup's `.chips`/`.grid` blocks.
 export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) {
   const [filter, setFilter] = useState<VideoFilter>("all");
+  const [category, setCategory] = useState<string>("all");
   const [allVideos, setAllVideos] = useState<Video[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -76,7 +78,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
   useEffect(() => {
     let active = true;
     setError(null);
-    listVideos(filter)
+    listVideos(filter, category)
       .then((v) => {
         if (active) setVideos(v);
       })
@@ -86,7 +88,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
     return () => {
       active = false;
     };
-  }, [filter]);
+  }, [filter, category]);
 
   // Live download progress: map each SSE "progress" event's job_id to the
   // video_id the download dock/queue knows about, so a downloading card's
@@ -151,7 +153,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
               if (active) setAllVideos(v);
             })
             .catch(() => {});
-          listVideos(filter)
+          listVideos(filter, category)
             .then((v) => {
               if (active) setVideos(v);
             })
@@ -163,7 +165,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
       active = false;
       window.clearTimeout(id);
     };
-  }, [filter, jobsRefreshTick]);
+  }, [filter, category, jobsRefreshTick]);
 
   function applyLocalUpdate(id: string, patch: Partial<Video>) {
     setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
@@ -197,7 +199,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
   async function handleRedownload(id: string) {
     try {
       await redownload(id);
-      const [all, current] = await Promise.all([listVideos("all"), listVideos(filter)]);
+      const [all, current] = await Promise.all([listVideos("all"), listVideos(filter, category)]);
       setAllVideos(all);
       setVideos(current);
     } catch (e) {
@@ -218,6 +220,26 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
             onClick={() => setFilter(chip.id)}
           >
             {chip.label} <span className="n">{allVideos.filter((v) => matchesFilter(v, chip.id)).length}</span>
+          </button>
+        ))}
+      </div>
+      <div className="catchips">
+        <button
+          type="button"
+          className={`catchip${category === "all" ? " on" : ""}`}
+          onClick={() => setCategory("all")}
+        >
+          All categories <span className="n">{allVideos.length}</span>
+        </button>
+        {CATEGORIES.filter((c) => allVideos.some((v) => v.category === c.id)).map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            className={`catchip${category === c.id ? " on" : ""}`}
+            onClick={() => setCategory(c.id)}
+          >
+            <span className="dotc" style={{ background: c.color }} />
+            {c.label} <span className="n">{allVideos.filter((v) => v.category === c.id).length}</span>
           </button>
         ))}
       </div>

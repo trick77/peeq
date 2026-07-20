@@ -54,7 +54,11 @@ CREATE TABLE videos (
     summary_status           TEXT NOT NULL DEFAULT 'pending' CHECK (summary_status IN ('pending','running','done','error','no_transcript')),
     summary_error            TEXT NOT NULL DEFAULT '',
     embed_model              TEXT NOT NULL DEFAULT '',
-    embed_dim                INTEGER NOT NULL DEFAULT 0
+    embed_dim                INTEGER NOT NULL DEFAULT 0,
+    -- category: fixed-enum classification (see internal/videos/category.go).
+    -- Plain TEXT (no CHECK): the enum lives in Go and app-side
+    -- NormalizeCategory guarantees a valid id or 'uncategorized' before write.
+    category                 TEXT NOT NULL DEFAULT 'uncategorized'
 );
 
 CREATE INDEX idx_videos_status ON videos(status);

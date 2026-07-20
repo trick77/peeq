@@ -193,6 +193,11 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 			// feed FailMonitor. The YoutubePaused gate in Run parks the
 			// loop next iteration; the plain backoff below still applies
 			// (harmless, since scanning is gated off anyway).
+		case errors.Is(err, ytdlp.ErrNoCookie):
+			// No cookie at all: race-only and self-limiting — the scheduler's
+			// own cookie gate stops scanning next pass — so it must not count
+			// toward the shared auto-pause heuristic, mirroring the download
+			// worker's classify. Leave cookie_status ('absent') as-is.
 		case errors.As(err, &terminal):
 			// Terminal ytdlp error (members-only/deleted/private/age/geo
 			// channel): permanent and per-channel-expected, mirroring the

@@ -60,6 +60,10 @@ export type Video = {
   summary_status: string;
   audio_language: string;
   has_subtitles: boolean;
+  // category mirrors the Task 7 classification field — always present,
+  // "uncategorized" is the fallback (see categories.ts, the TS mirror of
+  // backend/internal/videos/category.go).
+  category: string;
 };
 
 // Chapter mirrors httpapi's per-video chapter DTO — source distinguishes

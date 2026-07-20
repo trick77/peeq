@@ -23,6 +23,7 @@ const mockVideo: Video = {
   summary_status: "",
   audio_language: "",
   has_subtitles: false,
+  category: "uncategorized",
 };
 
 vi.mock("../api/videos", () => ({

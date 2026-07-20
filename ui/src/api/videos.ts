@@ -1,8 +1,13 @@
 import { api } from "./http";
 import type { Video, VideoFilter } from "./types";
 
-export async function listVideos(filter: VideoFilter = "all"): Promise<Video[]> {
-  return api.get<Video[]>(`/api/videos?filter=${encodeURIComponent(filter)}`, "failed to load videos");
+// listVideos' category defaults to "all" so pre-Task-7 call sites that pass
+// only filter (e.g. Library.tsx) keep compiling and keep filtering across
+// every category, unchanged.
+export async function listVideos(filter: VideoFilter = "all", category = "all"): Promise<Video[]> {
+  const q = new URLSearchParams({ filter });
+  if (category && category !== "all") q.set("category", category);
+  return api.get<Video[]>(`/api/videos?${q.toString()}`, "failed to load videos");
 }
 
 export async function getVideo(id: string): Promise<Video> {

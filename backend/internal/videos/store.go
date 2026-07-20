@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // Video mirrors the columns of the videos table this package reads or
@@ -58,6 +59,7 @@ type Video struct {
 	SummaryError          string
 	EmbedModel            string
 	EmbedDim              int
+	Category              string
 }
 
 // watchedThreshold is the fraction of a video's duration that, once
@@ -133,7 +135,7 @@ const videoColumns = `id, url, title, channel_id, channel_name, duration_seconds
 	availability, status, error_message, sponsorblock_segments,
 	watched, watched_at, resume_position_seconds, favorite, favorited_at,
 	created_at, downloaded_at,
-	audio_language, subtitle_path, summary, chapters, key_points, summary_status, summary_error, embed_model, embed_dim`
+	audio_language, subtitle_path, summary, chapters, key_points, summary_status, summary_error, embed_model, embed_dim, category`
 
 // rowScanner is satisfied by both *sql.Row and *sql.Rows.
 type rowScanner interface {
@@ -153,7 +155,7 @@ func scanVideo(rs rowScanner) (Video, error) {
 		&watched, &watchedAt, &v.ResumePositionSeconds, &favorite, &favoritedAt,
 		&v.CreatedAt, &downloadedAt,
 		&v.AudioLanguage, &v.SubtitlePath, &v.Summary, &v.Chapters, &v.KeyPoints,
-		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim,
+		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim, &v.Category,
 	)
 	if err != nil {
 		return Video{}, err
@@ -184,29 +186,41 @@ func (s *Store) Get(id string) (*Video, error) {
 	return &v, nil
 }
 
-// List returns videos matching filter, newest first:
+// List returns videos matching filter (status dimension) and category
+// (empty/"all"/unknown ⇒ no category constraint), newest first. The two
+// dimensions are orthogonal and both apply when set.
 //   - "unwatched": downloaded and not watched (available to watch now)
 //   - "watched": watched = true
 //   - "favorites": favorite = true
 //   - "downloading": status is queued or downloading
 //   - anything else (including "all"/""): every row, tombstoned included
-func (s *Store) List(filter string) ([]Video, error) {
-	where := ""
+func (s *Store) List(filter, category string) ([]Video, error) {
+	conds := []string{}
+	args := []any{}
 	switch filter {
 	case "unwatched":
-		where = "WHERE status = 'downloaded' AND watched = 0"
+		conds = append(conds, "status = 'downloaded' AND watched = 0")
 	case "watched":
-		where = "WHERE watched = 1"
+		conds = append(conds, "watched = 1")
 	case "favorites":
-		where = "WHERE favorite = 1"
+		conds = append(conds, "favorite = 1")
 	case "downloading":
-		where = "WHERE status IN ('queued', 'downloading')"
+		conds = append(conds, "status IN ('queued', 'downloading')")
+	}
+	if category != "" && category != "all" && ValidCategory(category) {
+		conds = append(conds, "category = ?")
+		args = append(args, category)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
 	}
 	rows, err := s.db.QueryContext(context.Background(),
 		"SELECT "+videoColumns+" FROM videos "+where+" ORDER BY created_at DESC, id DESC",
+		args...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list videos (filter=%s): %w", filter, err)
+		return nil, fmt.Errorf("list videos (filter=%s, category=%s): %w", filter, category, err)
 	}
 	defer rows.Close()
 
@@ -214,12 +228,12 @@ func (s *Store) List(filter string) ([]Video, error) {
 	for rows.Next() {
 		v, err := scanVideo(rows)
 		if err != nil {
-			return nil, fmt.Errorf("list videos (filter=%s): %w", filter, err)
+			return nil, fmt.Errorf("list videos (filter=%s, category=%s): %w", filter, category, err)
 		}
 		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list videos (filter=%s): %w", filter, err)
+		return nil, fmt.Errorf("list videos (filter=%s, category=%s): %w", filter, category, err)
 	}
 	return out, nil
 }
@@ -306,6 +320,17 @@ func (s *Store) SetSummary(id, summary, chaptersJSON, keyPointsJSON string) erro
 		summary, chaptersJSON, keyPointsJSON, id)
 	if err != nil {
 		return fmt.Errorf("set video %s summary: %w", id, err)
+	}
+	return nil
+}
+
+// SetCategory persists a video's classification. The value must already be a
+// valid enum id or 'uncategorized' (callers use videos.NormalizeCategory).
+func (s *Store) SetCategory(id, category string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET category = ? WHERE id = ?`, category, id)
+	if err != nil {
+		return fmt.Errorf("set video %s category: %w", id, err)
 	}
 	return nil
 }
