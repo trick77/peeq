@@ -2390,6 +2390,28 @@ git -c user.email=trick77@users.noreply.github.com commit -m "feat(ui): add chan
 
 Add to `ui/src/App.test.tsx`:
 
+Create `ui/src/views/Channel.test.tsx` with the navigation test — it fails now because there is no `Channel` component at all:
+
+```tsx
+import { describe, it, expect } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { Channel } from "./Channel";
+
+describe("Channel routing", () => {
+  it("renders the selected channel's id", () => {
+    render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />);
+    expect(screen.getByTestId("channel-page")).toHaveTextContent("UCa");
+  });
+
+  it("says so when no channel is selected", () => {
+    render(<Channel channelId={null} onOpenVideo={() => {}} onBack={() => {}} />);
+    expect(screen.getByText(/no channel selected/i)).toBeInTheDocument();
+  });
+});
+```
+
+Also add to `ui/src/App.test.tsx`:
+
 ```tsx
 it("channel is not in the nav rail", () => {
   render(<App />);
@@ -2402,9 +2424,9 @@ it("channel is not in the nav rail", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ui && npx vitest run src/App.test.tsx`
+Run: `cd ui && npx vitest run src/views/Channel.test.tsx`
 
-Expected: PASS trivially at first (nothing named "Channel" exists yet). The real gate is Step 4's typecheck — run the test again after Step 3 to confirm it still passes.
+Expected: FAIL — `Cannot find module './Channel'`.
 
 - [ ] **Step 3: Add the view id and the placeholder**
 
