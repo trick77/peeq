@@ -14,6 +14,7 @@ function baseChannel(overrides: Partial<Channel> = {}): Channel {
     format_override: "",
     pending_count: 3,
     downloaded_count: 0,
+    dormant: false,
     ...overrides,
   };
 }
@@ -43,6 +44,9 @@ vi.mock("../api/channels", () => ({
   subscribeChannel: vi.fn(),
   unsubscribeChannel: vi.fn(),
   deleteChannel: vi.fn(),
+  listAutoUnsubscribedChannels: vi.fn(),
+  dismissDormantChannel: vi.fn(),
+  resubscribeChannel: vi.fn(),
 }));
 
 import {
@@ -52,6 +56,9 @@ import {
   subscribeChannel,
   unsubscribeChannel,
   deleteChannel,
+  listAutoUnsubscribedChannels,
+  dismissDormantChannel,
+  resubscribeChannel,
 } from "../api/channels";
 
 describe("Channels", () => {
@@ -68,6 +75,12 @@ describe("Channels", () => {
     vi.mocked(unsubscribeChannel).mockResolvedValue({ status: "unsubscribed" });
     vi.mocked(updateChannel).mockResolvedValue({ id: "c1", autodownload: true, format_override: "" });
     vi.mocked(deleteChannel).mockResolvedValue(undefined);
+    vi.mocked(listAutoUnsubscribedChannels).mockReset();
+    vi.mocked(listAutoUnsubscribedChannels).mockResolvedValue([]);
+    vi.mocked(dismissDormantChannel).mockReset();
+    vi.mocked(dismissDormantChannel).mockResolvedValue({ status: "dismissed" });
+    vi.mocked(resubscribeChannel).mockReset();
+    vi.mocked(resubscribeChannel).mockResolvedValue({ status: "subscribed" });
   });
 
   it("lists both tracked and subscribed channels", async () => {
@@ -228,7 +241,10 @@ describe("Channels", () => {
     });
     // Refetch, so a row that no longer matches the active filter disappears
     // and a 0-row no-op on an unsubscribed channel can't leave a stale tick.
-    await waitFor(() => expect(listChannels).toHaveBeenCalledTimes(2));
+    // 3, not 2: mount fires both the filtered load and the review band's own
+    // filter="all" dormant load (see Channels.tsx's loadDormant), then the
+    // toggle fires one more.
+    await waitFor(() => expect(listChannels).toHaveBeenCalledTimes(3));
   });
 
   it("editing the format override field and blurring calls updateChannel", async () => {
@@ -267,5 +283,91 @@ describe("Channels", () => {
     await user.click(within(row).getByRole("button", { name: /delete/i }));
     expect(deleteChannel).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
+  });
+
+  describe("dormant review band", () => {
+    const dormant = baseChannel({
+      id: "c4",
+      handle: "@quietguy",
+      name: "Quiet Channel",
+      subscribed: true,
+      dormant: true,
+      last_video_at: "2020-01-01 00:00:00",
+      downloaded_count: 142,
+    });
+
+    it("shows the review band with a count when channels are dormant", async () => {
+      vi.mocked(listChannels).mockResolvedValue([tracked, subscribed, dormant]);
+      render(<Channels />);
+      expect(await screen.findByText("1 channel needs review")).toBeInTheDocument();
+      expect(screen.getByText("Quiet Channel")).toBeInTheDocument();
+    });
+
+    it("hides the band entirely when nothing is dormant", async () => {
+      render(<Channels />);
+      await screen.findByText("Tracked Channel");
+      expect(screen.queryByText(/needs? review/)).not.toBeInTheDocument();
+    });
+
+    it("dismissing a dormant channel removes it from the band", async () => {
+      const user = userEvent.setup();
+      vi.mocked(listChannels).mockResolvedValue([tracked, subscribed, dormant]);
+      render(<Channels />);
+      await screen.findByText("1 channel needs review");
+      const row = screen.getByText("Quiet Channel").closest(".channel-row") as HTMLElement;
+      await user.click(within(row).getByRole("button", { name: /keep subscribed/i }));
+
+      await waitFor(() => expect(dismissDormantChannel).toHaveBeenCalledWith("c4"));
+      // The band itself disappears (nothing left to review) — the channel
+      // moves into the main list rather than vanishing from the page.
+      await waitFor(() => expect(screen.queryByText(/needs? review/)).not.toBeInTheDocument());
+      expect(screen.getByText("Quiet Channel").closest(".band")).toBeNull();
+    });
+  });
+
+  describe("auto-unsubscribed section", () => {
+    const tombstone = {
+      id: "c5",
+      handle: "@vanished",
+      name: "Vanished Channel",
+      reason: "deleted",
+      at: "2026-07-12 09:00:00",
+    };
+
+    it("lists auto-unsubscribed channels with the reason and a re-subscribe button", async () => {
+      vi.mocked(listAutoUnsubscribedChannels).mockResolvedValue([tombstone]);
+      render(<Channels />);
+      await screen.findByText("Tracked Channel");
+
+      expect(await screen.findByText("Vanished Channel")).toBeInTheDocument();
+      expect(screen.getByText(/deleted on YouTube/i)).toBeInTheDocument();
+      const row = screen.getByText("Vanished Channel").closest(".tomb-row") as HTMLElement;
+      expect(within(row).getByRole("button", { name: /re-subscribe/i })).toBeInTheDocument();
+    });
+
+    it("states that archived videos are kept on an auto-unsubscribed row", async () => {
+      vi.mocked(listAutoUnsubscribedChannels).mockResolvedValue([tombstone]);
+      render(<Channels />);
+      expect(await screen.findByText(/kept — nothing was deleted/i)).toBeInTheDocument();
+    });
+
+    it("re-subscribing moves the channel back into the main list", async () => {
+      const user = userEvent.setup();
+      vi.mocked(listAutoUnsubscribedChannels).mockResolvedValue([tombstone]);
+      render(<Channels />);
+      await screen.findByText("Vanished Channel");
+
+      const revived = baseChannel({ id: "c5", handle: "@vanished", name: "Vanished Channel", subscribed: true });
+      vi.mocked(listChannels).mockResolvedValue([tracked, subscribed, revived]);
+
+      const row = screen.getByText("Vanished Channel").closest(".tomb-row") as HTMLElement;
+      await user.click(within(row).getByRole("button", { name: /re-subscribe/i }));
+
+      await waitFor(() => expect(resubscribeChannel).toHaveBeenCalledWith("c5"));
+      await waitFor(() => expect(screen.queryByText(/deleted on YouTube/i)).not.toBeInTheDocument());
+      expect(await screen.findByText("Vanished Channel")).toBeInTheDocument();
+      const revivedRow = screen.getByText("Vanished Channel").closest(".channel-row") as HTMLElement;
+      expect(revivedRow.className).toContain("sect");
+    });
   });
 });
