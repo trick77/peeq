@@ -6,7 +6,7 @@
 #                           # and the OIDC block
 #   docker compose up -d
 #
-# Edit the Host() rule below to your real domain before deploying.
+# The Traefik Host() rule below is set to peeq.trick77.com.
 services:
   peeq:
     image: ghcr.io/trick77/peeq:latest
@@ -77,8 +77,8 @@ services:
     labels:
       traefik.enable: "true"
       traefik.docker.network: traefik
-      # Replace the Host() rule with your real domain.
-      traefik.http.routers.peeq.rule: Host(`peeq.example.com`)
+      # Host rule for this deployment; change if the domain moves.
+      traefik.http.routers.peeq.rule: Host(`peeq.trick77.com`)
       traefik.http.routers.peeq.entrypoints: websecure
       traefik.http.routers.peeq.tls: "true"
       traefik.http.services.peeq.loadbalancer.server.port: "8080"
