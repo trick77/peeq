@@ -211,6 +211,7 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 			// channel): permanent and per-channel-expected, mirroring the
 			// download worker's classify — don't count it toward the
 			// shared auto-pause heuristic.
+			s.staleUnsubscribe(ctx, sub.ChannelID, terminal.Reason)
 		default:
 			// Everything else (transient/unclassified failures) is
 			// count-worthy for the shared auto-pause heuristic; the two
@@ -223,6 +224,38 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 		s.d.Logger.Warn("scan failed; backing off", "channel", sub.ChannelID, "err", err)
 		s.backoff(sub.ChannelID)
 	}
+}
+
+// staleUnsubscribe applies the dead-channel rule. It is deliberately inert
+// while YouTube access is unhealthy: a stale cookie can make EVERY channel
+// fail at once, and acting on that would empty the subscription list. The
+// counter is not even incremented, so an outage cannot accumulate toward the
+// threshold and then fire the instant access is restored.
+func (s *Scheduler) staleUnsubscribe(ctx context.Context, channelID, reason string) {
+	if reason != channels.ReasonDeleted {
+		return
+	}
+	if paused, _ := s.d.Settings.YoutubePaused(ctx); paused {
+		return
+	}
+	switch s.d.Settings.CookieStatus(ctx) {
+	case "blocked", "stale", "absent":
+		return
+	}
+	n, err := s.d.Channels.RecordDeadScan(channelID)
+	if err != nil {
+		s.d.Logger.Error("scan: record dead scan failed", "channel", channelID, "err", err)
+		return
+	}
+	if n < channels.DeadScanThreshold {
+		return
+	}
+	at := s.d.Now().UTC().Format(sqlTimeLayout)
+	if err := s.d.Channels.AutoUnsubscribe(channelID, channels.ReasonDeleted, at); err != nil {
+		s.d.Logger.Error("scan: auto unsubscribe failed", "channel", channelID, "err", err)
+		return
+	}
+	s.d.Logger.Info("scan: auto-unsubscribed dead channel", "channel", channelID, "reason", channels.ReasonDeleted, "dead_scans", n)
 }
 
 // backoff pushes a subscription's next_scan_at out by scanBackoff, leaving
@@ -298,8 +331,13 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	if err := s.d.Channels.MarkScanned(sub.ChannelID, baseline, lastScanned, next); err != nil {
 		return err
 	}
-	// Clean scan pass: reset the shared failure streak (Reset() clears the
+	// Clean scan pass: reset the consecutive dead-scan streak (a channel that
+	// recovers between unrelated failures must not creep toward
+	// auto-unsubscription) and the shared failure streak (Reset() clears the
 	// whole shared streak globally, not just for this channel).
+	if err := s.d.Channels.ResetDeadScan(sub.ChannelID); err != nil {
+		s.d.Logger.Error("scan: reset dead scan failed", "channel", sub.ChannelID, "err", err)
+	}
 	if s.d.FailMonitor != nil {
 		s.d.FailMonitor.Reset()
 	}
