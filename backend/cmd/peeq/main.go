@@ -384,6 +384,7 @@ func runYtdlpSelfUpdateTicker(ctx context.Context, dir string, interval time.Dur
 	} else {
 		slog.Info("yt-dlp self-update ticker started", "version", v, "interval", interval)
 	}
+	logJSRuntime(ctx, jsRuntimeBin)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -422,6 +423,29 @@ func resolveYtdlpBin(dir string) string {
 		return candidate
 	}
 	return "yt-dlp"
+}
+
+// jsRuntimeBin is the runtime yt-dlp auto-detects on PATH. deno is the only
+// runtime yt-dlp enables by default, which is why no --js-runtimes flag is
+// passed anywhere in this codebase.
+const jsRuntimeBin = "deno"
+
+// logJSRuntime reports which JavaScript runtime yt-dlp will find at run time.
+// It is observability only and NEVER fatal: dev hosts legitimately have no
+// runtime installed, and a warning that stops the process would block `make
+// dev`. In production the warning is the point — a missing runtime otherwise
+// degrades extraction silently, with formats disappearing rather than erroring.
+func logJSRuntime(ctx context.Context, bin string) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	v, err := ytdlp.JSRuntime(ctx, bin)
+	if err != nil {
+		slog.Warn("no JavaScript runtime for yt-dlp; YouTube extraction is on the deprecated path and some formats may be missing",
+			"want", bin, "err", err)
+		return
+	}
+	slog.Info("yt-dlp JavaScript runtime detected", "runtime", v)
 }
 
 // serve starts srv and blocks until either the server fails to start/serve
