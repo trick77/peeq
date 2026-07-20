@@ -279,6 +279,12 @@ func (s *Store) Unsubscribe(channelID string) (bool, error) {
 // (post-update) values via RETURNING, so there is no separate read step for
 // a concurrent write to race against. ok is false (with zero values and a
 // nil error) when the channel is not subscribed.
+//
+// The single COALESCE ... RETURNING statement exists so a partial update
+// cannot race a concurrent unsubscribe/resubscribe or another partial
+// update: the merge happens inside the statement itself, not against a
+// value read beforehand. This is a structural property of there being no
+// read to race, not something demonstrated by the test suite.
 func (s *Store) UpdateConfig(channelID string, autodownload *bool, formatOverride *string) (resultAutodownload bool, resultFormatOverride string, ok bool, err error) {
 	row := s.db.QueryRowContext(context.Background(), `
 UPDATE subscriptions
