@@ -197,7 +197,7 @@
     <p>The four controls from the Channels row, each with a sentence explaining what it does: subscribe, add-new-automatically, format override, and the checking schedule with its Check now button. Delete sits below the panel, visually separated from everything reversible, and names what it will destroy (&ldquo;Delete channel and its 142 videos&rdquo;).</p>
 
     <h3>Untracked channels</h3>
-    <p>A downloaded video stores its channel as loose text with no foreign key, so the Library contains channels that were never tracked &mdash; anything added by URL. Clicking those names opens the page anyway: the header shows the stats and the archive tab lists the videos, but there is no subscription, so the New and Settings tabs are absent and the header offers <strong>Track this channel</strong> instead of a subscribe toggle. A short line explains why the page is sparse.</p>
+    <p>A downloaded video stores its channel as loose text with no foreign key, so the Library contains channels that were never tracked &mdash; anything added by URL. Clicking those names opens the page anyway, and it is not a degraded page: the same avatar, banner, description, and stats, because peeq fetches and caches a channel&rsquo;s details the first time you visit it whether you track it or not (see <em>Populating the cache</em>). What is absent is only what genuinely does not exist &mdash; there is no subscription, so the New and Settings tabs are gone and the header offers <strong>Track this channel</strong> in place of the subscribe toggle. A short line says why.</p>
     <p>This turns what would be a dead link into the natural place to start following someone.</p>
   </section>
 
@@ -205,12 +205,17 @@
     <h2>Data</h2>
 
     <h3>Schema</h3>
-    <p>The <code>channels</code> table gains two columns and starts using one it already has. Per the decision below, this is an edit to <code>0001_init.sql</code> rather than a new migration.</p>
+    <p>Per the decision below, all of this is an edit to <code>0001_init.sql</code> rather than a new migration.</p>
+    <p>The <code>channels</code> table changes meaning. Today a row exists only when the user has tracked a channel, so &ldquo;we have metadata for this channel&rdquo; and &ldquo;the user tracks this channel&rdquo; are the same fact. The channel page needs them separated: it wants full metadata for channels the user has never tracked. So <code>channels</code> becomes a <strong>metadata cache</strong> that any channel may have a row in, and tracking becomes an explicit column.</p>
     <ul>
       <li><code>avatar_path</code> &mdash; already declared, currently never written.</li>
       <li><code>banner_path</code> <span class="tag new">new</span> &mdash; local path to the saved banner.</li>
       <li><code>description</code> <span class="tag new">new</span> &mdash; the channel&rsquo;s own description text.</li>
+      <li><code>tracked_at</code> <span class="tag new">new</span> &mdash; when the user tracked the channel; <code>NULL</code> for cache-only rows.</li>
     </ul>
+    <div class="note">
+      <strong>Every existing read of <code>channels</code> must be re-checked.</strong> Code that currently treats &ldquo;a row exists&rdquo; as &ldquo;tracked&rdquo; is now wrong. In particular <code>handleChannelsList</code> and its <code>?filter=tracked</code> must test <code>tracked_at IS NOT NULL</code>, or cache-only rows will appear in the Channels list as though the user had added them. The same applies to the delete flow, which destroys a channel&rsquo;s downloaded videos and must never be reachable for a cache-only row.
+    </div>
     <div class="note">
       <strong>Squash, do not migrate.</strong> peeq has exactly one migration file and one channel on the production instance. The decision is to edit <code>0001_init.sql</code> in place and re-create the production database, rather than establish a migration chain for a single row. This is a deliberate trade: the repository went public on 20 July 2026, so anyone who has already cloned and run peeq must wipe their database too. Accepted knowingly; this is the last point at which squashing is cheap.
     </div>
@@ -219,10 +224,13 @@
     <p>Throughout the page, &ldquo;archived&rdquo; means <code>videos.status = 'downloaded'</code>. The four header stats and the Archive grid count only those rows &mdash; queued, downloading, errored, and tombstoned videos are excluded, so the count matches what is actually on disk and playable.</p>
     <p><code>videos.channel_id</code> is plain text with no foreign key to <code>channels</code>. Matching is therefore by <code>channel_id</code>, falling back to <code>channel_name</code> for rows written before channel ids were recorded. That looseness is what makes the untracked case work at all: the page is defined over &ldquo;videos whose channel is X&rdquo;, not over &ldquo;tracked channel X&rdquo;.</p>
 
-    <h3>Images</h3>
-    <p><code>ResolveChannel</code> in <code>backend/internal/ytdlp/channel.go</code> already runs a metadata-only yt-dlp call and parses four fields out of a response that also carries <code>thumbnails</code> (avatar and banner) and <code>description</code>. Extend <code>flatListing</code> to capture them, download the two images, and store their paths.</p>
-    <p>Images are captured once, at the moment a channel is tracked, and never fetched again. A <code>channels</code> row is created in exactly one place &mdash; <code>handleChannelsPost</code>, immediately after <code>ResolveChannel</code> &mdash; and the production database is being re-created anyway, so every tracked channel has its images from the start. There is no backfill and no lazy path: the detail endpoint performs no network calls.</p>
-    <p>Untracked channels have no <code>channels</code> row and therefore no images. They render with <code>gradientClassFor</code>, the deterministic per-id gradient already used for missing video thumbnails, and no banner. Their images appear if and when the user presses <strong>Track this channel</strong>.</p>
+    <h3>Images and description</h3>
+    <p><code>ResolveChannel</code> in <code>backend/internal/ytdlp/channel.go</code> already runs a metadata-only yt-dlp call and parses four fields out of a response that also carries <code>thumbnails</code> (avatar and banner) and <code>description</code>. Extend <code>flatListing</code> to capture them, download the two images, and store their paths. This is the single routine that populates a cache row, whether the channel is being tracked or merely visited.</p>
+
+    <h3>Populating the cache</h3>
+    <p>Tracked channels are resolved at track time, as today. Untracked channels are resolved the first time their page is opened, and then never again &mdash; one call per channel, ever.</p>
+    <p>That fetch never blocks the page. The endpoint returns immediately from the database, so the page appears at once with whatever peeq already knows: the channel name recorded on its videos, and <code>gradientClassFor</code> &mdash; the deterministic per-id gradient already used for missing video thumbnails &mdash; standing in for the avatar. The resolve runs in the background and the header fills in when it lands.</p>
+    <p>It may legitimately never land. <code>ResolveChannel</code> already calls <code>pauseGate</code> and <code>cookieGate</code>, so a stale cookie or the global YouTube pause switch will refuse the call &mdash; correctly, and for free. The failure mode is simply that the page keeps its gradient placeholder, which is no worse than having no channel page at all. Failure must not be retried on a loop; record the attempt so a permanently unresolvable channel is not re-fetched on every visit.</p>
   </section>
 
   <section>
@@ -290,6 +298,7 @@
     <p>Green tests do not demonstrate a layout. Both halves are required.</p>
     <ul>
       <li><strong>Backend</strong> &mdash; handler tests for the four routes, including: an untracked channel returns 200 with <code>tracked: false</code>; a channel matched only by name resolves; scan sets <code>next_scan_at</code>; scan reports the cookie and pause gates rather than silently succeeding.</li>
+      <li><strong>The cache split</strong> &mdash; this is where a regression would hide. Assert that a cache-only row (visited, never tracked) does <em>not</em> appear in <code>GET /api/channels</code> under any filter, cannot be deleted, and cannot be subscribed to without being tracked first. Assert that visiting an already-cached channel makes no yt-dlp call.</li>
       <li><strong>Frontend</strong> &mdash; component tests for tab switching, the untracked variant hiding two tabs, and the empty New state.</li>
       <li><strong>In a browser</strong> &mdash; run the dev stack and look at it. Confirm the banner reads as a backdrop rather than a picture, that a bright channel banner does not wreck the header&rsquo;s legibility, that the toned-down row is still readable, and that every one of the four entry points navigates. This step is not optional; the last design change in this repository passed its tests and was still wrong in the browser.</li>
     </ul>
