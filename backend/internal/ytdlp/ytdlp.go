@@ -203,9 +203,11 @@ func defaultSleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// exec runs the yt-dlp binary with args, after writing cookieText to a
-// restricted temp file passed via --cookies and throttling. It never
-// receives a bare id or unparsed user input: callers must pass fully
+// exec runs the yt-dlp binary with args, after throttling. When cookieText is
+// non-empty it is written to a restricted temp file passed via --cookies;
+// when it is empty (only reachable in dev via AllowAnonymous — see
+// cookieGate) no temp file is written and --cookies is omitted entirely. It
+// never receives a bare id or unparsed user input: callers must pass fully
 // canonicalized URLs in args.
 func (r *Runner) exec(ctx context.Context, cookieText string, args ...string) ([]byte, error) {
 	return r.execWithProgress(ctx, cookieText, nil, args...)
