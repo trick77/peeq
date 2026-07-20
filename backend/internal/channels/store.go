@@ -13,13 +13,20 @@ import (
 	"fmt"
 )
 
-// Channel mirrors one row of the channels table.
+// Channel mirrors one row of the channels table. A Channel may exist purely
+// as a metadata cache entry: TrackedAt is empty for a channel the user has
+// visited but never tracked. AvatarPath and BannerPath are relative to the
+// media dir (resolve them with media.SafeMediaPath before serving).
 type Channel struct {
-	ID         string
-	Handle     string
-	Name       string
-	AvatarPath string
-	AddedAt    string
+	ID          string
+	Handle      string
+	Name        string
+	Description string
+	AvatarPath  string
+	BannerPath  string
+	ResolvedAt  string
+	TrackedAt   string
+	AddedAt     string
 }
 
 // Subscription mirrors one row of the subscriptions table. BaselinedAt and
@@ -157,13 +164,23 @@ WHERE v.channel_id = ?`, channelID)
 	return tx.Commit()
 }
 
-// Upsert tracks a channel: inserts it if new, or refreshes handle/name if it
-// already exists. avatar_path and added_at are left untouched on conflict.
+// Upsert caches a channel's identity, inserting it if new or refreshing the
+// resolved metadata if it already exists. It deliberately does NOT touch
+// tracked_at: caching a channel's details must never track or untrack it.
+// Empty fields do not overwrite stored values, so a partial refresh cannot
+// blank out a name that was already known.
 func (s *Store) Upsert(c Channel) error {
 	_, err := s.db.ExecContext(context.Background(), `
-INSERT INTO channels (id, handle, name) VALUES (?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET handle = excluded.handle, name = excluded.name`,
-		c.ID, c.Handle, c.Name,
+INSERT INTO channels (id, handle, name, description, avatar_path, banner_path, resolved_at)
+VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''))
+ON CONFLICT(id) DO UPDATE SET
+    handle      = COALESCE(NULLIF(excluded.handle, ''), channels.handle),
+    name        = COALESCE(NULLIF(excluded.name, ''), channels.name),
+    description = COALESCE(NULLIF(excluded.description, ''), channels.description),
+    avatar_path = COALESCE(NULLIF(excluded.avatar_path, ''), channels.avatar_path),
+    banner_path = COALESCE(NULLIF(excluded.banner_path, ''), channels.banner_path),
+    resolved_at = COALESCE(excluded.resolved_at, channels.resolved_at)`,
+		c.ID, c.Handle, c.Name, c.Description, c.AvatarPath, c.BannerPath, c.ResolvedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert channel %s: %w", c.ID, err)
@@ -171,13 +188,44 @@ ON CONFLICT(id) DO UPDATE SET handle = excluded.handle, name = excluded.name`,
 	return nil
 }
 
-// Get returns the channel with the given id, or (nil, nil) if it is not
-// tracked.
+// Track marks a cached channel as explicitly tracked by the user. It is
+// idempotent: re-tracking an already-tracked channel keeps the original
+// timestamp rather than resetting "tracked since".
+func (s *Store) Track(channelID, trackedAt string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE channels SET tracked_at = COALESCE(tracked_at, ?) WHERE id = ?`,
+		trackedAt, channelID,
+	)
+	if err != nil {
+		return fmt.Errorf("track channel %s: %w", channelID, err)
+	}
+	return nil
+}
+
+// MarkResolveAttempted records that a metadata fetch was tried, whether or
+// not it succeeded. Without this a permanently unresolvable channel would be
+// re-fetched from YouTube on every single page visit.
+func (s *Store) MarkResolveAttempted(channelID, at string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE channels SET resolved_at = ? WHERE id = ?`, at, channelID)
+	if err != nil {
+		return fmt.Errorf("mark resolve attempted %s: %w", channelID, err)
+	}
+	return nil
+}
+
+// Get returns the channel with the given id, or (nil, nil) if no such
+// channel is cached. Unlike List, Get does NOT filter on tracked_at — it
+// also finds cache-only rows, since the channel page reads metadata for
+// channels the user has never tracked.
 func (s *Store) Get(id string) (*Channel, error) {
-	row := s.db.QueryRowContext(context.Background(),
-		`SELECT id, handle, name, avatar_path, added_at FROM channels WHERE id = ?`, id)
+	row := s.db.QueryRowContext(context.Background(), `
+SELECT id, handle, name, description, avatar_path, banner_path,
+       COALESCE(resolved_at, ''), COALESCE(tracked_at, ''), added_at
+FROM channels WHERE id = ?`, id)
 	var c Channel
-	if err := row.Scan(&c.ID, &c.Handle, &c.Name, &c.AvatarPath, &c.AddedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.Handle, &c.Name, &c.Description,
+		&c.AvatarPath, &c.BannerPath, &c.ResolvedAt, &c.TrackedAt, &c.AddedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -194,23 +242,25 @@ func (s *Store) Get(id string) (*Channel, error) {
 // subscription row).
 func (s *Store) List(filter string) ([]ListItem, error) {
 	query := `
-SELECT c.id, c.handle, c.name, c.avatar_path, c.added_at,
+SELECT c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
+       COALESCE(c.resolved_at, ''), COALESCE(c.tracked_at, ''), c.added_at,
        s.channel_id IS NOT NULL AS subscribed,
        COALESCE(s.autodownload, 0), COALESCE(s.format_override, ''),
        (SELECT count(*) FROM channel_videos cv WHERE cv.channel_id = c.id AND cv.state = 'pending'),
        (SELECT count(*) FROM videos v WHERE v.channel_id = c.id AND v.status = 'downloaded')
-FROM channels c LEFT JOIN subscriptions s ON s.channel_id = c.id`
+FROM channels c LEFT JOIN subscriptions s ON s.channel_id = c.id
+WHERE c.tracked_at IS NOT NULL`
 
 	switch filter {
 	case "subscribed":
-		query += ` WHERE s.channel_id IS NOT NULL`
+		query += ` AND s.channel_id IS NOT NULL`
 	case "tracked":
-		query += ` WHERE s.channel_id IS NULL`
+		query += ` AND s.channel_id IS NULL`
 	case "autodownload":
 		// s.autodownload is NULL for tracked-but-unsubscribed channels, and
 		// `NULL = 1` is not true in SQLite, so those drop out without an
 		// extra IS NOT NULL guard.
-		query += ` WHERE s.autodownload = 1`
+		query += ` AND s.autodownload = 1`
 	case "all", "":
 		// no extra clause
 	default:
@@ -228,7 +278,8 @@ FROM channels c LEFT JOIN subscriptions s ON s.channel_id = c.id`
 	for rows.Next() {
 		var it ListItem
 		if err := rows.Scan(
-			&it.ID, &it.Handle, &it.Name, &it.AvatarPath, &it.AddedAt,
+			&it.ID, &it.Handle, &it.Name, &it.Description, &it.AvatarPath, &it.BannerPath,
+			&it.ResolvedAt, &it.TrackedAt, &it.AddedAt,
 			&it.Subscribed, &it.Autodownload, &it.FormatOverride,
 			&it.PendingCount, &it.DownloadedCount,
 		); err != nil {

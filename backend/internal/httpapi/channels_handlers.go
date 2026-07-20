@@ -109,8 +109,12 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "track channel failed")
 		return
 	}
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	if err := s.channels.Track(ucid, now); err != nil {
+		serverError(w, r, err, "track channel failed")
+		return
+	}
 	if req.Subscribe {
-		now := time.Now().UTC().Format("2006-01-02 15:04:05")
 		if err := s.channels.Subscribe(ucid, now); err != nil {
 			serverError(w, r, err, "subscribe failed")
 			return

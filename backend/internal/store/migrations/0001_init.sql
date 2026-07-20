@@ -116,13 +116,27 @@ CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 
 -- channels: a tracked YouTube channel (identity only). Presence == "tracked".
+-- channels: metadata cache for a YouTube channel. A row exists for any
+-- channel peeq has looked at — including ones the user has never tracked
+-- (their page is reachable from any video in the library). Tracking is
+-- therefore NOT "a row exists"; it is tracked_at IS NOT NULL.
 CREATE TABLE channels (
-    id          TEXT PRIMARY KEY,          -- the channel UCID (UC...)
-    handle      TEXT NOT NULL DEFAULT '',  -- @handle if known
-    name        TEXT NOT NULL DEFAULT '',
-    avatar_path TEXT NOT NULL DEFAULT '',  -- reserved, unused in P2
-    added_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    id           TEXT PRIMARY KEY,          -- the channel UCID (UC...)
+    handle       TEXT NOT NULL DEFAULT '',  -- @handle if known
+    name         TEXT NOT NULL DEFAULT '',
+    description  TEXT NOT NULL DEFAULT '',
+    avatar_path  TEXT NOT NULL DEFAULT '',  -- local path, relative to mediaDir
+    banner_path  TEXT NOT NULL DEFAULT '',  -- local path, relative to mediaDir
+    -- resolved_at: when the metadata above was last fetched from YouTube.
+    -- Non-empty means "do not re-fetch", INCLUDING after a failed attempt,
+    -- so an unresolvable channel is not re-fetched on every page visit.
+    resolved_at  TEXT,
+    -- tracked_at: when the user explicitly tracked this channel. NULL means
+    -- this is a cache-only row and must not appear in the channels list.
+    tracked_at   TEXT,
+    added_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX idx_channels_tracked_at ON channels(tracked_at);
 
 -- subscriptions: presence == "subscribed". One row per subscribed channel.
 CREATE TABLE subscriptions (

@@ -25,6 +25,92 @@ func newTestStore(t *testing.T) *Store {
 	return New(db)
 }
 
+// TestList_excludesCacheOnlyRows asserts a channel row that exists only as a
+// metadata cache entry (never tracked by the user) is invisible to every
+// ?filter= value the channels list supports. If this regresses, the user's
+// Channels page fills up with channels they merely clicked on once.
+func TestList_excludesCacheOnlyRows(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.Upsert(Channel{ID: "UCcache", Name: "Cache Only"}); err != nil {
+		t.Fatalf("upsert cache row: %v", err)
+	}
+	if err := s.Upsert(Channel{ID: "UCtracked", Name: "Tracked"}); err != nil {
+		t.Fatalf("upsert tracked row: %v", err)
+	}
+	if err := s.Track("UCtracked", "2026-07-20 10:00:00"); err != nil {
+		t.Fatalf("track: %v", err)
+	}
+
+	for _, filter := range []string{"all", "tracked", "subscribed", "autodownload"} {
+		items, err := s.List(filter)
+		if err != nil {
+			t.Fatalf("list %s: %v", filter, err)
+		}
+		for _, it := range items {
+			if it.ID == "UCcache" {
+				t.Fatalf("filter %q returned cache-only channel", filter)
+			}
+		}
+	}
+
+	all, err := s.List("all")
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if len(all) != 1 || all[0].ID != "UCtracked" {
+		t.Fatalf("list all = %+v, want only UCtracked", all)
+	}
+}
+
+// TestGet_returnsCacheOnlyRow asserts Get still finds a cache-only row — the
+// channel page reads its metadata through Get even when untracked, so Get
+// must NOT inherit List's tracked_at filter.
+func TestGet_returnsCacheOnlyRow(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Channel{ID: "UCcache", Name: "Cache Only", Description: "hello"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	c, err := s.Get("UCcache")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c == nil {
+		t.Fatal("get returned nil for a cache-only row")
+	}
+	if c.TrackedAt != "" {
+		t.Fatalf("TrackedAt = %q, want empty for an untracked row", c.TrackedAt)
+	}
+	if c.Description != "hello" {
+		t.Fatalf("Description = %q, want %q", c.Description, "hello")
+	}
+}
+
+// TestUpsert_preservesTrackedAt asserts re-caching a channel's metadata (which
+// happens on every visit-triggered resolve) never silently untracks it.
+func TestUpsert_preservesTrackedAt(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Channel{ID: "UCx", Name: "Before"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.Track("UCx", "2026-07-20 10:00:00"); err != nil {
+		t.Fatalf("track: %v", err)
+	}
+	if err := s.Upsert(Channel{ID: "UCx", Name: "After"}); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	c, err := s.Get("UCx")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.TrackedAt == "" {
+		t.Fatal("re-upsert cleared tracked_at")
+	}
+	if c.Name != "After" {
+		t.Fatalf("Name = %q, want refreshed to %q", c.Name, "After")
+	}
+}
+
 func TestChannels_trackSubscribeClaim(t *testing.T) {
 	st := newTestStore(t)
 
@@ -32,6 +118,12 @@ func TestChannels_trackSubscribeClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.Upsert(Channel{ID: "UC2", Name: "Two"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Track("UC2", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	// Tracked only → ClaimDue returns nothing.
@@ -162,6 +254,7 @@ func TestDeleteCascade_purgesVecAndFTSChunks(t *testing.T) {
 func TestChannels_unsubscribeKeepsChannel(t *testing.T) {
 	st := newTestStore(t)
 	st.Upsert(Channel{ID: "UC1", Name: "One"})
+	st.Track("UC1", "2000-01-01 00:00:00")
 	st.Subscribe("UC1", "2000-01-01 00:00:00")
 	ok, err := st.Unsubscribe("UC1")
 	if err != nil || !ok {
@@ -189,6 +282,9 @@ func TestChannels_listAutodownloadFilter(t *testing.T) {
 	} {
 		if err := st.Upsert(c); err != nil {
 			t.Fatalf("upsert %s: %v", c.ID, err)
+		}
+		if err := st.Track(c.ID, "2000-01-01 00:00:00"); err != nil {
+			t.Fatalf("track %s: %v", c.ID, err)
 		}
 	}
 	for _, id := range []string{"UC2", "UC3"} {
