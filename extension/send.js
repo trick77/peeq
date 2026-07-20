@@ -54,6 +54,28 @@ export async function sendCookie({ loadConfig, getCookies, hasPermission, fetch 
     return { ok: false, state: "server-error", detail };
   }
 
+  // A bare 200 is not evidence peeq received the cookie: a reverse proxy with
+  // SPA fallback (common in self-hosting) answers unknown routes with 200 and
+  // index.html, and some other service entirely could sit at that address.
+  // Only peeq's own success body proves this. Require it before saying "sent".
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    return {
+      ok: false,
+      state: "server-error",
+      detail: "That address answered, but it doesn't look like peeq.",
+    };
+  }
+  if (!body || body.status !== "valid") {
+    return {
+      ok: false,
+      state: "server-error",
+      detail: "That address answered, but it doesn't look like peeq.",
+    };
+  }
+
   // "sent" and "no-session" answer different questions and must not share a
   // count: this is how much was actually handed over (the full jar), not the
   // informational "N of 5" readout used above — don't unify them.

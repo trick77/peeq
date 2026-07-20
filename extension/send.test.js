@@ -104,6 +104,30 @@ test("a 400 from cookie validation is a server-error carrying peeq's reason", as
   assert.ok(result.detail.includes("no session"));
 });
 
+test("a 200 with an HTML body is not reported as sent", async () => {
+  // A reverse proxy with SPA fallback answers unknown routes with 200 and
+  // index.html — that must not be mistaken for peeq's success.
+  const d = deps({
+    fetchImpl: async () => new Response("<!doctype html><html><body>not peeq</body></html>", { status: 200 }),
+  });
+  const result = await sendCookie(d);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.state, "server-error");
+  assert.ok(result.detail.includes("doesn't look like peeq"));
+});
+
+test("a 200 with valid JSON but the wrong shape is not reported as sent", async () => {
+  const d = deps({
+    fetchImpl: async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+  });
+  const result = await sendCookie(d);
+
+  assert.equal(result.ok, false);
+  assert.notEqual(result.state, "sent");
+  assert.equal(result.state, "server-error");
+});
+
 test("the cookie body is not retained on the result", async () => {
   const result = await sendCookie(deps());
   assert.ok(!JSON.stringify(result).includes("__Secure-1PSID"),

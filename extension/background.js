@@ -39,6 +39,9 @@ api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     : message?.type === "status" ? status
     : null;
   if (!handler) return false;
-  handler().then(sendResponse, (err) => sendResponse({ ok: false, state: "server-error", detail: String(err) }));
+  // Deliberately not "server-error": that state belongs to the send pipeline
+  // (a failed PUT). A rejection here can come from status() too (e.g.
+  // chrome.cookies.getAll throwing), where nothing was ever sent.
+  handler().then(sendResponse, (err) => sendResponse({ ok: false, state: "status-error", detail: String(err) }));
   return true; // keep the message channel open for the async response
 });
