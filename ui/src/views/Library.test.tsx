@@ -239,7 +239,7 @@ describe("Library category chips", () => {
       return [aiVideo, newsVideo];
     });
 
-    render(<Library onOpenVideo={() => {}} />);
+    render(<Library onOpenVideo={() => {}} search="" />);
 
     expect(await screen.findByText("news video title")).toBeInTheDocument();
 
@@ -261,7 +261,7 @@ describe("Library category chips", () => {
       return [aiVideo, newsVideo];
     });
 
-    render(<Library onOpenVideo={() => {}} />);
+    render(<Library onOpenVideo={() => {}} search="" />);
     await screen.findByText("news video title");
 
     fireEvent.click(screen.getByRole("button", { name: /Unwatched/ }));
@@ -293,7 +293,7 @@ describe("Library category chips", () => {
     ]);
     vi.useFakeTimers({ shouldAdvanceTime: true });
 
-    render(<Library onOpenVideo={() => {}} />);
+    render(<Library onOpenVideo={() => {}} search="" />);
     const aiChip = await screen.findByRole("button", { name: /AI/ });
     fireEvent.click(aiChip);
     await waitFor(() => {
@@ -310,13 +310,14 @@ describe("Library category chips", () => {
     });
   });
 
-  it("typing in the search box refetches with the query", async () => {
+  it("refetches with the query when the search prop changes", async () => {
+    // The search box itself now lives in the top bar (App owns the state);
+    // Library just receives the query as a prop and debounces its own fetch.
     vi.mocked(listVideos).mockResolvedValue([]);
-    const user = userEvent.setup();
-    render(<Library onOpenVideo={() => {}} />);
-    await screen.findByPlaceholderText(/search/i);
+    const { rerender } = render(<Library onOpenVideo={() => {}} search="" />);
+    await screen.findByLabelText(/sort/i);
 
-    await user.type(screen.getByPlaceholderText(/search/i), "abyss");
+    rerender(<Library onOpenVideo={() => {}} search="abyss" />);
 
     await waitFor(() => {
       expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ q: "abyss" }));
@@ -326,7 +327,7 @@ describe("Library category chips", () => {
   it("choosing a sort option refetches with that sort", async () => {
     vi.mocked(listVideos).mockResolvedValue([]);
     const user = userEvent.setup();
-    render(<Library onOpenVideo={() => {}} />);
+    render(<Library onOpenVideo={() => {}} search="" />);
     await screen.findByLabelText(/sort/i);
 
     await user.selectOptions(screen.getByLabelText(/sort/i), "longest");

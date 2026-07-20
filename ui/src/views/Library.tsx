@@ -42,11 +42,12 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
 }
 
 // Library — the default view: filter chips + a grid of VideoCards, per the
-// mockup's `.chips`/`.grid` blocks.
-export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) {
+// mockup's `.chips`/`.grid` blocks. The search query itself lives in App
+// (it's the top bar's search box, wired there since the top bar is
+// Library-only chrome) and arrives here as the `search` prop.
+export function Library({ onOpenVideo, search }: { onOpenVideo: (id: string) => void; search: string }) {
   const [filter, setFilter] = useState<VideoFilter>("all");
   const [category, setCategory] = useState<string>("all");
-  const [query, setQuery] = useState("");
   const [sort, setSort] = useState<VideoSort>("newest");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [allVideos, setAllVideos] = useState<Video[]>([]);
@@ -88,9 +89,9 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
 
   // Debounce the search box so typing "abyss" fires one request, not five.
   useEffect(() => {
-    const id = setTimeout(() => setDebouncedQuery(query), 250);
+    const id = setTimeout(() => setDebouncedQuery(search), 250);
     return () => clearTimeout(id);
-  }, [query]);
+  }, [search]);
 
   // The chip's own filtered list, refetched whenever the active chip,
   // search query, or sort changes.
@@ -266,15 +267,6 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
         ))}
       </div>
       <div className="listbar">
-        <input
-          className={controlClass}
-          style={{ maxWidth: 280 }}
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search titles"
-          aria-label="Search titles"
-        />
         <select
           className={controlClass}
           style={{ maxWidth: 180 }}

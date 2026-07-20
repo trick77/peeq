@@ -52,6 +52,11 @@ export function App() {
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(
     restored?.playing ? restored.videoId : null,
   );
+  // Library search: lifted here (not owned by Library) because the search
+  // box itself now lives in the top bar, which Library doesn't render. The
+  // top bar is not channel-aware, so the channel page keeps its own,
+  // separately-owned in-page search box — this state is Library-only.
+  const [librarySearch, setLibrarySearch] = useState("");
   // pendingSeek is the jump-to-moment target set by Search's onOpen (Task
   // 18): Player consumes it once on the loadedmetadata handler that already
   // applies the resume position, taking priority over resume. openVideo
@@ -268,7 +273,13 @@ export function App() {
         cookieStatus={cookieStatus}
       />
       <main className="main">
-        <TopBar title={meta.title} subtitle={meta.subtitle} showSearch={view === "library"} />
+        <TopBar
+          title={meta.title}
+          subtitle={meta.subtitle}
+          showSearch={view === "library"}
+          search={librarySearch}
+          onSearchChange={setLibrarySearch}
+        />
         <section className="page">
           <DownloadStatusBanner
             status={downloadStatus}
@@ -285,6 +296,7 @@ export function App() {
             setView={setView}
             setPendingCount={setPendingCount}
             onQueued={refreshQueue}
+            librarySearch={librarySearch}
           />
         </section>
       </main>
@@ -354,6 +366,7 @@ function ViewSwitch({
   setView,
   setPendingCount,
   onQueued,
+  librarySearch,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
@@ -364,10 +377,11 @@ function ViewSwitch({
   setView: (v: ViewId) => void;
   setPendingCount: (n: number) => void;
   onQueued: () => void;
+  librarySearch: string;
 }) {
   switch (view) {
     case "library":
-      return <Library onOpenVideo={onOpenVideo} />;
+      return <Library onOpenVideo={onOpenVideo} search={librarySearch} />;
     case "player":
       return (
         <Player
