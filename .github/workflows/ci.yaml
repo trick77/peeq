@@ -26,9 +26,9 @@ jobs:
           cache-dependency-path: backend/go.sum
       - run: go build ./...
       - run: go vet ./...
+      - run: mkdir -p ../coverage
       # The race detector needs cgo; this is independent of the app's
       # CGO_ENABLED=0 build invariant enforced by the `go build` step above.
-      - run: mkdir -p ../coverage
       - run: go test -race -covermode=atomic -coverprofile=../coverage/backend.out ./...
         env:
           CGO_ENABLED: "1"
