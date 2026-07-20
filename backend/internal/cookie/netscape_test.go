@@ -3,6 +3,7 @@ package cookie_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/cookie"
@@ -94,5 +95,12 @@ func TestParse_extensionOutput(t *testing.T) {
 	// The #HttpOnly_ prefix must be stripped, leaving a clean domain.
 	if got := byName["SID"].Domain; got != ".youtube.com" {
 		t.Errorf("SID: Domain = %q, want %q", got, ".youtube.com")
+	}
+
+	// The parsed Domain is identical whether or not #HttpOnly_ was emitted,
+	// because Parse strips it. Assert on the raw text too, or a serializer
+	// that stopped emitting the prefix would slip through this lock.
+	if !strings.Contains(text, "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t") {
+		t.Error("fixture has no #HttpOnly_ prefixed line; the serializer stopped marking httpOnly cookies")
 	}
 }
