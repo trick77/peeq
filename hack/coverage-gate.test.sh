@@ -45,5 +45,38 @@ esac
 ./hack/coverage-gate.sh bogus >/dev/null 2>&1
 check "rejects unknown side" 2 $?
 
+printf 'backend=79.0\nui=abc\n' > "$TMP/floors-nonnumeric"
+COVERAGE_FLOORS="$TMP/floors-nonnumeric" COVERAGE_FILE="$TMP/backend.out" \
+  ./hack/coverage-gate.sh ui >/dev/null 2>&1
+check "rejects non-numeric floor" 2 $?
+
+# --- ui branch ---
+
+cat > "$TMP/ui-summary-good.json" <<'JSON'
+{"total": {"statements": {"pct": 90.0}}}
+JSON
+
+cat > "$TMP/ui-summary-malformed.json" <<'JSON'
+{not valid json
+JSON
+
+cat > "$TMP/ui-summary-missing-field.json" <<'JSON'
+{"total": {"statements": {}}}
+JSON
+
+printf 'backend=79.0\nui=50.0\n' > "$TMP/floors-ui-under"
+
+COVERAGE_FLOORS="$TMP/floors-ui-under" COVERAGE_FILE="$TMP/ui-summary-good.json" \
+  ./hack/coverage-gate.sh ui >/dev/null 2>&1
+check "ui passes when above floor" 0 $?
+
+COVERAGE_FLOORS="$TMP/floors-ui-under" COVERAGE_FILE="$TMP/ui-summary-malformed.json" \
+  ./hack/coverage-gate.sh ui >/dev/null 2>&1
+check "ui rejects malformed JSON" 2 $?
+
+COVERAGE_FLOORS="$TMP/floors-ui-under" COVERAGE_FILE="$TMP/ui-summary-missing-field.json" \
+  ./hack/coverage-gate.sh ui >/dev/null 2>&1
+check "ui rejects missing total.statements.pct" 2 $?
+
 [ "$fail" = 0 ] && echo "coverage-gate: all checks passed"
 exit "$fail"
