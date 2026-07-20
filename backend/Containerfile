@@ -29,7 +29,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/trick77/peeq/internal/v
 # it cannot host ffmpeg or the yt-dlp binary (both need a real userland, and
 # yt-dlp additionally needs a Python interpreter and OpenSSL/certs). peeq's
 # runtime instead needs to shell out to ffmpeg and yt-dlp for every download,
-# so it uses debian:12-slim (glibc, apt) and installs both directly.
+# so it uses debian:13-slim (glibc, apt) and installs both directly.
 FROM debian:13-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
