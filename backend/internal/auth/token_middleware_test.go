@@ -102,3 +102,45 @@ func TestRequireToken_doesNotPutAUserInTheContext(t *testing.T) {
 		t.Fatalf("a user was present in the context of a token request")
 	}
 }
+
+func TestRequireToken_acceptsLowercaseBearerScheme(t *testing.T) {
+	// Given
+	const token = "peeq_valid-token-value"
+	reached := false
+	mw := NewTokenMiddleware(fakeTokens{hash: apitoken.Hash(token)})
+	req := httptest.NewRequest(http.MethodPut, "/api/machine/cookie", nil)
+	req.Header.Set("Authorization", "bearer "+token)
+	rec := httptest.NewRecorder()
+
+	// When
+	mw.RequireToken(okHandler(&reached)).ServeHTTP(rec, req)
+
+	// Then
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !reached {
+		t.Fatalf("protected handler was not reached")
+	}
+}
+
+func TestRequireToken_nilTokenLookupFailsClosed(t *testing.T) {
+	// Given
+	const token = "peeq_valid-token-value"
+	reached := false
+	mw := NewTokenMiddleware(nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/machine/cookie", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+
+	// When
+	mw.RequireToken(okHandler(&reached)).ServeHTTP(rec, req)
+
+	// Then
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if reached {
+		t.Fatalf("protected handler was reached despite nil token lookup")
+	}
+}
