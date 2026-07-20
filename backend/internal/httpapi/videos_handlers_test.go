@@ -647,6 +647,42 @@ func TestVideosList_filtersByQueryParam(t *testing.T) {
 	}
 }
 
+// TestVideosList_filtersByCategory covers GET /api/videos?category=, and
+// that the returned DTO actually carries the category value (not just that
+// filtering happened).
+func TestVideosList_filtersByCategory(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed video v1: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v2", URL: "u2"}); err != nil {
+		t.Fatalf("seed video v2: %v", err)
+	}
+	if err := deps.Videos.SetCategory("v1", "ai"); err != nil {
+		t.Fatalf("set category v1: %v", err)
+	}
+	if err := deps.Videos.SetCategory("v2", "news"); err != nil {
+		t.Fatalf("set category v2: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos?category=ai", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET videos status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got) != 1 || got[0]["id"] != "v1" {
+		t.Fatalf("filtered list = %+v, want [v1]", got)
+	}
+	if got[0]["category"] != "ai" {
+		t.Fatalf("category = %v, want \"ai\"", got[0]["category"])
+	}
+}
+
 // redownloadTestHarness wires the videos API plus a real jobs store, so a
 // redownload test can assert both the video's status flip and that a job
 // was actually enqueued at manual priority.
