@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { App } from "./App";
-import { downloadsStatus, resumeYoutube, listDownloads } from "./api";
+import { downloadsStatus, resumeYoutube, listDownloads, getMe, listPending, cookieHealth, streamDownloads } from "./api";
 import { addDownload } from "./api/downloads";
-import type { Job, Video } from "./api/types";
+import type { Job, User, Video } from "./api/types";
 
 describe("App (static)", () => {
   it("renders peeq", () => {
@@ -87,6 +87,20 @@ describe("App dock bootstrap", () => {
   beforeEach(() => {
     sessionStorage.clear();
     vi.clearAllMocks();
+    // Restate every mock this test depends on rather than inheriting
+    // whatever an earlier describe left behind — the paused-banner tests
+    // above overwrite downloadsStatus, and clearAllMocks only drops call
+    // history, not implementations.
+    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    vi.mocked(downloadsStatus).mockResolvedValue({
+      paused: false,
+      low_disk: false,
+      youtube_paused: false,
+      youtube_pause_reason: "",
+    });
+    vi.mocked(listPending).mockResolvedValue([]);
+    vi.mocked(cookieHealth).mockResolvedValue({ status: "active", present: true });
+    vi.mocked(streamDownloads).mockResolvedValue(undefined);
   });
 
   it("refreshes the download queue after the Add view queues a video", async () => {
@@ -101,7 +115,11 @@ describe("App dock bootstrap", () => {
     } as Job);
 
     render(<App />);
-    fireEvent.click(await screen.findByText("Add a video"));
+
+    // Wait for the authed shell before touching the rail: on a slow runner
+    // the initial getMe() has not resolved yet, and a bare findByText would
+    // race its 1s default timeout against an unrendered nav.
+    fireEvent.click(await screen.findByRole("button", { name: /Add a video/ }, { timeout: 5000 }));
 
     // Starts empty — this is the state that used to be terminal.
     expect(await screen.findByText("Nothing queued")).toBeTruthy();
