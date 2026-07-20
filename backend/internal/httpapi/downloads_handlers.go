@@ -126,7 +126,7 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 		DurationSeconds: int64(meta.DurationSeconds),
 		PublishedAt:     meta.PublishedAt,
 		ThumbnailPath:   meta.Thumbnail,
-		Availability:    meta.Availability,
+		Availability:    videos.NormalizeAvailability(meta.Availability),
 	}); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "save video failed")
 		return
