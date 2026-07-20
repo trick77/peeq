@@ -79,3 +79,33 @@ func TestRunParsesProseWrappedJSON(t *testing.T) {
 		t.Fatalf("expected prose-wrapped JSON to be parsed, got: %+v", got.KeyPoints)
 	}
 }
+
+func TestClassifyReturnsRawReplyAndSendsAllowedIDs(t *testing.T) {
+	var gotSystem, gotUser string
+	fc := completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		gotSystem = m[0].Content
+		gotUser = m[1].Content
+		return " ai \n", nil
+	})
+	s := New(fc)
+	got, err := s.Classify(context.Background(), "GPT-5 is here", "A video about a new model.", []string{"ai", "news"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != " ai \n" {
+		t.Fatalf("Classify returned %q, want raw reply unchanged", got)
+	}
+	if !strings.Contains(gotSystem, "ai") || !strings.Contains(gotSystem, "news") {
+		t.Fatalf("system prompt missing allowed ids: %q", gotSystem)
+	}
+	if !strings.Contains(gotUser, "GPT-5 is here") || !strings.Contains(gotUser, "new model") {
+		t.Fatalf("user content missing title/summary: %q", gotUser)
+	}
+}
+
+// completerFunc adapts a func to the Completer interface for tests.
+type completerFunc func(context.Context, []llm.Message) (string, error)
+
+func (f completerFunc) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	return f(ctx, m)
+}
