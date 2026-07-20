@@ -83,6 +83,65 @@ html {
   color-scheme: dark;
 }
 
+/* Text inputs follow the UI step of the type scale — except on a touch screen,
+   where iOS Safari zooms the whole page in whenever you focus an input rendering
+   under 16px, and never zooms back out. The scale has no 16px step (--text-ui is
+   15px), so this is a deliberate one-off: a pointer-coarse-only bump that buys
+   the phone a stable viewport. Desktop keeps the scale exactly.
+   Fields must take their size from --text-input (via .ui-control or controlStyle
+   in ui.tsx), never from --text-ui and never from an inline fontSize — an inline
+   value would out-specify the media query below. */
+:root {
+  --text-input: var(--text-ui);
+}
+@media (pointer: coarse) {
+  :root {
+    --text-input: 16px;
+  }
+}
+
+/* ── shared primitives (ui.tsx) ────────────────────────────────────────── */
+
+/* The 40px form control. Focus is a 2px ring, not a border-colour swap, so the
+   control doesn't shift by a pixel when it gains focus. */
+.ui-control {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-ui);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-input);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ui-control:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+textarea.ui-control {
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* Every async wait spins — the label never carries an ellipsis. */
+.ui-spin {
+  display: inline-flex;
+  animation: ui-spin 0.7s linear infinite;
+}
+@keyframes ui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-spin {
+    animation-duration: 2.4s;
+  }
+}
+
 body {
   margin: 0;
   background: var(--color-bg);
@@ -438,12 +497,14 @@ button {
   margin-bottom: 22px;
 }
 .chip {
-  padding: 7px 14px;
-  border-radius: 20px;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-family: var(--font-sans);
   border: 1px solid var(--color-border);
   background: var(--color-panel);
   color: var(--color-muted);
-  font-size: 13.5px;
+  font-size: var(--text-ui);
   font-weight: 500;
   display: flex;
   align-items: center;
@@ -460,7 +521,8 @@ button {
 }
 .chip .n {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-micro);
   opacity: 0.7;
 }
 .catchips {
@@ -470,12 +532,14 @@ button {
   margin: -10px 0 22px;
 }
 .catchip {
-  padding: 6px 13px;
-  border-radius: 20px;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-family: var(--font-sans);
   border: 1px solid var(--color-border-soft);
   background: transparent;
   color: var(--color-muted);
-  font-size: 13px;
+  font-size: var(--text-ui);
   font-weight: 500;
   display: inline-flex;
   align-items: center;
@@ -499,7 +563,8 @@ button {
 }
 .catchip .n {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-micro);
   opacity: 0.65;
 }
 
@@ -707,6 +772,7 @@ button {
   color: var(--color-faint);
 }
 .metapill {
+  font-family: var(--font-sans);
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -827,37 +893,6 @@ button {
 .paste input::placeholder {
   color: var(--color-faint);
 }
-.btn {
-  border: none;
-  border-radius: 11px;
-  padding: 0 22px;
-  font-size: 15px;
-  font-weight: 650;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 46px;
-}
-.btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.btn.primary {
-  background: var(--color-accent);
-  color: var(--color-bg);
-  box-shadow: 0 8px 24px -10px var(--glow-accent);
-}
-.btn.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.btn.ghost {
-  background: var(--color-active);
-  color: var(--color-ink-dim);
-  border: 1px solid var(--color-border);
-}
-.btn.ghost:hover:not(:disabled) {
-  border-color: var(--color-faint);
-}
 .hint {
   font-size: 12.5px;
   color: var(--color-faint);
@@ -935,12 +970,12 @@ button {
   margin-top: 14px;
   flex-wrap: wrap;
 }
+/* One label style everywhere — the 11px uppercase variant is retired. */
 .lab {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--color-faint);
-  margin-bottom: 8px;
+  font-size: var(--text-label);
+  color: var(--color-muted);
+  font-weight: 500;
+  margin-bottom: 6px;
   display: block;
 }
 .select {
@@ -1100,7 +1135,7 @@ button {
 }
 .pill {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-micro);
   padding: 2px 9px;
   border-radius: 20px;
   border: 1px solid var(--color-border);
@@ -1112,43 +1147,6 @@ button {
   gap: 10px;
   margin-top: 18px;
   flex-wrap: wrap;
-}
-.abtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-radius: 11px;
-  background: var(--color-active);
-  border: 1px solid var(--color-border);
-  color: var(--color-ink-dim);
-  font-size: 14px;
-  font-weight: 550;
-  text-decoration: none;
-}
-.abtn:hover {
-  border-color: var(--color-faint);
-  color: var(--color-ink);
-}
-.abtn.gold {
-  color: var(--color-kept);
-  border-color: var(--color-accent-dim);
-  background: color-mix(in srgb, var(--color-kept) 12%, transparent);
-}
-.abtn.danger:hover {
-  color: var(--color-danger);
-  border-color: color-mix(in srgb, var(--color-danger) 50%, transparent);
-}
-.abtn.accent {
-  padding: 6px 12px;
-  font-size: 12.5px;
-  color: var(--color-accent-strong);
-  border-color: var(--color-accent-dim);
-  background: color-mix(in srgb, var(--color-accent-strong) 12%, transparent);
-}
-.abtn.accent:hover {
-  border-color: var(--color-accent-strong);
-  color: var(--color-accent-strong);
 }
 
 .side {
@@ -1431,12 +1429,6 @@ button {
   padding: 0 2px;
 }
 
-/* CC toggle (playacts row) */
-.abtn.cc-btn.on {
-  background: var(--color-accent-fill);
-  border-color: var(--color-accent);
-  color: var(--color-ink);
-}
 
 /* ── Settings (Task 14). ───────────────────────────────────────────────── */
 
@@ -1453,9 +1445,9 @@ button {
   padding: 22px 24px;
 }
 .sect h2 {
-  margin: 0 0 4px;
+  margin: 0 0 6px;
   font-family: var(--font-serif);
-  font-size: 19px;
+  font-size: var(--text-title);
   font-weight: 500;
   letter-spacing: -0.01em;
   display: flex;
@@ -1465,14 +1457,18 @@ button {
 }
 .sect .desc {
   margin: 0 0 18px;
-  font-size: 13.5px;
+  font-size: var(--text-body);
   color: var(--color-muted);
 }
+/* Pills are ALWAYS sans. This one renders inside the serif `.sect h2`, so
+   without an explicit family it inherits Anthropic Serif — serif is for content
+   headings only, never for a pill sitting in one. */
 .status-line {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
   font-weight: 600;
   color: var(--color-online);
   background: color-mix(in srgb, var(--color-online) 10%, transparent);
@@ -1540,7 +1536,7 @@ button {
   min-width: 0;
   padding: 13px 14px;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-label);
   line-height: 1.5;
   color: var(--color-ink-dim);
   overflow-x: auto;
@@ -1553,44 +1549,6 @@ button {
   padding: 0 6px;
   border-left: 1px solid var(--color-border);
   background: var(--color-panel);
-}
-.tokenbtn {
-  background: transparent;
-  border: none;
-  color: var(--color-muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 11px;
-  border-radius: 8px;
-  font-size: 12.5px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-}
-.tokenbtn:hover {
-  background: var(--color-active);
-  color: var(--color-ink-dim);
-}
-.tokenbtn:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
-}
-.tokenbtn.ok {
-  color: var(--color-online);
-}
-.btn.danger {
-  background: transparent;
-  color: var(--color-danger);
-  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
-}
-.btn.danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
-}
-.btn.sm {
-  min-height: 38px;
-  padding: 0 15px;
-  font-size: 13.5px;
 }
 .empty {
   border: 1px dashed var(--color-border);
@@ -1696,20 +1654,27 @@ textarea.cookiebox:focus {
     grid-template-columns: 1fr;
   }
 }
+/* These out-specify .ui-control (0,2,1 vs 0,1,0), so they must carry the same
+   values themselves — otherwise a field inside .ctrl silently keeps the old
+   13.5px mono face and re-opens the iOS zoom trap. Font size comes from
+   --text-input, never a literal. */
 .ctrl input[type="text"],
 .ctrl input[type="number"] {
   width: 100%;
-  background: var(--color-bg);
+  min-height: 40px;
+  background: var(--color-panel);
   border: 1px solid var(--color-border);
-  border-radius: 10px;
-  padding: 11px 13px;
+  border-radius: var(--radius-ui);
+  padding: 0 12px;
   color: var(--color-ink);
-  font-family: var(--font-mono);
-  font-size: 13.5px;
+  font-family: var(--font-sans);
+  font-size: var(--text-input);
   outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .ctrl input:focus {
   border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 .retain-note {
   font-size: 12.5px;
@@ -1989,4 +1954,126 @@ textarea.cookiebox:focus {
   .rail-foot {
     display: none;
   }
+}
+
+/* ── Button (ui.tsx) ───────────────────────────────────────────────────────
+   Class-based, deliberately NOT inline styles like music's ui.tsx. peeq's
+   buttons carry hover states (.abtn:hover, .abtn.danger:hover, the captions
+   toggle) and an inline style object beats a CSS :hover rule, so porting
+   music's approach verbatim would have silently dropped every hover.
+   Geometry follows the design system; every colour is peeq's existing value. */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: var(--radius-ui);
+  border: 1px solid transparent;
+  font-family: var(--font-sans);
+  font-size: var(--text-ui);
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.ui-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.ui-btn--sm {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: var(--text-label);
+}
+/* Icon-only. Always pair with aria-label — there is no visible text. */
+.ui-btn--icon {
+  min-height: 32px;
+  width: 32px;
+  padding: 0;
+  flex: none;
+}
+
+.ui-btn--primary {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-weight: 600;
+  box-shadow: 0 8px 24px -10px var(--glow-accent);
+}
+.ui-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+/* was .abtn and .btn.ghost — the same control under two names. */
+.ui-btn--secondary {
+  background: var(--color-active);
+  color: var(--color-ink-dim);
+  border-color: var(--color-border);
+}
+.ui-btn--secondary:hover:not(:disabled) {
+  border-color: var(--color-faint);
+  color: var(--color-ink);
+}
+
+/* was .tokenbtn — quiet, no chrome until hover. */
+.ui-btn--ghost {
+  background: transparent;
+  color: var(--color-muted);
+  font-weight: 600;
+}
+.ui-btn--ghost:hover:not(:disabled) {
+  background: var(--color-active);
+  color: var(--color-ink-dim);
+}
+
+/* was .btn.danger — a destructive action that reads destructive at rest. */
+.ui-btn--danger {
+  background: transparent;
+  color: var(--color-danger);
+  font-weight: 600;
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+}
+.ui-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+
+/* was .abtn.danger — neutral at rest, red on hover. Distinct from the above
+   on purpose: these sit in a row of ordinary actions (Delete beside Watch). */
+.ui-btn--dangerQuiet {
+  background: var(--color-active);
+  color: var(--color-ink-dim);
+  border-color: var(--color-border);
+}
+.ui-btn--dangerQuiet:hover:not(:disabled) {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 50%, transparent);
+}
+
+/* was .abtn.gold — the "Kept forever" favourite state. peeq-only. */
+.ui-btn--gold {
+  background: color-mix(in srgb, var(--color-kept) 12%, transparent);
+  color: var(--color-kept);
+  border-color: var(--color-accent-dim);
+}
+
+/* was .abtn.accent — Re-download on a failed card. peeq-only. */
+.ui-btn--tinted {
+  background: color-mix(in srgb, var(--color-accent-strong) 12%, transparent);
+  color: var(--color-accent-strong);
+  border-color: var(--color-accent-dim);
+}
+.ui-btn--tinted:hover:not(:disabled) {
+  border-color: var(--color-accent-strong);
+}
+
+/* pressed state for toggles (the captions button) — was .abtn.cc-btn.on. */
+.ui-btn.is-on {
+  background: var(--color-accent-fill);
+  border-color: var(--color-accent);
+  color: var(--color-ink);
+}
+/* success confirmation on an icon button (Copy -> Copied). */
+.ui-btn.is-ok {
+  color: var(--color-online);
 }

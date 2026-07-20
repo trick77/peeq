@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../icons";
+import { Button, Spinner, buttonClass } from "../ui";
 import { Scrubber } from "../components/Scrubber";
 import { getVideo, setFavorite, setWatched, setResume, deleteVideo, redownload, streamUrl } from "../api/videos";
 import { resummarize, subtitlesUrl } from "../api/search";
@@ -288,7 +289,12 @@ export function Player({
     return <div className="errline">{error}</div>;
   }
   if (!video) {
-    return <p style={{ color: "var(--color-faint)" }}>Loading…</p>;
+    return (
+      <p style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-faint)" }}>
+        <Spinner size="15px" />
+        Loading
+      </p>
+    );
   }
 
   const segments = video.sponsorblock_segments ?? [];
@@ -485,36 +491,39 @@ export function Player({
             {video.filesize_bytes ? <span className="pill">{formatSize(video.filesize_bytes)}</span> : null}
           </div>
           <div className="playacts">
-            <button
+            <Button
               type="button"
-              className={`abtn${video.favorite ? " gold" : ""}`}
+              variant={video.favorite ? "gold" : "secondary"}
               onClick={handleToggleFavorite}
             >
               <Icon name={video.favorite ? "starFilled" : "star"} size="17px" />
               <span>{video.favorite ? "Kept forever" : "Keep forever"}</span>
-            </button>
-            <button type="button" className="abtn" onClick={handleToggleWatched}>
+            </Button>
+            <Button type="button" variant="secondary" onClick={handleToggleWatched}>
               <Icon name="check" size="17px" /> {video.watched ? "Mark unwatched" : "Mark watched"}
-            </button>
+            </Button>
             {video.has_subtitles && (
-              <button
+              <Button
                 type="button"
-                className={`abtn cc-btn${ccOn ? " on" : ""}`}
+                variant="secondary"
+                className={ccOn ? "is-on" : undefined}
+                aria-pressed={ccOn}
                 onClick={handleToggleCC}
               >
                 <Icon name="captions" size="17px" /> CC
-              </button>
+              </Button>
             )}
-            <button type="button" className="abtn danger" onClick={handleDelete}>
+            <Button type="button" variant="dangerQuiet" onClick={handleDelete}>
               <Icon name="trash" size="17px" /> Delete
-            </button>
-            <a className="abtn" href={video.url} target="_blank" rel="noreferrer">
+            </Button>
+            <a className={buttonClass("secondary")} href={video.url} target="_blank" rel="noreferrer">
               <Icon name="externalLink" size="17px" /> Watch on YouTube
             </a>
             {(video.status === "error" || video.status === "tombstoned") && (
-              <button type="button" className="abtn accent" onClick={handleRedownload} disabled={redownloading}>
-                <Icon name="refresh" size="15px" /> {redownloading ? "Queuing…" : "Re-download"}
-              </button>
+              <Button type="button" variant="tinted" small busy={redownloading} onClick={handleRedownload}>
+                {!redownloading && <Icon name="refresh" size="15px" />}
+                {redownloading ? "Queuing" : "Re-download"}
+              </Button>
             )}
           </div>
         </div>
@@ -624,14 +633,18 @@ export function Player({
               ))}
             {video.summary_status === "no_transcript" && <p className="placeholder">No transcript available.</p>}
             {(video.summary_status === "pending" || video.summary_status === "running") && (
-              <p className="placeholder">Summarizing…</p>
+              <p className="placeholder" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Spinner size="15px" />
+                Summarizing
+              </p>
             )}
             {video.summary_status === "error" && (
               <>
                 <p className="errline">Summarization failed.</p>
-                <button type="button" className="abtn" onClick={handleResummarize} disabled={resummarizing}>
-                  <Icon name="download" size="15px" /> {resummarizing ? "Queuing…" : "Re-summarize"}
-                </button>
+                <Button type="button" variant="secondary" small busy={resummarizing} onClick={handleResummarize}>
+                  {!resummarizing && <Icon name="download" size="15px" />}
+                  {resummarizing ? "Queuing" : "Re-summarize"}
+                </Button>
               </>
             )}
             {!DONE_STATUSES.has(video.summary_status) && <p className="placeholder">No summary yet.</p>}

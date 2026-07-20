@@ -12,6 +12,7 @@ import { Channels } from "./views/Channels";
 import { Pending } from "./views/Pending";
 import { Search } from "./views/Search";
 import { readNowPlaying } from "./nowPlaying";
+import { Button } from "./ui";
 
 // Page titles/subtitles per view, per the mockup's `titles` map.
 const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
@@ -314,7 +315,7 @@ function DownloadStatusBanner({
           <b>YouTube activity is paused.</b>{" "}
           {auto ? status.youtube_pause_reason : "You paused all downloads and channel scans."}
         </span>
-        <button type="button" className="btn primary" onClick={onResume}>Resume</button>
+        <Button type="button" onClick={onResume}>Resume</Button>
       </div>
     );
   }

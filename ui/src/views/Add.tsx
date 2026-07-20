@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Icon } from "../icons";
+import { Button } from "../ui";
 import { addDownload, CookieRequiredError, InvalidUrlError } from "../api/downloads";
 import { addChannel } from "../api/channels";
 import { isChannelURL } from "../youtube";
@@ -63,10 +64,10 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
             aria-label="Video or channel URL"
           />
         </label>
-        <button className="btn primary" type="submit" disabled={busy || !url.trim()}>
-          <Icon name="download" size="18px" />
-          {busy ? "Adding…" : isChannelURL(url) ? "Track channel" : "Download now"}
-        </button>
+        <Button type="submit" busy={busy} disabled={!url.trim()}>
+          {!busy && <Icon name="download" size="18px" />}
+          {busy ? "Adding" : isChannelURL(url) ? "Track channel" : "Download now"}
+        </Button>
       </form>
 
       <div className="hint">

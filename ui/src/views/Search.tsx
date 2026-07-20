@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Icon } from "../icons";
+import { Spinner } from "../ui";
 import { searchVideos, type SearchResult } from "../api/search";
 import { thumbnailUrl } from "../api/videos";
 import { formatDuration, gradientClassFor } from "../format";
@@ -62,7 +63,12 @@ export function Search({ onOpen }: { onOpen: (videoId: string, startSeconds: num
       </div>
 
       {error ? <div className="errline">{error}</div> : null}
-      {loading ? <p style={{ color: "var(--color-faint)" }}>Searching…</p> : null}
+      {loading ? (
+        <p style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-faint)" }}>
+        <Spinner size="15px" />
+        Searching
+      </p>
+      ) : null}
 
       {!loading && results !== null && (
         <>
