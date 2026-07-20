@@ -1,7 +1,10 @@
-// Package llm is peeq's lean OpenAI-compatible chat client for MiMo. It targets
-// mimo-v2.5-pro at reasoning_effort=high on every call (an offline summarization
-// job, so latency is free and quality is the priority). Modeled on loom's
-// llm/client.go, minus loom's tool/vision/streaming machinery.
+// Package llm is peeq's lean OpenAI-compatible chat client, configured via
+// BACKEND_CHAT_BASE_URL and BACKEND_CHAT_API_KEY. The model below is a real
+// upstream model identifier sent on the wire, not a config name — it is
+// deliberately NOT renamed alongside those env vars. It targets
+// reasoning_effort=high on every call (an offline summarization job, so latency
+// is free and quality is the priority). Modeled on loom's llm/client.go, minus
+// loom's tool/vision/streaming machinery.
 package llm
 
 import (

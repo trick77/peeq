@@ -31,9 +31,9 @@ type Config struct {
 	Dev           DevUserConfig
 	LogLevel      string
 
-	// AI integration: MiMo chat + embeddings endpoints (required at boot).
-	MimoBaseURL    string
-	MimoAPIKey     string
+	// AI integration: chat + embeddings endpoints (required at boot).
+	ChatBaseURL    string
+	ChatAPIKey     string
 	EmbedBaseURL   string
 	EmbedAPIKey    string
 	EmbedModel     string
@@ -106,8 +106,8 @@ func Load() (Config, error) {
 		},
 	}
 
-	cfg.MimoBaseURL = env("BACKEND_MIMO_BASE_URL", "")
-	cfg.MimoAPIKey = env("BACKEND_MIMO_API_KEY", "")
+	cfg.ChatBaseURL = env("BACKEND_CHAT_BASE_URL", "")
+	cfg.ChatAPIKey = env("BACKEND_CHAT_API_KEY", "")
 	cfg.EmbedBaseURL = env("BACKEND_EMBED_BASE_URL", "")
 	cfg.EmbedAPIKey = env("BACKEND_EMBED_API_KEY", "")
 	cfg.EmbedModel = env("BACKEND_EMBED_MODEL", "")
@@ -132,8 +132,8 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("BACKEND_SESSION_SECRET is required")
 	}
 
-	if cfg.MimoBaseURL == "" {
-		return Config{}, fmt.Errorf("BACKEND_MIMO_BASE_URL is required")
+	if cfg.ChatBaseURL == "" {
+		return Config{}, fmt.Errorf("BACKEND_CHAT_BASE_URL is required")
 	}
 	if cfg.EmbedBaseURL == "" {
 		return Config{}, fmt.Errorf("BACKEND_EMBED_BASE_URL is required")

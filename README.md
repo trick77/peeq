@@ -55,12 +55,12 @@ yt-dlp call, so a large subscription list is scanned gradually rather than in a 
 ## Subtitles, summaries & search
 
 Phase 3 adds AI-powered captions, summaries, chapter extraction, and vector search across video
-transcripts. This requires two external endpoints: a **MiMo chat API** for generating artifacts
+transcripts. This requires two external endpoints: an **OpenAI-compatible chat API** for generating artifacts
 (summaries, chapters, highlights) and an **embeddings API** for indexing and searching.
 
 **Required env vars (peeq will not boot without these):**
-- `BACKEND_MIMO_BASE_URL` — MiMo chat endpoint (e.g. `http://localhost:8000/v1`)
-- `BACKEND_MIMO_API_KEY` — authentication token for MiMo
+- `BACKEND_CHAT_BASE_URL` — chat endpoint (e.g. `http://localhost:8000/v1`)
+- `BACKEND_CHAT_API_KEY` — authentication token for the chat endpoint
 - `BACKEND_EMBED_BASE_URL` — embeddings endpoint (e.g. `http://localhost:8001/v1`)
 - `BACKEND_EMBED_API_KEY` — authentication token for embeddings
 - `BACKEND_EMBED_MODEL` — model name (e.g. `text-embedding-3-small`)
@@ -170,8 +170,8 @@ download pipeline:
 
 After any change to Phase 3 (captions, embeddings, summaries, chapters, or global search):
 
-1. Boot with a real YouTube cookie, a running **MiMo endpoint** (`BACKEND_MIMO_BASE_URL` + 
-   `BACKEND_MIMO_API_KEY`), and a running **embeddings endpoint** (`BACKEND_EMBED_BASE_URL` + 
+1. Boot with a real YouTube cookie, a running **chat endpoint** (`BACKEND_CHAT_BASE_URL` + 
+   `BACKEND_CHAT_API_KEY`), and a running **embeddings endpoint** (`BACKEND_EMBED_BASE_URL` + 
    `BACKEND_EMBED_API_KEY` + `BACKEND_EMBED_MODEL` + `BACKEND_EMBED_DIM`). peeq will refuse to 
    start without all three.
 2. Download a real video and confirm its captions are present:
