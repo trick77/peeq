@@ -99,6 +99,7 @@ implementation detail. Plural only when literally counting ("Cookies sent: 14",
 ```
 extension/
   manifest.json      MV3; permissions: cookies, storage; host_permissions: https://*.youtube.com/*
+                     optional_host_permissions for the user-configured peeq origin (see CORS)
   background.js      service worker: read store, serialize, PUT
   popup.html/.js     status + one button
   options.html/.js   peeq address + access token
@@ -117,8 +118,43 @@ If it ever needs its own repo, `git subtree split` lifts it with history intact.
 → filter to YouTube domains → serialize to Netscape → `PUT /api/machine/cookie`
 with `Authorization: Bearer <token>` → report peeq's verdict.
 
-The service worker performs the fetch, so MV3 `host_permissions` bypass CORS and no preflight
-handling is needed. (A content-script fetch would require `OPTIONS` support on the route.)
+#### Host permissions and CORS
+
+The static `host_permissions` (`https://*.youtube.com/*`) covers `chrome.cookies.getAll`, but
+**not the fetch target**: peeq's origin is user-configured and therefore cannot appear in the
+manifest. `host_permissions` only bypasses CORS for hosts the extension actually holds
+permission for, so without one the PUT is an ordinary cross-origin request — and with an
+`Authorization` header plus `Content-Type: application/json` it is not a "simple" request, so
+Chrome sends a preflight `OPTIONS`. peeq has **no CORS or `OPTIONS` handling at all**
+(verified: no `Access-Control-*`, no `MethodOptions` in `httpapi/`), so that preflight 404s
+and the send fails.
+
+This corrects the Phase-4 note carried in the SDD ledger, which concluded no preflight
+handling was needed. That holds only for a host already in `host_permissions`; it inverts for
+a dynamic one.
+
+**Resolution: `optional_host_permissions`.** The manifest declares
+`"optional_host_permissions": ["https://*/*", "http://*/*"]`, and the options page calls
+`chrome.permissions.request({ origins: [<entered peeq origin>] })` inside the "Save and
+connect" click — a user gesture, which is required for the API to be allowed. Once granted,
+the service-worker fetch to peeq bypasses CORS and no preflight occurs.
+
+Consequences: **the first "Save and connect" raises a Chrome permission prompt**, which the
+options page must explain beforehand rather than let arrive unannounced; and if the address
+is later changed, permission must be requested for the new origin. Setup must treat a denied
+permission as a first-class failure state, distinct from "can't reach peeq" — a denied grant
+surfaces as a fetch failure that looks identical to the server being down.
+
+The rejected alternative is adding `OPTIONS` + `Access-Control-*` to the backend. That widens
+the single OIDC-bypass surface and gives up this phase's near-zero-backend-change property,
+to solve a problem the client can solve alone.
+
+#### Auth header
+
+`Authorization: Bearer <token>`. Verified against `auth/token_middleware.go:58`, which
+compares the scheme with `strings.EqualFold`, so casing is not significant. Note this differs
+from TubeArchivist's extension, which sends `Authorization: Token <key>` — copying TA's header
+verbatim would produce a silent 401 indistinguishable from the "token rejected" state.
 
 ### Invariants
 
@@ -171,6 +207,7 @@ be disabled for it.
 | Token rejected | red | 401; names the exact fix (copy a fresh token) |
 | No sign-in found | idle | No session cookies; **button removed, not disabled** |
 | Not set up | idle | Post-install; one button to setup |
+| Permission denied | red | The Chrome host-permission grant for peeq's origin was refused; button re-requests it. Kept distinct from "can't reach peeq" because both surface as a failed fetch while needing opposite fixes |
 
 "Sent" reports peeq's verdict rather than merely a 200, because a cookie that arrives and
 then fails validation is exactly the failure this phase exists to fix. Amber for
