@@ -68,6 +68,12 @@ type Deps struct {
 	Settings     *settings.Store
 	Lister       ChannelLister
 	CookieStatus func(ctx context.Context) string // settings.CookieStatus
+	// AllowAnonymous is the dev-only escape hatch (config.AllowAnonymousYoutube)
+	// mirrored here: when true, a non-"valid" CookieStatus no longer skips the
+	// poll, so the scheduler proceeds to scan with an absent cookie exactly
+	// like the ytdlp.Runner's own cookieGate does. Callers must only ever set
+	// this from the same boot-gated config value used to build the Runner.
+	AllowAnonymous bool
 	// YoutubePaused, when set and returning true, skips scan passes (the
 	// kill-switch), beside the cookie gate.
 	YoutubePaused func(ctx context.Context) bool
@@ -117,8 +123,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		// Cookie gate: no valid cookie → don't scan (don't hammer).
-		if s.d.CookieStatus(ctx) != "valid" {
+		// Cookie gate: no valid cookie → don't scan (don't hammer), UNLESS the
+		// dev-only anonymous escape hatch is enabled, in which case the poll
+		// proceeds without a cookie exactly like ytdlp.Runner's cookieGate.
+		if s.d.CookieStatus(ctx) != "valid" && !s.d.AllowAnonymous {
 			if !s.sleep(ctx, s.d.PollInterval) {
 				return
 			}

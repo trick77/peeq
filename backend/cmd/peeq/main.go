@@ -119,6 +119,12 @@ func run() error {
 		oidcSvc = discovered
 	case config.AuthModeDev:
 		slog.Warn("dev auth enabled; loopback only")
+		if cfg.AllowAnonymousYoutube {
+			// config.Load already refuses to boot with this set outside dev
+			// auth, so reaching here means it's safe (loopback-only), but the
+			// cookie invariant is still being relaxed and that must be loud.
+			slog.Warn("anonymous YouTube access enabled; cookie invariant relaxed; dev only")
+		}
 		devClaims = auth.Claims{
 			Subject:           cfg.Dev.Subject,
 			PreferredUsername: cfg.Dev.Username,
@@ -193,8 +199,9 @@ func run() error {
 		PauseProvider: func() (bool, string) {
 			return settingsStore.YoutubePaused(context.Background())
 		},
-		ThrottleFloor: time.Duration(initialSettings.ThrottleBaseSeconds) * time.Second,
-		MediaDir:      cfg.MediaDir,
+		ThrottleFloor:  time.Duration(initialSettings.ThrottleBaseSeconds) * time.Second,
+		MediaDir:       cfg.MediaDir,
+		AllowAnonymous: cfg.AllowAnonymousYoutube,
 	})
 
 	sseHub := sse.NewHub()
@@ -233,15 +240,16 @@ func run() error {
 	})
 
 	scheduler := scan.New(scan.Deps{
-		Channels:      channelsStore,
-		Ledger:        ledgerStore,
-		Videos:        videosStore,
-		Jobs:          jobsStore,
-		Settings:      settingsStore,
-		Lister:        runner,
-		CookieStatus:  func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
-		YoutubePaused: func(ctx context.Context) bool { p, _ := settingsStore.YoutubePaused(ctx); return p },
-		FailMonitor:   failMonitor,
+		Channels:       channelsStore,
+		Ledger:         ledgerStore,
+		Videos:         videosStore,
+		Jobs:           jobsStore,
+		Settings:       settingsStore,
+		Lister:         runner,
+		CookieStatus:   func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
+		AllowAnonymous: cfg.AllowAnonymousYoutube,
+		YoutubePaused:  func(ctx context.Context) bool { p, _ := settingsStore.YoutubePaused(ctx); return p },
+		FailMonitor:    failMonitor,
 	})
 
 	summarizeWorker := summarize.NewWorker(summarize.WorkerDeps{

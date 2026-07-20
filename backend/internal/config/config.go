@@ -39,6 +39,17 @@ type Config struct {
 	EmbedModel     string
 	EmbedDim       int
 	DefaultSubLang string
+
+	// AllowAnonymousYoutube is a dev-only escape hatch: when true, the yt-dlp
+	// Runner is permitted to run WITHOUT a cookie (see internal/ytdlp
+	// cookieGate). It exists because authenticated yt-dlp requests currently
+	// get served no usable formats by YouTube while anonymous ones work, so
+	// local development needs a way around the normally-absolute
+	// no-call-without-a-cookie invariant. Gated hard below: it may only be
+	// true when BACKEND_AUTH_MODE=dev, which is itself loopback-only
+	// (validateDevAuthLocalOnly), so this can never be reachable from the
+	// network.
+	AllowAnonymousYoutube bool
 }
 
 // OIDCConfig holds OpenID Connect settings.
@@ -102,6 +113,13 @@ func Load() (Config, error) {
 	cfg.EmbedModel = env("BACKEND_EMBED_MODEL", "")
 	cfg.DefaultSubLang = env("BACKEND_DEFAULT_SUB_LANG", "en")
 	cfg.EmbedDim = 1536
+	if v := env("BACKEND_ALLOW_ANONYMOUS_YOUTUBE", ""); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("BACKEND_ALLOW_ANONYMOUS_YOUTUBE must be a boolean")
+		}
+		cfg.AllowAnonymousYoutube = b
+	}
 	if v := env("BACKEND_EMBED_DIM", ""); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
@@ -145,6 +163,14 @@ func Load() (Config, error) {
 		}
 	default:
 		return Config{}, fmt.Errorf("BACKEND_AUTH_MODE must be one of: oidc, dev")
+	}
+
+	// BACKEND_ALLOW_ANONYMOUS_YOUTUBE relaxes the cookie invariant, so it must
+	// only ever be reachable through dev auth (loopback-only, enforced above).
+	// A stray true in a production environment (oidc or unset auth mode) is a
+	// hard boot failure, never a silent behavior change.
+	if cfg.AllowAnonymousYoutube && cfg.AuthMode != AuthModeDev {
+		return Config{}, fmt.Errorf("BACKEND_ALLOW_ANONYMOUS_YOUTUBE=true requires BACKEND_AUTH_MODE=dev")
 	}
 
 	return cfg, nil
