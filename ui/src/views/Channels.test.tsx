@@ -18,6 +18,13 @@ function baseChannel(overrides: Partial<Channel> = {}): Channel {
   };
 }
 
+// addFormButton scopes to the add form's submit button: its label is
+// "Track"/"Subscribe" depending on the checkbox, and "Subscribe" would
+// otherwise collide with the per-row subscribe buttons.
+function addFormButton(): HTMLElement {
+  return document.querySelector(".channel-add button[type=submit]") as HTMLElement;
+}
+
 const tracked = baseChannel();
 const subscribed = baseChannel({
   id: "c2",
@@ -119,22 +126,23 @@ describe("Channels", () => {
     await screen.findByText("Tracked Channel");
 
     await user.type(screen.getByLabelText("Channel URL"), "https://www.youtube.com/@new");
-    await user.click(screen.getByRole("button", { name: /add channel/i }));
+    await user.click(addFormButton());
 
     await waitFor(() => {
       expect(addChannel).toHaveBeenCalledWith("https://www.youtube.com/@new", false);
     });
   });
 
-  it("ticking Subscribe immediately adds the channel subscribed", async () => {
+  it("ticking Subscribe adds the channel subscribed", async () => {
     const user = userEvent.setup();
     vi.mocked(addChannel).mockResolvedValue({ id: "c3", name: "New Channel", subscribed: true });
     render(<Channels />);
     await screen.findByText("Tracked Channel");
 
     await user.type(screen.getByLabelText("Channel URL"), "https://www.youtube.com/@new");
-    await user.click(screen.getByLabelText("Subscribe immediately"));
-    await user.click(screen.getByRole("button", { name: /add channel/i }));
+    await user.click(screen.getByLabelText("Subscribe"));
+    expect(addFormButton()).toHaveTextContent("Subscribe");
+    await user.click(addFormButton());
 
     await waitFor(() => {
       expect(addChannel).toHaveBeenCalledWith("https://www.youtube.com/@new", true);
@@ -155,7 +163,7 @@ describe("Channels", () => {
     vi.mocked(listChannels).mockResolvedValue([]);
 
     await user.type(screen.getByLabelText("Channel URL"), "https://www.youtube.com/@new");
-    await user.click(screen.getByRole("button", { name: /add channel/i }));
+    await user.click(addFormButton());
 
     expect(await screen.findByText(/Tracked New Channel/)).toBeInTheDocument();
   });
@@ -166,7 +174,7 @@ describe("Channels", () => {
     await screen.findByText("Tracked Channel");
 
     await user.type(screen.getByLabelText("Channel URL"), "https://www.youtube.com/watch?v=abc12345678");
-    await user.click(screen.getByRole("button", { name: /add channel/i }));
+    await user.click(addFormButton());
 
     expect(await screen.findByText(/Paste a channel link/)).toBeInTheDocument();
     expect(addChannel).not.toHaveBeenCalled();

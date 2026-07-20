@@ -161,9 +161,11 @@ export function Channels() {
               aria-label="Channel URL"
             />
           </label>
+          {/* The label names the outcome rather than the mechanism, so the
+              Subscribe checkbox visibly changes what the button will do. */}
           <button className="btn primary" type="submit" disabled={addBusy || !addUrl.trim()}>
             <Icon name="plus" size="18px" />
-            {addBusy ? "Adding…" : "Add channel"}
+            {addBusy ? (addSubscribe ? "Subscribing…" : "Tracking…") : addSubscribe ? "Subscribe" : "Track"}
           </button>
         </div>
         <label className="ctrl channel-toggle" style={{ marginTop: 10 }}>
@@ -171,9 +173,9 @@ export function Channels() {
             type="checkbox"
             checked={addSubscribe}
             onChange={(e) => setAddSubscribe(e.target.checked)}
-            aria-label="Subscribe immediately"
+            aria-label="Subscribe"
           />
-          Subscribe immediately
+          Subscribe
         </label>
         {addError ? <div className="errline">{addError}</div> : null}
         {added ? (
