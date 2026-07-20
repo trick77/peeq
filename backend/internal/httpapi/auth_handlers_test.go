@@ -2,11 +2,22 @@ package httpapi
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+)
+
+// oidcStateCookieName and oidcNonceCookieName mirror the unexported cookie
+// names auth.OIDCService uses internally (auth/oidc.go:16-17). They aren't
+// exported, so tests that need to satisfy the cookie checks in
+// HandleCallback duplicate the literal values here.
+const (
+	oidcStateCookieName = "peeq_oidc_state"
+	oidcNonceCookieName = "peeq_oidc_nonce"
 )
 
 // captureLogs redirects slog's default logger into a buffer for the duration
@@ -50,17 +61,35 @@ func TestAuthCallback_logsTheFailureAndStillRedirectsGenerically(t *testing.T) {
 }
 
 func TestAuthCallback_neverLogsTheAuthCode(t *testing.T) {
-	// Given
+	// Given: OIDC configured with a backend whose Exchange fails with a
+	// *url.Error carrying the auth code in its query string — the code
+	// exchange failure (oidc.go:104-107) is one of the two failure modes
+	// that embeds the callback URL, and only reaches redactErr's redaction
+	// logic if the request first clears the state/nonce cookie checks.
 	logs := captureLogs(t)
-	h := New(testDepsWithOIDC(t))
+	exchangeErr := &url.Error{
+		Op:  "Post",
+		URL: "https://idp.example.com/token?code=SUPERSECRETCODE",
+		Err: errors.New("exchange rejected"),
+	}
+	h := New(testDepsWithOIDCExchangeError(t, exchangeErr))
 
-	// When: the callback URL carries a code that must never be logged.
+	// When: the callback carries a code that must never be logged, with
+	// state/nonce cookies set so the handler proceeds past the cookie
+	// checks and into Exchange.
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=SUPERSECRETCODE&state=xyz", nil)
+	req.AddCookie(&http.Cookie{Name: oidcStateCookieName, Value: "xyz"})
+	req.AddCookie(&http.Cookie{Name: oidcNonceCookieName, Value: "nonce123"})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	// Then
-	if strings.Contains(logs.String(), "SUPERSECRETCODE") {
-		t.Fatalf("the auth code leaked into the logs: %s", logs.String())
+	// Then: the secret never appears in the logs...
+	out := logs.String()
+	if strings.Contains(out, "SUPERSECRETCODE") {
+		t.Fatalf("the auth code leaked into the logs: %s", out)
+	}
+	// ...but the diagnostic host/path do, so this is still debuggable.
+	if !strings.Contains(out, "idp.example.com/token") {
+		t.Fatalf("redaction dropped the useful diagnostic part; got: %s", out)
 	}
 }

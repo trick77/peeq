@@ -60,16 +60,22 @@ func testDepsWithStores(t *testing.T) (Deps, *auth.SessionStore, *auth.UserStore
 	}, sessions, users
 }
 
-// stubOIDCBackend satisfies auth.OIDCBackend. The callback tests fail at the
-// state-cookie check, before Exchange is ever reached, so these methods only
-// need to exist.
-type stubOIDCBackend struct{}
+// stubOIDCBackend satisfies auth.OIDCBackend. The default (zero-value) tests
+// fail at the state-cookie check, before Exchange is ever reached, so
+// exchangeErr is only used by tests that specifically need to drive the
+// callback handler past the cookie checks and into a code-exchange failure.
+type stubOIDCBackend struct {
+	exchangeErr error
+}
 
 func (stubOIDCBackend) AuthCodeURL(state string, _ ...oauth2.AuthCodeOption) string {
 	return "https://idp.example.com/authorize?state=" + state
 }
 
-func (stubOIDCBackend) Exchange(context.Context, string) (*oauth2.Token, error) {
+func (s stubOIDCBackend) Exchange(context.Context, string) (*oauth2.Token, error) {
+	if s.exchangeErr != nil {
+		return nil, s.exchangeErr
+	}
 	return nil, errors.New("stub: exchange not expected in this test")
 }
 
@@ -82,13 +88,28 @@ func (stubOIDCBackend) VerifyClaims(context.Context, *oauth2.Token) (auth.Verifi
 // configured" path.
 func testDepsWithOIDC(t *testing.T) Deps {
 	t.Helper()
+	return testDepsWithOIDCBackend(t, stubOIDCBackend{})
+}
+
+// testDepsWithOIDCExchangeError is testDepsWithOIDC but with a backend whose
+// Exchange call fails with the given error — used to drive the callback
+// handler past the state/nonce cookie checks and into the code-exchange
+// failure path, which is one of the two paths that can carry a secret into
+// an unredacted log line.
+func testDepsWithOIDCExchangeError(t *testing.T, exchangeErr error) Deps {
+	t.Helper()
+	return testDepsWithOIDCBackend(t, stubOIDCBackend{exchangeErr: exchangeErr})
+}
+
+func testDepsWithOIDCBackend(t *testing.T, backend auth.OIDCBackend) Deps {
+	t.Helper()
 	d, sessions, users := testDepsWithStores(t)
 	oidcSvc := auth.NewOIDCService(auth.OIDCServiceConfig{
 		Issuer:       "https://idp.example.com",
 		ClientID:     "peeq-test",
 		ClientSecret: "test-secret",
 		RedirectURL:  "https://peeq.example.com/api/auth/callback",
-		Backend:      stubOIDCBackend{},
+		Backend:      backend,
 		SecureCookie: false,
 	})
 	d.AuthService = auth.NewService(oidcSvc, sessions, users)
