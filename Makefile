@@ -10,8 +10,8 @@ coverage: backend-coverage fe-coverage
 
 backend-coverage:
 	mkdir -p coverage
-	cd backend && go test -race -covermode=atomic -coverprofile=../coverage/backend.out ./...
-	cd backend && go tool cover -func=../coverage/backend.out | tail -1
+	cd backend && go test -race -covermode=atomic -coverpkg=./... -coverprofile=../coverage/backend.out ./...
+	cd backend && go run github.com/boumenot/gocover-cobertura@v1.5.0 < ../coverage/backend.out > ../coverage/backend.xml
 	./hack/coverage-gate.sh backend
 
 fe-test:
