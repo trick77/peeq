@@ -3,6 +3,15 @@ node_modules/
 # Playwright run output from extension/e2e.
 test-results/
 playwright-report/
+# Playwright MCP scratch output, written to the repo root during browser-driven
+# UI verification.
+.playwright-mcp/
+# Verification screenshots land at the repo root during UI work. They are
+# throwaway evidence, not artifacts, and the repo is public — an unlucky
+# `git add -A` should not publish a snapshot of a logged-in session.
+/*.png
+/*.jpg
+/*.jpeg
 .env
 # Any .env variant — backups, per-host copies, editor swap files. A bare `.env`
 # rule leaves `.env.bak`/`.env.local` untracked-but-committable, which is how
