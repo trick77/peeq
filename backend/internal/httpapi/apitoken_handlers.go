@@ -51,13 +51,9 @@ func (s *server) handlePostAPIToken(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "failed to generate api token")
 		return
 	}
-	if err := s.settings.SetAPITokenHash(r.Context(), apitoken.Hash(token)); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to store api token")
-		return
-	}
-	_, createdAt, err := s.settings.APITokenInfo(r.Context())
+	createdAt, err := s.settings.SetAPITokenHash(r.Context(), apitoken.Hash(token))
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to load api token")
+		writeJSONError(w, http.StatusInternalServerError, "failed to store api token")
 		return
 	}
 	writeJSON(w, apiTokenCreatedResponse{Token: token, CreatedAt: createdAt})
