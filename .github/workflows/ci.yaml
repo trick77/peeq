@@ -85,3 +85,24 @@ jobs:
           name: peeq-companion-extension
           path: /tmp/peeq-companion.zip
           if-no-files-found: error
+
+  # Browser-level tests. Separate job because it needs Playwright and a real
+  # Chromium download, which the extension's own zero-dependency package
+  # deliberately does not carry. It covers the one seam no unit test can reach:
+  # how Chrome's permission model filters the cookies the extension can see.
+  extension-e2e:
+    name: Extension (browser)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension/e2e
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: extension/e2e/package-lock.json
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+      - run: npm test

@@ -1,5 +1,8 @@
 bin/
 node_modules/
+# Playwright run output from extension/e2e.
+test-results/
+playwright-report/
 .env
 /data/
 .superpowers/

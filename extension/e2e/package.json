@@ -1,0 +1,13 @@
+{
+  "name": "peeq-companion-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser-level tests for the peeq Companion extension. Kept in its own package so the extension itself stays dependency-free.",
+  "scripts": {
+    "test": "playwright test",
+    "install-browser": "playwright install chromium --with-deps"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
+  }
+}
