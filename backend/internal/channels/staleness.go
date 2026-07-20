@@ -125,3 +125,79 @@ func (s *Store) ClearAutoUnsubscribe(channelID string) error {
 	}
 	return nil
 }
+
+// DormantAfter is the SQLite modifier for how long a subscribed channel may
+// go without a newly discovered video before it is flagged for review.
+// Deliberately loose (6 months): channel_videos.discovered_at is when peeq
+// first SAW a video, not when YouTube published it, so it is only a proxy
+// for the channel's real posting cadence. That's why dormancy only ever
+// raises a flag for a human — see DormantChannels — and never acts on its
+// own the way ReasonDeleted does.
+const DormantAfter = "-6 months"
+
+// Dormant is a subscribed channel that has gone quiet for longer than
+// DormantAfter, surfaced for a human to review and decide on.
+type Dormant struct {
+	ChannelID   string
+	Name        string
+	LastVideoAt string
+}
+
+// DormantChannels returns every subscribed channel whose most recently
+// discovered video is older than DormantAfter relative to now, excluding
+// any channel whose dormancy was dismissed and has not seen a newer
+// discovery since. now is a bound parameter, never datetime('now') inlined
+// into the query, so tests can control the clock deterministically.
+func (s *Store) DormantChannels(now string) ([]Dormant, error) {
+	rows, err := s.db.QueryContext(context.Background(), `
+SELECT s.channel_id, c.name, MAX(cv.discovered_at) AS last_seen
+FROM subscriptions s
+JOIN channels c ON c.id = s.channel_id
+LEFT JOIN channel_videos cv ON cv.channel_id = s.channel_id
+GROUP BY s.channel_id
+HAVING last_seen IS NOT NULL                       -- never flag on absent data: a
+                                                     -- LEFT JOIN + this NULL check is
+                                                     -- how a brand-new subscription
+                                                     -- with zero scans stays unflagged;
+                                                     -- swapping in an INNER JOIN would
+                                                     -- silently drop those channels
+                                                     -- from the result instead of
+                                                     -- excluding them by intent.
+   AND last_seen < datetime(?, ?)
+   AND (s.dormant_dismissed_at IS NULL OR last_seen > s.dormant_dismissed_at)
+ORDER BY last_seen`,
+		now, DormantAfter,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("dormant channels: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Dormant
+	for rows.Next() {
+		var d Dormant
+		if err := rows.Scan(&d.ChannelID, &d.Name, &d.LastVideoAt); err != nil {
+			return nil, fmt.Errorf("scan dormant channel: %w", err)
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate dormant channels: %w", err)
+	}
+	return out, nil
+}
+
+// DismissDormant records that the user reviewed channelID's dormancy flag
+// at `at` and chose to suppress it. The flag re-arms automatically the next
+// time channel_videos gets a discovery newer than `at` and the channel then
+// goes quiet again — dismissal is a snooze, not a permanent silence.
+func (s *Store) DismissDormant(channelID, at string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE subscriptions SET dormant_dismissed_at = ? WHERE channel_id = ?`,
+		at, channelID,
+	)
+	if err != nil {
+		return fmt.Errorf("dismiss dormant %s: %w", channelID, err)
+	}
+	return nil
+}

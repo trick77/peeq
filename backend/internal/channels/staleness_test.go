@@ -2,6 +2,172 @@ package channels
 
 import "testing"
 
+// TestDormantChannels_flagsChannelQuietLongerThanThreshold and its sibling
+// below are a matched pair: one discovered_at just outside DormantAfter,
+// one just inside. An implementation with the comparison operator flipped
+// would pass one and fail the other, never both — that's the point.
+func TestDormantChannels_flagsChannelQuietLongerThanThreshold(t *testing.T) {
+	st := newTestStore(t)
+	db := st.DB()
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `
+INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
+VALUES ('v1', 'UC1', 'seen', datetime('now','-7 months'))`)
+
+	const now = "2026-07-20 12:00:00"
+	got, err := st.DormantChannels(now)
+	if err != nil {
+		t.Fatalf("dormant channels: %v", err)
+	}
+	if len(got) != 1 || got[0].ChannelID != "UC1" {
+		t.Fatalf("dormant channels = %+v, want [UC1] flagged", got)
+	}
+	if got[0].Name != "One" {
+		t.Fatalf("dormant channel name = %q, want %q", got[0].Name, "One")
+	}
+	if got[0].LastVideoAt == "" {
+		t.Fatalf("dormant channel LastVideoAt is empty, want populated")
+	}
+}
+
+func TestDormantChannels_ignoresChannelJustInsideThreshold(t *testing.T) {
+	st := newTestStore(t)
+	db := st.DB()
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `
+INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
+VALUES ('v1', 'UC1', 'seen', datetime('now','-5 months'))`)
+
+	got, err := st.DormantChannels("2026-07-20 12:00:00")
+	if err != nil {
+		t.Fatalf("dormant channels: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("dormant channels = %+v, want none (video is inside threshold)", got)
+	}
+}
+
+// TestDormantChannels_neverFlagsChannelWithNoVideos guards the "absent data
+// is not evidence" rule: a brand-new subscription must not be flagged the
+// instant it is created, before any scan has ever run.
+func TestDormantChannels_neverFlagsChannelWithNoVideos(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.DormantChannels("2026-07-20 12:00:00")
+	if err != nil {
+		t.Fatalf("dormant channels: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("dormant channels = %+v, want none (no videos ever discovered)", got)
+	}
+}
+
+func TestDormantChannels_ignoresUnsubscribedChannels(t *testing.T) {
+	st := newTestStore(t)
+	db := st.DB()
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	// Tracked only, never subscribed.
+	mustExec(t, db, `
+INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
+VALUES ('v1', 'UC1', 'seen', datetime('now','-7 months'))`)
+
+	got, err := st.DormantChannels("2026-07-20 12:00:00")
+	if err != nil {
+		t.Fatalf("dormant channels: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("dormant channels = %+v, want none (channel is not subscribed)", got)
+	}
+}
+
+func TestDismissDormant_suppressesTheFlag(t *testing.T) {
+	st := newTestStore(t)
+	db := st.DB()
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `
+INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
+VALUES ('v1', 'UC1', 'seen', datetime('now','-7 months'))`)
+
+	const now = "2026-07-20 12:00:00"
+	got, err := st.DormantChannels(now)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("precondition: dormant channels = %+v err=%v, want UC1 flagged", got, err)
+	}
+
+	if err := st.DismissDormant("UC1", now); err != nil {
+		t.Fatalf("dismiss dormant: %v", err)
+	}
+
+	got, err = st.DormantChannels(now)
+	if err != nil {
+		t.Fatalf("dormant channels after dismiss: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("dormant channels after dismiss = %+v, want none (dismissal suppresses the flag)", got)
+	}
+}
+
+// TestDismissDormant_reArmsAfterNewerDiscovery is the "dismissal is not
+// permanent" guarantee: if the channel posts again and then goes quiet a
+// second time, the flag must return. A dismissal that suppressed forever
+// would hide a channel that genuinely went dormant twice.
+func TestDismissDormant_reArmsAfterNewerDiscovery(t *testing.T) {
+	st := newTestStore(t)
+	db := st.DB()
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `
+INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
+VALUES ('v1', 'UC1', 'seen', datetime('now','-7 months'))`)
+
+	const dismissedAt = "2026-07-20 12:00:00"
+	if err := st.DismissDormant("UC1", dismissedAt); err != nil {
+		t.Fatalf("dismiss dormant: %v", err)
+	}
+
+	// A newer discovery, after the dismissal, but the channel then goes
+	// quiet again for longer than DormantAfter relative to "now".
+	mustExec(t, db, `
+INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
+VALUES ('v2', 'UC1', 'seen', datetime(?, '+1 second'))`, dismissedAt)
+
+	now := "2027-02-20 12:00:00" // >6 months after v2's discovered_at
+	got, err := st.DormantChannels(now)
+	if err != nil {
+		t.Fatalf("dormant channels: %v", err)
+	}
+	if len(got) != 1 || got[0].ChannelID != "UC1" {
+		t.Fatalf("dormant channels = %+v, want UC1 re-flagged after newer discovery", got)
+	}
+}
+
 func TestRecordDeadScan_incrementsAndReturnsCount(t *testing.T) {
 	st := newTestStore(t)
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
