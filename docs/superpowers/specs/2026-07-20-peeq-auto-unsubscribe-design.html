@@ -1,0 +1,278 @@
+<title>peeq — auto-unsubscribe stale channels (design)</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #1f1f1e; --panel: #1b1b1a; --active: #2c2c2a;
+    --border: #323230; --border-soft: #2a2a28;
+    --ink: #faf9f5; --ink-dim: #e4e1d8; --muted: #9c9a92; --faint: #6f6d66;
+    --accent: #c6613f; --accent-strong: #d97757;
+    --online: #5aa06a; --danger: #c14638; --kept: #d6a15a;
+    --radius: 10px;
+    --sans: "Anthropic Sans", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --serif: "Anthropic Serif", Georgia, "Times New Roman", Times, serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(60rem 40rem at 78% -8%, rgba(198,97,63,.06), transparent 60%),
+      radial-gradient(46rem 34rem at 6% 4%, rgba(214,161,90,.03), transparent 62%),
+      var(--bg);
+    color: var(--ink); font-family: var(--sans); line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 60rem; margin: 0 auto; padding: 4rem 1.5rem 6rem; display: flex; flex-direction: column; gap: 2.75rem; }
+  .eyebrow { font-size: .6875rem; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin: 0 0 .75rem; }
+  h1 { font-family: var(--serif); font-size: clamp(1.7rem,4.2vw,2.4rem); line-height: 1.15; font-weight: 500; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+  .standfirst { color: var(--ink-dim); font-size: 1.0625rem; margin: 1rem 0 0; max-width: 46rem; }
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem .75rem; margin-top: 1.5rem; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: .4rem; font-size: .8125rem; font-family: var(--mono); color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: .25rem .7rem; }
+  .chip b { color: var(--ink-dim); font-weight: 500; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--online); flex: none; }
+  section { display: flex; flex-direction: column; gap: 1rem; }
+  h2 { font-family: var(--serif); font-size: 1.3rem; font-weight: 500; margin: 0; padding-bottom: .6rem; border-bottom: 1px solid var(--border-soft); text-wrap: balance; }
+  h3 { font-size: .9375rem; font-weight: 600; margin: .4rem 0 0; color: var(--ink-dim); }
+  p { margin: 0; max-width: 47rem; color: var(--ink-dim); }
+  a { color: var(--accent-strong); text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 3px; border-radius: 3px; }
+  strong { color: var(--ink); font-weight: 600; }
+  code { font-family: var(--mono); font-size: .85em; background: var(--active); border: 1px solid var(--border); border-radius: 5px; padding: .1em .38em; color: var(--ink-dim); }
+  pre { background: #191918; border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; font-family: var(--mono); font-size: .8125rem; line-height: 1.65; padding: 1rem 1.15rem; color: var(--ink-dim); margin: 0; }
+  pre .c { color: var(--faint); }
+  pre .k { color: var(--accent-strong); }
+  pre .g { color: var(--online); }
+  ul, ol { margin: 0; padding-left: 1.15rem; color: var(--ink-dim); max-width: 47rem; }
+  li { margin-bottom: .4rem; }
+  li::marker { color: var(--faint); }
+  .scroller { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+  table { border-collapse: collapse; width: 100%; font-size: .9375rem; min-width: 34rem; }
+  th, td { text-align: left; padding: .7rem .9rem; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th { background: var(--panel); font-size: .6875rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 600; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  .yes { color: var(--online); } .no { color: var(--danger); } .maybe { color: var(--kept); }
+  .note { border: 1px solid var(--border); border-left: 3px solid var(--accent); background: var(--panel); border-radius: var(--radius); padding: 1rem 1.15rem; display: flex; flex-direction: column; gap: .6rem; }
+  .note.risk { border-left-color: var(--danger); }
+  .note.key { border-left-color: var(--kept); }
+  .note h3 { margin-top: 0; }
+  .note p { max-width: none; }
+  footer { border-top: 1px solid var(--border-soft); padding-top: 1.25rem; color: var(--faint); font-size: .8125rem; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">peeq · design · 2026-07-20</p>
+    <h1>Auto-unsubscribe stale channels</h1>
+    <p class="standfirst">
+      Dead channels unsubscribe themselves. Dormant ones only ever get flagged. The difference
+      between those two is the whole design — and getting it wrong would quietly delete
+      subscriptions you wanted.
+    </p>
+    <div class="meta">
+      <span class="chip"><span class="dot"></span>branch <b>feat/auto-unsubscribe</b></span>
+      <span class="chip">layout <b>Option A</b></span>
+      <span class="chip">migration <b>0002</b></span>
+      <span class="chip"><a href="https://claude.ai/code/artifact/92e37936-f267-4478-b643-a4f4438eafe7">mockup</a></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>The problem, as it exists today</h2>
+    <p>When a channel is deleted, terminated or goes private, <code>scan/scheduler.go:209</code>
+      classifies the failure as terminal, deliberately excludes it from the auto-pause heuristic —
+      and then simply backs off. <strong>Forever, silently.</strong> The subscription stays, the
+      scheduler keeps scanning a channel that no longer exists, and nothing ever tells you.</p>
+    <p>Separately, channels that stop uploading accumulate. They are not broken, so nothing flags
+      them; they just quietly stop being worth scanning.</p>
+  </section>
+
+  <section>
+    <h2>The distinction the whole design rests on</h2>
+    <p><code>TerminalError.Reason</code> (<code>ytdlp/errors.go:36</code>) is one of five values,
+      and only one of them means the channel is gone:</p>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Reason</th><th>What it actually means</th><th>Auto-unsubscribe?</th></tr></thead>
+        <tbody>
+          <tr><td><code>deleted</code></td><td>The channel no longer exists.</td><td class="yes">✅ Yes — the only one</td></tr>
+          <tr><td><code>private</code></td><td>Hidden; can revert, e.g. during a rebrand.</td><td class="no">No</td></tr>
+          <tr><td><code>members</code></td><td>Members-only <em>content</em>. Channel is alive and well.</td><td class="no">No</td></tr>
+          <tr><td><code>age</code></td><td>Age-restricted. Often a <em>cookie</em> problem, not a channel problem.</td><td class="no">No</td></tr>
+          <tr><td><code>geo</code></td><td>Region-blocked. May be your network, not the channel.</td><td class="no">No</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note risk">
+      <h3>The failure mode that dictates the interlock</h3>
+      <p><code>age</code> and <code>geo</code> can be symptoms of a stale or logged-out cookie
+        rather than channel state. If the cookie dies, <strong>every</strong> channel can start
+        failing at once — and a naive implementation would unsubscribe the entire subscription
+        list in a single sweep. Restricting the trigger to <code>deleted</code> narrows this, but
+        it does not close it: yt-dlp's classification is <em>substring matching on stderr</em>
+        (<code>errors.go:136</code>), so a future message change could reclassify a broad failure
+        as <code>deleted</code>. The interlock is the second line of defence, and it is not
+        optional.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Rules</h2>
+    <div class="scroller">
+      <table>
+        <thead><tr><th></th><th>Dead</th><th>Dormant</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Signal</strong></td>
+            <td><code>TerminalError{Reason:"deleted"}</code> on <strong>3 consecutive</strong> scans</td>
+            <td>No new video discovered in <strong>6 months</strong></td></tr>
+          <tr><td><strong>Action</strong></td><td>Unsubscribe automatically</td><td class="maybe">Flag for review only — never automatic</td></tr>
+          <tr><td><strong>Counter reset</strong></td><td>Any clean scan resets to 0</td><td>n/a</td></tr>
+          <tr><td><strong>Suppression</strong></td><td>n/a</td><td>“Keep subscribed” dismisses permanently</td></tr>
+          <tr><td><strong>Interlock</strong></td><td colspan="2">Both suspended while <code>cookie_status ∈ {blocked, stale, absent}</code> or <code>youtube_paused</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Dismissal re-arms on new activity.</strong> Dismissing stores a timestamp. The flag
+      returns only if the channel publishes something new <em>after</em> that timestamp and then
+      falls silent for another 6 months. So a permanently-dead-but-not-deleted channel is
+      dismissed once and never nags again, while a channel that revives and re-lapses is flagged
+      afresh.</p>
+    <p><strong>A channel with no discovered videos at all is never dormant.</strong> A brand-new or
+      never-successfully-scanned subscription has no <code>MAX(discovered_at)</code>, and must not
+      be flagged on the strength of missing data.</p>
+  </section>
+
+  <section>
+    <h2>Nothing is destroyed</h2>
+    <p><code>channels.Unsubscribe</code> (<code>channels/store.go:262</code>) deletes exactly one
+      row from <code>subscriptions</code>. The <code>channels</code> row, the
+      <code>channel_videos</code> scan history and every archived row in <code>videos</code>
+      survive untouched — <code>channel_videos</code>' cascade hangs off <code>channels</code>,
+      not <code>subscriptions</code>.</p>
+    <p>So an auto-unsubscribe is <strong>reversible</strong>, and re-subscribing genuinely restores
+      the channel rather than starting from nothing. The UI states this on every dead row
+      (“23 archived videos kept — nothing was deleted”), because an automatic action the user
+      doesn't trust is worse than no automation at all.</p>
+  </section>
+
+  <section>
+    <h2>Schema — migration <code>0002</code></h2>
+    <p>Migrations are append-only files applied lexicographically and recorded in
+      <code>schema_migrations</code> (<code>store/migrate.go</code>). <code>0001_init.sql</code> is
+      never edited.</p>
+    <pre><span class="c">-- 0002_auto_unsubscribe.sql</span>
+
+<span class="c">-- Consecutive scans that returned a terminal "deleted" for this channel.</span>
+<span class="c">-- Reset to 0 by ANY clean scan, so only a sustained run triggers action.</span>
+<span class="k">ALTER TABLE</span> subscriptions <span class="k">ADD COLUMN</span> dead_scan_count INTEGER NOT NULL DEFAULT 0;
+
+<span class="c">-- When the user dismissed a dormancy flag. The flag re-arms only if a video</span>
+<span class="c">-- is discovered AFTER this instant and the channel then goes quiet again.</span>
+<span class="k">ALTER TABLE</span> subscriptions <span class="k">ADD COLUMN</span> dormant_dismissed_at TEXT;
+
+<span class="c">-- The visible record of what peeq unsubscribed on its own. Survives the</span>
+<span class="c">-- subscriptions row it replaces; cascades only if the channel itself is purged.</span>
+<span class="k">CREATE TABLE</span> auto_unsubscribes (
+    channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
+    reason     TEXT NOT NULL CHECK (reason IN ('deleted')),
+    at         TEXT NOT NULL DEFAULT (datetime('now'))
+);</pre>
+    <p>The <code>CHECK</code> is deliberately a single-value enum. If a later slice adds another
+      auto-unsubscribe reason it must widen the CHECK consciously — mirroring the
+      <code>availability</code> lesson, where a Go enum drifting from a SQL CHECK broke every
+      video add in production.</p>
+
+    <h3>The dormancy query</h3>
+    <pre><span class="k">SELECT</span> s.channel_id, <span class="k">MAX</span>(cv.discovered_at) <span class="k">AS</span> last_seen
+<span class="k">FROM</span> subscriptions s
+<span class="k">LEFT JOIN</span> channel_videos cv <span class="k">ON</span> cv.channel_id = s.channel_id
+<span class="k">GROUP BY</span> s.channel_id
+<span class="k">HAVING</span> last_seen <span class="k">IS NOT NULL</span>                              <span class="c">-- never flag on absent data</span>
+   <span class="k">AND</span> last_seen &lt; datetime('now','-6 months')
+   <span class="k">AND</span> (s.dormant_dismissed_at <span class="k">IS NULL</span> <span class="k">OR</span> last_seen &gt; s.dormant_dismissed_at);</pre>
+  </section>
+
+  <section>
+    <h2>Components</h2>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Unit</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td><code>channels.Store</code></td><td>Counter increment/reset, dormancy query, dismissal, the auto-unsubscribe record and its removal on re-subscribe.</td></tr>
+          <tr><td><code>scan.Scheduler</code></td><td>Feeds the signal: on a <code>deleted</code> terminal error increment; on a clean scan reset. Consults the interlock before acting.</td></tr>
+          <tr><td><code>httpapi</code></td><td>Extends the channels payload with <code>dormant</code> + <code>lastVideoAt</code>, lists auto-unsubscribes, and exposes dismiss / re-subscribe.</td></tr>
+          <tr><td><code>ui/views/Channels.tsx</code></td><td>The review band below the add-form, and the collapsed auto-unsubscribed section.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The decision to unsubscribe lives in <code>channels.Store</code>, not the scheduler: it is a
+      data rule, it must be unit-testable without a scan, and the scheduler is already the most
+      failure-path-heavy file in the codebase.</p>
+  </section>
+
+  <section>
+    <h2>UI — Option A</h2>
+    <p>Per the approved <a href="https://claude.ai/code/artifact/92e37936-f267-4478-b643-a4f4438eafe7">mockup</a>:
+      a review band listing dormant channels, placed <strong>below the add-channel form</strong> so
+      the page's primary action never moves; the normal channel list unchanged beneath it; and a
+      collapsed <code>Auto-unsubscribed</code> section at the bottom with per-row re-subscribe.</p>
+    <p>Rows inside the band and the tombstone section sit <strong>flush</strong>, separated by
+      hairlines, rather than as cards nested in a card. A nested card structurally insets its
+      buttons by an extra 15 px, breaking the shared right edge every action button on the page
+      aligns on. Flush rows make that alignment fall out of the layout instead of depending on a
+      magic number.</p>
+    <p>When the interlock is engaged the band shows why, naming the actual cookie status, rather
+      than silently doing nothing.</p>
+  </section>
+
+  <section>
+    <h2>Testing</h2>
+    <ul>
+      <li><strong>The interlock is the highest-value test.</strong> Assert that a channel at
+        <code>dead_scan_count = 3</code> is <em>not</em> unsubscribed while cookie status is
+        blocked/stale/absent or YouTube is paused. This is the test that stands between a bad
+        cookie and an emptied subscription list.</li>
+      <li><strong>Every non-<code>deleted</code> reason must not increment the counter</strong> —
+        one case per reason (<code>private</code>, <code>members</code>, <code>age</code>,
+        <code>geo</code>), because a single shared assertion would pass if the code checked
+        “is terminal” instead of “is deleted”.</li>
+      <li>Counter resets to 0 on a clean scan, including part-way to the threshold.</li>
+      <li>Dormancy boundaries: just inside and just outside 6 months; a channel with zero videos is
+        never flagged; dismissal suppresses; a discovery after dismissal re-arms.</li>
+      <li>Re-subscribe removes the <code>auto_unsubscribes</code> row and restores the
+        subscription, with archived videos still present afterwards.</li>
+      <li>A migrated store inserts every allowed <code>reason</code> value, locking the Go
+        constant to the SQL <code>CHECK</code> (the <code>availability</code> lesson).</li>
+      <li>Fakes only — no real yt-dlp, no network, no LLM.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Risks &amp; out of scope</h2>
+    <div class="note risk">
+      <h3>Risks</h3>
+      <ul>
+        <li><strong>Misclassification.</strong> yt-dlp's reason comes from substring matching on
+          stderr. Mitigated by: <code>deleted</code> only, 3 consecutive scans, the health
+          interlock, full reversibility, and a visible record.</li>
+        <li><strong>Dormancy is a proxy.</strong> <code>discovered_at</code> is when <em>peeq</em>
+          saw a video, not when YouTube published it. It is only ever used to raise a flag a human
+          resolves, never to act.</li>
+        <li><strong>A channel deleted while peeq is offline</strong> needs 3 scans after restart
+          before it is noticed. Acceptable: the cost is a few wasted scans.</li>
+      </ul>
+    </div>
+    <h3>Not in this slice</h3>
+    <ul>
+      <li>“Unwanted” channels (subscribed, uploading, but nothing ever downloaded) — the third
+        staleness definition, deliberately dropped as too opinionated.</li>
+      <li>Auto-unsubscribing on <code>private</code>; configurable thresholds; bulk re-subscribe;
+        deleting archived media on unsubscribe (peeq never does this).</li>
+    </ul>
+  </section>
+
+  <footer>
+    peeq · design · branch <code>feat/auto-unsubscribe</code> · mockup approved (Option A) ·
+    next: <code>superpowers:writing-plans</code>
+  </footer>
+</div>
