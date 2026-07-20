@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../icons";
+import { Button, Spinner } from "../ui";
 import { Scrubber } from "../components/Scrubber";
 import { getVideo, setFavorite, setWatched, setResume, deleteVideo, redownload, streamUrl } from "../api/videos";
 import { resummarize, subtitlesUrl } from "../api/search";
@@ -288,7 +289,12 @@ export function Player({
     return <div className="errline">{error}</div>;
   }
   if (!video) {
-    return <p style={{ color: "var(--color-faint)" }}>Loading…</p>;
+    return (
+      <p style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-faint)" }}>
+        <Spinner size="15px" />
+        Loading
+      </p>
+    );
   }
 
   const segments = video.sponsorblock_segments ?? [];
@@ -512,9 +518,10 @@ export function Player({
               <Icon name="externalLink" size="17px" /> Watch on YouTube
             </a>
             {(video.status === "error" || video.status === "tombstoned") && (
-              <button type="button" className="abtn accent" onClick={handleRedownload} disabled={redownloading}>
-                <Icon name="refresh" size="15px" /> {redownloading ? "Queuing…" : "Re-download"}
-              </button>
+              <Button type="button" variant="tinted" small busy={redownloading} onClick={handleRedownload}>
+                {!redownloading && <Icon name="refresh" size="15px" />}
+                {redownloading ? "Queuing" : "Re-download"}
+              </Button>
             )}
           </div>
         </div>
@@ -624,14 +631,18 @@ export function Player({
               ))}
             {video.summary_status === "no_transcript" && <p className="placeholder">No transcript available.</p>}
             {(video.summary_status === "pending" || video.summary_status === "running") && (
-              <p className="placeholder">Summarizing…</p>
+              <p className="placeholder" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Spinner size="15px" />
+                Summarizing
+              </p>
             )}
             {video.summary_status === "error" && (
               <>
                 <p className="errline">Summarization failed.</p>
-                <button type="button" className="abtn" onClick={handleResummarize} disabled={resummarizing}>
-                  <Icon name="download" size="15px" /> {resummarizing ? "Queuing…" : "Re-summarize"}
-                </button>
+                <Button type="button" variant="secondary" small busy={resummarizing} onClick={handleResummarize}>
+                  {!resummarizing && <Icon name="download" size="15px" />}
+                  {resummarizing ? "Queuing" : "Re-summarize"}
+                </Button>
               </>
             )}
             {!DONE_STATUSES.has(video.summary_status) && <p className="placeholder">No summary yet.</p>}

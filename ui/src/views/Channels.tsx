@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
+import { Button } from "../ui";
 import {
   addChannel,
   listChannels,
@@ -180,10 +181,10 @@ export function Channels() {
           </label>
           {/* The label names the outcome rather than the mechanism, so the
               Subscribe checkbox visibly changes what the button will do. */}
-          <button className="btn primary" type="submit" disabled={addBusy || !addUrl.trim()}>
-            <Icon name="plus" size="18px" />
-            {addBusy ? (addSubscribe ? "Subscribing…" : "Tracking…") : addSubscribe ? "Subscribe" : "Track"}
-          </button>
+          <Button type="submit" busy={addBusy} disabled={!addUrl.trim()}>
+            {!addBusy && <Icon name="plus" size="18px" />}
+            {addBusy ? (addSubscribe ? "Subscribing" : "Tracking") : addSubscribe ? "Subscribe" : "Track"}
+          </Button>
         </div>
         <label className="ctrl channel-toggle" style={{ marginTop: 10 }}>
           <input

@@ -76,7 +76,8 @@ describe("VideoCard lifecycle line", () => {
     const ring = document.querySelector(".ring");
     expect(ring).not.toBeNull();
     expect(ring?.getAttribute("data-p")).toBe("42%");
-    expect(screen.getByText("Downloading…")).toBeInTheDocument();
+    // Busy states are a spinner plus a plain label — never an ellipsis.
+    expect(screen.getByText("Downloading")).toBeInTheDocument();
   });
 
   it('renders "Not watched yet" for a fresh video', () => {

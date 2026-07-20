@@ -1,4 +1,5 @@
 import { Icon } from "../icons";
+import { Button, Spinner } from "../ui";
 import { thumbnailUrl } from "../api/videos";
 import type { Video } from "../api/types";
 import { daysSince, formatDuration, gradientClassFor } from "../format";
@@ -164,9 +165,9 @@ function Lifecycle({
           {video.status === "error" ? "Download failed" : "Removed to save space · summary kept"}
         </div>
         {onRedownload && (
-          <button type="button" className="abtn accent" onClick={() => onRedownload(video.id)}>
+          <Button type="button" variant="tinted" small onClick={() => onRedownload(video.id)}>
             <Icon name="refresh" size="15px" /> Re-download
-          </button>
+          </Button>
         )}
       </div>
     );
@@ -174,7 +175,8 @@ function Lifecycle({
   if (downloading) {
     return (
       <div className="life fresh">
-        Downloading…
+        <Spinner size="12px" />
+        Downloading
         <span className="sz">{Math.round(progress?.percent ?? 0)}%</span>
       </div>
     );

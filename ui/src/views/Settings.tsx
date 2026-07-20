@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
+import { Button, Spinner, t } from "../ui";
 import { getSettings, updateSettings, putCookie, getAPITokenStatus, createAPIToken } from "../api/settings";
 import { getYtdlpVersion, updateYtdlp } from "../api/ytdlp";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
@@ -219,7 +220,12 @@ export function Settings() {
     return <div className="errline">{error}</div>;
   }
   if (!settings) {
-    return <p style={{ color: "var(--color-faint)" }}>Loading…</p>;
+    return (
+      <p style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-faint)" }}>
+        <Spinner size="15px" />
+        Loading
+      </p>
+    );
   }
 
   const cookieHealthy = settings.cookie_status === "valid";
@@ -294,11 +300,11 @@ export function Settings() {
             aria-label="YouTube cookie"
           />
           <div className="field-row">
-            <button type="submit" className="btn primary" disabled={cookieSaving || cookieText.trim() === ""}>
-              {cookieSaving ? "Saving…" : "Save cookie"}
-            </button>
+            <Button type="submit" busy={cookieSaving} disabled={cookieText.trim() === ""}>
+              {cookieSaving ? "Saving" : "Save cookie"}
+            </Button>
             {cookieText.trim() !== "" ? (
-              <span style={{ fontSize: 12.5, color: looksValid ? "var(--color-online)" : "var(--color-danger)" }}>
+              <span style={{ ...t.label, color: looksValid ? "var(--color-online)" : "var(--color-danger)" }}>
                 {looksValid ? "Looks like a valid Netscape cookie file." : "Doesn't look like a Netscape cookie file yet."}
               </span>
             ) : null}
@@ -343,13 +349,17 @@ export function Settings() {
             <div className="tokenfield">
               <code>{freshToken}</code>
               <div className="acts">
-                <button
+                <Button
                   type="button"
-                  className={`tokenbtn${tokenCopied ? " ok" : ""}`}
+                  variant="ghost"
+                  icon
+                  aria-label={tokenCopied ? "Token copied" : "Copy token"}
+                  title={tokenCopied ? "Copied" : "Copy"}
+                  style={tokenCopied ? { color: "var(--color-online)" } : undefined}
                   onClick={handleCopyToken}
                 >
-                  {tokenCopied ? "Copied" : "Copy"}
-                </button>
+                  <Icon name={tokenCopied ? "check" : "copy"} size="16px" />
+                </Button>
               </div>
             </div>
             <p className="rfoot">
@@ -398,9 +408,9 @@ export function Settings() {
           <>
             <div className="empty">No API token yet.</div>
             <div className="field-row">
-              <button type="button" className="btn primary" disabled={tokenBusy} onClick={handleCreateToken}>
-                {tokenBusy ? "Generating…" : "Generate token"}
-              </button>
+              <Button type="button" busy={tokenBusy} onClick={handleCreateToken}>
+                {tokenBusy ? "Generating" : "Generate token"}
+              </Button>
               <span className="meta">You'll see the token once, right after it's created.</span>
             </div>
           </>
@@ -488,12 +498,12 @@ export function Settings() {
           <div className="ctrl">
             <span className="lab">yt-dlp version</span>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span className="mono" style={{ fontSize: 13.5 }}>
+              <span className="mono" style={t.label}>
                 {ytdlpVersion ?? "unknown"}
               </span>
-              <button type="button" className="btn ghost" style={{ minHeight: 34, padding: "0 14px" }} onClick={handleUpdateYtdlp} disabled={ytdlpBusy}>
-                {ytdlpBusy ? "Updating…" : "Update"}
-              </button>
+              <Button type="button" variant="secondary" small busy={ytdlpBusy} onClick={handleUpdateYtdlp}>
+                {ytdlpBusy ? "Updating" : "Update"}
+              </Button>
             </div>
             {ytdlpError ? <p className="retain-note">{ytdlpError}</p> : null}
           </div>
