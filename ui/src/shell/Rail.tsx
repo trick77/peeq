@@ -29,7 +29,7 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
   {
     label: "Collect",
     items: [
-      { id: "add", label: "Add a video", icon: "plus" },
+      { id: "add", label: "Add", icon: "plus" },
       { id: "pending", label: "Pending", icon: "clock", hot: true },
       { id: "channels", label: "Channels", icon: "tv" },
     ],

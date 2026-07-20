@@ -1737,6 +1737,28 @@ textarea.cookiebox:focus {
   flex: none;
 }
 
+/* The add-channel form reuses Add's .paste/.field layout, but nested inside
+   a .sect panel. Two overrides keep it from reading as a panel-on-panel
+   card: the input sinks to --color-bg (matching .channel-format-input, the
+   other input that lives inside a panel), and .hint/.paste shed the bottom
+   margins they carry as standalone blocks in the Add view. */
+.channel-add {
+  margin-bottom: 18px;
+}
+.channel-add .paste {
+  margin-bottom: 0;
+}
+.channel-add .field {
+  background: var(--color-bg);
+  padding: 12px 15px;
+}
+.channel-add .hint {
+  margin-bottom: 0;
+}
+.channel-add .errline {
+  margin-top: 10px;
+}
+
 .channel-list {
   display: flex;
   flex-direction: column;

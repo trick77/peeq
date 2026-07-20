@@ -188,8 +188,10 @@ func (s *Store) Get(id string) (*Channel, error) {
 
 // List returns tracked channels joined with their subscription state,
 // ordered by name (case-insensitive) then id. filter narrows the result:
-// "all" (no filter), "subscribed" (has a subscription row), or "tracked"
-// (no subscription row).
+// "all" (no filter), "subscribed" (has a subscription row), "tracked"
+// (no subscription row), or "autodownload" (subscribed with autodownload
+// on — a strict subset of "subscribed", since autodownload lives on the
+// subscription row).
 func (s *Store) List(filter string) ([]ListItem, error) {
 	query := `
 SELECT c.id, c.handle, c.name, c.avatar_path, c.added_at,
@@ -204,6 +206,11 @@ FROM channels c LEFT JOIN subscriptions s ON s.channel_id = c.id`
 		query += ` WHERE s.channel_id IS NOT NULL`
 	case "tracked":
 		query += ` WHERE s.channel_id IS NULL`
+	case "autodownload":
+		// s.autodownload is NULL for tracked-but-unsubscribed channels, and
+		// `NULL = 1` is not true in SQLite, so those drop out without an
+		// extra IS NOT NULL guard.
+		query += ` WHERE s.autodownload = 1`
 	case "all", "":
 		// no extra clause
 	default:

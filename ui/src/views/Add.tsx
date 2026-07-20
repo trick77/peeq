@@ -2,13 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { addDownload, CookieRequiredError, InvalidUrlError } from "../api/downloads";
 import { addChannel } from "../api/channels";
-
-// channelURLRe detects a channel URL client-side, mirroring the backend's
-// ytdlp.Canonicalize kind switch (backend/internal/ytdlp/url.go): a
-// youtube.com path starting with channel/, @, c/, or user/. Kept in sync by
-// hand — Canonicalize is the source of truth, this is only a routing hint so
-// Add can pick addChannel vs addDownload before hitting the server.
-const channelURLRe = /youtube\.com\/(channel\/|@|c\/|user\/)/i;
+import { isChannelURL } from "../youtube";
 
 // Add — the paste-a-URL view. The mockup shows a live metadata preview
 // before the user confirms; Task 14's backend (POST /api/downloads) has no
@@ -33,7 +27,7 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
     setQueued(null);
     setTracked(null);
     try {
-      if (channelURLRe.test(trimmed)) {
+      if (isChannelURL(trimmed)) {
         const channel = await addChannel(trimmed, false);
         setTracked({ name: channel.name });
         setUrl("");
@@ -45,7 +39,7 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
       }
     } catch (err) {
       if (err instanceof CookieRequiredError) {
-        setError("No YouTube cookie configured yet. Paste one on the Settings page before adding a video.");
+        setError("No YouTube cookie configured yet. Paste one on the Settings page first.");
       } else if (err instanceof InvalidUrlError) {
         setError(err.message || "That link isn't a single downloadable video (playlists and live streams aren't supported).");
       } else {
@@ -64,21 +58,22 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://www.youtube.com/watch?v=..."
+            placeholder="Paste a video or channel link"
             spellCheck={false}
-            aria-label="Video URL"
+            aria-label="Video or channel URL"
           />
         </label>
         <button className="btn primary" type="submit" disabled={busy || !url.trim()}>
           <Icon name="download" size="18px" />
-          {busy ? "Adding…" : channelURLRe.test(url.trim()) ? "Track channel" : "Download now"}
+          {busy ? "Adding…" : isChannelURL(url) ? "Track channel" : "Download now"}
         </button>
       </form>
 
       <div className="hint">
         <span className="led" />
         Downloads queue immediately using the format preset from Settings — subtitles &amp; a summary are included
-        automatically once later phases add them.
+        automatically once later phases add them. A channel link tracks the channel instead, downloading nothing —
+        you can also add channels from the Channels page.
       </div>
 
       {error ? <div className="errline">{error}</div> : null}

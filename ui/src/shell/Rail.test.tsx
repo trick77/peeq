@@ -15,7 +15,10 @@ describe("Rail", () => {
     expect(html).toContain("Library");
     expect(html).toContain("Now playing");
     expect(html).toContain("Search");
-    expect(html).toContain("Add a video");
+    // Anchored to the element boundaries: a bare toContain("Add") would also
+    // pass for "Add a video", so it could not pin the rename.
+    expect(html).toContain(">Add<");
+    expect(html).not.toContain("Add a video");
     expect(html).toContain("Pending");
     expect(html).toContain("Settings");
   });

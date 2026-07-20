@@ -218,6 +218,60 @@ func TestChannelsList_invalidFilter_400(t *testing.T) {
 	}
 }
 
+// TestChannelsPost_reAddSubscribed_reportsTrue asserts the response reports
+// the real post-condition rather than echoing req.Subscribe. Re-adding an
+// already-subscribed channel with subscribe=false is idempotent and leaves
+// the subscription intact, so claiming "subscribed": false would tell the
+// UI to print "not subscribed" about a channel that still gets scanned.
+func TestChannelsPost_reAddSubscribed_reportsTrue(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{ucid: "UCreadd", name: "Re Add"})
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@readd", "subscribe": true}); rr.Code != http.StatusCreated {
+		t.Fatalf("first add status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@readd", "subscribe": false})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("re-add status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Subscribed bool `json:"subscribed"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rr.Body.String())
+	}
+	if !got.Subscribed {
+		t.Fatalf("re-adding a subscribed channel reported subscribed=false; body=%s", rr.Body.String())
+	}
+	// And the subscription really did survive the re-add.
+	if list := getJSON(t, h, "/api/channels?filter=subscribed"); !strings.Contains(list, "UCreadd") {
+		t.Fatalf("subscription lost on re-add: %s", list)
+	}
+}
+
+// TestChannelsList_autodownloadFilter asserts the "autodownload" filter is
+// accepted by the handler and narrows to subscribed-with-autodownload-on
+// channels only.
+func TestChannelsList_autodownloadFilter(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{ucid: "UCauto", name: "Auto"})
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@auto", "subscribe": true}); rr.Code != http.StatusCreated {
+		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Subscribed but autodownload still off: must not be listed.
+	if list := getJSON(t, h, "/api/channels?filter=autodownload"); strings.Contains(list, "UCauto") {
+		t.Fatalf("autodownload filter must exclude a channel with autodownload off: %s", list)
+	}
+
+	if rr := putJSONWithCookie(t, h, cookie, "/api/channels/UCauto", map[string]any{"autodownload": true}); rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if list := getJSON(t, h, "/api/channels?filter=autodownload"); !strings.Contains(list, "UCauto") {
+		t.Fatalf("autodownload filter missing channel: %s", list)
+	}
+}
+
 // TestChannelsPut_notSubscribed_400 asserts updating config on a channel
 // that is tracked but not subscribed is a clean 400, not a silent no-op.
 func TestChannelsPut_notSubscribed_400(t *testing.T) {
