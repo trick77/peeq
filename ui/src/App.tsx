@@ -18,7 +18,7 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
   library: { title: "Library" },
   player: { title: "Now playing" },
   search: { title: "Search" },
-  add: { title: "Add a video" },
+  add: { title: "Add" },
   pending: { title: "Pending" },
   channels: { title: "Channels" },
   settings: { title: "Settings" },

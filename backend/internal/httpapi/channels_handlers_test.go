@@ -218,6 +218,29 @@ func TestChannelsList_invalidFilter_400(t *testing.T) {
 	}
 }
 
+// TestChannelsList_autodownloadFilter asserts the "autodownload" filter is
+// accepted by the handler and narrows to subscribed-with-autodownload-on
+// channels only.
+func TestChannelsList_autodownloadFilter(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{ucid: "UCauto", name: "Auto"})
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@auto", "subscribe": true}); rr.Code != http.StatusCreated {
+		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Subscribed but autodownload still off: must not be listed.
+	if list := getJSON(t, h, "/api/channels?filter=autodownload"); strings.Contains(list, "UCauto") {
+		t.Fatalf("autodownload filter must exclude a channel with autodownload off: %s", list)
+	}
+
+	if rr := putJSONWithCookie(t, h, cookie, "/api/channels/UCauto", map[string]any{"autodownload": true}); rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if list := getJSON(t, h, "/api/channels?filter=autodownload"); !strings.Contains(list, "UCauto") {
+		t.Fatalf("autodownload filter missing channel: %s", list)
+	}
+}
+
 // TestChannelsPut_notSubscribed_400 asserts updating config on a channel
 // that is tracked but not subscribed is a clean 400, not a silent no-op.
 func TestChannelsPut_notSubscribed_400(t *testing.T) {

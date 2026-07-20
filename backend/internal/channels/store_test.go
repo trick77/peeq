@@ -175,3 +175,33 @@ func TestChannels_unsubscribeKeepsChannel(t *testing.T) {
 		t.Fatalf("tracked count = %d, want 1", len(items))
 	}
 }
+
+// TestChannels_listAutodownloadFilter pins the "autodownload" filter to the
+// subscribed-AND-autodownload-on subset. The unsubscribed channel is the
+// interesting case: its LEFT JOIN leaves s.autodownload NULL, and the filter
+// relies on `NULL = 1` being untrue in SQLite to exclude it.
+func TestChannels_listAutodownloadFilter(t *testing.T) {
+	st := newTestStore(t)
+	st.Upsert(Channel{ID: "UC1", Name: "Tracked only"})
+	st.Upsert(Channel{ID: "UC2", Name: "Subscribed, autodownload off"})
+	st.Subscribe("UC2", "2000-01-01 00:00:00")
+	st.Upsert(Channel{ID: "UC3", Name: "Subscribed, autodownload on"})
+	st.Subscribe("UC3", "2000-01-01 00:00:00")
+	if _, err := st.UpdateConfig("UC3", true, ""); err != nil {
+		t.Fatalf("update config: %v", err)
+	}
+
+	items, err := st.List("autodownload")
+	if err != nil {
+		t.Fatalf("list autodownload: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("autodownload count = %d, want 1", len(items))
+	}
+	if items[0].ID != "UC3" {
+		t.Fatalf("autodownload id = %q, want UC3", items[0].ID)
+	}
+	if !items[0].Autodownload {
+		t.Fatal("listed item must report autodownload on")
+	}
+}

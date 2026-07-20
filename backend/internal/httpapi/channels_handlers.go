@@ -120,7 +120,8 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleChannelsList returns tracked channels, optionally narrowed by the
-// ?filter= query param ("all" default, "subscribed", or "tracked").
+// ?filter= query param ("all" default, "subscribed", "tracked", or
+// "autodownload").
 func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
@@ -131,7 +132,7 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 		filter = "all"
 	}
 	switch filter {
-	case "all", "subscribed", "tracked":
+	case "all", "subscribed", "tracked", "autodownload":
 		// valid
 	default:
 		writeJSONError(w, http.StatusBadRequest, "invalid filter: "+filter)

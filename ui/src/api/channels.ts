@@ -1,23 +1,35 @@
-import { api } from "./http";
+import { api, ApiError } from "./http";
+import { CookieRequiredError } from "./downloads";
 import type { Channel } from "./types";
 
 // ChannelFilter mirrors the ?filter= values the channels handler
 // understands (Task 12 brief / channels_handlers.go).
-export type ChannelFilter = "all" | "subscribed" | "tracked";
+export type ChannelFilter = "all" | "subscribed" | "tracked" | "autodownload";
 
 export async function listChannels(filter: ChannelFilter = "all"): Promise<Channel[]> {
   return api.get<Channel[]>(`/api/channels?filter=${encodeURIComponent(filter)}`, "failed to load channels");
 }
 
+// addChannel tracks a channel (and subscribes it when subscribe is true).
+// Resolving a channel shells out to yt-dlp and needs a cookie, so the
+// handler's 409 is mapped to the same CookieRequiredError addDownload
+// raises — callers can then use one cookie-missing branch for both.
 export async function addChannel(
   url: string,
   subscribe: boolean,
 ): Promise<{ id: string; name: string; subscribed: boolean }> {
-  return api.post<{ id: string; name: string; subscribed: boolean }>(
-    "/api/channels",
-    { url, subscribe },
-    "failed to add channel",
-  );
+  try {
+    return await api.post<{ id: string; name: string; subscribed: boolean }>(
+      "/api/channels",
+      { url, subscribe },
+      "failed to add channel",
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      throw new CookieRequiredError();
+    }
+    throw err;
+  }
 }
 
 // ChannelConfigUpdate mirrors handleChannelsPut's actual response body

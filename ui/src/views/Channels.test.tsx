@@ -39,6 +39,7 @@ vi.mock("../api/channels", () => ({
 }));
 
 import {
+  addChannel,
   listChannels,
   updateChannel,
   subscribeChannel,
@@ -49,6 +50,8 @@ import {
 describe("Channels", () => {
   beforeEach(() => {
     vi.mocked(listChannels).mockReset();
+    vi.mocked(addChannel).mockReset();
+    vi.mocked(addChannel).mockResolvedValue({ id: "c3", name: "New Channel", subscribed: false });
     vi.mocked(updateChannel).mockReset();
     vi.mocked(subscribeChannel).mockReset();
     vi.mocked(unsubscribeChannel).mockReset();
@@ -102,8 +105,81 @@ describe("Channels", () => {
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("tracked"));
 
     vi.mocked(listChannels).mockClear();
+    await user.click(screen.getByRole("button", { name: "Autodownload" }));
+    await waitFor(() => expect(listChannels).toHaveBeenCalledWith("autodownload"));
+
+    vi.mocked(listChannels).mockClear();
     await user.click(screen.getByRole("button", { name: "All" }));
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("all"));
+  });
+
+  it("the add form tracks without subscribing by default", async () => {
+    const user = userEvent.setup();
+    render(<Channels />);
+    await screen.findByText("Tracked Channel");
+
+    await user.type(screen.getByLabelText("Channel URL"), "https://www.youtube.com/@new");
+    await user.click(screen.getByRole("button", { name: /add channel/i }));
+
+    await waitFor(() => {
+      expect(addChannel).toHaveBeenCalledWith("https://www.youtube.com/@new", false);
+    });
+  });
+
+  it("ticking Subscribe immediately adds the channel subscribed", async () => {
+    const user = userEvent.setup();
+    vi.mocked(addChannel).mockResolvedValue({ id: "c3", name: "New Channel", subscribed: true });
+    render(<Channels />);
+    await screen.findByText("Tracked Channel");
+
+    await user.type(screen.getByLabelText("Channel URL"), "https://www.youtube.com/@new");
+    await user.click(screen.getByLabelText("Subscribe immediately"));
+    await user.click(screen.getByRole("button", { name: /add channel/i }));
+
+    await waitFor(() => {
+      expect(addChannel).toHaveBeenCalledWith("https://www.youtube.com/@new", true);
+    });
+    expect(await screen.findByText(/Subscribed to New Channel/)).toBeInTheDocument();
+  });
+
+  // The confirmation must not depend on the new row showing up: under a
+  // non-"all" chip a freshly tracked channel usually does not match the
+  // active filter, so the list does not visibly change and a silent success
+  // would read as a failure.
+  it("confirms the add even when the active filter excludes the new channel", async () => {
+    const user = userEvent.setup();
+    render(<Channels />);
+    await screen.findByText("Tracked Channel");
+
+    await user.click(screen.getByRole("button", { name: "Subscribed" }));
+    vi.mocked(listChannels).mockResolvedValue([]);
+
+    await user.type(screen.getByLabelText("Channel URL"), "https://www.youtube.com/@new");
+    await user.click(screen.getByRole("button", { name: /add channel/i }));
+
+    expect(await screen.findByText(/Tracked New Channel/)).toBeInTheDocument();
+  });
+
+  it("rejects a non-channel URL before calling the API", async () => {
+    const user = userEvent.setup();
+    render(<Channels />);
+    await screen.findByText("Tracked Channel");
+
+    await user.type(screen.getByLabelText("Channel URL"), "https://www.youtube.com/watch?v=abc12345678");
+    await user.click(screen.getByRole("button", { name: /add channel/i }));
+
+    expect(await screen.findByText(/Paste a channel link/)).toBeInTheDocument();
+    expect(addChannel).not.toHaveBeenCalled();
+  });
+
+  it("shows the filter-aware empty state", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listChannels).mockResolvedValue([]);
+    render(<Channels />);
+    expect(await screen.findByText("No channels yet.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Autodownload" }));
+    expect(await screen.findByText("No channels match this filter.")).toBeInTheDocument();
   });
 
   it("toggling autodownload calls updateChannel", async () => {
@@ -115,6 +191,9 @@ describe("Channels", () => {
     await waitFor(() => {
       expect(updateChannel).toHaveBeenCalledWith("c1", { autodownload: true });
     });
+    // Refetch, so a row that no longer matches the active filter disappears
+    // and a 0-row no-op on an unsubscribed channel can't leave a stale tick.
+    await waitFor(() => expect(listChannels).toHaveBeenCalledTimes(2));
   });
 
   it("editing the format override field and blurring calls updateChannel", async () => {
