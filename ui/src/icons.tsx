@@ -21,6 +21,8 @@ import {
   Captions,
   ChevronRight,
   RefreshCw,
+  Copy,
+  LoaderCircle,
   type LucideIcon,
 } from "lucide-react";
 
@@ -58,6 +60,8 @@ const COMPONENTS = {
   captions: Captions,
   chevronRight: ChevronRight,
   refresh: RefreshCw,
+  copy: Copy,
+  spinner: LoaderCircle, // spun by .ui-spin — every async wait spins
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof COMPONENTS;

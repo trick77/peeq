@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
+import { Button } from "../ui";
 import {
   addChannel,
   listChannels,
@@ -261,10 +262,10 @@ export function Channels() {
           </label>
           {/* The label names the outcome rather than the mechanism, so the
               Subscribe checkbox visibly changes what the button will do. */}
-          <button className="btn primary" type="submit" disabled={addBusy || !addUrl.trim()}>
-            <Icon name="plus" size="18px" />
-            {addBusy ? (addSubscribe ? "Subscribing…" : "Tracking…") : addSubscribe ? "Subscribe" : "Track"}
-          </button>
+          <Button type="submit" busy={addBusy} disabled={!addUrl.trim()}>
+            {!addBusy && <Icon name="plus" size="18px" />}
+            {addBusy ? (addSubscribe ? "Subscribing" : "Tracking") : addSubscribe ? "Subscribe" : "Track"}
+          </Button>
         </div>
         <label className="ctrl channel-toggle" style={{ marginTop: 10 }}>
           <input
@@ -333,18 +334,22 @@ export function Channels() {
                 placeholder="Format override (optional)"
                 aria-label="Format override"
               />
-              <button type="button" className={`abtn${c.subscribed ? " gold" : ""}`} onClick={() => handleToggleSubscribe(c)}>
+              <Button
+                type="button"
+                variant={c.subscribed ? "gold" : "secondary"}
+                onClick={() => handleToggleSubscribe(c)}
+              >
                 <Icon name={c.subscribed ? "starFilled" : "star"} size="16px" />
                 {c.subscribed ? "Unsubscribe" : "Subscribe"}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="abtn danger"
+                variant="dangerQuiet"
                 onClick={() => handleDelete(c)}
                 aria-label={`Delete ${c.name}`}
               >
                 <Icon name="trash" size="16px" /> Delete
-              </button>
+              </Button>
             </div>
           </div>
         ))}
