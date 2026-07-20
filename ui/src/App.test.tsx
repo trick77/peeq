@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { App } from "./App";
-import { downloadsStatus, resumeYoutube } from "./api";
-import type { Video } from "./api/types";
+import { downloadsStatus, resumeYoutube, listDownloads } from "./api";
+import { addDownload } from "./api/downloads";
+import type { Job, Video } from "./api/types";
 
 describe("App (static)", () => {
   it("renders peeq", () => {
@@ -66,6 +67,58 @@ vi.mock("./api/search", () => ({
   subtitlesUrl: (id: string) => `/api/videos/${id}/subtitles`,
   resummarize: vi.fn(),
 }));
+
+vi.mock("./api/downloads", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./api/downloads")>()),
+  addDownload: vi.fn(),
+}));
+
+vi.mock("./api/channels", () => ({
+  addChannel: vi.fn(),
+  listChannels: vi.fn().mockResolvedValue([]),
+}));
+
+// The dock only starts its 3s poll once `jobs` already holds an active
+// entry, so adding the first video to an empty dock used to leave it
+// invisible until a manual reload: App passed Add a no-op onQueued, and
+// the SSE progress handler can't help when the job is queued but not yet
+// downloading. This asserts the add itself refreshes the queue.
+describe("App dock bootstrap", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it("refreshes the download queue after the Add view queues a video", async () => {
+    vi.mocked(listDownloads).mockResolvedValue([]);
+    vi.mocked(addDownload).mockResolvedValue({
+      job_id: 7,
+      video_id: "vynCRZwkWhE",
+      title: "Queued video",
+      channel_name: "Some channel",
+      state: "pending",
+      priority: 10,
+    } as Job);
+
+    render(<App />);
+    fireEvent.click(await screen.findByText("Add a video"));
+
+    // Starts empty — this is the state that used to be terminal.
+    expect(await screen.findByText("Nothing queued")).toBeTruthy();
+
+    // Once queued, the dock must reflect it without a reload.
+    vi.mocked(listDownloads).mockResolvedValue([
+      { job_id: 7, video_id: "vynCRZwkWhE", title: "Queued video", state: "pending", priority: 10 } as Job,
+    ]);
+
+    fireEvent.change(screen.getByLabelText("Video URL"), {
+      target: { value: "https://www.youtube.com/watch?v=vynCRZwkWhE&t=68s" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Download now/ }));
+
+    expect(await screen.findByText("1 queued")).toBeTruthy();
+  });
+});
 
 describe("App reload-restore", () => {
   beforeEach(() => {
