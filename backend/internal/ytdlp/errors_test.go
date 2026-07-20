@@ -63,6 +63,48 @@ func TestClassify(t *testing.T) {
 			},
 		},
 		{
+			// Verbatim stderr captured by running yt-dlp against a channel id
+			// that does not exist. This is the load-bearing case for the
+			// auto-unsubscribe feature: Task 1's Classify only matched
+			// video-level "unavailable" text, so a genuinely deleted CHANNEL
+			// never classified as TerminalError{Reason:"deleted"} and
+			// staleUnsubscribe was never reached. Asserting on this exact,
+			// observed line (rather than a hand-built TerminalError) is the
+			// point of this test — a fake string that merely "looks close"
+			// would not have caught the original bug.
+			name:   "channel does not exist",
+			stderr: "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This channel does not exist.",
+			check: func(t *testing.T, err error) {
+				var te *TerminalError
+				if !errors.As(err, &te) {
+					t.Fatalf("want *TerminalError, got %v", err)
+				}
+				if te.Reason != "deleted" {
+					t.Fatalf("Reason = %q, want %q", te.Reason, "deleted")
+				}
+			},
+		},
+		{
+			// UNVERIFIED BY OBSERVATION: this is YouTube's known account-
+			// termination wording, but no terminated channel was available to
+			// run yt-dlp against, so this exact stderr line has not been
+			// confirmed against the real binary the way the "does not exist"
+			// case above was. Keep classifying it as "deleted" — if the real
+			// wording differs, this test (not production behavior) is what's
+			// wrong, and should be corrected once a real sample is captured.
+			name:   "account terminated (unverified wording)",
+			stderr: "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This account has been terminated.",
+			check: func(t *testing.T, err error) {
+				var te *TerminalError
+				if !errors.As(err, &te) {
+					t.Fatalf("want *TerminalError, got %v", err)
+				}
+				if te.Reason != "deleted" {
+					t.Fatalf("Reason = %q, want %q", te.Reason, "deleted")
+				}
+			},
+		},
+		{
 			name:   "rate limited",
 			stderr: "ERROR: unable to download video data: HTTP Error 429: Too Many Requests",
 			check: func(t *testing.T, err error) {
@@ -87,6 +129,31 @@ func TestClassify(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			c.check(t, Classify(c.stderr, genericExit))
 		})
+	}
+}
+
+// TestClassify_channelDeletedPrecedence pins that the new channel-level
+// "deleted" signatures cannot be shadowed by, and cannot shadow, the other
+// switch cases in Classify. Case order matters here: containsAny does plain
+// substring matching, so an earlier case that happened to also match
+// "channel does not exist" or "account has been terminated" would silently
+// steal these lines, and a later broadening of another case's substrings
+// could do the same in reverse. This test fails loudly if either happens.
+func TestClassify_channelDeletedPrecedence(t *testing.T) {
+	genericExit := fmt.Errorf("exit status 1")
+
+	for _, stderr := range []string{
+		"ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This channel does not exist.",
+		"ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This account has been terminated.",
+	} {
+		err := Classify(stderr, genericExit)
+		var te *TerminalError
+		if !errors.As(err, &te) {
+			t.Fatalf("%q: want *TerminalError, got %v", stderr, err)
+		}
+		if te.Reason != "deleted" {
+			t.Fatalf("%q: Reason = %q, want %q (case ordering/shadowing regression)", stderr, te.Reason, "deleted")
+		}
 	}
 }
 
