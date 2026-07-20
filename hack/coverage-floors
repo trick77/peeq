@@ -1,0 +1,4 @@
+# Statement-coverage floors. Only ever raised, capped at 80.
+# Raise in the same PR that earns it; see hack/coverage-gate.sh.
+backend=0.0
+ui=0.0
