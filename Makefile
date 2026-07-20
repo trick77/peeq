@@ -19,6 +19,7 @@ fe-test:
 
 fe-coverage:
 	cd ui && npm run test -- --run --coverage
+	./hack/coverage-gate.sh ui
 
 fe-build:
 	cd ui && npm ci && npm run build
