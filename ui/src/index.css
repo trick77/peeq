@@ -206,12 +206,8 @@ button {
   width: 100%;
   text-align: left;
 }
-.rail-nav-item .rail-nav-ic {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  opacity: 0.85;
-}
+/* nav icons are sized inline in Rail.tsx (size="18px"); there is deliberately
+   no .rail-nav-ic rule here — the class was never applied. */
 .rail-nav-item:hover {
   color: var(--color-ink-dim);
   background: var(--color-active);
