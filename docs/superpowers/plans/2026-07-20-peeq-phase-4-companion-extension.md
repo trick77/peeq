@@ -992,7 +992,7 @@ export async function saveConfig(storage, { baseUrl, token }) {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd extension && npm test`
-Expected: PASS, 25 tests.
+Expected: PASS, 24 tests (16 pre-existing + the 8 above).
 
 - [ ] **Step 5: Commit**
 
@@ -1196,7 +1196,12 @@ export async function sendCookie({ loadConfig, getCookies, hasPermission, fetch 
     return { ok: false, state: "server-error", detail };
   }
 
-  return { ok: true, state: "sent", count: countDisplayCookies(cookies) };
+  // NOTE: this count is cookies.length, NOT countDisplayCookies. The two
+  // branches answer different questions and must not share a helper:
+  // "sent" reports how much was handed over (the whole jar), while
+  // "no-session" reports how close the profile is to being signed in
+  // (the informational N-of-5 readout).
+  return { ok: true, state: "sent", count: cookies.length };
 }
 ```
 
