@@ -1828,6 +1828,27 @@ textarea.cookiebox:focus {
   font-weight: 500;
   margin: 0;
 }
+/* The mockup this was ported from had a base `.by` rule (flex, 12.5px,
+   muted) that peeq never defines outside `.card`/`.preview` — only
+   `.card .by` and `.preview .by` exist. Scoped here so the band/tomb `.by`
+   lines get that byline layout without touching those two unrelated rules.
+   `.life` also needs to go inline-flex within these rows specifically: the
+   real `.life` (used by the main channel cards) is block-level, which would
+   force the "· N archived" / "· Unsubscribed …" text onto its own line
+   instead of sitting on the same muted byline. */
+.band .by,
+.tomb-body .by {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--color-muted);
+}
+.band .by .life,
+.tomb-body .by .life {
+  display: inline-flex;
+  margin-top: 0;
+}
 .by .dot {
   color: var(--color-faint);
 }
@@ -1858,7 +1879,12 @@ textarea.cookiebox:focus {
   border-left: 3px solid var(--color-kept);
   background: linear-gradient(90deg, color-mix(in srgb, var(--color-kept) 5%, transparent), transparent 40%), var(--color-panel);
   border-radius: var(--radius-ui-lg);
-  padding: 14px 18px;
+  /* 20px horizontal, not the mockup's 18px: .band .channel-row has no
+     horizontal padding of its own (flush rows), so this is the only thing
+     standing between its action buttons and the edge. It must match
+     .channel-row's real 16px/20px (line ~1774) so the "Keep subscribed" /
+     "Unsubscribe" buttons share the main list's right edge exactly. */
+  padding: 14px 20px;
   margin-bottom: 14px;
 }
 .band-head {
@@ -1931,7 +1957,11 @@ details.tomb-sect[open] > summary svg {
   border: 1px solid var(--color-border);
   border-top: none;
   border-radius: 0 0 var(--radius-ui-lg) var(--radius-ui-lg);
-  padding: 2px 18px 12px;
+  /* 20px horizontal, matching .band above and .channel-row's real padding:
+     .tomb-row (like .band .channel-row) is a flush row with no horizontal
+     padding of its own, so this is what the Re-subscribe button's right
+     edge is measured from. */
+  padding: 2px 20px 12px;
   display: flex;
   flex-direction: column;
   gap: 0;
