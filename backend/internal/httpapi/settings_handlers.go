@@ -94,10 +94,25 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, got)
 }
 
-// handlePutSettingsCookie is the only way the pasted cookie ever enters the
-// system. On success it does not echo the cookie back — the response is the
-// same cookie-body-free settings view as GET /api/settings.
+// handlePutSettingsCookie is the session-authenticated way the pasted cookie
+// enters the system. On success it does not echo the cookie back — the
+// response is the same cookie-body-free settings view as GET /api/settings.
 func (s *server) handlePutSettingsCookie(w http.ResponseWriter, r *http.Request) {
+	s.applyCookie(w, r)
+}
+
+// handleMachineCookie is the token-authenticated cookie-write path, used by
+// the peeq browser extension. It is deliberately a separate route from
+// handlePutSettingsCookie so that exactly one route in server.go bypasses
+// OIDC, even though both share the write below.
+func (s *server) handleMachineCookie(w http.ResponseWriter, r *http.Request) {
+	s.applyCookie(w, r)
+}
+
+// applyCookie validates and stores a pasted cookie, then un-wedges the
+// download worker. Shared by the session and machine routes; it must never
+// echo the cookie body back.
+func (s *server) applyCookie(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "settings are not configured")
 		return

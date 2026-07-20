@@ -33,10 +33,12 @@ func testDeps(t *testing.T) Deps {
 	db := openTestDB(t)
 	sessions := auth.NewSessionStore(db, false)
 	users := auth.NewUserStore(db)
+	settingsStore := settings.New(db)
 	return Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
+		AuthService:     auth.NewService(nil, sessions, users),
+		AuthMiddleware:  auth.NewMiddleware(sessions, users),
+		Settings:        settingsStore,
+		TokenMiddleware: auth.NewTokenMiddleware(settingsStore),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",

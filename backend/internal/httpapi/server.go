@@ -29,6 +29,9 @@ type Deps struct {
 	AuthService *auth.Service
 	// AuthMiddleware protects authenticated routes.
 	AuthMiddleware *auth.Middleware
+	// TokenMiddleware gates the machine endpoints on the API token. Optional:
+	// when nil, PUT /api/machine/cookie returns 401 rather than being open.
+	TokenMiddleware *auth.TokenMiddleware
 	// Settings is the singleton settings store backing the Settings API.
 	Settings *settings.Store
 	// DevAuthClaims, when Subject is non-empty, makes /api/auth/login create a
@@ -127,6 +130,7 @@ type server struct {
 	static        http.Handler
 	authSvc       *auth.Service
 	authMW        *auth.Middleware
+	tokenMW       *auth.TokenMiddleware
 	settings      *settings.Store
 	devAuthClaims auth.Claims
 
@@ -159,6 +163,7 @@ func New(d Deps) http.Handler {
 		static:        d.Static,
 		authSvc:       d.AuthService,
 		authMW:        d.AuthMiddleware,
+		tokenMW:       d.TokenMiddleware,
 		settings:      d.Settings,
 		devAuthClaims: d.DevAuthClaims,
 		jobs:          d.Jobs,
@@ -202,6 +207,11 @@ func New(d Deps) http.Handler {
 	mux.Handle("PUT /api/settings", s.requireAuth(http.HandlerFunc(s.handlePutSettings)))
 	mux.Handle("PUT /api/settings/cookie", s.requireAuth(http.HandlerFunc(s.handlePutSettingsCookie)))
 	mux.Handle("GET /api/cookie/health", s.requireAuth(http.HandlerFunc(s.handleCookieHealth)))
+	mux.Handle("GET /api/settings/token", s.requireAuth(http.HandlerFunc(s.handleGetAPIToken)))
+	mux.Handle("POST /api/settings/token", s.requireAuth(http.HandlerFunc(s.handlePostAPIToken)))
+	// The only route in peeq that bypasses OIDC. Token-gated, cookie-write
+	// only — deliberately not a general machine surface.
+	mux.Handle("PUT /api/machine/cookie", s.requireToken(http.HandlerFunc(s.handleMachineCookie)))
 	mux.Handle("POST /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsPost)))
 	mux.Handle("GET /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsList)))
 	mux.Handle("GET /api/downloads/status", s.requireAuth(http.HandlerFunc(s.handleDownloadsStatus)))
@@ -240,4 +250,15 @@ func (s *server) requireAuth(next http.Handler) http.Handler {
 		})
 	}
 	return s.authMW.RequireAuth(next)
+}
+
+// requireToken gates a machine route on the API token. Mirrors requireAuth's
+// nil-safety: an unwired middleware rejects rather than opens the route.
+func (s *server) requireToken(next http.Handler) http.Handler {
+	if s.tokenMW == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		})
+	}
+	return s.tokenMW.RequireToken(next)
 }

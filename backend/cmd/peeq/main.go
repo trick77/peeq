@@ -302,6 +302,7 @@ func run() error {
 		Static:          web.Handler(),
 		AuthService:     authSvc,
 		AuthMiddleware:  authMW,
+		TokenMiddleware: auth.NewTokenMiddleware(settingsStore),
 		Settings:        settingsStore,
 		DevAuthClaims:   devClaims,
 		Jobs:            jobsStore,
