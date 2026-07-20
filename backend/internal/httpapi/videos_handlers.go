@@ -125,7 +125,7 @@ func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []videoDTO{})
 		return
 	}
-	all, err := s.videos.List(r.URL.Query().Get("filter"))
+	all, err := s.videos.List(r.URL.Query().Get("filter"), r.URL.Query().Get("category"))
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "list videos failed")
 		return

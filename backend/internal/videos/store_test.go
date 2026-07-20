@@ -409,7 +409,7 @@ func TestList_filters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	all, err := s.List("all")
+	all, err := s.List("all", "")
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
@@ -417,7 +417,7 @@ func TestList_filters(t *testing.T) {
 		t.Fatalf("list all = %d, want 3", len(all))
 	}
 
-	unwatched, err := s.List("unwatched")
+	unwatched, err := s.List("unwatched", "")
 	if err != nil {
 		t.Fatalf("list unwatched: %v", err)
 	}
@@ -425,7 +425,7 @@ func TestList_filters(t *testing.T) {
 		t.Fatalf("list unwatched = %+v, want [a]", unwatched)
 	}
 
-	watched, err := s.List("watched")
+	watched, err := s.List("watched", "")
 	if err != nil {
 		t.Fatalf("list watched: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestList_filters(t *testing.T) {
 		t.Fatalf("list watched = %+v, want [b]", watched)
 	}
 
-	favs, err := s.List("favorites")
+	favs, err := s.List("favorites", "")
 	if err != nil {
 		t.Fatalf("list favorites: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestList_filters(t *testing.T) {
 		t.Fatalf("list favorites = %+v, want [a]", favs)
 	}
 
-	downloading, err := s.List("downloading")
+	downloading, err := s.List("downloading", "")
 	if err != nil {
 		t.Fatalf("list downloading: %v", err)
 	}
@@ -573,5 +573,55 @@ func TestSweepCandidates_filtersByWatchedFavoriteTombstoneAndCutoff(t *testing.T
 			ids[i] = v.ID
 		}
 		t.Fatalf("sweep candidates = %v, want [old-eligible]", ids)
+	}
+}
+
+func TestSetCategoryAndListByCategory(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v-ai", URL: "u-v-ai", DurationSeconds: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDownloaded("v-ai", DownloadedResult{MediaPath: "/m/v-ai.mp4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Upsert(Video{ID: "v-news", URL: "u-v-news", DurationSeconds: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDownloaded("v-news", DownloadedResult{MediaPath: "/m/v-news.mp4"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetCategory("v-ai", "ai"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCategory("v-news", "news"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default before SetCategory is uncategorized; verify round-trip.
+	got, err := s.Get("v-ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Category != "ai" {
+		t.Fatalf("category = %q, want ai", got.Category)
+	}
+
+	// Category filter, orthogonal to status.
+	ai, err := s.List("all", "ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ai) != 1 || ai[0].ID != "v-ai" {
+		t.Fatalf("List all/ai = %v, want [v-ai]", ai)
+	}
+
+	// Empty / "all" category => no constraint.
+	all, err := s.List("all", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("List all/'' returned %d, want 2", len(all))
 	}
 }
