@@ -111,6 +111,11 @@ test("hasSessionCookie is false for a jar with no session cookie", () => {
   // The anonymous-jar case: sending this would overwrite peeq's good cookie.
   assert.equal(hasSessionCookie([yt("PREF"), yt("VISITOR_INFO1_LIVE")]), false);
   assert.equal(hasSessionCookie([]), false);
+  // SAPISID is in the display set but NOT the gate. If the gate ever widened
+  // to the display set, this jar would wrongly become sendable and the server
+  // would reject it.
+  assert.equal(hasSessionCookie([yt("SAPISID")]), false);
+  assert.equal(hasSessionCookie([yt("LOGIN_INFO")]), false);
 });
 
 test("hasSessionCookie ignores a session cookie on a non-YouTube domain", () => {
@@ -119,7 +124,10 @@ test("hasSessionCookie ignores a session cookie on a non-YouTube domain", () => 
 
 test("countDisplayCookies counts only display-set members, without double counting", () => {
   assert.equal(countDisplayCookies([yt("SID"), yt("SAPISID"), yt("PREF")]), 2);
-  assert.equal(countDisplayCookies([yt("SID"), yt("SID")]), 1, "duplicates count once");
+  // Chrome really returns the same name on different domains; dedup must be
+  // by name, not by domain+name.
+  assert.equal(countDisplayCookies([yt("SID"), { ...yt("SID"), domain: "www.youtube.com" }]), 1,
+    "duplicates count once");
   assert.equal(countDisplayCookies([]), 0);
 });
 
