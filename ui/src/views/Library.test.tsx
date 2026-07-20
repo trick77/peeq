@@ -203,4 +203,28 @@ describe("Library category chips", () => {
     });
     expect(screen.getByText("ai video title")).toBeInTheDocument();
   });
+
+  it("applies the category filter independently of the status chip", async () => {
+    const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
+    const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
+
+    vi.mocked(listVideos).mockImplementation(async (_filter, category) => {
+      if (category === "ai") return [aiVideo];
+      return [aiVideo, newsVideo];
+    });
+
+    render(<Library onOpenVideo={() => {}} />);
+    await screen.findByText("news video title");
+
+    fireEvent.click(screen.getByRole("button", { name: /Unwatched/ }));
+    const aiChip = await screen.findByRole("button", { name: /AI/ });
+    fireEvent.click(aiChip);
+
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith("unwatched", "ai");
+    });
+    // Selecting a category must not reset the status chip, and vice versa.
+    expect(screen.getByRole("button", { name: /Unwatched/ })).toHaveClass("on");
+    expect(aiChip).toHaveClass("on");
+  });
 });
