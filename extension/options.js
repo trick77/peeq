@@ -42,8 +42,13 @@ $("save").addEventListener("click", async () => {
     return;
   }
 
-  await saveConfig(api.storage.local, { baseUrl: normalized, token: $("token").value.trim() });
+  try {
+    await saveConfig(api.storage.local, { baseUrl: normalized, token: $("token").value.trim() });
+  } catch (err) {
+    verdict("bad", `Couldn't save your settings: ${err.message}`);
+    return;
+  }
   verdict("ok", "Connected. Open the extension to send the cookie.");
 });
 
-init();
+init().catch((err) => verdict("bad", `Couldn't load your saved settings: ${err.message}`));
