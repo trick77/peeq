@@ -149,7 +149,7 @@ func TestDownloads_postCanonicalizesAndEnqueues(t *testing.T) {
 		Channel:         "Rick Astley",
 		DurationSeconds: 212,
 		PublishedAt:     "2009-10-25",
-		Availability:    "available",
+		Availability:    "public",
 	}}
 	deps := downloadsTestDeps(t, runner)
 	h := New(deps)
@@ -183,6 +183,14 @@ func TestDownloads_postCanonicalizesAndEnqueues(t *testing.T) {
 	}
 	if video.URL != "https://www.youtube.com/watch?v=dQw4w9WgXcQ" {
 		t.Fatalf("video url = %q, want the canonical watch url (no playlist param)", video.URL)
+	}
+	// Regression test: yt-dlp reports availability as "public" for a normal
+	// video, which is NOT a valid videos.availability value (the DB CHECK
+	// constraint only allows available/deleted/private/geo/unknown). The
+	// handler must normalize "public" to "available" before writing it, or
+	// the Upsert below would have already failed with a 500 above.
+	if video.Availability != "available" {
+		t.Fatalf("video availability = %q, want %q (normalized from yt-dlp's \"public\")", video.Availability, "available")
 	}
 
 	allJobs, err := deps.Jobs.List()

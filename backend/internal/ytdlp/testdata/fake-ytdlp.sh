@@ -72,5 +72,9 @@ if [ -n "${FAKE_YTDLP_JSON:-}" ]; then
   exit 0
 fi
 
-echo '{}'
+# Default metadata JSON, used when a test doesn't override FAKE_YTDLP_JSON.
+# availability defaults to "public" (real yt-dlp's value for a normal,
+# publicly-listed video) rather than being omitted, so tests exercise the
+# same raw vocabulary real yt-dlp actually returns.
+echo '{"availability": "public"}'
 exit 0
