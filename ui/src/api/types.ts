@@ -20,6 +20,9 @@ export type User = {
 // VideoFilter mirrors the ?filter= values videos.Store.List understands.
 export type VideoFilter = "all" | "unwatched" | "watched" | "favorites" | "downloading";
 
+// VideoSort mirrors the sort keys videos.Store.List accepts.
+export type VideoSort = "newest" | "oldest" | "longest" | "title";
+
 // Video mirrors httpapi.videoDTO exactly. media_path is deliberately never
 // exposed (server-local filesystem path); has_media + the /stream endpoint
 // are how the UI knows whether/how to play it.

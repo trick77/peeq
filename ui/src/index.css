@@ -568,6 +568,16 @@ button {
   opacity: 0.65;
 }
 
+/* listbar — the search + sort row shared by the Library and the channel
+   page's Archive tab. Sits below the filter chips, above the grid. */
+.listbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(258px, 1fr));

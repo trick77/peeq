@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { VideoCard } from "../components/VideoCard";
 import type { Video } from "../api/types";
 
@@ -233,8 +234,8 @@ describe("Library category chips", () => {
     const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
     const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
 
-    vi.mocked(listVideos).mockImplementation(async (_filter, category) => {
-      if (category === "ai") return [aiVideo];
+    vi.mocked(listVideos).mockImplementation(async (opts) => {
+      if (opts.category === "ai") return [aiVideo];
       return [aiVideo, newsVideo];
     });
 
@@ -255,8 +256,8 @@ describe("Library category chips", () => {
     const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
     const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
 
-    vi.mocked(listVideos).mockImplementation(async (_filter, category) => {
-      if (category === "ai") return [aiVideo];
+    vi.mocked(listVideos).mockImplementation(async (opts) => {
+      if (opts.category === "ai") return [aiVideo];
       return [aiVideo, newsVideo];
     });
 
@@ -268,7 +269,7 @@ describe("Library category chips", () => {
     fireEvent.click(aiChip);
 
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith("unwatched", "ai");
+      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ filter: "unwatched", category: "ai" }));
     });
     // Selecting a category must not reset the status chip, and vice versa.
     expect(screen.getByRole("button", { name: /Unwatched/ })).toHaveClass("on");
@@ -296,7 +297,7 @@ describe("Library category chips", () => {
     const aiChip = await screen.findByRole("button", { name: /AI/ });
     fireEvent.click(aiChip);
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith("all", "ai");
+      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ filter: "all", category: "ai" }));
     });
     vi.mocked(listVideos).mockClear();
 
@@ -305,7 +306,33 @@ describe("Library category chips", () => {
 
     // Then: the refresh still carries the category, not just the status.
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith("all", "ai");
+      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ filter: "all", category: "ai" }));
+    });
+  });
+
+  it("typing in the search box refetches with the query", async () => {
+    vi.mocked(listVideos).mockResolvedValue([]);
+    const user = userEvent.setup();
+    render(<Library onOpenVideo={() => {}} />);
+    await screen.findByPlaceholderText(/search/i);
+
+    await user.type(screen.getByPlaceholderText(/search/i), "abyss");
+
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ q: "abyss" }));
+    });
+  });
+
+  it("choosing a sort option refetches with that sort", async () => {
+    vi.mocked(listVideos).mockResolvedValue([]);
+    const user = userEvent.setup();
+    render(<Library onOpenVideo={() => {}} />);
+    await screen.findByLabelText(/sort/i);
+
+    await user.selectOptions(screen.getByLabelText(/sort/i), "longest");
+
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ sort: "longest" }));
     });
   });
 });

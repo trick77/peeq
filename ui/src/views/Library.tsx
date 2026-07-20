@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoCard, type DownloadProgress } from "../components/VideoCard";
 import { listVideos, getSettings, listDownloads, streamDownloads, setFavorite, setWatched, redownload } from "../api";
-import type { Video, VideoFilter, Job, Settings } from "../api/types";
+import type { Video, VideoFilter, VideoSort, Job, Settings } from "../api/types";
 import { CATEGORIES } from "../categories";
+import { controlClass } from "../ui";
 
 const CHIPS: { id: VideoFilter; label: string }[] = [
   { id: "all", label: "All" },
@@ -10,6 +11,15 @@ const CHIPS: { id: VideoFilter; label: string }[] = [
   { id: "watched", label: "Watched" },
   { id: "favorites", label: "Favorites" },
   { id: "downloading", label: "Downloading" },
+];
+
+// SORT_OPTIONS is shared with the channel page's Archive tab so the two
+// lists can never drift apart in wording or in accepted values.
+export const SORT_OPTIONS: { id: VideoSort; label: string }[] = [
+  { id: "newest", label: "Newest first" },
+  { id: "oldest", label: "Oldest first" },
+  { id: "longest", label: "Longest first" },
+  { id: "title", label: "Title A–Z" },
 ];
 
 // matchesFilter mirrors videos.Store.List's SQL WHERE clauses exactly (see
@@ -36,6 +46,9 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
 export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) {
   const [filter, setFilter] = useState<VideoFilter>("all");
   const [category, setCategory] = useState<string>("all");
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<VideoSort>("newest");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [allVideos, setAllVideos] = useState<Video[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -57,7 +70,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
         if (active) setSettings(s);
       })
       .catch(() => {});
-    listVideos("all")
+    listVideos({ filter: "all" })
       .then((v) => {
         if (active) setAllVideos(v);
       })
@@ -73,12 +86,18 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
     };
   }, []);
 
-  // The chip's own filtered list, refetched whenever the active chip
-  // changes.
+  // Debounce the search box so typing "abyss" fires one request, not five.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(query), 250);
+    return () => clearTimeout(id);
+  }, [query]);
+
+  // The chip's own filtered list, refetched whenever the active chip,
+  // search query, or sort changes.
   useEffect(() => {
     let active = true;
     setError(null);
-    listVideos(filter, category)
+    listVideos({ filter, category, q: debouncedQuery, sort })
       .then((v) => {
         if (active) setVideos(v);
       })
@@ -88,7 +107,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
     return () => {
       active = false;
     };
-  }, [filter, category]);
+  }, [filter, category, debouncedQuery, sort]);
 
   // Live download progress: map each SSE "progress" event's job_id to the
   // video_id the download dock/queue knows about, so a downloading card's
@@ -148,12 +167,12 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
         .catch(() => {})
         .finally(() => {
           if (!active) return;
-          listVideos("all")
+          listVideos({ filter: "all" })
             .then((v) => {
               if (active) setAllVideos(v);
             })
             .catch(() => {});
-          listVideos(filter, category)
+          listVideos({ filter, category, q: debouncedQuery, sort })
             .then((v) => {
               if (active) setVideos(v);
             })
@@ -165,7 +184,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
       active = false;
       window.clearTimeout(id);
     };
-  }, [filter, category, jobsRefreshTick]);
+  }, [filter, category, debouncedQuery, sort, jobsRefreshTick]);
 
   function applyLocalUpdate(id: string, patch: Partial<Video>) {
     setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
@@ -199,7 +218,10 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
   async function handleRedownload(id: string) {
     try {
       await redownload(id);
-      const [all, current] = await Promise.all([listVideos("all"), listVideos(filter, category)]);
+      const [all, current] = await Promise.all([
+        listVideos({ filter: "all" }),
+        listVideos({ filter, category, q: debouncedQuery, sort }),
+      ]);
       setAllVideos(all);
       setVideos(current);
     } catch (e) {
@@ -242,6 +264,30 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
             {c.label} <span className="n">{allVideos.filter((v) => v.category === c.id).length}</span>
           </button>
         ))}
+      </div>
+      <div className="listbar">
+        <input
+          className={controlClass}
+          style={{ maxWidth: 280 }}
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search titles"
+          aria-label="Search titles"
+        />
+        <select
+          className={controlClass}
+          style={{ maxWidth: 180 }}
+          value={sort}
+          onChange={(e) => setSort(e.target.value as VideoSort)}
+          aria-label="Sort"
+        >
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
       </div>
       {error ? <div className="errline">{error}</div> : null}
       <div className="grid">

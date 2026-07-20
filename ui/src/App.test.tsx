@@ -162,13 +162,19 @@ describe("App reload-restore", () => {
   it("lands on Library when the marker says the video was paused", async () => {
     sessionStorage.setItem("peeq.nowPlaying", JSON.stringify({ videoId: "v1", playing: false }));
     render(<App />);
-    await screen.findByPlaceholderText(/Search titles/i);
+    // Exact match: TopBar's own (currently inert) search box shares the
+    // "Search titles & subtitles" wording, and /Search titles/i would match
+    // both — this asserts on Library's listbar search box specifically.
+    await screen.findByPlaceholderText("Search titles");
     expect(document.querySelector("video")).toBeNull();
   });
 
   it("lands on Library when there is no marker", async () => {
     render(<App />);
-    await screen.findByPlaceholderText(/Search titles/i);
+    // Exact match: TopBar's own (currently inert) search box shares the
+    // "Search titles & subtitles" wording, and /Search titles/i would match
+    // both — this asserts on Library's listbar search box specifically.
+    await screen.findByPlaceholderText("Search titles");
     expect(document.querySelector("video")).toBeNull();
   });
 });
