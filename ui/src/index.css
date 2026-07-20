@@ -182,17 +182,20 @@ button {
   letter-spacing: 0.15em;
   text-transform: uppercase;
   color: var(--color-faint);
-  padding: 14px 10px 6px;
+  padding: 10px 10px 4px;
 }
 .rail-nav-item {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 9px 11px;
+  padding: 6px 11px;
   border-radius: var(--radius-ui-sm);
   color: var(--color-muted);
   text-decoration: none;
   font-size: 14.5px;
+  /* tighter than the body's 1.5 — the rail only holds seven items and the
+     looser leading made the list read as loose rather than airy. */
+  line-height: 1.3;
   font-weight: 500;
   border: 1px solid transparent;
   position: relative;
@@ -222,8 +225,10 @@ button {
   content: "";
   position: absolute;
   left: -12px;
-  top: 10px;
-  bottom: 10px;
+  /* inset tracks .rail-nav-item's vertical padding — keep them in step or
+     the bar drifts off-centre within the item. */
+  top: 7px;
+  bottom: 7px;
   width: 3px;
   border-radius: 3px;
   background: var(--color-accent);
