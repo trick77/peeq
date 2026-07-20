@@ -135,6 +135,23 @@ Whenever peeq reports the cookie is no longer valid:
 
 Do not browse YouTube in that profile — that is what starts rotation.
 
+### JavaScript runtime (deno)
+
+yt-dlp has to run YouTube's player JavaScript to solve the `sig` and `n` challenges that gate
+stream URLs. Without a runtime it falls back to a deprecated path where formats silently go
+missing and transfers are throttled, so the runtime image ships deno, copied from deno's
+official image and pinned by digest.
+
+deno is the only runtime yt-dlp enables by default, so it is picked up automatically from
+`PATH` — no `--js-runtimes` flag and no configuration. peeq logs which runtime it found at
+boot:
+
+    yt-dlp JavaScript runtime detected  runtime=deno-2.9.3
+
+To bump deno, change **both** the tag and the digest in `backend/Containerfile`. Local dev on a
+host without deno logs a warning and keeps working, with extraction on the same deprecated path
+production used to be on — `brew install deno` if you want dev to match production.
+
 ## Safety rails
 
 Three mechanisms constrain how peeq talks to YouTube. All are enforced in code, not merely
