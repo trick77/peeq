@@ -1674,6 +1674,16 @@ Append to `.github/workflows/ci.yaml`, matching the existing jobs' style:
         with:
           node-version: "22"
       - run: npm test
+      # The committed Netscape fixture is generated from shared.js and asserted
+      # by a Go test. Nothing links them at compile time, so a serializer change
+      # with a forgotten regeneration would leave the Go test passing against a
+      # stale-but-valid fixture — exactly the drift this phase exists to
+      # prevent. Fail loudly instead.
+      - name: Fixture is up to date with the serializer
+        run: |
+          node testdata/generate_fixture.js > /tmp/fixture-fresh.txt
+          diff -u ../backend/internal/cookie/testdata/extension_output.txt /tmp/fixture-fresh.txt \
+            || { echo "::error::extension_output.txt is stale. Regenerate with: cd extension && node testdata/generate_fixture.js > ../backend/internal/cookie/testdata/extension_output.txt"; exit 1; }
 ```
 
 No `npm ci` and no cache key: the extension has zero dependencies and no lockfile by design.
