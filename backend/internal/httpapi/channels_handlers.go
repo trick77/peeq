@@ -309,10 +309,21 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	// 1. Read refs BEFORE deleting (we need media paths after the rows are gone).
-	refs, err := s.channels.VideoRefs(id)
+	// A cache-only row (visited, never tracked) must not be deletable:
+	// DeleteCascade destroys every video belonging to the channel.
+	c, err := s.channels.Get(id)
 	if err != nil {
 		serverError(w, r, err, "delete failed")
+		return
+	}
+	if c == nil || c.TrackedAt == "" {
+		writeJSONError(w, http.StatusNotFound, "channel not tracked")
+		return
+	}
+	// 1. Read refs BEFORE deleting (we need media paths after the rows are gone).
+	refs, rerr := s.channels.VideoRefs(id)
+	if rerr != nil {
+		serverError(w, r, rerr, "delete failed")
 		return
 	}
 	// 2. Cancel any active jobs for those videos (kills a live child). The

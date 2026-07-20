@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channels"
@@ -492,6 +493,10 @@ func (h *channelsDeleteHarness) seedChannel(id string) {
 	if err := h.channels.Upsert(channels.Channel{ID: id, Name: id}); err != nil {
 		panic(err)
 	}
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	if err := h.channels.Track(id, now); err != nil {
+		panic(err)
+	}
 }
 
 // seedDownloadedVideo inserts a downloaded video row for the channel with the
@@ -545,6 +550,51 @@ func doDelete(t *testing.T, h http.Handler, path string) *httptest.ResponseRecor
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+// TestChannelsDelete_cacheOnlyRow_404 asserts a channel that exists only as a
+// metadata cache entry cannot be deleted. DeleteCascade destroys every video
+// belonging to a channel, including favorited ones — reaching it for a
+// channel the user never tracked would be data loss from a page they merely
+// visited.
+func TestChannelsDelete_cacheOnlyRow_404(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{ucid: "UCx", name: "X"})
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCcache", Name: "Cache Only"}); err != nil {
+		t.Fatalf("seed cache row: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/UCcache", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", rec.Code, rec.Body.String())
+	}
+	c, err := deps.Channels.Get("UCcache")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c == nil {
+		t.Fatal("delete removed a cache-only channel row")
+	}
+}
+
+// TestChannelsSubscribe_cacheOnlyRow_404 asserts subscribing requires an
+// explicitly tracked channel — a cache row is not enough, or visiting a
+// channel page would make it subscribable without ever tracking it.
+func TestChannelsSubscribe_cacheOnlyRow_404(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{ucid: "UCx", name: "X"})
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCcache", Name: "Cache Only"}); err != nil {
+		t.Fatalf("seed cache row: %v", err)
+	}
+
+	rec := postJSON(t, h, "/api/channels/UCcache/subscribe", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", rec.Code, rec.Body.String())
+	}
 }
 
 // TestChannelsDelete_cancelsAndCascades asserts DELETE /api/channels/{id}
