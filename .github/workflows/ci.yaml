@@ -28,9 +28,13 @@ jobs:
       - run: go vet ./...
       # The race detector needs cgo; this is independent of the app's
       # CGO_ENABLED=0 build invariant enforced by the `go build` step above.
-      - run: go test -race ./...
+      - run: mkdir -p ../coverage
+      - run: go test -race -covermode=atomic -coverprofile=../coverage/backend.out ./...
         env:
           CGO_ENABLED: "1"
+      # The gate script resolves paths from the repo root, not backend/.
+      - run: ./hack/coverage-gate.sh backend
+        working-directory: .
 
   ui:
     name: UI (build + test)
@@ -47,7 +51,9 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
       - run: npm run build
-      - run: npm test -- --run
+      - run: npm test -- --run --coverage
+      - run: ./hack/coverage-gate.sh ui
+        working-directory: .
 
   extension:
     name: Extension (test)
