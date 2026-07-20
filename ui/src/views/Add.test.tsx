@@ -36,7 +36,7 @@ describe("Add", () => {
   it("submitting a channel URL calls addChannel, not addDownload", async () => {
     const user = userEvent.setup();
     render(<Add onQueued={() => {}} />);
-    const input = screen.getByLabelText("Video URL");
+    const input = screen.getByLabelText("Video or channel URL");
     await user.type(input, "https://www.youtube.com/@x");
     await user.click(screen.getByRole("button"));
 
@@ -50,7 +50,7 @@ describe("Add", () => {
   it("submitting a video URL still uses the download path", async () => {
     const user = userEvent.setup();
     render(<Add onQueued={() => {}} />);
-    const input = screen.getByLabelText("Video URL");
+    const input = screen.getByLabelText("Video or channel URL");
     await user.type(input, "https://www.youtube.com/watch?v=abc12345678");
     await user.click(screen.getByRole("button"));
 
