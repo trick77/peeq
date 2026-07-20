@@ -91,6 +91,32 @@ Phase 3.2 onward.
   a 20s minimum) is inserted before each yt-dlp call, to keep request patterns well away from
   anything that looks like scraping.
 
+## Browser extension (peeq Companion)
+
+peeq needs a YouTube sign-in to download videos. YouTube rotates account
+cookies on open YouTube browser tabs, so a cookie exported from the profile
+you browse with dies quickly. The fix is a profile that never browses.
+
+Once:
+
+1. Create a dedicated Chrome profile and sign it into a dedicated YouTube
+   account (not your personal one — this isolates any rate-limit or block).
+2. In that tab, navigate to `https://www.youtube.com/robots.txt`, then close
+   the tab. This stops a YouTube app page from rotating the cookie underneath
+   you.
+3. In peeq: Settings → Access token → create one and copy it.
+4. Load `extension/` at `chrome://extensions` (Developer mode → Load
+   unpacked) in that profile, open its options, paste peeq's address and the
+   token, and allow the permission prompt.
+
+Whenever peeq reports the cookie is no longer valid:
+
+1. Open the dedicated profile.
+2. Click the extension → **Send cookie to peeq**.
+3. Close the profile.
+
+Do not browse YouTube in that profile — that is what starts rotation.
+
 ## Database backup
 
 `BACKEND_DB_PATH` (default `/data/peeq.db`) is the single source of truth for everything that isn't

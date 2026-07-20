@@ -43,6 +43,22 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
   placeholder `index.html`. Do NOT commit built assets — only that placeholder is tracked; restore it
   (`git checkout -- backend/web/dist/index.html`) after a local build.
 
+## Extension (`extension/`)
+
+- Plain MV3 ES modules. No bundler, no framework, no dependencies. Tests are
+  `node --test`.
+- Never `getAllCookieStores()` — read only this profile's store. Merging
+  stores lets a dead session shadow a live one.
+- Never persist a cookie; only `baseUrl` and `token` go in storage.
+- Never send a jar without a gate cookie (`SID`, `__Secure-1PSID`,
+  `__Secure-3PSID`) — an anonymous jar overwrites peeq's good cookie.
+- Netscape column 4 is `secure`, not `httpOnly`. After changing the
+  serializer, regenerate the cross-language fixture:
+  `cd extension && node testdata/generate_fixture.js > ../backend/internal/cookie/testdata/extension_output.txt`
+- `Authorization: Bearer`, never `Token`.
+- UI: `system-ui` only, no serif, no font files. "cookie" is singular except
+  when counting.
+
 ## peeq invariants (must hold in every feature that talks to YouTube)
 - **Cookie gate**: never make a YouTube call without a valid, currently-loaded cookie. If no valid
   cookie is configured, the call must fail closed (refuse) rather than attempt an anonymous request.
