@@ -29,7 +29,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/trick77/peeq/internal/v
 # it cannot host ffmpeg or the yt-dlp binary (both need a real userland, and
 # yt-dlp additionally needs a Python interpreter and OpenSSL/certs). peeq's
 # runtime instead needs to shell out to ffmpeg and yt-dlp for every download,
-# so it uses debian:12-slim (glibc, apt) and installs both directly.
+# so it uses debian:13-slim (glibc, apt) and installs both directly.
 FROM debian:13-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
@@ -42,6 +42,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # without needing to rebuild the image.
 RUN curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
+# yt-dlp must execute YouTube's player JavaScript to solve the sig and n
+# challenges. Without a runtime it falls back to a deprecated Python
+# reimplementation where formats silently disappear from the list and
+# transfers get throttled. deno is the only runtime yt-dlp enables by
+# default, so it is auto-detected on PATH and no --js-runtimes flag is
+# needed anywhere in the Go code.
+#
+# Pinned by DIGEST, not just tag: this is the one binary in the image whose
+# job is executing code a third party controls, so the bytes must be exactly
+# the ones reviewed. To bump, change the tag AND the digest together.
+# yt-dlp-ejs (the JS that drives the runtime) is already bundled inside the
+# standalone yt-dlp binary above, so nothing is fetched at run time.
+COPY --from=denoland/deno:bin-2.9.3@sha256:eb93e70bd53efec4be113d9974107840756551bc1a59a8258892d7bbe5fb4ab0 \
+     /deno /usr/local/bin/deno
+# Fail the build loudly if the runtime cannot execute, rather than shipping
+# an image that silently degrades extraction in production.
+RUN deno --version
 COPY --from=build /out/peeq /usr/local/bin/peeq
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/peeq"]

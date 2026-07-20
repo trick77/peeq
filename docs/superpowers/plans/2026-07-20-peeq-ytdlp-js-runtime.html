@@ -1,0 +1,690 @@
+<title>peeq — JS runtime for yt-dlp (implementation plan)</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #1f1f1e;
+    --panel: #1b1b1a;
+    --active: #2c2c2a;
+    --border: #323230;
+    --border-soft: #2a2a28;
+    --ink: #faf9f5;
+    --ink-dim: #e4e1d8;
+    --muted: #9c9a92;
+    --faint: #6f6d66;
+    --accent: #c6613f;
+    --accent-strong: #d97757;
+    --online: #5aa06a;
+    --danger: #c14638;
+    --kept: #d6a15a;
+    --radius: 10px;
+    --sans: "Anthropic Sans", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --serif: "Anthropic Serif", Georgia, "Times New Roman", Times, serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(60rem 40rem at 78% -8%, rgba(198, 97, 63, 0.06), transparent 60%),
+      radial-gradient(46rem 34rem at 6% 4%, rgba(214, 161, 90, 0.03), transparent 62%),
+      var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 62rem; margin: 0 auto; padding: 3.5rem 1.5rem 6rem; display: flex; flex-direction: column; gap: 2.5rem; }
+
+  .eyebrow {
+    font-size: 0.6875rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--faint); font-weight: 600; margin: 0 0 0.75rem;
+  }
+  h1 {
+    font-family: var(--serif); font-size: clamp(1.7rem, 4.2vw, 2.4rem); line-height: 1.15;
+    font-weight: 500; margin: 0; text-wrap: balance; letter-spacing: -0.01em;
+  }
+  .standfirst { color: var(--ink-dim); font-size: 1.0625rem; margin: 1rem 0 0; max-width: 46rem; }
+  .meta { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; margin-top: 1.5rem; align-items: center; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8125rem;
+    font-family: var(--mono); color: var(--muted); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 999px; padding: 0.25rem 0.7rem;
+  }
+  .chip b { color: var(--ink-dim); font-weight: 500; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--online); flex: none; }
+
+  section { display: flex; flex-direction: column; gap: 1rem; }
+  h2 {
+    font-family: var(--serif); font-size: 1.3rem; font-weight: 500; margin: 0;
+    padding-bottom: 0.6rem; border-bottom: 1px solid var(--border-soft); text-wrap: balance;
+  }
+  h3 { font-size: 0.9375rem; font-weight: 600; margin: 0.4rem 0 0; color: var(--ink-dim); }
+  p { margin: 0; max-width: 48rem; color: var(--ink-dim); }
+  a { color: var(--accent-strong); text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 3px; border-radius: 3px; }
+  strong { color: var(--ink); font-weight: 600; }
+  code {
+    font-family: var(--mono); font-size: 0.85em; background: var(--active);
+    border: 1px solid var(--border); border-radius: 5px; padding: 0.1em 0.38em; color: var(--ink-dim);
+  }
+
+  pre {
+    background: #191918; border: 1px solid var(--border); border-radius: var(--radius);
+    overflow-x: auto; font-family: var(--mono); font-size: 0.8125rem; line-height: 1.65;
+    padding: 1rem 1.15rem; color: var(--ink-dim); margin: 0; tab-size: 2;
+  }
+  pre .c { color: var(--faint); }
+  pre .g { color: var(--online); }
+  pre .w { color: var(--kept); }
+  pre .r { color: var(--danger); }
+
+  ul, ol { margin: 0; padding-left: 1.15rem; color: var(--ink-dim); max-width: 48rem; }
+  li { margin-bottom: 0.35rem; }
+  li::marker { color: var(--faint); }
+
+  .task {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--panel); overflow: hidden;
+  }
+  .task > header {
+    display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
+    padding: 0.9rem 1.15rem; background: rgba(198, 97, 63, 0.07);
+    border-bottom: 1px solid var(--border);
+  }
+  .task > header .idx {
+    font-family: var(--mono); font-size: 0.75rem; color: var(--accent-strong);
+    border: 1px solid var(--border); border-radius: 5px; padding: 0.1rem 0.45rem; flex: none;
+  }
+  .task > header h3 { margin: 0; font-size: 1rem; color: var(--ink); }
+  .task > header .who { margin-left: auto; font-family: var(--mono); font-size: 0.75rem; color: var(--faint); }
+  .task .body { padding: 1.15rem; display: flex; flex-direction: column; gap: 0.9rem; }
+
+  .files { display: flex; flex-direction: column; gap: 0.3rem; font-family: var(--mono); font-size: 0.8125rem; }
+  .files span { color: var(--muted); }
+  .files .k { color: var(--faint); display: inline-block; min-width: 4.5rem; }
+  .files .create { color: var(--online); }
+  .files .modify { color: var(--kept); }
+
+  .step { display: flex; gap: 0.6rem; align-items: flex-start; }
+  .step input[type="checkbox"] {
+    margin: 0.35rem 0 0; accent-color: var(--accent); width: 1rem; height: 1rem; flex: none;
+  }
+  .step input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+  .step .sbody { display: flex; flex-direction: column; gap: 0.5rem; flex: 1; min-width: 0; }
+  .step .slabel { font-weight: 600; color: var(--ink); font-size: 0.9375rem; }
+
+  .note {
+    border: 1px solid var(--border); border-left: 3px solid var(--accent); background: var(--panel);
+    border-radius: var(--radius); padding: 0.9rem 1.15rem; display: flex; flex-direction: column; gap: 0.5rem;
+  }
+  .note.risk { border-left-color: var(--danger); }
+  .note.key { border-left-color: var(--kept); }
+  .note p { max-width: none; }
+  .note h3 { margin-top: 0; }
+
+  .scroller { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; min-width: 32rem; }
+  th, td { text-align: left; padding: 0.65rem 0.9rem; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th {
+    background: var(--panel); font-size: 0.6875rem; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--faint); font-weight: 600; white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+
+  footer { border-top: 1px solid var(--border-soft); padding-top: 1.25rem; color: var(--faint); font-size: 0.8125rem; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">peeq · implementation plan · 2026-07-20</p>
+    <h1>JS runtime for yt-dlp</h1>
+    <p class="standfirst">
+      Put a digest-pinned deno in peeq's runtime image so yt-dlp can solve YouTube's
+      <code>sig</code> and <code>n</code> challenges, and add a boot probe so a missing runtime is
+      visible instead of silent.
+    </p>
+    <div class="meta">
+      <span class="chip"><span class="dot"></span>branch <b>feat/ytdlp-js-runtime</b></span>
+      <span class="chip">3 tasks</span>
+      <span class="chip">TDD</span>
+      <span class="chip">spec <b>2026-07-20-…-js-runtime-design</b></span>
+    </div>
+  </header>
+
+  <div class="note">
+    <p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL — use
+      <code>superpowers:subagent-driven-development</code> (recommended) or
+      <code>superpowers:executing-plans</code> to implement this plan task-by-task. Every task ends
+      with an independently testable deliverable and a commit.</p>
+  </div>
+
+  <section>
+    <h2>Goal, architecture, stack</h2>
+    <p><strong>Goal:</strong> yt-dlp in production gains a supported JavaScript runtime, ending its
+      reliance on a deprecated extraction path where formats silently disappear.</p>
+    <p><strong>Architecture:</strong> The runtime is copied into the existing
+      <code>debian:13-slim</code> stage from deno's official image — no base-image change, no
+      download logic, no checksum to maintain. yt-dlp auto-detects <code>deno</code> on
+      <code>PATH</code>, so <strong>the extraction path needs no Go change and no config flag</strong>.
+      The only Go in this slice is a boot-time probe that logs which runtime was found, because a
+      missing runtime otherwise degrades extraction silently.</p>
+    <p><strong>Stack:</strong> Go 1.26 (<code>CGO_ENABLED=0</code>), <code>log/slog</code>,
+      Docker multi-stage build, deno 2.9.3.</p>
+  </section>
+
+  <section>
+    <h2>Global constraints</h2>
+    <ul>
+      <li>Env prefix is <code>BACKEND_</code>, never <code>PEEQ_</code>. This slice adds
+        <strong>no new env var</strong>.</li>
+      <li><code>CGO_ENABLED=0</code>; English comments; conventional commits.</li>
+      <li>Tests use fakes only — <strong>never</strong> a real LLM, embeddings endpoint, real
+        yt-dlp, real deno, or a network call.</li>
+      <li><strong>Fakes must emit what the real thing emits.</strong> Real <code>deno --version</code>
+        prints <em>three</em> lines. A one-line fake would make the parser structurally untestable —
+        the exact failure that shipped the <code>availability</code> and <code>SID</code>-secure
+        bugs.</li>
+      <li>Cookie invariant, 20 s throttle floor, kill-switch and <code>SafeMediaPath</code> are
+        untouched. The probe runs <strong>no</strong> YouTube call and does not pass through the
+        Runner's exec choke point.</li>
+      <li>Exactly one route bypasses OIDC (<code>PUT /api/machine/cookie</code>). Unchanged.</li>
+      <li>CI must stay green: Backend (build + vet + <code>go test -race</code>), UI, Extension
+        (test), Extension (browser).</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>File structure</h2>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>File</th><th>Change</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td><code>backend/internal/ytdlp/jsruntime.go</code></td><td>create</td>
+            <td>Probe a JS runtime binary and parse its version. Pure, no globals, no network.</td></tr>
+          <tr><td><code>backend/internal/ytdlp/jsruntime_test.go</code></td><td>create</td>
+            <td>Table tests against fake <code>deno</code> scripts emitting realistic output.</td></tr>
+          <tr><td><code>backend/cmd/peeq/main.go</code></td><td>modify</td>
+            <td>One boot-time call + slog line, beside the existing yt-dlp boot check.</td></tr>
+          <tr><td><code>backend/Containerfile</code></td><td>modify</td>
+            <td>The <code>COPY --from</code> line and a build-time assertion.</td></tr>
+          <tr><td><code>README.md</code></td><td>modify</td>
+            <td>Record why the runtime exists and how to bump it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Why a new file rather than extending <code>selfupdate.go</code>:</strong> that file
+      owns fetching and updating yt-dlp itself. Probing a <em>different</em> binary for a
+      <em>different</em> purpose is a separate responsibility, and keeping it separate means the
+      probe's tests never drag in the self-update download seam.</p>
+  </section>
+
+  <!-- ─────────────────────────── TASK 1 ─────────────────────────── -->
+  <article class="task">
+    <header><span class="idx">Task 1</span><h3>Probe a JS runtime and parse its version</h3>
+      <span class="who">sonnet</span></header>
+    <div class="body">
+      <div class="files">
+        <div><span class="k">Create</span><span class="create">backend/internal/ytdlp/jsruntime.go</span></div>
+        <div><span class="k">Test</span><span class="create">backend/internal/ytdlp/jsruntime_test.go</span></div>
+      </div>
+
+      <p><strong>Interfaces — produces:</strong>
+        <code>func JSRuntime(ctx context.Context, bin string) (string, error)</code>.
+        Returns a display string in yt-dlp's own format, e.g. <code>deno-2.9.3</code>. Returns a
+        non-nil error when the binary is missing, not executable, or prints output that does not
+        start with a recognizable <code>deno &lt;version&gt;</code> line.</p>
+      <p><strong>Consumes:</strong> nothing from other tasks. Mirrors the existing
+        <code>ytdlp.Version(ctx, bin)</code> in <code>selfupdate.go:19</code> — same shape, same
+        <code>exec.CommandContext</code> style, same "bin is a parameter so tests pass a fake path"
+        seam. Follow it.</p>
+
+      <div class="note key">
+        <h3>The one thing to get right</h3>
+        <p>Real <code>deno --version</code> prints <strong>three</strong> lines:</p>
+        <pre>deno 2.9.3 (stable, release, x86_64-unknown-linux-gnu)
+v8 14.9.207.2-rusty
+typescript 6.0.3</pre>
+        <p>Every fake in these tests emits all three. A fake that emitted only
+          <code>deno 2.9.3</code> would let a parser that ignores line structure pass while
+          mis-handling reality — the recurring "fakes were too kind" bug. One test asserts a
+          single-line, garbage output is <em>rejected</em>, which is what proves the parser is
+          actually parsing.</p>
+      </div>
+
+      <div class="step"><input type="checkbox" id="t1s1"><div class="sbody">
+        <label class="slabel" for="t1s1">Step 1 — Write the failing tests</label>
+        <p>Create <code>backend/internal/ytdlp/jsruntime_test.go</code>. The helper writes an
+          executable shell script to <code>t.TempDir()</code>, so no real deno is ever invoked.</p>
+        <pre>package ytdlp
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+<span class="c">// fakeDeno writes an executable stub that prints body, and returns its path.</span>
+func fakeDeno(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "deno")
+	script := "#!/bin/sh\ncat &lt;&lt;'EOF'\n" + body + "\nEOF\n"
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake deno: %v", err)
+	}
+	return p
+}
+
+<span class="c">// realDenoOutput is what deno 2.9.3 actually prints — THREE lines. Tests must</span>
+<span class="c">// feed the real shape; a one-line fake would make the parser untestable.</span>
+const realDenoOutput = `deno 2.9.3 (stable, release, x86_64-unknown-linux-gnu)
+v8 14.9.207.2-rusty
+typescript 6.0.3`
+
+func TestJSRuntime_realThreeLineOutput_parsesVersion(t *testing.T) {
+	got, err := JSRuntime(context.Background(), fakeDeno(t, realDenoOutput))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "deno-2.9.3" {
+		t.Fatalf("got %q, want %q", got, "deno-2.9.3")
+	}
+}
+
+func TestJSRuntime_missingBinary_returnsError(t *testing.T) {
+	_, err := JSRuntime(context.Background(), filepath.Join(t.TempDir(), "nope"))
+	if err == nil {
+		t.Fatal("expected an error for a missing binary, got nil")
+	}
+}
+
+func TestJSRuntime_notExecutable_returnsError(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "deno")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\necho hi\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := JSRuntime(context.Background(), p); err == nil {
+		t.Fatal("expected an error for a non-executable binary, got nil")
+	}
+}
+
+<span class="c">// This is the test that proves the parser parses rather than echoes.</span>
+func TestJSRuntime_unrecognizedOutput_returnsError(t *testing.T) {
+	for _, body := range []string{"hello world", "", "node v20.19.2"} {
+		if _, err := JSRuntime(context.Background(), fakeDeno(t, body)); err == nil {
+			t.Fatalf("expected an error for output %q, got nil", body)
+		}
+	}
+}
+
+func TestJSRuntime_errorMentionsBinary(t *testing.T) {
+	_, err := JSRuntime(context.Background(), filepath.Join(t.TempDir(), "nope"))
+	if err == nil || !strings.Contains(err.Error(), "jsruntime") {
+		t.Fatalf("error should be package-tagged, got %v", err)
+	}
+}</pre>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t1s2"><div class="sbody">
+        <label class="slabel" for="t1s2">Step 2 — Run the tests, confirm they fail</label>
+        <pre>cd backend &amp;&amp; go test ./internal/ytdlp/ -run TestJSRuntime -v</pre>
+        <p>Expected: compile failure — <code class="r">undefined: JSRuntime</code>. That is the
+          correct first failure; do not proceed until you have seen it.</p>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t1s3"><div class="sbody">
+        <label class="slabel" for="t1s3">Step 3 — Write the minimal implementation</label>
+        <p>Create <code>backend/internal/ytdlp/jsruntime.go</code>:</p>
+        <pre>package ytdlp
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os/exec"
+	"strings"
+)
+
+<span class="c">// JSRuntime runs `&lt;bin&gt; --version` and returns the runtime it found, in the</span>
+<span class="c">// same display form yt-dlp uses in its own debug output (e.g. "deno-2.9.3").</span>
+<span class="c">//</span>
+<span class="c">// yt-dlp needs a JavaScript runtime to solve YouTube's sig and n challenges;</span>
+<span class="c">// without one it falls back to a deprecated Python reimplementation where</span>
+<span class="c">// formats silently disappear. Nothing here touches YouTube, so it does NOT</span>
+<span class="c">// go through the Runner's cookie gate or throttle — it only inspects a local</span>
+<span class="c">// binary.</span>
+<span class="c">//</span>
+<span class="c">// Real `deno --version` prints three lines (deno, v8, typescript); only the</span>
+<span class="c">// first is parsed, and output that does not match is an error rather than a</span>
+<span class="c">// silently-passed-through string.</span>
+func JSRuntime(ctx context.Context, bin string) (string, error) {
+	cmd := exec.CommandContext(ctx, bin, "--version")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &amp;stdout
+	cmd.Stderr = &amp;stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ytdlp: jsruntime: run %s: %w: %s",
+			bin, err, strings.TrimSpace(stderr.String()))
+	}
+
+	first, _, _ := strings.Cut(strings.TrimSpace(stdout.String()), "\n")
+	fields := strings.Fields(first)
+	if len(fields) &lt; 2 || fields[0] != "deno" {
+		return "", fmt.Errorf("ytdlp: jsruntime: %s: unrecognized --version output %q", bin, first)
+	}
+	return fields[0] + "-" + fields[1], nil
+}</pre>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t1s4"><div class="sbody">
+        <label class="slabel" for="t1s4">Step 4 — Run the tests, confirm they pass</label>
+        <pre>cd backend &amp;&amp; go test -race ./internal/ytdlp/ -run TestJSRuntime -v</pre>
+        <p>Expected: <code class="g">PASS</code> for all five tests. Then confirm nothing else
+          regressed: <code>go test -race ./internal/ytdlp/</code>.</p>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t1s5"><div class="sbody">
+        <label class="slabel" for="t1s5">Step 5 — Commit</label>
+        <pre>git add backend/internal/ytdlp/jsruntime.go backend/internal/ytdlp/jsruntime_test.go
+git commit -m "feat(ytdlp): probe a JavaScript runtime and parse its version"</pre>
+      </div></div>
+    </div>
+  </article>
+
+  <!-- ─────────────────────────── TASK 2 ─────────────────────────── -->
+  <article class="task">
+    <header><span class="idx">Task 2</span><h3>Log the runtime at boot — loudly when absent</h3>
+      <span class="who">sonnet</span></header>
+    <div class="body">
+      <div class="files">
+        <div><span class="k">Modify</span><span class="modify">backend/cmd/peeq/main.go</span></div>
+        <div><span class="k">Test</span><span class="create">backend/cmd/peeq/jsruntime_boot_test.go</span></div>
+      </div>
+
+      <p><strong>Consumes:</strong> <code>ytdlp.JSRuntime(ctx, bin) (string, error)</code> from Task 1.</p>
+      <p><strong>Produces:</strong> <code>func logJSRuntime(ctx context.Context, bin string)</code>
+        in <code>package main</code> — never returns an error, never panics, never blocks longer
+        than 5 s.</p>
+
+      <div class="note risk">
+        <h3>Non-negotiable: this must never be fatal</h3>
+        <p>The probe runs in dev too, on a host with no deno. It must log a warning and
+          <strong>continue</strong> — never <code>os.Exit</code>, never block <code>make dev</code>.
+          The warning is the feature: it makes the dev/prod divergence visible instead of silent.</p>
+      </div>
+
+      <div class="step"><input type="checkbox" id="t2s1"><div class="sbody">
+        <label class="slabel" for="t2s1">Step 1 — Write the failing test</label>
+        <p>Create <code>backend/cmd/peeq/jsruntime_boot_test.go</code>. It captures slog output by
+          swapping in a buffer-backed handler, then restores the default.</p>
+        <pre>package main
+
+import (
+	"bytes"
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func captureLogs(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&amp;buf, &amp;slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
+	fn()
+	return buf.String()
+}
+
+func TestLogJSRuntime_present_logsVersion(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "deno")
+	body := "deno 2.9.3 (stable, release, x86_64-unknown-linux-gnu)\nv8 14.9.207.2-rusty\ntypescript 6.0.3"
+	if err := os.WriteFile(p, []byte("#!/bin/sh\ncat &lt;&lt;'EOF'\n"+body+"\nEOF\n"), 0o755); err != nil {
+		t.Fatalf("write fake deno: %v", err)
+	}
+	out := captureLogs(t, func() { logJSRuntime(context.Background(), p) })
+	if !strings.Contains(out, "deno-2.9.3") {
+		t.Fatalf("expected the version in the log, got: %s", out)
+	}
+	if strings.Contains(out, "level=WARN") {
+		t.Fatalf("a healthy runtime must not warn, got: %s", out)
+	}
+}
+
+func TestLogJSRuntime_absent_warnsButDoesNotExit(t *testing.T) {
+	out := captureLogs(t, func() {
+		logJSRuntime(context.Background(), filepath.Join(t.TempDir(), "nope"))
+	})
+	if !strings.Contains(out, "level=WARN") {
+		t.Fatalf("a missing runtime must warn, got: %s", out)
+	}
+	if !strings.Contains(out, "deprecated") {
+		t.Fatalf("the warning must say why it matters, got: %s", out)
+	}
+	<span class="c">// Reaching this line at all proves it did not exit or panic.</span>
+}</pre>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t2s2"><div class="sbody">
+        <label class="slabel" for="t2s2">Step 2 — Run the test, confirm it fails</label>
+        <pre>cd backend &amp;&amp; go test ./cmd/peeq/ -run TestLogJSRuntime -v</pre>
+        <p>Expected: <code class="r">undefined: logJSRuntime</code>.</p>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t2s3"><div class="sbody">
+        <label class="slabel" for="t2s3">Step 3 — Implement it</label>
+        <p>Add to <code>backend/cmd/peeq/main.go</code>, directly below
+          <code>resolveYtdlpBin</code> (currently ends at line 425):</p>
+        <pre><span class="c">// jsRuntimeBin is the runtime yt-dlp auto-detects on PATH. deno is the only</span>
+<span class="c">// runtime yt-dlp enables by default, which is why no --js-runtimes flag is</span>
+<span class="c">// passed anywhere in this codebase.</span>
+const jsRuntimeBin = "deno"
+
+<span class="c">// logJSRuntime reports which JavaScript runtime yt-dlp will find at run time.</span>
+<span class="c">// It is observability only and NEVER fatal: dev hosts legitimately have no</span>
+<span class="c">// runtime installed, and a warning that stops the process would block `make</span>
+<span class="c">// dev`. In production the warning is the point — a missing runtime otherwise</span>
+<span class="c">// degrades extraction silently, with formats disappearing rather than erroring.</span>
+func logJSRuntime(ctx context.Context, bin string) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	v, err := ytdlp.JSRuntime(ctx, bin)
+	if err != nil {
+		slog.Warn("no JavaScript runtime for yt-dlp; YouTube extraction is on the deprecated path and some formats may be missing",
+			"want", bin, "err", err)
+		return
+	}
+	slog.Info("yt-dlp JavaScript runtime detected", "runtime", v)
+}</pre>
+        <p>Then call it at boot. Put it beside the existing yt-dlp boot check inside
+          <code>runYtdlpSelfUpdateTicker</code> (<code>main.go:381</code>), immediately after the
+          existing version log so both facts about the download toolchain appear together:</p>
+        <pre>func runYtdlpSelfUpdateTicker(ctx context.Context, dir string, interval time.Duration) {
+	if v, err := ytdlp.Version(ctx, resolveYtdlpBin(dir)); err != nil {
+		slog.Warn("yt-dlp not available at boot; downloads will fail until self-update succeeds", "err", err)
+	} else {
+		slog.Info("yt-dlp self-update ticker started", "version", v, "interval", interval)
+	}
+<span class="g">	logJSRuntime(ctx, jsRuntimeBin)</span>
+</pre>
+        <p>Confirm <code>time</code> and <code>context</code> are already imported in
+          <code>main.go</code> — they are, so no import changes should be needed.</p>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t2s4"><div class="sbody">
+        <label class="slabel" for="t2s4">Step 4 — Run the tests, confirm they pass</label>
+        <pre>cd backend &amp;&amp; go test -race ./cmd/peeq/ -run TestLogJSRuntime -v
+cd backend &amp;&amp; go build ./... &amp;&amp; go vet ./...</pre>
+        <p>Expected: <code class="g">PASS</code>, clean build, clean vet.</p>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t2s5"><div class="sbody">
+        <label class="slabel" for="t2s5">Step 5 — Verify dev still boots without deno</label>
+        <p>This proves the non-fatal requirement on a real host (macOS, no deno). Run the whole
+          <code>cmd/peeq</code> package, which exercises the boot paths:</p>
+        <pre>cd backend &amp;&amp; go test -race ./cmd/peeq/ -v 2&gt;&amp;1 | tail -20</pre>
+        <p>Expected: <code class="g">ok github.com/trick77/peeq/cmd/peeq</code>. Every pre-existing
+          boot test must still pass — if adding the probe broke one, the probe is doing something
+          fatal that it must not do.</p>
+        <p>Then confirm by eye that the warning path is reachable and harmless: the
+          <code>TestLogJSRuntime_absent_warnsButDoesNotExit</code> case above returns normally on
+          this very host, since it has no deno. Reaching its final line <em>is</em> the assertion.</p>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t2s6"><div class="sbody">
+        <label class="slabel" for="t2s6">Step 6 — Commit</label>
+        <pre>git add backend/cmd/peeq/main.go backend/cmd/peeq/jsruntime_boot_test.go
+git commit -m "feat(boot): log which JavaScript runtime yt-dlp will use"</pre>
+      </div></div>
+    </div>
+  </article>
+
+  <!-- ─────────────────────────── TASK 3 ─────────────────────────── -->
+  <article class="task">
+    <header><span class="idx">Task 3</span><h3>Put deno in the image</h3>
+      <span class="who">haiku — brief contains complete code</span></header>
+    <div class="body">
+      <div class="files">
+        <div><span class="k">Modify</span><span class="modify">backend/Containerfile</span></div>
+        <div><span class="k">Modify</span><span class="modify">README.md</span></div>
+      </div>
+
+      <p><strong>Consumes:</strong> nothing. <strong>Produces:</strong> a runtime image where
+        <code>deno --version</code> succeeds and yt-dlp reports
+        <code>JS runtimes: deno-2.9.3</code>.</p>
+
+      <div class="step"><input type="checkbox" id="t3s1"><div class="sbody">
+        <label class="slabel" for="t3s1">Step 1 — Add the COPY and the build-time assertion</label>
+        <p>In <code>backend/Containerfile</code>, in the <code>runtime</code> stage, immediately
+          after the existing <code>RUN curl ... yt-dlp ... chmod a+rx</code> block and before
+          <code>COPY --from=build</code>:</p>
+        <pre><span class="c"># yt-dlp must execute YouTube's player JavaScript to solve the sig and n</span>
+<span class="c"># challenges. Without a runtime it falls back to a deprecated Python</span>
+<span class="c"># reimplementation where formats silently disappear from the list and</span>
+<span class="c"># transfers get throttled. deno is the only runtime yt-dlp enables by</span>
+<span class="c"># default, so it is auto-detected on PATH and no --js-runtimes flag is</span>
+<span class="c"># needed anywhere in the Go code.</span>
+<span class="c">#</span>
+<span class="c"># Pinned by DIGEST, not just tag: this is the one binary in the image whose</span>
+<span class="c"># job is executing code a third party controls, so the bytes must be exactly</span>
+<span class="c"># the ones reviewed. To bump, change the tag AND the digest together.</span>
+<span class="c"># yt-dlp-ejs (the JS that drives the runtime) is already bundled inside the</span>
+<span class="c"># standalone yt-dlp binary above, so nothing is fetched at run time.</span>
+<span class="g">COPY --from=denoland/deno:bin-2.9.3@sha256:eb93e70bd53efec4be113d9974107840756551bc1a59a8258892d7bbe5fb4ab0 \
+     /deno /usr/local/bin/deno</span>
+<span class="c"># Fail the build loudly if the runtime cannot execute, rather than shipping</span>
+<span class="c"># an image that silently degrades extraction in production.</span>
+<span class="g">RUN deno --version</span></pre>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t3s2"><div class="sbody">
+        <label class="slabel" for="t3s2">Step 2 — Build the image and verify</label>
+        <p>Build for the release platform (<code>linux/amd64</code>, per
+          <code>.github/workflows/release.yaml:64</code>):</p>
+        <pre>docker build --platform linux/amd64 -f backend/Containerfile -t peeq-jsruntime-check .</pre>
+        <p>Expected: the build succeeds and the <code>RUN deno --version</code> layer prints
+          <code class="g">deno 2.9.3</code>. A failure here means the digest or path is wrong —
+          fix it, do not skip the assertion.</p>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t3s3"><div class="sbody">
+        <label class="slabel" for="t3s3">Step 3 — Prove yt-dlp actually detects it</label>
+        <p>The build only proves deno runs. This proves yt-dlp <em>finds</em> it — the thing the
+          whole slice exists for. It makes no YouTube request:</p>
+        <pre>docker run --rm --platform linux/amd64 --entrypoint sh peeq-jsruntime-check -c \
+  'yt-dlp -v --simulate "https://www.youtube.com/watch?v=jNQXAC9IVRw" 2&gt;&amp;1 | grep "JS runtimes:"'</pre>
+        <p>Expected: <code class="g">[debug] JS runtimes: deno-2.9.3</code></p>
+        <p>Failure mode to watch for: <code class="r">JS runtimes: none</code> means deno did not
+          land on <code>PATH</code> — check that it was copied to <code>/usr/local/bin/deno</code>
+          and is executable.</p>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t3s4"><div class="sbody">
+        <label class="slabel" for="t3s4">Step 4 — Document it in the README</label>
+        <p>Add to the README section that covers the container's runtime dependencies (alongside
+          ffmpeg / python3 / yt-dlp). Keep it to the why and the bump ritual:</p>
+        <pre>### JavaScript runtime (deno)
+
+yt-dlp has to run YouTube's player JavaScript to solve the `sig` and `n`
+challenges that gate stream URLs. Without a runtime it falls back to a
+deprecated path where formats silently go missing and transfers are
+throttled, so the runtime image ships deno, copied from deno's official
+image and pinned by digest.
+
+deno is the only runtime yt-dlp enables by default, so it is picked up
+automatically from `PATH` — no `--js-runtimes` flag and no configuration.
+peeq logs which runtime it found at boot:
+
+    yt-dlp JavaScript runtime detected  runtime=deno-2.9.3
+
+To bump deno, change **both** the tag and the digest in
+`backend/Containerfile`. Local dev on a host without deno logs a warning
+and keeps working, with extraction on the same deprecated path production
+used to be on — `brew install deno` if you want dev to match production.</pre>
+      </div></div>
+
+      <div class="step"><input type="checkbox" id="t3s5"><div class="sbody">
+        <label class="slabel" for="t3s5">Step 5 — Full local CI parity, then commit</label>
+        <pre>cd backend &amp;&amp; go build ./... &amp;&amp; go vet ./... &amp;&amp; go test -race ./...
+cd ui &amp;&amp; npm test
+cd extension &amp;&amp; npm test</pre>
+        <p>Expected: 26 Go packages ok, 106 UI tests, 34 extension tests — the known-green
+          baseline for this branch.</p>
+        <pre>git add backend/Containerfile README.md
+git commit -m "feat(container): ship a digest-pinned deno so yt-dlp can solve YouTube JS challenges"</pre>
+      </div></div>
+    </div>
+  </article>
+
+  <section>
+    <h2>Definition of done</h2>
+    <ul>
+      <li><code>go test -race ./...</code> green across all 26 backend packages; UI 106; extension 34.</li>
+      <li>The image builds on <code>linux/amd64</code> and <code>RUN deno --version</code> passes.</li>
+      <li>In-container yt-dlp reports <code>JS runtimes: deno-2.9.3</code> and emits <strong>no</strong>
+        “No supported JavaScript runtime” warning.</li>
+      <li>Backend starts on a host with no deno, logs the warning, and keeps running.</li>
+      <li>No new env var; no <code>--js-runtimes</code> flag anywhere; cookie gate, throttle and
+        kill-switch untouched.</li>
+      <li><strong>After deploy:</strong> the boot log shows <code>runtime=deno-2.9.3</code> and a
+        real download completes. That is the production proof.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Review &amp; follow-ups</h2>
+    <p>Per the standing directive: validate every returning subagent result with a reviewer on the
+      <strong>Fable</strong> model, fix Critical/Important before closing each task, record minors
+      in <code>.superpowers/sdd/progress.md</code>. Close with a holistic whole-branch Fable review
+      on the most capable model, then <code>superpowers:finishing-a-development-branch</code> to
+      open the PR.</p>
+    <h3>Explicitly out of scope</h3>
+    <ul>
+      <li><strong>Retiring <code>BACKEND_ALLOW_ANONYMOUS_YOUTUBE</code></strong> — the authenticated
+        A/B belongs to that slice, where its outcome would actually change a decision. The hatch may
+        also guard failure modes a runtime does not fix (absent cookie in dev, cookie rotation).</li>
+      <li>Carried Phase 4 minors: host-permission revocation on address change,
+        <code>MaxBytesReader</code> on <code>applyCookie</code>, regenerating the Netscape fixture
+        from real captured Chrome cookies.</li>
+      <li>Multi-arch images; yt-dlp self-update changes; PO-token / SABR work.</li>
+    </ul>
+  </section>
+
+  <footer>
+    peeq · implementation plan · branch <code>feat/ytdlp-js-runtime</code> ·
+    spec <code>docs/superpowers/specs/2026-07-20-peeq-ytdlp-js-runtime-design.html</code>
+  </footer>
+
+</div>
