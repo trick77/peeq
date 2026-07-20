@@ -634,7 +634,7 @@ func TestPausedRunnerMakesNoCall_allEntryPoints(t *testing.T) {
 			CookieProvider: func() (string, string) { return "cookie-text", "valid" },
 			Sleep:          fatalSleep(t),
 		})
-		_, _, err := r.ResolveChannel(context.Background(), "https://www.youtube.com/@someone")
+		_, err := r.ResolveChannel(context.Background(), "https://www.youtube.com/@someone")
 		if !errors.Is(err, ErrPaused) {
 			t.Fatalf("err = %v, want ErrPaused", err)
 		}

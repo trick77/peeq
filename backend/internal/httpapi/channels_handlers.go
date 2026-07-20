@@ -19,7 +19,7 @@ import (
 // on the concrete *ytdlp.Runner type) keeps the handler testable with a fake
 // that never shells out to yt-dlp; the real *ytdlp.Runner satisfies it.
 type ChannelResolver interface {
-	ResolveChannel(ctx context.Context, url string) (ucid, name string, err error)
+	ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error)
 }
 
 // var _ ChannelResolver = (*ytdlp.Runner)(nil) proves at compile time that
@@ -93,7 +93,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "Paste a channel link (a /channel/, /@handle, /c/, or /user/ URL)")
 		return
 	}
-	ucid, name, err := s.channelResolver.ResolveChannel(r.Context(), channelURL)
+	info, err := s.channelResolver.ResolveChannel(r.Context(), channelURL)
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
 			writeJSONError(w, http.StatusConflict, "cookie required")
@@ -102,10 +102,17 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadGateway, "resolve channel failed: "+err.Error())
 		return
 	}
+	ucid, name := info.UCID, info.Name
 	// ResolveChannel is the authoritative source of the UCID; the handle is
 	// best-effort from the pasted url only (never derived from the UCID).
 	handle := channelHandleFromURL(req.URL)
-	if err := s.channels.Upsert(channels.Channel{ID: ucid, Name: name, Handle: handle}); err != nil {
+	if err := s.channels.Upsert(channels.Channel{
+		ID:          ucid,
+		Name:        name,
+		Handle:      handle,
+		Description: info.Description,
+		ResolvedAt:  time.Now().UTC().Format("2006-01-02 15:04:05"),
+	}); err != nil {
 		serverError(w, r, err, "track channel failed")
 		return
 	}

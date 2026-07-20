@@ -23,18 +23,17 @@ import (
 // testResolver is a ChannelResolver whose ResolveChannel behavior is
 // scripted per test, so these tests never shell out to yt-dlp.
 type testResolver struct {
-	ucid  string
-	name  string
+	info  ytdlp.ChannelInfo
 	err   error
 	calls int
 }
 
-func (r *testResolver) ResolveChannel(ctx context.Context, url string) (string, string, error) {
+func (r *testResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
 	r.calls++
 	if r.err != nil {
-		return "", "", r.err
+		return ytdlp.ChannelInfo{}, r.err
 	}
-	return r.ucid, r.name, nil
+	return r.info, nil
 }
 
 // channelsTestDeps builds Deps wired for the channels API: dev auth plus a
@@ -114,7 +113,7 @@ func getJSON(t *testing.T, h http.Handler, path string) string {
 // TestChannelsPost_tracksAndSubscribes asserts POST /api/channels tracks the
 // resolved channel and, when subscribe:true is passed, also subscribes it.
 func TestChannelsPost_tracksAndSubscribes(t *testing.T) {
-	h := newChannelsTestServer(t, &testResolver{ucid: "UCxyz", name: "My Channel"})
+	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCxyz", Name: "My Channel"}})
 	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@x", "subscribe": true})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
@@ -140,7 +139,7 @@ func TestChannelsPost_noCookie_409(t *testing.T) {
 // omitted) only tracks the channel — it does not appear in the subscribed
 // filter, only in tracked/all.
 func TestChannelsPost_trackOnly_notSubscribed(t *testing.T) {
-	h := newChannelsTestServer(t, &testResolver{ucid: "UCtrackonly", name: "Track Only"})
+	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCtrackonly", Name: "Track Only"}})
 	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@trackonly"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
@@ -158,7 +157,7 @@ func TestChannelsPost_trackOnly_notSubscribed(t *testing.T) {
 // TestChannelsPost_notAChannelURL_400 asserts a video url is rejected with
 // 400 before ever reaching the resolver.
 func TestChannelsPost_notAChannelURL_400(t *testing.T) {
-	resolver := &testResolver{ucid: "UCxyz", name: "x"}
+	resolver := &testResolver{info: ytdlp.ChannelInfo{UCID: "UCxyz", Name: "x"}}
 	h := newChannelsTestServer(t, resolver)
 	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://youtu.be/dQw4w9WgXcQ"})
 	if rr.Code != http.StatusBadRequest {
@@ -173,7 +172,7 @@ func TestChannelsPost_notAChannelURL_400(t *testing.T) {
 // hardening: a pasted /@Handle/videos url must store the bare @Handle, not
 // the trailing path segment.
 func TestChannelsPost_multiSegmentHandle_trimmed(t *testing.T) {
-	h := newChannelsTestServer(t, &testResolver{ucid: "UChandle", name: "Handle Channel"})
+	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UChandle", Name: "Handle Channel"}})
 	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@Handle/videos"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
@@ -225,7 +224,7 @@ func TestChannelsList_invalidFilter_400(t *testing.T) {
 // the subscription intact, so claiming "subscribed": false would tell the
 // UI to print "not subscribed" about a channel that still gets scanned.
 func TestChannelsPost_reAddSubscribed_reportsTrue(t *testing.T) {
-	h := newChannelsTestServer(t, &testResolver{ucid: "UCreadd", name: "Re Add"})
+	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCreadd", Name: "Re Add"}})
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@readd", "subscribe": true}); rr.Code != http.StatusCreated {
 		t.Fatalf("first add status = %d body=%s", rr.Code, rr.Body.String())
@@ -254,7 +253,7 @@ func TestChannelsPost_reAddSubscribed_reportsTrue(t *testing.T) {
 // accepted by the handler and narrows to subscribed-with-autodownload-on
 // channels only.
 func TestChannelsList_autodownloadFilter(t *testing.T) {
-	h := newChannelsTestServer(t, &testResolver{ucid: "UCauto", name: "Auto"})
+	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCauto", Name: "Auto"}})
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@auto", "subscribe": true}); rr.Code != http.StatusCreated {
 		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
@@ -276,7 +275,7 @@ func TestChannelsList_autodownloadFilter(t *testing.T) {
 // TestChannelsPut_notSubscribed_400 asserts updating config on a channel
 // that is tracked but not subscribed is a clean 400, not a silent no-op.
 func TestChannelsPut_notSubscribed_400(t *testing.T) {
-	h := newChannelsTestServer(t, &testResolver{ucid: "UCnotsub", name: "Not Sub"})
+	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCnotsub", Name: "Not Sub"}})
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@notsub"}); rr.Code != http.StatusCreated {
 		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
@@ -291,7 +290,7 @@ func TestChannelsPut_notSubscribed_400(t *testing.T) {
 // TestChannelsPutSubscribeUnsubscribe covers the full config + subscribe/
 // unsubscribe lifecycle for a tracked channel.
 func TestChannelsPutSubscribeUnsubscribe(t *testing.T) {
-	h := newChannelsTestServer(t, &testResolver{ucid: "UClifecycle", name: "Lifecycle"})
+	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UClifecycle", Name: "Lifecycle"}})
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@lifecycle"}); rr.Code != http.StatusCreated {
 		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
@@ -558,7 +557,7 @@ func doDelete(t *testing.T, h http.Handler, path string) *httptest.ResponseRecor
 // channel the user never tracked would be data loss from a page they merely
 // visited.
 func TestChannelsDelete_cacheOnlyRow_404(t *testing.T) {
-	deps := channelsTestDeps(t, &testResolver{ucid: "UCx", name: "X"})
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}})
 	h := New(deps)
 	if err := deps.Channels.Upsert(channels.Channel{ID: "UCcache", Name: "Cache Only"}); err != nil {
 		t.Fatalf("seed cache row: %v", err)
@@ -585,7 +584,7 @@ func TestChannelsDelete_cacheOnlyRow_404(t *testing.T) {
 // explicitly tracked channel — a cache row is not enough, or visiting a
 // channel page would make it subscribable without ever tracking it.
 func TestChannelsSubscribe_cacheOnlyRow_404(t *testing.T) {
-	deps := channelsTestDeps(t, &testResolver{ucid: "UCx", name: "X"})
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}})
 	h := New(deps)
 	if err := deps.Channels.Upsert(channels.Channel{ID: "UCcache", Name: "Cache Only"}); err != nil {
 		t.Fatalf("seed cache row: %v", err)

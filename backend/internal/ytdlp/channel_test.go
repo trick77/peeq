@@ -45,7 +45,7 @@ func TestResolveChannel_noCookie_doesNotCallBinary(t *testing.T) {
 		CookieProvider: func() (string, string) { return "", "absent" },
 		Sleep:          func(context.Context, time.Duration) error { return nil },
 	})
-	if _, _, err := r.ResolveChannel(context.Background(), "https://www.youtube.com/@x"); !errors.Is(err, ErrNoCookie) {
+	if _, err := r.ResolveChannel(context.Background(), "https://www.youtube.com/@x"); !errors.Is(err, ErrNoCookie) {
 		t.Fatalf("want ErrNoCookie, got %v", err)
 	}
 	if _, e := os.Stat(called); e == nil {
@@ -88,11 +88,68 @@ func TestResolveChannel_parsesUcidAndName(t *testing.T) {
 		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
 		Sleep:          func(context.Context, time.Duration) error { return nil },
 	})
-	ucid, name, err := r.ResolveChannel(context.Background(), "https://www.youtube.com/@x")
+	info, err := r.ResolveChannel(context.Background(), "https://www.youtube.com/@x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ucid != "UCxyz" || name != "My Channel" {
-		t.Fatalf("got (%q,%q), want (UCxyz, My Channel)", ucid, name)
+	if info.UCID != "UCxyz" || info.Name != "My Channel" {
+		t.Fatalf("got (%q,%q), want (UCxyz, My Channel)", info.UCID, info.Name)
+	}
+}
+
+// TestParseChannelInfo_picksAvatarAndBanner asserts the avatar and banner are
+// selected by yt-dlp's thumbnail id, not by array position — the array also
+// contains cropped variants, and its order is not guaranteed.
+func TestParseChannelInfo_picksAvatarAndBanner(t *testing.T) {
+	raw := []byte(`{
+      "channel_id": "UCxyz",
+      "channel": "Uncanny Expeditions",
+      "description": "Long-form field documentaries.",
+      "thumbnails": [
+        {"id": "avatar_uncropped", "url": "https://x/avatar.jpg"},
+        {"id": "banner_uncropped", "url": "https://x/banner.jpg"},
+        {"id": "0", "url": "https://x/other.jpg"}
+      ]
+    }`)
+
+	info, err := parseChannelInfo(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if info.UCID != "UCxyz" {
+		t.Fatalf("UCID = %q", info.UCID)
+	}
+	if info.Name != "Uncanny Expeditions" {
+		t.Fatalf("Name = %q", info.Name)
+	}
+	if info.Description != "Long-form field documentaries." {
+		t.Fatalf("Description = %q", info.Description)
+	}
+	if info.AvatarURL != "https://x/avatar.jpg" {
+		t.Fatalf("AvatarURL = %q", info.AvatarURL)
+	}
+	if info.BannerURL != "https://x/banner.jpg" {
+		t.Fatalf("BannerURL = %q", info.BannerURL)
+	}
+}
+
+// TestParseChannelInfo_missingImages_isNotAnError asserts a channel with no
+// banner still resolves. Many channels have no banner at all, and that must
+// not fail the whole resolve.
+func TestParseChannelInfo_missingImages_isNotAnError(t *testing.T) {
+	info, err := parseChannelInfo([]byte(`{"channel_id":"UCx","channel":"X"}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if info.AvatarURL != "" || info.BannerURL != "" {
+		t.Fatalf("expected empty image urls, got %+v", info)
+	}
+}
+
+// TestParseChannelInfo_noUCID_isAnError asserts a response we cannot pin to a
+// channel id is rejected rather than cached under an empty key.
+func TestParseChannelInfo_noUCID_isAnError(t *testing.T) {
+	if _, err := parseChannelInfo([]byte(`{"channel":"X"}`)); err == nil {
+		t.Fatal("expected an error when no channel id is present")
 	}
 }

@@ -34,12 +34,34 @@ type flatEntry struct {
 }
 
 type flatListing struct {
-	ID       string      `json:"id"`
-	Channel  string      `json:"channel"`
-	Title    string      `json:"title"`
-	Uploader string      `json:"uploader"`
-	Ch       string      `json:"channel_id"`
-	Entries  []flatEntry `json:"entries"`
+	ID          string         `json:"id"`
+	Channel     string         `json:"channel"`
+	Title       string         `json:"title"`
+	Uploader    string         `json:"uploader"`
+	Ch          string         `json:"channel_id"`
+	Description string         `json:"description"`
+	Thumbnails  []channelThumb `json:"thumbnails"`
+	Entries     []flatEntry    `json:"entries"`
+}
+
+// ChannelInfo is a channel's identity as resolved from a metadata-only
+// yt-dlp call. AvatarURL and BannerURL are REMOTE urls; the caller decides
+// whether to download them.
+type ChannelInfo struct {
+	UCID        string
+	Name        string
+	Description string
+	AvatarURL   string
+	BannerURL   string
+}
+
+// channelThumb is one entry of the channel-level thumbnails array. Unlike a
+// video's thumbnails, these carry an id naming the role ("avatar_uncropped",
+// "banner_uncropped"), which is how the two are told apart — array order is
+// not guaranteed and the array also holds cropped variants.
+type channelThumb struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
 }
 
 // ChannelVideos returns up to n most-recent uploads from a channel's /videos
@@ -86,39 +108,62 @@ func (r *Runner) ChannelVideos(ctx context.Context, ucid string, n int) ([]Chann
 	return entries, nil
 }
 
+// parseChannelInfo extracts a ChannelInfo from a yt-dlp metadata-only
+// channel response. Split out from ResolveChannel so it is testable without
+// shelling out.
+func parseChannelInfo(out []byte) (ChannelInfo, error) {
+	var raw flatListing
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return ChannelInfo{}, fmt.Errorf("ytdlp: parse channel json: %w", err)
+	}
+	info := ChannelInfo{
+		UCID:        raw.Ch,
+		Name:        raw.Channel,
+		Description: raw.Description,
+	}
+	if info.UCID == "" {
+		info.UCID = raw.ID
+	}
+	if info.Name == "" {
+		info.Name = raw.Uploader
+	}
+	if info.Name == "" {
+		info.Name = raw.Title
+	}
+	for _, th := range raw.Thumbnails {
+		switch th.ID {
+		case "avatar_uncropped":
+			info.AvatarURL = th.URL
+		case "banner_uncropped":
+			info.BannerURL = th.URL
+		}
+	}
+	if info.UCID == "" {
+		return ChannelInfo{}, fmt.Errorf("ytdlp: could not resolve channel id")
+	}
+	return info, nil
+}
+
 // ResolveChannel resolves a channel URL (a @handle, /c/, /user/, or /channel/
-// URL) to its UCID + display name via a metadata-only flat call
-// (--playlist-items 0 fetches no entries). Used at explicit channel-add time.
-func (r *Runner) ResolveChannel(ctx context.Context, channelURL string) (ucid, name string, err error) {
+// URL) to its full identity — UCID, display name, description, avatar, and
+// banner — via a metadata-only flat call (--playlist-items 0 fetches no
+// entries). Used at explicit channel-add time.
+func (r *Runner) ResolveChannel(ctx context.Context, channelURL string) (ChannelInfo, error) {
 	if perr := r.pauseGate(); perr != nil {
-		return "", "", perr
+		return ChannelInfo{}, perr
 	}
 
 	cookieText, gerr := r.cookieGate()
 	if gerr != nil {
-		return "", "", gerr
+		return ChannelInfo{}, gerr
 	}
 	out, xerr := r.exec(ctx, cookieText, "-J", "--flat-playlist", "--skip-download", "--playlist-items", "0", channelURL)
 	if xerr != nil {
-		return "", "", xerr
+		return ChannelInfo{}, xerr
 	}
-	var raw flatListing
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return "", "", fmt.Errorf("ytdlp: parse channel json: %w", err)
+	info, err := parseChannelInfo(out)
+	if err != nil {
+		return ChannelInfo{}, fmt.Errorf("%w (url %q)", err, channelURL)
 	}
-	ucid = raw.Ch
-	if ucid == "" {
-		ucid = raw.ID
-	}
-	name = raw.Channel
-	if name == "" {
-		name = raw.Uploader
-	}
-	if name == "" {
-		name = raw.Title
-	}
-	if ucid == "" {
-		return "", "", fmt.Errorf("ytdlp: could not resolve channel id from %q", channelURL)
-	}
-	return ucid, name, nil
+	return info, nil
 }
