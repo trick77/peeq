@@ -23,6 +23,8 @@ vi.mock("../api/settings", () => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
   putCookie: vi.fn(),
+  getAPITokenStatus: vi.fn(),
+  createAPIToken: vi.fn(),
 }));
 vi.mock("../api/ytdlp", () => ({
   getYtdlpVersion: vi.fn().mockResolvedValue("2026.01.01"),
@@ -33,7 +35,7 @@ vi.mock("../api/downloads", () => ({
   resumeYoutube: vi.fn(),
 }));
 
-import { getSettings, putCookie, updateSettings } from "../api/settings";
+import { getSettings, putCookie, updateSettings, getAPITokenStatus } from "../api/settings";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 
 describe("Settings", () => {
@@ -43,11 +45,13 @@ describe("Settings", () => {
     vi.mocked(updateSettings).mockReset();
     vi.mocked(pauseYoutube).mockReset();
     vi.mocked(resumeYoutube).mockReset();
+    vi.mocked(getAPITokenStatus).mockReset();
     vi.mocked(getSettings).mockResolvedValue(baseSettings);
     vi.mocked(putCookie).mockResolvedValue({ ...baseSettings, cookie_status: "valid" });
     vi.mocked(updateSettings).mockResolvedValue(baseSettings);
     vi.mocked(pauseYoutube).mockResolvedValue(undefined);
     vi.mocked(resumeYoutube).mockResolvedValue(undefined);
+    vi.mocked(getAPITokenStatus).mockResolvedValue({ present: false });
   });
 
   it("shows the cookie status from GET, never the cookie body", async () => {

@@ -1491,6 +1491,120 @@ button {
   background: currentColor;
   box-shadow: 0 0 7px currentColor;
 }
+
+/* API token section. The reveal panel is the only place the plaintext token
+   is ever rendered; it uses --color-kept (not danger red) because this is a
+   "keep this" moment, not an error. */
+.status-line.idle {
+  color: var(--color-faint);
+  background: transparent;
+  border-color: var(--color-border);
+}
+.status-line.idle .led {
+  box-shadow: none;
+}
+.reveal {
+  margin-top: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-kept) 40%, transparent);
+  background: color-mix(in srgb, var(--color-kept) 7%, transparent);
+  border-radius: var(--radius-ui);
+  padding: 16px 17px;
+}
+.reveal .rhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--color-kept);
+  letter-spacing: 0.02em;
+  margin-bottom: 11px;
+}
+.reveal .rfoot {
+  margin: 11px 0 0;
+  font-size: 12.5px;
+  color: var(--color-muted);
+  line-height: 1.5;
+}
+.tokenfield {
+  display: flex;
+  align-items: stretch;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.tokenfield code {
+  flex: 1;
+  min-width: 0;
+  padding: 13px 14px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-ink-dim);
+  overflow-x: auto;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+.tokenfield .acts {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-panel);
+}
+.tokenbtn {
+  background: transparent;
+  border: none;
+  color: var(--color-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.tokenbtn:hover {
+  background: var(--color-active);
+  color: var(--color-ink-dim);
+}
+.tokenbtn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.tokenbtn.ok {
+  color: var(--color-online);
+}
+.btn.danger {
+  background: transparent;
+  color: var(--color-danger);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+}
+.btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+.btn.sm {
+  min-height: 38px;
+  padding: 0 15px;
+  font-size: 13.5px;
+}
+.empty {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-ui);
+  padding: 20px;
+  text-align: center;
+  color: var(--color-faint);
+  font-size: 13px;
+}
+.meta {
+  font-size: 12.5px;
+  color: var(--color-faint);
+  margin-top: 12px;
+}
+
 textarea.cookiebox {
   width: 100%;
   min-height: 92px;
