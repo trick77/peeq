@@ -1,0 +1,44 @@
+# The build context is the repo root (release.yaml passes `context: .`), and the
+# Containerfile does a wholesale `COPY ui/ ./` and `COPY backend/ ./`. Without
+# this file a local build copies the host's ui/node_modules — darwin-arm64 native
+# binaries — straight over the Alpine `npm ci` result from the line above it.
+#
+# Deliberately does NOT ignore backend/web/dist: the committed index.html stub
+# there is what lets `//go:embed all:dist` compile before the real Vite bundle is
+# copied in from the ui stage. Ignoring it breaks the Go build.
+
+.git
+.github
+.claude
+.superpowers
+.DS_Store
+
+node_modules
+ui/node_modules
+ui/coverage
+extension/node_modules
+extension/e2e/node_modules
+
+bin
+*.test
+*.db
+*.db-*
+
+.env
+.env.*
+!.env.example
+/data
+logs
+
+# Playwright output from extension/e2e.
+test-results
+playwright-report
+
+# Live session credentials — must never enter a build context, let alone a layer.
+# Mirrors the .gitignore rules; see the comments there for why these are broad.
+Cookies.binarycookies
+*.binarycookies
+*cookies*.txt
+*cookies*.json
+
+docs

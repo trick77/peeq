@@ -62,6 +62,8 @@ jobs:
           file: ./backend/Containerfile
           push: true
           platforms: linux/amd64
+          build-args: |
+            BACKEND_VERSION=${{ steps.ver.outputs.version }}
           tags: |
             ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.version }}
             ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.major }}.${{ steps.ver.outputs.minor }}
