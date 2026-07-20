@@ -2,6 +2,13 @@ package channels
 
 import "testing"
 
+// fixedNow is the single reference instant every dormancy test seeds against.
+// Using one fixed literal instead of the host clock (datetime('now', ...))
+// keeps these tests hermetic: the relationship between "now" and each seeded
+// discovered_at is a fixed, visible offset rather than something that only
+// happens to line up on the day the suite was written.
+const fixedNow = "2026-07-20 12:00:00"
+
 // TestDormantChannels_flagsChannelQuietLongerThanThreshold and its sibling
 // below are a matched pair: one discovered_at just outside DormantAfter,
 // one just inside. An implementation with the comparison operator flipped
@@ -15,12 +22,12 @@ func TestDormantChannels_flagsChannelQuietLongerThanThreshold(t *testing.T) {
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
+	// 7 months before fixedNow: outside the (5-7 month) DormantAfter window.
 	mustExec(t, db, `
 INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
-VALUES ('v1', 'UC1', 'seen', datetime('now','-7 months'))`)
+VALUES ('v1', 'UC1', 'seen', '2025-12-20 12:00:00')`)
 
-	const now = "2026-07-20 12:00:00"
-	got, err := st.DormantChannels(now)
+	got, err := st.DormantChannels(fixedNow)
 	if err != nil {
 		t.Fatalf("dormant channels: %v", err)
 	}
@@ -44,11 +51,12 @@ func TestDormantChannels_ignoresChannelJustInsideThreshold(t *testing.T) {
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
+	// 5 months before fixedNow: inside the (5-7 month) DormantAfter window.
 	mustExec(t, db, `
 INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
-VALUES ('v1', 'UC1', 'seen', datetime('now','-5 months'))`)
+VALUES ('v1', 'UC1', 'seen', '2026-02-20 12:00:00')`)
 
-	got, err := st.DormantChannels("2026-07-20 12:00:00")
+	got, err := st.DormantChannels(fixedNow)
 	if err != nil {
 		t.Fatalf("dormant channels: %v", err)
 	}
@@ -84,12 +92,15 @@ func TestDormantChannels_ignoresUnsubscribedChannels(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// Tracked only, never subscribed.
+	// Tracked only, never subscribed. 7 months before fixedNow: would be
+	// flagged if the channel were subscribed, so this genuinely exercises
+	// the "unsubscribed channels are ignored" rule rather than passing
+	// vacuously because the video looks recent.
 	mustExec(t, db, `
 INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
-VALUES ('v1', 'UC1', 'seen', datetime('now','-7 months'))`)
+VALUES ('v1', 'UC1', 'seen', '2025-12-20 12:00:00')`)
 
-	got, err := st.DormantChannels("2026-07-20 12:00:00")
+	got, err := st.DormantChannels(fixedNow)
 	if err != nil {
 		t.Fatalf("dormant channels: %v", err)
 	}
@@ -107,21 +118,21 @@ func TestDismissDormant_suppressesTheFlag(t *testing.T) {
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
+	// 7 months before fixedNow: outside the DormantAfter window.
 	mustExec(t, db, `
 INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
-VALUES ('v1', 'UC1', 'seen', datetime('now','-7 months'))`)
+VALUES ('v1', 'UC1', 'seen', '2025-12-20 12:00:00')`)
 
-	const now = "2026-07-20 12:00:00"
-	got, err := st.DormantChannels(now)
+	got, err := st.DormantChannels(fixedNow)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("precondition: dormant channels = %+v err=%v, want UC1 flagged", got, err)
 	}
 
-	if err := st.DismissDormant("UC1", now); err != nil {
+	if err := st.DismissDormant("UC1", fixedNow); err != nil {
 		t.Fatalf("dismiss dormant: %v", err)
 	}
 
-	got, err = st.DormantChannels(now)
+	got, err = st.DormantChannels(fixedNow)
 	if err != nil {
 		t.Fatalf("dormant channels after dismiss: %v", err)
 	}
@@ -143,11 +154,14 @@ func TestDismissDormant_reArmsAfterNewerDiscovery(t *testing.T) {
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
+	// An older, otherwise-irrelevant discovery well before the dismissal;
+	// it is superseded by v2 below and only needs a fixed, deterministic
+	// value so the seeded data never drifts with the host clock.
 	mustExec(t, db, `
 INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
-VALUES ('v1', 'UC1', 'seen', datetime('now','-7 months'))`)
+VALUES ('v1', 'UC1', 'seen', '2025-12-20 12:00:00')`)
 
-	const dismissedAt = "2026-07-20 12:00:00"
+	dismissedAt := fixedNow
 	if err := st.DismissDormant("UC1", dismissedAt); err != nil {
 		t.Fatalf("dismiss dormant: %v", err)
 	}
@@ -158,7 +172,9 @@ VALUES ('v1', 'UC1', 'seen', datetime('now','-7 months'))`)
 INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
 VALUES ('v2', 'UC1', 'seen', datetime(?, '+1 second'))`, dismissedAt)
 
-	now := "2027-02-20 12:00:00" // >6 months after v2's discovered_at
+	// 7 months after fixedNow (dismissedAt) and thus >6 months after v2's
+	// discovered_at, which sits ~1 second after dismissedAt.
+	now := "2027-02-20 12:00:00"
 	got, err := st.DormantChannels(now)
 	if err != nil {
 		t.Fatalf("dormant channels: %v", err)
