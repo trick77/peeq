@@ -42,16 +42,19 @@ Out of scope:
 
 `api_token TEXT NOT NULL DEFAULT ''` on the settings row.
 
-**The token is stored plaintext at rest, deliberately.** The Settings UI
-renders it masked with a Show button and a Copy button, which requires a
-recoverable value. Hashing it would force a show-once-at-generation flow and
-break that UI. This is acceptable under peeq's threat model: single-user,
-self-hosted, and the same row already stores `cookie_text` — a live YouTube
-session credential — in plaintext. A hash would protect strictly less than the
-cookie sitting next to it.
+The token is stored plaintext at rest. This is a chosen trade-off, not an
+oversight, and the reasoning is recorded here so it can be re-examined rather
+than rediscovered:
 
-*Do not "harden" this to a one-way hash in review. It is a design decision, not
-an oversight.*
+- The Settings UI renders the token masked with Show and Copy buttons, which
+  requires a recoverable value. Hashing forces a show-once-at-generation flow.
+- The same row already stores `cookie_text` — a live YouTube session
+  credential — in plaintext, so a hashed token would protect strictly less than
+  the secret sitting next to it.
+- Threat model: single-user, self-hosted.
+
+If the Show/Copy affordance is dropped, hashing becomes the better choice and
+this decision should be revisited.
 
 Rejected: a dedicated `api_tokens` table with labels and multiple live tokens.
 No second consumer exists; speculative for a single-user app.
