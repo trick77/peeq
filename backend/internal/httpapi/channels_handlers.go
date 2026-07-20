@@ -257,7 +257,7 @@ func (s *server) handleChannelsSubscribe(w http.ResponseWriter, r *http.Request)
 		serverError(w, r, err, "get channel failed")
 		return
 	}
-	if c == nil {
+	if c == nil || c.TrackedAt == "" {
 		writeJSONError(w, http.StatusNotFound, "channel not tracked")
 		return
 	}

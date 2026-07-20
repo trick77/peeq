@@ -310,3 +310,46 @@ func TestChannels_listAutodownloadFilter(t *testing.T) {
 		t.Fatal("listed item must report autodownload on")
 	}
 }
+
+// TestUpsert_blankFieldsDoNotEraseCachedMetadata asserts a partial re-upsert
+// — which is exactly what the track path does, passing only id/name/handle —
+// cannot wipe metadata a previous resolve already cached. Without the
+// COALESCE(NULLIF(...)) in Upsert this silently blanks the description and
+// both image paths.
+func TestUpsert_blankFieldsDoNotEraseCachedMetadata(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.Upsert(Channel{
+		ID:          "UCx",
+		Name:        "Full",
+		Handle:      "@full",
+		Description: "a description",
+		AvatarPath:  ".channels/UCx/avatar.jpg",
+		BannerPath:  ".channels/UCx/banner.jpg",
+		ResolvedAt:  "2026-07-20 10:00:00",
+	}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	// A partial re-upsert: every metadata field is the Go zero value.
+	if err := s.Upsert(Channel{ID: "UCx", Name: "Full", Handle: "@full"}); err != nil {
+		t.Fatalf("partial upsert: %v", err)
+	}
+
+	c, err := s.Get("UCx")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.Description != "a description" {
+		t.Fatalf("Description = %q, want it preserved", c.Description)
+	}
+	if c.AvatarPath != ".channels/UCx/avatar.jpg" {
+		t.Fatalf("AvatarPath = %q, want it preserved", c.AvatarPath)
+	}
+	if c.BannerPath != ".channels/UCx/banner.jpg" {
+		t.Fatalf("BannerPath = %q, want it preserved", c.BannerPath)
+	}
+	if c.ResolvedAt != "2026-07-20 10:00:00" {
+		t.Fatalf("ResolvedAt = %q, want it preserved", c.ResolvedAt)
+	}
+}
