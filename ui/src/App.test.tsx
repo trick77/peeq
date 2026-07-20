@@ -126,7 +126,7 @@ describe("App dock bootstrap", () => {
     // stay comfortably under this test's own timeout (last arg to it()),
     // or vitest aborts the test before the query can report what it saw.
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
-    fireEvent.click(screen.getByRole("button", { name: /Add a video/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
     // Starts empty — this is the state that used to be terminal.
     expect(await screen.findByText("Nothing queued")).toBeTruthy();
@@ -136,7 +136,7 @@ describe("App dock bootstrap", () => {
       { job_id: 7, video_id: "vynCRZwkWhE", title: "Queued video", state: "pending", priority: 10 } as Job,
     ]);
 
-    fireEvent.change(screen.getByLabelText("Video URL"), {
+    fireEvent.change(screen.getByLabelText("Video or channel URL"), {
       target: { value: "https://www.youtube.com/watch?v=vynCRZwkWhE&t=68s" },
     });
     fireEvent.click(screen.getByRole("button", { name: /Download now/ }));
