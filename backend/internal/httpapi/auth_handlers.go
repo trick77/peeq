@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/trick77/peeq/internal/auth"
@@ -33,6 +34,12 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	claims, err := s.authSvc.HandleCallback(r)
 	s.authSvc.ClearOIDCCookies(w)
 	if err != nil {
+		// The browser only ever sees the generic code — the five distinct
+		// failure modes in HandleCallback (bad state, bad nonce, code
+		// exchange rejected, token verification failed) are otherwise
+		// indistinguishable from the outside, which makes a misconfigured
+		// provider undebuggable.
+		slog.Warn("oidc callback failed", "err", redactErr(err))
 		http.Redirect(w, r, "/?auth_error=oidc_callback_failed", http.StatusFound)
 		return
 	}

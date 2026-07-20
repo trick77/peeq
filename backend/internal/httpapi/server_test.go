@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/store"
+	"golang.org/x/oauth2"
 )
 
 func openTestDB(t *testing.T) *sql.DB {
@@ -30,6 +33,15 @@ func openTestDB(t *testing.T) *sql.DB {
 // short-circuits straight to a session without contacting OIDC.
 func testDeps(t *testing.T) Deps {
 	t.Helper()
+	d, _, _ := testDepsWithStores(t)
+	return d
+}
+
+// testDepsWithStores is testDeps but also returns the session/user stores it
+// built, so callers that need to construct their own auth.Service (e.g. with
+// a non-nil OIDC service) can reuse them instead of duplicating setup.
+func testDepsWithStores(t *testing.T) (Deps, *auth.SessionStore, *auth.UserStore) {
+	t.Helper()
 	db := openTestDB(t)
 	sessions := auth.NewSessionStore(db, false)
 	users := auth.NewUserStore(db)
@@ -45,7 +57,42 @@ func testDeps(t *testing.T) Deps {
 			Email:             "dev@example.local",
 			Name:              "Dev Tester",
 		},
-	}
+	}, sessions, users
+}
+
+// stubOIDCBackend satisfies auth.OIDCBackend. The callback tests fail at the
+// state-cookie check, before Exchange is ever reached, so these methods only
+// need to exist.
+type stubOIDCBackend struct{}
+
+func (stubOIDCBackend) AuthCodeURL(state string, _ ...oauth2.AuthCodeOption) string {
+	return "https://idp.example.com/authorize?state=" + state
+}
+
+func (stubOIDCBackend) Exchange(context.Context, string) (*oauth2.Token, error) {
+	return nil, errors.New("stub: exchange not expected in this test")
+}
+
+func (stubOIDCBackend) VerifyClaims(context.Context, *oauth2.Token) (auth.VerifiedClaims, error) {
+	return auth.VerifiedClaims{}, errors.New("stub: verify not expected in this test")
+}
+
+// testDepsWithOIDC is testDeps with a real (stub-backed) OIDC service, so the
+// callback handler takes the redirect path rather than the 503 "not
+// configured" path.
+func testDepsWithOIDC(t *testing.T) Deps {
+	t.Helper()
+	d, sessions, users := testDepsWithStores(t)
+	oidcSvc := auth.NewOIDCService(auth.OIDCServiceConfig{
+		Issuer:       "https://idp.example.com",
+		ClientID:     "peeq-test",
+		ClientSecret: "test-secret",
+		RedirectURL:  "https://peeq.example.com/api/auth/callback",
+		Backend:      stubOIDCBackend{},
+		SecureCookie: false,
+	})
+	d.AuthService = auth.NewService(oidcSvc, sessions, users)
+	return d
 }
 
 func TestServer_devLoginThenEmptyVideos(t *testing.T) {
