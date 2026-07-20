@@ -3,7 +3,9 @@ package ytdlp
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestClassify feeds the exact stderr signatures yt-dlp is known to emit
@@ -93,6 +95,81 @@ func TestClassify_unrecognizedFallsBackToExitErr(t *testing.T) {
 	err := Classify("ERROR: something totally unexpected happened", exitErr)
 	if !errors.Is(err, exitErr) {
 		t.Fatalf("want fallback to exitErr, got %v", err)
+	}
+}
+
+// TestClassify_unrecognizedKeepsStderr is the regression guard for the bug
+// this file used to have: an unrecognized failure surfaced to the API as a
+// bare "exit status 1" and yt-dlp's own explanation was discarded, leaving
+// nothing to debug from.
+func TestClassify_unrecognizedKeepsStderr(t *testing.T) {
+	exitErr := fmt.Errorf("exit status 1")
+	stderr := "WARNING: [youtube] noise nobody needs\n" +
+		"ERROR: [youtube] vynCRZwkWhE: Failed to extract any player response"
+
+	err := Classify(stderr, exitErr)
+
+	var ee *ExecError
+	if !errors.As(err, &ee) {
+		t.Fatalf("want *ExecError, got %T (%v)", err, err)
+	}
+	if !strings.Contains(err.Error(), "Failed to extract any player response") {
+		t.Fatalf("error text lost yt-dlp's reason: %q", err.Error())
+	}
+	// The ERROR: line wins over the WARNING noise above it.
+	if strings.Contains(ee.Stderr, "noise nobody needs") {
+		t.Fatalf("kept warning noise instead of the ERROR line: %q", ee.Stderr)
+	}
+	// Unwrapping still reaches the process error, so existing errors.Is
+	// checks on *exec.ExitError keep working.
+	if !errors.Is(err, exitErr) {
+		t.Fatalf("ExecError no longer unwraps to exitErr: %v", err)
+	}
+}
+
+// TestClassify_stderrWithoutErrorLines covers the case that actually bit
+// here: yt-dlp exits non-zero having printed only WARNING lines (e.g. the
+// missing-JS-runtime warning). There is no ERROR: line to prefer, so the
+// warnings themselves are the best available explanation and must survive.
+func TestClassify_stderrWithoutErrorLines(t *testing.T) {
+	stderr := "WARNING: [youtube] No supported JavaScript runtime could be found."
+
+	err := Classify(stderr, fmt.Errorf("exit status 1"))
+
+	if !strings.Contains(err.Error(), "No supported JavaScript runtime") {
+		t.Fatalf("warning-only stderr was dropped: %q", err.Error())
+	}
+}
+
+func TestStderrTail_capsRunawayOutput(t *testing.T) {
+	huge := "ERROR: " + strings.Repeat("x", 5000)
+
+	got := stderrTail(huge)
+
+	if len(got) > maxStderrTail+len("…") {
+		t.Fatalf("tail not capped: %d bytes", len(got))
+	}
+}
+
+// TestStderrTail_truncatesOnRuneBoundary guards the cap against splitting a
+// multi-byte character. yt-dlp echoes video titles into its ERROR lines, so
+// non-ASCII at the cut point is routine; a byte-index slice would emit
+// invalid UTF-8 into the 502 body and the jobs.last_error column, where
+// encoding/json silently swaps in U+FFFD rather than failing loudly.
+func TestStderrTail_truncatesOnRuneBoundary(t *testing.T) {
+	// "世" is 3 bytes, so repeating it guarantees the byte cap lands
+	// mid-rune for at least some of the offsets tested below.
+	for _, pad := range []int{0, 1, 2} {
+		line := "ERROR: " + strings.Repeat("a", pad) + strings.Repeat("世", 400)
+
+		got := stderrTail(line)
+
+		if !utf8.ValidString(got) {
+			t.Fatalf("pad=%d: tail is not valid UTF-8: %q", pad, got)
+		}
+		if len(got) > maxStderrTail+len("…") {
+			t.Fatalf("pad=%d: tail not capped: %d bytes", pad, len(got))
+		}
 	}
 }
 

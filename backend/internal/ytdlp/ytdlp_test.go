@@ -238,18 +238,65 @@ func TestCookieGate_notAnonymous_emptyCookieStillErrors(t *testing.T) {
 	}
 }
 
-// TestCookieGate_anonymousAllowed_expiredStillErrors and its blocked sibling
-// below lock the carve-out: an expired/blocked cookie STATUS means a real
+// TestCookieGate_anonymousAllowed_staleStillErrors and its blocked sibling
+// below lock the carve-out: a stale/blocked cookie STATUS means a real
 // cookie exists and YouTube rejected it — that is a genuine signal, not an
 // absence, and anonymous mode must not weaken it.
-func TestCookieGate_anonymousAllowed_expiredStillErrors(t *testing.T) {
+//
+// The status string MUST be one settings actually persists. This test
+// previously passed "expired", which nothing writes and the schema's CHECK
+// constraint forbids, so it went green against a branch production could
+// never reach while real stale cookies were handed to yt-dlp anyway.
+func TestCookieGate_anonymousAllowed_staleStillErrors(t *testing.T) {
 	r := New(RunnerConfig{
 		AllowAnonymous: true,
-		CookieProvider: func() (string, string) { return "cookie-text", "expired" },
+		CookieProvider: func() (string, string) { return "cookie-text", "stale" },
 	})
 	_, err := r.cookieGate()
 	if !errors.Is(err, ErrCookieExpired) {
 		t.Fatalf("cookieGate() error = %v, want ErrCookieExpired even in anonymous mode", err)
+	}
+}
+
+// TestCookieGate_coversEveryPersistedStatus walks the complete set of
+// cookie_status values the settings schema permits and asserts the gate
+// makes a deliberate decision about each. It is the guard against the
+// failure mode above: a status that no branch matches must not quietly
+// fall through to "run yt-dlp with it".
+func TestCookieGate_coversEveryPersistedStatus(t *testing.T) {
+	// Mirrors the CHECK constraint on settings.cookie_status.
+	cases := []struct {
+		status  string
+		wantErr error
+	}{
+		{"valid", nil},
+		{"stale", ErrCookieExpired},
+		{"blocked", ErrBlocked},
+		{"absent", ErrNoCookie},
+	}
+
+	for _, c := range cases {
+		t.Run(c.status, func(t *testing.T) {
+			text := "cookie-text"
+			if c.status == "absent" {
+				text = ""
+			}
+			r := New(RunnerConfig{
+				CookieProvider: func() (string, string) { return text, c.status },
+			})
+
+			_, err := r.cookieGate()
+
+			if c.wantErr == nil {
+				if err != nil {
+					t.Fatalf("cookieGate() error = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, c.wantErr) {
+				t.Fatalf("cookieGate() error = %v, want %v", err, c.wantErr)
+			}
+		})
 	}
 }
 
@@ -357,15 +404,15 @@ func TestThrottle_appliesInAnonymousMode(t *testing.T) {
 	}
 }
 
-// TestMetadata_cookieStatusExpired_doesNotCallBinary locks the pre-exec
-// short-circuit: a "expired" cookie status must stop the run (with
+// TestMetadata_cookieStatusStale_doesNotCallBinary locks the pre-exec
+// short-circuit: a "stale" cookie status must stop the run (with
 // ErrCookieExpired) before the binary is ever invoked and before the
 // throttle sleep, saving a burned 20s+ wait on a cookie already known bad.
-func TestMetadata_cookieStatusExpired_doesNotCallBinary(t *testing.T) {
+func TestMetadata_cookieStatusStale_doesNotCallBinary(t *testing.T) {
 	called := filepath.Join(t.TempDir(), "called")
 	r := New(RunnerConfig{
 		Bin:            fakeBinTouching(called),
-		CookieProvider: func() (string, string) { return "cookie-text", "expired" },
+		CookieProvider: func() (string, string) { return "cookie-text", "stale" },
 		Sleep: func(context.Context, time.Duration) error {
 			t.Fatal("throttle must not sleep when the cookie status is already known bad")
 			return nil
@@ -376,12 +423,12 @@ func TestMetadata_cookieStatusExpired_doesNotCallBinary(t *testing.T) {
 		t.Fatalf("want ErrCookieExpired, got %v", err)
 	}
 	if _, e := os.Stat(called); e == nil {
-		t.Fatal("binary must not run when the cookie status is expired")
+		t.Fatal("binary must not run when the cookie status is stale")
 	}
 }
 
 // TestMetadata_cookieStatusBlocked_doesNotCallBinary mirrors
-// TestMetadata_cookieStatusExpired_doesNotCallBinary for the "blocked"
+// TestMetadata_cookieStatusStale_doesNotCallBinary for the "blocked"
 // status.
 func TestMetadata_cookieStatusBlocked_doesNotCallBinary(t *testing.T) {
 	called := filepath.Join(t.TempDir(), "called")

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
 import { TopBar } from "./shell/TopBar";
 import { getMe, listDownloads, cookieHealth, downloadsStatus, streamDownloads, listPending, resumeYoutube } from "./api";
@@ -147,12 +147,31 @@ export function App() {
     };
   }, [downloadStatus.paused]);
 
+  // Refetch the queue on demand — used when a view queues something itself
+  // (the Add view) so the dock reflects it immediately. This is also what
+  // bootstraps the poll below: that interval only starts once `jobs` holds
+  // an active entry, so something has to seed the first one.
+  const refreshQueue = useCallback(() => {
+    listDownloads()
+      .then((j) => setJobs(j))
+      .catch(() => {});
+    downloadsStatus()
+      .then((s) => setDownloadStatus(s))
+      .catch(() => {});
+  }, []);
+
   // Poll the queue every 3s while any job is pending/running. There is no
   // SSE "job finished" event (the worker only ever publishes "progress"),
   // so without this a job that completes right after its last progress
   // tick would leave the dock stuck showing it as still active forever.
   // Cheap and self-limiting: the interval only runs while something is
   // actually in flight.
+  //
+  // Note the bootstrap dependency: `hasActive` reads the CURRENT jobs, so
+  // an empty dock never starts polling on its own. Adding the first video
+  // has to seed `jobs` via refreshQueue above — the SSE progress handler
+  // can't cover it, since a job that is queued but not yet downloading
+  // (worker paused, cookie missing, queue busy) emits no progress at all.
   useEffect(() => {
     if (!authChecked || !user) return;
     const hasActive = jobs.some((j) => j.state === "pending" || j.state === "running");
@@ -264,6 +283,7 @@ export function App() {
             onSeekConsumed={() => setPendingSeek(undefined)}
             setView={setView}
             setPendingCount={setPendingCount}
+            onQueued={refreshQueue}
           />
         </section>
       </main>
@@ -332,6 +352,7 @@ function ViewSwitch({
   onSeekConsumed,
   setView,
   setPendingCount,
+  onQueued,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
@@ -341,6 +362,7 @@ function ViewSwitch({
   onSeekConsumed: () => void;
   setView: (v: ViewId) => void;
   setPendingCount: (n: number) => void;
+  onQueued: () => void;
 }) {
   switch (view) {
     case "library":
@@ -360,7 +382,7 @@ function ViewSwitch({
       // Stay on the Add page after queuing (per the mockup — the preview
       // card confirms the queue, it doesn't jump into Player before the
       // download has even started); onOpenVideo is Library's job.
-      return <Add onQueued={() => {}} />;
+      return <Add onQueued={onQueued} />;
     case "pending":
       // onCountChange keeps the rail badge in sync while the user acts on
       // items (Download now/Ignore) without leaving this view — the

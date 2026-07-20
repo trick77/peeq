@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -139,14 +137,12 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-track the video's channel using metadata already fetched above —
-	// no extra YouTube call. Non-fatal: a tracking failure must not fail the
-	// download, the video is still queued either way.
-	if s.channels != nil && meta.ChannelID != "" {
-		if err := s.channels.Upsert(channels.Channel{ID: meta.ChannelID, Name: meta.Channel}); err != nil {
-			slog.Warn("auto-track channel failed", "channel_id", meta.ChannelID, "err", err)
-		}
-	}
+	// Deliberately NOT tracking the video's channel here. Adding one video by
+	// URL is a one-off; it must not silently populate the Channels view with
+	// every channel the user has ever grabbed a single video from. Tracking
+	// (and subscribing) stays an explicit action on the Channels page. The
+	// video keeps meta.ChannelID on its own row — videos has no foreign key
+	// to channels, so an untracked channel_id is a normal, supported state.
 
 	jobID, err := s.jobs.Enqueue(videoID, downloadPriority)
 	if err != nil {
