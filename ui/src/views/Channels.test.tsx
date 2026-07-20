@@ -112,7 +112,7 @@ describe("Channels", () => {
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("tracked"));
 
     vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: "Autodownload" }));
+    await user.click(screen.getByRole("button", { name: "Auto-add" }));
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("autodownload"));
 
     vi.mocked(listChannels).mockClear();
@@ -186,7 +186,7 @@ describe("Channels", () => {
     render(<Channels />);
     expect(await screen.findByText("No channels yet.")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Autodownload" }));
+    await user.click(screen.getByRole("button", { name: "Auto-add" }));
     expect(await screen.findByText("No channels match this filter.")).toBeInTheDocument();
   });
 
@@ -195,7 +195,7 @@ describe("Channels", () => {
     render(<Channels />);
     await screen.findByText("Tracked Channel");
     const row = screen.getByText("Tracked Channel").closest(".channel-row") as HTMLElement;
-    await user.click(within(row).getByLabelText(/autodownload/i));
+    await user.click(within(row).getByLabelText("Auto-add"));
     await waitFor(() => {
       expect(updateChannel).toHaveBeenCalledWith("c1", { autodownload: true });
     });

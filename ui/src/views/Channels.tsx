@@ -17,7 +17,9 @@ const CHIPS: { id: ChannelFilter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "subscribed", label: "Subscribed" },
   { id: "tracked", label: "Tracked" },
-  { id: "autodownload", label: "Autodownload" },
+  // The filter id stays "autodownload" — it is the API's ?filter= value and
+  // the subscriptions column name. Only the label is user-facing.
+  { id: "autodownload", label: "Auto-add" },
 ];
 
 // Channels — tracked/subscribed channel management: an add-channel form,
@@ -216,9 +218,9 @@ export function Channels() {
                   type="checkbox"
                   checked={c.autodownload}
                   onChange={() => handleToggleAutodownload(c)}
-                  aria-label="Autodownload"
+                  aria-label="Auto-add"
                 />
-                Autodownload
+                Auto-add
               </label>
               <input
                 type="text"
