@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { VideoCard } from "../components/VideoCard";
 import type { Video } from "../api/types";
@@ -224,6 +224,10 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockReset();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders a category chip row and filters by category", async () => {
     const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
     const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
@@ -275,10 +279,7 @@ describe("Library category chips", () => {
     // only arms while a download job is pending/running, so listDownloads
     // must report one to make the interval fire at all.
     const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
-    vi.mocked(listVideos).mockImplementation(async (_filter, category) => {
-      if (category === "ai") return [aiVideo];
-      return [aiVideo];
-    });
+    vi.mocked(listVideos).mockResolvedValue([aiVideo]);
     vi.mocked(listDownloads).mockResolvedValue([
       {
         job_id: 1,
@@ -305,7 +306,5 @@ describe("Library category chips", () => {
     await waitFor(() => {
       expect(listVideos).toHaveBeenCalledWith("all", "ai");
     });
-    vi.useRealTimers();
-    vi.mocked(listDownloads).mockResolvedValue([]);
   });
 });
