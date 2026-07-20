@@ -3,6 +3,7 @@ import { Icon } from "../icons";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
 import type { PendingItem } from "../api/types";
 import { formatDuration } from "../format";
+import { Button } from "../ui";
 
 // Pending — the channel_videos ledger's "Pending" grid: reuses
 // Library's `.grid`/`.card`/`.thumb`/`.dur` visual language, but the
@@ -74,24 +75,24 @@ export function Pending({ onCountChange }: { onCountChange?: (n: number) => void
             <h3>{item.title}</h3>
             <div className="by">{item.channel_name || item.channel_id}</div>
             <div className="acts-row" style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <button
+              <Button
                 type="button"
-                className="abtn"
+                variant="secondary"
                 disabled={busyId === item.video_id}
                 onClick={() => handleDownload(item)}
               >
                 <Icon name="download" size="16px" />
                 Download now
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="abtn danger"
+                variant="dangerQuiet"
                 disabled={busyId === item.video_id}
                 onClick={() => handleIgnore(item)}
               >
                 <Icon name="trash" size="16px" />
                 Ignore
-              </button>
+              </Button>
             </div>
           </article>
         ))}

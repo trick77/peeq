@@ -893,40 +893,6 @@ button {
 .paste input::placeholder {
   color: var(--color-faint);
 }
-/* Geometry follows the design system (40px / radius 10 / 15px / weight 600);
-   every colour below is peeq's existing value and is deliberately unchanged. */
-.btn {
-  border: 1px solid transparent;
-  border-radius: var(--radius-ui);
-  padding: 0 16px;
-  font-size: var(--text-ui);
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 40px;
-}
-.btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.btn.primary {
-  background: var(--color-accent);
-  color: var(--color-bg);
-  box-shadow: 0 8px 24px -10px var(--glow-accent);
-}
-.btn.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.btn.ghost {
-  background: var(--color-active);
-  color: var(--color-ink-dim);
-  border: 1px solid var(--color-border);
-}
-.btn.ghost:hover:not(:disabled) {
-  border-color: var(--color-faint);
-}
 .hint {
   font-size: 12.5px;
   color: var(--color-faint);
@@ -1181,50 +1147,6 @@ button {
   gap: 10px;
   margin-top: 18px;
   flex-wrap: wrap;
-}
-/* Same control as .btn secondary — geometry unified, colours untouched.
-   Call sites migrate to <Button variant="secondary"> and this class retires. */
-.abtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 40px;
-  padding: 0 16px;
-  border-radius: var(--radius-ui);
-  background: var(--color-active);
-  border: 1px solid var(--color-border);
-  color: var(--color-ink-dim);
-  font-size: var(--text-ui);
-  font-weight: 500;
-  text-decoration: none;
-}
-.abtn:hover {
-  border-color: var(--color-faint);
-  color: var(--color-ink);
-}
-.abtn.gold {
-  color: var(--color-kept);
-  border-color: var(--color-accent-dim);
-  background: color-mix(in srgb, var(--color-kept) 12%, transparent);
-}
-.abtn.danger:hover {
-  color: var(--color-danger);
-  border-color: color-mix(in srgb, var(--color-danger) 50%, transparent);
-}
-/* "tinted" in ui.tsx — peeq's own treatment, used for Re-download on a failed
-   card. Colours are verbatim; only the height and type join the system. */
-.abtn.accent {
-  min-height: 32px;
-  padding: 0 12px;
-  font-size: var(--text-label);
-  color: var(--color-accent-strong);
-  border-color: var(--color-accent-dim);
-  background: color-mix(in srgb, var(--color-accent-strong) 12%, transparent);
-}
-.abtn.accent:hover {
-  border-color: var(--color-accent-strong);
-  color: var(--color-accent-strong);
 }
 
 .side {
@@ -1507,12 +1429,6 @@ button {
   padding: 0 2px;
 }
 
-/* CC toggle (playacts row) */
-.abtn.cc-btn.on {
-  background: var(--color-accent-fill);
-  border-color: var(--color-accent);
-  color: var(--color-ink);
-}
 
 /* ── Settings (Task 14). ───────────────────────────────────────────────── */
 
@@ -1633,52 +1549,6 @@ button {
   padding: 0 6px;
   border-left: 1px solid var(--color-border);
   background: var(--color-panel);
-}
-.tokenbtn {
-  background: transparent;
-  border: none;
-  color: var(--color-muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 11px;
-  border-radius: 8px;
-  font-size: 12.5px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-}
-.tokenbtn:hover {
-  background: var(--color-active);
-  color: var(--color-ink-dim);
-}
-.tokenbtn:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
-}
-.tokenbtn.ok {
-  color: var(--color-online);
-}
-.btn.danger {
-  background: transparent;
-  color: var(--color-danger);
-  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
-}
-.btn.danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
-}
-.btn.sm {
-  min-height: 32px;
-  padding: 0 12px;
-  font-size: var(--text-label);
-}
-/* Icon-only button — a copy action is always an icon, never the word "Copy".
-   The label lives on aria-label, so this must never be used without one. */
-.btn.icon {
-  min-height: 32px;
-  width: 32px;
-  padding: 0;
-  flex: none;
 }
 .empty {
   border: 1px dashed var(--color-border);
@@ -2084,4 +1954,126 @@ textarea.cookiebox:focus {
   .rail-foot {
     display: none;
   }
+}
+
+/* ── Button (ui.tsx) ───────────────────────────────────────────────────────
+   Class-based, deliberately NOT inline styles like music's ui.tsx. peeq's
+   buttons carry hover states (.abtn:hover, .abtn.danger:hover, the captions
+   toggle) and an inline style object beats a CSS :hover rule, so porting
+   music's approach verbatim would have silently dropped every hover.
+   Geometry follows the design system; every colour is peeq's existing value. */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: var(--radius-ui);
+  border: 1px solid transparent;
+  font-family: var(--font-sans);
+  font-size: var(--text-ui);
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.ui-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.ui-btn--sm {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: var(--text-label);
+}
+/* Icon-only. Always pair with aria-label — there is no visible text. */
+.ui-btn--icon {
+  min-height: 32px;
+  width: 32px;
+  padding: 0;
+  flex: none;
+}
+
+.ui-btn--primary {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-weight: 600;
+  box-shadow: 0 8px 24px -10px var(--glow-accent);
+}
+.ui-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+/* was .abtn and .btn.ghost — the same control under two names. */
+.ui-btn--secondary {
+  background: var(--color-active);
+  color: var(--color-ink-dim);
+  border-color: var(--color-border);
+}
+.ui-btn--secondary:hover:not(:disabled) {
+  border-color: var(--color-faint);
+  color: var(--color-ink);
+}
+
+/* was .tokenbtn — quiet, no chrome until hover. */
+.ui-btn--ghost {
+  background: transparent;
+  color: var(--color-muted);
+  font-weight: 600;
+}
+.ui-btn--ghost:hover:not(:disabled) {
+  background: var(--color-active);
+  color: var(--color-ink-dim);
+}
+
+/* was .btn.danger — a destructive action that reads destructive at rest. */
+.ui-btn--danger {
+  background: transparent;
+  color: var(--color-danger);
+  font-weight: 600;
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+}
+.ui-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+
+/* was .abtn.danger — neutral at rest, red on hover. Distinct from the above
+   on purpose: these sit in a row of ordinary actions (Delete beside Watch). */
+.ui-btn--dangerQuiet {
+  background: var(--color-active);
+  color: var(--color-ink-dim);
+  border-color: var(--color-border);
+}
+.ui-btn--dangerQuiet:hover:not(:disabled) {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 50%, transparent);
+}
+
+/* was .abtn.gold — the "Kept forever" favourite state. peeq-only. */
+.ui-btn--gold {
+  background: color-mix(in srgb, var(--color-kept) 12%, transparent);
+  color: var(--color-kept);
+  border-color: var(--color-accent-dim);
+}
+
+/* was .abtn.accent — Re-download on a failed card. peeq-only. */
+.ui-btn--tinted {
+  background: color-mix(in srgb, var(--color-accent-strong) 12%, transparent);
+  color: var(--color-accent-strong);
+  border-color: var(--color-accent-dim);
+}
+.ui-btn--tinted:hover:not(:disabled) {
+  border-color: var(--color-accent-strong);
+}
+
+/* pressed state for toggles (the captions button) — was .abtn.cc-btn.on. */
+.ui-btn.is-on {
+  background: var(--color-accent-fill);
+  border-color: var(--color-accent);
+  color: var(--color-ink);
+}
+/* success confirmation on an icon button (Copy -> Copied). */
+.ui-btn.is-ok {
+  color: var(--color-online);
 }

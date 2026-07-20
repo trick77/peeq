@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../icons";
-import { Button, Spinner } from "../ui";
+import { Button, Spinner, buttonClass } from "../ui";
 import { Scrubber } from "../components/Scrubber";
 import { getVideo, setFavorite, setWatched, setResume, deleteVideo, redownload, streamUrl } from "../api/videos";
 import { resummarize, subtitlesUrl } from "../api/search";
@@ -491,30 +491,32 @@ export function Player({
             {video.filesize_bytes ? <span className="pill">{formatSize(video.filesize_bytes)}</span> : null}
           </div>
           <div className="playacts">
-            <button
+            <Button
               type="button"
-              className={`abtn${video.favorite ? " gold" : ""}`}
+              variant={video.favorite ? "gold" : "secondary"}
               onClick={handleToggleFavorite}
             >
               <Icon name={video.favorite ? "starFilled" : "star"} size="17px" />
               <span>{video.favorite ? "Kept forever" : "Keep forever"}</span>
-            </button>
-            <button type="button" className="abtn" onClick={handleToggleWatched}>
+            </Button>
+            <Button type="button" variant="secondary" onClick={handleToggleWatched}>
               <Icon name="check" size="17px" /> {video.watched ? "Mark unwatched" : "Mark watched"}
-            </button>
+            </Button>
             {video.has_subtitles && (
-              <button
+              <Button
                 type="button"
-                className={`abtn cc-btn${ccOn ? " on" : ""}`}
+                variant="secondary"
+                className={ccOn ? "is-on" : undefined}
+                aria-pressed={ccOn}
                 onClick={handleToggleCC}
               >
                 <Icon name="captions" size="17px" /> CC
-              </button>
+              </Button>
             )}
-            <button type="button" className="abtn danger" onClick={handleDelete}>
+            <Button type="button" variant="dangerQuiet" onClick={handleDelete}>
               <Icon name="trash" size="17px" /> Delete
-            </button>
-            <a className="abtn" href={video.url} target="_blank" rel="noreferrer">
+            </Button>
+            <a className={buttonClass("secondary")} href={video.url} target="_blank" rel="noreferrer">
               <Icon name="externalLink" size="17px" /> Watch on YouTube
             </a>
             {(video.status === "error" || video.status === "tombstoned") && (

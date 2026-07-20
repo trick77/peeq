@@ -270,9 +270,9 @@ export function Settings() {
         ) : null}
         {settings.youtube_paused ? (
           <div className="field-row" style={{ marginTop: 12 }}>
-            <button type="button" className="btn primary" onClick={() => handleToggleYoutubePause(false)}>
+            <Button type="button" onClick={() => handleToggleYoutubePause(false)}>
               Resume
-            </button>
+            </Button>
           </div>
         ) : null}
       </section>
@@ -367,9 +367,9 @@ export function Settings() {
               generate a new one — the old one stops working.
             </p>
             <div className="field-row">
-              <button type="button" className="btn ghost" onClick={() => setFreshToken(null)}>
+              <Button type="button" variant="secondary" onClick={() => setFreshToken(null)}>
                 Done
-              </button>
+              </Button>
             </div>
           </div>
         ) : tokenPresent ? (
@@ -378,14 +378,14 @@ export function Settings() {
               {tokenCreatedAt ? `Created ${new Date(tokenCreatedAt).toLocaleString()}` : "Token is set up."}
             </p>
             <div className="field-row">
-              <button
+              <Button
                 type="button"
-                className="btn ghost"
+                variant="secondary"
                 disabled={tokenConfirming || tokenBusy}
                 onClick={() => setTokenConfirming(true)}
               >
                 Generate a new token
-              </button>
+              </Button>
               <span className="meta">The current token stops working immediately.</span>
             </div>
             {tokenConfirming ? (
@@ -395,12 +395,12 @@ export function Settings() {
                   Generate a new token? Your extension will stop sending cookies until you paste the new
                   one.
                 </span>
-                <button type="button" className="btn danger sm" disabled={tokenBusy} onClick={handleCreateToken}>
+                <Button type="button" variant="danger" small busy={tokenBusy} onClick={handleCreateToken}>
                   Generate
-                </button>
-                <button type="button" className="btn ghost sm" onClick={() => setTokenConfirming(false)}>
+                </Button>
+                <Button type="button" variant="secondary" small onClick={() => setTokenConfirming(false)}>
                   Cancel
-                </button>
+                </Button>
               </div>
             ) : null}
           </>

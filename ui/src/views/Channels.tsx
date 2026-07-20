@@ -247,18 +247,22 @@ export function Channels() {
                 placeholder="Format override (optional)"
                 aria-label="Format override"
               />
-              <button type="button" className={`abtn${c.subscribed ? " gold" : ""}`} onClick={() => handleToggleSubscribe(c)}>
+              <Button
+                type="button"
+                variant={c.subscribed ? "gold" : "secondary"}
+                onClick={() => handleToggleSubscribe(c)}
+              >
                 <Icon name={c.subscribed ? "starFilled" : "star"} size="16px" />
                 {c.subscribed ? "Unsubscribe" : "Subscribe"}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="abtn danger"
+                variant="dangerQuiet"
                 onClick={() => handleDelete(c)}
                 aria-label={`Delete ${c.name}`}
               >
                 <Icon name="trash" size="16px" /> Delete
-              </button>
+              </Button>
             </div>
           </div>
         ))}

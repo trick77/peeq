@@ -58,64 +58,39 @@ export const controlStyle: CSSProperties = {
   outline: "none",
 };
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "tinted";
+export type ButtonVariant =
+  | "primary"
+  | "secondary"
+  | "ghost"
+  | "danger"
+  /** Neutral at rest, red on hover — for a Delete sitting in a row of ordinary actions. */
+  | "dangerQuiet"
+  /** peeq-only: the "Kept forever" favourite state. */
+  | "gold"
+  /** peeq-only: Re-download on a failed card. */
+  | "tinted";
 
-const variantStyle: Record<ButtonVariant, CSSProperties> = {
-  // peeq's existing primary colour — deliberately not music's --color-accent-fill.
-  primary: {
-    background: "var(--color-accent)",
-    color: "var(--color-bg)",
-    fontWeight: 600,
-    border: "1px solid transparent",
-    boxShadow: "0 8px 24px -10px var(--glow-accent)",
-  },
-  secondary: {
-    background: "var(--color-active)",
-    color: "var(--color-ink-dim)",
-    fontWeight: 500,
-    border: "1px solid var(--color-border)",
-  },
-  ghost: {
-    background: "transparent",
-    color: "var(--color-accent-strong)",
-    fontWeight: 500,
-    border: "1px solid transparent",
-  },
-  danger: {
-    background: "transparent",
-    color: "var(--color-danger)",
-    fontWeight: 600,
-    border: "1px solid color-mix(in srgb, var(--color-danger) 35%, transparent)",
-  },
-  // peeq-only: the old .abtn.accent, kept verbatim.
-  tinted: {
-    background: "color-mix(in srgb, var(--color-accent-strong) 12%, transparent)",
-    color: "var(--color-accent-strong)",
-    fontWeight: 500,
-    border: "1px solid var(--color-accent-dim)",
-  },
-};
-
-/** Raw button style object (height 40 / radius 10 / 15px), for call sites needing a style. */
-export function buttonStyle(
+/**
+ * Buttons style through CSS classes, NOT an inline style object.
+ *
+ * music's ui.tsx returns inline styles, which works there because its buttons
+ * have no hover states. peeq's do — .abtn:hover, .abtn.danger:hover and the
+ * captions toggle all change on hover — and an inline style beats a CSS :hover
+ * rule, so porting that approach verbatim would have silently dropped them.
+ * Keep the visual definition in index.css under .ui-btn.
+ */
+export function buttonClass(
   variant: ButtonVariant = "primary",
   opts?: { small?: boolean; icon?: boolean },
-): CSSProperties {
-  const small = opts?.small ?? false;
-  const icon = opts?.icon ?? false;
-  return {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    minHeight: small || icon ? 32 : 40,
-    ...(icon ? { width: 32, padding: 0, flex: "none" } : { padding: small ? "0 12px" : "0 16px" }),
-    borderRadius: "var(--radius-ui)",
-    fontFamily: "var(--font-sans)",
-    fontSize: small ? "var(--text-label)" : "var(--text-ui)",
-    cursor: "pointer",
-    ...variantStyle[variant],
-  };
+): string {
+  return [
+    "ui-btn",
+    `ui-btn--${variant}`,
+    opts?.small ? "ui-btn--sm" : null,
+    opts?.icon ? "ui-btn--icon" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /** Spinner — every async wait spins. Never an ellipsis in the label. */
@@ -139,7 +114,7 @@ type ButtonProps = {
 
 /**
  * Button — the one button primitive. Replaces .btn, .abtn and .tokenbtn.
- * Disabled/busy convention: opacity 0.6, spinner when busy.
+ * Busy shows a spinner and disables the button; the label stays, without an ellipsis.
  */
 export function Button({
   variant = "primary",
@@ -147,20 +122,15 @@ export function Button({
   icon,
   busy,
   disabled,
+  className,
   children,
-  style,
   ...rest
 }: ButtonProps) {
-  const off = disabled || busy;
   return (
     <button
       {...rest}
-      disabled={off}
-      style={{
-        ...buttonStyle(variant, { small, icon }),
-        ...(off ? { opacity: 0.6, cursor: "default" } : null),
-        ...style,
-      }}
+      disabled={disabled || busy}
+      className={[buttonClass(variant, { small, icon }), className].filter(Boolean).join(" ")}
     >
       {busy && <Spinner size={small || icon ? "13px" : "15px"} />}
       {children}
