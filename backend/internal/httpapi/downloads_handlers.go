@@ -126,14 +126,14 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 		ThumbnailPath:   meta.Thumbnail,
 		Availability:    videos.NormalizeAvailability(meta.Availability),
 	}); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "save video failed")
+		serverError(w, r, err, "save video failed")
 		return
 	}
 	// Upsert deliberately never touches status (so re-running metadata on an
 	// already-downloaded video can't wipe its state); a fresh add must be
 	// marked 'queued' explicitly.
 	if err := s.videos.SetStatus(videoID, "queued", ""); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "save video failed")
+		serverError(w, r, err, "save video failed")
 		return
 	}
 
@@ -146,7 +146,7 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 
 	jobID, err := s.jobs.Enqueue(videoID, downloadPriority)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "enqueue job failed")
+		serverError(w, r, err, "enqueue job failed")
 		return
 	}
 
@@ -169,7 +169,7 @@ func (s *server) handleDownloadsList(w http.ResponseWriter, r *http.Request) {
 	}
 	all, err := s.jobs.List()
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "list downloads failed")
+		serverError(w, r, err, "list downloads failed")
 		return
 	}
 
@@ -228,7 +228,7 @@ func (s *server) handlePauseYoutube(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.settings.SetYoutubePaused(r.Context(), true, ""); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "pause failed")
+		serverError(w, r, err, "pause failed")
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -242,7 +242,7 @@ func (s *server) handleResumeYoutube(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.settings.SetYoutubePaused(r.Context(), false, ""); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "resume failed")
+		serverError(w, r, err, "resume failed")
 		return
 	}
 	if s.onResumeYoutube != nil {
@@ -271,7 +271,7 @@ func (s *server) handleDownloadsCancel(w http.ResponseWriter, r *http.Request) {
 	case s.jobs != nil:
 		canceled, err = s.jobs.Cancel(jobID)
 		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "cancel failed")
+			serverError(w, r, err, "cancel failed")
 			return
 		}
 	default:
@@ -299,7 +299,7 @@ func (s *server) handleDownloadsStream(w http.ResponseWriter, r *http.Request) {
 	}
 	writer, err := sse.NewWriter(w)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "streaming not supported")
+		serverError(w, r, err, "streaming not supported")
 		return
 	}
 

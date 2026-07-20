@@ -44,10 +44,38 @@ import (
 )
 
 func main() {
+	// Configure structured logging with an explicit handler so every line
+	// carries an RFC3339 timestamp (the package default does not guarantee
+	// one). Installed before anything else so the startup banner and any
+	// config-load failure are timestamped too. Level: BACKEND_LOG_LEVEL.
+	logLevel := parseLogLevel(envDefault("BACKEND_LOG_LEVEL", "info"))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	slog.Info("starting peeq", "version", version.Version)
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
+	}
+}
+
+func envDefault(key, def string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return def
+}
+
+// parseLogLevel maps a BACKEND_LOG_LEVEL string to a slog.Level, defaulting to
+// Info for empty or unrecognized values.
+func parseLogLevel(raw string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
 	}
 }
 
@@ -333,7 +361,15 @@ func run() error {
 	}
 	handler := httpapi.New(deps)
 
-	srv := &http.Server{Addr: cfg.Addr, Handler: handler}
+	srv := &http.Server{
+		Addr:    cfg.Addr,
+		Handler: handler,
+		// net/http writes its own failures (request-parse errors, superfluous
+		// WriteHeader, TLS handshake failures) here. Without this they bypass
+		// slog entirely: unstructured, untimestamped, unfiltered by
+		// BACKEND_LOG_LEVEL.
+		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
+	}
 
 	err = serve(ctx, srv, sseHub)
 	// serve can return either because ctx was cancelled (signal) or because

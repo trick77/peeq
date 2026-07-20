@@ -106,13 +106,13 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	// best-effort from the pasted url only (never derived from the UCID).
 	handle := channelHandleFromURL(req.URL)
 	if err := s.channels.Upsert(channels.Channel{ID: ucid, Name: name, Handle: handle}); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "track channel failed")
+		serverError(w, r, err, "track channel failed")
 		return
 	}
 	if req.Subscribe {
 		now := time.Now().UTC().Format("2006-01-02 15:04:05")
 		if err := s.channels.Subscribe(ucid, now); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "subscribe failed")
+			serverError(w, r, err, "subscribe failed")
 			return
 		}
 	}
@@ -166,7 +166,7 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.channels.List(filter)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "list channels failed")
+		serverError(w, r, err, "list channels failed")
 		return
 	}
 	out := make([]channelItem, 0, len(items))
@@ -204,7 +204,7 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	// than being reset to the zero value by a partial PUT.
 	items, err := s.channels.List("subscribed")
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "load channel config failed")
+		serverError(w, r, err, "load channel config failed")
 		return
 	}
 	var current *channels.ListItem
@@ -230,7 +230,7 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := s.channels.UpdateConfig(id, autodownload, formatOverride)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "update config failed")
+		serverError(w, r, err, "update config failed")
 		return
 	}
 	if !ok {
@@ -250,7 +250,7 @@ func (s *server) handleChannelsSubscribe(w http.ResponseWriter, r *http.Request)
 	id := r.PathValue("id")
 	c, err := s.channels.Get(id)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "get channel failed")
+		serverError(w, r, err, "get channel failed")
 		return
 	}
 	if c == nil {
@@ -259,7 +259,7 @@ func (s *server) handleChannelsSubscribe(w http.ResponseWriter, r *http.Request)
 	}
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	if err := s.channels.Subscribe(id, now); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "subscribe failed")
+		serverError(w, r, err, "subscribe failed")
 		return
 	}
 	writeJSON(w, map[string]string{"status": "subscribed"})
@@ -275,7 +275,7 @@ func (s *server) handleChannelsUnsubscribe(w http.ResponseWriter, r *http.Reques
 	id := r.PathValue("id")
 	ok, err := s.channels.Unsubscribe(id)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "unsubscribe failed")
+		serverError(w, r, err, "unsubscribe failed")
 		return
 	}
 	if !ok {
@@ -308,7 +308,7 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 	// 1. Read refs BEFORE deleting (we need media paths after the rows are gone).
 	refs, err := s.channels.VideoRefs(id)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "delete failed")
+		serverError(w, r, err, "delete failed")
 		return
 	}
 	// 2. Cancel any active jobs for those videos (kills a live child). The
@@ -327,7 +327,7 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	// 3. Delete rows (FK-cascades jobs, subscription, ledger).
 	if err := s.channels.DeleteCascade(id); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "delete failed")
+		serverError(w, r, err, "delete failed")
 		return
 	}
 	// 4. Unlink media/thumbnail files (plus subtitle sidecars) using the refs
@@ -364,7 +364,7 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.ledger.ListPending()
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "list pending failed")
+		serverError(w, r, err, "list pending failed")
 		return
 	}
 	out := make([]pendingItem, 0, len(items))
@@ -412,7 +412,7 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	// downloaded.
 	if v, verr := s.videos.Get(e.VideoID); verr == nil && v != nil && v.Status == "downloaded" {
 		if err := s.ledger.SetState(e.VideoID, "queued"); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "update pending failed")
+			serverError(w, r, err, "update pending failed")
 			return
 		}
 		writeJSON(w, map[string]string{"status": "already_downloaded"})
@@ -425,19 +425,19 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 		ChannelID:       e.ChannelID,
 		DurationSeconds: int64(e.DurationSeconds),
 	}); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "save video failed")
+		serverError(w, r, err, "save video failed")
 		return
 	}
 	if err := s.videos.SetStatus(e.VideoID, "queued", ""); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "save video failed")
+		serverError(w, r, err, "save video failed")
 		return
 	}
 	if _, err := s.jobs.Enqueue(e.VideoID, downloadPriority); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "enqueue failed")
+		serverError(w, r, err, "enqueue failed")
 		return
 	}
 	if err := s.ledger.SetState(e.VideoID, "queued"); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "update pending failed")
+		serverError(w, r, err, "update pending failed")
 		return
 	}
 	writeJSON(w, map[string]string{"status": "queued"})
@@ -458,7 +458,7 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.ledger.SetState(id, "ignored"); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "ignore failed")
+		serverError(w, r, err, "ignore failed")
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ignored"})

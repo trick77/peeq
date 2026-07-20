@@ -29,7 +29,6 @@ type Config struct {
 	AuthMode      AuthMode
 	OIDC          OIDCConfig
 	Dev           DevUserConfig
-	LogLevel      string
 
 	// AI integration: chat + embeddings endpoints (required at boot).
 	ChatBaseURL    string
@@ -88,7 +87,6 @@ func Load() (Config, error) {
 		MediaDir:      env("BACKEND_MEDIA_DIR", "/data/media"),
 		YtdlpDir:      env("BACKEND_YTDLP_DIR", "/data/bin"),
 		AuthMode:      AuthMode(env("BACKEND_AUTH_MODE", "")),
-		LogLevel:      env("BACKEND_LOG_LEVEL", "info"),
 		OIDC: OIDCConfig{
 			Issuer:                env("BACKEND_OIDC_ISSUER", ""),
 			ClientID:              env("BACKEND_OIDC_CLIENT_ID", ""),

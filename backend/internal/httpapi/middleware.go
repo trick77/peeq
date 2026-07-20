@@ -1,0 +1,102 @@
+package httpapi
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"runtime/debug"
+	"time"
+)
+
+// recovery converts panics in downstream handlers into 500 responses. Without
+// it, a handler panic bypasses slog entirely and lands on stderr in Go's
+// default log format.
+func recovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("panic recovered", "err", rec, "path", r.URL.Path, "stack", string(debug.Stack()))
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the response status code.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rec *statusRecorder) WriteHeader(code int) {
+	rec.status = code
+	rec.ResponseWriter.WriteHeader(code)
+}
+
+func (rec *statusRecorder) Write(b []byte) (int, error) {
+	if rec.status == 0 {
+		rec.status = http.StatusOK
+	}
+	return rec.ResponseWriter.Write(b)
+}
+
+// Flush forwards flushes so the SSE handlers (/api/downloads/stream) keep
+// working through the wrapper.
+func (rec *statusRecorder) Flush() {
+	if f, ok := rec.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the underlying writer for http.ResponseController, which the
+// video range-streaming handler relies on.
+func (rec *statusRecorder) Unwrap() http.ResponseWriter {
+	return rec.ResponseWriter
+}
+
+// ReadFrom forwards to the underlying writer's sendfile fast path. io.Copy
+// type-asserts the destination directly and does not follow Unwrap, so
+// without this every streamed video byte round-trips through userspace.
+func (rec *statusRecorder) ReadFrom(r io.Reader) (int64, error) {
+	if rec.status == 0 {
+		rec.status = http.StatusOK
+	}
+	if rf, ok := rec.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(rec.ResponseWriter, r)
+}
+
+// logging logs each request with method, path, status, and duration.
+// Deliberately logs r.URL.Path and never the query string: the OIDC callback
+// URL carries a live auth code and state.
+func logging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+		if rec.status == 0 {
+			rec.status = http.StatusOK
+		}
+		// Level reflects the outcome so failures stand out instead of drowning in
+		// the INFO request stream: 5xx -> ERROR, 4xx -> WARN, otherwise INFO.
+		level := slog.LevelInfo
+		switch {
+		case rec.status >= 500:
+			level = slog.LevelError
+		case rec.status >= 400:
+			level = slog.LevelWarn
+		}
+		slog.LogAttrs(r.Context(), level, "request",
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Int("status", rec.status),
+			slog.String("dur", time.Since(start).String()),
+		)
+	})
+}

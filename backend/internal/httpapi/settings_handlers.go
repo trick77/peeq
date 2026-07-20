@@ -34,7 +34,7 @@ func (s *server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	got, err := s.settings.Get(r.Context())
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to load settings")
+		serverError(w, r, err, "failed to load settings")
 		return
 	}
 	writeJSON(w, got)
@@ -83,12 +83,12 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		MinVideoDurationSeconds: req.MinVideoDurationSeconds,
 	}
 	if err := s.settings.Update(r.Context(), patch); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to update settings")
+		serverError(w, r, err, "failed to update settings")
 		return
 	}
 	got, err := s.settings.Get(r.Context())
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to load settings")
+		serverError(w, r, err, "failed to load settings")
 		return
 	}
 	writeJSON(w, got)
@@ -153,7 +153,7 @@ func (s *server) applyCookie(w http.ResponseWriter, r *http.Request, minimalAck 
 	}
 	got, err := s.settings.Get(r.Context())
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to load settings")
+		serverError(w, r, err, "failed to load settings")
 		return
 	}
 	writeJSON(w, got)
@@ -176,7 +176,7 @@ func (s *server) handleCookieHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	got, err := s.settings.Get(r.Context())
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to load settings")
+		serverError(w, r, err, "failed to load settings")
 		return
 	}
 	writeJSON(w, cookieHealthResponse{

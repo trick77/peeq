@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/trick77/peeq/internal/auth"
@@ -33,6 +34,12 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	claims, err := s.authSvc.HandleCallback(r)
 	s.authSvc.ClearOIDCCookies(w)
 	if err != nil {
+		// The browser only ever sees the generic code — the five distinct
+		// failure modes in HandleCallback (bad state, bad nonce, code
+		// exchange rejected, token verification failed) are otherwise
+		// indistinguishable from the outside, which makes a misconfigured
+		// provider undebuggable.
+		slog.Warn("oidc callback failed", "err", redactErr(err))
 		http.Redirect(w, r, "/?auth_error=oidc_callback_failed", http.StatusFound)
 		return
 	}
@@ -48,7 +55,7 @@ func (s *server) createSessionFromClaims(w http.ResponseWriter, r *http.Request,
 	}
 	session, _, err := s.authSvc.CreateSessionFromClaims(r.Context(), claims)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "session create failed")
+		serverError(w, r, err, "session create failed")
 		return
 	}
 	http.SetCookie(w, s.authSvc.CookieFor(session.Token, session.ExpiresAt))
@@ -61,7 +68,11 @@ func (s *server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil {
-		_ = s.authSvc.Revoke(r.Context(), cookie.Value)
+		if err := s.authSvc.Revoke(r.Context(), cookie.Value); err != nil {
+			// The cookie is cleared regardless, but a session left live in
+			// the DB is security-relevant — don't let it vanish silently.
+			slog.Error("session revoke failed", "err", redactErr(err))
+		}
 	}
 	http.SetCookie(w, s.authSvc.ClearCookie())
 	writeJSON(w, map[string]string{"redirectUrl": "/"})
