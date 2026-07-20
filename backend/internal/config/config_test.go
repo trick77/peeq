@@ -21,7 +21,7 @@ func TestLoad_devAuthLoopbackOK(t *testing.T) {
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	t.Setenv("BACKEND_PUBLIC_URL", "")
-	t.Setenv("BACKEND_MIMO_BASE_URL", "http://mimo")
+	t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
 	t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
 	t.Setenv("BACKEND_EMBED_MODEL", "e5")
 	if _, err := Load(); err != nil {
@@ -44,7 +44,7 @@ func TestLoad_allowAnonymousYoutube_requiresDevAuth(t *testing.T) {
 	t.Cleanup(os.Clearenv)
 	base := map[string]string{
 		"BACKEND_SESSION_SECRET":          "s",
-		"BACKEND_MIMO_BASE_URL":           "http://mimo",
+		"BACKEND_CHAT_BASE_URL":           "http://chat",
 		"BACKEND_EMBED_BASE_URL":          "http://emb",
 		"BACKEND_EMBED_MODEL":             "e5",
 		"BACKEND_ALLOW_ANONYMOUS_YOUTUBE": "true",
@@ -98,7 +98,7 @@ func TestLoad_allowAnonymousYoutube_defaultFalse(t *testing.T) {
 	t.Setenv("BACKEND_SESSION_SECRET", "x")
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
-	t.Setenv("BACKEND_MIMO_BASE_URL", "http://mimo")
+	t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
 	t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
 	t.Setenv("BACKEND_EMBED_MODEL", "e5")
 	cfg, err := Load()
@@ -113,7 +113,7 @@ func TestLoad_allowAnonymousYoutube_defaultFalse(t *testing.T) {
 func TestLoadRequiresAIEndpoints(t *testing.T) {
 	base := map[string]string{
 		"BACKEND_SESSION_SECRET": "s", "BACKEND_AUTH_MODE": "dev", "BACKEND_ADDR": "127.0.0.1:8080",
-		"BACKEND_MIMO_BASE_URL": "http://mimo", "BACKEND_EMBED_BASE_URL": "http://emb", "BACKEND_EMBED_MODEL": "e5",
+		"BACKEND_CHAT_BASE_URL": "http://chat", "BACKEND_EMBED_BASE_URL": "http://emb", "BACKEND_EMBED_MODEL": "e5",
 	}
 	setEnv := func(m map[string]string) {
 		os.Clearenv()
@@ -126,10 +126,10 @@ func TestLoadRequiresAIEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected ok, got %v", err)
 	}
-	if cfg.MimoBaseURL != "http://mimo" || cfg.EmbedModel != "e5" || cfg.EmbedDim != 1536 || cfg.DefaultSubLang != "en" {
+	if cfg.ChatBaseURL != "http://chat" || cfg.EmbedModel != "e5" || cfg.EmbedDim != 1536 || cfg.DefaultSubLang != "en" {
 		t.Fatalf("defaults wrong: %+v", cfg)
 	}
-	for _, drop := range []string{"BACKEND_MIMO_BASE_URL", "BACKEND_EMBED_BASE_URL", "BACKEND_EMBED_MODEL"} {
+	for _, drop := range []string{"BACKEND_CHAT_BASE_URL", "BACKEND_EMBED_BASE_URL", "BACKEND_EMBED_MODEL"} {
 		m := map[string]string{}
 		for k, v := range base {
 			m[k] = v

@@ -162,7 +162,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// Classify into one fixed-enum category from the stored summary. This is
 	// best-effort: a classify error or invalid reply leaves the category at
 	// its 'uncategorized' default and must NOT fail the job (the summary is
-	// already stored). Same MiMo client + throttle/pause path as summarize.
+	// already stored). Same chat client + throttle/pause path as summarize.
 	if raw, cerr := w.d.Summarizer.Classify(ctx, video.Title, art.Summary, videos.CategoryIDs()); cerr != nil {
 		w.d.Logger.Warn("summarize worker: classify failed", "video_id", video.ID, "err", cerr)
 	} else if serr := w.d.Videos.SetCategory(video.ID, videos.NormalizeCategory(raw)); serr != nil {

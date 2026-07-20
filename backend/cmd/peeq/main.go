@@ -151,8 +151,8 @@ func run() error {
 	embedClient := rag.NewEmbedClient(rag.EmbedConfig{
 		BaseURL: cfg.EmbedBaseURL, APIKey: cfg.EmbedAPIKey, Model: cfg.EmbedModel,
 	}, nil)
-	mimoClient := llm.NewClient(llm.Config{BaseURL: cfg.MimoBaseURL, APIKey: cfg.MimoAPIKey}, nil)
-	summarizer := summarize.New(mimoClient)
+	chatClient := llm.NewClient(llm.Config{BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey}, nil)
+	summarizer := summarize.New(chatClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

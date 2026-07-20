@@ -4,6 +4,12 @@ node_modules/
 test-results/
 playwright-report/
 .env
+# Any .env variant — backups, per-host copies, editor swap files. A bare `.env`
+# rule leaves `.env.bak`/`.env.local` untracked-but-committable, which is how
+# real API keys get staged by an unlucky `git add -A`. `.env.example` is
+# re-included below because it carries no secrets.
+.env.*
+!.env.example
 /data/
 .superpowers/
 backend/web/dist/*
