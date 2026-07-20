@@ -177,7 +177,7 @@
       <span class="chip">base <b>0d1301a</b></span>
       <span class="chip">image <b>debian:13-slim</b></span>
       <span class="chip"><span class="dot on"></span>runtime <b>deno 2.9.3</b></span>
-      <span class="chip"><span class="dot wait"></span>status <b>awaiting A/B</b></span>
+      <span class="chip"><span class="dot on"></span>status <b>approved — planning</b></span>
     </div>
   </header>
 
@@ -339,9 +339,25 @@
   </section>
 
   <section>
-    <h2>The open gate</h2>
+    <h2>Why there is no A/B gate</h2>
     <div class="note open">
-      <h3>The authenticated A/B decides the framing, not the design</h3>
+      <h3>Considered, then dropped — and why that is not a lowered bar</h3>
+      <p><strong>The A/B was designed to answer “is this worth spending a day on?” The slice turned
+        out to be one <code>COPY</code> line plus a small boot probe.</strong> The cost-benefit that
+        justified the test collapsed when the work shrank. Decisively: <em>the outcome could not
+        change the action</em> — formats gained meant ship, null meant ship anyway as insurance
+        against a deprecated path. A test that cannot change a decision is ritual, not a gate, and
+        this one is not free: it spends authenticated calls on an account that has already tripped
+        an hour-long lock.</p>
+      <p>A null would also have been uninformative for the real risk. The value of a runtime is not
+        mainly today's format count — it is that the Python fallback must be re-derived by hand at
+        every player change and fails <em>silently</em>. <strong>That risk is inherently
+        unmeasurable today.</strong> A green result this afternoon says nothing about the next
+        player rotation.</p>
+      <p>The evidence bar was met by other means: deno auto-detection confirmed in a container,
+        the image build verified, Debian's node empirically rejected, the mechanism read from
+        upstream source. The authenticated question survives where it can still change a decision
+        — retiring the anonymous hatch, scoped as a separate slice below.</p>
       <p>peeq's records show <em>authenticated</em> requests serving no usable formats while
         anonymous ones worked — the reason <code>BACKEND_ALLOW_ANONYMOUS_YOUTUBE</code> exists.
         yt-dlp says degradation is severe specifically for logged-in users. These may be the same
@@ -350,16 +366,8 @@
         rotated, server-side-dead cookie. On a stale cookie the A/B is uninterpretable and a false
         null could wrongly kill a nearly-free change. The script confirms the cookie is live
         first, then A/Bs on that same live cookie. Two calls, spaced 25 s.</p>
-      <div class="verdict-slot">VERDICT: ______________________  (awaiting run)
-GAINED with runtime: ______________________</div>
+      <div class="verdict-slot">PROOF AFTER DEPLOY: boot log reports deno-2.9.3, and a real download completes.</div>
     </div>
-    <ul>
-      <li><strong>Formats gained</strong> → live fix; peeq is archiving degraded copies today, and
-        retiring the anonymous hatch becomes a candidate follow-up.</li>
-      <li><strong>Null again</strong> → the value is protection against a silent-breakage path
-        yt-dlp has deprecated and says will worsen. Still worth it at this price — but stated
-        honestly as insurance, not a rescue.</li>
-    </ul>
   </section>
 
   <section>
