@@ -36,7 +36,7 @@ func (s *server) handleVideoSubtitles(w http.ResponseWriter, r *http.Request) {
 
 	stat, err := f.Stat()
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "subtitles not available")
+		serverError(w, r, err, "subtitles not available")
 		return
 	}
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")

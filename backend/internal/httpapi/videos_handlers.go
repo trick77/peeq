@@ -132,7 +132,7 @@ func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 	}
 	all, err := s.videos.List(r.URL.Query().Get("filter"), r.URL.Query().Get("category"))
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "list videos failed")
+		serverError(w, r, err, "list videos failed")
 		return
 	}
 	out := make([]videoDTO, 0, len(all))
@@ -165,7 +165,7 @@ func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 	media.RemoveVideoFiles(s.mediaDir, v.MediaPath, v.ThumbnailPath, v.SubtitlePath)
 
 	if err := s.videos.Tombstone(v.ID); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "delete video failed")
+		serverError(w, r, err, "delete video failed")
 		return
 	}
 	writeJSON(w, map[string]string{"status": "tombstoned"})
@@ -192,7 +192,7 @@ func (s *server) handleFavoriteVideo(w http.ResponseWriter, r *http.Request) {
 		newVal = *req.Favorite
 	}
 	if err := s.videos.SetFavorite(v.ID, newVal); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "set favorite failed")
+		serverError(w, r, err, "set favorite failed")
 		return
 	}
 	writeJSON(w, map[string]bool{"favorite": newVal})
@@ -217,7 +217,7 @@ func (s *server) handleWatchedVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.videos.SetWatched(v.ID, *req.Watched); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "set watched failed")
+		serverError(w, r, err, "set watched failed")
 		return
 	}
 	writeJSON(w, map[string]bool{"watched": *req.Watched})
@@ -246,7 +246,7 @@ func (s *server) handleResumeVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.videos.SetResume(v.ID, *req.Position); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "set resume failed")
+		serverError(w, r, err, "set resume failed")
 		return
 	}
 	writeJSON(w, map[string]float64{"position": *req.Position})
@@ -286,7 +286,7 @@ func (s *server) handleStreamVideo(w http.ResponseWriter, r *http.Request) {
 
 	stat, err := f.Stat()
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "media not available")
+		serverError(w, r, err, "media not available")
 		return
 	}
 	http.ServeContent(w, r, filepath.Base(safe), stat.ModTime(), f)
@@ -321,7 +321,7 @@ func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
 
 	stat, err := f.Stat()
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "thumbnail not available")
+		serverError(w, r, err, "thumbnail not available")
 		return
 	}
 	http.ServeContent(w, r, filepath.Base(safe), stat.ModTime(), f)
@@ -352,15 +352,15 @@ func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
 	// freshly re-downloaded media within its next hourly pass. Mirrors the
 	// existing "un-watch rescues from the auto-delete sweep" rule from P1.
 	if err := s.videos.SetWatched(v.ID, false); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "reset watched state failed")
+		serverError(w, r, err, "reset watched state failed")
 		return
 	}
 	if err := s.videos.SetStatus(v.ID, "queued", ""); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "requeue failed")
+		serverError(w, r, err, "requeue failed")
 		return
 	}
 	if _, err := s.jobs.Enqueue(v.ID, downloadPriority); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "enqueue failed")
+		serverError(w, r, err, "enqueue failed")
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -377,7 +377,7 @@ func (s *server) lookupVideo(w http.ResponseWriter, r *http.Request) (*videos.Vi
 	id := r.PathValue("id")
 	v, err := s.videos.Get(id)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "get video failed")
+		serverError(w, r, err, "get video failed")
 		return nil, false
 	}
 	if v == nil {

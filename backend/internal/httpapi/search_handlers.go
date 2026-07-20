@@ -126,7 +126,7 @@ func (s *server) handleResummarize(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	v, err := s.videos.Get(id)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "get video failed")
+		serverError(w, r, err, "get video failed")
 		return
 	}
 	if v == nil {
@@ -145,11 +145,11 @@ func (s *server) handleResummarize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.videos.SetSummaryStatus(id, "pending", ""); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "reset summary status failed")
+		serverError(w, r, err, "reset summary status failed")
 		return
 	}
 	if _, err := s.summaryJobs.Enqueue(id); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "enqueue summary job failed")
+		serverError(w, r, err, "enqueue summary job failed")
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)

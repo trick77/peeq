@@ -55,7 +55,7 @@ func (s *server) createSessionFromClaims(w http.ResponseWriter, r *http.Request,
 	}
 	session, _, err := s.authSvc.CreateSessionFromClaims(r.Context(), claims)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "session create failed")
+		serverError(w, r, err, "session create failed")
 		return
 	}
 	http.SetCookie(w, s.authSvc.CookieFor(session.Token, session.ExpiresAt))
@@ -68,7 +68,11 @@ func (s *server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil {
-		_ = s.authSvc.Revoke(r.Context(), cookie.Value)
+		if err := s.authSvc.Revoke(r.Context(), cookie.Value); err != nil {
+			// The cookie is cleared regardless, but a session left live in
+			// the DB is security-relevant — don't let it vanish silently.
+			slog.Error("session revoke failed", "err", err)
+		}
 	}
 	http.SetCookie(w, s.authSvc.ClearCookie())
 	writeJSON(w, map[string]string{"redirectUrl": "/"})

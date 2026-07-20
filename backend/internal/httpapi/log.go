@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"errors"
+	"log/slog"
+	"net/http"
 	"regexp"
 )
 
@@ -49,4 +51,19 @@ func redactErr(err error) error {
 		return err
 	}
 	return errors.New(redacted)
+}
+
+// serverError logs the underlying cause of a 5xx with request context and
+// returns a generic JSON error to the client, so internal details never leak
+// to the browser. Every 500 path should go through here so failures are never
+// silent. Only r.URL.Path is logged — never the query string, which on the
+// OIDC callback carries a live auth code.
+func serverError(w http.ResponseWriter, r *http.Request, err error, clientMessage string) {
+	slog.Error("request failed",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"client_message", clientMessage,
+		"err", redactErr(err),
+	)
+	writeJSONError(w, http.StatusInternalServerError, clientMessage)
 }

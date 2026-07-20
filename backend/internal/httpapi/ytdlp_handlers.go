@@ -18,7 +18,7 @@ func (s *server) handleYTDLPVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.ytdlp.Version(r.Context())
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to read yt-dlp version")
+		serverError(w, r, err, "failed to read yt-dlp version")
 		return
 	}
 	writeJSON(w, ytdlpVersionResponse{Version: v})
@@ -33,7 +33,7 @@ func (s *server) handleYTDLPUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.ytdlp.UpdateLatest(r.Context())
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to update yt-dlp")
+		serverError(w, r, err, "failed to update yt-dlp")
 		return
 	}
 	writeJSON(w, ytdlpVersionResponse{Version: v})
