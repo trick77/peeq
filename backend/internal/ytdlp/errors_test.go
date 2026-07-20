@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestClassify feeds the exact stderr signatures yt-dlp is known to emit
@@ -146,7 +147,29 @@ func TestStderrTail_capsRunawayOutput(t *testing.T) {
 	got := stderrTail(huge)
 
 	if len(got) > maxStderrTail+len("…") {
-		t.Fatalf("tail not capped: %d chars", len(got))
+		t.Fatalf("tail not capped: %d bytes", len(got))
+	}
+}
+
+// TestStderrTail_truncatesOnRuneBoundary guards the cap against splitting a
+// multi-byte character. yt-dlp echoes video titles into its ERROR lines, so
+// non-ASCII at the cut point is routine; a byte-index slice would emit
+// invalid UTF-8 into the 502 body and the jobs.last_error column, where
+// encoding/json silently swaps in U+FFFD rather than failing loudly.
+func TestStderrTail_truncatesOnRuneBoundary(t *testing.T) {
+	// "世" is 3 bytes, so repeating it guarantees the byte cap lands
+	// mid-rune for at least some of the offsets tested below.
+	for _, pad := range []int{0, 1, 2} {
+		line := "ERROR: " + strings.Repeat("a", pad) + strings.Repeat("世", 400)
+
+		got := stderrTail(line)
+
+		if !utf8.ValidString(got) {
+			t.Fatalf("pad=%d: tail is not valid UTF-8: %q", pad, got)
+		}
+		if len(got) > maxStderrTail+len("…") {
+			t.Fatalf("pad=%d: tail not capped: %d bytes", pad, len(got))
+		}
 	}
 }
 

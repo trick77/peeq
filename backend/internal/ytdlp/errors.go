@@ -8,6 +8,7 @@ package ytdlp
 import (
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
 // Sentinel errors for failure families that apply across an entire run,
@@ -55,6 +56,13 @@ func (e *RetryableError) Error() string {
 // whether the cause was a dead cookie, a bot block, an extractor change,
 // or a missing JS runtime. Unwrap keeps errors.Is/As working against the
 // underlying *exec.ExitError.
+//
+// Stderr is propagated verbatim (trimmed only for length) and surfaces in
+// API error bodies and the jobs.last_error column. That is safe for the
+// current argv, which carries neither --verbose nor --print-traffic, so
+// yt-dlp never echoes cookie values. Do NOT add either flag without first
+// redacting here: with them, the cookie jar's contents reach stderr and
+// would be persisted and returned over HTTP.
 type ExecError struct {
 	Err    error  // the process error, normally *exec.ExitError
 	Stderr string // trimmed tail of yt-dlp's stderr
@@ -69,15 +77,18 @@ func (e *ExecError) Error() string {
 
 func (e *ExecError) Unwrap() error { return e.Err }
 
-// maxStderrTail bounds what an error carries: enough for the real reason,
-// not so much that a verbose run pushes a wall of text into an API
-// response body or a log line.
+// maxStderrTail bounds what an error carries, in bytes: enough for the
+// real reason, not so much that a verbose run pushes a wall of text into
+// an API response body or a log line.
 const maxStderrTail = 600
 
 // stderrTail reduces yt-dlp's stderr to the part worth reporting. yt-dlp
 // prints the actual failure on lines prefixed "ERROR:", usually after
 // noisier WARNING lines, so those win; otherwise the last non-empty lines
-// are used. The result is capped at maxStderrTail characters.
+// are used. The result is capped at maxStderrTail bytes, truncated on a
+// rune boundary — yt-dlp echoes video titles into its ERROR lines, so a
+// blind byte cut would routinely split a multi-byte character and emit
+// invalid UTF-8 into the API response and the jobs.last_error column.
 func stderrTail(stderr string) string {
 	var errLines, allLines []string
 	for _, line := range strings.Split(stderr, "\n") {
@@ -106,7 +117,13 @@ func stderrTail(stderr string) string {
 
 	out := strings.Join(lines, "; ")
 	if len(out) > maxStderrTail {
-		out = out[:maxStderrTail] + "…"
+		cut := maxStderrTail
+		// Back off to the start of the rune that straddles the cut, so the
+		// result is never left holding a partial multi-byte character.
+		for cut > 0 && !utf8.RuneStart(out[cut]) {
+			cut--
+		}
+		out = out[:cut] + "…"
 	}
 	return out
 }
