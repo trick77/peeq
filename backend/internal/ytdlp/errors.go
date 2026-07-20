@@ -145,6 +145,24 @@ func Classify(stderr string, exitErr error) error {
 		return &TerminalError{Reason: "private"}
 	case containsAny(s, "video is no longer available", "video unavailable"):
 		return &TerminalError{Reason: "deleted"}
+	// Channel-level deletion signatures. These are distinct from the
+	// video-level ones above: yt-dlp emits them when the CHANNEL itself is
+	// gone, which is exactly the case the auto-unsubscribe feature exists to
+	// detect — a per-video "video unavailable" says nothing about whether the
+	// channel is still there. Without these two lines matching, a deleted
+	// channel falls through to the generic ExecError branch below,
+	// staleUnsubscribe is never reached, and the whole feature never fires.
+	case containsAny(s,
+		// Verified against real yt-dlp output run against a nonexistent
+		// channel: "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube
+		// said: This channel does not exist."
+		"this channel does not exist",
+		// The known YouTube termination message. NOT verified against real
+		// yt-dlp output (no terminated channel was available to observe) —
+		// keep this comment until someone captures the real stderr line.
+		"this account has been terminated",
+	):
+		return &TerminalError{Reason: "deleted"}
 	case containsAny(s, "members-only", "join this channel"):
 		return &TerminalError{Reason: "members"}
 	case containsAny(s, "age-restricted", "confirm your age"):

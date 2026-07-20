@@ -63,6 +63,48 @@ func TestClassify(t *testing.T) {
 			},
 		},
 		{
+			// Verbatim stderr captured by running yt-dlp against a channel id
+			// that does not exist. This is the load-bearing case for the
+			// auto-unsubscribe feature: Task 1's Classify only matched
+			// video-level "unavailable" text, so a genuinely deleted CHANNEL
+			// never classified as TerminalError{Reason:"deleted"} and
+			// staleUnsubscribe was never reached. Asserting on this exact,
+			// observed line (rather than a hand-built TerminalError) is the
+			// point of this test — a fake string that merely "looks close"
+			// would not have caught the original bug.
+			name:   "channel does not exist",
+			stderr: "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This channel does not exist.",
+			check: func(t *testing.T, err error) {
+				var te *TerminalError
+				if !errors.As(err, &te) {
+					t.Fatalf("want *TerminalError, got %v", err)
+				}
+				if te.Reason != "deleted" {
+					t.Fatalf("Reason = %q, want %q", te.Reason, "deleted")
+				}
+			},
+		},
+		{
+			// UNVERIFIED BY OBSERVATION: this is YouTube's known account-
+			// termination wording, but no terminated channel was available to
+			// run yt-dlp against, so this exact stderr line has not been
+			// confirmed against the real binary the way the "does not exist"
+			// case above was. Keep classifying it as "deleted" — if the real
+			// wording differs, this test (not production behavior) is what's
+			// wrong, and should be corrected once a real sample is captured.
+			name:   "account terminated (unverified wording)",
+			stderr: "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This account has been terminated.",
+			check: func(t *testing.T, err error) {
+				var te *TerminalError
+				if !errors.As(err, &te) {
+					t.Fatalf("want *TerminalError, got %v", err)
+				}
+				if te.Reason != "deleted" {
+					t.Fatalf("Reason = %q, want %q", te.Reason, "deleted")
+				}
+			},
+		},
+		{
 			name:   "rate limited",
 			stderr: "ERROR: unable to download video data: HTTP Error 429: Too Many Requests",
 			check: func(t *testing.T, err error) {
@@ -86,6 +128,99 @@ func TestClassify(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			c.check(t, Classify(c.stderr, genericExit))
+		})
+	}
+}
+
+// TestClassify_channelDeletedSignatures verifies that channel-level
+// "deleted" signatures (channel does not exist, account terminated) are
+// recognized and classified as TerminalError{Reason:"deleted"}. This is
+// essential for auto-unsubscribe to work: a deleted channel looks different
+// from a deleted video, and this test ensures yt-dlp's channel-level
+// signatures do not collide with other error cases.
+func TestClassify_channelDeletedSignatures(t *testing.T) {
+	genericExit := fmt.Errorf("exit status 1")
+
+	for _, stderr := range []string{
+		"ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This channel does not exist.",
+		"ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This account has been terminated.",
+	} {
+		err := Classify(stderr, genericExit)
+		var te *TerminalError
+		if !errors.As(err, &te) {
+			t.Fatalf("%q: want *TerminalError, got %v", stderr, err)
+		}
+		if te.Reason != "deleted" {
+			t.Fatalf("%q: Reason = %q, want %q", stderr, te.Reason, "deleted")
+		}
+	}
+}
+
+// TestClassify_precedence pins the switch-case ordering in Classify, which
+// is safety-critical: if two signatures appear in the same stderr, the
+// earliest matching case in the switch decides the outcome. This matters most
+// for bot-block vs. channel-deleted: bot detection (line 140) must beat
+// channel deletion (line 155) to prevent misclassification. Concretely, when
+// YouTube's bot detection rejects a request to scan a deleted channel, the
+// stderr will contain both "confirm you're not a bot" and "channel does not
+// exist". If someone reorders the switch so deleted comes first, that stderr
+// would incorrectly classify as "deleted" instead of ErrBlocked, feeding
+// peeq's dead-scan counter during an untrustworthy bot-block. This test
+// prevents that reordering.
+func TestClassify_precedence(t *testing.T) {
+	genericExit := fmt.Errorf("exit status 1")
+
+	cases := []struct {
+		name              string
+		stderr            string
+		expectErrIs       error
+		expectTerminalReason string
+	}{
+		{
+			// Bot-block signature appears on one line, channel-deleted on
+			// another. Bot-block case comes earlier in switch, so it wins.
+			name: "bot-block beats channel-deleted",
+			stderr: "ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot\n" +
+				"ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This channel does not exist.",
+			expectErrIs: ErrBlocked,
+		},
+		{
+			// Cookie-expired signature on one line, channel-deleted on another.
+			// Cookie case comes earlier in switch, so it wins.
+			name: "cookie-expired beats channel-deleted",
+			stderr: "ERROR: [youtube] dQw4w9WgXcQ: The provided YouTube account cookies are no longer valid. Try using --cookies-from-browser instead\n" +
+				"ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This account has been terminated.",
+			expectErrIs: ErrCookieExpired,
+		},
+		{
+			// Channel-deleted alone: confirm it still works when no other
+			// signature is present.
+			name:              "channel-deleted alone",
+			stderr:            "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This channel does not exist.",
+			expectTerminalReason: "deleted",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := Classify(c.stderr, genericExit)
+
+			// If this case expects a sentinel error (ErrBlocked, ErrCookieExpired)
+			if c.expectErrIs != nil {
+				if !errors.Is(err, c.expectErrIs) {
+					t.Fatalf("want %v, got %v", c.expectErrIs, err)
+				}
+				return
+			}
+
+			// Otherwise, expect a TerminalError with a specific Reason
+			var te *TerminalError
+			if !errors.As(err, &te) {
+				t.Fatalf("want *TerminalError, got %v", err)
+			}
+			if c.expectTerminalReason != "" && te.Reason != c.expectTerminalReason {
+				t.Fatalf("Reason = %q, want %q", te.Reason, c.expectTerminalReason)
+			}
 		})
 	}
 }

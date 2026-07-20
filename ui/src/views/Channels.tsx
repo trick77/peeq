@@ -8,11 +8,16 @@ import {
   subscribeChannel,
   unsubscribeChannel,
   deleteChannel,
+  listAutoUnsubscribedChannels,
+  dismissDormantChannel,
+  resubscribeChannel,
   type ChannelFilter,
 } from "../api/channels";
 import { CookieRequiredError } from "../api/downloads";
 import { isChannelURL } from "../youtube";
-import type { Channel } from "../api/types";
+import type { AutoUnsubscribedChannel, Channel } from "../api/types";
+import { ReviewBand } from "./ReviewBand";
+import { AutoUnsubscribedSection } from "./AutoUnsubscribedSection";
 
 const CHIPS: { id: ChannelFilter; label: string }[] = [
   { id: "all", label: "All" },
@@ -38,6 +43,13 @@ export function Channels() {
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [added, setAdded] = useState<{ name: string; subscribed: boolean } | null>(null);
+  const [tombstones, setTombstones] = useState<AutoUnsubscribedChannel[]>([]);
+  // dormant is deliberately its own list, fetched with filter "all" rather
+  // than derived from `channels`. `channels` follows the active chip (e.g.
+  // "Auto-add"), so a dormant channel with autodownload off would silently
+  // drop out of the review band the moment that chip is selected — the one
+  // alert on the page that should never depend on which chip is lit.
+  const [dormant, setDormant] = useState<Channel[]>([]);
 
   // filterRef mirrors filter so the async handlers below can refetch the
   // filter that is active NOW. Reading `filter` after an await would use the
@@ -78,6 +90,30 @@ export function Channels() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
 
+  // The auto-unsubscribed list does not depend on the filter chips (it is
+  // its own, separate surface), so it loads once on mount rather than
+  // re-fetching every time the chip selection changes.
+  useEffect(() => {
+    listAutoUnsubscribedChannels()
+      .then(setTombstones)
+      .catch((e: Error) => setError(e.message));
+  }, []);
+
+  // loadDormant refreshes the review band's own list. Called on mount and
+  // again after anything that could add or remove a dormant channel
+  // (dismiss, unsubscribe, resubscribe) — never as a side effect of the
+  // filter chips.
+  function loadDormant() {
+    listChannels("all")
+      .then((cs) => setDormant(cs.filter((c) => c.dormant)))
+      .catch((e: Error) => setError(e.message));
+  }
+
+  useEffect(() => {
+    loadDormant();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // handleAdd tracks the pasted channel (subscribing too, if the box is
   // ticked). It always shows a confirmation line rather than relying on the
   // new row appearing: under a non-"all" chip the new channel often does not
@@ -117,6 +153,10 @@ export function Channels() {
   async function handleToggleSubscribe(c: Channel) {
     const next = !c.subscribed;
     applyLocalUpdate(c.id, { subscribed: next });
+    // A dormant channel unsubscribed from the review band itself must leave
+    // the band immediately — it lives in `dormant`, a separate list from
+    // `channels`, so applyLocalUpdate above does not touch it.
+    if (!next) setDormant((prev) => prev.filter((x) => x.id !== c.id));
     try {
       if (next) {
         await subscribeChannel(c.id);
@@ -124,8 +164,12 @@ export function Channels() {
         await unsubscribeChannel(c.id);
       }
       load(filterRef.current);
+      // Unsubscribing (from the main list or the review band itself) always
+      // clears dormancy — a channel can only be dormant while subscribed.
+      loadDormant();
     } catch (err) {
       applyLocalUpdate(c.id, { subscribed: c.subscribed });
+      if (!next) loadDormant();
       setError((err as Error).message);
     }
   }
@@ -160,6 +204,43 @@ export function Channels() {
     try {
       await deleteChannel(c.id);
       setChannels((prev) => prev.filter((x) => x.id !== c.id));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  // handleKeepDormant dismisses one channel's dormancy flag (the "Keep
+  // subscribed" action in the review band). Applied optimistically against
+  // the band's own `dormant` list — the row leaves the band immediately —
+  // and reverted with an error line on failure. Also patches `channels` in
+  // case the same channel happens to be visible under the active filter.
+  async function handleKeepDormant(c: Channel) {
+    setDormant((prev) => prev.filter((x) => x.id !== c.id));
+    applyLocalUpdate(c.id, { dormant: false });
+    try {
+      await dismissDormantChannel(c.id);
+    } catch (err) {
+      setDormant((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]));
+      applyLocalUpdate(c.id, { dormant: true });
+      setError((err as Error).message);
+    }
+  }
+
+  function handleKeepAllDormant() {
+    for (const c of dormant) {
+      handleKeepDormant(c);
+    }
+  }
+
+  // handleResubscribe restores a channel peeq auto-unsubscribed: the record
+  // drops out of the tombstone list and a full channel reload brings the
+  // channel back into the main list under whatever filter is active.
+  async function handleResubscribe(c: AutoUnsubscribedChannel) {
+    try {
+      await resubscribeChannel(c.id);
+      setTombstones((prev) => prev.filter((x) => x.id !== c.id));
+      load(filterRef.current);
+      loadDormant();
     } catch (err) {
       setError((err as Error).message);
     }
@@ -218,8 +299,14 @@ export function Channels() {
         ))}
       </div>
       {error ? <div className="errline">{error}</div> : null}
+      <ReviewBand
+        channels={dormant}
+        onKeep={handleKeepDormant}
+        onKeepAll={handleKeepAllDormant}
+        onUnsubscribe={handleToggleSubscribe}
+      />
       <div className="channel-list">
-        {channels.map((c) => (
+        {channels.filter((c) => !c.dormant).map((c) => (
           <div key={c.id} className="channel-row sect">
             <div className="channel-info">
               <h3 style={{ margin: 0, fontFamily: "var(--font-serif)", fontSize: 17, fontWeight: 500 }}>{c.name}</h3>
@@ -272,6 +359,7 @@ export function Channels() {
           {filter === "all" ? "No channels yet." : "No channels match this filter."}
         </p>
       ) : null}
+      <AutoUnsubscribedSection channels={tombstones} onResubscribe={handleResubscribe} />
     </>
   );
 }
