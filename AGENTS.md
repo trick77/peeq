@@ -11,6 +11,8 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
 - Phase 3 requires chat + embeddings endpoints (`BACKEND_CHAT_*`, `BACKEND_EMBED_*`); tests fake
   them with httptest — never call a real LLM/embeddings endpoint or the real yt-dlp binary.
 
+- Flows needing a real cookie/AI endpoints aren't automated — run `docs/manual-verification.md` by hand.
+
 ## Commands
 - `make test` — backend Go tests (`go test ./...`)
 - `make fe-test` — frontend Vitest
