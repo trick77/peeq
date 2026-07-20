@@ -32,13 +32,13 @@ func TestValidCategory(t *testing.T) {
 
 func TestNormalizeCategory(t *testing.T) {
 	cases := map[string]string{
-		"ai":            "ai",
-		"AI":            "ai",
-		"  software  ":  "software",
-		"\"news\".":     "news",
-		"`gaming`":      "gaming",
-		"":              "uncategorized",
-		"not-a-real-id": "uncategorized",
+		"ai":                 "ai",
+		"AI":                 "ai",
+		"  software  ":       "software",
+		"\"news\".":          "news",
+		"`gaming`":           "gaming",
+		"":                   "uncategorized",
+		"not-a-real-id":      "uncategorized",
 		"Science & Research": "uncategorized", // labels are not ids
 	}
 	for in, want := range cases {
