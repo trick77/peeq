@@ -342,6 +342,12 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 // resolved_at is written whether the fetch succeeds or fails, so a channel
 // that cannot be resolved — a stale cookie, a deleted channel — is not
 // re-fetched on every single visit.
+//
+// The gate reads the row snapshotted before the goroutine launches, so two
+// near-simultaneous first visits to the same unresolved channel can both
+// fetch. Left as-is deliberately: peeq is single-user, the window is one
+// page load wide, and the cost of losing that race is one redundant yt-dlp
+// call — not worth a dedup map or a queue.
 func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel) {
 	if s.channelResolver == nil || s.channels == nil {
 		return
@@ -351,6 +357,13 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 	}
 	go func() {
 		defer func() {
+			// This goroutine parses yt-dlp output and remote HTTP responses,
+			// both of which are external input. An unrecovered panic here
+			// would take down the whole server, so it is contained the same
+			// way every other background worker in peeq contains one.
+			if r := recover(); r != nil {
+				slog.Error("channel resolve: recovered from panic", "channel_id", channelID, "panic", r)
+			}
 			if s.onChannelResolved != nil {
 				s.onChannelResolved(channelID)
 			}
