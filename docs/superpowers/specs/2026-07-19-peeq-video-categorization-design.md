@@ -120,10 +120,10 @@ category **that has ≥1 video** (empty categories hidden), each showing a muted
 label + count. Selecting a category refetches the list with `category=<id>`; it is
 independent of the active status chip (both dimensions apply). "All categories" clears it.
 
-**VideoCard — badge on thumbnail (mockup variant 2).** A category badge at the
-thumbnail's **bottom-left** (duration is bottom-right, hover-actions top-right, `NEW`
-top-left — bottom-left avoids all collisions), shown only when
-`category !== 'uncategorized'`: a muted dot + label on a translucent dark chip.
+**VideoCard — pill in the meta line (mockup variant 1).** A category pill in the card's
+`.by` meta line (channel · date · category), shown only when `category !== 'uncategorized'`:
+a muted dot + label on a subtle bordered chip. Lives in the meta line rather than on the
+thumbnail, so it never competes with the `NEW` tag, duration, or hover actions.
 
 **Colors.** Keep the muted per-category dot colors (operator choice). Chips/badges
 otherwise use the standard warm treatment; only the dot carries category color.

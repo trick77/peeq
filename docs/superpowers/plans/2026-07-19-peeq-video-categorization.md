@@ -945,11 +945,11 @@ git commit -m "feat(ui): Library category chip row filters the grid"
 
 ---
 
-### Task 9: UI — VideoCard category badge (thumbnail, bottom-left)
+### Task 9: UI — VideoCard category pill (meta line)
 
 **Files:**
-- Modify: `ui/src/components/VideoCard.tsx` (badge inside `.thumb`, bottom-left)
-- Modify: `ui/src/index.css` (`.thumb .catbadge`)
+- Modify: `ui/src/components/VideoCard.tsx` (pill in the `.by` meta line)
+- Modify: `ui/src/index.css` (`.metapill`)
 - Test: `ui/src/components/VideoCard.test.tsx` (or existing card test)
 
 **Interfaces:**
@@ -978,43 +978,54 @@ Expected: FAIL (no badge rendered)
 
 Add the import: `import { CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";`
 
-Inside the `.thumb` wrapper, as a sibling of `.acts` (NOT inside the thumbnail `<button>`), add the badge bottom-left, rendered only when categorized:
+In the `.by` meta line (which renders channel name + published date), append the pill after the existing published-date fragment, rendered only when categorized. The pill sits inside the `.by` flex row alongside the `·` dot separators:
 
 ```tsx
-        {video.category && video.category !== UNCATEGORIZED && CATEGORY_BY_ID[video.category] ? (
-          <span className="catbadge">
-            <span className="dotc" style={{ background: CATEGORY_BY_ID[video.category].color }} />
-            {CATEGORY_BY_ID[video.category].label}
-          </span>
+      <div className="by">
+        {video.channel_name || video.channel_id}
+        {video.published_at ? (
+          <>
+            <span className="dot">·</span>
+            {new Date(video.published_at).toLocaleDateString()}
+          </>
         ) : null}
+        {video.category && video.category !== UNCATEGORIZED && CATEGORY_BY_ID[video.category] ? (
+          <>
+            <span className="dot">·</span>
+            <span className="metapill">
+              <span className="dotc" style={{ background: CATEGORY_BY_ID[video.category].color }} />
+              {CATEGORY_BY_ID[video.category].label}
+            </span>
+          </>
+        ) : null}
+      </div>
 ```
 
-`index.css` — add:
+> This replaces the existing `.by` block — keep the channel-name and published-date logic exactly as-is; only the category fragment is new.
+
+`index.css` — add near the `.card .by` block:
 
 ```css
-.thumb .catbadge {
-  position: absolute;
-  left: 8px;
-  bottom: 8px;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  padding: 3px 8px 3px 7px;
-  border-radius: 6px;
+.metapill {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: rgba(5, 8, 11, 0.72);
-  color: var(--color-ink);
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--color-border);
+  background: var(--color-panel);
+  color: var(--color-ink-dim);
 }
-.thumb .catbadge .dotc {
+.metapill .dotc {
   width: 6px;
   height: 6px;
   border-radius: 50%;
 }
 ```
 
-> Bottom-left is free: duration is bottom-right, hover-actions top-right, `NEW` top-left. The resume bar sits at the very bottom edge (height 4px) — the 8px offset clears it.
+> The pill lives in the meta line (not on the thumbnail), so it never competes with the `NEW` tag, duration, or hover actions.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1044,6 +1055,6 @@ git commit -m "feat(ui): VideoCard shows a bottom-left category badge"
 - Spec §4 data model (in-place `0001`, `category` column, struct field) → Task 2.
 - Spec §5 classify step (separate constrained call after summary; error → uncategorized, non-fatal; no-transcript never classifies) → Tasks 3–4.
 - Spec §6 filter + API (orthogonal `List(filter, category)`, `?category=`, client-side counts) → Tasks 2, 5, 8.
-- Spec §7 frontend (categories module, chip row variant A, thumbnail bottom-left badge variant 2, muted dot colors) → Tasks 7–9.
+- Spec §7 frontend (categories module, chip row variant A, meta-line pill variant 1, muted dot colors) → Tasks 7–9.
 - Spec §8 scan-classify `ErrNoCookie` cleanup → Task 6.
 - Spec §9 testing → each task is TDD; §10 invariants restated in Global Constraints.
