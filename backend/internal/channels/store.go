@@ -44,6 +44,15 @@ type ListItem struct {
 	FormatOverride  string
 	PendingCount    int
 	DownloadedCount int
+	// LastVideoAt is the discovered_at of the channel's most recently seen
+	// video, or "" if none has ever been discovered (tracked-but-unscanned,
+	// or genuinely brand new).
+	LastVideoAt string
+	// Dormant mirrors DormantChannels' predicate for this one channel: it is
+	// subscribed, has seen at least one video, that video is older than
+	// DormantAfter relative to now, and dormancy has not been dismissed
+	// since. Always false for a tracked-but-unsubscribed channel.
+	Dormant bool
 }
 
 // Store persists channels and subscriptions.
@@ -192,14 +201,35 @@ func (s *Store) Get(id string) (*Channel, error) {
 // (no subscription row), or "autodownload" (subscribed with autodownload
 // on — a strict subset of "subscribed", since autodownload lives on the
 // subscription row).
+//
+// The last_video_at/dormant columns come from a "lv" CTE (one row per
+// channel_id, its MAX(discovered_at)) joined in alongside subscriptions,
+// rather than a correlated subquery repeated per output column — SQLite has
+// no way to name and reuse a scalar subquery's result within the same
+// SELECT list, and duplicating it three times over would both bloat the
+// query and risk the copies drifting apart. dormant reuses DormantAfter (the
+// same modifier DormantChannels applies) via a bound parameter, so the two
+// have exactly one definition of "how long is too long" between them.
 func (s *Store) List(filter string) ([]ListItem, error) {
 	query := `
+WITH lv AS (
+  SELECT channel_id, MAX(discovered_at) AS last_video_at
+  FROM channel_videos
+  GROUP BY channel_id
+)
 SELECT c.id, c.handle, c.name, c.avatar_path, c.added_at,
        s.channel_id IS NOT NULL AS subscribed,
        COALESCE(s.autodownload, 0), COALESCE(s.format_override, ''),
        (SELECT count(*) FROM channel_videos cv WHERE cv.channel_id = c.id AND cv.state = 'pending'),
-       (SELECT count(*) FROM videos v WHERE v.channel_id = c.id AND v.status = 'downloaded')
-FROM channels c LEFT JOIN subscriptions s ON s.channel_id = c.id`
+       (SELECT count(*) FROM videos v WHERE v.channel_id = c.id AND v.status = 'downloaded'),
+       COALESCE(lv.last_video_at, ''),
+       s.channel_id IS NOT NULL
+         AND lv.last_video_at IS NOT NULL
+         AND lv.last_video_at < datetime('now', ?)
+         AND (s.dormant_dismissed_at IS NULL OR lv.last_video_at > s.dormant_dismissed_at)
+FROM channels c
+LEFT JOIN subscriptions s ON s.channel_id = c.id
+LEFT JOIN lv ON lv.channel_id = c.id`
 
 	switch filter {
 	case "subscribed":
@@ -218,7 +248,7 @@ FROM channels c LEFT JOIN subscriptions s ON s.channel_id = c.id`
 	}
 	query += ` ORDER BY c.name COLLATE NOCASE, c.id`
 
-	rows, err := s.db.QueryContext(context.Background(), query)
+	rows, err := s.db.QueryContext(context.Background(), query, DormantAfter)
 	if err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
 	}
@@ -231,6 +261,7 @@ FROM channels c LEFT JOIN subscriptions s ON s.channel_id = c.id`
 			&it.ID, &it.Handle, &it.Name, &it.AvatarPath, &it.AddedAt,
 			&it.Subscribed, &it.Autodownload, &it.FormatOverride,
 			&it.PendingCount, &it.DownloadedCount,
+			&it.LastVideoAt, &it.Dormant,
 		); err != nil {
 			return nil, fmt.Errorf("scan channel list item: %w", err)
 		}

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -685,5 +686,238 @@ func TestPendingIgnore_notFound_404(t *testing.T) {
 	rr := postJSON(t, h, "/api/pending/nope/ignore", nil)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("ignore unknown id status = %d, want 404, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// channelsListTestHarness wires the channels API against a store whose raw
+// db handle is also exposed, so dormancy tests can seed channel_videos
+// discovered_at timestamps directly — the channels API itself has no writer
+// for that table.
+type channelsListTestHarness struct {
+	http.Handler
+	channels *channels.Store
+}
+
+func newChannelsListTestServer(t *testing.T, resolver ChannelResolver) *channelsListTestHarness {
+	t.Helper()
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	channelsStore := channels.New(db)
+	deps := Deps{
+		AuthService:     auth.NewService(nil, sessions, users),
+		AuthMiddleware:  auth.NewMiddleware(sessions, users),
+		Settings:        settings.New(db),
+		Channels:        channelsStore,
+		ChannelResolver: resolver,
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}
+	return &channelsListTestHarness{Handler: New(deps), channels: channelsStore}
+}
+
+// mustExecDB runs a statement against the raw db handle, failing the test on
+// error. Mirrors internal/channels/store_test.go's mustExec — duplicated
+// here because that helper is unexported in a different package.
+func mustExecDB(t *testing.T, db *sql.DB, query string, args ...any) {
+	t.Helper()
+	if _, err := db.Exec(query, args...); err != nil {
+		t.Fatalf("exec %q: %v", query, err)
+	}
+}
+
+// TestChannelsList_includesDormantFields asserts GET /api/channels reports
+// dormant:true plus a populated last_video_at for a subscribed channel whose
+// most recent discovery is far outside DormantAfter, and dormant:false for a
+// healthy one. The seeded timestamps are deliberately years (not months)
+// apart from "now" so the test can never flake against the real DormantAfter
+// boundary regardless of what day it runs.
+func TestChannelsList_includesDormantFields(t *testing.T) {
+	h := newChannelsListTestServer(t, &testResolver{})
+	if err := h.channels.Upsert(channels.Channel{ID: "UCdormant", Name: "Dormant"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Subscribe("UCdormant", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Upsert(channels.Channel{ID: "UChealthy", Name: "Healthy"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Subscribe("UChealthy", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	db := h.channels.DB()
+	mustExecDB(t, db, `INSERT INTO channel_videos (video_id, channel_id, state, discovered_at) VALUES ('v1','UCdormant','seen','2020-01-01 00:00:00')`)
+	mustExecDB(t, db, `INSERT INTO channel_videos (video_id, channel_id, state, discovered_at) VALUES ('v2','UChealthy','seen', datetime('now'))`)
+
+	body := getJSON(t, h, "/api/channels?filter=subscribed")
+	var items []struct {
+		ID          string `json:"id"`
+		Dormant     bool   `json:"dormant"`
+		LastVideoAt string `json:"last_video_at"`
+	}
+	if err := json.Unmarshal([]byte(body), &items); err != nil {
+		t.Fatalf("decode: %v body=%s", err, body)
+	}
+	byID := map[string]bool{}
+	lastVideoAt := map[string]string{}
+	for _, it := range items {
+		byID[it.ID] = it.Dormant
+		lastVideoAt[it.ID] = it.LastVideoAt
+	}
+	if dormant, ok := byID["UCdormant"]; !ok || !dormant {
+		t.Fatalf("UCdormant dormant = %v (present=%v), want true: %s", dormant, ok, body)
+	}
+	if lastVideoAt["UCdormant"] == "" {
+		t.Fatalf("UCdormant last_video_at empty, want populated: %s", body)
+	}
+	if dormant, ok := byID["UChealthy"]; !ok || dormant {
+		t.Fatalf("UChealthy dormant = %v (present=%v), want false: %s", dormant, ok, body)
+	}
+}
+
+// TestAutoUnsubscribedList_returnsRecordedChannels asserts GET
+// /api/channels/auto-unsubscribed returns a channel peeq auto-unsubscribed,
+// with its reason and timestamp.
+func TestAutoUnsubscribedList_returnsRecordedChannels(t *testing.T) {
+	h := newChannelsListTestServer(t, &testResolver{})
+	if err := h.channels.Upsert(channels.Channel{ID: "UCdead", Name: "Dead Channel"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Subscribe("UCdead", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.AutoUnsubscribe("UCdead", channels.ReasonDeleted, "2026-07-20 12:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	body := getJSON(t, h, "/api/channels/auto-unsubscribed")
+	if !strings.Contains(body, "UCdead") || !strings.Contains(body, channels.ReasonDeleted) || !strings.Contains(body, "2026-07-20 12:00:00") {
+		t.Fatalf("auto-unsubscribed list = %s", body)
+	}
+}
+
+// TestDismissDormant_removesChannelFromDormantSet asserts a POST to
+// dismiss-dormant makes the channel stop reporting dormant:true.
+func TestDismissDormant_removesChannelFromDormantSet(t *testing.T) {
+	h := newChannelsListTestServer(t, &testResolver{})
+	if err := h.channels.Upsert(channels.Channel{ID: "UCdormant", Name: "Dormant"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Subscribe("UCdormant", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	mustExecDB(t, h.channels.DB(), `INSERT INTO channel_videos (video_id, channel_id, state, discovered_at) VALUES ('v1','UCdormant','seen','2020-01-01 00:00:00')`)
+
+	before := getJSON(t, h, "/api/channels?filter=subscribed")
+	if !strings.Contains(before, `"dormant":true`) {
+		t.Fatalf("precondition: channel not reported dormant: %s", before)
+	}
+
+	rr := postJSON(t, h, "/api/channels/UCdormant/dismiss-dormant", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("dismiss-dormant status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	after := getJSON(t, h, "/api/channels?filter=subscribed")
+	if strings.Contains(after, `"dormant":true`) {
+		t.Fatalf("channel still reported dormant after dismiss: %s", after)
+	}
+}
+
+// TestDismissDormant_unknownChannel_404 asserts dismissing a channel with no
+// subscription (unknown, or tracked-but-unsubscribed) is a clean 404 rather
+// than the silent no-op DismissDormant used to be (Task 2 review finding).
+func TestDismissDormant_unknownChannel_404(t *testing.T) {
+	h := newChannelsListTestServer(t, &testResolver{})
+	rr := postJSON(t, h, "/api/channels/nope/dismiss-dormant", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("dismiss-dormant unknown channel status = %d, want 404, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestResubscribe_restoresSubscriptionAndClearsRecord asserts POST
+// .../resubscribe re-subscribes an auto-unsubscribed channel AND clears its
+// auto-unsubscribe record.
+func TestResubscribe_restoresSubscriptionAndClearsRecord(t *testing.T) {
+	h := newChannelsListTestServer(t, &testResolver{})
+	if err := h.channels.Upsert(channels.Channel{ID: "UCdead", Name: "Dead"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Subscribe("UCdead", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.AutoUnsubscribe("UCdead", channels.ReasonDeleted, "2026-07-20 12:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := postJSON(t, h, "/api/channels/UCdead/resubscribe", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resubscribe status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	subscribed := getJSON(t, h, "/api/channels?filter=subscribed")
+	if !strings.Contains(subscribed, "UCdead") {
+		t.Fatalf("channel not resubscribed: %s", subscribed)
+	}
+	auList := getJSON(t, h, "/api/channels/auto-unsubscribed")
+	if strings.Contains(auList, "UCdead") {
+		t.Fatalf("channel still in auto-unsubscribed list after resubscribe: %s", auList)
+	}
+}
+
+// TestResubscribe_afterSecondDeath_recordsAgain pins the ON CONFLICT DO
+// UPDATE branch of AutoUnsubscribe (Task 1 review): resubscribing a
+// previously auto-unsubscribed channel, then auto-unsubscribing it a second
+// time, must record the new reason/timestamp rather than aborting the
+// transaction on the PRIMARY KEY conflict and leaving a dead channel
+// silently subscribed forever.
+func TestResubscribe_afterSecondDeath_recordsAgain(t *testing.T) {
+	h := newChannelsListTestServer(t, &testResolver{})
+	if err := h.channels.Upsert(channels.Channel{ID: "UCdead", Name: "Dead"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Subscribe("UCdead", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.AutoUnsubscribe("UCdead", channels.ReasonDeleted, "2026-07-20 12:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if rr := postJSON(t, h, "/api/channels/UCdead/resubscribe", nil); rr.Code != http.StatusOK {
+		t.Fatalf("resubscribe status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	const secondDeath = "2026-08-20 12:00:00"
+	if err := h.channels.AutoUnsubscribe("UCdead", channels.ReasonDeleted, secondDeath); err != nil {
+		t.Fatal(err)
+	}
+
+	body := getJSON(t, h, "/api/channels/auto-unsubscribed")
+	if !strings.Contains(body, "UCdead") || !strings.Contains(body, secondDeath) {
+		t.Fatalf("auto-unsubscribed list missing re-recorded death: %s", body)
+	}
+}
+
+// TestStalenessRoutes_requireAuth asserts every dormancy/auto-unsubscribe
+// route added in this task is behind requireAuth, exactly like the existing
+// channels routes. peeq has exactly one route that bypasses OIDC (PUT
+// /api/machine/cookie); this test guards against a new one slipping in.
+func TestStalenessRoutes_requireAuth(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{})
+
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/api/channels/auto-unsubscribed", nil),
+		httptest.NewRequest(http.MethodPost, "/api/channels/UC1/dismiss-dormant", nil),
+		httptest.NewRequest(http.MethodPost, "/api/channels/UC1/resubscribe", nil),
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s status = %d, want 401", req.Method, req.URL.Path, rec.Code)
+		}
 	}
 }

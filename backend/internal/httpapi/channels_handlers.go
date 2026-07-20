@@ -52,6 +52,23 @@ type channelItem struct {
 	FormatOverride  string `json:"format_override,omitempty"`
 	PendingCount    int    `json:"pending_count"`
 	DownloadedCount int    `json:"downloaded_count"`
+	// Dormant and LastVideoAt surface channels.Store.List's dormancy
+	// columns: Dormant is always present (false for a healthy or
+	// unsubscribed channel), LastVideoAt is omitted when the channel has
+	// never had a video discovered.
+	Dormant     bool   `json:"dormant"`
+	LastVideoAt string `json:"last_video_at,omitempty"`
+}
+
+// autoUnsubscribedItem is the JSON shape returned by GET
+// /api/channels/auto-unsubscribed: one channel peeq unsubscribed on its own,
+// with the reason and when.
+type autoUnsubscribedItem struct {
+	ID     string `json:"id"`
+	Handle string `json:"handle,omitempty"`
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+	At     string `json:"at"`
 }
 
 // channelHandleFromURL extracts the @handle from a pasted channel url, if
@@ -180,9 +197,100 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 			FormatOverride:  it.FormatOverride,
 			PendingCount:    it.PendingCount,
 			DownloadedCount: it.DownloadedCount,
+			Dormant:         it.Dormant,
+			LastVideoAt:     it.LastVideoAt,
 		})
 	}
 	writeJSON(w, out)
+}
+
+// handleChannelsAutoUnsubscribedList returns every channel peeq has
+// auto-unsubscribed on its own, most recent first.
+func (s *server) handleChannelsAutoUnsubscribedList(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	items, err := s.channels.AutoUnsubscribedList()
+	if err != nil {
+		serverError(w, r, err, "list auto-unsubscribed failed")
+		return
+	}
+	out := make([]autoUnsubscribedItem, 0, len(items))
+	for _, it := range items {
+		out = append(out, autoUnsubscribedItem{
+			ID:     it.ID,
+			Handle: it.Handle,
+			Name:   it.Name,
+			Reason: it.Reason,
+			At:     it.At,
+		})
+	}
+	writeJSON(w, out)
+}
+
+// handleChannelsDismissDormant suppresses a channel's dormancy flag until it
+// next posts and then goes quiet again. 404s for a channel with no
+// subscription (unknown, or tracked-but-unsubscribed) rather than the
+// silent no-op DismissDormant used to return — a 200 there would tell the
+// caller its dismissal took effect when nothing was flagged in the first
+// place (Task 2 review finding).
+func (s *server) handleChannelsDismissDormant(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	id := r.PathValue("id")
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	ok, err := s.channels.DismissDormant(id, now)
+	if err != nil {
+		serverError(w, r, err, "dismiss dormant failed")
+		return
+	}
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "channel not subscribed")
+		return
+	}
+	writeJSON(w, map[string]string{"status": "dismissed"})
+}
+
+// handleChannelsResubscribe restores a subscription peeq auto-unsubscribed:
+// clear the auto-unsubscribe record, THEN subscribe with next_scan_at = now
+// so the channel is picked up on the next tick rather than waiting a full
+// scan interval. The order matters: a crash between the two steps leaves the
+// channel merely tracked, with its auto-unsubscribe record already cleared —
+// a clean state a retried resubscribe finishes correctly. The reverse order
+// would risk the opposite: a channel that looks subscribed again while it
+// still carries a stale auto-unsubscribe record, which is the confusing
+// half-state worth avoiding here. (AutoUnsubscribe's own ON CONFLICT DO
+// UPDATE is what keeps a later re-death clean regardless — this ordering is
+// only about not leaving a misleading intermediate state visible to a user
+// who checks between the two writes.)
+func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	id := r.PathValue("id")
+	c, err := s.channels.Get(id)
+	if err != nil {
+		serverError(w, r, err, "get channel failed")
+		return
+	}
+	if c == nil {
+		writeJSONError(w, http.StatusNotFound, "channel not tracked")
+		return
+	}
+	if err := s.channels.ClearAutoUnsubscribe(id); err != nil {
+		serverError(w, r, err, "clear auto-unsubscribe failed")
+		return
+	}
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	if err := s.channels.Subscribe(id, now); err != nil {
+		serverError(w, r, err, "subscribe failed")
+		return
+	}
+	writeJSON(w, map[string]string{"status": "subscribed"})
 }
 
 // handleChannelsPut updates a subscribed channel's autodownload flag and/or

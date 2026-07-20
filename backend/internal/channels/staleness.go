@@ -191,13 +191,23 @@ ORDER BY last_seen`,
 // at `at` and chose to suppress it. The flag re-arms automatically the next
 // time channel_videos gets a discovery newer than `at` and the channel then
 // goes quiet again — dismissal is a snooze, not a permanent silence.
-func (s *Store) DismissDormant(channelID, at string) error {
-	_, err := s.db.ExecContext(context.Background(),
+//
+// Returns whether a subscription row actually existed for channelID. Without
+// this signal the UPDATE affecting zero rows (an unknown or
+// tracked-but-unsubscribed channel id) would look identical to a successful
+// dismissal — the HTTP handler needs to tell the two apart to return 404
+// instead of a misleading 200 (Task 2 review finding).
+func (s *Store) DismissDormant(channelID, at string) (bool, error) {
+	res, err := s.db.ExecContext(context.Background(),
 		`UPDATE subscriptions SET dormant_dismissed_at = ? WHERE channel_id = ?`,
 		at, channelID,
 	)
 	if err != nil {
-		return fmt.Errorf("dismiss dormant %s: %w", channelID, err)
+		return false, fmt.Errorf("dismiss dormant %s: %w", channelID, err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("dismiss dormant %s: rows affected: %w", channelID, err)
+	}
+	return n > 0, nil
 }

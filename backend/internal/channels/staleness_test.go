@@ -128,8 +128,8 @@ VALUES ('v1', 'UC1', 'seen', '2025-12-20 12:00:00')`)
 		t.Fatalf("precondition: dormant channels = %+v err=%v, want UC1 flagged", got, err)
 	}
 
-	if err := st.DismissDormant("UC1", fixedNow); err != nil {
-		t.Fatalf("dismiss dormant: %v", err)
+	if ok, err := st.DismissDormant("UC1", fixedNow); err != nil || !ok {
+		t.Fatalf("dismiss dormant: ok=%v err=%v", ok, err)
 	}
 
 	got, err = st.DormantChannels(fixedNow)
@@ -162,8 +162,8 @@ INSERT INTO channel_videos (video_id, channel_id, state, discovered_at)
 VALUES ('v1', 'UC1', 'seen', '2025-12-20 12:00:00')`)
 
 	dismissedAt := fixedNow
-	if err := st.DismissDormant("UC1", dismissedAt); err != nil {
-		t.Fatalf("dismiss dormant: %v", err)
+	if ok, err := st.DismissDormant("UC1", dismissedAt); err != nil || !ok {
+		t.Fatalf("dismiss dormant: ok=%v err=%v", ok, err)
 	}
 
 	// A newer discovery, after the dismissal, but the channel then goes
@@ -181,6 +181,21 @@ VALUES ('v2', 'UC1', 'seen', datetime(?, '+1 second'))`, dismissedAt)
 	}
 	if len(got) != 1 || got[0].ChannelID != "UC1" {
 		t.Fatalf("dormant channels = %+v, want UC1 re-flagged after newer discovery", got)
+	}
+}
+
+// TestDismissDormant_unknownChannel_reportsFalse asserts DismissDormant
+// reports ok=false for a channel with no subscription row (unknown, or
+// tracked-but-unsubscribed), so callers can distinguish that from a real
+// dismissal instead of treating a zero-row UPDATE as success.
+func TestDismissDormant_unknownChannel_reportsFalse(t *testing.T) {
+	st := newTestStore(t)
+	ok, err := st.DismissDormant("nope", fixedNow)
+	if err != nil {
+		t.Fatalf("dismiss dormant: %v", err)
+	}
+	if ok {
+		t.Fatalf("dismiss dormant unknown channel ok = true, want false")
 	}
 }
 
@@ -228,6 +243,55 @@ func TestResetDeadScan_zeroesPartialCount(t *testing.T) {
 	}
 	if got != 1 {
 		t.Fatalf("dead scan count after reset+one scan = %d, want 1 (must not creep to 3)", got)
+	}
+}
+
+// TestAutoUnsubscribe_secondDeathAfterManualResubscribe_updatesRecord pins
+// the ON CONFLICT DO UPDATE branch (Task 1 review): a channel that is
+// manually re-subscribed via plain Subscribe (which, unlike the HTTP
+// resubscribe handler, does NOT clear the prior auto-unsubscribe record)
+// and then dies a second time must have its record UPDATED with the new
+// reason/timestamp, not abort the transaction on the channel_id PRIMARY KEY
+// conflict and leave the channel silently subscribed with a stale record.
+// Removing the ON CONFLICT clause makes this test fail on the second
+// AutoUnsubscribe call with a PK constraint error.
+func TestAutoUnsubscribe_secondDeathAfterManualResubscribe_updatesRecord(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	const firstDeath = "2026-07-20 12:00:00"
+	if err := st.AutoUnsubscribe("UC1", ReasonDeleted, firstDeath); err != nil {
+		t.Fatalf("first auto unsubscribe: %v", err)
+	}
+
+	// Manual re-subscribe, deliberately NOT clearing the auto-unsubscribe
+	// record — this is the case the HTTP resubscribe handler's Clear-then-
+	// Subscribe ordering is designed to avoid, but Subscribe itself must
+	// still tolerate it (a plain POST /api/channels/{id}/subscribe reaches
+	// this same store method).
+	if err := st.Subscribe("UC1", "2026-07-21 00:00:00"); err != nil {
+		t.Fatalf("manual resubscribe: %v", err)
+	}
+
+	const secondDeath = "2026-08-20 12:00:00"
+	if err := st.AutoUnsubscribe("UC1", ReasonDeleted, secondDeath); err != nil {
+		t.Fatalf("second auto unsubscribe (must not abort on PK conflict): %v", err)
+	}
+
+	list, err := st.AutoUnsubscribedList()
+	if err != nil {
+		t.Fatalf("auto unsubscribed list: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != "UC1" {
+		t.Fatalf("auto unsubscribed list = %+v, want exactly UC1", list)
+	}
+	if list[0].At != secondDeath {
+		t.Fatalf("auto unsubscribed at = %q, want %q (the second death, not the first)", list[0].At, secondDeath)
 	}
 }
 
