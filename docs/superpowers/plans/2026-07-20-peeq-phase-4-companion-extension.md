@@ -1196,6 +1196,28 @@ export async function sendCookie({ loadConfig, getCookies, hasPermission, fetch 
     return { ok: false, state: "server-error", detail };
   }
 
+  // A bare 200 is not evidence peeq received the cookie: a reverse proxy with
+  // SPA fallback (common in self-hosting) answers unknown routes with 200 and
+  // index.html, and some other service entirely could sit at that address.
+  // Only peeq's own success body proves this. Require it before saying "sent".
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    return {
+      ok: false,
+      state: "server-error",
+      detail: "That address answered, but it doesn't look like peeq.",
+    };
+  }
+  if (!body || body.status !== "valid") {
+    return {
+      ok: false,
+      state: "server-error",
+      detail: "That address answered, but it doesn't look like peeq.",
+    };
+  }
+
   // NOTE: this count is cookies.length, NOT countDisplayCookies. The two
   // branches answer different questions and must not share a helper:
   // "sent" reports how much was handed over (the whole jar), while
@@ -1257,7 +1279,7 @@ api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd extension && npm test`
-Expected: PASS, 33 tests.
+Expected: PASS, 32 tests (24 pre-existing + 8 new).
 
 - [ ] **Step 6: Commit**
 
@@ -1566,6 +1588,9 @@ const VIEWS = {
   rejected: { led: "bad", headline: "peeq rejected the token", detail: "The access token is wrong, or was regenerated. Copy a fresh one from peeq's Settings." },
   "permission-denied": { led: "bad", headline: "Chrome permission missing", detail: "The extension needs permission to talk to peeq's address. Grant it in settings." },
   "server-error": { led: "bad", headline: "peeq refused the cookie", detail: "" },
+  // Deliberately NOT a send state: nothing was sent, so it must not say peeq
+  // refused anything. Raised when reading this profile's cookies fails.
+  "status-error": { led: "bad", headline: "Couldn't read this profile's cookies", detail: "Chrome refused the cookie read. Try reopening the extension." },
   "no-session": { led: "idle", headline: "No YouTube sign-in in this profile", detail: "Sign in to YouTube in this Chrome profile, then come back." },
   "not-configured": { led: "idle", headline: "Connect to peeq", detail: "Add peeq's address and an access token to get started." },
 };
