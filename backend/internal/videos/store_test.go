@@ -625,3 +625,63 @@ func TestSetCategoryAndListByCategory(t *testing.T) {
 		t.Fatalf("List all/'' returned %d, want 2", len(all))
 	}
 }
+
+func TestList_statusAndCategoryAreAnded(t *testing.T) {
+	s := New(openTestDB(t))
+
+	// Given: four videos spanning both axes — watched × category.
+	seed := []struct {
+		id       string
+		watched  bool
+		category string
+	}{
+		{"a", false, "ai"},
+		{"b", false, "gaming"},
+		{"c", true, "ai"},
+		{"d", true, "gaming"},
+	}
+	for _, v := range seed {
+		if err := s.Upsert(Video{ID: v.id, URL: "u", DurationSeconds: 100}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetDownloaded(v.id, DownloadedResult{MediaPath: "/m/" + v.id + ".mp4"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetCategory(v.id, v.category); err != nil {
+			t.Fatal(err)
+		}
+		if v.watched {
+			if err := s.SetWatched(v.id, true); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// When: both filters are applied together.
+	got, err := s.List("unwatched", "ai")
+	if err != nil {
+		t.Fatalf("list unwatched+ai: %v", err)
+	}
+
+	// Then: only the row matching BOTH comes back — not the union of each.
+	if len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("list unwatched+ai = %+v, want [a]", got)
+	}
+
+	// And: each filter alone still returns its own two rows, proving the
+	// combination narrowed the result rather than one filter winning.
+	unwatched, err := s.List("unwatched", "")
+	if err != nil {
+		t.Fatalf("list unwatched: %v", err)
+	}
+	if len(unwatched) != 2 {
+		t.Fatalf("list unwatched = %d rows, want 2", len(unwatched))
+	}
+	ai, err := s.List("all", "ai")
+	if err != nil {
+		t.Fatalf("list ai: %v", err)
+	}
+	if len(ai) != 2 {
+		t.Fatalf("list ai = %d rows, want 2", len(ai))
+	}
+}
