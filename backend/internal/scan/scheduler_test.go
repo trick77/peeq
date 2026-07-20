@@ -581,6 +581,43 @@ func TestScanPausedErrorDoesNotCountFailure(t *testing.T) {
 	}
 }
 
+// TestScanErrNoCookieDoesNotCountTowardAutoPause mirrors the download
+// worker's classify for ytdlp.ErrNoCookie: no cookie at all is race-only and
+// self-limiting (the scheduler's own cookie gate stops scanning next pass),
+// so it must NOT feed FailMonitor.Fail.
+func TestScanErrNoCookieDoesNotCountTowardAutoPause(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+
+	var fails []string
+	fm := &fakeMonitor{
+		onFail: func(id string) { fails = append(fails, id) },
+	}
+	h.sched = New(Deps{
+		Channels:     h.channels,
+		Ledger:       h.ledger,
+		Videos:       h.videos,
+		Jobs:         h.jobs,
+		Settings:     h.settings,
+		Lister:       errLister{err: ytdlp.ErrNoCookie},
+		CookieStatus: func(context.Context) string { return h.cookieStatus },
+		FailMonitor:  fm,
+		Now:          func() time.Time { return fixedNow },
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+	h.sched.scanChannel(context.Background(), sub)
+
+	if len(fails) != 0 {
+		t.Fatalf("fails = %+v, want none for ErrNoCookie", fails)
+	}
+}
+
 func TestScanCleanPassResetsFailMonitor(t *testing.T) {
 	h := newScanHarness(t)
 	h.trackAndSubscribe("UC1", false, "")
