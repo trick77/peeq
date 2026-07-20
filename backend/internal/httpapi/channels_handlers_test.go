@@ -332,6 +332,43 @@ func TestChannelsPutSubscribeUnsubscribe(t *testing.T) {
 	}
 }
 
+// TestChannelsPut_partialUpdate_preservesOtherField asserts a PUT that sets
+// only one of autodownload/format_override leaves the other column exactly
+// as it was, in both directions. Before the fix this was implemented by
+// reading the row and merging in Go; the atomic COALESCE update must
+// preserve the same observable behaviour for a single, uncontested request.
+func TestChannelsPut_partialUpdate_preservesOtherField(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{ucid: "UCpartial", name: "Partial"})
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@partial", "subscribe": true}); rr.Code != http.StatusCreated {
+		t.Fatalf("track+subscribe status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Seed both fields with a full PUT.
+	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UCpartial", map[string]any{"autodownload": true, "format_override": "bestvideo+bestaudio"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed PUT status = %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Partial PUT: only autodownload. format_override must survive untouched.
+	rr = putJSONWithCookie(t, h, cookie, "/api/channels/UCpartial", map[string]any{"autodownload": false})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT (autodownload only) status = %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"autodownload":false`) || !strings.Contains(rr.Body.String(), `"format_override":"bestvideo+bestaudio"`) {
+		t.Fatalf("PUT (autodownload only) response = %s, want format_override preserved", rr.Body.String())
+	}
+
+	// Partial PUT: only format_override. autodownload must survive untouched.
+	rr = putJSONWithCookie(t, h, cookie, "/api/channels/UCpartial", map[string]any{"format_override": "worst"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT (format_override only) status = %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"autodownload":false`) || !strings.Contains(rr.Body.String(), `"format_override":"worst"`) {
+		t.Fatalf("PUT (format_override only) response = %s, want autodownload preserved", rr.Body.String())
+	}
+}
+
 // TestChannels_requireAuth asserts every channels route is behind
 // requireAuth.
 func TestChannels_requireAuth(t *testing.T) {
@@ -852,8 +889,10 @@ func TestChannelsPut_invalidBody_400(t *testing.T) {
 	}
 }
 
-// TestChannelsPut_loadConfigStoreError_500 covers the
-// s.channels.List("subscribed") error branch of handleChannelsPut.
+// TestChannelsPut_loadConfigStoreError_500 covers the s.channels.UpdateConfig
+// error branch of handleChannelsPut when the subscriptions table itself is
+// gone (as opposed to TestChannelsPut_updateConfigStoreError_500 below,
+// which blocks the UPDATE with a trigger on an otherwise-intact table).
 func TestChannelsPut_loadConfigStoreError_500(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{})
 	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {

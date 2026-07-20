@@ -200,35 +200,7 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up the current config so unset fields are left untouched rather
-	// than being reset to the zero value by a partial PUT.
-	items, err := s.channels.List("subscribed")
-	if err != nil {
-		serverError(w, r, err, "load channel config failed")
-		return
-	}
-	var current *channels.ListItem
-	for i := range items {
-		if items[i].ID == id {
-			current = &items[i]
-			break
-		}
-	}
-	if current == nil {
-		writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
-		return
-	}
-
-	autodownload := current.Autodownload
-	if req.Autodownload != nil {
-		autodownload = *req.Autodownload
-	}
-	formatOverride := current.FormatOverride
-	if req.FormatOverride != nil {
-		formatOverride = *req.FormatOverride
-	}
-
-	ok, err := s.channels.UpdateConfig(id, autodownload, formatOverride)
+	autodownload, formatOverride, ok, err := s.channels.UpdateConfig(id, req.Autodownload, req.FormatOverride)
 	if err != nil {
 		serverError(w, r, err, "update config failed")
 		return

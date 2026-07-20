@@ -10,6 +10,7 @@ package channels
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -272,23 +273,28 @@ func (s *Store) Unsubscribe(channelID string) (bool, error) {
 	return n > 0, nil
 }
 
-// UpdateConfig sets a subscription's autodownload flag and format override.
-// Returns whether a subscription row actually existed (and was updated) —
-// callers use this to distinguish a real config update from a silent no-op
-// on a channel that is tracked but not subscribed.
-func (s *Store) UpdateConfig(channelID string, autodownload bool, formatOverride string) (bool, error) {
-	res, err := s.db.ExecContext(context.Background(),
-		`UPDATE subscriptions SET autodownload = ?, format_override = ? WHERE channel_id = ?`,
+// UpdateConfig applies a partial update to a subscription's autodownload
+// flag and/or format override in a single atomic statement: a nil argument
+// leaves the corresponding column unchanged. It returns the resulting
+// (post-update) values via RETURNING, so there is no separate read step for
+// a concurrent write to race against. ok is false (with zero values and a
+// nil error) when the channel is not subscribed.
+func (s *Store) UpdateConfig(channelID string, autodownload *bool, formatOverride *string) (resultAutodownload bool, resultFormatOverride string, ok bool, err error) {
+	row := s.db.QueryRowContext(context.Background(), `
+UPDATE subscriptions
+   SET autodownload    = COALESCE(?, autodownload),
+       format_override = COALESCE(?, format_override)
+ WHERE channel_id = ?
+RETURNING autodownload, format_override`,
 		autodownload, formatOverride, channelID,
 	)
-	if err != nil {
-		return false, fmt.Errorf("update config %s: %w", channelID, err)
+	if err := row.Scan(&resultAutodownload, &resultFormatOverride); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, "", false, nil
+		}
+		return false, "", false, fmt.Errorf("update config %s: %w", channelID, err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("update config %s: rows affected: %w", channelID, err)
-	}
-	return n > 0, nil
+	return resultAutodownload, resultFormatOverride, true, nil
 }
 
 // ClaimDue returns the subscription with the oldest next_scan_at <= now, or

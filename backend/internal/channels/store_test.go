@@ -53,7 +53,8 @@ func TestChannels_trackSubscribeClaim(t *testing.T) {
 		t.Fatalf("new subscription must have NULL baselined_at, got %q", sub.BaselinedAt)
 	}
 	// Config update reflected in List.
-	if ok, err := st.UpdateConfig("UC1", true, "bestvideo+bestaudio"); err != nil || !ok {
+	adOn, format := true, "bestvideo+bestaudio"
+	if _, _, ok, err := st.UpdateConfig("UC1", &adOn, &format); err != nil || !ok {
 		t.Fatalf("update config: ok=%v err=%v", ok, err)
 	}
 	items, err := st.List("subscribed")
@@ -62,6 +63,141 @@ func TestChannels_trackSubscribeClaim(t *testing.T) {
 	}
 	if len(items) != 2 {
 		t.Fatalf("subscribed count = %d, want 2", len(items))
+	}
+}
+
+// TestChannels_updateConfigPartial_leavesOtherFieldUnchanged asserts a
+// partial UpdateConfig call (nil pointer for one field) leaves that column
+// exactly as it was, in both directions.
+func TestChannels_updateConfigPartial_leavesOtherFieldUnchanged(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	adOn, format := true, "bestvideo+bestaudio"
+	if _, _, ok, err := st.UpdateConfig("UC1", &adOn, &format); err != nil || !ok {
+		t.Fatalf("seed config: ok=%v err=%v", ok, err)
+	}
+
+	// Partial: only autodownload. format_override must survive.
+	adOff := false
+	gotAD, gotFormat, ok, err := st.UpdateConfig("UC1", &adOff, nil)
+	if err != nil || !ok {
+		t.Fatalf("update autodownload only: ok=%v err=%v", ok, err)
+	}
+	if gotAD != false || gotFormat != "bestvideo+bestaudio" {
+		t.Fatalf("got autodownload=%v format=%q, want false/bestvideo+bestaudio", gotAD, gotFormat)
+	}
+
+	// Partial: only format_override. autodownload must survive.
+	newFormat := "worst"
+	gotAD, gotFormat, ok, err = st.UpdateConfig("UC1", nil, &newFormat)
+	if err != nil || !ok {
+		t.Fatalf("update format only: ok=%v err=%v", ok, err)
+	}
+	if gotAD != false || gotFormat != "worst" {
+		t.Fatalf("got autodownload=%v format=%q, want false/worst", gotAD, gotFormat)
+	}
+}
+
+// TestChannels_updateConfig_notSubscribed reports ok=false, not an error,
+// when the channel has no subscription row (tracked-only or unknown).
+func TestChannels_updateConfig_notSubscribed(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	adOn := true
+	if _, _, ok, err := st.UpdateConfig("UC1", &adOn, nil); err != nil || ok {
+		t.Fatalf("tracked-only channel: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+}
+
+// TestChannels_updateConfig_doesNotResurrectStaleReadValue reproduces the
+// original defect's mechanism directly. The old UpdateConfig took plain
+// bool/string values (no "leave unchanged" concept), so the only way the
+// old handleChannelsPut could implement a partial PUT was to read the
+// current row first (List), merge the request over it in Go, and pass the
+// merged concrete values through. That read could go stale: this test
+// captures exactly such a stale read, then has a concurrent
+// unsubscribe/resubscribe (the exact interleaving from the bug report)
+// reset the row before the write lands.
+//
+// With the old signature, completing the write meant calling
+// UpdateConfig(id, mergedAutodownload, staleFormatOverride) — there was no
+// way to say "don't touch format_override", so the stale value from the
+// read would have been written back, clobbering the concurrent reset. That
+// call no longer compiles: UpdateConfig now takes *string, and passing the
+// captured stale string forces an explicit, visibly-wrong non-nil argument.
+// The fix is that a caller who only wants to change autodownload passes nil
+// for format_override — there is no stale value to thread through, because
+// there is no read step at all. This test proves that path: even though a
+// "stale read" is captured first (mirroring what the old handler would have
+// cached), passing nil for format_override to the real UpdateConfig
+// preserves the concurrently-written value instead of the stale one.
+func TestChannels_updateConfig_doesNotResurrectStaleReadValue(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	adOff, staleFormat := false, "1080p"
+	if _, _, ok, err := st.UpdateConfig("UC1", &adOff, &staleFormat); err != nil || !ok {
+		t.Fatalf("seed config: ok=%v err=%v", ok, err)
+	}
+
+	// Request A's read: capture the current config, the way the old
+	// handler's List("subscribed") call did before merging in a partial PUT.
+	items, err := st.List("subscribed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current *ListItem
+	for i := range items {
+		if items[i].ID == "UC1" {
+			current = &items[i]
+		}
+	}
+	if current == nil {
+		t.Fatal("UC1 not found in subscribed list")
+	}
+	if current.FormatOverride != staleFormat {
+		t.Fatalf("captured read = %q, want %q", current.FormatOverride, staleFormat)
+	}
+
+	// Request B: unsubscribe then resubscribe, exactly as in the bug
+	// report. Subscribe's INSERT ... ON CONFLICT DO NOTHING leaves the
+	// fresh row at the schema default, discarding the prior format_override.
+	if _, err := st.Unsubscribe("UC1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Request A resumes: a partial PUT that only sets autodownload. The old
+	// handler had nothing but the stale `current.FormatOverride` to pass as
+	// its concrete format_override argument here — that call no longer
+	// exists. The real fix passes nil: there is nothing captured to
+	// resurrect.
+	adOn := true
+	gotAD, gotFormat, ok, err := st.UpdateConfig("UC1", &adOn, nil)
+	if err != nil || !ok {
+		t.Fatalf("resume update: ok=%v err=%v", ok, err)
+	}
+	if gotFormat == staleFormat {
+		t.Fatalf("resurrected stale format_override %q from the pre-resubscribe read", staleFormat)
+	}
+	if gotFormat != "" {
+		t.Fatalf("format_override = %q, want %q (the schema default Subscribe reset it to)", gotFormat, "")
+	}
+	if !gotAD {
+		t.Fatal("autodownload was not applied")
 	}
 }
 
@@ -196,7 +332,8 @@ func TestChannels_listAutodownloadFilter(t *testing.T) {
 			t.Fatalf("subscribe %s: %v", id, err)
 		}
 	}
-	if _, err := st.UpdateConfig("UC3", true, ""); err != nil {
+	adOn, format := true, ""
+	if _, _, _, err := st.UpdateConfig("UC3", &adOn, &format); err != nil {
 		t.Fatalf("update config: %v", err)
 	}
 
