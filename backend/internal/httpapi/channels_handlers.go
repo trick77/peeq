@@ -14,8 +14,11 @@ import (
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
-// ChannelResolver resolves a canonicalized channel url to its authoritative
-// UCID and display name via yt-dlp. Declaring it here (rather than depending
+// ChannelResolver resolves a canonicalized channel url to its identity via
+// yt-dlp: the authoritative UCID and display name, plus the description and
+// the remote avatar/banner urls the channel page renders. The handle is NOT
+// part of it — that comes from the pasted url, never from yt-dlp.
+// Declaring it here (rather than depending
 // on the concrete *ytdlp.Runner type) keeps the handler testable with a fake
 // that never shells out to yt-dlp; the real *ytdlp.Runner satisfies it.
 type ChannelResolver interface {
