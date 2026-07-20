@@ -20,9 +20,11 @@ const (
 )
 
 // Availabilities is the fixed enum accepted by the DB CHECK constraint.
-// AvailabilityDeleted and AvailabilityGeo are reachable only via download
-// error classification (see ytdlp.TerminalError), never via
-// NormalizeAvailability, but they remain part of the enum this package owns.
+// AvailabilityDeleted and AvailabilityGeo are never produced by
+// NormalizeAvailability: yt-dlp's availability field has no equivalent. They
+// are reserved for future download-error classification (the shape
+// ytdlp.TerminalError would feed) — no code writes them today — but they
+// remain part of the enum this package owns and the CHECK accepts.
 var Availabilities = []string{
 	AvailabilityAvailable,
 	AvailabilityDeleted,
