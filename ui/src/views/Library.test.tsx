@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { VideoCard } from "../components/VideoCard";
 import type { Video } from "../api/types";
 
@@ -131,5 +131,76 @@ describe("VideoCard lifecycle line", () => {
       />,
     );
     expect(screen.getByText("Removed to save space · summary kept")).toBeInTheDocument();
+  });
+});
+
+// Library view: category chip row + filtering. Mocks the "../api" barrel
+// the same way App.test.tsx does, since Library.tsx imports from it
+// directly (listVideos, getSettings, listDownloads, streamDownloads,
+// setFavorite, setWatched, redownload).
+vi.mock("../api", () => ({
+  listVideos: vi.fn(),
+  getSettings: vi.fn().mockResolvedValue({ retention_days: 14 }),
+  listDownloads: vi.fn().mockResolvedValue([]),
+  streamDownloads: vi.fn().mockImplementation(() => new Promise(() => {})),
+  setFavorite: vi.fn(),
+  setWatched: vi.fn(),
+  redownload: vi.fn(),
+}));
+
+import { Library } from "./Library";
+import { listVideos } from "../api";
+
+function categoryVideo(overrides: Partial<Video> = {}): Video {
+  return {
+    id: "v1",
+    url: "https://youtu.be/v1",
+    title: "A Test Video",
+    channel_id: "chan1",
+    channel_name: "Test Channel",
+    duration_seconds: 754,
+    has_thumbnail: false,
+    has_media: true,
+    availability: "available",
+    status: "downloaded",
+    watched: false,
+    resume_position_seconds: 0,
+    favorite: false,
+    summary: "",
+    chapters: [],
+    key_points: [],
+    summary_status: "",
+    audio_language: "",
+    has_subtitles: false,
+    category: "uncategorized",
+    ...overrides,
+  };
+}
+
+describe("Library category chips", () => {
+  beforeEach(() => {
+    vi.mocked(listVideos).mockReset();
+  });
+
+  it("renders a category chip row and filters by category", async () => {
+    const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
+    const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
+
+    vi.mocked(listVideos).mockImplementation(async (_filter, category) => {
+      if (category === "ai") return [aiVideo];
+      return [aiVideo, newsVideo];
+    });
+
+    render(<Library onOpenVideo={() => {}} />);
+
+    expect(await screen.findByText("news video title")).toBeInTheDocument();
+
+    const aiChip = await screen.findByRole("button", { name: /AI/ });
+    fireEvent.click(aiChip);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/news video title/i)).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("ai video title")).toBeInTheDocument();
   });
 });
