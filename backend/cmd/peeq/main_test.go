@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -187,5 +188,27 @@ func TestServe_ShutdownReturnsPromptlyWithOpenSSEStream(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("serve (srv.Shutdown) did not return within 3s with an open SSE stream connected; graceful shutdown is blocking on the client instead of on hub.Close()")
+	}
+}
+
+// TestParseLogLevel_mapsNamesAndDefaultsToInfo covers parseLogLevel's
+// case-insensitive parsing and defaults to slog.LevelInfo for empty or
+// unrecognized values.
+func TestParseLogLevel_mapsNamesAndDefaultsToInfo(t *testing.T) {
+	// Given / When / Then
+	cases := map[string]slog.Level{
+		"debug":    slog.LevelDebug,
+		"DEBUG":    slog.LevelDebug,
+		" info ":   slog.LevelInfo,
+		"warn":     slog.LevelWarn,
+		"warning":  slog.LevelWarn,
+		"error":    slog.LevelError,
+		"":         slog.LevelInfo,
+		"nonsense": slog.LevelInfo,
+	}
+	for raw, want := range cases {
+		if got := parseLogLevel(raw); got != want {
+			t.Errorf("parseLogLevel(%q) = %v, want %v", raw, got, want)
+		}
 	}
 }
