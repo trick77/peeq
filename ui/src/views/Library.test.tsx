@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { VideoCard } from "../components/VideoCard";
 import type { Video } from "../api/types";
@@ -156,6 +156,24 @@ describe("VideoCard lifecycle line", () => {
     );
     expect(screen.queryByText("Uncategorized")).not.toBeInTheDocument();
   });
+
+  it("renders no category pill for an unknown category id", () => {
+    // Given: a video carrying a category the UI has never heard of — e.g.
+    // written by a newer backend enum than this build's mirror.
+    render(
+      <VideoCard
+        video={baseVideo({ category: "not-a-real-category" })}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+
+    // Then: the card still renders, and the raw id never leaks into the UI.
+    expect(screen.getByText("A Test Video")).toBeInTheDocument();
+    expect(screen.queryByText("not-a-real-category")).not.toBeInTheDocument();
+  });
 });
 
 // Library view: category chip row + filtering. Mocks the "../api" barrel
@@ -173,7 +191,7 @@ vi.mock("../api", () => ({
 }));
 
 import { Library } from "./Library";
-import { listVideos } from "../api";
+import { listVideos, listDownloads } from "../api";
 
 function categoryVideo(overrides: Partial<Video> = {}): Video {
   return {
@@ -204,6 +222,10 @@ function categoryVideo(overrides: Partial<Video> = {}): Video {
 describe("Library category chips", () => {
   beforeEach(() => {
     vi.mocked(listVideos).mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("renders a category chip row and filters by category", async () => {
@@ -250,5 +272,39 @@ describe("Library category chips", () => {
     // Selecting a category must not reset the status chip, and vice versa.
     expect(screen.getByRole("button", { name: /Unwatched/ })).toHaveClass("on");
     expect(aiChip).toHaveClass("on");
+  });
+
+  it("keeps the selected category when the 3s poller refreshes", async () => {
+    // Given: a category filter is active. The 3s poller (Library.tsx:163)
+    // only arms while a download job is pending/running, so listDownloads
+    // must report one to make the interval fire at all.
+    const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
+    vi.mocked(listVideos).mockResolvedValue([aiVideo]);
+    vi.mocked(listDownloads).mockResolvedValue([
+      {
+        job_id: 1,
+        video_id: "v1",
+        state: "running",
+        priority: 0,
+        attempts: 0,
+      },
+    ]);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    render(<Library onOpenVideo={() => {}} />);
+    const aiChip = await screen.findByRole("button", { name: /AI/ });
+    fireEvent.click(aiChip);
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith("all", "ai");
+    });
+    vi.mocked(listVideos).mockClear();
+
+    // When: the 3s poller fires.
+    await vi.advanceTimersByTimeAsync(3000);
+
+    // Then: the refresh still carries the category, not just the status.
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith("all", "ai");
+    });
   });
 });

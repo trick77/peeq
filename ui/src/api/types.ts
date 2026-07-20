@@ -172,3 +172,19 @@ export type CookieHealth = {
   updated_at?: string;
   present: boolean;
 };
+
+// APITokenStatus is the non-secret view of the machine API token. The token
+// itself is write-only: it is never returned after the response that
+// creates it, so this type deliberately has no token field.
+export type APITokenStatus = {
+  present: boolean;
+  created_at?: string;
+};
+
+// APITokenCreated is the one and only shape that carries the plaintext
+// token, returned by createAPIToken. Hold it in component state only — it
+// cannot be fetched again.
+export type APITokenCreated = {
+  token: string;
+  created_at: string;
+};

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
-import { getSettings, updateSettings, putCookie } from "../api/settings";
+import { getSettings, updateSettings, putCookie, getAPITokenStatus, createAPIToken } from "../api/settings";
 import { getYtdlpVersion, updateYtdlp } from "../api/ytdlp";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 import type { Settings as SettingsType } from "../api/types";
@@ -55,6 +55,16 @@ export function Settings() {
   const [ytdlpBusy, setYtdlpBusy] = useState(false);
   const [ytdlpError, setYtdlpError] = useState<string | null>(null);
 
+  const [tokenPresent, setTokenPresent] = useState(false);
+  const [tokenCreatedAt, setTokenCreatedAt] = useState("");
+  // freshToken holds the plaintext returned by createAPIToken. It lives only
+  // here: peeq stores a hash, so leaving this page loses it for good.
+  const [freshToken, setFreshToken] = useState<string | null>(null);
+  const [tokenConfirming, setTokenConfirming] = useState(false);
+  const [tokenBusy, setTokenBusy] = useState(false);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
+
   function load() {
     getSettings()
       .then((s) => {
@@ -74,6 +84,19 @@ export function Settings() {
     getYtdlpVersion()
       .then(setYtdlpVersion)
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    getAPITokenStatus()
+      .then((status) => {
+        setTokenPresent(status.present);
+        setTokenCreatedAt(status.created_at ?? "");
+      })
+      .catch(() => {
+        // A failed status read must not blank the whole Settings page; the
+        // section falls back to its empty state.
+        setTokenPresent(false);
+      });
   }, []);
 
   async function handleSaveCookie(e: FormEvent) {
@@ -150,6 +173,33 @@ export function Settings() {
     } catch (err) {
       setError((err as Error).message);
     }
+  }
+
+  async function handleCreateToken() {
+    setTokenBusy(true);
+    setTokenError(null);
+    try {
+      const created = await createAPIToken();
+      setFreshToken(created.token);
+      setTokenPresent(true);
+      setTokenCreatedAt(created.created_at);
+      setTokenConfirming(false);
+    } catch (err) {
+      setTokenError((err as Error).message ?? "Failed to create the API token.");
+    } finally {
+      setTokenBusy(false);
+    }
+  }
+
+  async function handleCopyToken() {
+    if (!freshToken) return;
+    try {
+      await navigator.clipboard.writeText(freshToken);
+    } catch {
+      // Clipboard access can be denied; the token is selectable on screen.
+    }
+    setTokenCopied(true);
+    setTimeout(() => setTokenCopied(false), 1600);
   }
 
   async function handleUpdateYtdlp() {
@@ -262,6 +312,100 @@ export function Settings() {
             asks you to re-paste instead.
           </span>
         </div>
+      </section>
+
+      <section className="sect">
+        <h2>
+          API token
+          {tokenPresent ? (
+            <span className="status-line">
+              <span className="led" />
+              Active
+            </span>
+          ) : (
+            <span className="status-line idle">
+              <span className="led" />
+              Not set up
+            </span>
+          )}
+        </h2>
+        <p className="desc">
+          Lets the peeq browser extension send your YouTube cookie automatically, so you never paste it
+          by hand. The token can only write the cookie — it cannot read your library.
+        </p>
+
+        {freshToken ? (
+          <div className="reveal">
+            <div className="rhead">
+              <Icon name="warning" size="15px" />
+              Copy this now — it won't be shown again
+            </div>
+            <div className="tokenfield">
+              <code>{freshToken}</code>
+              <div className="acts">
+                <button
+                  type="button"
+                  className={`tokenbtn${tokenCopied ? " ok" : ""}`}
+                  onClick={handleCopyToken}
+                >
+                  {tokenCopied ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+            <p className="rfoot">
+              peeq stores only a hash of this token, so it can't show it to you again. If you lose it,
+              generate a new one — the old one stops working.
+            </p>
+            <div className="field-row">
+              <button type="button" className="btn ghost" onClick={() => setFreshToken(null)}>
+                Done
+              </button>
+            </div>
+          </div>
+        ) : tokenPresent ? (
+          <>
+            <p className="meta">
+              {tokenCreatedAt ? `Created ${new Date(tokenCreatedAt).toLocaleString()}` : "Token is set up."}
+            </p>
+            <div className="field-row">
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={tokenConfirming || tokenBusy}
+                onClick={() => setTokenConfirming(true)}
+              >
+                Generate a new token
+              </button>
+              <span className="meta">The current token stops working immediately.</span>
+            </div>
+            {tokenConfirming ? (
+              <div className="warnline">
+                <Icon name="warning" size="16px" style={{ color: "var(--color-danger)" }} />
+                <span style={{ flex: 1 }}>
+                  Generate a new token? Your extension will stop sending cookies until you paste the new
+                  one.
+                </span>
+                <button type="button" className="btn danger sm" disabled={tokenBusy} onClick={handleCreateToken}>
+                  Generate
+                </button>
+                <button type="button" className="btn ghost sm" onClick={() => setTokenConfirming(false)}>
+                  Cancel
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <div className="empty">No API token yet.</div>
+            <div className="field-row">
+              <button type="button" className="btn primary" disabled={tokenBusy} onClick={handleCreateToken}>
+                {tokenBusy ? "Generating…" : "Generate token"}
+              </button>
+              <span className="meta">You'll see the token once, right after it's created.</span>
+            </div>
+          </>
+        )}
+        {tokenError ? <div className="errline">{tokenError}</div> : null}
       </section>
 
       <section className="sect">

@@ -2,7 +2,9 @@ package settings
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/store"
@@ -146,4 +148,80 @@ func TestUpdate_minVideoDurationSeconds(t *testing.T) {
 		t.Fatalf("min_video_duration_seconds = %d, want %d", got.MinVideoDurationSeconds, want)
 	}
 	// Default is 180 on a fresh row — sanity that the column exists & seeds.
+}
+
+func TestAPIToken_roundTripsAndReportsPresence(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+
+	// Given: a fresh settings row, no token has ever been generated.
+	present, createdAt, err := st.APITokenInfo(ctx)
+	if err != nil {
+		t.Fatalf("APITokenInfo: %v", err)
+	}
+	if present {
+		t.Fatalf("present = true on a fresh row, want false")
+	}
+	if createdAt != "" {
+		t.Fatalf("createdAt = %q on a fresh row, want empty", createdAt)
+	}
+	if got := st.APITokenHash(ctx); got != "" {
+		t.Fatalf("APITokenHash = %q on a fresh row, want empty", got)
+	}
+
+	// When: a hash is stored.
+	if err := st.SetAPITokenHash(ctx, "hash-one"); err != nil {
+		t.Fatalf("SetAPITokenHash: %v", err)
+	}
+
+	// Then: it round-trips and is reported present with a timestamp.
+	if got := st.APITokenHash(ctx); got != "hash-one" {
+		t.Fatalf("APITokenHash = %q, want %q", got, "hash-one")
+	}
+	present, createdAt, err = st.APITokenInfo(ctx)
+	if err != nil {
+		t.Fatalf("APITokenInfo: %v", err)
+	}
+	if !present {
+		t.Fatalf("present = false after storing a hash, want true")
+	}
+	if createdAt == "" {
+		t.Fatalf("createdAt is empty after storing a hash, want a timestamp")
+	}
+
+	// When: a second hash replaces it (regeneration).
+	if err := st.SetAPITokenHash(ctx, "hash-two"); err != nil {
+		t.Fatalf("SetAPITokenHash (regenerate): %v", err)
+	}
+
+	// Then: the old hash is gone.
+	if got := st.APITokenHash(ctx); got != "hash-two" {
+		t.Fatalf("APITokenHash after regenerate = %q, want %q", got, "hash-two")
+	}
+}
+
+func TestGet_neverCarriesTheAPIToken(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	if err := st.SetAPITokenHash(ctx, "hash-one"); err != nil {
+		t.Fatalf("SetAPITokenHash: %v", err)
+	}
+
+	got, err := st.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	// The Settings struct is the JSON API's view. A token field here would
+	// leak a credential into every GET /api/settings response.
+	blob, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(blob), "hash-one") {
+		t.Fatalf("Settings JSON contains the token hash: %s", blob)
+	}
+	if strings.Contains(strings.ToLower(string(blob)), "api_token") {
+		t.Fatalf("Settings JSON has an api_token field: %s", blob)
+	}
 }
