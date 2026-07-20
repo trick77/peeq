@@ -85,6 +85,10 @@ vi.mock("./api/channels", () => ({
 // downloading. This asserts the add itself refreshes the queue.
 describe("App dock bootstrap", () => {
   beforeEach(() => {
+    // testing-library truncates its failure DOM dump at 7000 chars by
+    // default, which cuts off the rail's lower nav groups and makes a
+    // CI-only failure here impossible to diagnose from the log.
+    process.env.DEBUG_PRINT_LIMIT = "100000";
     sessionStorage.clear();
     vi.clearAllMocks();
     // Restate every mock this test depends on rather than inheriting
@@ -118,8 +122,11 @@ describe("App dock bootstrap", () => {
 
     // Wait for the authed shell before touching the rail: on a slow runner
     // the initial getMe() has not resolved yet, and a bare findByText would
-    // race its 1s default timeout against an unrendered nav.
-    fireEvent.click(await screen.findByRole("button", { name: /Add a video/ }, { timeout: 5000 }));
+    // race its 1s default timeout against an unrendered nav. The waits must
+    // stay comfortably under this test's own timeout (last arg to it()),
+    // or vitest aborts the test before the query can report what it saw.
+    await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
+    fireEvent.click(screen.getByRole("button", { name: /Add a video/ }));
 
     // Starts empty — this is the state that used to be terminal.
     expect(await screen.findByText("Nothing queued")).toBeTruthy();
@@ -135,7 +142,7 @@ describe("App dock bootstrap", () => {
     fireEvent.click(screen.getByRole("button", { name: /Download now/ }));
 
     expect(await screen.findByText("1 queued")).toBeTruthy();
-  });
+  }, 20000);
 });
 
 describe("App reload-restore", () => {
