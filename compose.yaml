@@ -40,6 +40,17 @@ services:
       BACKEND_DB_PATH: /data/peeq.db
       BACKEND_MEDIA_DIR: /data/media
       BACKEND_YTDLP_DIR: /data/bin
+      # AI endpoints. Values come from .env — see .env.example. Compose reads
+      # .env for ${} interpolation only, so anything not listed here never
+      # reaches the container.
+      BACKEND_CHAT_BASE_URL: "${BACKEND_CHAT_BASE_URL}"
+      BACKEND_CHAT_API_KEY: "${BACKEND_CHAT_API_KEY}"
+      BACKEND_EMBED_BASE_URL: "${BACKEND_EMBED_BASE_URL}"
+      BACKEND_EMBED_API_KEY: "${BACKEND_EMBED_API_KEY}"
+      BACKEND_EMBED_MODEL: "${BACKEND_EMBED_MODEL}"
+      # Must match the embedding model's real output dimension.
+      BACKEND_EMBED_DIM: "${BACKEND_EMBED_DIM:-1536}"
+      BACKEND_DEFAULT_SUB_LANG: "${BACKEND_DEFAULT_SUB_LANG:-en}"
       BACKEND_LOG_LEVEL: "${BACKEND_LOG_LEVEL:-info}"
 
     healthcheck:
