@@ -564,7 +564,7 @@ button {
 .catchip .n {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 10.5px;
+  font-size: var(--text-micro);
   opacity: 0.65;
 }
 
@@ -1004,12 +1004,12 @@ button {
   margin-top: 14px;
   flex-wrap: wrap;
 }
+/* One label style everywhere — the 11px uppercase variant is retired. */
 .lab {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--color-faint);
-  margin-bottom: 8px;
+  font-size: var(--text-label);
+  color: var(--color-muted);
+  font-weight: 500;
+  margin-bottom: 6px;
   display: block;
 }
 .select {
@@ -1529,9 +1529,9 @@ button {
   padding: 22px 24px;
 }
 .sect h2 {
-  margin: 0 0 4px;
+  margin: 0 0 6px;
   font-family: var(--font-serif);
-  font-size: 19px;
+  font-size: var(--text-title);
   font-weight: 500;
   letter-spacing: -0.01em;
   display: flex;
@@ -1541,7 +1541,7 @@ button {
 }
 .sect .desc {
   margin: 0 0 18px;
-  font-size: 13.5px;
+  font-size: var(--text-body);
   color: var(--color-muted);
 }
 /* Pills are ALWAYS sans. This one renders inside the serif `.sect h2`, so
@@ -1620,7 +1620,7 @@ button {
   min-width: 0;
   padding: 13px 14px;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-label);
   line-height: 1.5;
   color: var(--color-ink-dim);
   overflow-x: auto;
@@ -1784,20 +1784,27 @@ textarea.cookiebox:focus {
     grid-template-columns: 1fr;
   }
 }
+/* These out-specify .ui-control (0,2,1 vs 0,1,0), so they must carry the same
+   values themselves — otherwise a field inside .ctrl silently keeps the old
+   13.5px mono face and re-opens the iOS zoom trap. Font size comes from
+   --text-input, never a literal. */
 .ctrl input[type="text"],
 .ctrl input[type="number"] {
   width: 100%;
-  background: var(--color-bg);
+  min-height: 40px;
+  background: var(--color-panel);
   border: 1px solid var(--color-border);
-  border-radius: 10px;
-  padding: 11px 13px;
+  border-radius: var(--radius-ui);
+  padding: 0 12px;
   color: var(--color-ink);
-  font-family: var(--font-mono);
-  font-size: 13.5px;
+  font-family: var(--font-sans);
+  font-size: var(--text-input);
   outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .ctrl input:focus {
   border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 .retain-note {
   font-size: 12.5px;
