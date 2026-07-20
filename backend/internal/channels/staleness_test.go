@@ -1,0 +1,184 @@
+package channels
+
+import "testing"
+
+func TestRecordDeadScan_incrementsAndReturnsCount(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, want := range []int{1, 2, 3} {
+		got, err := st.RecordDeadScan("UC1")
+		if err != nil {
+			t.Fatalf("record dead scan #%d: %v", i+1, err)
+		}
+		if got != want {
+			t.Fatalf("record dead scan #%d = %d, want %d", i+1, got, want)
+		}
+	}
+}
+
+func TestResetDeadScan_zeroesPartialCount(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.RecordDeadScan("UC1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RecordDeadScan("UC1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ResetDeadScan("UC1"); err != nil {
+		t.Fatalf("reset dead scan: %v", err)
+	}
+	got, err := st.RecordDeadScan("UC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1 {
+		t.Fatalf("dead scan count after reset+one scan = %d, want 1 (must not creep to 3)", got)
+	}
+}
+
+func TestAutoUnsubscribe_removesSubscriptionAndRecordsReason(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	const at = "2026-07-20 12:00:00"
+	if err := st.AutoUnsubscribe("UC1", ReasonDeleted, at); err != nil {
+		t.Fatalf("auto unsubscribe: %v", err)
+	}
+
+	items, err := st.List("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Subscribed {
+		t.Fatalf("list after auto unsubscribe = %+v, want one tracked-but-unsubscribed item", items)
+	}
+
+	list, err := st.AutoUnsubscribedList()
+	if err != nil {
+		t.Fatalf("auto unsubscribed list: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("auto unsubscribed list len = %d, want 1", len(list))
+	}
+	if list[0].ID != "UC1" {
+		t.Fatalf("auto unsubscribed channel id = %q, want UC1", list[0].ID)
+	}
+	if list[0].Reason != ReasonDeleted {
+		t.Fatalf("auto unsubscribed reason = %q, want %q", list[0].Reason, ReasonDeleted)
+	}
+	if list[0].At != at {
+		t.Fatalf("auto unsubscribed at = %q, want %q", list[0].At, at)
+	}
+}
+
+// TestAutoUnsubscribe_keepsChannelAndVideos is the "nothing is destroyed"
+// promise the UI makes to the user: auto-unsubscribing removes only the
+// subscriptions row, never the channel, its ledger rows, or its downloaded
+// videos. Asserted against the real schema, not an assumption about how the
+// FK cascades behave.
+func TestAutoUnsubscribe_keepsChannelAndVideos(t *testing.T) {
+	st := newTestStore(t)
+	db := st.DB()
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status,media_path) VALUES ('v1','u','UC1','downloaded','/m/v1.mp4')`)
+	mustExec(t, db, `INSERT INTO channel_videos (video_id, channel_id, state) VALUES ('v1','UC1','queued')`)
+
+	if err := st.AutoUnsubscribe("UC1", ReasonDeleted, "2026-07-20 12:00:00"); err != nil {
+		t.Fatalf("auto unsubscribe: %v", err)
+	}
+
+	for _, q := range []string{
+		`SELECT count(*) FROM channels WHERE id='UC1'`,
+		`SELECT count(*) FROM channel_videos WHERE channel_id='UC1'`,
+		`SELECT count(*) FROM videos WHERE channel_id='UC1'`,
+	} {
+		var n int
+		if err := db.QueryRow(q).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("%q -> n=%d err=%v, want 1 (nothing destroyed)", q, n, err)
+		}
+	}
+	var subs int
+	if err := db.QueryRow(`SELECT count(*) FROM subscriptions WHERE channel_id='UC1'`).Scan(&subs); err != nil || subs != 0 {
+		t.Fatalf("subscriptions after auto unsubscribe = %d err=%v, want 0", subs, err)
+	}
+}
+
+func TestClearAutoUnsubscribe_allowsResubscribe(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AutoUnsubscribe("UC1", ReasonDeleted, "2026-07-20 12:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.ClearAutoUnsubscribe("UC1"); err != nil {
+		t.Fatalf("clear auto unsubscribe: %v", err)
+	}
+	if err := st.Subscribe("UC1", "2026-07-21 00:00:00"); err != nil {
+		t.Fatalf("resubscribe: %v", err)
+	}
+
+	items, err := st.List("subscribed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != "UC1" {
+		t.Fatalf("subscribed list = %+v, want UC1 subscribed again", items)
+	}
+
+	list, err := st.AutoUnsubscribedList()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("auto unsubscribed list = %+v, want empty after clear", list)
+	}
+}
+
+// TestAutoUnsubscribeReasons_allAcceptedByDBCheck locks the Go reason enum to
+// the SQL CHECK constraint. peeq shipped a production bug where a Go enum
+// silently drifted from a SQL CHECK and broke every video add — this test
+// exists to prevent a repeat for auto_unsubscribes.reason.
+func TestAutoUnsubscribeReasons_allAcceptedByDBCheck(t *testing.T) {
+	st := newTestStore(t)
+	reasons := []string{ReasonDeleted}
+	for i, reason := range reasons {
+		id := "UC" + string(rune('1'+i))
+		if err := st.Upsert(Channel{ID: id, Name: id}); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+		if err := st.Subscribe(id, "2000-01-01 00:00:00"); err != nil {
+			t.Fatalf("subscribe %s: %v", id, err)
+		}
+		if err := st.AutoUnsubscribe(id, reason, "2026-07-20 12:00:00"); err != nil {
+			t.Fatalf("auto unsubscribe %s with reason %q rejected by DB CHECK: %v", id, reason, err)
+		}
+	}
+}
