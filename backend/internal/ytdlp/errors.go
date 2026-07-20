@@ -49,11 +49,73 @@ func (e *RetryableError) Error() string {
 	return "ytdlp: retryable (" + e.Reason + ")"
 }
 
+// ExecError is the fallback when stderr matches no known signature. It
+// keeps yt-dlp's own words attached to the exit status: without it a
+// failure collapses to the bare "exit status 1", which says nothing about
+// whether the cause was a dead cookie, a bot block, an extractor change,
+// or a missing JS runtime. Unwrap keeps errors.Is/As working against the
+// underlying *exec.ExitError.
+type ExecError struct {
+	Err    error  // the process error, normally *exec.ExitError
+	Stderr string // trimmed tail of yt-dlp's stderr
+}
+
+func (e *ExecError) Error() string {
+	if e.Stderr == "" {
+		return e.Err.Error()
+	}
+	return e.Err.Error() + ": " + e.Stderr
+}
+
+func (e *ExecError) Unwrap() error { return e.Err }
+
+// maxStderrTail bounds what an error carries: enough for the real reason,
+// not so much that a verbose run pushes a wall of text into an API
+// response body or a log line.
+const maxStderrTail = 600
+
+// stderrTail reduces yt-dlp's stderr to the part worth reporting. yt-dlp
+// prints the actual failure on lines prefixed "ERROR:", usually after
+// noisier WARNING lines, so those win; otherwise the last non-empty lines
+// are used. The result is capped at maxStderrTail characters.
+func stderrTail(stderr string) string {
+	var errLines, allLines []string
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		allLines = append(allLines, line)
+		if strings.HasPrefix(line, "ERROR:") {
+			errLines = append(errLines, line)
+		}
+	}
+
+	lines := errLines
+	if len(lines) == 0 {
+		lines = allLines
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	// Keep the last few lines: with multi-line tracebacks the tail carries
+	// the cause, and the head is boilerplate.
+	if len(lines) > 3 {
+		lines = lines[len(lines)-3:]
+	}
+
+	out := strings.Join(lines, "; ")
+	if len(out) > maxStderrTail {
+		out = out[:maxStderrTail] + "…"
+	}
+	return out
+}
+
 // Classify inspects yt-dlp's stderr output and the process exit error (if
 // any) and maps them to the ytdlp error taxonomy. stderr is matched
 // case-insensitively against known yt-dlp message signatures. If nothing
-// recognizable is found, exitErr is returned unchanged (nil if there was
-// no error at all).
+// recognizable is found, exitErr is wrapped in an ExecError carrying the
+// stderr tail (nil is returned unchanged if there was no error at all).
 func Classify(stderr string, exitErr error) error {
 	s := strings.ToLower(stderr)
 
@@ -76,7 +138,10 @@ func Classify(stderr string, exitErr error) error {
 		return &RetryableError{Reason: "rate limited or server error"}
 	}
 
-	return exitErr
+	if exitErr == nil {
+		return nil
+	}
+	return &ExecError{Err: exitErr, Stderr: stderrTail(stderr)}
 }
 
 func containsAny(haystack string, subs ...string) bool {

@@ -298,10 +298,11 @@ func TestChannels_requireAuth(t *testing.T) {
 	}
 }
 
-// TestDownloadsPost_autoTracksChannel asserts adding a video via
-// POST /api/downloads auto-tracks its channel using already-fetched
-// metadata, without an extra resolve call.
-func TestDownloadsPost_autoTracksChannel(t *testing.T) {
+// TestDownloadsPost_doesNotTrackChannel asserts adding a single video via
+// POST /api/downloads leaves the Channels view untouched. Tracking is an
+// explicit action on the Channels page; grabbing one video must not
+// silently subscribe the user to its channel.
+func TestDownloadsPost_doesNotTrackChannel(t *testing.T) {
 	db := openTestDB(t)
 	sessions := auth.NewSessionStore(db, false)
 	users := auth.NewUserStore(db)
@@ -337,8 +338,8 @@ func TestDownloadsPost_autoTracksChannel(t *testing.T) {
 	}
 
 	list := getJSON(t, h, "/api/channels?filter=tracked")
-	if !strings.Contains(list, "UCauto") {
-		t.Fatalf("channel not auto-tracked: %s", list)
+	if strings.Contains(list, "UCauto") {
+		t.Fatalf("channel was tracked by a plain video download: %s", list)
 	}
 }
 
