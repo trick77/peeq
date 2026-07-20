@@ -429,21 +429,21 @@ FROM videos WHERE status = 'downloaded' AND `+where, args...)
 	return st, nil
 }
 
-// NameFromVideos returns the channel name recorded on this channel's videos,
-// used when there is no cached channels row yet — the untracked case, where
-// the only thing peeq knows about the channel is what its videos say.
-func (s *Store) NameFromVideos(channelID string) (string, error) {
+// NameFromVideos returns the channel name recorded on this channel's videos
+// and whether the channel has any videos at all. Both matter to the channel
+// page: the name is all peeq knows about an untracked channel, and existence
+// is what separates "a channel with nothing downloaded yet" from "an id that
+// names nothing". Existence is deliberately NOT filtered by status — a video
+// still downloading is still a video.
+func (s *Store) NameFromVideos(channelID string) (name string, found bool, err error) {
 	row := s.db.QueryRowContext(context.Background(),
-		`SELECT COALESCE(channel_name, '') FROM videos WHERE channel_id = ? AND channel_name != '' LIMIT 1`,
+		`SELECT COALESCE(max(channel_name), ''), count(*) FROM videos WHERE channel_id = ?`,
 		channelID)
-	var name string
-	if err := row.Scan(&name); err != nil {
-		if err == sql.ErrNoRows {
-			return "", nil
-		}
-		return "", fmt.Errorf("channel name from videos %s: %w", channelID, err)
+	var count int
+	if err := row.Scan(&name, &count); err != nil {
+		return "", false, fmt.Errorf("channel name from videos %s: %w", channelID, err)
 	}
-	return name, nil
+	return name, count > 0, nil
 }
 
 // MarkScanned records the result of a scan: last_scanned_at and next_scan_at

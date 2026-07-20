@@ -261,17 +261,23 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No cached row: fall back to what this channel's own videos say. If
-	// there are none either, the id names nothing peeq knows about.
+	// No cached row: fall back to what this channel's own videos say, and
+	// find out whether the channel has any videos at all (existence, not
+	// downloaded-ness, is what decides the 404 below).
 	name := ""
+	found := true
 	if c != nil {
 		name = c.Name
 	}
-	if name == "" {
-		name, err = s.channels.NameFromVideos(id)
+	if c == nil || name == "" {
+		var videoName string
+		videoName, found, err = s.channels.NameFromVideos(id)
 		if err != nil {
 			serverError(w, r, err, "load channel failed")
 			return
+		}
+		if name == "" {
+			name = videoName
 		}
 	}
 	stats, err := s.channels.Stats(id, name)
@@ -279,7 +285,7 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "load channel failed")
 		return
 	}
-	if c == nil && stats.ArchivedCount == 0 {
+	if c == nil && !found {
 		writeJSONError(w, http.StatusNotFound, "channel not found")
 		return
 	}

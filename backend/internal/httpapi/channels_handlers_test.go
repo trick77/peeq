@@ -404,6 +404,28 @@ func TestChannelDetail_unknownChannel_404(t *testing.T) {
 	}
 }
 
+// TestChannelDetail_untrackedChannel_onlyQueuedVideos_200 asserts the page
+// exists for a channel whose videos have not finished downloading. The stats
+// count only downloaded videos, so archived_count is 0 here — but the channel
+// is plainly real, and 404ing it would make the page flap to 200 the moment
+// the download completed.
+func TestChannelDetail_untrackedChannel_onlyQueuedVideos_200(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	h := New(deps)
+	seedVideoRowFull(t, deps, seedVideo{ID: "v1", ChannelID: "UCq", ChannelName: "Queued Channel", Status: "queued"})
+
+	body := getJSON(t, h, "/api/channels/UCq")
+	if !strings.Contains(body, `"tracked":false`) {
+		t.Fatalf("want tracked:false, got %s", body)
+	}
+	if !strings.Contains(body, `"archived_count":0`) {
+		t.Fatalf("want archived_count 0, got %s", body)
+	}
+	if !strings.Contains(body, "Queued Channel") {
+		t.Fatalf("want the channel name from its videos, got %s", body)
+	}
+}
+
 // TestChannelDetail_subscribed_includesSchedule asserts the page can tell the
 // user when peeq last checked and when it will check next.
 func TestChannelDetail_subscribed_includesSchedule(t *testing.T) {
