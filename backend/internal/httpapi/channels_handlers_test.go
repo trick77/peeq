@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -685,5 +686,488 @@ func TestPendingIgnore_notFound_404(t *testing.T) {
 	rr := postJSON(t, h, "/api/pending/nope/ignore", nil)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("ignore unknown id status = %d, want 404, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelHandleFromURL covers channelHandleFromURL's two "no handle
+// found" branches directly, as a plain function test (no HTTP layer
+// needed): a url with no /@ segment, and one whose /@ segment is empty.
+func TestChannelHandleFromURL(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"no at-segment", "https://www.youtube.com/channel/UC123", ""},
+		{"empty handle", "https://www.youtube.com/@", ""},
+		{"empty handle before query", "https://www.youtube.com/@?foo=bar", ""},
+		{"plain handle", "https://www.youtube.com/@Handle", "@Handle"},
+		{"handle with trailing path", "https://www.youtube.com/@Handle/videos", "@Handle"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := channelHandleFromURL(c.url); got != c.want {
+				t.Fatalf("channelHandleFromURL(%q) = %q, want %q", c.url, got, c.want)
+			}
+		})
+	}
+}
+
+// TestChannelsPost_notConfigured_503 covers the s.channels == nil ||
+// s.channelResolver == nil guard.
+func TestChannelsPost_notConfigured_503(t *testing.T) {
+	h := New(testDeps(t))
+	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@x"})
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsPost_invalidBody_400 covers the JSON-decode / missing-url
+// validation branch.
+func TestChannelsPost_invalidBody_400(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{})
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/channels", strings.NewReader("not json"))
+	req.AddCookie(cookie)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/channels (bad body) status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "   "})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/channels (blank url) status = %d, want 400, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsPost_resolveFails_502 covers a ResolveChannel failure that is
+// NOT ytdlp.ErrNoCookie: it must surface as 502, distinct from the 409
+// cookie-required case.
+func TestChannelsPost_resolveFails_502(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{err: errors.New("yt-dlp: boom")})
+	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@x"})
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsPost_upsertStoreError_500 covers the s.channels.Upsert error
+// branch: a broken channels table must surface as 500.
+func TestChannelsPost_upsertStoreError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{ucid: "UCbroken", name: "Broken"})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE channels`); err != nil {
+		t.Fatalf("drop channels table: %v", err)
+	}
+	h := New(deps)
+	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@x"})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsPost_subscribeStoreError_500 covers the s.channels.Subscribe
+// error branch: Upsert succeeds (channels table intact) but the
+// subscriptions table is broken.
+func TestChannelsPost_subscribeStoreError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{ucid: "UCbroken", name: "Broken"})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {
+		t.Fatalf("drop subscriptions table: %v", err)
+	}
+	h := New(deps)
+	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@x", "subscribe": true})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsPost_subscribedCheckStoreError_500 covers the final
+// channelSubscribed error branch: Upsert succeeds and subscribe:false skips
+// Subscribe entirely, but the closing List("subscribed") call (which joins
+// against subscriptions) fails because that table is broken.
+func TestChannelsPost_subscribedCheckStoreError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{ucid: "UCbroken", name: "Broken"})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {
+		t.Fatalf("drop subscriptions table: %v", err)
+	}
+	h := New(deps)
+	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@x"})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsList_defaultsToAllWhenFilterOmitted covers the ?filter=
+// omitted-entirely path, distinct from an explicit ?filter=all.
+func TestChannelsList_defaultsToAllWhenFilterOmitted(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{ucid: "UCdefault", name: "Default"})
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@default"}); rr.Code != http.StatusCreated {
+		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/channels", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/channels (no filter) status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "UCdefault") {
+		t.Fatalf("GET /api/channels (no filter) missing tracked channel: %s", rec.Body.String())
+	}
+}
+
+// TestChannelsList_storeError_500 covers the s.channels.List error branch.
+func TestChannelsList_storeError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE channels`); err != nil {
+		t.Fatalf("drop channels table: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	req := httptest.NewRequest(http.MethodGet, "/api/channels", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /api/channels (store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelsPut_invalidBody_400 covers the JSON-decode error branch.
+func TestChannelsPut_invalidBody_400(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{})
+	cookie := loginAndGetCookie(t, h)
+	req := httptest.NewRequest(http.MethodPut, "/api/channels/UC1", strings.NewReader("not json"))
+	req.AddCookie(cookie)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT /api/channels/UC1 (bad body) status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelsPut_loadConfigStoreError_500 covers the
+// s.channels.List("subscribed") error branch of handleChannelsPut.
+func TestChannelsPut_loadConfigStoreError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {
+		t.Fatalf("drop subscriptions table: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UC1", map[string]any{"autodownload": true})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("PUT (store error) status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsPut_updateConfigStoreError_500 covers the
+// s.channels.UpdateConfig error branch: the channel is genuinely subscribed
+// (so the List lookup finds it), but the subscriptions table's update is
+// blocked by a trigger.
+func TestChannelsPut_updateConfigStoreError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{ucid: "UCput", name: "Put"})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@put", "subscribe": true}); rr.Code != http.StatusCreated {
+		t.Fatalf("track+subscribe status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := deps.Channels.DB().Exec(`CREATE TRIGGER block_subscriptions_update BEFORE UPDATE ON subscriptions BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UCput", map[string]any{"autodownload": true})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("PUT (store error) status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsSubscribe_notConfigured_503 covers the s.channels == nil
+// guard on handleChannelsSubscribe.
+func TestChannelsSubscribe_notConfigured_503(t *testing.T) {
+	h := New(testDeps(t))
+	rr := postJSON(t, h, "/api/channels/UC1/subscribe", nil)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsSubscribe_getStoreError_500 covers the s.channels.Get error
+// branch of handleChannelsSubscribe.
+func TestChannelsSubscribe_getStoreError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE channels`); err != nil {
+		t.Fatalf("drop channels table: %v", err)
+	}
+	h := New(deps)
+	rr := postJSON(t, h, "/api/channels/UC1/subscribe", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsSubscribe_unknownChannel_404 covers the c == nil branch: a
+// channel that was never tracked can't be subscribed.
+func TestChannelsSubscribe_unknownChannel_404(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{})
+	rr := postJSON(t, h, "/api/channels/nope/subscribe", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsSubscribe_storeError_500 covers the s.channels.Subscribe
+// error branch: the channel is tracked (Get succeeds) but the
+// subscriptions table itself is broken.
+func TestChannelsSubscribe_storeError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{ucid: "UCsub", name: "Sub"})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@sub"}); rr.Code != http.StatusCreated {
+		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {
+		t.Fatalf("drop subscriptions table: %v", err)
+	}
+
+	rr := postJSONWithCookie(t, h, cookie, "/api/channels/UCsub/subscribe", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsUnsubscribe_notConfigured_503 covers the s.channels == nil
+// guard on handleChannelsUnsubscribe.
+func TestChannelsUnsubscribe_notConfigured_503(t *testing.T) {
+	h := New(testDeps(t))
+	rr := postJSON(t, h, "/api/channels/UC1/unsubscribe", nil)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsUnsubscribe_notSubscribed_404 covers the !ok branch: a
+// tracked-but-never-subscribed channel can't be unsubscribed.
+func TestChannelsUnsubscribe_notSubscribed_404(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{ucid: "UCunsub", name: "Unsub"})
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@unsub"}); rr.Code != http.StatusCreated {
+		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	rr := postJSONWithCookie(t, h, cookie, "/api/channels/UCunsub/unsubscribe", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsUnsubscribe_storeError_500 covers the s.channels.Unsubscribe
+// error branch.
+func TestChannelsUnsubscribe_storeError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{ucid: "UCunsub2", name: "Unsub2"})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@unsub2", "subscribe": true}); rr.Code != http.StatusCreated {
+		t.Fatalf("track+subscribe status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {
+		t.Fatalf("drop subscriptions table: %v", err)
+	}
+
+	rr := postJSONWithCookie(t, h, cookie, "/api/channels/UCunsub2/unsubscribe", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsDelete_notConfigured_503 covers the s.channels == nil guard
+// on handleChannelsDelete.
+func TestChannelsDelete_notConfigured_503(t *testing.T) {
+	h := New(testDeps(t))
+	rr := doDelete(t, h, "/api/channels/UC1")
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsDelete_videoRefsStoreError_500 covers the s.channels.VideoRefs
+// error branch.
+func TestChannelsDelete_videoRefsStoreError_500(t *testing.T) {
+	h := newChannelsDeleteServer(t)
+	h.seedChannel("UC1")
+	if _, err := h.channels.DB().Exec(`DROP TABLE videos`); err != nil {
+		t.Fatalf("drop videos table: %v", err)
+	}
+	rr := doDelete(t, h, "/api/channels/UC1")
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsDelete_cascadeStoreError_500 covers the
+// s.channels.DeleteCascade error branch: VideoRefs succeeds (videos table
+// intact) but the channels table itself is gone, so the cascade's final
+// DELETE FROM channels fails.
+func TestChannelsDelete_cascadeStoreError_500(t *testing.T) {
+	h := newChannelsDeleteServer(t)
+	h.seedChannel("UC1")
+	if _, err := h.channels.DB().Exec(`DROP TABLE channels`); err != nil {
+		t.Fatalf("drop channels table: %v", err)
+	}
+	rr := doDelete(t, h, "/api/channels/UC1")
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestPendingList_storeError_500 covers the s.ledger.ListPending error
+// branch.
+func TestPendingList_storeError_500(t *testing.T) {
+	h := newPendingTestServer(t)
+	if _, err := h.channels.DB().Exec(`DROP TABLE channel_videos`); err != nil {
+		t.Fatalf("drop channel_videos table: %v", err)
+	}
+	rr := postJSON(t, h, "/api/pending/x/ignore", nil) // sanity: ledger still reachable enough to 404
+	if rr.Code != http.StatusInternalServerError && rr.Code != http.StatusNotFound {
+		t.Fatalf("sanity ignore status = %d", rr.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/pending", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /api/pending (store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPendingDownload_alreadyDownloaded_setStateStoreError_500 covers the
+// ledger.SetState error branch inside the already-downloaded short-circuit:
+// a trigger blocks the channel_videos state column update.
+func TestPendingDownload_alreadyDownloaded_setStateStoreError_500(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.videos.Upsert(videos.Video{ID: "p1", URL: "https://www.youtube.com/watch?v=p1", ChannelID: "UC1"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetDownloaded("p1", videos.DownloadedResult{MediaPath: "/tmp/p1.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+	if _, err := h.channels.DB().Exec(`CREATE TRIGGER block_cv_state BEFORE UPDATE OF state ON channel_videos BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/pending/p1/download", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestPendingDownload_upsertVideoStoreError_500 covers the s.videos.Upsert
+// error branch of the main (not-already-downloaded) download path.
+func TestPendingDownload_upsertVideoStoreError_500(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+	if _, err := h.channels.DB().Exec(`DROP TABLE videos`); err != nil {
+		t.Fatalf("drop videos table: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/pending/p1/download", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestPendingDownload_setStatusStoreError_500 covers the s.videos.SetStatus
+// error branch: Upsert succeeds (videos table intact) but a trigger blocks
+// the status column update.
+func TestPendingDownload_setStatusStoreError_500(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+	if _, err := h.channels.DB().Exec(`CREATE TRIGGER block_videos_status BEFORE UPDATE OF status ON videos BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/pending/p1/download", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestPendingDownload_enqueueStoreError_500 covers the s.jobs.Enqueue error
+// branch: Upsert and SetStatus both succeed but the queue table is broken.
+func TestPendingDownload_enqueueStoreError_500(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+	if _, err := h.channels.DB().Exec(`DROP TABLE download_jobs`); err != nil {
+		t.Fatalf("drop download_jobs table: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/pending/p1/download", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestPendingDownload_finalSetStateStoreError_500 covers the closing
+// ledger.SetState error branch of the main download path: Upsert,
+// SetStatus, and Enqueue all succeed, but the channel_videos state update
+// itself is blocked.
+func TestPendingDownload_finalSetStateStoreError_500(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+	if _, err := h.channels.DB().Exec(`CREATE TRIGGER block_cv_state BEFORE UPDATE OF state ON channel_videos BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/pending/p1/download", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+	// The video itself must have been queued even though flipping the
+	// ledger row's state failed — this is the handler's actual sequencing,
+	// documented rather than asserted as a promise.
+	v, err := h.videos.Get("p1")
+	if err != nil || v == nil {
+		t.Fatalf("get video: %v", err)
+	}
+}
+
+// TestPendingIgnore_storeError_500 covers the s.ledger.SetState error
+// branch of handlePendingIgnore.
+func TestPendingIgnore_storeError_500(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+	if _, err := h.channels.DB().Exec(`CREATE TRIGGER block_cv_state BEFORE UPDATE OF state ON channel_videos BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/pending/p1/ignore", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
 	}
 }

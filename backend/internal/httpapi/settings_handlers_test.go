@@ -2,14 +2,89 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/settings"
 )
+
+// flakyDBTX satisfies settings.DBTX but lets a test force either
+// ExecContext or QueryRowContext to fail independently, while the other
+// still runs against a real migrated *sql.DB. This is how the store-error
+// branches in the settings handlers (which take *settings.Store, a
+// concrete type) get exercised without touching any non-test source.
+type flakyDBTX struct {
+	db        *sql.DB
+	failExec  bool
+	failQuery bool
+}
+
+func (f *flakyDBTX) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if f.failExec {
+		return nil, errors.New("flakyDBTX: forced exec failure")
+	}
+	return f.db.ExecContext(ctx, query, args...)
+}
+
+func (f *flakyDBTX) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	if f.failQuery {
+		return f.db.QueryRowContext(ctx, "SELECT * FROM flaky_dbtx_nonexistent_table")
+	}
+	return f.db.QueryRowContext(ctx, query, args...)
+}
+
+// testDepsNilSettings builds Deps with dev auth wired but Settings left
+// nil, so every settings/cookie route takes its "settings are not
+// configured" 503 branch.
+func testDepsNilSettings(t *testing.T) Deps {
+	t.Helper()
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	return Deps{
+		AuthService:    auth.NewService(nil, sessions, users),
+		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}
+}
+
+// testDepsFlakySettings builds Deps whose auth stores are backed by a
+// normal working DB (so login always succeeds) but whose Settings store is
+// backed by a flakyDBTX over a second, separately migrated DB, so a test
+// can force Get/Update to fail independently of authentication.
+func testDepsFlakySettings(t *testing.T) (Deps, *flakyDBTX) {
+	t.Helper()
+	authDB := openTestDB(t)
+	sessions := auth.NewSessionStore(authDB, false)
+	users := auth.NewUserStore(authDB)
+	settingsDB := openTestDB(t)
+	flaky := &flakyDBTX{db: settingsDB}
+	settingsStore := settings.New(flaky)
+	return Deps{
+		AuthService:     auth.NewService(nil, sessions, users),
+		AuthMiddleware:  auth.NewMiddleware(sessions, users),
+		Settings:        settingsStore,
+		TokenMiddleware: auth.NewTokenMiddleware(settingsStore),
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}, flaky
+}
 
 const validYouTubeCookieBody = "# Netscape HTTP Cookie File\n" +
 	".youtube.com\tTRUE\t/\tTRUE\t1789000000\tSID\tabc\n" +
@@ -230,6 +305,183 @@ func TestSettingsHandlers_cookieHealth(t *testing.T) {
 	}
 	if got["present"] != false {
 		t.Fatalf("present = %v, want false before any cookie is set", got["present"])
+	}
+}
+
+// TestSettingsHandlers_settingsNotConfigured covers the "s.settings == nil"
+// guard on every settings/cookie route: a deployment that never wired a
+// settings store must fail closed with 503, not panic.
+func TestSettingsHandlers_settingsNotConfigured(t *testing.T) {
+	h := New(testDepsNilSettings(t))
+	sessionCookie := loginAndGetCookie(t, h)
+
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/api/settings", nil),
+		httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader([]byte("{}"))),
+		httptest.NewRequest(http.MethodPut, "/api/settings/cookie", bytes.NewReader([]byte(`{"cookie":"x"}`))),
+		httptest.NewRequest(http.MethodGet, "/api/cookie/health", nil),
+	} {
+		req.AddCookie(sessionCookie)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s %s status = %d, want 503, body = %s", req.Method, req.URL.Path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestSettingsHandlers_getSettings_storeError covers the store-error branch
+// of handleGetSettings: a real callers-visible failure (DB blip) must
+// surface as a generic 500, never a panic or a leaked internal error.
+func TestSettingsHandlers_getSettings_storeError(t *testing.T) {
+	deps, flaky := testDepsFlakySettings(t)
+	flaky.failQuery = true
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /api/settings (store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSettingsHandlers_putSettings_invalidBody covers handlePutSettings'
+// JSON-decode error branch.
+func TestSettingsHandlers_putSettings_invalidBody(t *testing.T) {
+	h := New(testDeps(t))
+	sessionCookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader("not json"))
+	req.AddCookie(sessionCookie)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT /api/settings (bad body) status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSettingsHandlers_putSettings_updateStoreError covers the
+// s.settings.Update error branch of handlePutSettings.
+func TestSettingsHandlers_putSettings_updateStoreError(t *testing.T) {
+	deps, flaky := testDepsFlakySettings(t)
+	flaky.failExec = true
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	putBody, _ := json.Marshal(map[string]any{"retention_days": 5})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(putBody))
+	req.AddCookie(sessionCookie)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("PUT /api/settings (update store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSettingsHandlers_putSettings_getAfterUpdateStoreError covers the
+// second store-error branch in handlePutSettings: Update succeeds but the
+// follow-up Get (used to build the response) fails.
+func TestSettingsHandlers_putSettings_getAfterUpdateStoreError(t *testing.T) {
+	deps, flaky := testDepsFlakySettings(t)
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	// Update succeeds (failExec still false); only the follow-up Get fails.
+	flaky.failQuery = true
+
+	putBody, _ := json.Marshal(map[string]any{"retention_days": 5})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(putBody))
+	req.AddCookie(sessionCookie)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("PUT /api/settings (get-after-update store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSettingsHandlers_putCookie_invalidBody covers applyCookie's
+// JSON-decode error branch.
+func TestSettingsHandlers_putCookie_invalidBody(t *testing.T) {
+	h := New(testDeps(t))
+	sessionCookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/cookie", strings.NewReader("not json"))
+	req.AddCookie(sessionCookie)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT /api/settings/cookie (bad body) status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSettingsHandlers_putCookie_empty covers applyCookie's
+// empty-cookie-body rejection.
+func TestSettingsHandlers_putCookie_empty(t *testing.T) {
+	h := New(testDeps(t))
+	sessionCookie := loginAndGetCookie(t, h)
+
+	putBody, _ := json.Marshal(map[string]string{"cookie": ""})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/cookie", bytes.NewReader(putBody))
+	req.AddCookie(sessionCookie)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT /api/settings/cookie (empty) status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	if got["error"] == "" {
+		t.Fatal("expected a non-empty error message")
+	}
+}
+
+// TestSettingsHandlers_putCookie_getAfterSetStoreError covers the
+// session-route store-error branch in applyCookie: SetCookie succeeds but
+// the follow-up Get (used to build the full settings response) fails.
+func TestSettingsHandlers_putCookie_getAfterSetStoreError(t *testing.T) {
+	deps, flaky := testDepsFlakySettings(t)
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	// SetCookie succeeds (failExec still false); only the follow-up Get fails.
+	flaky.failQuery = true
+
+	putBody, _ := json.Marshal(map[string]string{"cookie": validYouTubeCookieBody})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/cookie", bytes.NewReader(putBody))
+	req.AddCookie(sessionCookie)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("PUT /api/settings/cookie (get-after-set store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSettingsHandlers_cookieHealth_storeError covers the store-error
+// branch of handleCookieHealth.
+func TestSettingsHandlers_cookieHealth_storeError(t *testing.T) {
+	deps, flaky := testDepsFlakySettings(t)
+	flaky.failQuery = true
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/cookie/health", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /api/cookie/health (store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
 	}
 }
 
