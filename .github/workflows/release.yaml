@@ -3,6 +3,35 @@ name: Release
 on:
   push:
     branches: [master]
+    # Only cut a release when something that ships actually changed. The image is
+    # built from ui/ and backend/ (see backend/Containerfile, whose build context
+    # .dockerignore shapes), and the release additionally carries the Companion
+    # extension zip built from extension/ — so those four paths, and nothing else,
+    # justify a new version.
+    #
+    # Without this, a licence file, a .gitignore line or a comment fix each cut a
+    # full version, image build, GHCR push, git tag and GitHub release. That was
+    # measured, not assumed: 11 releases landed in under three hours, of which
+    # roughly four changed the image.
+    #
+    # This is an ignore-list rather than an allow-list on purpose: a new top-level
+    # directory starts out releasing, which is the safe default. Forgetting to add
+    # a path here costs a redundant release; forgetting to remove one would
+    # silently skip a needed release.
+    #
+    # workflow_dispatch below is unfiltered, so a release can always be forced by
+    # hand — including after a change to this workflow, which .github/** ignores.
+    paths-ignore:
+      - "docs/**"
+      - "hack/**"
+      - ".github/**"
+      - "**/*.md"
+      - "LICENSE"
+      - ".gitignore"
+      - ".env.example"
+      - "Makefile"
+      - "compose.yaml"
+      - "compose.dev.yaml"
   workflow_dispatch:
     inputs:
       bump:
