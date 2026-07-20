@@ -26,6 +26,7 @@ function baseVideo(overrides: Partial<Video> = {}): Video {
     summary_status: "",
     audio_language: "",
     has_subtitles: false,
+    category: "uncategorized",
     ...overrides,
   };
 }
