@@ -287,6 +287,60 @@ func TestSessionCookieRoute_stillReturnsSettingsView(t *testing.T) {
 	}
 }
 
+func TestMachineCookie_resumesWorker(t *testing.T) {
+	// Given: a paused worker and a generated token
+	deps := testDeps(t)
+	worker := &fakeWorker{paused: true}
+	deps.Worker = worker
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+	token := createToken(t, h, sessionCookie)
+	before := worker.resumes()
+	body := `{"cookie":` + strconv.Quote(validYouTubeCookieBody) + `}`
+
+	// When: a machine-path cookie write succeeds
+	req := httptest.NewRequest(http.MethodPut, "/api/machine/cookie", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	// Then: the download worker was un-wedged exactly once
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body)
+	}
+	if got := worker.resumes() - before; got != 1 {
+		t.Fatalf("resumes = %d, want 1", got)
+	}
+}
+
+func TestMachineCookie_doesNotResumeWorkerOnInvalidCookie(t *testing.T) {
+	// Given: a wired worker and a body that fails cookie.Validate
+	deps := testDeps(t)
+	worker := &fakeWorker{paused: true}
+	deps.Worker = worker
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+	token := createToken(t, h, sessionCookie)
+	before := worker.resumes()
+
+	// When
+	req := httptest.NewRequest(http.MethodPut, "/api/machine/cookie",
+		strings.NewReader(`{"cookie":"this is not a netscape cookie file"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	// Then: rejected, and the worker was never resumed
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body=%s)", rec.Code, rec.Body)
+	}
+	if got := worker.resumes() - before; got != 0 {
+		t.Fatalf("resumes = %d, want 0 — resumed on an invalid cookie", got)
+	}
+}
+
 func TestMachineCookie_rejectsAMalformedCookieBody(t *testing.T) {
 	// Given
 	h := New(testDeps(t))
