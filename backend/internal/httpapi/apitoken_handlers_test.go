@@ -220,6 +220,73 @@ func TestMachineCookie_rejectsWhenNoTokenHasBeenGenerated(t *testing.T) {
 	}
 }
 
+func TestMachineCookie_returnsMinimalAckNotSettings(t *testing.T) {
+	// Given: a generated token and a valid cookie body
+	deps := testDeps(t)
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+	token := createToken(t, h, sessionCookie)
+	body := `{"cookie":` + strconv.Quote(validYouTubeCookieBody) + `}`
+
+	// When: the machine route accepts the cookie
+	req := httptest.NewRequest(http.MethodPut, "/api/machine/cookie", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	// Then: 200 with only status and present — no settings fields at all
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["status"] != "valid" {
+		t.Fatalf(`status = %v, want "valid"`, got["status"])
+	}
+	if got["present"] != true {
+		t.Fatalf("present = %v, want true", got["present"])
+	}
+	if len(got) != 2 {
+		t.Fatalf("machine ack leaked extra fields: %v", got)
+	}
+	// Belt and braces: settings-only keys must never appear.
+	for _, leaked := range []string{"format_preset", "limit_rate", "cookie_text", "api_token_hash"} {
+		if _, ok := got[leaked]; ok {
+			t.Fatalf("machine ack leaked %q", leaked)
+		}
+	}
+}
+
+func TestSessionCookieRoute_stillReturnsSettingsView(t *testing.T) {
+	// Given: the session-authenticated cookie route (unchanged behaviour)
+	deps := testDeps(t)
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+	body := `{"cookie":` + strconv.Quote(validYouTubeCookieBody) + `}`
+
+	// When
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/cookie", strings.NewReader(body))
+	req.AddCookie(sessionCookie)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	// Then: the full settings view, as before
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := got["format_preset"]; !ok {
+		t.Fatalf("session route no longer returns the settings view: %v", got)
+	}
+}
+
 func TestMachineCookie_rejectsAMalformedCookieBody(t *testing.T) {
 	// Given
 	h := New(testDeps(t))

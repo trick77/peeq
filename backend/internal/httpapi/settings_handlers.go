@@ -94,25 +94,35 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, got)
 }
 
+// machineCookieAck is the machine route's deliberately minimal response. A
+// token holder can write a cookie and learn whether it took — nothing more.
+type machineCookieAck struct {
+	Status  string `json:"status"`
+	Present bool   `json:"present"`
+}
+
 // handlePutSettingsCookie is the session-authenticated way the pasted cookie
 // enters the system. On success it does not echo the cookie back — the
 // response is the same cookie-body-free settings view as GET /api/settings.
 func (s *server) handlePutSettingsCookie(w http.ResponseWriter, r *http.Request) {
-	s.applyCookie(w, r)
+	s.applyCookie(w, r, false)
 }
 
 // handleMachineCookie is the token-authenticated cookie-write path, used by
 // the peeq browser extension. It is deliberately a separate route from
 // handlePutSettingsCookie so that exactly one route in server.go bypasses
-// OIDC, even though both share the write below.
+// OIDC, even though both share the write below. It answers with a minimal
+// ack rather than the settings view: a token stored in a browser extension
+// is more exposed than one in a terminal, so it should be able to read less.
 func (s *server) handleMachineCookie(w http.ResponseWriter, r *http.Request) {
-	s.applyCookie(w, r)
+	s.applyCookie(w, r, true)
 }
 
 // applyCookie validates and stores a pasted cookie, then un-wedges the
 // download worker. Shared by the session and machine routes; it must never
-// echo the cookie body back.
-func (s *server) applyCookie(w http.ResponseWriter, r *http.Request) {
+// echo the cookie body back. minimalAck selects the machine route's
+// deliberately narrow response over the full settings view.
+func (s *server) applyCookie(w http.ResponseWriter, r *http.Request, minimalAck bool) {
 	if s.settings == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "settings are not configured")
 		return
@@ -136,6 +146,10 @@ func (s *server) applyCookie(w http.ResponseWriter, r *http.Request) {
 	// test/deployment without one just skips this.
 	if s.worker != nil {
 		s.worker.Resume()
+	}
+	if minimalAck {
+		writeJSON(w, machineCookieAck{Status: "valid", Present: true})
+		return
 	}
 	got, err := s.settings.Get(r.Context())
 	if err != nil {
