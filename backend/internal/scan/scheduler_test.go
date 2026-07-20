@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -722,6 +723,35 @@ func TestScan_anonymousAllowed_proceedsWithAbsentCookie(t *testing.T) {
 // internal/ytdlp's TestCookieGate_anonymousAllowed_expiredStillErrors and
 // TestCookieGate_anonymousAllowed_blockedStillErrors), not duplicated here.
 
+// seedCookieStatusBypassingCheck writes status into settings.cookie_status
+// directly, stepping around the schema's `cookie_status IN (...)` CHECK
+// constraint via SQLite's ignore_check_constraints pragma. This exists for
+// exactly one purpose: TestScan_interlockEngaged_neverUnsubscribes's
+// "unknown future cookie status" case, which needs to simulate a status the
+// current schema does not (and by design should not) allow through the real
+// settings.Store.SetCookie path, to prove the scheduler's interlock is an
+// allowlist rather than a denylist against exactly the statuses enumerated
+// today. Both PRAGMA toggles and the UPDATE run inside one Exec call so the
+// pooled *sql.DB is guaranteed to execute them all on the same connection —
+// the pragma is per-connection, so splitting them across separate Exec calls
+// would risk the UPDATE landing on a different pooled connection where the
+// constraint is still enforced.
+func (h *scanHarness) seedCookieStatusBypassingCheck(status string) {
+	h.t.Helper()
+	// The driver rejects bound parameters across a multi-statement Exec
+	// ("sqlite3: multiple statements"), so status is inlined as a quoted
+	// SQL string literal (single quotes, doubled per SQL escaping rules)
+	// rather than bound — safe here because it is always a Go string
+	// literal supplied by this test file, never external input.
+	stmt := fmt.Sprintf(
+		`PRAGMA ignore_check_constraints=ON; UPDATE settings SET cookie_status = '%s' WHERE id = 1; PRAGMA ignore_check_constraints=OFF;`,
+		strings.ReplaceAll(status, "'", "''"),
+	)
+	if _, err := h.db.Exec(stmt); err != nil {
+		h.t.Fatalf("seed cookie status (bypass check) = %q: %v", status, err)
+	}
+}
+
 // deadScanCount reads subscriptions.dead_scan_count for channelID directly,
 // bypassing RecordDeadScan (which would itself mutate the value under test).
 func (h *scanHarness) deadScanCount(channelID string) int {
@@ -891,11 +921,24 @@ func TestScan_interlockEngaged_neverUnsubscribes(t *testing.T) {
 		name         string
 		cookieStatus string // "" leaves cookie_status at "valid"
 		paused       bool
+		bypassCheck  bool // seed cookieStatus around the schema's CHECK constraint
 	}{
 		{name: "cookie blocked", cookieStatus: "blocked"},
 		{name: "cookie stale", cookieStatus: "stale"},
 		{name: "cookie absent", cookieStatus: "absent"},
 		{name: "youtube paused", paused: true},
+		// Pins the allowlist fix: the interlock must deny anything that is
+		// not exactly "valid", not merely the three statuses the schema's
+		// CHECK constraint happens to enumerate today. A denylist form
+		// would fail OPEN here and let this hypothetical future status
+		// through. The schema's CHECK constraint does not allow this value
+		// through the normal settings.Store.SetCookie path (by design —
+		// that's the whole reason the allowlist is defense in depth rather
+		// than provably unreachable), so this case seeds it directly via
+		// seedCookieStatusBypassingCheck, simulating a future migration
+		// that adds a 5th status without every caller being updated in
+		// lockstep.
+		{name: "unknown future cookie status", cookieStatus: "quarantined", bypassCheck: true},
 	}
 
 	for _, tc := range cases {
@@ -912,7 +955,9 @@ func TestScan_interlockEngaged_neverUnsubscribes(t *testing.T) {
 			if tc.cookieStatus != "" {
 				status = tc.cookieStatus
 			}
-			if err := h.settings.SetCookie(context.Background(), "", status); err != nil {
+			if tc.bypassCheck {
+				h.seedCookieStatusBypassingCheck(status)
+			} else if err := h.settings.SetCookie(context.Background(), "", status); err != nil {
 				t.Fatalf("seed cookie status: %v", err)
 			}
 			if tc.paused {
@@ -978,5 +1023,52 @@ func TestScan_nonDeletedTerminalReasons_neverCount(t *testing.T) {
 				t.Fatalf("reason %q: channel must remain subscribed", reason)
 			}
 		})
+	}
+}
+
+// TestScan_nonConsecutiveDeleted_resetsAndDoesNotUnsubscribe proves the
+// counter really tracks CONSECUTIVE dead scans, not merely "at least N dead
+// scans out of the last M". The sequence deleted, deleted, members, deleted,
+// deleted has four "deleted" results total (more than DeadScanThreshold) but
+// never three IN A ROW: the "members" result in the middle is affirmative
+// evidence the channel was alive at that point, so it must reset the streak
+// and the channel must remain subscribed after all five scans.
+func TestScan_nonConsecutiveDeleted_resetsAndDoesNotUnsubscribe(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	if err := h.settings.SetCookie(context.Background(), "", "valid"); err != nil {
+		t.Fatalf("seed cookie status: %v", err)
+	}
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+
+	deleted := h.deletedSched()
+	members := h.terminalSched("members")
+
+	deleted.scanChannel(context.Background(), sub)
+	deleted.scanChannel(context.Background(), sub)
+	if n := h.deadScanCount("UC1"); n != 2 {
+		t.Fatalf("dead_scan_count after 2 deleted scans = %d, want 2", n)
+	}
+
+	members.scanChannel(context.Background(), sub)
+	if n := h.deadScanCount("UC1"); n != 0 {
+		t.Fatalf("dead_scan_count after an interleaved members-only scan = %d, want 0 (reset)", n)
+	}
+
+	deleted.scanChannel(context.Background(), sub)
+	deleted.scanChannel(context.Background(), sub)
+	if n := h.deadScanCount("UC1"); n != 2 {
+		t.Fatalf("dead_scan_count after reset + 2 more deleted scans = %d, want 2", n)
+	}
+
+	if !h.isSubscribed("UC1") {
+		t.Fatal("channel must still be subscribed: 4 total 'deleted' results never formed 3 CONSECUTIVE ones")
+	}
+	if reason := h.autoUnsubscribeReason("UC1"); reason != "" {
+		t.Fatalf("unexpected auto_unsubscribes row (reason %q)", reason)
 	}
 }

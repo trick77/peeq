@@ -233,13 +233,44 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 // threshold and then fire the instant access is restored.
 func (s *Scheduler) staleUnsubscribe(ctx context.Context, channelID, reason string) {
 	if reason != channels.ReasonDeleted {
+		// A non-deleted terminal reason (private/members/age/geo) is itself
+		// positive evidence the channel is ALIVE: yt-dlp reached it and
+		// classified real content, not an absence. Without this reset, the
+		// dead-scan counter is merely a count of the last N scans' outcomes
+		// rather than a count of CONSECUTIVE dead scans (which its own doc
+		// comment promises), so a sequence like deleted, deleted, members,
+		// deleted would unsubscribe on the 4th scan despite the 3rd scan
+		// proving the channel was reachable in between.
+		//
+		// This reset is unconditional, deliberately placed BEFORE (and
+		// independent of) the pause/cookie interlock below. That interlock
+		// exists solely to stop RecordDeadScan from trusting a "deleted"
+		// verdict that might really be a symptom of OUR OWN broken cookie
+		// (a stale/blocked/absent cookie can make yt-dlp misreport a live
+		// channel as gone). A private/members/age/geo classification is not
+		// that failure mode — it is yt-dlp successfully parsing a real
+		// channel response, which is trustworthy on its own merits and
+		// should not be withheld just because our cookie also happens to be
+		// unhealthy right now. And per ResetDeadScan's own contract, a reset
+		// only ever delays a future unsubscribe, never causes a wrong one,
+		// so applying it unconditionally here cannot itself be unsafe.
+		if err := s.d.Channels.ResetDeadScan(channelID); err != nil {
+			s.d.Logger.Error("scan: reset dead scan failed", "channel", channelID, "err", err)
+		}
 		return
 	}
 	if paused, _ := s.d.Settings.YoutubePaused(ctx); paused {
 		return
 	}
-	switch s.d.Settings.CookieStatus(ctx) {
-	case "blocked", "stale", "absent":
+	// Allowlist, not a denylist: only "valid" proceeds. The schema's CHECK
+	// constraint happens to enumerate exactly four cookie_status values
+	// today, but this switch used to deny-list three of them ("blocked",
+	// "stale", "absent") and fail OPEN for anything else — a future fifth
+	// status (e.g. a new degraded state) would have silently bypassed the
+	// interlock and let dead-scan counting continue during an outage.
+	// Requiring the one known-good value instead fails CLOSED against any
+	// status this code doesn't yet know about.
+	if s.d.Settings.CookieStatus(ctx) != "valid" {
 		return
 	}
 	n, err := s.d.Channels.RecordDeadScan(channelID)
