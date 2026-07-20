@@ -190,7 +190,8 @@
 
     <h3>Tab 2 &mdash; New</h3>
     <p>The discovered-but-undecided videos for this channel: the Pending page scoped down. A list rather than a grid, because these are decisions rather than things to look at &mdash; thumbnail, title, when it was found, and Add / Ignore. Bulk &ldquo;Add all&rdquo; and &ldquo;Ignore all&rdquo; sit in the toolbar alongside a line reading when the channel was last checked and when it will be checked next.</p>
-    <p>The empty state is the common case and is designed as such: &ldquo;Nothing new&rdquo;, the same last-checked / next-check line, and a Check now button.</p>
+    <p>&ldquo;New&rdquo; means <code>channel_videos.state = 'pending'</code>. Note that when <em>add new videos automatically</em> is on, discoveries are enqueued straight away by <code>enqueueAuto</code> and never become pending &mdash; so for an auto-adding channel this tab is permanently empty by design. It fills only when auto-add is off, or before the channel has been baselined.</p>
+    <p>The empty state is therefore the common case and is designed as such: &ldquo;Nothing new&rdquo;, the same last-checked / next-check line, and a Check now button.</p>
 
     <h3>Tab 3 &mdash; Settings</h3>
     <p>The four controls from the Channels row, each with a sentence explaining what it does: subscribe, add-new-automatically, format override, and the checking schedule with its Check now button. Delete sits below the panel, visually separated from everything reversible, and names what it will destroy (&ldquo;Delete channel and its 142 videos&rdquo;).</p>
@@ -215,11 +216,13 @@
     </div>
 
     <h3>Finding a channel&rsquo;s videos</h3>
+    <p>Throughout the page, &ldquo;archived&rdquo; means <code>videos.status = 'downloaded'</code>. The four header stats and the Archive grid count only those rows &mdash; queued, downloading, errored, and tombstoned videos are excluded, so the count matches what is actually on disk and playable.</p>
     <p><code>videos.channel_id</code> is plain text with no foreign key to <code>channels</code>. Matching is therefore by <code>channel_id</code>, falling back to <code>channel_name</code> for rows written before channel ids were recorded. That looseness is what makes the untracked case work at all: the page is defined over &ldquo;videos whose channel is X&rdquo;, not over &ldquo;tracked channel X&rdquo;.</p>
 
     <h3>Images</h3>
     <p><code>ResolveChannel</code> in <code>backend/internal/ytdlp/channel.go</code> already runs a metadata-only yt-dlp call and parses four fields out of a response that also carries <code>thumbnails</code> (avatar and banner) and <code>description</code>. Extend <code>flatListing</code> to capture them, download the two images, and store their paths.</p>
-    <p>Channels added before this change have no images. Rather than a backfill script, the detail endpoint resolves them lazily: if a tracked channel has no <code>avatar_path</code>, the first visit to its page triggers one metadata fetch and fills them in. The page renders without images if that fetch fails &mdash; it must never block on it.</p>
+    <p>Images are captured once, at the moment a channel is tracked, and never fetched again. A <code>channels</code> row is created in exactly one place &mdash; <code>handleChannelsPost</code>, immediately after <code>ResolveChannel</code> &mdash; and the production database is being re-created anyway, so every tracked channel has its images from the start. There is no backfill and no lazy path: the detail endpoint performs no network calls.</p>
+    <p>Untracked channels have no <code>channels</code> row and therefore no images. They render with <code>gradientClassFor</code>, the deterministic per-id gradient already used for missing video thumbnails, and no banner. Their images appear if and when the user presses <strong>Track this channel</strong>.</p>
   </section>
 
   <section>
