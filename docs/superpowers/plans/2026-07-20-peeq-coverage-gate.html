@@ -92,6 +92,19 @@
 </section>
 
 <section>
+  <div class="callout" style="border-color:var(--kept)">
+    <p><strong>Superseded in part.</strong> Tasks 1–4 below were implemented as written, against a
+    <em>statements</em> metric with a ratcheting floor toward 80%. That was then replaced: the rule
+    became a hard <strong>75% floor on lines</strong>, and <code>-coverpkg=./...</code> was added.
+    The reworked design is the spec, not this plan. Two things forced the change — Go exposes no
+    line metric, so the backend number now comes from a Cobertura conversion; and that conversion
+    also fixed a real bug, since with <code>-coverpkg</code> the raw profile repeats every block
+    once per test binary and the awk here summed the duplicates, reporting 4.9% for a ~72% codebase.
+    The CI wiring in Task 4 was reverted: the gate is red by design until coverage is backfilled.</p>
+  </div>
+</section>
+
+<section>
   <h2>Global constraints</h2>
   <ul>
     <li>Metric is <strong>statements only</strong> — never branches, functions or lines.</li>
