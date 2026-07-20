@@ -21,9 +21,12 @@ cp -R "$SRC/." "$STAGE/"
 # silently omit a newly added runtime file — the extension would then load with
 # a missing module and fail at runtime, which is far worse than shipping an
 # extra file. Anything not named here is packaged.
-rm -rf "$STAGE/testdata" "$STAGE/node_modules" "$STAGE/.git"
+rm -rf "$STAGE/testdata" "$STAGE/node_modules" "$STAGE/.git" "$STAGE/e2e"
 rm -f "$STAGE/package.json" "$STAGE/package-lock.json" "$STAGE/package.sh"
 find "$STAGE" -name '*.test.js' -delete
+# Belt and braces: node_modules can appear at any depth, and shipping one into
+# a Chrome Web Store package would be both enormous and a review red flag.
+find "$STAGE" -name 'node_modules' -type d -prune -exec rm -rf {} +
 
 # Chrome Web Store refuses an upload whose manifest version did not increase,
 # and an unpacked install shows this string in chrome://extensions. Stamp the
@@ -52,9 +55,21 @@ for required in manifest.json background.js send.js shared.js config.js \
   fi
 done
 
-# No test file may reach the package.
-if find "$STAGE" -name '*.test.js' | grep -q .; then
-  echo "::error::packaged extension still contains test files" >&2
+# No test file, dependency tree, or browser-test harness may reach the package.
+# This guard caught a real leak: adding extension/e2e/ silently grew the zip
+# from 10 files to 239 (17 MB of Playwright) until e2e/ joined the denylist.
+if find "$STAGE" \( -name '*.test.js' -o -name 'node_modules' -o -name 'e2e' \) | grep -q .; then
+  echo "::error::packaged extension contains test or dependency files:" >&2
+  find "$STAGE" \( -name '*.test.js' -o -name 'node_modules' -o -name 'e2e' \) >&2
+  exit 1
+fi
+
+# A runtime extension is a handful of small text files. A package far larger
+# than that means something was swept in that does not belong.
+FILE_COUNT="$(find "$STAGE" -type f | wc -l | tr -d ' ')"
+if [ "$FILE_COUNT" -gt 25 ]; then
+  echo "::error::packaged extension has $FILE_COUNT files, expected ~10 — something leaked in" >&2
+  find "$STAGE" -type f >&2
   exit 1
 fi
 
