@@ -26,11 +26,24 @@ jobs:
           cache-dependency-path: backend/go.sum
       - run: go build ./...
       - run: go vet ./...
+      - run: mkdir -p ../coverage
       # The race detector needs cgo; this is independent of the app's
       # CGO_ENABLED=0 build invariant enforced by the `go build` step above.
-      - run: go test -race ./...
+      #
+      # -coverpkg=./... attributes coverage across package boundaries: code
+      # exercised only by another package's tests (the httpapi tests drive
+      # store, videos and llm) is otherwise reported as uncovered.
+      - run: go test -race -covermode=atomic -coverpkg=./... -coverprofile=../coverage/backend.out ./...
         env:
           CGO_ENABLED: "1"
+      # Go exposes no line metric — `go tool cover` reports statements only — so
+      # the line percentage comes from a Cobertura conversion of the profile.
+      # That also merges the duplicate blocks -coverpkg emits, one set per test
+      # binary, which a naive sum over the raw profile gets badly wrong.
+      - run: go run github.com/boumenot/gocover-cobertura@v1.5.0 < ../coverage/backend.out > ../coverage/backend.xml
+      # The gate resolves paths from the repo root, not backend/.
+      - run: ./hack/coverage-gate.sh backend
+        working-directory: .
 
   ui:
     name: UI (build + test)
@@ -47,7 +60,9 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
       - run: npm run build
-      - run: npm test -- --run
+      - run: npm test -- --run --coverage
+      - run: ./hack/coverage-gate.sh ui
+        working-directory: .
 
   extension:
     name: Extension (test)
