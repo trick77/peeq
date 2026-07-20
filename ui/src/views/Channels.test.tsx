@@ -120,6 +120,33 @@ describe("Channels", () => {
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("all"));
   });
 
+  // A slow response for an abandoned filter must not overwrite the list the
+  // active chip asked for. Without the sequence guard the stale "all"
+  // response resolves last and wins, showing every channel under "Tracked".
+  it("a stale filter response does not overwrite the active filter's list", async () => {
+    const user = userEvent.setup();
+    let releaseAll: (() => void) | undefined;
+    vi.mocked(listChannels).mockImplementation((f) => {
+      if (f === "all") {
+        return new Promise((resolve) => {
+          releaseAll = () => resolve([tracked, subscribed]);
+        });
+      }
+      return Promise.resolve([tracked]);
+    });
+
+    render(<Channels />);
+    // The initial "all" load is still in flight; switch to "Tracked".
+    await user.click(screen.getByRole("button", { name: "Tracked" }));
+    expect(await screen.findByText("Tracked Channel")).toBeInTheDocument();
+    expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
+
+    // Now let the abandoned "all" request resolve — it must be ignored.
+    releaseAll?.();
+    await waitFor(() => expect(listChannels).toHaveBeenCalledWith("tracked"));
+    expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
+  });
+
   it("the add form tracks without subscribing by default", async () => {
     const user = userEvent.setup();
     render(<Channels />);

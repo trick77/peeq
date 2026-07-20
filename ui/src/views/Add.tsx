@@ -39,7 +39,7 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
       }
     } catch (err) {
       if (err instanceof CookieRequiredError) {
-        setError("No YouTube cookie configured yet. Paste one on the Settings page before adding a video.");
+        setError("No YouTube cookie configured yet. Paste one on the Settings page first.");
       } else if (err instanceof InvalidUrlError) {
         setError(err.message || "That link isn't a single downloadable video (playlists and live streams aren't supported).");
       } else {

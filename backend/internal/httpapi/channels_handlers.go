@@ -116,7 +116,33 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSONStatus(w, http.StatusCreated, map[string]any{"id": ucid, "name": name, "subscribed": req.Subscribe})
+	// Report the real post-condition, not req.Subscribe. Upsert and Subscribe
+	// are both idempotent, so re-adding an ALREADY-subscribed channel with
+	// subscribe=false succeeds and leaves the existing subscription intact —
+	// echoing the request would tell the caller "not subscribed" about a
+	// channel that is subscribed and will keep being scanned.
+	subscribed, err := s.channelSubscribed(ucid)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "load subscription state failed")
+		return
+	}
+	writeJSONStatus(w, http.StatusCreated, map[string]any{"id": ucid, "name": name, "subscribed": subscribed})
+}
+
+// channelSubscribed reports whether channelID currently has a subscription
+// row. It reuses the List("subscribed") + scan pattern handleChannelsPut
+// already relies on rather than adding a store method for one caller.
+func (s *server) channelSubscribed(channelID string) (bool, error) {
+	items, err := s.channels.List("subscribed")
+	if err != nil {
+		return false, err
+	}
+	for i := range items {
+		if items[i].ID == channelID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // handleChannelsList returns tracked channels, optionally narrowed by the

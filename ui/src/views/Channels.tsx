@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import {
   addChannel,
@@ -38,10 +38,25 @@ export function Channels() {
   const [addError, setAddError] = useState<string | null>(null);
   const [added, setAdded] = useState<{ name: string; subscribed: boolean } | null>(null);
 
+  // filterRef mirrors filter so the async handlers below can refetch the
+  // filter that is active NOW. Reading `filter` after an await would use the
+  // value captured when the handler was created: toggle a row, switch chips
+  // while the request is in flight, and the resumed handler would overwrite
+  // the list with the old filter's channels while the new chip stays lit.
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
+
+  // loadSeq drops out-of-order responses. Two listChannels calls can be in
+  // flight at once (rapid chip clicks, or a chip click racing a toggle's
+  // refetch); without this the slower one wins whichever chip is active.
+  const loadSeq = useRef(0);
+
   function load(f: ChannelFilter) {
     setError(null);
+    const seq = ++loadSeq.current;
     listChannels(f)
       .then((cs) => {
+        if (seq !== loadSeq.current) return; // a newer load superseded this one
         setChannels(cs);
         setFormatDrafts((prev) => {
           const next = { ...prev };
@@ -51,7 +66,10 @@ export function Channels() {
           return next;
         });
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => {
+        if (seq !== loadSeq.current) return;
+        setError(e.message);
+      });
   }
 
   useEffect(() => {
@@ -79,7 +97,7 @@ export function Channels() {
       const channel = await addChannel(trimmed, addSubscribe);
       setAdded({ name: channel.name, subscribed: channel.subscribed });
       setAddUrl("");
-      load(filter);
+      load(filterRef.current);
     } catch (err) {
       if (err instanceof CookieRequiredError) {
         setAddError("No YouTube cookie configured yet. Paste one on the Settings page before adding a channel.");
@@ -104,7 +122,7 @@ export function Channels() {
       } else {
         await unsubscribeChannel(c.id);
       }
-      load(filter);
+      load(filterRef.current);
     } catch (err) {
       applyLocalUpdate(c.id, { subscribed: c.subscribed });
       setError((err as Error).message);
@@ -116,12 +134,9 @@ export function Channels() {
     applyLocalUpdate(c.id, { autodownload: next });
     try {
       await updateChannel(c.id, { autodownload: next });
-      // Refetch rather than trust the optimistic flip: under the
-      // "Autodownload" chip a channel switched off no longer belongs in the
-      // list, and on a tracked-but-unsubscribed channel the PUT is a 0-row
-      // no-op, so the local update would be showing a state that was never
-      // persisted.
-      load(filter);
+      // Refetch rather than trust the optimistic flip: under the Auto-add
+      // chip a channel switched off no longer belongs in the list.
+      load(filterRef.current);
     } catch (err) {
       applyLocalUpdate(c.id, { autodownload: c.autodownload });
       setError((err as Error).message);

@@ -182,11 +182,20 @@ func TestChannels_unsubscribeKeepsChannel(t *testing.T) {
 // relies on `NULL = 1` being untrue in SQLite to exclude it.
 func TestChannels_listAutodownloadFilter(t *testing.T) {
 	st := newTestStore(t)
-	st.Upsert(Channel{ID: "UC1", Name: "Tracked only"})
-	st.Upsert(Channel{ID: "UC2", Name: "Subscribed, autodownload off"})
-	st.Subscribe("UC2", "2000-01-01 00:00:00")
-	st.Upsert(Channel{ID: "UC3", Name: "Subscribed, autodownload on"})
-	st.Subscribe("UC3", "2000-01-01 00:00:00")
+	for _, c := range []Channel{
+		{ID: "UC1", Name: "Tracked only"},
+		{ID: "UC2", Name: "Subscribed, autodownload off"},
+		{ID: "UC3", Name: "Subscribed, autodownload on"},
+	} {
+		if err := st.Upsert(c); err != nil {
+			t.Fatalf("upsert %s: %v", c.ID, err)
+		}
+	}
+	for _, id := range []string{"UC2", "UC3"} {
+		if err := st.Subscribe(id, "2000-01-01 00:00:00"); err != nil {
+			t.Fatalf("subscribe %s: %v", id, err)
+		}
+	}
 	if _, err := st.UpdateConfig("UC3", true, ""); err != nil {
 		t.Fatalf("update config: %v", err)
 	}
