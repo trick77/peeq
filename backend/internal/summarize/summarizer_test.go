@@ -98,6 +98,9 @@ func TestClassifyReturnsRawReplyAndSendsAllowedIDs(t *testing.T) {
 	if !strings.Contains(gotSystem, "ai") || !strings.Contains(gotSystem, "news") {
 		t.Fatalf("system prompt missing allowed ids: %q", gotSystem)
 	}
+	if !strings.Contains(gotSystem, "category id") {
+		t.Fatalf("system prompt missing load-bearing substring %q (worker test's fake completer dispatches on it): %q", "category id", gotSystem)
+	}
 	if !strings.Contains(gotUser, "GPT-5 is here") || !strings.Contains(gotUser, "new model") {
 		t.Fatalf("user content missing title/summary: %q", gotUser)
 	}

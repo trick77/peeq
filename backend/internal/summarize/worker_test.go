@@ -45,9 +45,30 @@ func (fakeWorkerCompleter) Complete(ctx context.Context, m []llm.Message) (strin
 		if strings.Contains(sys, "Combine these section summaries") {
 			return "Overall prose summary.", nil
 		}
+		if strings.Contains(sys, "category id") {
+			return "ai", nil
+		}
 		if strings.Contains(sys, "JSON") {
 			return `{"key_points":[{"ts":0,"text":"a point"}]}`, nil
 		}
+	}
+	return "chunk summary", nil
+}
+
+// classifyErrCompleter answers summary/keypoints normally but errors on the
+// classify call, proving a classify failure does NOT fail the job and leaves
+// the category at its 'uncategorized' default.
+type classifyErrCompleter struct{}
+
+func (classifyErrCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	sys := m[0].Content
+	switch {
+	case strings.Contains(sys, "Combine these section summaries"):
+		return "Overall prose summary.", nil
+	case strings.Contains(sys, "category id"):
+		return "", errors.New("classify boom")
+	case strings.Contains(sys, "JSON"):
+		return `{"key_points":[]}`, nil
 	}
 	return "chunk summary", nil
 }
@@ -208,6 +229,112 @@ func TestWorkerHappyPathPersistsSummaryAndChunks(t *testing.T) {
 	}
 	if count == 0 {
 		t.Fatal("expected transcript_chunks rows to be inserted")
+	}
+}
+
+// TestProcessOneSetsCategory asserts a happy-path processOne run classifies
+// the video and persists the category returned by the model.
+func TestProcessOneSetsCategory(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v6/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n\n" +
+		"00:00:02.000 --> 00:00:04.000\nToday we will talk about testing Go workers.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+
+	if err := h.videos.Upsert(videos.Video{ID: "v6", URL: "https://youtu.be/v6"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v6", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v6"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(fakeWorkerCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   1536,
+	})
+
+	did, err := w.processOne(context.Background())
+	if err != nil || !did {
+		t.Fatalf("processOne did=%v err=%v", did, err)
+	}
+
+	v, err := h.videos.Get("v6")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.Category != "ai" {
+		t.Fatalf("category = %q, want ai", v.Category)
+	}
+}
+
+// TestClassifyErrorLeavesUncategorizedAndJobSucceeds asserts a classify
+// failure is logged, not fatal: the summarize job still finishes done and
+// the category stays at its 'uncategorized' default.
+func TestClassifyErrorLeavesUncategorizedAndJobSucceeds(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v7/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n\n" +
+		"00:00:02.000 --> 00:00:04.000\nToday we will talk about testing Go workers.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+
+	if err := h.videos.Upsert(videos.Video{ID: "v7", URL: "https://youtu.be/v7"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v7", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v7"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(classifyErrCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   1536,
+	})
+
+	did, err := w.processOne(context.Background())
+	if err != nil || !did {
+		t.Fatalf("processOne did=%v err=%v", did, err)
+	}
+
+	v, err := h.videos.Get("v7")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.SummaryStatus != "done" {
+		t.Fatalf("summary_status = %q, want done (classify error must not fail the job)", v.SummaryStatus)
+	}
+	if v.Category != "uncategorized" {
+		t.Fatalf("category = %q, want uncategorized", v.Category)
 	}
 }
 
