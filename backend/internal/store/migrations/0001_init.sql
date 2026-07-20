@@ -115,7 +115,6 @@ CREATE TABLE sessions (
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 
--- channels: a tracked YouTube channel (identity only). Presence == "tracked".
 -- channels: metadata cache for a YouTube channel. A row exists for any
 -- channel peeq has looked at — including ones the user has never tracked
 -- (their page is reachable from any video in the library). Tracking is
