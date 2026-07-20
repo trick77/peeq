@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -109,11 +112,23 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	// ResolveChannel is the authoritative source of the UCID; the handle is
 	// best-effort from the pasted url only (never derived from the UCID).
 	handle := channelHandleFromURL(req.URL)
+	// Images are best-effort: a channel with no banner, or a transient fetch
+	// failure, must not prevent the channel from being tracked.
+	avatarPath, err := media.FetchImage(r.Context(), info.AvatarURL, s.mediaDir, ".channels/"+ucid+"/avatar")
+	if err != nil {
+		slog.Warn("channel avatar fetch failed", "channel_id", ucid, "err", err)
+	}
+	bannerPath, err := media.FetchImage(r.Context(), info.BannerURL, s.mediaDir, ".channels/"+ucid+"/banner")
+	if err != nil {
+		slog.Warn("channel banner fetch failed", "channel_id", ucid, "err", err)
+	}
 	if err := s.channels.Upsert(channels.Channel{
 		ID:          ucid,
 		Name:        name,
 		Handle:      handle,
 		Description: info.Description,
+		AvatarPath:  avatarPath,
+		BannerPath:  bannerPath,
 		ResolvedAt:  time.Now().UTC().Format("2006-01-02 15:04:05"),
 	}); err != nil {
 		serverError(w, r, err, "track channel failed")
@@ -487,4 +502,54 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ignored"})
+}
+
+// handleChannelAvatar and handleChannelBanner serve a cached channel image
+// off local disk. Like video thumbnails, the stored path never reaches the
+// browser — only these endpoints do — and it is resolved through
+// media.SafeMediaPath so a crafted stored value cannot escape the media dir.
+func (s *server) handleChannelAvatar(w http.ResponseWriter, r *http.Request) {
+	s.serveChannelImage(w, r, func(c *channels.Channel) string { return c.AvatarPath })
+}
+
+func (s *server) handleChannelBanner(w http.ResponseWriter, r *http.Request) {
+	s.serveChannelImage(w, r, func(c *channels.Channel) string { return c.BannerPath })
+}
+
+func (s *server) serveChannelImage(w http.ResponseWriter, r *http.Request, pick func(*channels.Channel) string) {
+	if s.channels == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	c, err := s.channels.Get(r.PathValue("id"))
+	if err != nil {
+		serverError(w, r, err, "load channel failed")
+		return
+	}
+	if c == nil {
+		http.NotFound(w, r)
+		return
+	}
+	stored := pick(c)
+	if stored == "" {
+		http.NotFound(w, r)
+		return
+	}
+	path, err := media.SafeMediaPath(s.mediaDir, stored)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeContent(w, r, filepath.Base(path), fi.ModTime(), f)
 }

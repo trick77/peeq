@@ -227,6 +227,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsDelete)))
 	mux.Handle("POST /api/channels/{id}/subscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsSubscribe)))
 	mux.Handle("POST /api/channels/{id}/unsubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsUnsubscribe)))
+	mux.Handle("GET /api/channels/{id}/avatar", s.requireAuth(http.HandlerFunc(s.handleChannelAvatar)))
+	mux.Handle("GET /api/channels/{id}/banner", s.requireAuth(http.HandlerFunc(s.handleChannelBanner)))
 	mux.Handle("GET /api/pending", s.requireAuth(http.HandlerFunc(s.handlePendingList)))
 	mux.Handle("POST /api/pending/{id}/download", s.requireAuth(http.HandlerFunc(s.handlePendingDownload)))
 	mux.Handle("POST /api/pending/{id}/ignore", s.requireAuth(http.HandlerFunc(s.handlePendingIgnore)))
