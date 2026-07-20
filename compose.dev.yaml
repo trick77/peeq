@@ -33,6 +33,15 @@ services:
       BACKEND_DB_PATH: /data/peeq.db
       BACKEND_MEDIA_DIR: /data/media
       BACKEND_YTDLP_DIR: /data/bin
+      # AI endpoints. Unlike the rest of this file these can't be hardcoded —
+      # they point at real endpoints — so the dev stack needs a populated .env.
+      BACKEND_CHAT_BASE_URL: "${BACKEND_CHAT_BASE_URL}"
+      BACKEND_CHAT_API_KEY: "${BACKEND_CHAT_API_KEY}"
+      BACKEND_EMBED_BASE_URL: "${BACKEND_EMBED_BASE_URL}"
+      BACKEND_EMBED_API_KEY: "${BACKEND_EMBED_API_KEY}"
+      BACKEND_EMBED_MODEL: "${BACKEND_EMBED_MODEL}"
+      BACKEND_EMBED_DIM: "${BACKEND_EMBED_DIM:-1536}"
+      BACKEND_DEFAULT_SUB_LANG: "${BACKEND_DEFAULT_SUB_LANG:-en}"
       BACKEND_LOG_LEVEL: "${BACKEND_LOG_LEVEL:-debug}"
     volumes:
       - ./data:/data
