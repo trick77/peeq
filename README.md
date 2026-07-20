@@ -1,125 +1,130 @@
 # peeq
 
-Self-hosted YouTube archiver. Go backend (JSON API + embedded React SPA), single SQLite file, no
-external services required.
+Self-hosted YouTube archiver. A Go backend serving a JSON API and an embedded React SPA, with a
+single SQLite file for state — no database server, no queue, no external services beyond the two
+AI endpoints described below.
 
-## Run
+## What it does
+
+**Channels.** Adding a channel URL or `@handle` *tracks* it: it appears under Channels, but nothing
+is downloaded. *Subscribing* opts it into the daily scan for new uploads. New uploads either land
+under **Pending** for a manual decision, or — if the channel has **autodownload** on — are enqueued
+automatically, optionally with a per-channel format override. A channel's first scan only records a
+baseline of its current videos and queues nothing, so subscribing never triggers a bulk backfill.
+
+**Captions and AI artifacts.** Downloaded videos get their captions extracted, and from those peeq
+generates a summary, chapters, and highlights. Any video can be re-summarized on demand.
+
+**Search.** One search box over every transcript and summary. Queries run as keyword search (SQLite
+FTS5) *and* semantic search (vector similarity) and are fused into a single ranked list, with
+results linking to the timestamp inside the video. Keyword search needs no external service, so if
+the embeddings endpoint is unreachable, search degrades to keyword-only with a logged warning
+rather than failing.
+
+**Categories.** Each video is classified into one of fifteen categories (AI, Science, Gaming,
+History, …) on a best-effort basis. The Library has a category filter that composes with the other
+filters.
+
+**Recovery.** A failed download can be retried per video from the Library, the player, or a video
+card, without re-adding it.
+
+## Requirements
+
+- Two OpenAI-compatible HTTP endpoints: one **chat** endpoint (summaries, chapters, highlights)
+  and one **embeddings** endpoint (indexing and semantic search). Self-hosted or commercial —
+  peeq only needs the OpenAI wire format.
+- A **YouTube cookie**, supplied by the companion browser extension. peeq will not touch YouTube
+  without one; see [YouTube access](#youtube-access).
+- For production, an external Traefik reverse proxy terminating TLS, and an OIDC provider.
+
+## Running it
 
 ```bash
-cp .env.example .env   # fill in the values, especially BACKEND_SESSION_SECRET and the OIDC block
-docker compose up -d --build
+cp .env.example .env   # fill it in — see Configuration
+docker compose up -d
 ```
 
-This starts a single hardened `peeq` container (non-root, read-only rootfs, all capabilities
-dropped) behind an external Traefik network — see `compose.yaml`. The SQLite DB and the yt-dlp
-binary live under `./data`; downloaded media lives on its own bind mount (`/mnt/ark/peeq` by
-default — adjust to your host).
+This runs a single hardened `peeq` container (non-root, read-only rootfs, all capabilities
+dropped) on an external `traefik` network. Create that network first if it does not exist
+(`docker network create traefik`) and edit the `Host()` rule in `compose.yaml` to your domain.
+The SQLite DB and the self-updating yt-dlp binary live under `./data`; media lives on its own
+bind mount, `/mnt/ark/peeq` by default — adjust it to your host.
 
-For local development without OIDC (dev auto-login, host networking):
+For local development without OIDC, which auto-signs you in as a fixed dev admin and binds to
+loopback only:
 
 ```bash
 docker compose -f compose.dev.yaml up --build
 ```
 
-or natively:
+Or natively, with the backend on `127.0.0.1:8080` and a Vite dev server proxying `/api` to it:
 
 ```bash
-make dev   # backend on 127.0.0.1:8080 + Vite dev server proxying /api
+make dev
 ```
 
-See `AGENTS.md` for conventions, locked technical choices, and commands.
+`make dev` keeps its database at `/tmp/peeq-dev.db` rather than under `./data`.
 
-### Phase 2 upgrade note
+See `AGENTS.md` for conventions and the full command list.
 
-Phase 2 (channels & subscriptions) squashed all migrations into a single `0001_init.sql`, so an
-existing dev database predating this change won't pick up the new tables on startup. Delete it and
-let peeq re-migrate from scratch:
+## Configuration
 
-```bash
-rm ./data/peeq.db*
-```
+Everything is read from `BACKEND_*` environment variables. `.env.example` is the exhaustive list,
+annotated with defaults; the tables below cover what matters most.
 
-(This is a dev-only concern — a fresh volume/deploy just migrates cleanly.)
+**Required — peeq refuses to start without these:**
 
-## Channels & subscriptions
+| Variable | Purpose |
+| --- | --- |
+| `BACKEND_SESSION_SECRET` | Signs session cookies. Generate with `openssl rand -hex 32`. |
+| `BACKEND_AUTH_MODE` | `oidc` or `dev`. No default. |
+| `BACKEND_CHAT_BASE_URL` | Chat endpoint, e.g. `http://localhost:8000/v1`. |
+| `BACKEND_EMBED_BASE_URL` | Embeddings endpoint, e.g. `http://localhost:8001/v1`. |
+| `BACKEND_EMBED_MODEL` | Embedding model name, e.g. `text-embedding-3-small`. |
 
-Adding a channel URL or `@handle` **tracks** it (it shows up under Channels, but nothing is
-downloaded automatically). **Subscribing** to a tracked channel opts it into the daily scan, which
-looks for new uploads and either lists them under **Pending** for a manual decision, or — if
-the channel has **autodownload** enabled — enqueues them automatically (optionally with a
-per-channel format override). A channel's first scan only records a baseline (its current videos)
-and queues nothing, so subscribing never triggers a bulk backfill. The scan itself respects the
-same throttle as everything else: at least 60s between channels and a 20s+ randomized delay per
-yt-dlp call, so a large subscription list is scanned gradually rather than in a burst.
+**Required when `BACKEND_AUTH_MODE=oidc`:** `BACKEND_OIDC_ISSUER`, `BACKEND_OIDC_CLIENT_ID`,
+`BACKEND_OIDC_CLIENT_SECRET`, `BACKEND_OIDC_REDIRECT_URL`.
 
-## Subtitles, summaries & search
+**Optional, with defaults:**
 
-Phase 3 adds AI-powered captions, summaries, chapter extraction, and vector search across video
-transcripts. This requires two external endpoints: an **OpenAI-compatible chat API** for generating artifacts
-(summaries, chapters, highlights) and an **embeddings API** for indexing and searching.
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `BACKEND_PUBLIC_URL` | *(empty)* | Externally reachable base URL. Not enforced at boot, but OIDC redirect and logout URLs are built from it, so OIDC will not work without it. |
+| `BACKEND_ADDR` | `:8080` | Dev auth requires a loopback address here. |
+| `BACKEND_DB_PATH` | `/data/peeq.db` | |
+| `BACKEND_MEDIA_DIR` | `/data/media` | Written as `<dir>/<channel>/<video>/`. |
+| `BACKEND_YTDLP_DIR` | `/data/bin` | Where yt-dlp is fetched and self-updates. |
+| `BACKEND_CHAT_API_KEY` | *(empty)* | Omit for an endpoint that needs no auth. |
+| `BACKEND_EMBED_API_KEY` | *(empty)* | Omit for an endpoint that needs no auth. |
+| `BACKEND_EMBED_DIM` | `1536` | Must match the model's real output dimension. Changing it later requires recreating the database — see [Database](#database). |
+| `BACKEND_DEFAULT_SUB_LANG` | `en` | Fallback subtitle language when none is detected. |
+| `BACKEND_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
 
-**Required env vars (peeq will not boot without these):**
-- `BACKEND_CHAT_BASE_URL` — chat endpoint (e.g. `http://localhost:8000/v1`)
-- `BACKEND_CHAT_API_KEY` — authentication token for the chat endpoint
-- `BACKEND_EMBED_BASE_URL` — embeddings endpoint (e.g. `http://localhost:8001/v1`)
-- `BACKEND_EMBED_API_KEY` — authentication token for embeddings
-- `BACKEND_EMBED_MODEL` — model name (e.g. `text-embedding-3-small`)
-- `BACKEND_EMBED_DIM` — vector dimension (e.g. `1536`); **changing this requires recreating the
-  database** because the `vec_chunks` table's dimension is fixed at DDL time. To reset:
-  ```bash
-  rm ./data/peeq.db*
-  ```
-- `BACKEND_DEFAULT_SUB_LANG` — fallback subtitle language if none is auto-detected (default `en`)
+## YouTube access
 
-**Phase 3.1a — hybrid search:** search now matches by **keyword** (SQLite FTS5) *and* **meaning**
-(vector similarity), fused into one ranked list, and also indexes each video's **summary**. Keyword
-search needs no external service, so if the embeddings endpoint is unavailable, search **degrades
-gracefully to keyword-only** (HTTP 200 with a logged warning) instead of failing. Phase 3.1a also
-adds a `kind` column to `transcript_chunks` and an `fts_chunks` table via a **final in-place edit of
-`0001_init.sql`** — the migration runner will not re-apply an edited `0001` to an existing database,
-so **upgrading an existing dev DB requires recreating it** (`rm ./data/peeq.db*`). On a stale DB,
-search silently returns no results (now logged as a warning). Append-only migrations resume from
-Phase 3.2 onward.
-
-## Two hard invariants
-
-- **No YouTube call ever fires without a valid cookie.** Every yt-dlp invocation (metadata fetch,
-  download, self-update excepted) goes through a cookie gate first; with no cookie configured,
-  `POST /api/downloads` is refused with `409`. This is enforced in code, not just documented —
-  there is no way to bypass it from the UI or API.
-- **Every YouTube request is throttled.** A random 20s+ delay (configurable floor, hard-clamped to
-  a 20s minimum) is inserted before each yt-dlp call, to keep request patterns well away from
-  anything that looks like scraping.
-
-## Browser extension (peeq Companion)
-
-peeq needs a YouTube sign-in to download videos. YouTube rotates account
-cookies on open YouTube browser tabs, so a cookie exported from the profile
-you browse with dies quickly. The fix is a profile that never browses.
+peeq needs a YouTube sign-in to download videos. YouTube rotates account cookies on open YouTube
+browser tabs, so a cookie exported from the profile you browse with dies quickly. The fix is a
+profile that never browses.
 
 Once:
 
-1. Create a dedicated Chrome profile and sign it into a dedicated YouTube
-   account (not your personal one — this isolates any rate-limit or block).
-2. In that tab, navigate to `https://www.youtube.com/robots.txt`, then close
-   the tab. This stops a YouTube app page from rotating the cookie underneath
-   you.
+1. Create a dedicated Chrome profile and sign it into a dedicated YouTube account (not your
+   personal one — this isolates any rate-limit or block).
+2. In that tab, navigate to `https://www.youtube.com/robots.txt`, then close the tab. This stops a
+   YouTube app page from rotating the cookie underneath you.
 3. In peeq: Settings → Access token → create one and copy it.
-4. Install the extension in that profile at `chrome://extensions` (Developer
-   mode → Load unpacked), pointing it at either:
+4. Install the extension in that profile at `chrome://extensions` (Developer mode → Load unpacked),
+   pointing it at either:
    - the `extension/` directory of a checkout, or
    - the unzipped `peeq-companion-<version>.zip` from a
-     [release](https://github.com/trick77/peeq/releases) — the same build, no
-     checkout needed.
+     [release](https://github.com/trick77/peeq/releases) — the same build, no checkout needed.
 
-   Then open its options, paste peeq's address and the token, and allow the
-   permission prompt.
+   Then open its options, paste peeq's address and the token, and allow the permission prompt.
 
-   The extension is deliberately **not** on the Chrome Web Store: it talks to
-   one self-hosted server, so the store's discovery and auto-update buy
-   nothing, while `cookies` plus a user-configured host permission would make
-   for a long and uncertain review. Keep a checkout at a stable path — Chrome
-   derives the extension ID from it, so moving the directory registers it as a
+   The extension is deliberately **not** on the Chrome Web Store: it talks to one self-hosted
+   server, so the store's discovery and auto-update buy nothing, while `cookies` plus a
+   user-configured host permission would make for a long and uncertain review. Keep a checkout at a
+   stable path — Chrome derives the extension ID from it, so moving the directory registers it as a
    new extension and the address and token must be re-entered.
 
 Whenever peeq reports the cookie is no longer valid:
@@ -130,61 +135,51 @@ Whenever peeq reports the cookie is no longer valid:
 
 Do not browse YouTube in that profile — that is what starts rotation.
 
-## Database backup
+## Safety rails
 
-`BACKEND_DB_PATH` (default `/data/peeq.db`) is the single source of truth for everything that isn't
-the media file itself: watch/resume position, favorites, tombstones, the download queue, and
-settings (including the stored cookie). **Back this file up.** If it's lost, re-downloading the
-media does not restore any of that state — favorited and watched videos, resume positions, and
-tombstoned entries are gone for good. SQLite runs in WAL mode; use `sqlite3 peeq.db ".backup
-backup.db"` (or a continuous tool like Litestream) rather than copying the file directly while the
-process is running.
+Three mechanisms constrain how peeq talks to YouTube. All are enforced in code, not merely
+documented.
 
-## Manual verification checklist (channels & subscriptions)
+- **No YouTube call fires without a valid cookie.** Every yt-dlp invocation (self-update excepted)
+  passes a cookie gate first. With no cookie configured, `POST /api/downloads` is refused with
+  `409`. There is no way to bypass this from the UI or the API. There is one env-level escape
+  hatch, `BACKEND_ALLOW_ANONYMOUS_YOUTUBE`, which exists so local testing can work around YouTube
+  serving no usable formats to authenticated requests; it is a hard boot error unless
+  `BACKEND_AUTH_MODE=dev`, which is itself loopback-only. Never enable it in production.
+- **Every YouTube request is throttled.** A randomized delay — configurable floor, hard-clamped to
+  a 20s minimum — precedes each yt-dlp call, and channel scans additionally wait at least 60s
+  between channels. A large subscription list is scanned gradually rather than in a burst.
+- **A kill-switch stops all YouTube activity.** You can pause everything from Settings. peeq also
+  engages the pause automatically when enough *distinct* videos or channels fail in a row with
+  extractor or rate-limit errors — the signal that the extractor is broken generally rather than
+  that one video is bad. Any success resets the streak. While paused, downloads and scans stop;
+  resume from Settings.
 
-The full channels/subscriptions flow needs a real YouTube cookie and is not covered by automated
-tests. Run this checklist by hand after any change that touches channels, scanning, or the
-download pipeline:
+## Database
 
-1. Boot with a real DB/media dir; sign in; paste a real cookie in Settings and confirm status
-   shows "active".
-2. **Add** a channel by `@handle` under Channels — it should appear tracked with the resolved
-   channel name. **Subscribe** to it.
-3. Wait for (or force) the scheduler's first pass on that channel — it should show `baselined_at`
-   set and queue **nothing** (first-run baseline, no backfill).
-4. Once a genuinely new upload exists on a subscribed, non-autodownload channel, confirm it lands
-   in **Pending** on the next scan. **Download now** should enqueue it (progress visible in
-   the dock) and it should land in Library as `downloaded`. **Ignore** on another pending item
-   should remove it from the list.
-5. Flip a channel to **Autodownload** with a format override — the next new upload on that channel
-   should enqueue automatically at low priority and download using the override format.
-6. Paste a **video** URL (not a channel URL) into Add — confirm its channel is silently tracked
-   (appears under Channels → Tracked) without being subscribed.
-7. **Delete** a channel that has a downloaded, favorited video — confirm the video row and its
-   media file are both gone (cascade delete overrides the favorite), and that deleting a channel
-   mid-download cancels the running job for that channel.
-8. With multiple subscribed channels, watch the logs across a scan cycle and confirm at least 60s
-   between channels and a 20s+ delay per yt-dlp call.
+`BACKEND_DB_PATH` (default `/data/peeq.db`) is the single source of truth for everything that is
+not the media file itself: watch and resume positions, favorites, tombstones, categories, the
+download queue, transcripts and their embeddings, and settings including the stored cookie.
 
-## Manual verification checklist (Phase 3: AI, captions, summaries & search)
+**Back this file up.** If it is lost, re-downloading the media restores none of that state.
+SQLite runs in WAL mode, so use `sqlite3 peeq.db ".backup backup.db"` — or a continuous tool like
+Litestream — rather than copying the file while the process is running.
 
-After any change to Phase 3 (captions, embeddings, summaries, chapters, or global search):
+**The schema is not upgrade-safe yet.** Schema changes are made in place in
+`backend/internal/store/migrations/0001_init.sql`, and the migration runner will not re-apply an
+already-recorded migration. An existing database therefore does not pick up schema changes; it has
+to be deleted and re-migrated from scratch:
 
-1. Boot with a real YouTube cookie, a running **chat endpoint** (`BACKEND_CHAT_BASE_URL` + 
-   `BACKEND_CHAT_API_KEY`), and a running **embeddings endpoint** (`BACKEND_EMBED_BASE_URL` + 
-   `BACKEND_EMBED_API_KEY` + `BACKEND_EMBED_MODEL` + `BACKEND_EMBED_DIM`). peeq will refuse to 
-   start without all three.
-2. Download a real video and confirm its captions are present:
-   - Check that VTT captions are extracted (if the video has YouTube-hosted captions or subtitles).
-   - Confirm CC (closed captions) file(s) are generated and stored alongside the video.
-3. Wait for artifact generation (summaries, chapters, highlights) to complete. Verify all three 
-   appear in the video detail panel.
-4. Perform a **global search** (search box, top of page) using a keyword from the video's transcript. 
-   Confirm the result appears and links to the correct timestamp within the video.
+```bash
+rm ./data/peeq.db*        # or /tmp/peeq-dev.db* for `make dev`
+```
+
+A fresh volume or a new deployment migrates cleanly. Changing `BACKEND_EMBED_DIM` requires the same
+reset, because the `vec_chunks` table's dimension is fixed at DDL time.
 
 ## Legal note
 
 Cookie-authenticated automated downloading violates YouTube's Terms of Service and ties every
-request to the Google account whose cookie you configured — use a throwaway account, not your
-main one. The built-in throttling (20s+ randomized delay per request) reduces, but does not
-eliminate, the risk of that account or its source IP getting rate-limited or blocked.
+request to the Google account whose cookie you configured — use a throwaway account, not your main
+one. The built-in throttling reduces, but does not eliminate, the risk of that account or its
+source IP getting rate-limited or blocked.
