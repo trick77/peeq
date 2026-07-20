@@ -266,6 +266,16 @@ func (s *server) handleChannelsDismissDormant(w http.ResponseWriter, r *http.Req
 // UPDATE is what keeps a later re-death clean regardless — this ordering is
 // only about not leaving a misleading intermediate state visible to a user
 // who checks between the two writes.)
+//
+// It also dismisses any dormancy flag on the fresh subscription row. Without
+// this, a channel that was dead for a long time (which is exactly the kind
+// of channel that gets auto-unsubscribed) comes back with a last-video-at
+// far older than DormantAfter and would show up in the dormant-review band
+// INSTANTLY — suggesting the user unsubscribe from the channel they just
+// went out of their way to restore. DismissDormant's own re-arm rule (it
+// re-flags automatically once a newer discovery arrives and the channel goes
+// quiet again) means this is a one-time clean slate, not a permanent
+// silencing of real future dormancy.
 func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
@@ -288,6 +298,14 @@ func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Reques
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	if err := s.channels.Subscribe(id, now); err != nil {
 		serverError(w, r, err, "subscribe failed")
+		return
+	}
+	// Best-effort in the sense that a "not found" result is impossible here
+	// (Subscribe above just created the row), but a real error still needs
+	// to surface: silently leaving a resubscribed channel dormant-flagged
+	// would defeat the whole point of this call.
+	if _, err := s.channels.DismissDormant(id, now); err != nil {
+		serverError(w, r, err, "dismiss dormant failed")
 		return
 	}
 	writeJSON(w, map[string]string{"status": "subscribed"})

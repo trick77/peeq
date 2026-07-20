@@ -870,12 +870,22 @@ func TestResubscribe_restoresSubscriptionAndClearsRecord(t *testing.T) {
 	}
 }
 
-// TestResubscribe_afterSecondDeath_recordsAgain pins the ON CONFLICT DO
-// UPDATE branch of AutoUnsubscribe (Task 1 review): resubscribing a
-// previously auto-unsubscribed channel, then auto-unsubscribing it a second
-// time, must record the new reason/timestamp rather than aborting the
-// transaction on the PRIMARY KEY conflict and leaving a dead channel
-// silently subscribed forever.
+// TestResubscribe_afterSecondDeath_recordsAgain covers the end-to-end
+// resubscribe-then-die-again flow through the HTTP layer: a channel that was
+// auto-unsubscribed, brought back via POST /resubscribe, and then dies a
+// second time must show up in /api/channels/auto-unsubscribed with the new
+// reason/timestamp.
+//
+// It does NOT exercise AutoUnsubscribe's ON CONFLICT DO UPDATE branch,
+// despite the resemblance: the /resubscribe handler calls
+// ClearAutoUnsubscribe before Subscribe, so the second AutoUnsubscribe call
+// here inserts into an empty auto_unsubscribes slot and no PRIMARY KEY
+// conflict ever occurs. The ON CONFLICT branch is instead pinned at the
+// store level, via plain Subscribe (which does NOT clear the record) in
+// TestAutoUnsubscribe_secondDeathAfterManualResubscribe_updatesRecord in
+// internal/channels/staleness_test.go — that is the test that would fail if
+// the ON CONFLICT clause were removed. Do not delete that test on the
+// assumption this one already covers it.
 func TestResubscribe_afterSecondDeath_recordsAgain(t *testing.T) {
 	h := newChannelsListTestServer(t, &testResolver{})
 	if err := h.channels.Upsert(channels.Channel{ID: "UCdead", Name: "Dead"}); err != nil {
@@ -900,6 +910,53 @@ func TestResubscribe_afterSecondDeath_recordsAgain(t *testing.T) {
 	if !strings.Contains(body, "UCdead") || !strings.Contains(body, secondDeath) {
 		t.Fatalf("auto-unsubscribed list missing re-recorded death: %s", body)
 	}
+}
+
+// TestResubscribe_longDeadChannel_notImmediatelyDormant asserts that
+// resubscribing a channel that was dead (and therefore auto-unsubscribed)
+// long enough ago that its last known video predates DormantAfter does NOT
+// show up as dormant:true right after the resubscribe. Without the handler
+// dismissing dormancy on the fresh subscription row, auto-unsubscribe's
+// DELETE FROM subscriptions takes dormant_dismissed_at with it, so a
+// restored long-dead channel would land instantly in the dormant-review
+// band — telling the user to unsubscribe from the channel they just
+// restored. The seeded discovery date is years (not months) in the past so
+// this can never flake against the real DormantAfter boundary.
+func TestResubscribe_longDeadChannel_notImmediatelyDormant(t *testing.T) {
+	h := newChannelsListTestServer(t, &testResolver{})
+	if err := h.channels.Upsert(channels.Channel{ID: "UCdead", Name: "Long Dead"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Subscribe("UCdead", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	mustExecDB(t, h.channels.DB(), `INSERT INTO channel_videos (video_id, channel_id, state, discovered_at) VALUES ('v1','UCdead','seen','2020-01-01 00:00:00')`)
+	if err := h.channels.AutoUnsubscribe("UCdead", channels.ReasonDeleted, "2026-07-20 12:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := postJSON(t, h, "/api/channels/UCdead/resubscribe", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resubscribe status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	body := getJSON(t, h, "/api/channels?filter=subscribed")
+	var items []struct {
+		ID      string `json:"id"`
+		Dormant bool   `json:"dormant"`
+	}
+	if err := json.Unmarshal([]byte(body), &items); err != nil {
+		t.Fatalf("decode: %v body=%s", err, body)
+	}
+	for _, it := range items {
+		if it.ID == "UCdead" {
+			if it.Dormant {
+				t.Fatalf("resubscribed channel reported dormant immediately: %s", body)
+			}
+			return
+		}
+	}
+	t.Fatalf("resubscribed channel missing from subscribed list: %s", body)
 }
 
 // TestStalenessRoutes_requireAuth asserts every dormancy/auto-unsubscribe
