@@ -165,17 +165,23 @@ download queue, transcripts and their embeddings, and settings including the sto
 SQLite runs in WAL mode, so use `sqlite3 peeq.db ".backup backup.db"` — or a continuous tool like
 Litestream — rather than copying the file while the process is running.
 
-**The schema is not upgrade-safe yet.** Schema changes are made in place in
-`backend/internal/store/migrations/0001_init.sql`, and the migration runner will not re-apply an
-already-recorded migration. An existing database therefore does not pick up schema changes; it has
-to be deleted and re-migrated from scratch:
+**Upgrades.** Migrations are append-only: each schema change is a new numbered file under
+`backend/internal/store/migrations/`, and the runner applies pending ones in order and records
+them. Existing databases upgrade in place — no reset needed.
+
+Two exceptions:
+
+- A database created before **0.0.11** predates the append-only rule, back when the initial
+  migration was still being rewritten in place. The runner will not re-apply it, so such a
+  database silently lacks later columns and tables. Recreate it.
+- Changing `BACKEND_EMBED_DIM` requires recreating the database regardless, because the
+  `vec_chunks` table's dimension is fixed at DDL time.
+
+In both cases:
 
 ```bash
 rm ./data/peeq.db*        # or /tmp/peeq-dev.db* for `make dev`
 ```
-
-A fresh volume or a new deployment migrates cleanly. Changing `BACKEND_EMBED_DIM` requires the same
-reset, because the `vec_chunks` table's dimension is fixed at DDL time.
 
 ## Legal note
 
