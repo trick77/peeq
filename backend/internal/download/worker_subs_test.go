@@ -60,6 +60,9 @@ func TestSucceedPersistsSubtitleAndEnqueuesSummary(t *testing.T) {
 
 	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
 	waitForVideoStatus(t, h, "v1", "downloaded")
+	// succeed() enqueues the summary job *after* SetDownloaded, so the video
+	// status is not a sufficient sync point: wait on the last side effect.
+	waitFor(t, "summary enqueued", func() bool { return len(spy.enqueued()) == 1 })
 
 	if gotSubLang != "en" {
 		t.Fatalf("req.SubLang = %q, want %q (from DefaultSubLang)", gotSubLang, "en")
