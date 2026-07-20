@@ -176,7 +176,8 @@
       <span class="chip"><span class="dot on"></span>branch <b>feat/ytdlp-js-runtime</b></span>
       <span class="chip">base <b>0d1301a</b></span>
       <span class="chip">image <b>debian:13-slim</b></span>
-      <span class="chip"><span class="dot wait"></span>status <b>awaiting choice + A/B</b></span>
+      <span class="chip"><span class="dot on"></span>runtime <b>deno 2.9.3</b></span>
+      <span class="chip"><span class="dot wait"></span>status <b>awaiting A/B</b></span>
     </div>
   </header>
 
@@ -284,10 +285,11 @@
   </section>
 
   <section>
-    <h2>Recommendation</h2>
-    <p>Both surviving options are defensible, and the split is genuinely a judgment call about
-      what peeq values. My recommendation is <strong>deno</strong>, with quickjs a legitimate
-      choice if image size matters more than upstream alignment.</p>
+    <h2>Decision — deno</h2>
+    <p><strong>Chosen: deno 2.9.3, copied from the official image.</strong> Both surviving options
+      were defensible; the split was a judgment call about what peeq values, and it went to
+      upstream alignment and zero code over the 50&times; size saving. quickjs remains the
+      documented fallback if image size ever becomes the binding constraint.</p>
     <div class="scroller">
       <table>
         <thead><tr><th></th><th>deno — recommended</th><th>quickjs</th></tr></thead>
@@ -367,10 +369,10 @@ GAINED with runtime: ______________________</div>
 <span class="dim"># silently disappear. deno is the only runtime yt-dlp auto-detects, so</span>
 <span class="dim"># no --js-runtimes flag is needed. amd64 only, matching the release build.</span>
 <span class="good">COPY --from=denoland/deno:bin-2.9.3 /deno /usr/local/bin/deno</span></div>
-    <h3>Optional: one boot log line</h3>
+    <h3>Plus one boot log line — confirmed in scope</h3>
     <p>A runtime can go missing from a future or hand-built image, and the failure is silent by
-      nature. One probe at startup makes it visible. It is the only Go code in the slice and is
-      genuinely optional.</p>
+      nature. One probe at startup makes it visible, and confirms the runtime is genuinely
+      detected rather than merely present. This is the only Go code in the slice.</p>
     <div class="code"><span class="good">peeq: yt-dlp JS runtime: deno-2.9.3</span>
 <span class="warn">peeq: yt-dlp JS runtime: NONE — YouTube extraction is on the deprecated path</span></div>
   </section>
