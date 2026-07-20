@@ -208,6 +208,155 @@ func TestThrottle_cancelledContextReturnsPromptly(t *testing.T) {
 	}
 }
 
+// TestCookieGate_anonymousAllowed_emptyCookieOK locks the dev-only anonymous
+// escape hatch: with AllowAnonymous set, an empty (absent) cookie must NOT
+// return ErrNoCookie — the run proceeds with an empty cookie text instead.
+func TestCookieGate_anonymousAllowed_emptyCookieOK(t *testing.T) {
+	r := New(RunnerConfig{
+		AllowAnonymous: true,
+		CookieProvider: func() (string, string) { return "", "absent" },
+	})
+	text, err := r.cookieGate()
+	if err != nil {
+		t.Fatalf("cookieGate() error = %v, want nil (anonymous allowed)", err)
+	}
+	if text != "" {
+		t.Fatalf("cookieGate() text = %q, want empty", text)
+	}
+}
+
+// TestCookieGate_notAnonymous_emptyCookieStillErrors locks the existing
+// guarantee: without AllowAnonymous, an empty cookie still returns
+// ErrNoCookie exactly as before.
+func TestCookieGate_notAnonymous_emptyCookieStillErrors(t *testing.T) {
+	r := New(RunnerConfig{
+		CookieProvider: func() (string, string) { return "", "absent" },
+	})
+	_, err := r.cookieGate()
+	if !errors.Is(err, ErrNoCookie) {
+		t.Fatalf("cookieGate() error = %v, want ErrNoCookie", err)
+	}
+}
+
+// TestCookieGate_anonymousAllowed_expiredStillErrors and its blocked sibling
+// below lock the carve-out: an expired/blocked cookie STATUS means a real
+// cookie exists and YouTube rejected it — that is a genuine signal, not an
+// absence, and anonymous mode must not weaken it.
+func TestCookieGate_anonymousAllowed_expiredStillErrors(t *testing.T) {
+	r := New(RunnerConfig{
+		AllowAnonymous: true,
+		CookieProvider: func() (string, string) { return "cookie-text", "expired" },
+	})
+	_, err := r.cookieGate()
+	if !errors.Is(err, ErrCookieExpired) {
+		t.Fatalf("cookieGate() error = %v, want ErrCookieExpired even in anonymous mode", err)
+	}
+}
+
+func TestCookieGate_anonymousAllowed_blockedStillErrors(t *testing.T) {
+	r := New(RunnerConfig{
+		AllowAnonymous: true,
+		CookieProvider: func() (string, string) { return "cookie-text", "blocked" },
+	})
+	_, err := r.cookieGate()
+	if !errors.Is(err, ErrBlocked) {
+		t.Fatalf("cookieGate() error = %v, want ErrBlocked even in anonymous mode", err)
+	}
+}
+
+// TestMetadata_anonymous_emptyCookie_runsWithoutCookiesFlag proves the
+// end-to-end anonymous path: with AllowAnonymous and no cookie configured,
+// Metadata actually invokes the binary (rather than short-circuiting with
+// ErrNoCookie), and the built argv contains NO --cookies flag at all —
+// passing --cookies pointed at an empty file is not equivalent to omitting
+// it, so the flag must be genuinely absent.
+func TestMetadata_anonymous_emptyCookie_runsWithoutCookiesFlag(t *testing.T) {
+	captureOut := filepath.Join(t.TempDir(), "capture.out")
+	content := "#!/bin/sh\necho \"$@\" > '" + captureOut + "'\necho '{}'\nexit 0\n"
+	script := filepath.Join(t.TempDir(), "capture.sh")
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New(RunnerConfig{
+		Bin:            script,
+		AllowAnonymous: true,
+		CookieProvider: func() (string, string) { return "", "absent" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+
+	out, err := os.ReadFile(captureOut)
+	if err != nil {
+		t.Fatalf("read capture: %v", err)
+	}
+	argLine := string(out)
+	if strings.Contains(argLine, "--cookies") {
+		t.Fatalf("args %q must not contain --cookies when the cookie is empty in anonymous mode", argLine)
+	}
+}
+
+// TestMetadata_withCookie_stillPassesCookiesFlag proves that even with
+// AllowAnonymous set, a present cookie still takes the normal --cookies
+// path (anonymous is an absence-only carve-out, not a global disable).
+func TestMetadata_withCookie_stillPassesCookiesFlag(t *testing.T) {
+	captureOut := filepath.Join(t.TempDir(), "capture.out")
+	content := "#!/bin/sh\necho \"$@\" > '" + captureOut + "'\necho '{}'\nexit 0\n"
+	script := filepath.Join(t.TempDir(), "capture.sh")
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New(RunnerConfig{
+		Bin:            script,
+		AllowAnonymous: true,
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+
+	out, err := os.ReadFile(captureOut)
+	if err != nil {
+		t.Fatalf("read capture: %v", err)
+	}
+	if !strings.Contains(string(out), "--cookies") {
+		t.Fatalf("args %q must still contain --cookies when a cookie is present", string(out))
+	}
+}
+
+// TestThrottle_appliesInAnonymousMode locks that the 20s throttle floor is
+// unaffected by AllowAnonymous — anonymous calls carry MORE ban risk (no
+// account to rate-limit, just the host IP), so the throttle must not be
+// skipped or weakened for them.
+func TestThrottle_appliesInAnonymousMode(t *testing.T) {
+	var sleptFor time.Duration
+	slept := false
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		AllowAnonymous: true,
+		CookieProvider: func() (string, string) { return "", "absent" },
+		Sleep: func(_ context.Context, d time.Duration) error {
+			slept = true
+			sleptFor = d
+			return nil
+		},
+	})
+	t.Setenv("FAKE_YTDLP_JSON", `{"id":"dQw4w9WgXcQ","title":"t"}`)
+	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	if !slept {
+		t.Fatal("throttle must still sleep for anonymous calls")
+	}
+	if sleptFor < minThrottleFloor {
+		t.Fatalf("anonymous throttle wait %v below hard floor %v", sleptFor, minThrottleFloor)
+	}
+}
+
 // TestMetadata_cookieStatusExpired_doesNotCallBinary locks the pre-exec
 // short-circuit: a "expired" cookie status must stop the run (with
 // ErrCookieExpired) before the binary is ever invoked and before the

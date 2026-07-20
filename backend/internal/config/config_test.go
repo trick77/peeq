@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -32,6 +33,80 @@ func TestLoad_missingSecretFails(t *testing.T) {
 	t.Setenv("BACKEND_SESSION_SECRET", "")
 	if _, err := Load(); err == nil {
 		t.Fatal("missing secret must fail")
+	}
+}
+
+func TestLoad_allowAnonymousYoutube_requiresDevAuth(t *testing.T) {
+	// This test drives os.Setenv/Clearenv directly (like
+	// TestLoadRequiresAIEndpoints below) rather than t.Setenv, since it needs
+	// to fully replace the env between subcases; restore a clean env after so
+	// later tests in this file aren't polluted by leftover vars.
+	t.Cleanup(os.Clearenv)
+	base := map[string]string{
+		"BACKEND_SESSION_SECRET":          "s",
+		"BACKEND_MIMO_BASE_URL":           "http://mimo",
+		"BACKEND_EMBED_BASE_URL":          "http://emb",
+		"BACKEND_EMBED_MODEL":             "e5",
+		"BACKEND_ALLOW_ANONYMOUS_YOUTUBE": "true",
+	}
+	setEnv := func(m map[string]string) {
+		os.Clearenv()
+		for k, v := range m {
+			os.Setenv(k, v)
+		}
+	}
+
+	// true + AUTH_MODE=dev (loopback) → OK.
+	devOK := map[string]string{}
+	for k, v := range base {
+		devOK[k] = v
+	}
+	devOK["BACKEND_AUTH_MODE"] = "dev"
+	devOK["BACKEND_ADDR"] = "127.0.0.1:8080"
+	setEnv(devOK)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("anonymous youtube + dev auth should boot, got err: %v", err)
+	}
+	if !cfg.AllowAnonymousYoutube {
+		t.Fatal("AllowAnonymousYoutube should be true")
+	}
+
+	// true + AUTH_MODE=oidc (fully configured) → hard startup error naming
+	// the anon-guard, not an incidental OIDC-field error.
+	oidcBad := map[string]string{}
+	for k, v := range base {
+		oidcBad[k] = v
+	}
+	oidcBad["BACKEND_AUTH_MODE"] = "oidc"
+	oidcBad["BACKEND_ADDR"] = ":8080"
+	oidcBad["BACKEND_OIDC_ISSUER"] = "https://issuer.example"
+	oidcBad["BACKEND_OIDC_CLIENT_ID"] = "client"
+	oidcBad["BACKEND_OIDC_CLIENT_SECRET"] = "secret"
+	oidcBad["BACKEND_OIDC_REDIRECT_URL"] = "https://issuer.example/callback"
+	setEnv(oidcBad)
+	_, err = Load()
+	if err == nil {
+		t.Fatal("BACKEND_ALLOW_ANONYMOUS_YOUTUBE=true with BACKEND_AUTH_MODE=oidc must fail to start")
+	}
+	if !strings.Contains(err.Error(), "BACKEND_ALLOW_ANONYMOUS_YOUTUBE") {
+		t.Fatalf("error should name the anon-youtube guard, got: %v", err)
+	}
+}
+
+func TestLoad_allowAnonymousYoutube_defaultFalse(t *testing.T) {
+	t.Setenv("BACKEND_SESSION_SECRET", "x")
+	t.Setenv("BACKEND_AUTH_MODE", "dev")
+	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
+	t.Setenv("BACKEND_MIMO_BASE_URL", "http://mimo")
+	t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
+	t.Setenv("BACKEND_EMBED_MODEL", "e5")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AllowAnonymousYoutube {
+		t.Fatal("AllowAnonymousYoutube must default to false")
 	}
 }
 

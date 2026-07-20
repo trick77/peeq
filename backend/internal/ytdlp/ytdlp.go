@@ -76,6 +76,16 @@ type RunnerConfig struct {
 	// returns true, every call is refused with ErrPaused before the binary
 	// runs and before the throttle sleep — the strongest enforcement point.
 	PauseProvider func() (paused bool, reason string)
+	// AllowAnonymous is a dev-only escape hatch (config.AllowAnonymousYoutube):
+	// when true, cookieGate lets an EMPTY cookie through instead of failing
+	// with ErrNoCookie, and exec omits --cookies entirely for that empty-text
+	// run. It does NOT weaken the "expired"/"blocked" cookie-status branches —
+	// those mean a real cookie exists and YouTube rejected it, a genuine
+	// signal that must still fail. The throttle floor and pause gate are
+	// completely unaffected. Callers must only ever set this from a config
+	// value that was itself gated on BACKEND_AUTH_MODE=dev at boot
+	// (config.Load); Runner does not re-derive or re-validate that here.
+	AllowAnonymous bool
 }
 
 // Runner wraps the yt-dlp binary: cookie gate, throttle, and error
@@ -127,6 +137,14 @@ func (r *Runner) effectiveThrottleFloor() time.Duration {
 // invariant: every run must first observe a non-empty, non-flagged cookie,
 // or it must stop before the binary is ever invoked (and before the
 // throttle sleep, so a known-bad cookie never burns a 20s+ wait).
+//
+// The "expired"/"blocked" branches always fail, even when AllowAnonymous is
+// set: those statuses mean a real cookie exists and YouTube rejected it,
+// which is a genuine signal, not an absence, so anonymous mode must not
+// weaken them. Only the empty-cookie (absent) branch is relaxed, and only
+// when AllowAnonymous is true — this is the dev-only escape hatch for the
+// case where authenticated yt-dlp requests currently get no usable formats
+// from YouTube while anonymous ones work.
 func (r *Runner) cookieGate() (string, error) {
 	text, status := r.cfg.CookieProvider()
 	switch status {
@@ -136,6 +154,9 @@ func (r *Runner) cookieGate() (string, error) {
 		return "", ErrBlocked
 	}
 	if text == "" {
+		if r.cfg.AllowAnonymous {
+			return "", nil
+		}
 		return "", ErrNoCookie
 	}
 	return text, nil
@@ -200,17 +221,32 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 		return nil, ErrPaused
 	}
 
-	cookieFile, err := writeCookieTempFile(cookieText)
-	if err != nil {
-		return nil, fmt.Errorf("ytdlp: write cookie temp file: %w", err)
+	// An empty cookieText only ever reaches here via the anonymous carve-out
+	// in cookieGate (the non-anonymous path fails earlier with ErrNoCookie),
+	// so no temp file is written and --cookies is omitted entirely — passing
+	// --cookies pointed at an empty file is NOT equivalent to leaving the
+	// flag off, so the flag must be genuinely absent for an anonymous run.
+	var cookieFile string
+	if cookieText != "" {
+		f, err := writeCookieTempFile(cookieText)
+		if err != nil {
+			return nil, fmt.Errorf("ytdlp: write cookie temp file: %w", err)
+		}
+		cookieFile = f
+		defer os.Remove(cookieFile)
 	}
-	defer os.Remove(cookieFile)
 
+	// The throttle applies unconditionally, before AND after the cookie
+	// branch above — anonymous calls carry MORE ban risk (no account to
+	// rate-limit, just the host IP), so they must never skip or shorten it.
 	if err := r.throttle(ctx); err != nil {
 		return nil, err
 	}
 
-	fullArgs := append([]string{"--cookies", cookieFile}, args...)
+	fullArgs := args
+	if cookieFile != "" {
+		fullArgs = append([]string{"--cookies", cookieFile}, args...)
+	}
 	// Resolve the binary path fresh on every invocation (not once at boot),
 	// so a self-updated yt-dlp written to disk after startup is used without
 	// requiring a restart.

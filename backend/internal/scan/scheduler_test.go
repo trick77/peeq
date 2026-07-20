@@ -672,3 +672,52 @@ func TestScan_noCookie_skipsScan(t *testing.T) {
 		t.Fatalf("lister called %d times without cookie", calls)
 	}
 }
+
+// TestScan_anonymousAllowed_proceedsWithAbsentCookie locks the dev-only
+// anonymous escape hatch at the scheduler's own cookie gate: when
+// AllowAnonymous is set, an absent cookie must no longer block the poll from
+// proceeding to scan.
+func TestScan_anonymousAllowed_proceedsWithAbsentCookie(t *testing.T) {
+	h := newScanHarness(t)
+	h.cookieStatus = "absent"
+	h.trackAndSubscribe("UC1", false, "")
+	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "v1", DurationSeconds: 600, LiveStatus: "not_live"}})
+
+	h.sched = New(Deps{
+		Channels:       h.channels,
+		Ledger:         h.ledger,
+		Videos:         h.videos,
+		Jobs:           h.jobs,
+		Settings:       h.settings,
+		Lister:         h.lister,
+		CookieStatus:   func(context.Context) string { return h.cookieStatus },
+		AllowAnonymous: true,
+		Now:            func() time.Time { return fixedNow },
+		PollInterval:   5 * time.Millisecond,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { h.sched.Run(ctx); close(done) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	if ok, _ := h.ledger.Exists("v1"); !ok {
+		t.Fatal("anonymous mode must proceed to scan despite an absent cookie")
+	}
+	h.lister.mu.Lock()
+	calls := h.lister.calls
+	h.lister.mu.Unlock()
+	if calls == 0 {
+		t.Fatal("lister must be called when anonymous is allowed, even with an absent cookie")
+	}
+}
+
+// Note: the scheduler's own poll-level gate is deliberately a blunt
+// CookieStatus != "valid" check with no "expired"/"blocked" distinction —
+// that finer-grained distinction (a real cookie exists and was rejected,
+// vs. no cookie at all) is enforced downstream by ytdlp.Runner.cookieGate
+// against the actual cookie text/status on every real yt-dlp call (see
+// internal/ytdlp's TestCookieGate_anonymousAllowed_expiredStillErrors and
+// TestCookieGate_anonymousAllowed_blockedStillErrors), not duplicated here.

@@ -6,5 +6,15 @@ node_modules/
 backend/web/dist/*
 !backend/web/dist/index.html
 
+# Browser cookie material — never commit. Cookies.binarycookies is Safari's
+# jar for EVERY site, not just YouTube; the .txt forms are Netscape exports
+# fed to yt-dlp. Both are live session credentials.
+Cookies.binarycookies
+*.binarycookies
+# Broad on purpose: a narrow "*-cookies.txt" missed yt-cookies-youtube.txt,
+# which held live auth cookies as an untracked file.
+*cookies*.txt
+*cookies*.json
+
 # Local Claude Code settings
 .claude/
