@@ -156,10 +156,21 @@
   </section>
 
   <section>
-    <h2>Schema — migration <code>0002</code></h2>
-    <p>Migrations are append-only files applied lexicographically and recorded in
-      <code>schema_migrations</code> (<code>store/migrate.go</code>). <code>0001_init.sql</code> is
-      never edited.</p>
+    <h2>Schema</h2>
+    <div class="note risk">
+      <h3>Superseded during implementation: squashed into <code>0001</code></h3>
+      <p>This was built as an append-only <code>0002_auto_unsubscribe.sql</code>, then squashed
+        into <code>0001_init.sql</code> at the user's request, with the two columns folded into the
+        <code>subscriptions</code> definition rather than left as <code>ALTER</code>s.</p>
+      <p><strong>This is only safe because the database was disposable.</strong>
+        <code>store/migrate.go</code> keys off the recorded <em>filename</em> and skips any version
+        already present in <code>schema_migrations</code> — so editing <code>0001</code> is a no-op
+        on a database that already ran it. The new columns would silently never be created, and
+        every test would still pass, because tests build fresh databases. Any future schema change
+        against a non-disposable database must be append-only.</p>
+    </div>
+    <p>The DDL below is what now lives in <code>0001_init.sql</code>; it was originally written as
+      the <code>0002</code> shown here.</p>
     <pre><span class="c">-- 0002_auto_unsubscribe.sql</span>
 
 <span class="c">-- Consecutive scans that returned a terminal "deleted" for this channel.</span>

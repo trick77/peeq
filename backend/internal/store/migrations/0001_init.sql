@@ -132,7 +132,24 @@ CREATE TABLE subscriptions (
     baselined_at    TEXT,                       -- NULL until the first scan completes
     last_scanned_at TEXT,
     next_scan_at    TEXT NOT NULL,              -- set to now on subscribe
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Consecutive scans that returned a terminal "deleted" for this channel.
+    -- ANY clean scan resets this to 0, so only a sustained run ever acts.
+    dead_scan_count INTEGER NOT NULL DEFAULT 0,
+    -- When the user dismissed a dormancy flag. The flag re-arms only if a video
+    -- is discovered AFTER this instant and the channel then goes quiet again.
+    dormant_dismissed_at TEXT
+);
+
+-- auto_unsubscribes: the visible record of what peeq unsubscribed on its own.
+-- Deliberately OUTLIVES the subscriptions row it replaces, so an automatic
+-- action is never invisible — hence its own table rather than a column.
+-- The single-value CHECK is deliberate: a future reason must widen it
+-- consciously, so the Go constant and the SQL enum cannot drift apart silently.
+CREATE TABLE auto_unsubscribes (
+    channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
+    reason     TEXT NOT NULL CHECK (reason IN ('deleted')),
+    at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_subscriptions_next_scan_at ON subscriptions(next_scan_at);
 
