@@ -1,5 +1,12 @@
+import { DISPLAY_COOKIE_NAMES } from "./shared.js";
+
 const api = globalThis.browser ?? globalThis.chrome;
 const $ = (id) => document.getElementById(id);
+
+// Captured from the initial status call and reused on every subsequent
+// render so the host badge survives a send(), which only forwards
+// {detail, count} and never carries baseUrl itself.
+let knownBaseUrl = "";
 
 // Amber, not red, for unreachable: it usually means you're on another network
 // and nothing is broken. Red stays reserved for errors you must act on.
@@ -16,14 +23,26 @@ const VIEWS = {
   "status-error": { led: "bad", headline: "Couldn't read this profile's cookies", detail: "Chrome refused the cookie read. Try reopening the extension." },
   "no-session": { led: "idle", headline: "No YouTube sign-in in this profile", detail: "Sign in to YouTube in this Chrome profile, then come back." },
   "not-configured": { led: "idle", headline: "Connect to peeq", detail: "Add peeq's address and an access token to get started." },
+  // Nothing was sent or even attempted here: the service worker never answered
+  // (rejected sendMessage, or closed the channel with no response). Distinct
+  // from "status-error" (a cookie read failed) and "server-error" (peeq
+  // answered and refused). Reopening the extension usually restarts a
+  // crashed/updating worker.
+  "worker-error": { led: "bad", headline: "The extension didn't respond", detail: "peeq's background worker did not answer. Reopening the extension usually fixes it." },
+  // The fallback for a state this popup doesn't recognise (e.g. one added
+  // later on the status path). It must NOT borrow "server-error" or any
+  // other view that asserts a specific cause — nothing here confirms
+  // anything was sent, refused, or read, so the copy stays cause-neutral.
+  unknown: { led: "bad", headline: "Something went wrong", detail: "peeq's extension hit an unexpected state. Reopening the extension usually fixes it." },
 };
 
 function render(state, extra = {}) {
-  const view = VIEWS[state] ?? VIEWS["server-error"];
+  const view = VIEWS[state] ?? VIEWS.unknown;
   $("led").className = `led ${view.led === "idle" ? "" : view.led}`;
   $("headline").textContent = view.headline;
   $("detail").textContent = extra.detail || view.detail;
-  $("host").textContent = extra.baseUrl ?? "";
+  if (extra.baseUrl !== undefined) knownBaseUrl = extra.baseUrl;
+  $("host").textContent = knownBaseUrl;
 
   const facts = $("facts");
   facts.replaceChildren();
@@ -34,7 +53,7 @@ function render(state, extra = {}) {
   if (state === "sent" && extra.count !== undefined) {
     rows.push(["Cookies sent", String(extra.count)]);
   } else if (extra.count !== undefined) {
-    rows.push(["Sign-in cookies", `${extra.count} of ${extra.total ?? 5} present`]);
+    rows.push(["Sign-in cookies", `${extra.count} of ${extra.total ?? DISPLAY_COOKIE_NAMES.length} present`]);
   }
   facts.hidden = rows.length === 0;
   for (const [key, value] of rows) {
@@ -70,13 +89,23 @@ function button(label, className, onClick) {
 
 async function send() {
   render("sending");
-  const result = await api.runtime.sendMessage({ type: "send" });
-  render(result.state, { detail: result.detail, count: result.count });
+  try {
+    const result = await api.runtime.sendMessage({ type: "send" });
+    if (!result || !result.state) throw new Error("no response from the extension");
+    render(result.state, { detail: result.detail, count: result.count });
+  } catch (err) {
+    render("worker-error", { detail: err.message });
+  }
 }
 
 async function init() {
-  const status = await api.runtime.sendMessage({ type: "status" });
-  render(status.state, status);
+  try {
+    const status = await api.runtime.sendMessage({ type: "status" });
+    if (!status || !status.state) throw new Error("no response from the extension");
+    render(status.state, status);
+  } catch (err) {
+    render("worker-error", { detail: err.message });
+  }
 }
 
 init();
