@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,8 +37,10 @@ func (r *testResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.Ch
 	return r.info, nil
 }
 
-// channelsTestDeps builds Deps wired for the channels API: dev auth plus a
-// real channels store and the given fake resolver.
+// channelsTestDeps builds Deps wired for the channels API: dev auth plus
+// real channels, videos, and ledger stores sharing ONE *sql.DB (so a video
+// seeded through one store is visible through another), and the given fake
+// resolver.
 func channelsTestDeps(t *testing.T, resolver ChannelResolver) Deps {
 	t.Helper()
 	db := openTestDB(t)
@@ -48,6 +51,8 @@ func channelsTestDeps(t *testing.T, resolver ChannelResolver) Deps {
 		AuthMiddleware:  auth.NewMiddleware(sessions, users),
 		Settings:        settings.New(db),
 		Channels:        channels.New(db),
+		Videos:          videos.New(db),
+		Ledger:          channelvideos.New(db),
 		ChannelResolver: resolver,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
@@ -853,5 +858,77 @@ func TestPendingIgnore_notFound_404(t *testing.T) {
 	rr := postJSON(t, h, "/api/pending/nope/ignore", nil)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("ignore unknown id status = %d, want 404, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelDetail_unresolvedChannel_triggersOneResolve asserts visiting an
+// uncached channel schedules exactly one metadata fetch, and that a second
+// visit does not fetch again. Without the second assertion a permanently
+// unresolvable channel would hit YouTube on every page load.
+func TestChannelDetail_unresolvedChannel_triggersOneResolve(t *testing.T) {
+	resolver := &testResolver{info: ytdlp.ChannelInfo{UCID: "UCloose", Name: "Deep Field Radio"}}
+	deps := channelsTestDeps(t, resolver)
+	done := make(chan struct{}, 4)
+	deps.OnChannelResolved = func(string) { done <- struct{}{} }
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCloose", "Deep Field Radio")
+
+	getJSON(t, h, "/api/channels/UCloose")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background resolve never completed")
+	}
+	if resolver.calls != 1 {
+		t.Fatalf("resolver.calls = %d, want 1", resolver.calls)
+	}
+
+	getJSON(t, h, "/api/channels/UCloose")
+	select {
+	case <-done:
+		t.Fatal("second visit resolved again; resolved_at should suppress it")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if resolver.calls != 1 {
+		t.Fatalf("resolver.calls = %d after second visit, want still 1", resolver.calls)
+	}
+}
+
+// TestChannelDetail_resolveFailure_stillMarksAttempted asserts a channel that
+// cannot be resolved (stale cookie, deleted channel) is not retried on every
+// visit.
+func TestChannelDetail_resolveFailure_stillMarksAttempted(t *testing.T) {
+	resolver := &testResolver{err: errors.New("boom")}
+	deps := channelsTestDeps(t, resolver)
+	done := make(chan struct{}, 4)
+	deps.OnChannelResolved = func(string) { done <- struct{}{} }
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCbad", "Bad Channel")
+
+	getJSON(t, h, "/api/channels/UCbad")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background resolve never completed")
+	}
+
+	getJSON(t, h, "/api/channels/UCbad")
+	time.Sleep(300 * time.Millisecond)
+	if resolver.calls != 1 {
+		t.Fatalf("resolver.calls = %d, want 1 — a failed resolve must not retry every visit", resolver.calls)
+	}
+}
+
+// TestListVideos_channelParam_scopes asserts ?channel= narrows the library to
+// one channel, which is what the Archive tab loads.
+func TestListVideos_channelParam_scopes(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCa", "Alpha")
+	seedVideoRow(t, deps, "v2", "UCb", "Beta")
+
+	body := getJSON(t, h, "/api/videos?channel=UCa")
+	if !strings.Contains(body, `"v1"`) || strings.Contains(body, `"v2"`) {
+		t.Fatalf("channel scoping wrong: %s", body)
 	}
 }

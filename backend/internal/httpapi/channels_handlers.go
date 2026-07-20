@@ -330,7 +330,73 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.maybeResolveChannel(id, c)
 	writeJSON(w, out)
+}
+
+// maybeResolveChannel kicks off a one-shot background metadata fetch for a
+// channel peeq has never resolved. It deliberately does NOT block the
+// response: the page renders from what is already in the database and the
+// header fills in on the next load.
+//
+// resolved_at is written whether the fetch succeeds or fails, so a channel
+// that cannot be resolved — a stale cookie, a deleted channel — is not
+// re-fetched on every single visit.
+func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel) {
+	if s.channelResolver == nil || s.channels == nil {
+		return
+	}
+	if cached != nil && cached.ResolvedAt != "" {
+		return
+	}
+	go func() {
+		defer func() {
+			if s.onChannelResolved != nil {
+				s.onChannelResolved(channelID)
+			}
+		}()
+		// Detached from the request: the browser has its response already.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+
+		now := time.Now().UTC().Format("2006-01-02 15:04:05")
+		url := "https://www.youtube.com/channel/" + channelID
+		info, err := s.channelResolver.ResolveChannel(ctx, url)
+		if err != nil {
+			slog.Warn("channel resolve failed", "channel_id", channelID, "err", err)
+			// Ensure a row exists to carry resolved_at, so the failure is
+			// remembered and not retried on the next visit.
+			if cached == nil {
+				if uerr := s.channels.Upsert(channels.Channel{ID: channelID, ResolvedAt: now}); uerr != nil {
+					slog.Error("cache channel after failed resolve", "channel_id", channelID, "err", uerr)
+				}
+				return
+			}
+			if merr := s.channels.MarkResolveAttempted(channelID, now); merr != nil {
+				slog.Error("mark resolve attempted", "channel_id", channelID, "err", merr)
+			}
+			return
+		}
+
+		avatarPath, aerr := media.FetchImage(ctx, info.AvatarURL, s.mediaDir, ".channels/"+channelID+"/avatar")
+		if aerr != nil {
+			slog.Warn("channel avatar fetch failed", "channel_id", channelID, "err", aerr)
+		}
+		bannerPath, berr := media.FetchImage(ctx, info.BannerURL, s.mediaDir, ".channels/"+channelID+"/banner")
+		if berr != nil {
+			slog.Warn("channel banner fetch failed", "channel_id", channelID, "err", berr)
+		}
+		if uerr := s.channels.Upsert(channels.Channel{
+			ID:          channelID,
+			Name:        info.Name,
+			Description: info.Description,
+			AvatarPath:  avatarPath,
+			BannerPath:  bannerPath,
+			ResolvedAt:  now,
+		}); uerr != nil {
+			slog.Error("cache resolved channel", "channel_id", channelID, "err", uerr)
+		}
+	}()
 }
 
 // handleChannelsPut updates a subscribed channel's autodownload flag and/or

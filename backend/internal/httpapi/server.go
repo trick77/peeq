@@ -93,6 +93,11 @@ type Deps struct {
 	// a fresh auto-pause window. Optional: when nil, resume only clears the
 	// settings flag.
 	OnResumeYoutube func()
+
+	// OnChannelResolved fires after a background channel-metadata resolve
+	// settles, successfully or not. Test-only: it exists so a test can wait
+	// for the goroutine instead of sleeping. nil in production.
+	OnChannelResolved func(channelID string)
 }
 
 // SearchEmbedder embeds free-text search queries into vectors comparable
@@ -154,6 +159,8 @@ type server struct {
 	summaryJobs SummaryEnqueuer
 
 	onResumeYoutube func()
+
+	onChannelResolved func(channelID string)
 }
 
 // New returns the fully wired HTTP handler.
@@ -185,6 +192,8 @@ func New(d Deps) http.Handler {
 		summaryJobs: d.SummaryJobs,
 
 		onResumeYoutube: d.OnResumeYoutube,
+
+		onChannelResolved: d.OnChannelResolved,
 	}
 
 	mux := http.NewServeMux()

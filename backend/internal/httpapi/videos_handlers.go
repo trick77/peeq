@@ -132,11 +132,22 @@ func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []videoDTO{})
 		return
 	}
+	channelID := r.URL.Query().Get("channel")
+	channelName := ""
+	if channelID != "" && s.channels != nil {
+		if c, cerr := s.channels.Get(channelID); cerr == nil && c != nil {
+			channelName = c.Name
+		} else if n, found, nerr := s.channels.NameFromVideos(channelID); nerr == nil && found {
+			channelName = n
+		}
+	}
 	all, err := s.videos.List(videos.ListOptions{
-		Filter:   r.URL.Query().Get("filter"),
-		Category: r.URL.Query().Get("category"),
-		Query:    r.URL.Query().Get("q"),
-		Sort:     r.URL.Query().Get("sort"),
+		Filter:      r.URL.Query().Get("filter"),
+		Category:    r.URL.Query().Get("category"),
+		Query:       r.URL.Query().Get("q"),
+		Sort:        r.URL.Query().Get("sort"),
+		ChannelID:   channelID,
+		ChannelName: channelName,
 	})
 	if err != nil {
 		serverError(w, r, err, "list videos failed")
