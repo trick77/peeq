@@ -1,0 +1,18 @@
+{
+  // Production gate: the browser bundle only.
+  //
+  // Deliberately exposes NO Node types. @types/node is a devDependency needed
+  // by src/enumsync.test.ts, but with "node" in the ambient types array,
+  // process/Buffer/require would type-check inside React components and then
+  // fail at runtime in the browser. Excluding tests here keeps that surface
+  // out of application code.
+  //
+  // `npm run build` runs this config first, so a Node-only API reaching a
+  // component is a build failure, not a runtime surprise.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client"]
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test-setup.ts"]
+}
