@@ -1,0 +1,305 @@
+<title>peeq — Channel page (design)</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #1f1f1e;
+    --panel: #1b1b1a;
+    --active: #2c2c2a;
+    --border: #323230;
+    --border-soft: #2a2a28;
+    --ink: #faf9f5;
+    --ink-dim: #e4e1d8;
+    --muted: #9c9a92;
+    --faint: #6f6d66;
+    --accent: #c6613f;
+    --accent-strong: #d97757;
+    --online: #5aa06a;
+    --danger: #c14638;
+    --kept: #d6a15a;
+    --elevated-border: #454540;
+    --radius: 10px;
+    --sans: "Anthropic Sans", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --serif: "Anthropic Serif", Georgia, "Times New Roman", Times, serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(60rem 40rem at 78% -8%, rgba(198, 97, 63, 0.06), transparent 60%),
+      radial-gradient(46rem 34rem at 6% 4%, rgba(214, 161, 90, 0.03), transparent 62%),
+      var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: 4rem 1.5rem 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3rem;
+  }
+
+  .eyebrow {
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 600;
+    margin: 0 0 0.75rem;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(1.75rem, 4.4vw, 2.6rem);
+    line-height: 1.15;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    margin: 0 0 0.75rem;
+    text-wrap: balance;
+  }
+  h2 {
+    font-family: var(--serif);
+    font-size: 1.5rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    margin: 0 0 1rem;
+  }
+  h3 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    margin: 1.75rem 0 0.5rem;
+    color: var(--ink-dim);
+  }
+  h3:first-child { margin-top: 0; }
+  p { margin: 0 0 1rem; max-width: 68ch; color: var(--ink-dim); }
+  p:last-child { margin-bottom: 0; }
+  .lede { color: var(--muted); font-size: 1.0625rem; }
+
+  a { color: var(--accent-strong); }
+
+  section {
+    border-top: 1px solid var(--border-soft);
+    padding-top: 2rem;
+  }
+  section.hero { border-top: 0; padding-top: 0; }
+
+  ul, ol { margin: 0 0 1rem; padding-left: 1.25rem; color: var(--ink-dim); max-width: 68ch; }
+  li { margin-bottom: 0.4rem; }
+  li:last-child { margin-bottom: 0; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--active);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 0.08em 0.36em;
+    color: var(--ink-dim);
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem 1.5rem;
+  }
+  .panel + .panel { margin-top: 1rem; }
+
+  .note {
+    border-left: 2px solid var(--accent);
+    padding: 0.25rem 0 0.25rem 1rem;
+    color: var(--muted);
+    font-size: 0.9375rem;
+    margin: 0 0 1rem;
+    max-width: 68ch;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+  .scroll { overflow-x: auto; margin-bottom: 1rem; }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.9rem 0.55rem 0;
+    border-bottom: 1px solid var(--border-soft);
+    vertical-align: top;
+  }
+  th {
+    font-size: 0.6875rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  td { color: var(--ink-dim); }
+  td code { white-space: nowrap; }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    background: var(--active);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .tag.new { border-color: var(--accent); color: var(--accent-strong); }
+
+  .files { font-family: var(--mono); font-size: 0.8125rem; color: var(--muted); }
+</style>
+
+<div class="wrap">
+
+  <section class="hero">
+    <p class="eyebrow">peeq &middot; design &middot; 20 July 2026</p>
+    <h1>Channel page</h1>
+    <p class="lede">Clicking a channel name anywhere in peeq opens a page for that channel: everything archived from it, everything newly discovered and awaiting a decision, and the subscription settings that today are crammed into a single row.</p>
+  </section>
+
+  <section>
+    <h2>Why</h2>
+    <p>Channels are currently a flat list of rows. Each row carries a name, two counts, and four controls jammed into the same line &mdash; there is nowhere to go from a channel, and nowhere for a channel to say anything about itself. Meanwhile the pieces of a channel&rsquo;s story are scattered: its archived videos live in the Library behind a filter, its newly discovered videos live on the global Pending page mixed with every other channel&rsquo;s, and its subscription settings live in the row.</p>
+    <p>The channel page gathers those into one place, and gives the settings enough room to explain themselves.</p>
+    <p>A second, smaller motivation: peeq already fetches a channel&rsquo;s avatar, banner, and description when the channel is added, and discards all three. Channels look identical to one another when they need not.</p>
+  </section>
+
+  <section>
+    <h2>Shape</h2>
+    <p>An identity header, then three tabs. The reference mockup is the approved artifact from the brainstorm; this section is the written form of it.</p>
+
+    <h3>Header</h3>
+    <ul>
+      <li>The channel&rsquo;s banner as a faded backdrop &mdash; roughly 22% opacity, slightly desaturated, under a gradient that resolves to the panel colour before the content starts. Channel art is bright and busy; it should give the page a distinct feel without competing with the interface.</li>
+      <li>Round avatar, channel name in the serif face, handle and &ldquo;tracked since&rdquo; date, and up to two lines of the channel description.</li>
+      <li>Four stats, monospace with tabular figures: <strong>archived</strong> (count), <strong>runtime</strong> (sum of durations), <strong>on disk</strong> (sum of file sizes), <strong>newest</strong> (age of the most recent archived video).</li>
+      <li>The subscribe toggle, top right, in the gold <code>kept</code> tone when subscribed.</li>
+    </ul>
+
+    <h3>Tab 1 &mdash; Archive</h3>
+    <p>The default tab. A grid of every archived video from this channel, with its own search box, category filter, and sort. The filter state is local to the page and does not touch the Library&rsquo;s filters &mdash; visiting a channel should never change what the Library shows when you go back to it.</p>
+
+    <h3>Tab 2 &mdash; New</h3>
+    <p>The discovered-but-undecided videos for this channel: the Pending page scoped down. A list rather than a grid, because these are decisions rather than things to look at &mdash; thumbnail, title, when it was found, and Add / Ignore. Bulk &ldquo;Add all&rdquo; and &ldquo;Ignore all&rdquo; sit in the toolbar alongside a line reading when the channel was last checked and when it will be checked next.</p>
+    <p>The empty state is the common case and is designed as such: &ldquo;Nothing new&rdquo;, the same last-checked / next-check line, and a Check now button.</p>
+
+    <h3>Tab 3 &mdash; Settings</h3>
+    <p>The four controls from the Channels row, each with a sentence explaining what it does: subscribe, add-new-automatically, format override, and the checking schedule with its Check now button. Delete sits below the panel, visually separated from everything reversible, and names what it will destroy (&ldquo;Delete channel and its 142 videos&rdquo;).</p>
+
+    <h3>Untracked channels</h3>
+    <p>A downloaded video stores its channel as loose text with no foreign key, so the Library contains channels that were never tracked &mdash; anything added by URL. Clicking those names opens the page anyway: the header shows the stats and the archive tab lists the videos, but there is no subscription, so the New and Settings tabs are absent and the header offers <strong>Track this channel</strong> instead of a subscribe toggle. A short line explains why the page is sparse.</p>
+    <p>This turns what would be a dead link into the natural place to start following someone.</p>
+  </section>
+
+  <section>
+    <h2>Data</h2>
+
+    <h3>Schema</h3>
+    <p>The <code>channels</code> table gains two columns and starts using one it already has. Per the decision below, this is an edit to <code>0001_init.sql</code> rather than a new migration.</p>
+    <ul>
+      <li><code>avatar_path</code> &mdash; already declared, currently never written.</li>
+      <li><code>banner_path</code> <span class="tag new">new</span> &mdash; local path to the saved banner.</li>
+      <li><code>description</code> <span class="tag new">new</span> &mdash; the channel&rsquo;s own description text.</li>
+    </ul>
+    <div class="note">
+      <strong>Squash, do not migrate.</strong> peeq has exactly one migration file and one channel on the production instance. The decision is to edit <code>0001_init.sql</code> in place and re-create the production database, rather than establish a migration chain for a single row. This is a deliberate trade: the repository went public on 20 July 2026, so anyone who has already cloned and run peeq must wipe their database too. Accepted knowingly; this is the last point at which squashing is cheap.
+    </div>
+
+    <h3>Finding a channel&rsquo;s videos</h3>
+    <p><code>videos.channel_id</code> is plain text with no foreign key to <code>channels</code>. Matching is therefore by <code>channel_id</code>, falling back to <code>channel_name</code> for rows written before channel ids were recorded. That looseness is what makes the untracked case work at all: the page is defined over &ldquo;videos whose channel is X&rdquo;, not over &ldquo;tracked channel X&rdquo;.</p>
+
+    <h3>Images</h3>
+    <p><code>ResolveChannel</code> in <code>backend/internal/ytdlp/channel.go</code> already runs a metadata-only yt-dlp call and parses four fields out of a response that also carries <code>thumbnails</code> (avatar and banner) and <code>description</code>. Extend <code>flatListing</code> to capture them, download the two images, and store their paths.</p>
+    <p>Channels added before this change have no images. Rather than a backfill script, the detail endpoint resolves them lazily: if a tracked channel has no <code>avatar_path</code>, the first visit to its page triggers one metadata fetch and fills them in. The page renders without images if that fetch fails &mdash; it must never block on it.</p>
+  </section>
+
+  <section>
+    <h2>Backend</h2>
+    <p>Four additions in <code>backend/internal/httpapi/channels_handlers.go</code>, registered in <code>server.go</code> alongside the existing channel routes and wrapped in <code>requireAuth</code> like all of them.</p>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Route</th><th>Returns</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GET /api/channels/{id}</code></td>
+            <td>Identity (name, handle, avatar, banner, description), the four stats, <code>tracked</code>, and &mdash; when tracked &mdash; subscription state including <code>autodownload</code>, <code>format_override</code>, <code>last_scanned_at</code>, <code>next_scan_at</code>. 404 only when the id matches neither a tracked channel nor any archived video.</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/channels/{id}/videos</code></td>
+            <td>The archived videos, accepting <code>q</code>, <code>category</code>, and <code>sort</code>. Same item shape the Library already uses, so <code>VideoCard</code> renders it unchanged.</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/channels/{id}/scan</code></td>
+            <td>Sets <code>next_scan_at</code> to now. Returns the reason if a scan cannot currently run.</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/pending?channel={id}</code></td>
+            <td>Existing handler, new optional filter.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Check now</h3>
+    <p>The scheduler (<code>backend/internal/scan/scheduler.go</code>) holds no in-memory schedule &mdash; its <code>Run</code> loop polls <code>ClaimDue(now)</code> and takes whatever subscription is due. So &ldquo;check now&rdquo; is a single update to <code>next_scan_at</code>; the scheduler picks the channel up on its next poll.</p>
+    <p>The interface must be honest about that. The button reports <em>&ldquo;Checking soon&hellip;&rdquo;</em>, not a spinner implying the scan is happening at that instant. Two gates in the same loop can also delay it indefinitely: an invalid YouTube cookie, and the global pause flag. When either is set, the endpoint says so and the page shows that sentence instead of a vague pending state.</p>
+  </section>
+
+  <section>
+    <h2>Frontend</h2>
+
+    <h3>Routing</h3>
+    <p>peeq has no router; <code>App.tsx</code> holds a <code>view</code> string and switches on it. The channel page is the first view that needs a parameter, so <code>App.tsx</code> gains a <code>selectedChannelId</code> state set alongside the view. <code>ViewId</code> in <code>shell/Rail.tsx</code> gains <code>"channel"</code>, but &mdash; unlike every existing view &mdash; it gets no entry in the nav rail: the page is reachable only by clicking a channel, the way the player is reachable only by clicking a video.</p>
+
+    <h3>Entry points</h3>
+    <p>Channel names become links in four places, all of which already render a channel name as inert text:</p>
+    <ul class="files">
+      <li>ui/src/views/Channels.tsx &mdash; the row heading</li>
+      <li>ui/src/components/VideoCard.tsx &mdash; the channel line under a thumbnail (Library)</li>
+      <li>ui/src/views/Player.tsx &mdash; the channel name under the video title</li>
+      <li>ui/src/views/Pending.tsx &mdash; the channel line on each discovered video</li>
+    </ul>
+    <p>Every one of these links carries a channel id where it has one and a channel name where it does not; the page accepts either.</p>
+
+    <h3>New files</h3>
+    <p><code>ui/src/views/Channel.tsx</code> owns the header, tab state, and data loading. Each tab body is its own component in <code>ui/src/views/channel/</code> &mdash; <code>ArchiveTab</code>, <code>NewTab</code>, <code>SettingsTab</code> &mdash; so no single file carries all three concerns. The API client goes in the existing <code>ui/src/api/channels.ts</code>.</p>
+    <p>Reuse rather than rebuild: <code>VideoCard</code> for the archive grid, <code>Button</code> and <code>controlClass</code> from <code>ui/src/ui.tsx</code>, <code>Icon</code> from <code>icons.tsx</code>, and <code>formatDuration</code> / <code>daysSince</code> / <code>gradientClassFor</code> from <code>format.ts</code>. Cards are CSS-only in this project (<code>.card</code>, <code>.card .hd</code>); the settings panel follows that pattern rather than introducing a component.</p>
+    <p>Copy the two loading guards that <code>Channels.tsx</code> already establishes: the <code>filterRef</code> pattern that avoids refetching against a stale filter, and the <code>loadSeq</code> counter that drops out-of-order responses. Tab switching and search typing both produce exactly the races those solve.</p>
+
+    <h3>Channels row, toned down</h3>
+    <p>Independent of the page, and the reason this work started: the counts line under each channel name (<code>@handle &middot; 0 pending &middot; 0 downloaded</code>) currently renders at near-full text brightness and competes with the name beside it. It drops to the faint tone one step smaller, with only the numerals lifted to the muted tone so they stay scannable. The name, now a link, leads.</p>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <p>Green tests do not demonstrate a layout. Both halves are required.</p>
+    <ul>
+      <li><strong>Backend</strong> &mdash; handler tests for the four routes, including: an untracked channel returns 200 with <code>tracked: false</code>; a channel matched only by name resolves; scan sets <code>next_scan_at</code>; scan reports the cookie and pause gates rather than silently succeeding.</li>
+      <li><strong>Frontend</strong> &mdash; component tests for tab switching, the untracked variant hiding two tabs, and the empty New state.</li>
+      <li><strong>In a browser</strong> &mdash; run the dev stack and look at it. Confirm the banner reads as a backdrop rather than a picture, that a bright channel banner does not wreck the header&rsquo;s legibility, that the toned-down row is still readable, and that every one of the four entry points navigates. This step is not optional; the last design change in this repository passed its tests and was still wrong in the browser.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Not doing</h2>
+    <ul>
+      <li><strong>Per-channel statistics beyond the four.</strong> No charts, no upload cadence, no category breakdown.</li>
+      <li><strong>Editing channel metadata.</strong> Name, avatar, and description come from YouTube and are not user-editable.</li>
+      <li><strong>Browsing a channel&rsquo;s full YouTube catalogue.</strong> The page shows what peeq knows about &mdash; archived videos and discovered ones &mdash; not everything the channel has ever published.</li>
+      <li><strong>A real router.</strong> Adding one parameter to the existing view state is enough; introducing a routing library for a single parameterised view is not warranted.</li>
+    </ul>
+  </section>
+
+</div>
