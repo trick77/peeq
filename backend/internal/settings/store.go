@@ -210,20 +210,22 @@ func (s *Store) YoutubePaused(ctx context.Context) (bool, string) {
 	return paused, reason
 }
 
-// SetAPITokenHash stores the SHA-256 hash of the machine API token and
-// stamps api_token_created_at. The token plaintext is never persisted: it
-// exists only in the response that creates it (see internal/apitoken).
-// Calling this again replaces the previous hash, which is how regeneration
-// invalidates the old token immediately.
-func (s *Store) SetAPITokenHash(ctx context.Context, hash string) error {
-	_, err := s.db.ExecContext(ctx, `
+// SetAPITokenHash stores the token hash and stamps api_token_created_at,
+// returning the stamp. Returning it from the same statement (rather than
+// re-reading it) means a create can never half-succeed: previously a failed
+// follow-up read left the new hash live while the caller got an error and
+// never saw the plaintext, locking the user out of their own token.
+func (s *Store) SetAPITokenHash(ctx context.Context, hash string) (string, error) {
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `
 UPDATE settings
 SET api_token_hash = ?, api_token_created_at = datetime('now')
-WHERE id = 1`, hash)
+WHERE id = 1
+RETURNING api_token_created_at`, hash).Scan(&createdAt)
 	if err != nil {
-		return fmt.Errorf("set api token hash: %w", err)
+		return "", fmt.Errorf("set api token hash: %w", err)
 	}
-	return nil
+	return createdAt, nil
 }
 
 // APITokenHash returns the stored token hash for the RequireToken

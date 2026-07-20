@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>peeq Companion — settings</title>
+  <link rel="stylesheet" href="styles.css">
+  <style> body { padding: 32px; max-width: 560px; } </style>
+</head>
+<body>
+  <h1>Connect to peeq</h1>
+  <p class="lede">peeq needs a YouTube sign-in to download videos. This extension sends it from this Chrome profile.</p>
+
+  <div class="field">
+    <label for="baseUrl">peeq address</label>
+    <input id="baseUrl" type="text" spellcheck="false" placeholder="https://peeq.home.lan">
+    <span class="hint">Where you open peeq in your browser.</span>
+  </div>
+
+  <div class="field">
+    <label for="token">Access token</label>
+    <input id="token" type="password" spellcheck="false" autocomplete="off" placeholder="Paste the token from peeq">
+    <span class="hint">peeq &rarr; Settings &rarr; Access token &rarr; Copy. Shown once, when you create it.</span>
+  </div>
+
+  <div class="note">
+    When you save, Chrome will ask permission for the extension to talk to peeq's address. That grant is what lets it send the cookie, so choose Allow.
+  </div>
+
+  <div class="row">
+    <button class="btn primary" id="save">Save and connect</button>
+    <span class="verdict" id="verdict" hidden aria-live="polite"><span class="led" id="led"></span><span id="verdictText"></span></span>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

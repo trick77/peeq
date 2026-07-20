@@ -170,7 +170,7 @@ func TestAPIToken_roundTripsAndReportsPresence(t *testing.T) {
 	}
 
 	// When: a hash is stored.
-	if err := st.SetAPITokenHash(ctx, "hash-one"); err != nil {
+	if _, err := st.SetAPITokenHash(ctx, "hash-one"); err != nil {
 		t.Fatalf("SetAPITokenHash: %v", err)
 	}
 
@@ -190,7 +190,7 @@ func TestAPIToken_roundTripsAndReportsPresence(t *testing.T) {
 	}
 
 	// When: a second hash replaces it (regeneration).
-	if err := st.SetAPITokenHash(ctx, "hash-two"); err != nil {
+	if _, err := st.SetAPITokenHash(ctx, "hash-two"); err != nil {
 		t.Fatalf("SetAPITokenHash (regenerate): %v", err)
 	}
 
@@ -200,10 +200,36 @@ func TestAPIToken_roundTripsAndReportsPresence(t *testing.T) {
 	}
 }
 
+func TestSetAPITokenHash_returnsStampedCreatedAt(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	createdAt, err := store.SetAPITokenHash(ctx, "hash-one")
+	if err != nil {
+		t.Fatalf("SetAPITokenHash: %v", err)
+	}
+	if createdAt == "" {
+		t.Fatal("SetAPITokenHash returned an empty created_at")
+	}
+
+	// The returned value must be exactly what a subsequent read reports —
+	// that equality is the whole point: it lets the handler skip the read.
+	present, readCreatedAt, err := store.APITokenInfo(ctx)
+	if err != nil {
+		t.Fatalf("APITokenInfo: %v", err)
+	}
+	if !present {
+		t.Fatal("APITokenInfo reports no token after SetAPITokenHash")
+	}
+	if readCreatedAt != createdAt {
+		t.Fatalf("created_at mismatch: SetAPITokenHash=%q APITokenInfo=%q", createdAt, readCreatedAt)
+	}
+}
+
 func TestGet_neverCarriesTheAPIToken(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
-	if err := st.SetAPITokenHash(ctx, "hash-one"); err != nil {
+	if _, err := st.SetAPITokenHash(ctx, "hash-one"); err != nil {
 		t.Fatalf("SetAPITokenHash: %v", err)
 	}
 
