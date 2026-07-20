@@ -40,8 +40,9 @@ type RunnerConfig struct {
 	// (or "yt-dlp"). Injectable so tests can point it at a stub binary.
 	BinResolver func() string
 	// CookieProvider returns the current cookie text (Netscape format) and
-	// its status string (e.g. "valid", "expired", "absent"). An empty text
-	// means no cookie is configured.
+	// its status string — one of "absent", "valid", "stale", "blocked", the
+	// only values settings.cookie_status permits. An empty text means no
+	// cookie is configured.
 	CookieProvider func() (text string, status string)
 	// ThrottleFloor is the configured minimum wait between YouTube calls.
 	// It maps to the settings.throttle_base_seconds column. It is always
@@ -79,7 +80,7 @@ type RunnerConfig struct {
 	// AllowAnonymous is a dev-only escape hatch (config.AllowAnonymousYoutube):
 	// when true, cookieGate lets an EMPTY cookie through instead of failing
 	// with ErrNoCookie, and exec omits --cookies entirely for that empty-text
-	// run. It does NOT weaken the "expired"/"blocked" cookie-status branches —
+	// run. It does NOT weaken the "stale"/"blocked" cookie-status branches —
 	// those mean a real cookie exists and YouTube rejected it, a genuine
 	// signal that must still fail. The throttle floor and pause gate are
 	// completely unaffected. Callers must only ever set this from a config
@@ -138,17 +139,22 @@ func (r *Runner) effectiveThrottleFloor() time.Duration {
 // or it must stop before the binary is ever invoked (and before the
 // throttle sleep, so a known-bad cookie never burns a 20s+ wait).
 //
-// The "expired"/"blocked" branches always fail, even when AllowAnonymous is
+// The "stale"/"blocked" branches always fail, even when AllowAnonymous is
 // set: those statuses mean a real cookie exists and YouTube rejected it,
 // which is a genuine signal, not an absence, so anonymous mode must not
 // weaken them. Only the empty-cookie (absent) branch is relaxed, and only
 // when AllowAnonymous is true — this is the dev-only escape hatch for the
 // case where authenticated yt-dlp requests currently get no usable formats
 // from YouTube while anonymous ones work.
+//
+// The status strings here must match what settings actually persists —
+// the schema's CHECK constraint permits only absent/valid/stale/blocked.
+// This branch once read "expired", a value nothing ever writes, so a
+// rejected cookie sailed through the gate and was handed to yt-dlp anyway.
 func (r *Runner) cookieGate() (string, error) {
 	text, status := r.cfg.CookieProvider()
 	switch status {
-	case "expired":
+	case "stale":
 		return "", ErrCookieExpired
 	case "blocked":
 		return "", ErrBlocked
