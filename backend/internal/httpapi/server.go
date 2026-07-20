@@ -236,7 +236,8 @@ func New(d Deps) http.Handler {
 		mux.Handle("/", s.static)
 	}
 
-	return mux
+	// recovery outermost so it also catches panics raised inside logging.
+	return recovery(logging(mux))
 }
 
 // requireAuth wraps next with session authentication. If no middleware is
