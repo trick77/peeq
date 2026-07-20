@@ -88,4 +88,44 @@ describe("streamSSE", () => {
     await streamSSE("/api/downloads/stream", vi.fn(), controller.signal);
     expect(f.mock.calls[0][1]).toEqual({ signal: controller.signal });
   });
+
+  it("reassembles a multibyte UTF-8 character split across chunk boundaries", async () => {
+    // "日" encodes to the 3 bytes E6 97 A5 in UTF-8. Split the encoded frame
+    // so that the cut lands inside that byte sequence (after its first byte),
+    // which only decodes correctly if the decoder carries state across
+    // `decoder.decode(value, { stream: true })` calls.
+    const frame = 'event: progress\ndata: {"name":"日"}\n\n';
+    const encoder = new TextEncoder();
+    const full = encoder.encode(frame);
+    const prefixLen = encoder.encode(frame.slice(0, frame.indexOf("日"))).length;
+    const splitAt = prefixLen + 1; // inside the 3-byte sequence for 日
+    const chunk1 = full.slice(0, splitAt);
+    const chunk2 = full.slice(splitAt);
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk1);
+        controller.enqueue(chunk2);
+        controller.close();
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(stream, { status: 200 }));
+
+    const onEvent = vi.fn();
+    await streamSSE("/api/downloads/stream", onEvent);
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith({ event: "progress", data: { name: "日" } });
+  });
+
+  it("drops a frame that has a data: line but no event: line", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(makeStreamResponse(['data: {"job_id":5}\n\n']));
+    const onEvent = vi.fn();
+    await streamSSE("/api/downloads/stream", onEvent);
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it("throws when the response has no body", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+    await expect(streamSSE("/api/downloads/stream", vi.fn())).rejects.toThrow(/has no body/);
+  });
 });
