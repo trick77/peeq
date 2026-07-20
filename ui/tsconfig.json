@@ -1,4 +1,13 @@
 {
+  // Root config: everything under src, including tests. Editors pick this up
+  // by default, so test files get full IntelliSense.
+  //
+  // Node types are available here because src/enumsync.test.ts reads the Go
+  // category enum from disk to guard against Go<->TS enum drift.
+  //
+  // This config is NOT the production gate. tsconfig.app.json is — it drops
+  // the Node types so process/Buffer/require cannot type-check in browser
+  // code, where they would fail at runtime.
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -6,6 +15,7 @@
     "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
+    "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client", "node"]
   },
