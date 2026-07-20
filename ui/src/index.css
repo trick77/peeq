@@ -705,6 +705,23 @@ button {
 .card .by .dot {
   color: var(--color-faint);
 }
+.metapill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--color-border);
+  background: var(--color-panel);
+  color: var(--color-ink-dim);
+}
+.metapill .dotc {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
 
 .life {
   display: flex;

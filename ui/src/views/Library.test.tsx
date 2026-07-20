@@ -132,6 +132,30 @@ describe("VideoCard lifecycle line", () => {
     );
     expect(screen.getByText("Removed to save space · summary kept")).toBeInTheDocument();
   });
+
+  it("shows a category badge when categorized, hides it when uncategorized", () => {
+    const base = baseVideo({ category: "ai" });
+    const { rerender } = render(
+      <VideoCard
+        video={base}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+    expect(screen.getByText("AI")).toBeInTheDocument();
+    rerender(
+      <VideoCard
+        video={baseVideo({ category: "uncategorized" })}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+    expect(screen.queryByText("Uncategorized")).not.toBeInTheDocument();
+  });
 });
 
 // Library view: category chip row + filtering. Mocks the "../api" barrel

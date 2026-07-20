@@ -2,6 +2,7 @@ import { Icon } from "../icons";
 import { thumbnailUrl } from "../api/videos";
 import type { Video } from "../api/types";
 import { daysSince, formatDuration, gradientClassFor } from "../format";
+import { CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
 
 export type DownloadProgress = { percent: number; eta?: string };
 
@@ -119,6 +120,15 @@ export function VideoCard({
           <>
             <span className="dot">·</span>
             {new Date(video.published_at).toLocaleDateString()}
+          </>
+        ) : null}
+        {video.category && video.category !== UNCATEGORIZED && CATEGORY_BY_ID[video.category] ? (
+          <>
+            <span className="dot">·</span>
+            <span className="metapill">
+              <span className="dotc" style={{ background: CATEGORY_BY_ID[video.category].color }} />
+              {CATEGORY_BY_ID[video.category].label}
+            </span>
           </>
         ) : null}
       </div>
