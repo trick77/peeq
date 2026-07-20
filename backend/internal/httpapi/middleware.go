@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"io"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -52,6 +53,19 @@ func (rec *statusRecorder) Flush() {
 // video range-streaming handler relies on.
 func (rec *statusRecorder) Unwrap() http.ResponseWriter {
 	return rec.ResponseWriter
+}
+
+// ReadFrom forwards to the underlying writer's sendfile fast path. io.Copy
+// type-asserts the destination directly and does not follow Unwrap, so
+// without this every streamed video byte round-trips through userspace.
+func (rec *statusRecorder) ReadFrom(r io.Reader) (int64, error) {
+	if rec.status == 0 {
+		rec.status = http.StatusOK
+	}
+	if rf, ok := rec.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(rec.ResponseWriter, r)
 }
 
 // logging logs each request with method, path, status, and duration.

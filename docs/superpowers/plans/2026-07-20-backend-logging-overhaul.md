@@ -891,7 +891,7 @@ Expected: event lines appear promptly, not all at once on close. If they buffer,
 ## Logging
 - Structured `slog` only. Error attr key is **`err`**, never `error`.
 - Short lowercase messages; variables go in attrs (`snake_case`: `job_id`, `video_id`, `path`).
-- Every 500 goes through `serverError(w, r, err, "client message")` — it logs the cause and returns only the generic message. 4xx uses `writeJSONError` and is captured by the request middleware.
+- Every 500 goes through `serverError(w, r, err, "client message")` — it logs the cause and returns only the generic message. 4xx uses `writeJSONError` and needs no handler-level log — the request middleware records every request, 4xx at WARN and 5xx at ERROR.
 - **Never log a full URL, `RequestURI()`, or a query string.** The OIDC callback carries a live auth `code`. Log `r.URL.Path`. Wrap errors that may embed a URL in `redactErr()`.
 - Level via `BACKEND_LOG_LEVEL` (debug/info/warn/error), read in `main()` before anything else.
 ```

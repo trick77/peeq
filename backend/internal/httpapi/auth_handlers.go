@@ -71,7 +71,7 @@ func (s *server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		if err := s.authSvc.Revoke(r.Context(), cookie.Value); err != nil {
 			// The cookie is cleared regardless, but a session left live in
 			// the DB is security-relevant — don't let it vanish silently.
-			slog.Error("session revoke failed", "err", err)
+			slog.Error("session revoke failed", "err", redactErr(err))
 		}
 	}
 	http.SetCookie(w, s.authSvc.ClearCookie())

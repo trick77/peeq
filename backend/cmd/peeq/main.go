@@ -361,7 +361,15 @@ func run() error {
 	}
 	handler := httpapi.New(deps)
 
-	srv := &http.Server{Addr: cfg.Addr, Handler: handler}
+	srv := &http.Server{
+		Addr:    cfg.Addr,
+		Handler: handler,
+		// net/http writes its own failures (request-parse errors, superfluous
+		// WriteHeader, TLS handshake failures) here. Without this they bypass
+		// slog entirely: unstructured, untimestamped, unfiltered by
+		// BACKEND_LOG_LEVEL.
+		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
+	}
 
 	err = serve(ctx, srv, sseHub)
 	// serve can return either because ctx was cancelled (signal) or because

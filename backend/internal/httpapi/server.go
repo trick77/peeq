@@ -236,8 +236,9 @@ func New(d Deps) http.Handler {
 		mux.Handle("/", s.static)
 	}
 
-	// recovery outermost so it also catches panics raised inside logging.
-	return recovery(logging(mux))
+	// recovery innermost so its 500 is written into the statusRecorder and the
+	// request still gets an access-log line; logging's own body cannot panic.
+	return logging(recovery(mux))
 }
 
 // requireAuth wraps next with session authentication. If no middleware is

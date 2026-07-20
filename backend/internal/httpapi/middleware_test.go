@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -121,6 +122,116 @@ func TestStatusRecorder_unwrapReturnsTheUnderlyingWriter(t *testing.T) {
 	// Then
 	if got != underlying {
 		t.Fatalf("Unwrap() did not return the underlying writer")
+	}
+}
+
+// readFromRecorder wraps httptest.NewRecorder and implements io.ReaderFrom,
+// recording whether it was invoked, so tests can prove statusRecorder.ReadFrom
+// reaches the underlying writer's sendfile fast path rather than falling back
+// to io.Copy.
+type readFromRecorder struct {
+	*httptest.ResponseRecorder
+	readFromCalled bool
+	written        int64
+}
+
+func (r *readFromRecorder) ReadFrom(src io.Reader) (int64, error) {
+	r.readFromCalled = true
+	n, err := io.Copy(r.ResponseRecorder, src)
+	r.written = n
+	return n, err
+}
+
+// readOnlyReader exposes only io.Reader, hiding any WriteTo method the
+// wrapped reader might have (strings.Reader has one).
+type readOnlyReader struct {
+	io.Reader
+}
+
+func TestStatusRecorder_readFromReachesTheUnderlyingWriter(t *testing.T) {
+	// Given: a statusRecorder wrapping a writer that implements io.ReaderFrom,
+	// simulating how logging() wraps the mux in front of the video stream
+	// handler, whose http.ServeContent call uses io.Copy under the hood.
+	underlying := &readFromRecorder{ResponseRecorder: httptest.NewRecorder()}
+	rec := &statusRecorder{ResponseWriter: underlying}
+	// A bare Read-only reader: io.Copy prefers src.WriteTo over dst.ReadFrom
+	// when the source has one (strings.Reader does, and since Go 1.20
+	// io.NopCloser preserves it), which would make this test pass without
+	// ever exercising statusRecorder.ReadFrom. Wrapping in readOnlyReader
+	// strips that method, matching http.ServeContent's real source (an
+	// *os.File, which has no WriteTo).
+	body := readOnlyReader{strings.NewReader("video bytes")}
+
+	// When: io.Copy is used against rec directly, exactly as it would be if
+	// rec (not the raw underlying writer) were the io.Copy destination.
+	n, err := io.Copy(rec, body)
+
+	// Then: the underlying writer's ReadFrom fast path was reached, not a
+	// generic byte-by-byte Write loop.
+	if err != nil {
+		t.Fatalf("io.Copy() error = %v", err)
+	}
+	if n != int64(len("video bytes")) {
+		t.Fatalf("copied %d bytes, want %d", n, len("video bytes"))
+	}
+	if !underlying.readFromCalled {
+		t.Fatal("underlying ReadFrom was not called; io.Copy fell back to Write, defeating sendfile")
+	}
+}
+
+func TestStatusRecorder_readFromDefaultsStatusTo200(t *testing.T) {
+	// Given: a statusRecorder that has not had WriteHeader called on it, as
+	// happens when a handler streams a 200 response straight through
+	// ServeContent without an explicit header write.
+	underlying := &readFromRecorder{ResponseRecorder: httptest.NewRecorder()}
+	rec := &statusRecorder{ResponseWriter: underlying}
+
+	// When
+	if _, err := rec.ReadFrom(strings.NewReader("x")); err != nil {
+		t.Fatalf("ReadFrom() error = %v", err)
+	}
+
+	// Then: the access log will see 200, not the zero value.
+	if rec.status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.status, http.StatusOK)
+	}
+}
+
+func TestMiddlewareComposition_panicStillProducesAnAccessLogLine(t *testing.T) {
+	// Given: the same composition New() installs — logging outermost,
+	// recovery innermost — wrapping a handler that panics. This is the
+	// regression from recovery(logging(mux)): logging has no defer, so a
+	// panic unwinds past its log call and the request produces only a
+	// "panic recovered" line with no status or duration. Swap the wrapping
+	// below to recovery(logging(h)) to see this test fail against the old
+	// order.
+	logs := captureLogs(t)
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("boom")
+	})
+	wrapped := logging(recovery(h))
+	rec := httptest.NewRecorder()
+
+	// When
+	wrapped.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/videos", nil))
+
+	// Then: both the panic line and the access-log line are present, and the
+	// access line reflects the 500 recovery produced.
+	out := logs.String()
+	if !strings.Contains(out, "panic recovered") {
+		t.Fatalf("panic not logged: %s", out)
+	}
+	if !strings.Contains(out, "msg=request") {
+		t.Fatalf("no access-log line for the panicking request (this is what the reorder fixes): %s", out)
+	}
+	if !strings.Contains(out, "status=500") {
+		t.Fatalf("access-log line missing status=500: %s", out)
+	}
+	if !strings.Contains(out, "level=ERROR") {
+		t.Fatalf("access-log line should be level=ERROR for a 500: %s", out)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
 	}
 }
 
