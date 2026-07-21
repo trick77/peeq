@@ -10,9 +10,14 @@ export function DownloadDock({
   progressByJobId,
 }: {
   jobs: Job[];
-  progressByJobId?: Record<number, { percent: number; speed: string; eta: string }>;
+  progressByJobId?: Record<
+    number,
+    { percent: number; speed: string; eta: string }
+  >;
 }) {
-  const active = jobs.filter((j) => j.state === "pending" || j.state === "running");
+  const active = jobs.filter(
+    (j) => j.state === "pending" || j.state === "running",
+  );
   if (active.length === 0) {
     return (
       <div className="dock">
@@ -39,7 +44,8 @@ export function DownloadDock({
         <div className="dock-meta">
           <div className="dock-title">{lead.title ?? lead.video_id}</div>
           <div className="dock-sub">
-            {Math.round(percent)}%{progress?.speed ? ` · ${progress.speed}` : ""}
+            {Math.round(percent)}%
+            {progress?.speed ? ` · ${progress.speed}` : ""}
             {progress?.eta ? ` · ${progress.eta}` : ""}
           </div>
         </div>

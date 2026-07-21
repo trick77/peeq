@@ -177,7 +177,7 @@ func (s *Store) CookieStatus(ctx context.Context) string {
 }
 
 // SetYoutubePaused sets or clears the global YouTube kill-switch. reason is
-// the auto-pause explanation ('' for a manual pause). When pausing, the
+// the auto-pause explanation (” for a manual pause). When pausing, the
 // timestamp is stamped; when resuming, all three columns are cleared.
 func (s *Store) SetYoutubePaused(ctx context.Context, paused bool, reason string) error {
 	if !paused {

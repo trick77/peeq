@@ -6,8 +6,13 @@ import type { AutoUnsubscribedChannel, Channel } from "./types";
 // understands (Task 12 brief / channels_handlers.go).
 export type ChannelFilter = "all" | "subscribed" | "tracked" | "autodownload";
 
-export async function listChannels(filter: ChannelFilter = "all"): Promise<Channel[]> {
-  return api.get<Channel[]>(`/api/channels?filter=${encodeURIComponent(filter)}`, "failed to load channels");
+export async function listChannels(
+  filter: ChannelFilter = "all",
+): Promise<Channel[]> {
+  return api.get<Channel[]>(
+    `/api/channels?filter=${encodeURIComponent(filter)}`,
+    "failed to load channels",
+  );
 }
 
 // addChannel tracks a channel (and subscribes it when subscribe is true).
@@ -47,10 +52,16 @@ export async function updateChannel(
   id: string,
   patch: { autodownload?: boolean; format_override?: string },
 ): Promise<ChannelConfigUpdate> {
-  return api.put<ChannelConfigUpdate>(`/api/channels/${encodeURIComponent(id)}`, patch, "failed to update channel");
+  return api.put<ChannelConfigUpdate>(
+    `/api/channels/${encodeURIComponent(id)}`,
+    patch,
+    "failed to update channel",
+  );
 }
 
-export async function subscribeChannel(id: string): Promise<{ status: string }> {
+export async function subscribeChannel(
+  id: string,
+): Promise<{ status: string }> {
   return api.post<{ status: string }>(
     `/api/channels/${encodeURIComponent(id)}/subscribe`,
     undefined,
@@ -58,7 +69,9 @@ export async function subscribeChannel(id: string): Promise<{ status: string }> 
   );
 }
 
-export async function unsubscribeChannel(id: string): Promise<{ status: string }> {
+export async function unsubscribeChannel(
+  id: string,
+): Promise<{ status: string }> {
   return api.post<{ status: string }>(
     `/api/channels/${encodeURIComponent(id)}/unsubscribe`,
     undefined,
@@ -67,13 +80,18 @@ export async function unsubscribeChannel(id: string): Promise<{ status: string }
 }
 
 export async function deleteChannel(id: string): Promise<void> {
-  await api.delete(`/api/channels/${encodeURIComponent(id)}`, "failed to delete channel");
+  await api.delete(
+    `/api/channels/${encodeURIComponent(id)}`,
+    "failed to delete channel",
+  );
 }
 
 // listAutoUnsubscribedChannels returns every channel peeq unsubscribed on
 // its own (most recent first) — the "tombstone" list shown in the
 // auto-unsubscribed section.
-export async function listAutoUnsubscribedChannels(): Promise<AutoUnsubscribedChannel[]> {
+export async function listAutoUnsubscribedChannels(): Promise<
+  AutoUnsubscribedChannel[]
+> {
   return api.get<AutoUnsubscribedChannel[]>(
     "/api/channels/auto-unsubscribed",
     "failed to load auto-unsubscribed channels",
@@ -83,7 +101,9 @@ export async function listAutoUnsubscribedChannels(): Promise<AutoUnsubscribedCh
 // dismissDormantChannel suppresses a channel's dormancy flag until it posts
 // again and then goes quiet a second time. 404s (handled by the caller as a
 // regular ApiError) if the channel has no subscription row.
-export async function dismissDormantChannel(id: string): Promise<{ status: string }> {
+export async function dismissDormantChannel(
+  id: string,
+): Promise<{ status: string }> {
   return api.post<{ status: string }>(
     `/api/channels/${encodeURIComponent(id)}/dismiss-dormant`,
     undefined,
@@ -93,7 +113,9 @@ export async function dismissDormantChannel(id: string): Promise<{ status: strin
 
 // resubscribeChannel restores a subscription peeq auto-unsubscribed,
 // clearing the auto-unsubscribe record.
-export async function resubscribeChannel(id: string): Promise<{ status: string }> {
+export async function resubscribeChannel(
+  id: string,
+): Promise<{ status: string }> {
   return api.post<{ status: string }>(
     `/api/channels/${encodeURIComponent(id)}/resubscribe`,
     undefined,

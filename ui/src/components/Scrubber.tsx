@@ -1,7 +1,11 @@
 import type { MouseEvent } from "react";
 import { formatDuration } from "../format";
 
-export type SponsorblockSegment = { category: string; start_time: number; end_time: number };
+export type SponsorblockSegment = {
+  category: string;
+  start_time: number;
+  end_time: number;
+};
 
 // Scrubber — the mockup's `.scrub`/`.scrub-times` block: a seek bar with
 // the played fraction plus SponsorBlock segments overlaid as
@@ -19,18 +23,28 @@ export function Scrubber({
   onSeek: (seconds: number) => void;
 }) {
   const duration = durationSeconds > 0 ? durationSeconds : 0;
-  const playedPercent = duration > 0 ? Math.min(100, (currentSeconds / duration) * 100) : 0;
+  const playedPercent =
+    duration > 0 ? Math.min(100, (currentSeconds / duration) * 100) : 0;
 
   function handleClick(e: MouseEvent<HTMLDivElement>) {
     if (duration <= 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const fraction = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const fraction = Math.min(
+      1,
+      Math.max(0, (e.clientX - rect.left) / rect.width),
+    );
     onSeek(fraction * duration);
   }
 
   return (
     <div className="scrub-wrap">
-      <div className="scrub" onClick={handleClick} role="slider" aria-label="Seek" aria-valuenow={currentSeconds}>
+      <div
+        className="scrub"
+        onClick={handleClick}
+        role="slider"
+        aria-label="Seek"
+        aria-valuenow={currentSeconds}
+      >
         {segments.map((seg, i) => {
           if (duration <= 0) return null;
           const left = (seg.start_time / duration) * 100;

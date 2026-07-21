@@ -91,7 +91,12 @@ export function Icon({
       role={label ? "img" : undefined}
       aria-label={label}
       aria-hidden={label ? undefined : true}
-      style={{ display: "inline-block", flexShrink: 0, verticalAlign: "middle", ...style }}
+      style={{
+        display: "inline-block",
+        flexShrink: 0,
+        verticalAlign: "middle",
+        ...style,
+      }}
     />
   );
 }

@@ -38,7 +38,11 @@ export async function searchVideos(q: string): Promise<SearchResult[]> {
 // failure to the caller. postNoContent still preserves the shared
 // 401 -> AuthExpiredError / non-2xx -> ApiError handling.
 export async function resummarize(id: string): Promise<void> {
-  await api.postNoContent(`/api/videos/${encodeURIComponent(id)}/resummarize`, undefined, "failed to resummarize video");
+  await api.postNoContent(
+    `/api/videos/${encodeURIComponent(id)}/resummarize`,
+    undefined,
+    "failed to resummarize video",
+  );
 }
 
 // subtitlesUrl is just a string builder (no request) — callers render it as

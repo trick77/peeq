@@ -48,10 +48,15 @@ describe("Pending", () => {
     render(<Pending />);
     expect(await screen.findByText("First pending video")).toBeInTheDocument();
     expect(screen.getByText("Second pending video")).toBeInTheDocument();
-    const imgs = document.querySelectorAll("img") as NodeListOf<HTMLImageElement>;
+    const imgs = document.querySelectorAll(
+      "img",
+    ) as NodeListOf<HTMLImageElement>;
     expect(imgs).toHaveLength(2);
     expect(Array.from(imgs).map((i) => i.src)).toEqual(
-      expect.arrayContaining(["https://img.example/v1.jpg", "https://img.example/v2.jpg"]),
+      expect.arrayContaining([
+        "https://img.example/v1.jpg",
+        "https://img.example/v2.jpg",
+      ]),
     );
   });
 
@@ -83,8 +88,12 @@ describe("Pending", () => {
     const user = userEvent.setup();
     render(<Pending />);
     await screen.findByText("First pending video");
-    const row = screen.getByText("First pending video").closest(".card") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: /download now/i }));
+    const row = screen
+      .getByText("First pending video")
+      .closest(".card") as HTMLElement;
+    await user.click(
+      within(row).getByRole("button", { name: /download now/i }),
+    );
     await waitFor(() => {
       expect(downloadPending).toHaveBeenCalledWith("v1");
     });
@@ -98,13 +107,17 @@ describe("Pending", () => {
     const user = userEvent.setup();
     render(<Pending />);
     await screen.findByText("Second pending video");
-    const row = screen.getByText("Second pending video").closest(".card") as HTMLElement;
+    const row = screen
+      .getByText("Second pending video")
+      .closest(".card") as HTMLElement;
     await user.click(within(row).getByRole("button", { name: /ignore/i }));
     await waitFor(() => {
       expect(ignorePending).toHaveBeenCalledWith("v2");
     });
     await waitFor(() => {
-      expect(screen.queryByText("Second pending video")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Second pending video"),
+      ).not.toBeInTheDocument();
     });
     expect(screen.getByText("First pending video")).toBeInTheDocument();
   });
@@ -115,8 +128,12 @@ describe("Pending", () => {
     render(<Pending onCountChange={onCountChange} />);
     await screen.findByText("First pending video");
     onCountChange.mockClear();
-    const row = screen.getByText("First pending video").closest(".card") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: /download now/i }));
+    const row = screen
+      .getByText("First pending video")
+      .closest(".card") as HTMLElement;
+    await user.click(
+      within(row).getByRole("button", { name: /download now/i }),
+    );
     await waitFor(() => {
       expect(onCountChange).toHaveBeenCalledWith(1);
     });
@@ -128,11 +145,12 @@ describe("Pending", () => {
     render(<Pending onCountChange={onCountChange} />);
     await screen.findByText("Second pending video");
     onCountChange.mockClear();
-    const row = screen.getByText("Second pending video").closest(".card") as HTMLElement;
+    const row = screen
+      .getByText("Second pending video")
+      .closest(".card") as HTMLElement;
     await user.click(within(row).getByRole("button", { name: /ignore/i }));
     await waitFor(() => {
       expect(onCountChange).toHaveBeenCalledWith(1);
     });
   });
 });
-

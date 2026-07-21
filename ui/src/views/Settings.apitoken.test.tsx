@@ -2,7 +2,11 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "./Settings";
-import { getSettings, getAPITokenStatus, createAPIToken } from "../api/settings";
+import {
+  getSettings,
+  getAPITokenStatus,
+  createAPIToken,
+} from "../api/settings";
 
 // Mirror Settings.test.tsx's mock of ../api/settings, extended with the two
 // token functions.
@@ -31,7 +35,9 @@ const baseSettings = {
 };
 
 function tokenSection(): HTMLElement {
-  return screen.getByRole("heading", { name: /API token/i }).closest("section") as HTMLElement;
+  return screen
+    .getByRole("heading", { name: /API token/i })
+    .closest("section") as HTMLElement;
 }
 
 describe("Settings — API token", () => {
@@ -50,7 +56,9 @@ describe("Settings — API token", () => {
 
     // Then
     const section = await waitFor(() => tokenSection());
-    expect(within(section).getByRole("button", { name: /Generate token/i })).toBeInTheDocument();
+    expect(
+      within(section).getByRole("button", { name: /Generate token/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows the token once after generating it", async () => {
@@ -65,15 +73,21 @@ describe("Settings — API token", () => {
     const section = await waitFor(() => tokenSection());
 
     // When
-    await user.click(within(section).getByRole("button", { name: /Generate token/i }));
+    await user.click(
+      within(section).getByRole("button", { name: /Generate token/i }),
+    );
 
     // Then: the plaintext is rendered, with the copy-it-now warning.
     await waitFor(() => {
       expect(
-        within(tokenSection()).getByText("peeq_7Kd2mQx9vRtY4nLpZbA6sWfE8hJcU3iO1gTaXkPqRmN"),
+        within(tokenSection()).getByText(
+          "peeq_7Kd2mQx9vRtY4nLpZbA6sWfE8hJcU3iO1gTaXkPqRmN",
+        ),
       ).toBeInTheDocument();
     });
-    expect(within(tokenSection()).getByText(/won't be shown again/i)).toBeInTheDocument();
+    expect(
+      within(tokenSection()).getByText(/won't be shown again/i),
+    ).toBeInTheDocument();
   });
 
   it("never renders a token value on a returning visit", async () => {
@@ -88,7 +102,9 @@ describe("Settings — API token", () => {
 
     // Then: only a regenerate affordance, no secret.
     const section = await waitFor(() => tokenSection());
-    expect(within(section).getByRole("button", { name: /Generate a new token/i })).toBeInTheDocument();
+    expect(
+      within(section).getByRole("button", { name: /Generate a new token/i }),
+    ).toBeInTheDocument();
     expect(section.textContent).not.toMatch(/peeq_/);
   });
 
@@ -107,14 +123,20 @@ describe("Settings — API token", () => {
     const section = await waitFor(() => tokenSection());
 
     // When: the first click only opens the confirm row.
-    await user.click(within(section).getByRole("button", { name: /Generate a new token/i }));
+    await user.click(
+      within(section).getByRole("button", { name: /Generate a new token/i }),
+    );
 
     // Then: nothing has been created yet.
     expect(createAPIToken).not.toHaveBeenCalled();
-    expect(within(tokenSection()).getByText(/stop sending cookies/i)).toBeInTheDocument();
+    expect(
+      within(tokenSection()).getByText(/stop sending cookies/i),
+    ).toBeInTheDocument();
 
     // When: the confirm is clicked.
-    await user.click(within(tokenSection()).getByRole("button", { name: /^Generate$/ }));
+    await user.click(
+      within(tokenSection()).getByRole("button", { name: /^Generate$/ }),
+    );
 
     // Then
     await waitFor(() => expect(createAPIToken).toHaveBeenCalledTimes(1));

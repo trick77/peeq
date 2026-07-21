@@ -6,7 +6,8 @@ import type { Job } from "../api/types";
 // ViewId enumerates the six destinations the rail routes to. App.tsx owns
 // the actual view-state (manual, no router lib — see App.tsx); Rail is
 // purely presentational plus the onNavigate callback.
-export type ViewId = "library" | "player" | "search" | "add" | "pending" | "channels" | "settings";
+export type ViewId =
+  "library" | "player" | "search" | "add" | "pending" | "channels" | "settings";
 
 type NavItem = {
   id: ViewId;
@@ -55,7 +56,10 @@ export function Rail({
   pendingCount?: number;
   jobs?: Job[];
   /** Live per-job percent/speed/eta from the download SSE feed. */
-  progressByJobId?: Record<number, { percent: number; speed: string; eta: string }>;
+  progressByJobId?: Record<
+    number,
+    { percent: number; speed: string; eta: string }
+  >;
   cookieStatus?: string;
   cookieUpdatedAtLabel?: string;
 }) {
@@ -89,10 +93,16 @@ export function Rail({
                   onClick={() => onNavigate(item.id)}
                   aria-current={item.id === active ? "page" : undefined}
                 >
-                  <Icon name={item.icon} size="18px" style={{ width: 18, height: 18 }} />
+                  <Icon
+                    name={item.icon}
+                    size="18px"
+                    style={{ width: 18, height: 18 }}
+                  />
                   {item.label}
                   {count !== undefined && count > 0 ? (
-                    <span className={`rail-nav-count${item.hot ? " hot" : ""}`}>{count}</span>
+                    <span className={`rail-nav-count${item.hot ? " hot" : ""}`}>
+                      {count}
+                    </span>
                   ) : null}
                 </button>
               );
@@ -104,7 +114,10 @@ export function Rail({
       <div className="rail-foot">
         <DownloadDock jobs={jobs} progressByJobId={progressByJobId} />
         {cookieStatus !== undefined ? (
-          <CookieStatus status={cookieStatus} updatedAtLabel={cookieUpdatedAtLabel} />
+          <CookieStatus
+            status={cookieStatus}
+            updatedAtLabel={cookieUpdatedAtLabel}
+          />
         ) : null}
       </div>
     </aside>

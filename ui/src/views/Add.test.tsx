@@ -4,7 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { Add } from "./Add";
 
 vi.mock("../api/downloads", async () => {
-  const actual = await vi.importActual<typeof import("../api/downloads")>("../api/downloads");
+  const actual =
+    await vi.importActual<typeof import("../api/downloads")>(
+      "../api/downloads",
+    );
   return {
     ...actual,
     addDownload: vi.fn(),
@@ -30,7 +33,11 @@ describe("Add", () => {
       priority: 0,
       attempts: 0,
     });
-    vi.mocked(addChannel).mockResolvedValue({ id: "c1", name: "A Channel", subscribed: false });
+    vi.mocked(addChannel).mockResolvedValue({
+      id: "c1",
+      name: "A Channel",
+      subscribed: false,
+    });
   });
 
   it("submitting a channel URL calls addChannel, not addDownload", async () => {
@@ -41,7 +48,10 @@ describe("Add", () => {
     await user.click(screen.getByRole("button"));
 
     await waitFor(() => {
-      expect(addChannel).toHaveBeenCalledWith("https://www.youtube.com/@x", false);
+      expect(addChannel).toHaveBeenCalledWith(
+        "https://www.youtube.com/@x",
+        false,
+      );
     });
     expect(addDownload).not.toHaveBeenCalled();
     expect(await screen.findByText(/Tracked A Channel/)).toBeInTheDocument();
@@ -55,7 +65,9 @@ describe("Add", () => {
     await user.click(screen.getByRole("button"));
 
     await waitFor(() => {
-      expect(addDownload).toHaveBeenCalledWith("https://www.youtube.com/watch?v=abc12345678");
+      expect(addDownload).toHaveBeenCalledWith(
+        "https://www.youtube.com/watch?v=abc12345678",
+      );
     });
     expect(addChannel).not.toHaveBeenCalled();
   });

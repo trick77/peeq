@@ -11,7 +11,11 @@ import { formatDuration, gradientClassFor } from "../format";
 // video card listing its matched transcript/summary chunks (snippet +
 // timestamp + distance). Clicking a match hands (videoId, startSeconds) up
 // to `onOpen`, which App wires to the Player + a pending-seek (see App.tsx).
-export function Search({ onOpen }: { onOpen: (videoId: string, startSeconds: number) => void }) {
+export function Search({
+  onOpen,
+}: {
+  onOpen: (videoId: string, startSeconds: number) => void;
+}) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -43,9 +47,12 @@ export function Search({ onOpen }: { onOpen: (videoId: string, startSeconds: num
     <>
       <div className="gsearch-hero">
         <p className="lead">
-          Search everything you've archived — by keyword and meaning, across transcripts and summaries.
+          Search everything you've archived — by keyword and meaning, across
+          transcripts and summaries.
         </p>
-        <p className="hint">Semantic search over every transcript. Jumps straight to the moment.</p>
+        <p className="hint">
+          Semantic search over every transcript. Jumps straight to the moment.
+        </p>
         <form className="bigsearch" role="search" onSubmit={handleSubmit}>
           <Icon name="search" size="20px" />
           <input
@@ -57,47 +64,69 @@ export function Search({ onOpen }: { onOpen: (videoId: string, startSeconds: num
         </form>
         {results !== null && !loading ? (
           <p className="semantic-note">
-            <Icon name="search" size="14px" /> Semantic search over every transcript chunk.
+            <Icon name="search" size="14px" /> Semantic search over every
+            transcript chunk.
           </p>
         ) : null}
       </div>
 
       {error ? <div className="errline">{error}</div> : null}
       {loading ? (
-        <p style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-faint)" }}>
-        <Spinner size="15px" />
-        Searching
-      </p>
+        <p
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            color: "var(--color-faint)",
+          }}
+        >
+          <Spinner size="15px" />
+          Searching
+        </p>
       ) : null}
 
       {!loading && results !== null && (
         <>
           <div className="results-head">
-            <span style={{ fontFamily: "var(--font-serif)", fontSize: 16 }}>Matches</span>
+            <span style={{ fontFamily: "var(--font-serif)", fontSize: 16 }}>
+              Matches
+            </span>
             <span className="n mono">
-              {results.length} video{results.length === 1 ? "" : "s"} · {matchCount} moment
+              {results.length} video{results.length === 1 ? "" : "s"} ·{" "}
+              {matchCount} moment
               {matchCount === 1 ? "" : "s"}
             </span>
           </div>
           {results.length === 0 ? (
-            <p style={{ color: "var(--color-faint)" }}>No matches. Try a different phrase.</p>
+            <p style={{ color: "var(--color-faint)" }}>
+              No matches. Try a different phrase.
+            </p>
           ) : (
             results.map((r) => (
               <div className="result" key={r.video.id}>
                 <div className="thumb">
                   {r.video.has_thumbnail ? (
-                    <img className="fill" src={thumbnailUrl(r.video.id)} alt="" loading="lazy" />
+                    <img
+                      className="fill"
+                      src={thumbnailUrl(r.video.id)}
+                      alt=""
+                      loading="lazy"
+                    />
                   ) : (
                     <div className={`fill ${gradientClassFor(r.video.id)}`} />
                   )}
                   <div className="play">
                     <Icon name="play" size="30px" />
                   </div>
-                  <span className="dur mono">{formatDuration(r.video.duration_seconds)}</span>
+                  <span className="dur mono">
+                    {formatDuration(r.video.duration_seconds)}
+                  </span>
                 </div>
                 <div className="rmeta">
                   <h3>{r.video.title}</h3>
-                  <div className="ch">{r.video.channel_name || r.video.channel_id}</div>
+                  <div className="ch">
+                    {r.video.channel_name || r.video.channel_id}
+                  </div>
                   <div className="matches">
                     {r.matches.map((m, i) => (
                       <button
@@ -109,7 +138,9 @@ export function Search({ onOpen }: { onOpen: (videoId: string, startSeconds: num
                         {m.kind === "summary" ? (
                           <span className="badge">Summary</span>
                         ) : (
-                          <span className="ts mono">{formatDuration(m.start_seconds)}</span>
+                          <span className="ts mono">
+                            {formatDuration(m.start_seconds)}
+                          </span>
                         )}
                         <span className="snip">{m.snippet}</span>
                         <span className="score">{m.distance.toFixed(2)}</span>

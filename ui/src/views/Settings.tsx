@@ -1,7 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Button, Spinner, t } from "../ui";
-import { getSettings, updateSettings, putCookie, getAPITokenStatus, createAPIToken } from "../api/settings";
+import {
+  getSettings,
+  updateSettings,
+  putCookie,
+  getAPITokenStatus,
+  createAPIToken,
+} from "../api/settings";
 import { getYtdlpVersion, updateYtdlp } from "../api/ytdlp";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 import type { Settings as SettingsType } from "../api/types";
@@ -20,7 +26,11 @@ const PRESETS: { id: string; label: string; format: string }[] = [
     label: "Apple 720p",
     format: "bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
   },
-  { id: "best-mp4", label: "Best available MP4", format: "bestvideo+bestaudio/best" },
+  {
+    id: "best-mp4",
+    label: "Best available MP4",
+    format: "bestvideo+bestaudio/best",
+  },
   { id: "custom", label: "Custom…", format: "write your own format string" },
 ];
 
@@ -30,7 +40,11 @@ const PRESETS: { id: string; label: string; format: string }[] = [
 function looksLikeNetscapeCookie(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed === "") return false;
-  return trimmed.split("\n").some((line) => line.includes(".youtube.com") && line.split("\t").length >= 7);
+  return trimmed
+    .split("\n")
+    .some(
+      (line) => line.includes(".youtube.com") && line.split("\t").length >= 7,
+    );
 }
 
 // Settings — cookie / format preset / rate-limit / retention / yt-dlp
@@ -117,7 +131,10 @@ export function Settings() {
 
   async function handlePickPreset(id: string) {
     if (!settings) return;
-    const patch = id === "custom" ? { format_preset: id, format_custom: customFormat } : { format_preset: id };
+    const patch =
+      id === "custom"
+        ? { format_preset: id, format_custom: customFormat }
+        : { format_preset: id };
     try {
       const s = await updateSettings(patch);
       setSettingsState(s);
@@ -128,7 +145,10 @@ export function Settings() {
 
   async function handleSaveCustomFormat() {
     try {
-      const s = await updateSettings({ format_preset: "custom", format_custom: customFormat });
+      const s = await updateSettings({
+        format_preset: "custom",
+        format_custom: customFormat,
+      });
       setSettingsState(s);
     } catch (err) {
       setError((err as Error).message);
@@ -169,7 +189,9 @@ export function Settings() {
 
   async function handleSaveMinVideoDuration() {
     try {
-      const s = await updateSettings({ min_video_duration_seconds: minVideoDuration });
+      const s = await updateSettings({
+        min_video_duration_seconds: minVideoDuration,
+      });
       setSettingsState(s);
     } catch (err) {
       setError((err as Error).message);
@@ -186,7 +208,9 @@ export function Settings() {
       setTokenCreatedAt(created.created_at);
       setTokenConfirming(false);
     } catch (err) {
-      setTokenError((err as Error).message ?? "Failed to create the API token.");
+      setTokenError(
+        (err as Error).message ?? "Failed to create the API token.",
+      );
     } finally {
       setTokenBusy(false);
     }
@@ -221,7 +245,14 @@ export function Settings() {
   }
   if (!settings) {
     return (
-      <p style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-faint)" }}>
+      <p
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          color: "var(--color-faint)",
+        }}
+      >
         <Spinner size="15px" />
         Loading
       </p>
@@ -246,13 +277,20 @@ export function Settings() {
       <section className="sect">
         <h2>
           YouTube activity
-          <span className={`status-line${settings.youtube_paused ? " warn" : ""}`}>
+          <span
+            className={`status-line${settings.youtube_paused ? " warn" : ""}`}
+          >
             <span className="led" />
-            {settings.youtube_paused ? (settings.youtube_pause_reason ? "Paused · auto" : "Paused") : "Active"}
+            {settings.youtube_paused
+              ? settings.youtube_pause_reason
+                ? "Paused · auto"
+                : "Paused"
+              : "Active"}
           </span>
         </h2>
         <p className="desc">
-          Pause all downloads, channel scans, and metadata fetches. Nothing leaves peeq while paused.
+          Pause all downloads, channel scans, and metadata fetches. Nothing
+          leaves peeq while paused.
         </p>
         <label className="channel-toggle">
           <input
@@ -260,17 +298,26 @@ export function Settings() {
             checked={settings.youtube_paused}
             onChange={(e) => handleToggleYoutubePause(e.target.checked)}
           />
-          {settings.youtube_paused ? "YouTube activity is paused" : "Pause all YouTube activity"}
+          {settings.youtube_paused
+            ? "YouTube activity is paused"
+            : "Pause all YouTube activity"}
         </label>
         {settings.youtube_paused && settings.youtube_pause_reason ? (
           <div className="warnline">
-            <Icon name="warning" size="16px" style={{ color: "var(--color-danger)" }} />
+            <Icon
+              name="warning"
+              size="16px"
+              style={{ color: "var(--color-danger)" }}
+            />
             <span>{settings.youtube_pause_reason}</span>
           </div>
         ) : null}
         {settings.youtube_paused ? (
           <div className="field-row" style={{ marginTop: 12 }}>
-            <Button type="button" onClick={() => handleToggleYoutubePause(false)}>
+            <Button
+              type="button"
+              onClick={() => handleToggleYoutubePause(false)}
+            >
               Resume
             </Button>
           </div>
@@ -283,12 +330,15 @@ export function Settings() {
           <span className={`status-line${cookieHealthy ? "" : " warn"}`}>
             <span className="led" />
             {cookieHealthy ? "Active" : settings.cookie_status}
-            {settings.cookie_updated_at ? ` · updated ${new Date(settings.cookie_updated_at).toLocaleString()}` : ""}
+            {settings.cookie_updated_at
+              ? ` · updated ${new Date(settings.cookie_updated_at).toLocaleString()}`
+              : ""}
           </span>
         </h2>
         <p className="desc">
-          Paste your browser's YouTube cookies (Netscape format). peeq keeps yt-dlp's rotated cookie fresh
-          automatically. The pasted text is never shown back to you — only its status is.
+          Paste your browser's YouTube cookies (Netscape format). peeq keeps
+          yt-dlp's rotated cookie fresh automatically. The pasted text is never
+          shown back to you — only its status is.
         </p>
         <form onSubmit={handleSaveCookie}>
           <textarea
@@ -296,26 +346,45 @@ export function Settings() {
             spellCheck={false}
             value={cookieText}
             onChange={(e) => setCookieText(e.target.value)}
-            placeholder={"# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t...\tSID\t..."}
+            placeholder={
+              "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t...\tSID\t..."
+            }
             aria-label="YouTube cookie"
           />
           <div className="field-row">
-            <Button type="submit" busy={cookieSaving} disabled={cookieText.trim() === ""}>
+            <Button
+              type="submit"
+              busy={cookieSaving}
+              disabled={cookieText.trim() === ""}
+            >
               {cookieSaving ? "Saving" : "Save cookie"}
             </Button>
             {cookieText.trim() !== "" ? (
-              <span style={{ ...t.label, color: looksValid ? "var(--color-online)" : "var(--color-danger)" }}>
-                {looksValid ? "Looks like a valid Netscape cookie file." : "Doesn't look like a Netscape cookie file yet."}
+              <span
+                style={{
+                  ...t.label,
+                  color: looksValid
+                    ? "var(--color-online)"
+                    : "var(--color-danger)",
+                }}
+              >
+                {looksValid
+                  ? "Looks like a valid Netscape cookie file."
+                  : "Doesn't look like a Netscape cookie file yet."}
               </span>
             ) : null}
           </div>
           {cookieError ? <div className="errline">{cookieError}</div> : null}
         </form>
         <div className="warnline">
-          <Icon name="warning" size="16px" style={{ color: "var(--color-danger)" }} />
+          <Icon
+            name="warning"
+            size="16px"
+            style={{ color: "var(--color-danger)" }}
+          />
           <span>
-            <b>No cookie, no calls.</b> peeq never touches YouTube without a valid cookie — it pauses the queue and
-            asks you to re-paste instead.
+            <b>No cookie, no calls.</b> peeq never touches YouTube without a
+            valid cookie — it pauses the queue and asks you to re-paste instead.
           </span>
         </div>
       </section>
@@ -336,8 +405,9 @@ export function Settings() {
           )}
         </h2>
         <p className="desc">
-          Lets the peeq browser extension send your YouTube cookie automatically, so you never paste it
-          by hand. The token can only write the cookie — it cannot read your library.
+          Lets the peeq browser extension send your YouTube cookie
+          automatically, so you never paste it by hand. The token can only write
+          the cookie — it cannot read your library.
         </p>
 
         {freshToken ? (
@@ -355,7 +425,9 @@ export function Settings() {
                   icon
                   aria-label={tokenCopied ? "Token copied" : "Copy token"}
                   title={tokenCopied ? "Copied" : "Copy"}
-                  style={tokenCopied ? { color: "var(--color-online)" } : undefined}
+                  style={
+                    tokenCopied ? { color: "var(--color-online)" } : undefined
+                  }
                   onClick={handleCopyToken}
                 >
                   <Icon name={tokenCopied ? "check" : "copy"} size="16px" />
@@ -363,11 +435,16 @@ export function Settings() {
               </div>
             </div>
             <p className="rfoot">
-              peeq stores only a hash of this token, so it can't show it to you again. If you lose it,
-              generate a new one — the old one stops working.
+              peeq stores only a hash of this token, so it can't show it to you
+              again. If you lose it, generate a new one — the old one stops
+              working.
             </p>
             <div className="field-row">
-              <Button type="button" variant="secondary" onClick={() => setFreshToken(null)}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setFreshToken(null)}
+              >
                 Done
               </Button>
             </div>
@@ -375,7 +452,9 @@ export function Settings() {
         ) : tokenPresent ? (
           <>
             <p className="meta">
-              {tokenCreatedAt ? `Created ${new Date(tokenCreatedAt).toLocaleString()}` : "Token is set up."}
+              {tokenCreatedAt
+                ? `Created ${new Date(tokenCreatedAt).toLocaleString()}`
+                : "Token is set up."}
             </p>
             <div className="field-row">
               <Button
@@ -386,19 +465,36 @@ export function Settings() {
               >
                 Generate a new token
               </Button>
-              <span className="meta">The current token stops working immediately.</span>
+              <span className="meta">
+                The current token stops working immediately.
+              </span>
             </div>
             {tokenConfirming ? (
               <div className="warnline">
-                <Icon name="warning" size="16px" style={{ color: "var(--color-danger)" }} />
+                <Icon
+                  name="warning"
+                  size="16px"
+                  style={{ color: "var(--color-danger)" }}
+                />
                 <span style={{ flex: 1 }}>
-                  Generate a new token? Your extension will stop sending cookies until you paste the new
-                  one.
+                  Generate a new token? Your extension will stop sending cookies
+                  until you paste the new one.
                 </span>
-                <Button type="button" variant="danger" small busy={tokenBusy} onClick={handleCreateToken}>
+                <Button
+                  type="button"
+                  variant="danger"
+                  small
+                  busy={tokenBusy}
+                  onClick={handleCreateToken}
+                >
                   Generate
                 </Button>
-                <Button type="button" variant="secondary" small onClick={() => setTokenConfirming(false)}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  small
+                  onClick={() => setTokenConfirming(false)}
+                >
                   Cancel
                 </Button>
               </div>
@@ -408,10 +504,16 @@ export function Settings() {
           <>
             <div className="empty">No API token yet.</div>
             <div className="field-row">
-              <Button type="button" busy={tokenBusy} onClick={handleCreateToken}>
+              <Button
+                type="button"
+                busy={tokenBusy}
+                onClick={handleCreateToken}
+              >
                 {tokenBusy ? "Generating" : "Generate token"}
               </Button>
-              <span className="meta">You'll see the token once, right after it's created.</span>
+              <span className="meta">
+                You'll see the token once, right after it's created.
+              </span>
             </div>
           </>
         )}
@@ -421,7 +523,8 @@ export function Settings() {
       <section className="sect">
         <h2>Download format</h2>
         <p className="desc">
-          A yt-dlp format selector. Apple presets pick H.264 / AAC so videos play natively — no transcoding.
+          A yt-dlp format selector. Apple presets pick H.264 / AAC so videos
+          play natively — no transcoding.
         </p>
         <div className="presets">
           {PRESETS.map((preset) => (
@@ -466,7 +569,9 @@ export function Settings() {
             </p>
           </div>
           <div className="ctrl">
-            <span className="lab">Minimum delay between YouTube calls (seconds)</span>
+            <span className="lab">
+              Minimum delay between YouTube calls (seconds)
+            </span>
             <input
               type="number"
               min={0}
@@ -477,11 +582,14 @@ export function Settings() {
               aria-label="Minimum delay between YouTube calls (seconds)"
             />
             <p className="retain-note">
-              The backend enforces a <b>20s hard floor</b> regardless of this value.
+              The backend enforces a <b>20s hard floor</b> regardless of this
+              value.
             </p>
           </div>
           <div className="ctrl">
-            <span className="lab">Ignore channel videos shorter than (seconds)</span>
+            <span className="lab">
+              Ignore channel videos shorter than (seconds)
+            </span>
             <input
               type="number"
               min={0}
@@ -492,7 +600,8 @@ export function Settings() {
               aria-label="Ignore channel videos shorter than (seconds)"
             />
             <p className="retain-note">
-              Channel scans skip videos shorter than this (e.g. Shorts). <b>0</b> disables the filter.
+              Channel scans skip videos shorter than this (e.g. Shorts).{" "}
+              <b>0</b> disables the filter.
             </p>
           </div>
           <div className="ctrl">
@@ -501,7 +610,13 @@ export function Settings() {
               <span className="mono" style={t.label}>
                 {ytdlpVersion ?? "unknown"}
               </span>
-              <Button type="button" variant="secondary" small busy={ytdlpBusy} onClick={handleUpdateYtdlp}>
+              <Button
+                type="button"
+                variant="secondary"
+                small
+                busy={ytdlpBusy}
+                onClick={handleUpdateYtdlp}
+              >
                 {ytdlpBusy ? "Updating" : "Update"}
               </Button>
             </div>
@@ -512,7 +627,10 @@ export function Settings() {
 
       <section className="sect">
         <h2>Automatic cleanup</h2>
-        <p className="desc">Keep the library from filling up — watched videos age out on their own.</p>
+        <p className="desc">
+          Keep the library from filling up — watched videos age out on their
+          own.
+        </p>
         <div className="slider-row">
           <span className="lab" style={{ margin: 0 }}>
             Delete watched after
@@ -531,8 +649,9 @@ export function Settings() {
           <span className="val">{retentionDays} days</span>
         </div>
         <p className="retain-note">
-          <b>Unwatched videos are never deleted.</b> <b>Favorites are kept forever</b>, even after you watch them.
-          Only watched, un-favorited videos expire.
+          <b>Unwatched videos are never deleted.</b>{" "}
+          <b>Favorites are kept forever</b>, even after you watch them. Only
+          watched, un-favorited videos expire.
         </p>
       </section>
     </div>

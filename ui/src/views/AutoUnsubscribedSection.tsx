@@ -6,7 +6,9 @@ import type { AutoUnsubscribedChannel } from "../api/types";
 // but a readable fallback keeps this from silently showing a raw code if a
 // new reason is ever added server-side.
 function reasonLabel(reason: string): string {
-  return reason === "deleted" ? "Channel deleted on YouTube" : "Channel is gone from YouTube";
+  return reason === "deleted"
+    ? "Channel deleted on YouTube"
+    : "Channel is gone from YouTube";
 }
 
 // AutoUnsubscribedSection — a collapsed-by-default <details> listing every
@@ -31,8 +33,13 @@ export function AutoUnsubscribedSection({
   return (
     <details className="tomb-sect">
       <summary>
-        <Icon name="chevronRight" size="16px" style={{ transition: "transform .15s" }} />
-        Auto-unsubscribed <span className="metapill dead">{channels.length}</span>
+        <Icon
+          name="chevronRight"
+          size="16px"
+          style={{ transition: "transform .15s" }}
+        />
+        Auto-unsubscribed{" "}
+        <span className="metapill dead">{channels.length}</span>
       </summary>
       <div className="tomb-body">
         {channels.map((c) => (
@@ -51,7 +58,11 @@ export function AutoUnsubscribedSection({
                 Archived videos were kept — nothing was deleted.
               </div>
             </div>
-            <button type="button" className="abtn primary" onClick={() => onResubscribe(c)}>
+            <button
+              type="button"
+              className="abtn primary"
+              onClick={() => onResubscribe(c)}
+            >
               Re-subscribe
             </button>
           </div>
