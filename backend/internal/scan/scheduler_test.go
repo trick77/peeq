@@ -149,7 +149,7 @@ func (h *scanHarness) trackAndSubscribe(ucid string, autodownload bool, format s
 	if err := h.channels.Subscribe(ucid, "2000-01-01 00:00:00"); err != nil {
 		h.t.Fatalf("subscribe %s: %v", ucid, err)
 	}
-	if _, err := h.channels.UpdateConfig(ucid, autodownload, format); err != nil {
+	if _, _, _, err := h.channels.UpdateConfig(ucid, &autodownload, &format); err != nil {
 		h.t.Fatalf("config %s: %v", ucid, err)
 	}
 }
