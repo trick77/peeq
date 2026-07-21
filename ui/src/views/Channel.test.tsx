@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Channel } from "./Channel";
 import type { ChannelDetail } from "../api/types";
@@ -58,11 +58,19 @@ describe("Channel", () => {
   });
 
   it("shows the channel name and its four stats", async () => {
+    const { container } = render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />);
+    await screen.findByText("Uncanny Expeditions");
+    const stats = container.querySelector(".chan-stats") as HTMLElement;
+    expect(within(stats).getByText("142")).toBeInTheDocument();
+    expect(within(stats).getByText(/61 h/)).toBeInTheDocument();
+    expect(within(stats).getByText(/38(\.\d+)? GB/)).toBeInTheDocument();
+  });
+
+  it("the Archive tab shows its count badge", async () => {
     render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />);
     await screen.findByText("Uncanny Expeditions");
-    expect(screen.getByText("142")).toBeInTheDocument();
-    expect(screen.getByText(/61 h/)).toBeInTheDocument();
-    expect(screen.getByText(/38(\.\d+)? GB/)).toBeInTheDocument();
+    const archiveTab = screen.getByRole("tab", { name: /archive/i });
+    expect(within(archiveTab).getByText("142")).toBeInTheDocument();
   });
 
   it("an untracked channel hides the New and Settings tabs", async () => {

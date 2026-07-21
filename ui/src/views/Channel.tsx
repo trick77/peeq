@@ -124,17 +124,17 @@ export function Channel({
   if (error && !detail) return <div className="errline">{error}</div>;
   if (!detail) return null;
 
-  // The Archive tab does not repeat archived_count as a badge: it is
-  // already shown as the "archived" stat in the header, and duplicating it
-  // here reads as a mistake rather than new information. The New tab's
-  // pending_count is genuinely different information, so it gets one.
+  // The Archive tab carries a count badge, same as the New tab: the badge
+  // tells you how many items are behind that tab, distinct from the
+  // "archived" stat shown in the header, which is part of the channel's
+  // summary.
   const tabs: { id: TabId; label: string; count?: number }[] = detail.tracked
     ? [
-        { id: "archive", label: "Archive" },
+        { id: "archive", label: "Archive", count: detail.archived_count },
         { id: "new", label: "New", count: detail.pending_count },
         { id: "settings", label: "Settings" },
       ]
-    : [{ id: "archive", label: "Archive" }];
+    : [{ id: "archive", label: "Archive", count: detail.archived_count }];
 
   return (
     <div className="chan">
