@@ -45,7 +45,17 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
 // mockup's `.chips`/`.grid` blocks. The search query itself lives in App
 // (it's the top bar's search box, wired there since the top bar is
 // Library-only chrome) and arrives here as the `search` prop.
-export function Library({ onOpenVideo, search }: { onOpenVideo: (id: string) => void; search: string }) {
+export function Library({
+  onOpenVideo,
+  onOpenChannel,
+  search,
+}: {
+  onOpenVideo: (id: string) => void;
+  // onOpenChannel — optional: wired by App (Task 11), rendered as channel
+  // name links in Task 15.
+  onOpenChannel?: (id: string) => void;
+  search: string;
+}) {
   const [filter, setFilter] = useState<VideoFilter>("all");
   const [category, setCategory] = useState<string>("all");
   const [sort, setSort] = useState<VideoSort>("newest");

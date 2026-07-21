@@ -28,7 +28,13 @@ const CHIPS: { id: ChannelFilter; label: string }[] = [
 // format-override field, and a delete-with-confirm. Mirrors Library's chip
 // pattern and Settings' panel language (.sect / .ctrl / .btn) for visual
 // consistency — no new look.
-export function Channels() {
+export function Channels({
+  onOpenChannel,
+}: {
+  // onOpenChannel — optional: wired by App (Task 11), rendered as channel
+  // name links in Task 15.
+  onOpenChannel?: (id: string) => void;
+} = {}) {
   const [filter, setFilter] = useState<ChannelFilter>("all");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [error, setError] = useState<string | null>(null);

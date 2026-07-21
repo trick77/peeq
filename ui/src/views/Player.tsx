@@ -97,6 +97,7 @@ export function Player({
   seekTo,
   onSeekConsumed,
   onDeleted,
+  onOpenChannel,
 }: {
   videoId: string | null;
   // seekTo — the Task 18 jump-to-moment target (Search's onOpen, via App's
@@ -113,6 +114,9 @@ export function Player({
   // seek target from this callback.
   onSeekConsumed?: () => void;
   onDeleted: () => void;
+  // onOpenChannel — optional: wired by App (Task 11), rendered as a channel
+  // name link in Task 15.
+  onOpenChannel?: (id: string) => void;
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);

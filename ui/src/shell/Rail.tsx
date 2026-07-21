@@ -3,10 +3,22 @@ import { DownloadDock } from "./DownloadDock";
 import { CookieStatus } from "./CookieStatus";
 import type { Job } from "../api/types";
 
-// ViewId enumerates the six destinations the rail routes to. App.tsx owns
-// the actual view-state (manual, no router lib — see App.tsx); Rail is
-// purely presentational plus the onNavigate callback.
-export type ViewId = "library" | "player" | "search" | "add" | "pending" | "channels" | "settings";
+// ViewId enumerates the destinations App routes to. App.tsx owns the actual
+// view-state (manual, no router lib — see App.tsx); Rail is purely
+// presentational plus the onNavigate callback.
+//
+// "channel" is a detail destination reached by clicking a channel name, not
+// a rail entry — deliberately absent from SECTIONS below, like "player" is
+// reached from a video card. Rail's `active` simply matches nothing then.
+export type ViewId =
+  | "library"
+  | "player"
+  | "search"
+  | "add"
+  | "pending"
+  | "channels"
+  | "channel"
+  | "settings";
 
 type NavItem = {
   id: ViewId;

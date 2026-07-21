@@ -191,3 +191,14 @@ describe("App youtube-paused banner", () => {
     await waitFor(() => expect(resumeYoutube).toHaveBeenCalled());
   });
 });
+
+// Task 11: the channel page is a detail destination reached only by clicking
+// a channel name (like the player is reached from a video card), never a
+// rail item — this locks that in as a regression guard.
+describe("App routing", () => {
+  it("channel is not in the nav rail", async () => {
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+    expect(screen.queryByRole("button", { name: /^channel$/i })).toBeNull();
+  });
+});

@@ -9,6 +9,7 @@ import { Add } from "./views/Add";
 import { Player } from "./views/Player";
 import { Settings } from "./views/Settings";
 import { Channels } from "./views/Channels";
+import { Channel } from "./views/Channel";
 import { Pending } from "./views/Pending";
 import { Search } from "./views/Search";
 import { readNowPlaying } from "./nowPlaying";
@@ -22,6 +23,7 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
   add: { title: "Add" },
   pending: { title: "Pending" },
   channels: { title: "Channels" },
+  channel: { title: "Channel" },
   settings: { title: "Settings" },
 };
 
@@ -52,6 +54,7 @@ export function App() {
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(
     restored?.playing ? restored.videoId : null,
   );
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   // Library search: lifted here (not owned by Library) because the search
   // box itself now lives in the top bar, which Library doesn't render. The
   // top bar is not channel-aware, so the channel page keeps its own,
@@ -262,6 +265,13 @@ export function App() {
     setView("player");
   }
 
+  // openChannel is the channel page's only entry point: there is no rail
+  // item for it, so this is called from every place a channel name appears.
+  function openChannel(id: string) {
+    setSelectedChannelId(id);
+    setView("channel");
+  }
+
   return (
     <div className="app-shell">
       <Rail
@@ -289,9 +299,11 @@ export function App() {
           <ViewSwitch
             view={view}
             selectedVideoId={selectedVideoId}
+            selectedChannelId={selectedChannelId}
             pendingSeek={pendingSeek}
             onOpenVideo={openVideo}
             onOpenVideoAt={openVideoAt}
+            onOpenChannel={openChannel}
             onSeekConsumed={() => setPendingSeek(undefined)}
             setView={setView}
             setPendingCount={setPendingCount}
@@ -359,9 +371,11 @@ function DownloadStatusBanner({
 function ViewSwitch({
   view,
   selectedVideoId,
+  selectedChannelId,
   pendingSeek,
   onOpenVideo,
   onOpenVideoAt,
+  onOpenChannel,
   onSeekConsumed,
   setView,
   setPendingCount,
@@ -370,9 +384,11 @@ function ViewSwitch({
 }: {
   view: ViewId;
   selectedVideoId: string | null;
+  selectedChannelId: string | null;
   pendingSeek: number | undefined;
   onOpenVideo: (id: string) => void;
   onOpenVideoAt: (id: string, startSeconds: number) => void;
+  onOpenChannel: (id: string) => void;
   onSeekConsumed: () => void;
   setView: (v: ViewId) => void;
   setPendingCount: (n: number) => void;
@@ -381,7 +397,7 @@ function ViewSwitch({
 }) {
   switch (view) {
     case "library":
-      return <Library onOpenVideo={onOpenVideo} search={librarySearch} />;
+      return <Library onOpenVideo={onOpenVideo} onOpenChannel={onOpenChannel} search={librarySearch} />;
     case "player":
       return (
         <Player
@@ -389,6 +405,7 @@ function ViewSwitch({
           seekTo={pendingSeek}
           onSeekConsumed={onSeekConsumed}
           onDeleted={() => setView("library")}
+          onOpenChannel={onOpenChannel}
         />
       );
     case "search":
@@ -403,9 +420,17 @@ function ViewSwitch({
       // items (Download now/Ignore) without leaving this view — the
       // nav-refetch effect above only covers count changes that happen
       // while the user is elsewhere.
-      return <Pending onCountChange={setPendingCount} />;
+      return <Pending onCountChange={setPendingCount} onOpenChannel={onOpenChannel} />;
     case "channels":
-      return <Channels />;
+      return <Channels onOpenChannel={onOpenChannel} />;
+    case "channel":
+      return (
+        <Channel
+          channelId={selectedChannelId}
+          onOpenVideo={onOpenVideo}
+          onBack={() => setView("channels")}
+        />
+      );
     case "settings":
       return <Settings />;
   }

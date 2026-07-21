@@ -10,7 +10,15 @@ import { Button } from "../ui";
 // thumbnail is the remote `thumbnail_url` (no local media exists yet — an
 // item here has never been downloaded), and the two actions are Download
 // now / Ignore rather than favorite/watched.
-export function Pending({ onCountChange }: { onCountChange?: (n: number) => void } = {}) {
+export function Pending({
+  onCountChange,
+  onOpenChannel,
+}: {
+  onCountChange?: (n: number) => void;
+  // onOpenChannel — optional: wired by App (Task 11), rendered as channel
+  // name links in Task 15.
+  onOpenChannel?: (id: string) => void;
+} = {}) {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
