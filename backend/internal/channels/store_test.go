@@ -405,3 +405,96 @@ func TestUpsert_blankFieldsDoNotEraseCachedMetadata(t *testing.T) {
 		t.Fatalf("ResolvedAt = %q, want it preserved", c.ResolvedAt)
 	}
 }
+
+// TestTrack_errorsOnClosedDB asserts a failed UPDATE (here forced by closing
+// the handle) is reported to the caller rather than swallowed, so a
+// tracking request that silently didn't happen isn't mistaken for success.
+func TestTrack_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if err := s.Track("UCx", "2026-07-20 10:00:00"); err == nil {
+		t.Fatal("expected an error tracking against a closed db")
+	}
+}
+
+// TestMarkResolveAttempted_setsResolvedAt asserts a successful call stamps
+// resolved_at on the channel row, which is what stops a permanently
+// unresolvable channel from being re-fetched from YouTube on every page
+// visit.
+func TestMarkResolveAttempted_setsResolvedAt(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Channel{ID: "UCx", Name: "X", Handle: "@x"}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	if err := s.MarkResolveAttempted("UCx", "2026-07-20 10:00:00"); err != nil {
+		t.Fatalf("mark resolve attempted: %v", err)
+	}
+
+	c, err := s.Get("UCx")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.ResolvedAt != "2026-07-20 10:00:00" {
+		t.Fatalf("ResolvedAt = %q, want 2026-07-20 10:00:00", c.ResolvedAt)
+	}
+}
+
+// TestMarkResolveAttempted_errorsOnClosedDB asserts a failed write here is
+// surfaced, not swallowed — otherwise a channel that can never be resolved
+// would be silently retried forever instead of the caller finding out the
+// write itself is broken.
+func TestMarkResolveAttempted_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if err := s.MarkResolveAttempted("UCx", "2026-07-20 10:00:00"); err == nil {
+		t.Fatal("expected an error marking resolve attempted against a closed db")
+	}
+}
+
+// TestGetSubscription_errorsOnClosedDB asserts a query failure that is not
+// sql.ErrNoRows is distinguished from "not subscribed" and reported to the
+// caller.
+func TestGetSubscription_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := s.GetSubscription("UCx"); err == nil {
+		t.Fatal("expected an error getting subscription from a closed db")
+	}
+}
+
+// TestStats_errorsOnClosedDB asserts a failed stats query is reported rather
+// than the channel page rendering zeroes as if the channel genuinely has no
+// downloads.
+func TestStats_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := s.Stats("UCx", "Some Channel"); err == nil {
+		t.Fatal("expected an error computing stats against a closed db")
+	}
+}
+
+// TestNameFromVideos_errorsOnClosedDB asserts a failed lookup is reported
+// rather than being confused with "channel has no videos".
+func TestNameFromVideos_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, _, err := s.NameFromVideos("UCx"); err == nil {
+		t.Fatal("expected an error resolving channel name from videos against a closed db")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,6 +18,19 @@ func fakeBinPrinting(t *testing.T, stdout string) string {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "fake-ytdlp-print.sh")
 	content := "#!/bin/sh\ncat <<'BACKEND_EOF'\n" + stdout + "\nBACKEND_EOF\nexit 0\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("write fake bin: %v", err)
+	}
+	return script
+}
+
+// fakeBinFailing writes a tiny throwaway shell script that exits non-zero,
+// printing msg to stderr, simulating yt-dlp itself failing (network error,
+// removed channel, etc.).
+func fakeBinFailing(t *testing.T, msg string) string {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "fake-ytdlp-fail.sh")
+	content := "#!/bin/sh\necho '" + msg + "' >&2\nexit 1\n"
 	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
 		t.Fatalf("write fake bin: %v", err)
 	}
@@ -151,5 +165,73 @@ func TestParseChannelInfo_missingImages_isNotAnError(t *testing.T) {
 func TestParseChannelInfo_noUCID_isAnError(t *testing.T) {
 	if _, err := parseChannelInfo([]byte(`{"channel":"X"}`)); err == nil {
 		t.Fatal("expected an error when no channel id is present")
+	}
+}
+
+// TestParseChannelInfo_malformedJSON_isAnError asserts an unparseable
+// response (yt-dlp emitting something that isn't the expected JSON shape) is
+// reported rather than panicking or resolving to a zero-value channel.
+func TestParseChannelInfo_malformedJSON_isAnError(t *testing.T) {
+	if _, err := parseChannelInfo([]byte(`not json`)); err == nil {
+		t.Fatal("expected an error for malformed JSON")
+	}
+}
+
+// TestParseChannelInfo_nameFallsBackToUploader asserts that when yt-dlp's
+// "channel" field is empty, the name falls back to "uploader" — some
+// channel responses only populate uploader.
+func TestParseChannelInfo_nameFallsBackToUploader(t *testing.T) {
+	info, err := parseChannelInfo([]byte(`{"channel_id":"UCx","uploader":"Uploader Name"}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if info.Name != "Uploader Name" {
+		t.Fatalf("Name = %q, want fallback to uploader", info.Name)
+	}
+}
+
+// TestParseChannelInfo_nameFallsBackToTitle asserts that when both "channel"
+// and "uploader" are empty, the name falls back to "title" as the last
+// resort before leaving the channel unnamed.
+func TestParseChannelInfo_nameFallsBackToTitle(t *testing.T) {
+	info, err := parseChannelInfo([]byte(`{"channel_id":"UCx","title":"Title Only"}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if info.Name != "Title Only" {
+		t.Fatalf("Name = %q, want fallback to title", info.Name)
+	}
+}
+
+// TestResolveChannel_execFailure_isReported asserts a yt-dlp process failure
+// (network error, removed channel, etc.) surfaces as an error rather than a
+// zero-value ChannelInfo being treated as a resolved channel.
+func TestResolveChannel_execFailure_isReported(t *testing.T) {
+	r := New(RunnerConfig{
+		Bin:            fakeBinFailing(t, "yt-dlp: unable to resolve channel"),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	if _, err := r.ResolveChannel(context.Background(), "https://www.youtube.com/@x"); err == nil {
+		t.Fatal("expected an error when yt-dlp itself fails")
+	}
+}
+
+// TestResolveChannel_unresolvableChannel_wrapsErrorWithURL asserts a response
+// that parses but carries no channel id is rejected, and the wrapped error
+// names the URL that failed — otherwise a multi-channel batch operation
+// can't tell the user which one broke.
+func TestResolveChannel_unresolvableChannel_wrapsErrorWithURL(t *testing.T) {
+	r := New(RunnerConfig{
+		Bin:            fakeBinPrinting(t, `{"channel":"No Id Here"}`),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	_, err := r.ResolveChannel(context.Background(), "https://www.youtube.com/@mystery")
+	if err == nil {
+		t.Fatal("expected an error for a channel with no resolvable id")
+	}
+	if !strings.Contains(err.Error(), "https://www.youtube.com/@mystery") {
+		t.Fatalf("err = %v, want it to name the failing URL", err)
 	}
 }

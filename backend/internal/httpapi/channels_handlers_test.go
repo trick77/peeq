@@ -8,6 +8,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -128,6 +130,28 @@ func TestChannelsPost_tracksAndSubscribes(t *testing.T) {
 	list := getJSON(t, h, "/api/channels?filter=subscribed")
 	if !strings.Contains(list, "UCxyz") {
 		t.Fatalf("subscribed list missing channel: %s", list)
+	}
+}
+
+// TestChannelsPost_imageFetchFailure_stillTracks asserts that a channel
+// whose avatar/banner cannot be fetched (here, no MediaDir is configured, so
+// media.FetchImage always errors) is still tracked — a broken or missing
+// image must never block adding the channel, only leave the image paths
+// empty.
+func TestChannelsPost_imageFetchFailure_stillTracks(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{
+		UCID:      "UCimg",
+		Name:      "Image Channel",
+		AvatarURL: "https://example.com/avatar.jpg",
+		BannerURL: "https://example.com/banner.jpg",
+	}})
+	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@x"})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	list := getJSON(t, h, "/api/channels?filter=tracked")
+	if !strings.Contains(list, "UCimg") {
+		t.Fatalf("tracked list missing channel despite image fetch failure: %s", list)
 	}
 }
 
@@ -444,6 +468,124 @@ func TestChannelDetail_unknownChannel_404(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestChannelDetail_unconfigured_503 covers the s.channels == nil guard on
+// handleChannelDetail.
+func TestChannelDetail_unconfigured_503(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	deps.Channels = nil
+	h := New(deps)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/channels/UCx", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelDetail_getError_500 asserts a channels.Get failure is a 500,
+// not the 404 an absent-but-otherwise-healthy lookup would return.
+func TestChannelDetail_getError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE channels`); err != nil {
+		t.Fatalf("drop channels table: %v", err)
+	}
+	h := New(deps)
+	req := httptest.NewRequest(http.MethodGet, "/api/channels/UCx", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelDetail_nameFromVideosError_500 asserts a failure looking up the
+// fallback name from videos (reached when there is no cached channels row)
+// is a 500 rather than the page silently rendering with no name.
+func TestChannelDetail_nameFromVideosError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE videos`); err != nil {
+		t.Fatalf("drop videos table: %v", err)
+	}
+	h := New(deps)
+	req := httptest.NewRequest(http.MethodGet, "/api/channels/UCx", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelDetail_statsError_500 asserts a Stats query failure is a 500.
+// The channel's name is already known from its cached row, so NameFromVideos
+// is skipped and Stats is the very next store call — isolating this failure
+// from TestChannelDetail_nameFromVideosError_500 above.
+func TestChannelDetail_statsError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X"}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE videos`); err != nil {
+		t.Fatalf("drop videos table: %v", err)
+	}
+	h := New(deps)
+	req := httptest.NewRequest(http.MethodGet, "/api/channels/UCx", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelDetail_getSubscriptionError_500 asserts a subscription lookup
+// failure for a TRACKED channel is a 500. The subscriptions table itself
+// stays present (Backoff-style trigger tests exist elsewhere for that); here
+// dropping it entirely is fine because nothing earlier in the handler reads
+// it.
+func TestChannelDetail_getSubscriptionError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "S"}})
+	h := New(deps)
+	if rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@s"}); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {
+		t.Fatalf("drop subscriptions table: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/channels/UCs", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelDetail_listPendingError_500 asserts a pending-ledger lookup
+// failure for a tracked channel is a 500. GetSubscription must still
+// succeed (sub can legitimately be nil — tracked but not subscribed), so
+// only the channel_videos table is dropped.
+func TestChannelDetail_listPendingError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "S"}})
+	h := New(deps)
+	if rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@s"}); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE channel_videos`); err != nil {
+		t.Fatalf("drop channel_videos table: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/channels/UCs", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -998,6 +1140,203 @@ func TestChannelDetail_resolveFailure_stillMarksAttempted(t *testing.T) {
 	}
 }
 
+// TestChannelDetail_noResolver_doesNotBackgroundResolve asserts a nil
+// ChannelResolver (peeq run without yt-dlp wired, or a config that disables
+// it) makes the background resolve a no-op instead of a nil-pointer panic —
+// the page must still render from whatever is already cached.
+func TestChannelDetail_noResolver_doesNotBackgroundResolve(t *testing.T) {
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	deps := Deps{
+		AuthService:    auth.NewService(nil, sessions, users),
+		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Settings:       settings.New(db),
+		Channels:       channels.New(db),
+		Videos:         videos.New(db),
+		// ChannelResolver intentionally left nil.
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCnoresolver", "No Resolver Channel")
+
+	body := getJSON(t, h, "/api/channels/UCnoresolver")
+	if !strings.Contains(body, "No Resolver Channel") {
+		t.Fatalf("want the channel name from its videos, got %s", body)
+	}
+}
+
+// dbClosingResolver is a ChannelResolver whose ResolveChannel closes the
+// shared db before returning err, simulating a store write that starts
+// succeeding right up until the exact moment the background resolve tries
+// to persist its result — the only way to force that specific failure
+// without a store mock (against this package's real-sqlite convention).
+type dbClosingResolver struct {
+	db  *sql.DB
+	err error
+}
+
+func (r *dbClosingResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+	_ = r.db.Close()
+	return ytdlp.ChannelInfo{}, r.err
+}
+
+// TestChannelDetail_resolveFailure_cacheOnlyRow_upsertError asserts that
+// when a background resolve fails for a channel with NO cached row yet, and
+// the Upsert that would record "we tried" itself fails, the failure is
+// logged rather than left to crash the goroutine or retry silently forever.
+func TestChannelDetail_resolveFailure_cacheOnlyRow_upsertError(t *testing.T) {
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	resolver := &dbClosingResolver{db: db, err: errors.New("boom")}
+	deps := Deps{
+		AuthService:     auth.NewService(nil, sessions, users),
+		AuthMiddleware:  auth.NewMiddleware(sessions, users),
+		Settings:        settings.New(db),
+		Channels:        channels.New(db),
+		Videos:          videos.New(db),
+		ChannelResolver: resolver,
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}
+	done := make(chan struct{}, 4)
+	deps.OnChannelResolved = func(string) { done <- struct{}{} }
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCnocache", "No Cache Channel")
+
+	getJSON(t, h, "/api/channels/UCnocache")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background resolve never completed")
+	}
+}
+
+// TestChannelDetail_resolveFailure_trackedRow_markAttemptedError asserts
+// that when a background resolve fails for a channel that already HAS a
+// cached row (tracked, but never successfully resolved — e.g. added via a
+// single-video download before its channel was ever visited), and the
+// MarkResolveAttempted write itself fails, the failure is logged rather
+// than crashing the goroutine.
+func TestChannelDetail_resolveFailure_trackedRow_markAttemptedError(t *testing.T) {
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	chStore := channels.New(db)
+	if err := chStore.Upsert(channels.Channel{ID: "UCpending", Name: "Pending Resolve"}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if err := chStore.Track("UCpending", "2026-07-20 10:00:00"); err != nil {
+		t.Fatalf("track channel: %v", err)
+	}
+	resolver := &dbClosingResolver{db: db, err: errors.New("boom")}
+	deps := Deps{
+		AuthService:     auth.NewService(nil, sessions, users),
+		AuthMiddleware:  auth.NewMiddleware(sessions, users),
+		Settings:        settings.New(db),
+		Channels:        chStore,
+		Videos:          videos.New(db),
+		ChannelResolver: resolver,
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}
+	done := make(chan struct{}, 4)
+	deps.OnChannelResolved = func(string) { done <- struct{}{} }
+	h := New(deps)
+
+	getJSON(t, h, "/api/channels/UCpending")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background resolve never completed")
+	}
+}
+
+// panickingResolver is a ChannelResolver that panics instead of returning,
+// simulating a bug in yt-dlp response parsing or an unexpected nil
+// dereference — exactly what the background resolve's recover() guards
+// against, since an unrecovered panic in that goroutine would take down the
+// whole server.
+type panickingResolver struct{}
+
+func (panickingResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+	panic("simulated parser bug")
+}
+
+// TestChannelDetail_resolvePanic_isRecovered asserts a panic inside the
+// background resolve goroutine is contained: it does not crash the test
+// process, and the completion hook still fires (via the deferred recover).
+func TestChannelDetail_resolvePanic_isRecovered(t *testing.T) {
+	deps := channelsTestDeps(t, panickingResolver{})
+	done := make(chan struct{}, 4)
+	deps.OnChannelResolved = func(string) { done <- struct{}{} }
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCpanic", "Panic Channel")
+
+	getJSON(t, h, "/api/channels/UCpanic")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background resolve never completed despite the panic")
+	}
+	// A second request proves the server is still alive and serving.
+	body := getJSON(t, h, "/api/channels/UCpanic")
+	if !strings.Contains(body, "Panic Channel") {
+		t.Fatalf("server did not survive the panic: %s", body)
+	}
+}
+
+// TestChannelDetail_resolveSuccess_imageFetchFailures asserts that when the
+// background resolve succeeds but the avatar/banner images cannot be
+// fetched (here, no MediaDir is configured), the resolve still completes
+// and caches the channel's metadata — a broken image must never block a
+// successful metadata resolve, only leave the image paths empty.
+func TestChannelDetail_resolveSuccess_imageFetchFailures(t *testing.T) {
+	resolver := &testResolver{info: ytdlp.ChannelInfo{
+		UCID:      "UCimgasync",
+		Name:      "Async Image Channel",
+		AvatarURL: "https://example.com/avatar.jpg",
+		BannerURL: "https://example.com/banner.jpg",
+	}}
+	deps := channelsTestDeps(t, resolver)
+	done := make(chan struct{}, 4)
+	deps.OnChannelResolved = func(string) { done <- struct{}{} }
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCimgasync", "Async Image Channel")
+
+	getJSON(t, h, "/api/channels/UCimgasync")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background resolve never completed")
+	}
+
+	c, err := deps.Channels.Get("UCimgasync")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c == nil || c.ResolvedAt == "" {
+		t.Fatalf("channel not cached as resolved: %+v", c)
+	}
+	if c.AvatarPath != "" || c.BannerPath != "" {
+		t.Fatalf("expected empty image paths given the fetch failure, got avatar=%q banner=%q", c.AvatarPath, c.BannerPath)
+	}
+}
+
 // TestListVideos_channelParam_scopes asserts ?channel= narrows the library to
 // one channel, which is what the Archive tab loads.
 func TestListVideos_channelParam_scopes(t *testing.T) {
@@ -1111,6 +1450,92 @@ func TestChannelScan_cookieInvalid_blocked(t *testing.T) {
 	}
 	if after.NextScanAt != before.NextScanAt {
 		t.Fatalf("next_scan_at changed on a blocked scan: %q -> %q", before.NextScanAt, after.NextScanAt)
+	}
+}
+
+// TestChannelScan_youtubePaused_blocked asserts the global YouTube kill
+// switch blocks a scan the same honest way an invalid cookie does: 200
+// {"status":"blocked"} with the operator's own reason, not a "scheduled"
+// response for a scan that will never run.
+func TestChannelScan_youtubePaused_blocked(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "S"}})
+	h := New(deps)
+	if rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@s", "subscribe": true}); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := deps.Settings.SetYoutubePaused(context.Background(), true, "extractor broke"); err != nil {
+		t.Fatalf("pause youtube: %v", err)
+	}
+
+	rec := postJSON(t, h, "/api/channels/UCs/scan", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v; body %s", err, rec.Body.String())
+	}
+	if got.Status != "blocked" || !strings.Contains(got.Reason, "extractor broke") {
+		t.Fatalf("body = %s, want status=blocked with the pause reason", rec.Body.String())
+	}
+}
+
+// TestChannelScan_unconfigured_503 asserts the endpoint reports its own
+// missing dependency rather than panicking on a nil channels store.
+func TestChannelScan_unconfigured_503(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	deps.Channels = nil
+	h := New(deps)
+	rec := postJSON(t, h, "/api/channels/UCx/scan", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelScan_getSubscriptionError_500 asserts a subscription lookup
+// failure is reported as a 500 rather than being mistaken for "not
+// subscribed" (400).
+func TestChannelScan_getSubscriptionError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "S"}})
+	h := New(deps)
+	if rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@s", "subscribe": true}); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {
+		t.Fatalf("drop subscriptions: %v", err)
+	}
+
+	rec := postJSON(t, h, "/api/channels/UCs/scan", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelScan_backoffError_500 asserts a failed backoff write (the
+// update that actually schedules the scan) is reported as a 500 rather than
+// a false "scheduled". The subscriptions table stays intact (GetSubscription
+// must still succeed to reach this code) — only its UPDATE is blocked by a
+// trigger, isolating the Backoff failure from the earlier GetSubscription
+// read.
+func TestChannelScan_backoffError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "S"}})
+	h := New(deps)
+	if rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@s", "subscribe": true}); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := deps.Settings.SetCookie(context.Background(), "", "valid"); err != nil {
+		t.Fatalf("seed valid cookie: %v", err)
+	}
+	if _, err := deps.Channels.DB().Exec(`CREATE TRIGGER block_subscriptions_update BEFORE UPDATE ON subscriptions BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	rec := postJSON(t, h, "/api/channels/UCs/scan", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -1928,5 +2353,161 @@ func TestStalenessRoutes_requireAuth(t *testing.T) {
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s status = %d, want 401", req.Method, req.URL.Path, rec.Code)
 		}
+	}
+}
+
+// channelImageTestDeps is channelsTestDeps but also configures MediaDir, so
+// a test can seed a real avatar/banner file on disk for the image endpoints.
+func channelImageTestDeps(t *testing.T, resolver ChannelResolver) (Deps, string) {
+	t.Helper()
+	deps := channelsTestDeps(t, resolver)
+	deps.MediaDir = t.TempDir()
+	return deps, deps.MediaDir
+}
+
+// TestChannelAvatar_servesFile asserts a cached avatar is served byte-for-
+// byte off local disk, mirroring how video thumbnails work.
+func TestChannelAvatar_servesFile(t *testing.T) {
+	deps, mediaDir := channelImageTestDeps(t, &testResolver{})
+	if err := os.MkdirAll(filepath.Join(mediaDir, ".channels", "UCx"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	content := []byte("fake avatar bytes")
+	if err := os.WriteFile(filepath.Join(mediaDir, ".channels", "UCx", "avatar.jpg"), content, 0o644); err != nil {
+		t.Fatalf("write avatar: %v", err)
+	}
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X", AvatarPath: ".channels/UCx/avatar.jpg"}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCx/avatar", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != string(content) {
+		t.Fatalf("body = %q, want %q", got, string(content))
+	}
+}
+
+// TestChannelBanner_servesFile is TestChannelAvatar_servesFile for the
+// banner endpoint, which shares serveChannelImage but selects BannerPath.
+func TestChannelBanner_servesFile(t *testing.T) {
+	deps, mediaDir := channelImageTestDeps(t, &testResolver{})
+	if err := os.MkdirAll(filepath.Join(mediaDir, ".channels", "UCx"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	content := []byte("fake banner bytes")
+	if err := os.WriteFile(filepath.Join(mediaDir, ".channels", "UCx", "banner.jpg"), content, 0o644); err != nil {
+		t.Fatalf("write banner: %v", err)
+	}
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X", BannerPath: ".channels/UCx/banner.jpg"}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCx/banner", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != string(content) {
+		t.Fatalf("body = %q, want %q", got, string(content))
+	}
+}
+
+// TestChannelAvatar_unconfigured_503 covers the s.channels == nil guard,
+// shared by both channel image endpoints.
+func TestChannelAvatar_unconfigured_503(t *testing.T) {
+	deps, _ := channelImageTestDeps(t, &testResolver{})
+	deps.Channels = nil
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCx/avatar", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelAvatar_getError_500 asserts a store failure is a 500, not a
+// 404 that would be indistinguishable from "channel genuinely has no
+// avatar".
+func TestChannelAvatar_getError_500(t *testing.T) {
+	deps, _ := channelImageTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE channels`); err != nil {
+		t.Fatalf("drop channels table: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCx/avatar", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelAvatar_unknownChannel_404 asserts an id matching no cached
+// channel is a 404.
+func TestChannelAvatar_unknownChannel_404(t *testing.T) {
+	deps, _ := channelImageTestDeps(t, &testResolver{})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCnope/avatar", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelAvatar_noAvatar_404 asserts a channel that exists but has never
+// had an avatar cached (AvatarPath empty) is a 404, not an empty 200.
+func TestChannelAvatar_noAvatar_404(t *testing.T) {
+	deps, _ := channelImageTestDeps(t, &testResolver{})
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X"}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCx/avatar", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelAvatar_unsafeStoredPath_404 asserts a stored path that would
+// escape the media dir (however it got into the database) is refused rather
+// than served — the same guarantee media.SafeMediaPath gives video
+// thumbnails.
+func TestChannelAvatar_unsafeStoredPath_404(t *testing.T) {
+	deps, _ := channelImageTestDeps(t, &testResolver{})
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X", AvatarPath: "../../etc/passwd"}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCx/avatar", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelAvatar_fileMissingOnDisk_404 asserts a stored path whose file
+// no longer exists on disk (deleted out from under the database, e.g. by a
+// manual media-dir cleanup) is a 404 rather than a 500.
+func TestChannelAvatar_fileMissingOnDisk_404(t *testing.T) {
+	deps, _ := channelImageTestDeps(t, &testResolver{})
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X", AvatarPath: ".channels/UCx/avatar.jpg"}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCx/avatar", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body = %s", rec.Code, rec.Body.String())
 	}
 }

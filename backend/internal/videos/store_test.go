@@ -818,3 +818,53 @@ func TestList_channelID_scopesToOneChannel(t *testing.T) {
 		}
 	}
 }
+
+// TestList_channelID_withoutChannelName_matchesChannelIDOnly asserts that
+// when ChannelName is not supplied, scoping matches strictly on channel_id
+// and does not fall back to matching rows by channel_name (that fallback
+// only makes sense when the caller has a name to fall back to).
+func TestList_channelID_withoutChannelName_matchesChannelIDOnly(t *testing.T) {
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", ChannelID: "UCa", ChannelName: "Alpha", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "v2", ChannelID: "", ChannelName: "Alpha", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "v3", ChannelID: "UCb", ChannelName: "Beta", Status: "downloaded"})
+
+	got, err := s.List(ListOptions{ChannelID: "UCa"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "v1" {
+		t.Fatalf("got %+v, want only v1", got)
+	}
+}
+
+// TestList_errorsOnCorruptRow asserts a row that fails to scan (here, a
+// non-numeric value in an INTEGER column — SQLite's dynamic typing allows
+// writing it directly, bypassing the app-level guarantees Upsert provides)
+// surfaces as an error rather than a panic or a silently truncated list.
+func TestList_errorsOnCorruptRow(t *testing.T) {
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", URL: "https://youtu.be/v1", Status: "downloaded"})
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET watched = 'not-a-number' WHERE id = 'v1'`); err != nil {
+		t.Fatalf("corrupt row: %v", err)
+	}
+
+	if _, err := s.List(ListOptions{}); err == nil {
+		t.Fatal("expected an error scanning a corrupt row")
+	}
+}
+
+// TestList_errorsOnClosedDB asserts a query failure (here, a closed handle)
+// is reported to the caller rather than an empty list masquerading as "no
+// videos".
+func TestList_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := s.List(ListOptions{}); err == nil {
+		t.Fatal("expected an error listing against a closed db")
+	}
+}
