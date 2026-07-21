@@ -12,6 +12,7 @@ package channels
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -53,6 +54,15 @@ type ListItem struct {
 	FormatOverride  string
 	PendingCount    int
 	DownloadedCount int
+	// LastVideoAt is the discovered_at of the channel's most recently seen
+	// video, or "" if none has ever been discovered (tracked-but-unscanned,
+	// or genuinely brand new).
+	LastVideoAt string
+	// Dormant mirrors DormantChannels' predicate for this one channel: it is
+	// subscribed, has seen at least one video, that video is older than
+	// DormantAfter relative to now, and dormancy has not been dismissed
+	// since. Always false for a tracked-but-unsubscribed channel.
+	Dormant bool
 }
 
 // Store persists channels and subscriptions.
@@ -242,15 +252,36 @@ FROM channels WHERE id = ?`, id)
 // (no subscription row), or "autodownload" (subscribed with autodownload
 // on — a strict subset of "subscribed", since autodownload lives on the
 // subscription row).
+//
+// The last_video_at/dormant columns come from a "lv" CTE (one row per
+// channel_id, its MAX(discovered_at)) joined in alongside subscriptions,
+// rather than a correlated subquery repeated per output column — SQLite has
+// no way to name and reuse a scalar subquery's result within the same
+// SELECT list, and duplicating it three times over would both bloat the
+// query and risk the copies drifting apart. dormant reuses DormantAfter (the
+// same modifier DormantChannels applies) via a bound parameter, so the two
+// have exactly one definition of "how long is too long" between them.
 func (s *Store) List(filter string) ([]ListItem, error) {
 	query := `
+WITH lv AS (
+  SELECT channel_id, MAX(discovered_at) AS last_video_at
+  FROM channel_videos
+  GROUP BY channel_id
+)
 SELECT c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
        COALESCE(c.resolved_at, ''), COALESCE(c.tracked_at, ''), c.added_at,
        s.channel_id IS NOT NULL AS subscribed,
        COALESCE(s.autodownload, 0), COALESCE(s.format_override, ''),
        (SELECT count(*) FROM channel_videos cv WHERE cv.channel_id = c.id AND cv.state = 'pending'),
-       (SELECT count(*) FROM videos v WHERE v.channel_id = c.id AND v.status = 'downloaded')
-FROM channels c LEFT JOIN subscriptions s ON s.channel_id = c.id
+       (SELECT count(*) FROM videos v WHERE v.channel_id = c.id AND v.status = 'downloaded'),
+       COALESCE(lv.last_video_at, ''),
+       s.channel_id IS NOT NULL
+         AND lv.last_video_at IS NOT NULL
+         AND lv.last_video_at < datetime('now', ?)
+         AND (s.dormant_dismissed_at IS NULL OR lv.last_video_at > s.dormant_dismissed_at)
+FROM channels c
+LEFT JOIN subscriptions s ON s.channel_id = c.id
+LEFT JOIN lv ON lv.channel_id = c.id
 WHERE c.tracked_at IS NOT NULL`
 
 	switch filter {
@@ -270,7 +301,7 @@ WHERE c.tracked_at IS NOT NULL`
 	}
 	query += ` ORDER BY c.name COLLATE NOCASE, c.id`
 
-	rows, err := s.db.QueryContext(context.Background(), query)
+	rows, err := s.db.QueryContext(context.Background(), query, DormantAfter)
 	if err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
 	}
@@ -284,6 +315,7 @@ WHERE c.tracked_at IS NOT NULL`
 			&it.ResolvedAt, &it.TrackedAt, &it.AddedAt,
 			&it.Subscribed, &it.Autodownload, &it.FormatOverride,
 			&it.PendingCount, &it.DownloadedCount,
+			&it.LastVideoAt, &it.Dormant,
 		); err != nil {
 			return nil, fmt.Errorf("scan channel list item: %w", err)
 		}
@@ -325,23 +357,34 @@ func (s *Store) Unsubscribe(channelID string) (bool, error) {
 	return n > 0, nil
 }
 
-// UpdateConfig sets a subscription's autodownload flag and format override.
-// Returns whether a subscription row actually existed (and was updated) —
-// callers use this to distinguish a real config update from a silent no-op
-// on a channel that is tracked but not subscribed.
-func (s *Store) UpdateConfig(channelID string, autodownload bool, formatOverride string) (bool, error) {
-	res, err := s.db.ExecContext(context.Background(),
-		`UPDATE subscriptions SET autodownload = ?, format_override = ? WHERE channel_id = ?`,
+// UpdateConfig applies a partial update to a subscription's autodownload
+// flag and/or format override in a single atomic statement: a nil argument
+// leaves the corresponding column unchanged. It returns the resulting
+// (post-update) values via RETURNING, so there is no separate read step for
+// a concurrent write to race against. ok is false (with zero values and a
+// nil error) when the channel is not subscribed.
+//
+// The single COALESCE ... RETURNING statement exists so a partial update
+// cannot race a concurrent unsubscribe/resubscribe or another partial
+// update: the merge happens inside the statement itself, not against a
+// value read beforehand. This is a structural property of there being no
+// read to race, not something demonstrated by the test suite.
+func (s *Store) UpdateConfig(channelID string, autodownload *bool, formatOverride *string) (resultAutodownload bool, resultFormatOverride string, ok bool, err error) {
+	row := s.db.QueryRowContext(context.Background(), `
+UPDATE subscriptions
+   SET autodownload    = COALESCE(?, autodownload),
+       format_override = COALESCE(?, format_override)
+ WHERE channel_id = ?
+RETURNING autodownload, format_override`,
 		autodownload, formatOverride, channelID,
 	)
-	if err != nil {
-		return false, fmt.Errorf("update config %s: %w", channelID, err)
+	if err := row.Scan(&resultAutodownload, &resultFormatOverride); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, "", false, nil
+		}
+		return false, "", false, fmt.Errorf("update config %s: %w", channelID, err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("update config %s: rows affected: %w", channelID, err)
-	}
-	return n > 0, nil
+	return resultAutodownload, resultFormatOverride, true, nil
 }
 
 // ClaimDue returns the subscription with the oldest next_scan_at <= now, or

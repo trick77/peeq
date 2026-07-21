@@ -143,6 +143,10 @@ export type SettingsPatch = Partial<{
 
 // Channel mirrors httpapi.channelItem — one tracked channel, joined with
 // its (optional) subscription state and video counts.
+// dormant/last_video_at mirror the Task 4 staleness fields: dormant is
+// always present (true only for a subscribed channel quiet 6+ months);
+// last_video_at is omitempty — absent means peeq has never seen a video
+// from this channel.
 export type Channel = {
   id: string;
   handle?: string;
@@ -152,6 +156,20 @@ export type Channel = {
   format_override?: string;
   pending_count: number;
   downloaded_count: number;
+  dormant: boolean;
+  last_video_at?: string;
+};
+
+// AutoUnsubscribedChannel mirrors httpapi's GET
+// /api/channels/auto-unsubscribed entry — a channel peeq unsubscribed on
+// its own after repeated "deleted" scans. handle is omitempty; reason is
+// currently always "deleted" (channels.ReasonDeleted).
+export type AutoUnsubscribedChannel = {
+  id: string;
+  handle?: string;
+  name: string;
+  reason: string;
+  at: string;
 };
 
 // PendingItem mirrors httpapi.pendingItem — one channel_videos ledger entry

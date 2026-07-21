@@ -1,6 +1,6 @@
 import { api, ApiError } from "./http";
 import { CookieRequiredError } from "./downloads";
-import type { Channel, ChannelDetail, ScanResult } from "./types";
+import type { AutoUnsubscribedChannel, Channel, ChannelDetail, ScanResult } from "./types";
 
 // ChannelFilter mirrors the ?filter= values the channels handler
 // understands (Task 12 brief / channels_handlers.go).
@@ -84,4 +84,35 @@ export function channelAvatarUrl(id: string): string {
 
 export function channelBannerUrl(id: string): string {
   return `/api/channels/${encodeURIComponent(id)}/banner`;
+}
+
+// listAutoUnsubscribedChannels returns every channel peeq unsubscribed on
+// its own (most recent first) — the "tombstone" list shown in the
+// auto-unsubscribed section.
+export async function listAutoUnsubscribedChannels(): Promise<AutoUnsubscribedChannel[]> {
+  return api.get<AutoUnsubscribedChannel[]>(
+    "/api/channels/auto-unsubscribed",
+    "failed to load auto-unsubscribed channels",
+  );
+}
+
+// dismissDormantChannel suppresses a channel's dormancy flag until it posts
+// again and then goes quiet a second time. 404s (handled by the caller as a
+// regular ApiError) if the channel has no subscription row.
+export async function dismissDormantChannel(id: string): Promise<{ status: string }> {
+  return api.post<{ status: string }>(
+    `/api/channels/${encodeURIComponent(id)}/dismiss-dormant`,
+    undefined,
+    "failed to dismiss",
+  );
+}
+
+// resubscribeChannel restores a subscription peeq auto-unsubscribed,
+// clearing the auto-unsubscribe record.
+export async function resubscribeChannel(id: string): Promise<{ status: string }> {
+  return api.post<{ status: string }>(
+    `/api/channels/${encodeURIComponent(id)}/resubscribe`,
+    undefined,
+    "failed to resubscribe",
+  );
 }

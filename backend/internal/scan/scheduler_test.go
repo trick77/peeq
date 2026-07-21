@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -154,7 +155,7 @@ func (h *scanHarness) trackAndSubscribe(ucid string, autodownload bool, format s
 	if err := h.channels.Subscribe(ucid, "2000-01-01 00:00:00"); err != nil {
 		h.t.Fatalf("subscribe %s: %v", ucid, err)
 	}
-	if _, err := h.channels.UpdateConfig(ucid, autodownload, format); err != nil {
+	if _, _, _, err := h.channels.UpdateConfig(ucid, &autodownload, &format); err != nil {
 		h.t.Fatalf("config %s: %v", ucid, err)
 	}
 }
@@ -765,3 +766,353 @@ func TestScan_anonymousAllowed_proceedsWithAbsentCookie(t *testing.T) {
 // against the actual cookie text/status on every real yt-dlp call (see
 // internal/ytdlp's TestCookieGate_anonymousAllowed_expiredStillErrors and
 // TestCookieGate_anonymousAllowed_blockedStillErrors), not duplicated here.
+
+// seedCookieStatusBypassingCheck writes status into settings.cookie_status
+// directly, stepping around the schema's `cookie_status IN (...)` CHECK
+// constraint via SQLite's ignore_check_constraints pragma. This exists for
+// exactly one purpose: TestScan_interlockEngaged_neverUnsubscribes's
+// "unknown future cookie status" case, which needs to simulate a status the
+// current schema does not (and by design should not) allow through the real
+// settings.Store.SetCookie path, to prove the scheduler's interlock is an
+// allowlist rather than a denylist against exactly the statuses enumerated
+// today. Both PRAGMA toggles and the UPDATE run inside one Exec call so the
+// pooled *sql.DB is guaranteed to execute them all on the same connection —
+// the pragma is per-connection, so splitting them across separate Exec calls
+// would risk the UPDATE landing on a different pooled connection where the
+// constraint is still enforced.
+func (h *scanHarness) seedCookieStatusBypassingCheck(status string) {
+	h.t.Helper()
+	// The driver rejects bound parameters across a multi-statement Exec
+	// ("sqlite3: multiple statements"), so status is inlined as a quoted
+	// SQL string literal (single quotes, doubled per SQL escaping rules)
+	// rather than bound — safe here because it is always a Go string
+	// literal supplied by this test file, never external input.
+	stmt := fmt.Sprintf(
+		`PRAGMA ignore_check_constraints=ON; UPDATE settings SET cookie_status = '%s' WHERE id = 1; PRAGMA ignore_check_constraints=OFF;`,
+		strings.ReplaceAll(status, "'", "''"),
+	)
+	if _, err := h.db.Exec(stmt); err != nil {
+		h.t.Fatalf("seed cookie status (bypass check) = %q: %v", status, err)
+	}
+}
+
+// deadScanCount reads subscriptions.dead_scan_count for channelID directly,
+// bypassing RecordDeadScan (which would itself mutate the value under test).
+func (h *scanHarness) deadScanCount(channelID string) int {
+	h.t.Helper()
+	var n int
+	if err := h.db.QueryRow(
+		`SELECT dead_scan_count FROM subscriptions WHERE channel_id = ?`, channelID,
+	).Scan(&n); err != nil {
+		h.t.Fatalf("read dead_scan_count %s: %v", channelID, err)
+	}
+	return n
+}
+
+// isSubscribed reports whether channelID currently has a subscriptions row.
+func (h *scanHarness) isSubscribed(channelID string) bool {
+	h.t.Helper()
+	items, err := h.channels.List("all")
+	if err != nil {
+		h.t.Fatalf("list all: %v", err)
+	}
+	for _, it := range items {
+		if it.ID == channelID {
+			return it.Subscribed
+		}
+	}
+	h.t.Fatalf("channel %s not found in List(all)", channelID)
+	return false
+}
+
+// autoUnsubscribeReason returns the reason recorded in auto_unsubscribes for
+// channelID, or "" if no row exists.
+func (h *scanHarness) autoUnsubscribeReason(channelID string) string {
+	h.t.Helper()
+	var reason string
+	err := h.db.QueryRow(
+		`SELECT reason FROM auto_unsubscribes WHERE channel_id = ?`, channelID,
+	).Scan(&reason)
+	if err == sql.ErrNoRows {
+		return ""
+	}
+	if err != nil {
+		h.t.Fatalf("read auto_unsubscribes %s: %v", channelID, err)
+	}
+	return reason
+}
+
+// deletedSched builds a scheduler over h's stores whose Lister always
+// returns a real *ytdlp.TerminalError{Reason: "deleted"} — the interlock
+// tests need the genuine typed error since staleUnsubscribe branches on
+// errors.As, not a sentinel string.
+func (h *scanHarness) deletedSched() *Scheduler {
+	return New(Deps{
+		Channels: h.channels, Ledger: h.ledger, Videos: h.videos, Jobs: h.jobs,
+		Settings:     h.settings,
+		Lister:       errLister{err: &ytdlp.TerminalError{Reason: channels.ReasonDeleted}},
+		CookieStatus: func(context.Context) string { return h.cookieStatus },
+		Now:          func() time.Time { return fixedNow },
+		PollInterval: 5 * time.Millisecond,
+	})
+}
+
+// terminalSched builds a scheduler whose Lister always fails with a real
+// *ytdlp.TerminalError of the given (non-deleted) reason.
+func (h *scanHarness) terminalSched(reason string) *Scheduler {
+	return New(Deps{
+		Channels: h.channels, Ledger: h.ledger, Videos: h.videos, Jobs: h.jobs,
+		Settings:     h.settings,
+		Lister:       errLister{err: &ytdlp.TerminalError{Reason: reason}},
+		CookieStatus: func(context.Context) string { return h.cookieStatus },
+		Now:          func() time.Time { return fixedNow },
+		PollInterval: 5 * time.Millisecond,
+	})
+}
+
+// TestScan_deletedThreeTimes_autoUnsubscribes proves the happy path: three
+// consecutive scans that surface a real *ytdlp.TerminalError{Reason:
+// "deleted"} unsubscribe the channel and leave an auto_unsubscribes record
+// behind (reason "deleted"), so the automatic action always leaves a trace.
+func TestScan_deletedThreeTimes_autoUnsubscribes(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	// The interlock must be open (healthy cookie, not paused) for this test:
+	// cookie_status defaults to "absent", which would otherwise mask the
+	// behaviour under test.
+	if err := h.settings.SetCookie(context.Background(), "", "valid"); err != nil {
+		t.Fatalf("seed cookie status: %v", err)
+	}
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+	sched := h.deletedSched()
+
+	for i := 0; i < channels.DeadScanThreshold; i++ {
+		sched.scanChannel(context.Background(), sub)
+	}
+
+	if h.isSubscribed("UC1") {
+		t.Fatal("channel should be auto-unsubscribed after DeadScanThreshold deleted scans")
+	}
+	if reason := h.autoUnsubscribeReason("UC1"); reason != channels.ReasonDeleted {
+		t.Fatalf("auto_unsubscribes reason = %q, want %q", reason, channels.ReasonDeleted)
+	}
+}
+
+// TestScan_deletedTwice_thenCleanScan_doesNotUnsubscribe proves the reset
+// genuinely breaks a run: two deleted scans, then one clean scan (which must
+// call ResetDeadScan alongside MarkScanned), then two more deleted scans —
+// still short of the threshold's worth of CONSECUTIVE dead scans, so the
+// channel must remain subscribed.
+func TestScan_deletedTwice_thenCleanScan_doesNotUnsubscribe(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	if err := h.settings.SetCookie(context.Background(), "", "valid"); err != nil {
+		t.Fatalf("seed cookie status: %v", err)
+	}
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+
+	deleted := h.deletedSched()
+	deleted.scanChannel(context.Background(), sub)
+	deleted.scanChannel(context.Background(), sub)
+	if n := h.deadScanCount("UC1"); n != 2 {
+		t.Fatalf("dead_scan_count after 2 deleted scans = %d, want 2", n)
+	}
+
+	// One clean scan: no entries, no error.
+	clean := New(Deps{
+		Channels: h.channels, Ledger: h.ledger, Videos: h.videos, Jobs: h.jobs,
+		Settings:     h.settings,
+		Lister:       h.lister, // returns no entries for UC1, no error
+		CookieStatus: func(context.Context) string { return h.cookieStatus },
+		Now:          func() time.Time { return fixedNow },
+		PollInterval: 5 * time.Millisecond,
+	})
+	clean.scanChannel(context.Background(), sub)
+	if n := h.deadScanCount("UC1"); n != 0 {
+		t.Fatalf("dead_scan_count after clean scan = %d, want 0 (reset)", n)
+	}
+
+	deleted.scanChannel(context.Background(), sub)
+	deleted.scanChannel(context.Background(), sub)
+	if n := h.deadScanCount("UC1"); n != 2 {
+		t.Fatalf("dead_scan_count after reset + 2 more deleted scans = %d, want 2", n)
+	}
+	if !h.isSubscribed("UC1") {
+		t.Fatal("channel must still be subscribed: the run never reached 3 CONSECUTIVE dead scans")
+	}
+}
+
+// TestScan_interlockEngaged_neverUnsubscribes is THE MOST IMPORTANT TEST IN
+// THE SLICE. yt-dlp derives its error reason by substring-matching stderr;
+// age/geo failures in particular can be symptoms of a dead cookie rather
+// than a dead channel. If cookie access is unhealthy (blocked/stale/absent)
+// or the youtube_paused kill-switch is set, staleUnsubscribe must be
+// completely inert: not just skip unsubscribing, but never even increment
+// the counter — otherwise an outage silently accumulates toward the
+// threshold and fires the instant access is restored.
+func TestScan_interlockEngaged_neverUnsubscribes(t *testing.T) {
+	const consecutiveScans = 5
+
+	cases := []struct {
+		name         string
+		cookieStatus string // "" leaves cookie_status at "valid"
+		paused       bool
+		bypassCheck  bool // seed cookieStatus around the schema's CHECK constraint
+	}{
+		{name: "cookie blocked", cookieStatus: "blocked"},
+		{name: "cookie stale", cookieStatus: "stale"},
+		{name: "cookie absent", cookieStatus: "absent"},
+		{name: "youtube paused", paused: true},
+		// Pins the allowlist fix: the interlock must deny anything that is
+		// not exactly "valid", not merely the three statuses the schema's
+		// CHECK constraint happens to enumerate today. A denylist form
+		// would fail OPEN here and let this hypothetical future status
+		// through. The schema's CHECK constraint does not allow this value
+		// through the normal settings.Store.SetCookie path (by design —
+		// that's the whole reason the allowlist is defense in depth rather
+		// than provably unreachable), so this case seeds it directly via
+		// seedCookieStatusBypassingCheck, simulating a future migration
+		// that adds a 5th status without every caller being updated in
+		// lockstep.
+		{name: "unknown future cookie status", cookieStatus: "quarantined", bypassCheck: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newScanHarness(t)
+			h.trackAndSubscribe("UC1", false, "")
+			h.markBaselined("UC1", nil)
+			sub, _ := h.channels.ClaimDue(h.nowStr())
+			if sub == nil {
+				t.Fatal("expected a due subscription")
+			}
+
+			status := "valid"
+			if tc.cookieStatus != "" {
+				status = tc.cookieStatus
+			}
+			if tc.bypassCheck {
+				h.seedCookieStatusBypassingCheck(status)
+			} else if err := h.settings.SetCookie(context.Background(), "", status); err != nil {
+				t.Fatalf("seed cookie status: %v", err)
+			}
+			if tc.paused {
+				if err := h.settings.SetYoutubePaused(context.Background(), true, "test"); err != nil {
+					t.Fatalf("seed youtube_paused: %v", err)
+				}
+			}
+
+			sched := h.deletedSched()
+			for i := 0; i < consecutiveScans; i++ {
+				sched.scanChannel(context.Background(), sub)
+			}
+
+			if !h.isSubscribed("UC1") {
+				t.Fatalf("%s: interlock must prevent auto-unsubscribe", tc.name)
+			}
+			if n := h.deadScanCount("UC1"); n != 0 {
+				t.Fatalf("%s: dead_scan_count = %d, want 0 (must not even increment while interlocked)", tc.name, n)
+			}
+			if reason := h.autoUnsubscribeReason("UC1"); reason != "" {
+				t.Fatalf("%s: unexpected auto_unsubscribes row (reason %q)", tc.name, reason)
+			}
+		})
+	}
+}
+
+// TestScan_nonDeletedTerminalReasons_neverCount proves staleUnsubscribe
+// checks specifically for "deleted", not merely "is this terminal?". Each
+// reason is its own subtest: a single combined assertion would still pass
+// if the code gated on terminal-ness alone, which would wrongly unsubscribe
+// healthy channels whose latest video happens to be members-only/age-gated/
+// geo-blocked/private.
+func TestScan_nonDeletedTerminalReasons_neverCount(t *testing.T) {
+	reasons := []string{"private", "members", "age", "geo"}
+
+	for _, reason := range reasons {
+		t.Run(reason, func(t *testing.T) {
+			h := newScanHarness(t)
+			h.trackAndSubscribe("UC1", false, "")
+			h.markBaselined("UC1", nil)
+			// Cookie must be healthy here: the point of this test is that the
+			// reason check alone (not the interlock) keeps a non-deleted
+			// terminal error from counting. A default "absent" cookie would
+			// let a buggy "is this terminal?" implementation pass too, by
+			// returning at the interlock instead of the reason check.
+			if err := h.settings.SetCookie(context.Background(), "", "valid"); err != nil {
+				t.Fatalf("seed cookie status: %v", err)
+			}
+			sub, _ := h.channels.ClaimDue(h.nowStr())
+			if sub == nil {
+				t.Fatal("expected a due subscription")
+			}
+
+			sched := h.terminalSched(reason)
+			for i := 0; i < channels.DeadScanThreshold; i++ {
+				sched.scanChannel(context.Background(), sub)
+			}
+
+			if n := h.deadScanCount("UC1"); n != 0 {
+				t.Fatalf("reason %q: dead_scan_count = %d, want 0", reason, n)
+			}
+			if !h.isSubscribed("UC1") {
+				t.Fatalf("reason %q: channel must remain subscribed", reason)
+			}
+		})
+	}
+}
+
+// TestScan_nonConsecutiveDeleted_resetsAndDoesNotUnsubscribe proves the
+// counter really tracks CONSECUTIVE dead scans, not merely "at least N dead
+// scans out of the last M". The sequence deleted, deleted, members, deleted,
+// deleted has four "deleted" results total (more than DeadScanThreshold) but
+// never three IN A ROW: the "members" result in the middle is affirmative
+// evidence the channel was alive at that point, so it must reset the streak
+// and the channel must remain subscribed after all five scans.
+func TestScan_nonConsecutiveDeleted_resetsAndDoesNotUnsubscribe(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	if err := h.settings.SetCookie(context.Background(), "", "valid"); err != nil {
+		t.Fatalf("seed cookie status: %v", err)
+	}
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+
+	deleted := h.deletedSched()
+	members := h.terminalSched("members")
+
+	deleted.scanChannel(context.Background(), sub)
+	deleted.scanChannel(context.Background(), sub)
+	if n := h.deadScanCount("UC1"); n != 2 {
+		t.Fatalf("dead_scan_count after 2 deleted scans = %d, want 2", n)
+	}
+
+	members.scanChannel(context.Background(), sub)
+	if n := h.deadScanCount("UC1"); n != 0 {
+		t.Fatalf("dead_scan_count after an interleaved members-only scan = %d, want 0 (reset)", n)
+	}
+
+	deleted.scanChannel(context.Background(), sub)
+	deleted.scanChannel(context.Background(), sub)
+	if n := h.deadScanCount("UC1"); n != 2 {
+		t.Fatalf("dead_scan_count after reset + 2 more deleted scans = %d, want 2", n)
+	}
+
+	if !h.isSubscribed("UC1") {
+		t.Fatal("channel must still be subscribed: 4 total 'deleted' results never formed 3 CONSECUTIVE ones")
+	}
+	if reason := h.autoUnsubscribeReason("UC1"); reason != "" {
+		t.Fatalf("unexpected auto_unsubscribes row (reason %q)", reason)
+	}
+}

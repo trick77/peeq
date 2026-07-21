@@ -145,7 +145,8 @@ func TestChannels_trackSubscribeClaim(t *testing.T) {
 		t.Fatalf("new subscription must have NULL baselined_at, got %q", sub.BaselinedAt)
 	}
 	// Config update reflected in List.
-	if ok, err := st.UpdateConfig("UC1", true, "bestvideo+bestaudio"); err != nil || !ok {
+	adOn, format := true, "bestvideo+bestaudio"
+	if _, _, ok, err := st.UpdateConfig("UC1", &adOn, &format); err != nil || !ok {
 		t.Fatalf("update config: ok=%v err=%v", ok, err)
 	}
 	items, err := st.List("subscribed")
@@ -154,6 +155,56 @@ func TestChannels_trackSubscribeClaim(t *testing.T) {
 	}
 	if len(items) != 2 {
 		t.Fatalf("subscribed count = %d, want 2", len(items))
+	}
+}
+
+// TestChannels_updateConfigPartial_leavesOtherFieldUnchanged asserts a
+// partial UpdateConfig call (nil pointer for one field) leaves that column
+// exactly as it was, in both directions.
+func TestChannels_updateConfigPartial_leavesOtherFieldUnchanged(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	adOn, format := true, "bestvideo+bestaudio"
+	if _, _, ok, err := st.UpdateConfig("UC1", &adOn, &format); err != nil || !ok {
+		t.Fatalf("seed config: ok=%v err=%v", ok, err)
+	}
+
+	// Partial: only autodownload. format_override must survive.
+	adOff := false
+	gotAD, gotFormat, ok, err := st.UpdateConfig("UC1", &adOff, nil)
+	if err != nil || !ok {
+		t.Fatalf("update autodownload only: ok=%v err=%v", ok, err)
+	}
+	if gotAD != false || gotFormat != "bestvideo+bestaudio" {
+		t.Fatalf("got autodownload=%v format=%q, want false/bestvideo+bestaudio", gotAD, gotFormat)
+	}
+
+	// Partial: only format_override. autodownload must survive.
+	newFormat := "worst"
+	gotAD, gotFormat, ok, err = st.UpdateConfig("UC1", nil, &newFormat)
+	if err != nil || !ok {
+		t.Fatalf("update format only: ok=%v err=%v", ok, err)
+	}
+	if gotAD != false || gotFormat != "worst" {
+		t.Fatalf("got autodownload=%v format=%q, want false/worst", gotAD, gotFormat)
+	}
+}
+
+// TestChannels_updateConfig_notSubscribed reports ok=false, not an error,
+// when the channel has no subscription row (tracked-only or unknown).
+func TestChannels_updateConfig_notSubscribed(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	adOn := true
+	if _, _, ok, err := st.UpdateConfig("UC1", &adOn, nil); err != nil || ok {
+		t.Fatalf("tracked-only channel: ok=%v err=%v, want ok=false err=nil", ok, err)
 	}
 }
 
@@ -292,7 +343,8 @@ func TestChannels_listAutodownloadFilter(t *testing.T) {
 			t.Fatalf("subscribe %s: %v", id, err)
 		}
 	}
-	if _, err := st.UpdateConfig("UC3", true, ""); err != nil {
+	adOn, format := true, ""
+	if _, _, _, err := st.UpdateConfig("UC3", &adOn, &format); err != nil {
 		t.Fatalf("update config: %v", err)
 	}
 

@@ -1,5 +1,8 @@
 bin/
 node_modules/
+coverage/
+# tsc -b build-mode stamp file, written by the UI typecheck.
+ui/tsconfig.tsbuildinfo
 # Playwright run output from extension/e2e.
 test-results/
 playwright-report/

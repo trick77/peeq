@@ -1,0 +1,442 @@
+<title>peeq — auto-unsubscribe UI mockup</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --color-bg: #1f1f1e;
+    --color-panel: #1b1b1a;
+    --color-active: #2c2c2a;
+    --color-border: #323230;
+    --color-border-soft: #2a2a28;
+    --color-ink: #faf9f5;
+    --color-ink-dim: #e4e1d8;
+    --color-muted: #9c9a92;
+    --color-faint: #6f6d66;
+    --color-accent: #c6613f;
+    --color-accent-strong: #d97757;
+    --color-accent-fill: #c25f34;
+    --color-accent-dim: #5a3527;
+    --color-online: #5aa06a;
+    --color-danger: #c14638;
+    --color-kept: #d6a15a;
+    --color-elevated: #363632;
+    --color-elevated-border: #454540;
+    --font-sans: "Anthropic Sans", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-serif: "Anthropic Serif", Georgia, "Times New Roman", Times, serif;
+    --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, monospace;
+    --radius-ui: 10px;
+    --radius-ui-lg: 12px;
+    --shadow-panel: 0 24px 60px -18px rgba(0, 0, 0, 0.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(60rem 40rem at 78% -8%, rgba(198, 97, 63, 0.06), transparent 60%),
+      radial-gradient(46rem 34rem at 6% 4%, rgba(214, 161, 90, 0.03), transparent 62%),
+      var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: 58rem; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+
+  .doc-head { margin-bottom: 2rem; }
+  .doc-eyebrow {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--color-faint); font-weight: 600; margin: 0 0 0.6rem;
+  }
+  .doc-head h1 {
+    font-family: var(--font-serif); font-size: 1.9rem; font-weight: 500;
+    margin: 0 0 0.6rem; letter-spacing: -0.01em;
+  }
+  .doc-head p { margin: 0; color: var(--color-muted); max-width: 44rem; }
+
+  /* option switcher */
+  .switcher {
+    display: flex; gap: 8px; margin: 1.75rem 0 1.25rem; flex-wrap: wrap;
+    border-bottom: 1px solid var(--color-border-soft); padding-bottom: 1.25rem;
+  }
+  .switcher button {
+    font: inherit; font-size: 14px; cursor: pointer;
+    padding: 8px 16px; border-radius: 20px;
+    background: var(--color-panel); color: var(--color-muted);
+    border: 1px solid var(--color-border); transition: all .15s;
+  }
+  .switcher button:hover { color: var(--color-ink-dim); border-color: var(--color-elevated-border); }
+  .switcher button[aria-pressed="true"] {
+    background: var(--color-accent-dim); color: var(--color-ink);
+    border-color: var(--color-accent);
+  }
+  .switcher button:focus-visible { outline: 2px solid var(--color-accent-strong); outline-offset: 2px; }
+
+  .opt { display: none; }
+  .opt.on { display: block; }
+
+  /* ---- peeq surfaces ---- */
+  .sect {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-ui-lg);
+    padding: 16px 18px;
+  }
+
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 22px; }
+  .chip {
+    padding: 7px 14px; border-radius: 20px; font-size: 13.5px; cursor: pointer;
+    background: var(--color-panel); color: var(--color-muted);
+    border: 1px solid var(--color-border); font: inherit; font-size: 13.5px;
+    display: inline-flex; align-items: center; gap: 7px; transition: all .15s;
+  }
+  .chip:hover { color: var(--color-ink-dim); }
+  .chip[aria-pressed="true"] {
+    background: var(--color-active); color: var(--color-ink);
+    border-color: var(--color-elevated-border);
+  }
+  .chip:focus-visible { outline: 2px solid var(--color-accent-strong); outline-offset: 2px; }
+  .chip .count {
+    font-family: var(--font-mono); font-size: 11px; color: var(--color-faint);
+    background: var(--color-bg); border-radius: 9px; padding: 1px 6px;
+  }
+  .chip[aria-pressed="true"] .count { color: var(--color-ink-dim); }
+
+  .channel-list { display: flex; flex-direction: column; gap: 10px; }
+
+  .channel-row {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .channel-info { flex: 1; min-width: 13rem; }
+  .channel-info .nm { font-weight: 600; color: var(--color-ink); font-size: 15px; }
+  .by {
+    font-size: 12.5px; color: var(--color-muted);
+    display: flex; align-items: center; gap: 6px; margin-top: 2px; flex-wrap: wrap;
+  }
+  .by .dot { color: var(--color-faint); }
+
+  .life { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+  .life .led { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--color-online); box-shadow: 0 0 8px var(--color-online); }
+  .life.warn { color: var(--color-kept); }
+  .life.warn .led { background: var(--color-kept); box-shadow: 0 0 8px var(--color-kept); }
+  .life.tomb { color: var(--color-faint); }
+  .life.tomb .led { background: var(--color-faint); box-shadow: none; }
+
+  .metapill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px; border-radius: 12px; font-size: 11.5px;
+    background: var(--color-active); color: var(--color-muted);
+    border: 1px solid var(--color-border);
+  }
+  .metapill.warn { background: rgba(214,161,90,.12); color: var(--color-kept); border-color: rgba(214,161,90,.3); }
+  .metapill.dead { background: rgba(193,70,56,.12); color: var(--color-danger); border-color: rgba(193,70,56,.3); }
+
+  .channel-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ctrl { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--color-muted); }
+  .abtn {
+    font: inherit; font-size: 13px; cursor: pointer; padding: 6px 13px;
+    border-radius: 9px; background: var(--color-active); color: var(--color-ink-dim);
+    border: 1px solid var(--color-border); transition: all .15s;
+  }
+  .abtn:hover { background: var(--color-elevated); color: var(--color-ink); }
+  .abtn:focus-visible { outline: 2px solid var(--color-accent-strong); outline-offset: 2px; }
+  .abtn.danger:hover { border-color: var(--color-danger); color: var(--color-danger); }
+  .abtn.primary {
+    background: var(--color-accent-fill); color: #fff; border-color: var(--color-accent-fill);
+  }
+  .abtn.primary:hover { background: var(--color-accent-strong); }
+
+  /* review band */
+  .band {
+    border: 1px solid var(--color-border);
+    border-left: 3px solid var(--color-kept);
+    background: linear-gradient(90deg, rgba(214,161,90,.05), transparent 40%), var(--color-panel);
+    border-radius: var(--radius-ui-lg);
+    padding: 14px 18px; margin-bottom: 14px;
+  }
+  .band-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .band-head h3 { margin: 0; font-size: 14.5px; font-weight: 600; color: var(--color-ink); }
+  .band-head .why { font-size: 12.5px; color: var(--color-muted); }
+  .band-head .spacer { margin-left: auto; }
+  /* Rows sit flush inside the band rather than as cards-within-a-card: a
+     nested card would inset its buttons an extra 15px, breaking the shared
+     right edge that every action button on this page lines up on. */
+  .band .channel-list { margin-top: 6px; gap: 0; }
+  .band .channel-row {
+    background: transparent; border: none; border-radius: 0;
+    padding: 12px 0; border-top: 1px solid var(--color-border-soft);
+  }
+  .band .channel-row:first-child { border-top: none; }
+
+  details.tomb-sect { margin-top: 22px; }
+  details.tomb-sect > summary {
+    cursor: pointer; list-style: none; padding: 14px 18px;
+    border: 1px solid var(--color-border); border-radius: var(--radius-ui-lg);
+    background: var(--color-panel); color: var(--color-muted); font-size: 14px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  details.tomb-sect > summary::-webkit-details-marker { display: none; }
+  details.tomb-sect > summary:hover { color: var(--color-ink-dim); }
+  details.tomb-sect > summary:focus-visible { outline: 2px solid var(--color-accent-strong); outline-offset: 2px; }
+  details.tomb-sect[open] > summary { border-radius: var(--radius-ui-lg) var(--radius-ui-lg) 0 0; border-bottom-color: transparent; }
+  .tomb-body {
+    border: 1px solid var(--color-border); border-top: none;
+    border-radius: 0 0 var(--radius-ui-lg) var(--radius-ui-lg);
+    padding: 2px 18px 12px; display: flex; flex-direction: column; gap: 0;
+  }
+  /* Same flush treatment as the review band, for the same reason. */
+  .tomb-row {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 0; border-top: 1px solid var(--color-border-soft);
+  }
+  .tomb-row:first-child { border-top: none; }
+  .tomb-row .channel-info .nm { color: var(--color-ink-dim); }
+  .caret { transition: transform .15s; color: var(--color-faint); }
+  details[open] .caret { transform: rotate(90deg); }
+
+  .interlock {
+    display: flex; align-items: flex-start; gap: 10px;
+    border: 1px solid var(--color-border); border-left: 3px solid var(--color-danger);
+    background: var(--color-panel); border-radius: var(--radius-ui);
+    padding: 12px 15px; margin-bottom: 14px; font-size: 13.5px; color: var(--color-ink-dim);
+  }
+  .interlock .led { width: 7px; height: 7px; border-radius: 50%; background: var(--color-danger); box-shadow: 0 0 8px var(--color-danger); margin-top: 6px; flex: none; }
+
+  .notes {
+    margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px solid var(--color-border-soft);
+  }
+  .notes h2 { font-family: var(--font-serif); font-size: 1.15rem; font-weight: 500; margin: 0 0 .75rem; }
+  .notes ul { margin: 0; padding-left: 1.15rem; color: var(--color-muted); font-size: 14px; max-width: 44rem; }
+  .notes li { margin-bottom: .45rem; }
+  .notes li::marker { color: var(--color-faint); }
+  .notes strong { color: var(--color-ink-dim); }
+  code {
+    font-family: var(--font-mono); font-size: .85em; background: var(--color-active);
+    border: 1px solid var(--color-border); border-radius: 5px; padding: .1em .38em; color: var(--color-ink-dim);
+  }
+</style>
+
+<div class="page">
+
+  <div class="doc-head">
+    <p class="doc-eyebrow">peeq · UI mockup · auto-unsubscribe</p>
+    <h1>Stale channels, surfaced two ways</h1>
+    <p>Real peeq tokens and real component classes from <code>ui/src/index.css</code>. Dead
+      channels (<code>deleted</code> × 3 scans) unsubscribe themselves; dormant ones (no new video
+      in 6 months) are only ever flagged. Toggle to compare — everything below is clickable.</p>
+  </div>
+
+  <div class="switcher" role="group" aria-label="Layout option">
+    <button aria-pressed="true" data-opt="a">Option A — Review band on top</button>
+    <button aria-pressed="false" data-opt="b">Option B — Filter chips, inline</button>
+  </div>
+
+  <!-- ══════════════ OPTION A ══════════════ -->
+  <div class="opt on" id="opt-a">
+
+    <div class="band">
+      <div class="band-head">
+        <h3>2 channels need review</h3>
+        <span class="why">No new videos in over 6 months</span>
+        <span class="spacer"></span>
+        <button class="abtn">Dismiss all</button>
+      </div>
+      <div class="channel-list">
+        <div class="channel-row">
+          <div class="channel-info">
+            <div class="nm">Kurzgesagt – In a Nutshell</div>
+            <div class="by">
+              <span class="life warn"><span class="led"></span>Last video 8 months ago</span>
+              <span class="dot">·</span><span>142 archived</span>
+            </div>
+          </div>
+          <div class="channel-actions">
+            <button class="abtn">Keep subscribed</button>
+            <button class="abtn danger">Unsubscribe</button>
+          </div>
+        </div>
+        <div class="channel-row">
+          <div class="channel-info">
+            <div class="nm">Practical Engineering</div>
+            <div class="by">
+              <span class="life warn"><span class="led"></span>Last video 11 months ago</span>
+              <span class="dot">·</span><span>67 archived</span>
+            </div>
+          </div>
+          <div class="channel-actions">
+            <button class="abtn">Keep subscribed</button>
+            <button class="abtn danger">Unsubscribe</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="channel-list">
+      <div class="channel-row sect">
+        <div class="channel-info">
+          <div class="nm">Veritasium</div>
+          <div class="by"><span class="life"><span class="led"></span>Active</span>
+            <span class="dot">·</span><span>Scanned 2 h ago</span>
+            <span class="dot">·</span><span>318 archived</span></div>
+        </div>
+        <div class="channel-actions">
+          <label class="ctrl"><input type="checkbox" checked> Auto-download</label>
+          <button class="abtn danger">Unsubscribe</button>
+        </div>
+      </div>
+      <div class="channel-row sect">
+        <div class="channel-info">
+          <div class="nm">3Blue1Brown</div>
+          <div class="by"><span class="life"><span class="led"></span>Active</span>
+            <span class="dot">·</span><span>Scanned 5 h ago</span>
+            <span class="dot">·</span><span>96 archived</span></div>
+        </div>
+        <div class="channel-actions">
+          <label class="ctrl"><input type="checkbox"> Auto-download</label>
+          <button class="abtn danger">Unsubscribe</button>
+        </div>
+      </div>
+    </div>
+
+    <details class="tomb-sect">
+      <summary><span class="caret">▸</span> Auto-unsubscribed <span class="metapill dead">1</span></summary>
+      <div class="tomb-body">
+        <div class="tomb-row">
+          <div class="channel-info" style="flex:1">
+            <div class="nm">Tech Channel That Vanished</div>
+            <div class="by">
+              <span class="life tomb"><span class="led"></span>Channel deleted on YouTube</span>
+              <span class="dot">·</span><span>Unsubscribed 12 Jul 2026, after 3 failed scans</span>
+            </div>
+            <div class="by" style="color:var(--color-faint)">23 archived videos kept — nothing was deleted</div>
+          </div>
+          <button class="abtn primary">Re-subscribe</button>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <!-- ══════════════ OPTION B ══════════════ -->
+  <div class="opt" id="opt-b">
+    <div class="chips" role="group" aria-label="Filter channels">
+      <button class="chip" aria-pressed="true">All <span class="count">5</span></button>
+      <button class="chip" aria-pressed="false">Active <span class="count">2</span></button>
+      <button class="chip" aria-pressed="false">Needs review <span class="count">2</span></button>
+      <button class="chip" aria-pressed="false">Auto-unsubscribed <span class="count">1</span></button>
+    </div>
+
+    <div class="channel-list">
+      <div class="channel-row sect">
+        <div class="channel-info">
+          <div class="nm">Veritasium</div>
+          <div class="by"><span class="life"><span class="led"></span>Active</span>
+            <span class="dot">·</span><span>Scanned 2 h ago</span></div>
+        </div>
+        <div class="channel-actions">
+          <label class="ctrl"><input type="checkbox" checked> Auto-download</label>
+          <button class="abtn danger">Unsubscribe</button>
+        </div>
+      </div>
+
+      <div class="channel-row sect">
+        <div class="channel-info">
+          <div class="nm">Kurzgesagt – In a Nutshell</div>
+          <div class="by">
+            <span class="life warn"><span class="led"></span>Dormant</span>
+            <span class="dot">·</span><span>Last video 8 months ago</span>
+          </div>
+        </div>
+        <div class="channel-actions">
+          <span class="metapill warn">Needs review</span>
+          <button class="abtn">Keep</button>
+          <button class="abtn danger">Unsubscribe</button>
+        </div>
+      </div>
+
+      <div class="channel-row sect">
+        <div class="channel-info">
+          <div class="nm">3Blue1Brown</div>
+          <div class="by"><span class="life"><span class="led"></span>Active</span>
+            <span class="dot">·</span><span>Scanned 5 h ago</span></div>
+        </div>
+        <div class="channel-actions">
+          <label class="ctrl"><input type="checkbox"> Auto-download</label>
+          <button class="abtn danger">Unsubscribe</button>
+        </div>
+      </div>
+
+      <div class="channel-row sect">
+        <div class="channel-info">
+          <div class="nm">Practical Engineering</div>
+          <div class="by">
+            <span class="life warn"><span class="led"></span>Dormant</span>
+            <span class="dot">·</span><span>Last video 11 months ago</span>
+          </div>
+        </div>
+        <div class="channel-actions">
+          <span class="metapill warn">Needs review</span>
+          <button class="abtn">Keep</button>
+          <button class="abtn danger">Unsubscribe</button>
+        </div>
+      </div>
+
+      <div class="channel-row sect" style="opacity:.72">
+        <div class="channel-info">
+          <div class="nm">Tech Channel That Vanished</div>
+          <div class="by">
+            <span class="life tomb"><span class="led"></span>Channel deleted on YouTube</span>
+            <span class="dot">·</span><span>Auto-unsubscribed 12 Jul, 23 videos kept</span>
+          </div>
+        </div>
+        <div class="channel-actions">
+          <span class="metapill dead">Auto-unsubscribed</span>
+          <button class="abtn primary">Re-subscribe</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <h2>The safety interlock, when it fires</h2>
+    <div class="interlock">
+      <span class="led"></span>
+      <div><strong>Auto-unsubscribe paused.</strong> YouTube access is unhealthy
+        (cookie status: <code>stale</code>), so channel failures can't be trusted to mean a channel
+        is really gone. No channel will be unsubscribed until access is restored.</div>
+    </div>
+
+    <h2>What both options assume</h2>
+    <ul>
+      <li><strong>Dead ≠ dormant.</strong> Only <code>deleted</code>, seen on 3 consecutive scans,
+        auto-unsubscribes. <code>members</code>, <code>age</code> and <code>geo</code> describe
+        restricted <em>content</em> on a living channel and must never trigger it.</li>
+      <li><strong>Nothing is destroyed.</strong> <code>Unsubscribe</code> deletes only the
+        <code>subscriptions</code> row — the channel, its scan history and every archived video
+        survive, so re-subscribe genuinely restores it. Both mockups say so on the row, because an
+        automatic action you don't trust is worse than no automation.</li>
+      <li><strong>Dormant is never automatic.</strong> 6 months with no new discovery only ever
+        raises a flag.</li>
+      <li><strong>The interlock is load-bearing.</strong> If the cookie goes stale, every channel
+        could fail at once — without the interlock a single bad cookie could wipe the whole
+        subscription list.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  const sw = document.querySelector('.switcher');
+  sw.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-opt]');
+    if (!b) return;
+    sw.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    document.querySelectorAll('.opt').forEach(o => o.classList.remove('on'));
+    document.getElementById('opt-' + b.dataset.opt).classList.add('on');
+  });
+  document.querySelectorAll('.chip').forEach(c => {
+    c.addEventListener('click', () => {
+      c.closest('.chips').querySelectorAll('.chip').forEach(x => x.setAttribute('aria-pressed', String(x === c)));
+    });
+  });
+</script>

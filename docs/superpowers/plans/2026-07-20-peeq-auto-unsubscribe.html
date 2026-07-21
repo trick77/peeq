@@ -1,0 +1,587 @@
+<title>peeq — auto-unsubscribe (implementation plan)</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#1f1f1e; --panel:#1b1b1a; --active:#2c2c2a;
+    --border:#323230; --border-soft:#2a2a28;
+    --ink:#faf9f5; --ink-dim:#e4e1d8; --muted:#9c9a92; --faint:#6f6d66;
+    --accent:#c6613f; --accent-strong:#d97757;
+    --online:#5aa06a; --danger:#c14638; --kept:#d6a15a;
+    --radius:10px;
+    --sans:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:"Anthropic Serif",Georgia,"Times New Roman",Times,serif;
+    --mono:ui-monospace,"SF Mono","SFMono-Regular","JetBrains Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    background:
+      radial-gradient(60rem 40rem at 78% -8%,rgba(198,97,63,.06),transparent 60%),
+      radial-gradient(46rem 34rem at 6% 4%,rgba(214,161,90,.03),transparent 62%),
+      var(--bg);
+    color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:62rem;margin:0 auto;padding:3.5rem 1.5rem 6rem;display:flex;flex-direction:column;gap:2.5rem}
+  .eyebrow{font-size:.6875rem;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:600;margin:0 0 .75rem}
+  h1{font-family:var(--serif);font-size:clamp(1.7rem,4.2vw,2.4rem);line-height:1.15;font-weight:500;margin:0;letter-spacing:-.01em;text-wrap:balance}
+  .standfirst{color:var(--ink-dim);font-size:1.0625rem;margin:1rem 0 0;max-width:46rem}
+  .meta{display:flex;flex-wrap:wrap;gap:.5rem .75rem;margin-top:1.5rem;align-items:center}
+  .chip{display:inline-flex;align-items:center;gap:.4rem;font-size:.8125rem;font-family:var(--mono);color:var(--muted);background:var(--panel);border:1px solid var(--border);border-radius:999px;padding:.25rem .7rem}
+  .chip b{color:var(--ink-dim);font-weight:500}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--online);flex:none}
+  section{display:flex;flex-direction:column;gap:1rem}
+  h2{font-family:var(--serif);font-size:1.3rem;font-weight:500;margin:0;padding-bottom:.6rem;border-bottom:1px solid var(--border-soft);text-wrap:balance}
+  h3{font-size:.9375rem;font-weight:600;margin:.4rem 0 0;color:var(--ink-dim)}
+  p{margin:0;max-width:48rem;color:var(--ink-dim)}
+  a{color:var(--accent-strong);text-underline-offset:2px}
+  a:focus-visible{outline:2px solid var(--accent-strong);outline-offset:3px;border-radius:3px}
+  strong{color:var(--ink);font-weight:600}
+  code{font-family:var(--mono);font-size:.85em;background:var(--active);border:1px solid var(--border);border-radius:5px;padding:.1em .38em;color:var(--ink-dim)}
+  pre{background:#191918;border:1px solid var(--border);border-radius:var(--radius);overflow-x:auto;font-family:var(--mono);font-size:.8125rem;line-height:1.65;padding:1rem 1.15rem;color:var(--ink-dim);margin:0;tab-size:2}
+  pre .c{color:var(--faint)} pre .g{color:var(--online)} pre .r{color:var(--danger)} pre .k{color:var(--accent-strong)}
+  ul,ol{margin:0;padding-left:1.15rem;color:var(--ink-dim);max-width:48rem}
+  li{margin-bottom:.35rem} li::marker{color:var(--faint)}
+  .scroller{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)}
+  table{border-collapse:collapse;width:100%;font-size:.9375rem;min-width:34rem}
+  th,td{text-align:left;padding:.65rem .9rem;border-bottom:1px solid var(--border-soft);vertical-align:top}
+  th{background:var(--panel);font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:600;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+
+  .task{border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);overflow:hidden}
+  .task>header{display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap;padding:.9rem 1.15rem;background:rgba(198,97,63,.07);border-bottom:1px solid var(--border)}
+  .task>header .idx{font-family:var(--mono);font-size:.75rem;color:var(--accent-strong);border:1px solid var(--border);border-radius:5px;padding:.1rem .45rem;flex:none}
+  .task>header h3{margin:0;font-size:1rem;color:var(--ink)}
+  .task>header .who{margin-left:auto;font-family:var(--mono);font-size:.75rem;color:var(--faint)}
+  .task .body{padding:1.15rem;display:flex;flex-direction:column;gap:.9rem}
+  .files{display:flex;flex-direction:column;gap:.3rem;font-family:var(--mono);font-size:.8125rem}
+  .files .k{color:var(--faint);display:inline-block;min-width:4.5rem}
+  .files .create{color:var(--online)} .files .modify{color:var(--kept)}
+  .step{display:flex;gap:.6rem;align-items:flex-start}
+  .step input[type=checkbox]{margin:.35rem 0 0;accent-color:var(--accent);width:1rem;height:1rem;flex:none}
+  .step input[type=checkbox]:focus-visible{outline:2px solid var(--accent-strong);outline-offset:2px}
+  .step .sbody{display:flex;flex-direction:column;gap:.5rem;flex:1;min-width:0}
+  .step .slabel{font-weight:600;color:var(--ink);font-size:.9375rem}
+  .note{border:1px solid var(--border);border-left:3px solid var(--accent);background:var(--panel);border-radius:var(--radius);padding:.9rem 1.15rem;display:flex;flex-direction:column;gap:.5rem}
+  .note.risk{border-left-color:var(--danger)}
+  .note.key{border-left-color:var(--kept)}
+  .note p{max-width:none} .note h3{margin-top:0}
+  footer{border-top:1px solid var(--border-soft);padding-top:1.25rem;color:var(--faint);font-size:.8125rem}
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">peeq · implementation plan · 2026-07-20</p>
+  <h1>Auto-unsubscribe stale channels</h1>
+  <p class="standfirst">
+    Dead channels (<code>deleted</code> × 3 consecutive scans) unsubscribe themselves; dormant ones
+    (no new video in 6 months) are only flagged. A health interlock stops a bad cookie from
+    emptying the subscription list.
+  </p>
+  <div class="meta">
+    <span class="chip"><span class="dot"></span>branch <b>feat/auto-unsubscribe</b></span>
+    <span class="chip">5 tasks</span>
+    <span class="chip">TDD</span>
+    <span class="chip"><a href="https://claude.ai/code/artifact/37eeb02b-4b41-4669-a1e1-28384210c198">spec</a></span>
+    <span class="chip"><a href="https://claude.ai/code/artifact/92e37936-f267-4478-b643-a4f4438eafe7">mockup</a></span>
+  </div>
+</header>
+
+<div class="note">
+  <p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL — use
+    <code>superpowers:subagent-driven-development</code> (recommended) or
+    <code>superpowers:executing-plans</code>. Each task ends with an independently testable
+    deliverable and a commit.</p>
+</div>
+
+<section>
+  <h2>Goal, architecture, stack</h2>
+  <p><strong>Goal:</strong> peeq stops scanning channels that no longer exist, and surfaces
+    channels that have gone quiet — without ever destroying archived media or acting on an
+    untrustworthy signal.</p>
+  <p><strong>Architecture:</strong> The decision rules live in <code>channels.Store</code> as
+    plain data operations, unit-testable without running a scan. The scheduler only
+    <em>feeds</em> them: increment on a <code>deleted</code> terminal error, reset on any clean
+    scan. The HTTP layer exposes the review list and two actions; the UI renders the approved
+    Option A layout.</p>
+  <p><strong>Stack:</strong> Go 1.26 (<code>CGO_ENABLED=0</code>), SQLite via
+    <code>ncruces/go-sqlite3</code>, append-only SQL migrations, React + TypeScript + Vitest.</p>
+</section>
+
+<section>
+  <h2>Global constraints</h2>
+  <ul>
+    <li>Env prefix <code>BACKEND_</code>, never <code>PEEQ_</code>. This slice adds <strong>no new
+      env var</strong> and <strong>no new config</strong> — thresholds are Go constants.</li>
+    <li><code>CGO_ENABLED=0</code>; English comments; conventional commits.</li>
+    <li>Migrations are <strong>append-only</strong>. Create <code>0002_auto_unsubscribe.sql</code>;
+      never edit <code>0001_init.sql</code>.</li>
+    <li>Tests use fakes only — never a real LLM, embeddings endpoint, real yt-dlp, or network.</li>
+    <li><strong>Fakes must emit what the real thing emits.</strong></li>
+    <li>Cookie invariant, 20 s throttle floor, kill-switch and <code>SafeMediaPath</code> untouched.
+      Exactly one route bypasses OIDC (<code>PUT /api/machine/cookie</code>) — unchanged; every new
+      route is behind <code>requireAuth</code>.</li>
+    <li><strong>Unsubscribing must never delete media.</strong> <code>Unsubscribe</code> touches
+      only the <code>subscriptions</code> row.</li>
+    <li>CI green: Backend (build + vet + <code>go test -race</code>), UI, Extension (test),
+      Extension (browser).</li>
+  </ul>
+</section>
+
+<section>
+  <h2>File structure</h2>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>File</th><th>Change</th><th>Responsibility</th></tr></thead>
+      <tbody>
+        <tr><td><code>backend/internal/store/migrations/0002_auto_unsubscribe.sql</code></td><td>create</td><td>Two columns + the <code>auto_unsubscribes</code> table.</td></tr>
+        <tr><td><code>backend/internal/channels/staleness.go</code></td><td>create</td><td>All staleness rules: counter, dormancy, dismissal, the auto-unsubscribe record. Kept out of <code>store.go</code> (already 360 lines) so the rules read as one unit.</td></tr>
+        <tr><td><code>backend/internal/channels/staleness_test.go</code></td><td>create</td><td>Tests for the above against a real migrated SQLite store.</td></tr>
+        <tr><td><code>backend/internal/scan/scheduler.go</code></td><td>modify</td><td>Feed the signal; consult the interlock.</td></tr>
+        <tr><td><code>backend/internal/httpapi/channels_handlers.go</code></td><td>modify</td><td>Dormancy fields on the list payload; dismiss + re-subscribe; auto-unsubscribed list.</td></tr>
+        <tr><td><code>ui/src/api/channels.ts</code>, <code>types.ts</code></td><td>modify</td><td>New fields and calls.</td></tr>
+        <tr><td><code>ui/src/views/Channels.tsx</code>, <code>index.css</code></td><td>modify</td><td>Review band + auto-unsubscribed section.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- TASK 1 -->
+<article class="task">
+  <header><span class="idx">Task 1</span><h3>Migration + the dead-channel counter</h3><span class="who">sonnet</span></header>
+  <div class="body">
+    <div class="files">
+      <div><span class="k">Create</span><span class="create">backend/internal/store/migrations/0002_auto_unsubscribe.sql</span></div>
+      <div><span class="k">Create</span><span class="create">backend/internal/channels/staleness.go</span></div>
+      <div><span class="k">Test</span><span class="create">backend/internal/channels/staleness_test.go</span></div>
+    </div>
+
+    <p><strong>Produces:</strong> <code>const DeadScanThreshold = 3</code>;
+      <code>func (s *Store) RecordDeadScan(channelID string) (int, error)</code> (increments, returns
+      the new count); <code>func (s *Store) ResetDeadScan(channelID string) error</code>;
+      <code>func (s *Store) AutoUnsubscribe(channelID, reason, at string) error</code>;
+      <code>type AutoUnsubscribed struct { Channel; Reason, At string }</code>;
+      <code>func (s *Store) AutoUnsubscribedList() ([]AutoUnsubscribed, error)</code>;
+      <code>func (s *Store) ClearAutoUnsubscribe(channelID string) error</code>.</p>
+    <p><strong>Consumes:</strong> nothing. Read <code>backend/internal/channels/store.go</code> and
+      <code>store_test.go</code> first — match their error-wrapping idiom
+      (<code>fmt.Errorf("verb %s: %w", id, err)</code>) and their test setup helper for a real
+      migrated store.</p>
+
+    <div class="note key">
+      <h3>AutoUnsubscribe must be atomic</h3>
+      <p>It deletes the <code>subscriptions</code> row <em>and</em> inserts the
+        <code>auto_unsubscribes</code> record. Do both in one transaction: a crash between them
+        would leave a channel silently unsubscribed with no visible record — precisely the
+        invisible-automation failure this feature exists to avoid.</p>
+    </div>
+
+    <div class="step"><input type="checkbox" id="t1s1"><div class="sbody">
+      <label class="slabel" for="t1s1">Step 1 — Write the migration</label>
+      <pre><span class="c">-- 0002_auto_unsubscribe.sql — staleness tracking for subscriptions.</span>
+
+<span class="c">-- Consecutive scans that returned a terminal "deleted" for this channel.</span>
+<span class="c">-- ANY clean scan resets this to 0, so only a sustained run ever acts.</span>
+ALTER TABLE subscriptions ADD COLUMN dead_scan_count INTEGER NOT NULL DEFAULT 0;
+
+<span class="c">-- When the user dismissed a dormancy flag. The flag re-arms only if a video</span>
+<span class="c">-- is discovered AFTER this instant and the channel then goes quiet again.</span>
+ALTER TABLE subscriptions ADD COLUMN dormant_dismissed_at TEXT;
+
+<span class="c">-- The visible record of what peeq unsubscribed on its own. Outlives the</span>
+<span class="c">-- subscriptions row it replaces. The single-value CHECK is deliberate: a</span>
+<span class="c">-- future reason must widen it consciously, so the Go constant and the SQL</span>
+<span class="c">-- enum cannot drift apart silently.</span>
+CREATE TABLE auto_unsubscribes (
+    channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
+    reason     TEXT NOT NULL CHECK (reason IN ('deleted')),
+    at         TEXT NOT NULL DEFAULT (datetime('now'))
+);</pre>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t1s2"><div class="sbody">
+      <label class="slabel" for="t1s2">Step 2 — Write the failing tests</label>
+      <p>In <code>staleness_test.go</code>, using the same store-construction helper the existing
+        <code>store_test.go</code> uses (find it and reuse it; do not invent a second one):</p>
+      <pre>func TestRecordDeadScan_incrementsAndReturnsCount(t *testing.T)
+    <span class="c">// subscribe a channel; RecordDeadScan three times; expect 1, 2, 3.</span>
+
+func TestResetDeadScan_zeroesPartialCount(t *testing.T)
+    <span class="c">// RecordDeadScan twice, ResetDeadScan, RecordDeadScan once → expect 1, not 3.</span>
+    <span class="c">// This is the test that proves a recovering channel cannot creep to the</span>
+    <span class="c">// threshold across unrelated failures.</span>
+
+func TestAutoUnsubscribe_removesSubscriptionAndRecordsReason(t *testing.T)
+    <span class="c">// after the call: List() shows subscribed=false, AutoUnsubscribedList()</span>
+    <span class="c">// has one entry with reason "deleted" and the given timestamp.</span>
+
+func TestAutoUnsubscribe_keepsChannelAndVideos(t *testing.T)
+    <span class="c">// insert a channels row + a channel_videos row + a downloaded videos row,</span>
+    <span class="c">// auto-unsubscribe, then assert ALL THREE still exist. This is the</span>
+    <span class="c">// "nothing is destroyed" promise the UI makes to the user — assert it,</span>
+    <span class="c">// do not assume the FK cascade behaves.</span>
+
+func TestClearAutoUnsubscribe_allowsResubscribe(t *testing.T)
+    <span class="c">// ClearAutoUnsubscribe then Subscribe → subscribed=true and the</span>
+    <span class="c">// auto-unsubscribed list is empty.</span>
+
+func TestAutoUnsubscribeReasons_allAcceptedByDBCheck(t *testing.T)
+    <span class="c">// insert every member of the Go reason enum through the real migrated</span>
+    <span class="c">// store. Locks the Go constant to the SQL CHECK — the availability bug.</span></pre>
+      <p>Write these as real test bodies with real assertions, not as the comments above.</p>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t1s3"><div class="sbody">
+      <label class="slabel" for="t1s3">Step 3 — Run them, confirm they fail</label>
+      <pre>cd backend &amp;&amp; go test ./internal/channels/ -run 'DeadScan|AutoUnsubscribe' -v</pre>
+      <p>Expected: compile failure on the undefined methods. Observe it before implementing.</p>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t1s4"><div class="sbody">
+      <label class="slabel" for="t1s4">Step 4 — Implement <code>staleness.go</code></label>
+      <p>Key shapes (fill in the bodies following <code>store.go</code>'s idiom):</p>
+      <pre><span class="c">// DeadScanThreshold is how many CONSECUTIVE scans must report the channel</span>
+<span class="c">// deleted before peeq unsubscribes itself. Deliberately &gt; 1: yt-dlp derives</span>
+<span class="c">// the reason from substring-matching stderr, which is too thin a thread to</span>
+<span class="c">// hang an automatic action on.</span>
+const DeadScanThreshold = 3
+
+<span class="c">// ReasonDeleted is the ONLY reason peeq auto-unsubscribes. members/age/geo</span>
+<span class="c">// describe restricted content on a living channel; private can revert.</span>
+const ReasonDeleted = "deleted"
+
+func (s *Store) AutoUnsubscribe(channelID, reason, at string) error {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	<span class="c">// ... DELETE FROM subscriptions; INSERT INTO auto_unsubscribes; commit.</span>
+	<span class="c">// Both statements or neither — a partial apply would unsubscribe with</span>
+	<span class="c">// no visible record.</span>
+}</pre>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t1s5"><div class="sbody">
+      <label class="slabel" for="t1s5">Step 5 — Green, then commit</label>
+      <pre>cd backend &amp;&amp; go test -race ./internal/channels/ ./internal/store/ -v
+cd backend &amp;&amp; go build ./... &amp;&amp; go vet ./...</pre>
+      <pre>git add backend/internal/store/migrations/0002_auto_unsubscribe.sql backend/internal/channels/
+git commit -m "feat(channels): track dead-scan counts and record auto-unsubscribes"</pre>
+    </div></div>
+  </div>
+</article>
+
+<!-- TASK 2 -->
+<article class="task">
+  <header><span class="idx">Task 2</span><h3>Dormancy detection and dismissal</h3><span class="who">sonnet</span></header>
+  <div class="body">
+    <div class="files">
+      <div><span class="k">Modify</span><span class="modify">backend/internal/channels/staleness.go</span></div>
+      <div><span class="k">Modify</span><span class="modify">backend/internal/channels/staleness_test.go</span></div>
+    </div>
+
+    <p><strong>Consumes:</strong> the file created in Task 1.
+      <strong>Produces:</strong> <code>const DormantAfter = "-6 months"</code>;
+      <code>type Dormant struct { ChannelID, Name, LastVideoAt string }</code>;
+      <code>func (s *Store) DormantChannels(now string) ([]Dormant, error)</code>;
+      <code>func (s *Store) DismissDormant(channelID, at string) error</code>.</p>
+
+    <div class="note key">
+      <h3>Three boundaries that must each have their own test</h3>
+      <p>A channel with <strong>no discovered videos at all</strong> must never be flagged — absent
+        data is not evidence of dormancy, and a brand-new subscription would otherwise be flagged
+        the moment it is created. Dismissal must <strong>suppress</strong>. A discovery
+        <strong>after</strong> a dismissal must <strong>re-arm</strong> it.</p>
+    </div>
+
+    <div class="step"><input type="checkbox" id="t2s1"><div class="sbody">
+      <label class="slabel" for="t2s1">Step 1 — Write the failing tests</label>
+      <pre>func TestDormantChannels_flagsChannelQuietLongerThanThreshold(t *testing.T)
+    <span class="c">// channel_videos.discovered_at = 7 months ago → flagged, LastVideoAt set.</span>
+
+func TestDormantChannels_ignoresChannelJustInsideThreshold(t *testing.T)
+    <span class="c">// discovered_at = 5 months ago → NOT flagged. Pair with the test above so</span>
+    <span class="c">// an implementation with an inverted comparison cannot pass both.</span>
+
+func TestDormantChannels_neverFlagsChannelWithNoVideos(t *testing.T)
+    <span class="c">// subscribed channel, zero channel_videos rows → NOT flagged.</span>
+
+func TestDormantChannels_ignoresUnsubscribedChannels(t *testing.T)
+    <span class="c">// tracked but not subscribed, old videos → NOT flagged.</span>
+
+func TestDismissDormant_suppressesTheFlag(t *testing.T)
+
+func TestDismissDormant_reArmsAfterNewerDiscovery(t *testing.T)
+    <span class="c">// dismiss, then insert a channel_videos row with discovered_at AFTER the</span>
+    <span class="c">// dismissal but still older than the threshold → flagged again.</span></pre>
+      <p>Insert rows with explicit <code>discovered_at</code> values computed via SQLite's
+        <code>datetime('now','-7 months')</code> so the tests do not depend on the host clock
+        drifting mid-run.</p>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t2s2"><div class="sbody">
+      <label class="slabel" for="t2s2">Step 2 — Run, confirm failure</label>
+      <pre>cd backend &amp;&amp; go test ./internal/channels/ -run Dormant -v</pre>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t2s3"><div class="sbody">
+      <label class="slabel" for="t2s3">Step 3 — Implement the query</label>
+      <pre>SELECT s.channel_id, c.name, MAX(cv.discovered_at) AS last_seen
+FROM subscriptions s
+JOIN channels c ON c.id = s.channel_id
+LEFT JOIN channel_videos cv ON cv.channel_id = s.channel_id
+GROUP BY s.channel_id
+HAVING last_seen IS NOT NULL                       <span class="c">-- never flag on absent data</span>
+   AND last_seen &lt; datetime(?, '-6 months')
+   AND (s.dormant_dismissed_at IS NULL OR last_seen &gt; s.dormant_dismissed_at)
+ORDER BY last_seen</pre>
+      <p>Pass <code>now</code> as the bound parameter so tests control the clock.</p>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t2s4"><div class="sbody">
+      <label class="slabel" for="t2s4">Step 4 — Green, then commit</label>
+      <pre>cd backend &amp;&amp; go test -race ./internal/channels/ -v
+git add backend/internal/channels/
+git commit -m "feat(channels): detect dormant subscriptions and support dismissal"</pre>
+    </div></div>
+  </div>
+</article>
+
+<!-- TASK 3 -->
+<article class="task">
+  <header><span class="idx">Task 3</span><h3>Wire the scheduler — and the interlock</h3><span class="who">sonnet</span></header>
+  <div class="body">
+    <div class="files">
+      <div><span class="k">Modify</span><span class="modify">backend/internal/scan/scheduler.go</span></div>
+      <div><span class="k">Modify</span><span class="modify">backend/internal/scan/scheduler_test.go</span></div>
+    </div>
+
+    <p><strong>Consumes:</strong> <code>RecordDeadScan</code>, <code>ResetDeadScan</code>,
+      <code>AutoUnsubscribe</code>, <code>DeadScanThreshold</code>, <code>ReasonDeleted</code> from
+      Task 1; <code>Settings.CookieStatus(ctx) string</code> and
+      <code>Settings.YoutubePaused(ctx) (bool, string)</code> which the scheduler already holds.</p>
+
+    <div class="note risk">
+      <h3>This task contains the single most important test in the slice</h3>
+      <p>The interlock. If <code>cookie_status</code> is <code>blocked</code>/<code>stale</code>/
+        <code>absent</code>, or YouTube is paused, a channel at the threshold must
+        <strong>not</strong> be unsubscribed, and the counter must <strong>not</strong> be
+        incremented. A dead cookie can make every channel fail at once; without this, one bad
+        cookie empties the entire subscription list. Write this test first.</p>
+    </div>
+
+    <div class="step"><input type="checkbox" id="t3s1"><div class="sbody">
+      <label class="slabel" for="t3s1">Step 1 — Write the failing tests</label>
+      <pre>func TestScan_deletedThreeTimes_autoUnsubscribes(t *testing.T)
+    <span class="c">// fake scanner returns &amp;ytdlp.TerminalError{Reason:"deleted"} every time.</span>
+    <span class="c">// After 3 scan cycles: subscription gone, auto_unsubscribes row present.</span>
+
+func TestScan_deletedTwice_thenCleanScan_doesNotUnsubscribe(t *testing.T)
+    <span class="c">// 2 deleted, then a successful scan, then 2 more deleted → still subscribed.</span>
+
+func TestScan_interlockEngaged_neverUnsubscribes(t *testing.T)
+    <span class="c">// Table-driven over: cookie "blocked", "stale", "absent", and</span>
+    <span class="c">// youtube_paused=true. In EVERY case, 5 consecutive deleted scans leave</span>
+    <span class="c">// the subscription intact and dead_scan_count at 0.</span>
+
+func TestScan_nonDeletedTerminalReasons_neverCount(t *testing.T)
+    <span class="c">// ONE CASE PER REASON: "private", "members", "age", "geo". Separate cases,</span>
+    <span class="c">// not one shared assertion — a single combined case would still pass if the</span>
+    <span class="c">// code checked "is terminal" instead of "is deleted", which would</span>
+    <span class="c">// unsubscribe healthy channels whose latest video is members-only.</span></pre>
+      <p>Reuse the existing scheduler test's fake channel-scanner seam; read
+        <code>scheduler_test.go</code> first. The fake must return real
+        <code>*ytdlp.TerminalError</code> values, not sentinel strings.</p>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t3s2"><div class="sbody">
+      <label class="slabel" for="t3s2">Step 2 — Run, confirm failure</label>
+      <pre>cd backend &amp;&amp; go test ./internal/scan/ -run 'Unsubscribe|interlock|Terminal' -v</pre>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t3s3"><div class="sbody">
+      <label class="slabel" for="t3s3">Step 3 — Implement</label>
+      <p>In <code>scanChannel</code>'s error switch, extend the existing
+        <code>case errors.As(err, &amp;terminal):</code> branch (around line 209 — verify) and add a
+        reset on the success path:</p>
+      <pre><span class="c">// staleUnsubscribe applies the dead-channel rule. It is deliberately inert</span>
+<span class="c">// while YouTube access is unhealthy: a stale cookie can make EVERY channel</span>
+<span class="c">// fail at once, and acting on that would empty the subscription list. The</span>
+<span class="c">// counter is not even incremented, so an outage cannot accumulate toward</span>
+<span class="c">// the threshold.</span>
+func (s *Scheduler) staleUnsubscribe(ctx context.Context, channelID string, reason string) {
+	if reason != channels.ReasonDeleted {
+		return
+	}
+	if paused, _ := s.d.Settings.YoutubePaused(ctx); paused {
+		return
+	}
+	switch s.d.Settings.CookieStatus(ctx) {
+	case "blocked", "stale", "absent":
+		return
+	}
+	n, err := s.d.Channels.RecordDeadScan(channelID)
+	<span class="c">// ... on err: log and return.</span>
+	if n &lt; channels.DeadScanThreshold {
+		return
+	}
+	<span class="c">// ... AutoUnsubscribe(channelID, channels.ReasonDeleted, now); log at Info —</span>
+	<span class="c">// an automatic action must always leave a trace.</span>
+}</pre>
+      <p>Call <code>ResetDeadScan</code> wherever a scan completes cleanly (alongside the existing
+        <code>MarkScanned</code> call). Verify the exact success path before editing.</p>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t3s4"><div class="sbody">
+      <label class="slabel" for="t3s4">Step 4 — Green, then commit</label>
+      <pre>cd backend &amp;&amp; go test -race ./internal/scan/ ./internal/channels/ -v
+cd backend &amp;&amp; go build ./... &amp;&amp; go vet ./...
+git add backend/internal/scan/
+git commit -m "feat(scan): auto-unsubscribe deleted channels behind a health interlock"</pre>
+    </div></div>
+  </div>
+</article>
+
+<!-- TASK 4 -->
+<article class="task">
+  <header><span class="idx">Task 4</span><h3>HTTP API</h3><span class="who">sonnet</span></header>
+  <div class="body">
+    <div class="files">
+      <div><span class="k">Modify</span><span class="modify">backend/internal/httpapi/channels_handlers.go</span></div>
+      <div><span class="k">Modify</span><span class="modify">backend/internal/httpapi/server.go</span></div>
+      <div><span class="k">Modify</span><span class="modify">backend/internal/channels/store.go</span> (List query only)</div>
+      <div><span class="k">Test</span><span class="modify">backend/internal/httpapi/channels_handlers_test.go</span></div>
+    </div>
+
+    <p><strong>Produces:</strong> <code>dormant</code> (bool) and <code>last_video_at</code>
+      (string, omitempty) on each channel in <code>GET /api/channels</code>;
+      <code>GET /api/channels/auto-unsubscribed</code>;
+      <code>POST /api/channels/{id}/dismiss-dormant</code>;
+      <code>POST /api/channels/{id}/resubscribe</code>.</p>
+
+    <div class="note">
+      <p><strong>Every new route goes behind <code>s.requireAuth(...)</code></strong>, exactly like
+        the existing channels routes at <code>server.go:224-229</code>. The OIDC-bypass surface
+        must remain exactly one route: <code>PUT /api/machine/cookie</code>. Add a test asserting
+        each new route returns 401 unauthenticated.</p>
+    </div>
+
+    <div class="step"><input type="checkbox" id="t4s1"><div class="sbody">
+      <label class="slabel" for="t4s1">Step 1 — Write the failing tests</label>
+      <pre>func TestChannelsList_includesDormantFields(t *testing.T)
+func TestAutoUnsubscribedList_returnsRecordedChannels(t *testing.T)
+func TestDismissDormant_removesChannelFromDormantSet(t *testing.T)
+func TestResubscribe_restoresSubscriptionAndClearsRecord(t *testing.T)
+func TestStalenessRoutes_requireAuth(t *testing.T)
+    <span class="c">// table over all three new routes → 401 without a session.</span></pre>
+      <p>Follow the existing handler tests' construction of the test server; do not invent a new
+        harness.</p>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t4s2"><div class="sbody">
+      <label class="slabel" for="t4s2">Step 2 — Run, confirm failure; Step 3 — implement</label>
+      <pre>cd backend &amp;&amp; go test ./internal/httpapi/ -run 'Dormant|AutoUnsub|Resubscribe|Staleness' -v</pre>
+      <p><code>resubscribe</code> must call <code>ClearAutoUnsubscribe</code> <em>and</em>
+        <code>Subscribe</code> with <code>next_scan_at = now</code>, so the restored channel is
+        picked up on the next tick rather than waiting a full interval.</p>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t4s3"><div class="sbody">
+      <label class="slabel" for="t4s3">Step 4 — Green, then commit</label>
+      <pre>cd backend &amp;&amp; go test -race ./... &amp;&amp; go build ./... &amp;&amp; go vet ./...
+git add backend/internal/httpapi/ backend/internal/channels/
+git commit -m "feat(api): expose dormant channels, auto-unsubscribes, dismiss and resubscribe"</pre>
+    </div></div>
+  </div>
+</article>
+
+<!-- TASK 5 -->
+<article class="task">
+  <header><span class="idx">Task 5</span><h3>UI — review band and auto-unsubscribed section</h3><span class="who">sonnet</span></header>
+  <div class="body">
+    <div class="files">
+      <div><span class="k">Modify</span><span class="modify">ui/src/api/types.ts</span>, <span class="modify">ui/src/api/channels.ts</span></div>
+      <div><span class="k">Modify</span><span class="modify">ui/src/views/Channels.tsx</span></div>
+      <div><span class="k">Modify</span><span class="modify">ui/src/index.css</span></div>
+      <div><span class="k">Test</span><span class="modify">ui/src/views/Channels.test.tsx</span></div>
+    </div>
+
+    <p><strong>Reference the approved mockup</strong>
+      (<a href="https://claude.ai/code/artifact/92e37936-f267-4478-b643-a4f4438eafe7">Option A</a>)
+      for exact structure, class names and copy. It already uses peeq's real tokens and real class
+      names — port them, do not redesign.</p>
+
+    <div class="note key">
+      <h3>Two details from the mockup that are requirements, not decoration</h3>
+      <ul>
+        <li>The band sits <strong>below the add-channel form</strong>, so the page's primary action
+          never moves when channels need review.</li>
+        <li>Rows inside the band and the auto-unsubscribed section are <strong>flush</strong>
+          (hairline separators), NOT nested cards. A nested card insets its buttons an extra 15 px
+          and breaks the shared right edge every action button on the page aligns on.</li>
+        <li>Every auto-unsubscribed row states that archived videos were kept. That sentence is
+          what makes an automatic action trustworthy.</li>
+      </ul>
+    </div>
+
+    <div class="step"><input type="checkbox" id="t5s1"><div class="sbody">
+      <label class="slabel" for="t5s1">Step 1 — Write the failing tests</label>
+      <pre>it("shows the review band with a count when channels are dormant")
+it("hides the band entirely when nothing is dormant")
+it("dismissing a dormant channel removes it from the band")
+it("lists auto-unsubscribed channels with the reason and a re-subscribe button")
+it("re-subscribing moves the channel back into the main list")
+it("states that archived videos are kept on an auto-unsubscribed row")</pre>
+      <p>Mock the API module as the existing <code>Channels.test.tsx</code> does.</p>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t5s2"><div class="sbody">
+      <label class="slabel" for="t5s2">Step 2 — Run, confirm failure; Step 3 — implement</label>
+      <pre>cd ui &amp;&amp; npm test -- Channels</pre>
+    </div></div>
+
+    <div class="step"><input type="checkbox" id="t5s3"><div class="sbody">
+      <label class="slabel" for="t5s3">Step 4 — Full CI parity, then commit</label>
+      <pre>cd ui &amp;&amp; npm run build &amp;&amp; npm test
+cd backend &amp;&amp; go test -race ./...
+git add ui/
+git commit -m "feat(ui): review band for dormant channels and auto-unsubscribed section"</pre>
+      <p>Note: <code>npm run build</code> writes <code>backend/web/dist</code>, which dirties the
+        tracked <code>index.html</code> stub. That is known and deliberate — <strong>do not commit
+        it and do not "fix" it.</strong></p>
+    </div></div>
+  </div>
+</article>
+
+<section>
+  <h2>Definition of done</h2>
+  <ul>
+    <li>Backend 26+ packages <code>-race</code> green; UI green; extension unchanged and green.</li>
+    <li>A channel reporting <code>deleted</code> on 3 consecutive scans is unsubscribed, recorded,
+      and its archived videos still exist.</li>
+    <li>The same channel is <strong>not</strong> unsubscribed while the cookie is unhealthy or
+      YouTube is paused.</li>
+    <li>No non-<code>deleted</code> terminal reason ever increments the counter.</li>
+    <li>Dormant channels appear in the band; dismissal suppresses; a later discovery re-arms.</li>
+    <li>Re-subscribe restores the subscription and clears the record.</li>
+    <li>No new env var; every new route behind <code>requireAuth</code>; OIDC bypass still exactly
+      one route.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Review &amp; follow-ups</h2>
+  <p>Validate every returning subagent result with a reviewer on the <strong>Fable</strong> model;
+    fix Critical/Important before closing each task; record minors in
+    <code>.superpowers/sdd/progress.md</code>. Close with a holistic whole-branch Fable review on
+    the most capable model, then <code>superpowers:finishing-a-development-branch</code>.</p>
+  <h3>Out of scope</h3>
+  <ul>
+    <li>“Unwanted” channels (subscribed and uploading, but nothing ever downloaded).</li>
+    <li>Auto-unsubscribing on <code>private</code>; configurable thresholds; bulk actions.</li>
+    <li>Carried Phase 4 minors; the <code>jsruntime</code> banner-line test gap.</li>
+  </ul>
+</section>
+
+<footer>
+  peeq · implementation plan · branch <code>feat/auto-unsubscribe</code> ·
+  spec <code>docs/superpowers/specs/2026-07-20-peeq-auto-unsubscribe-design.html</code>
+</footer>
+</div>

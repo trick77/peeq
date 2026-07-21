@@ -40,8 +40,12 @@ export async function streamSSE(
       buffer += decoder.decode(value, { stream: true });
       buffer = drainBuffer(buffer, onEvent);
     }
-    buffer += decoder.decode();
-    drainBuffer(buffer, onEvent);
+    // Nothing to drain after the loop. drainBuffer only dispatches on a `\n\n`
+    // terminator and has already consumed every one of them, and the decoder's
+    // final flush can only emit replacement characters for an incomplete
+    // multibyte sequence — never a newline. So whatever remains here is a frame
+    // the server never terminated, which SSE says to discard rather than
+    // dispatch. A trailing drainBuffer call used to sit here looking load-bearing.
   } finally {
     reader.releaseLock();
   }
