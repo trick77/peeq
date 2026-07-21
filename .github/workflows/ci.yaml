@@ -19,11 +19,20 @@ jobs:
       run:
         working-directory: backend
     steps:
+      # fetch-depth: 0 — hack/patch-coverage.sh diffs the branch against the PR
+      # base, which needs real history. The default shallow checkout leaves the
+      # base ref unresolvable and the gate exits 2.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install diff-cover==10.3.0
       - run: go build ./...
       - run: go vet ./...
       - run: mkdir -p ../coverage
@@ -41,8 +50,15 @@ jobs:
       # That also merges the duplicate blocks -coverpkg emits, one set per test
       # binary, which a naive sum over the raw profile gets badly wrong.
       - run: go run github.com/boumenot/gocover-cobertura@v1.5.0 < ../coverage/backend.out > ../coverage/backend.xml
-      # The gate resolves paths from the repo root, not backend/.
+      # Both gates resolve paths from the repo root, not backend/.
+      #
+      # The floor gate runs first: when a PR drops the project below 75% the
+      # absolute number is the more actionable failure, and reporting it before
+      # patch coverage keeps the log readable.
       - run: ./hack/coverage-gate.sh backend
+        working-directory: .
+      - name: Backend patch coverage
+        run: ./hack/patch-coverage.sh "origin/${{ github.base_ref || 'master' }}"
         working-directory: .
 
   ui:
@@ -52,16 +68,26 @@ jobs:
       run:
         working-directory: ui
     steps:
+      # fetch-depth: 0 — see the backend job.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: ui/package-lock.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install diff-cover==10.3.0
       - run: npm ci
       - run: npm run build
       - run: npm test -- --run --coverage
       - run: ./hack/coverage-gate.sh ui
+        working-directory: .
+      - name: UI patch coverage
+        run: ./hack/patch-coverage.sh "origin/${{ github.base_ref || 'master' }}"
         working-directory: .
 
   extension:

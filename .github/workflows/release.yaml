@@ -105,10 +105,19 @@ jobs:
       # Tag only AFTER the image push succeeds, so a failed release never leaves
       # an orphan git tag behind.
       #
-      # Create the tag via the REST API rather than `git push`. A git-transport tag push with
-      # GITHUB_TOKEN is refused once the repo contains workflow files (it needs the `workflows`
-      # scope, which is not grantable via the `permissions:` block); create-ref only adds a
-      # pointer to the existing commit and is allowed under `contents: write`.
+      # Create the tag via the REST API rather than `git push`.
+      #
+      # An earlier version of this comment claimed a git-transport tag push is
+      # refused once the repo contains workflow files. That is not accurate: the
+      # `workflows`-scope refusal applies to pushes that change workflow file
+      # *content on a branch*, and a tag is only a pointer to a commit that
+      # already exists. Sibling repos have pushed hundreds of tags with plain
+      # `git push` and GITHUB_TOKEN without trouble.
+      #
+      # create-ref is still the right choice, for weaker but real reasons: it
+      # needs no git credentials in the checkout, and it is a single atomic call
+      # that fails with a clear HTTP error. Every repo in this family uses it so
+      # the release workflows stay directly comparable.
       - name: Create tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
