@@ -65,27 +65,50 @@
     <p class="eyebrow">peeq · design · 2026-07-21</p>
     <h1>TubeArchivist import</h1>
     <p class="standfirst">
-      A one-time migration that lifts an existing TubeArchivist library into peeq — metadata,
-      media, subtitles and watch state — so TubeArchivist can be retired. It ships as a
-      subcommand of the peeq binary, adds no schema, no HTTP route and no UI.
+      A one-time migration lifting an existing TubeArchivist library into peeq so TA can be
+      retired. Split into two phases: <strong>subscriptions first</strong> — small, fast and
+      reversible — then the video archive and its media files.
     </p>
     <div class="meta">
       <span class="chip"><span class="dot"></span>branch <b>feat/tubearchivist-import</b></span>
       <span class="chip">migration <b>none</b></span>
       <span class="chip">surface <b>CLI only</b></span>
-      <span class="chip">end state <b>TA retires</b></span>
+      <span class="chip">phases <b>A then B</b></span>
     </div>
   </header>
 
   <section>
     <h2>Context</h2>
     <p>TubeArchivist runs on the same host as peeq, in Docker, holding a library that predates
-      peeq. peeq now does everything that library is wanted for — and more, since it adds
-      transcripts, summaries and semantic search. The goal is to move the archive across once,
-      verify it, and shut TubeArchivist down.</p>
-    <p>Because TA is being retired, this is a <strong>one-shot tool, not a sync</strong>. It does
-      not need to track deltas, reconcile edits, or run again on a schedule. That single
-      constraint removes most of the complexity the feature would otherwise carry.</p>
+      peeq. peeq now does everything that library is wanted for, and adds transcripts, summaries
+      and semantic search on top. The goal is to move the archive across once, verify it, and shut
+      TubeArchivist down.</p>
+    <p>Because TA is being retired, this is a <strong>one-shot tool, not a sync</strong>. No delta
+      tracking, no reconciliation, no schedule. That single constraint removes most of the
+      complexity the feature would otherwise carry.</p>
+  </section>
+
+  <section>
+    <h2>Why two phases</h2>
+    <p>The two halves of this migration have completely different risk and cost profiles, and
+      bundling them would mean building all of it before running any of it.</p>
+    <div class="scroller">
+      <table>
+        <thead><tr><th></th><th>Phase A — subscriptions</th><th>Phase B — video archive</th></tr></thead>
+        <tbody>
+          <tr><td>TA endpoints</td><td><code>GET /api/channel/</code> only</td><td>video paging, per channel</td></tr>
+          <tr><td>Runtime</td><td>seconds</td><td>hours to days</td></tr>
+          <tr><td>Disk cost</td><td class="yes">none</td><td class="maybe">2× the library, transiently</td></tr>
+          <tr><td>LLM cost</td><td class="yes">none</td><td class="maybe">one summary per video</td></tr>
+          <tr><td>Reversible?</td><td class="yes">delete some rows</td><td class="no">not cheaply</td></tr>
+          <tr><td>Needs TA volumes mounted?</td><td class="yes">no</td><td class="no">yes, both of them</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Phase A also gets you the part that is actually time-sensitive. Subscriptions are what peeq
+      needs in order to start <em>tracking new uploads</em>; the back catalogue is inert and can
+      follow whenever. And it proves the TA connection, token and API shape before a single byte
+      moves.</p>
   </section>
 
   <section>
@@ -97,35 +120,42 @@
           <tr>
             <td>Where does metadata come from?</td>
             <td><strong>TA's REST API</strong>, token-authenticated</td>
-            <td>TA already publishes port 8000; Elasticsearch is only <code>expose</code>d, so the
-              ES route would mean editing TA's compose and restarting it. More decisively, the API
-              is the <em>only</em> source carrying resume positions — those live in Redis, and both
-              the ES and backup-zip routes drop them silently.</td>
+            <td>TA already publishes port 8000; Elasticsearch is only <code>expose</code>d, so that
+              route would mean editing TA's compose and restarting it. More decisively, the API is
+              the <em>only</em> source carrying resume positions — those live in Redis, and both the
+              ES and backup-zip routes drop them silently.</td>
+          </tr>
+          <tr>
+            <td>Which channels become subscriptions?</td>
+            <td><strong>Subscribed, active and inactive</strong></td>
+            <td>Everything TA had subscribed, dead channels included. Explicitly <em>not</em> every
+              channel TA knows about — see the filter note below.</td>
           </tr>
           <tr>
             <td>How do media files move?</td>
             <td><strong>Copy</strong></td>
-            <td>Chosen over hardlinking. Simple, filesystem-agnostic, and leaves TA's library
-              completely untouched while both apps coexist during verification.</td>
+            <td>Chosen over hardlinking. Filesystem-agnostic, and leaves TA's library untouched
+              while both apps coexist during verification.</td>
           </tr>
           <tr>
             <td>Summaries and embeddings?</td>
             <td><strong>Queue everything</strong></td>
-            <td>Every imported video gets a summary job. Full semantic search over the whole back
+            <td>Every imported video gets a summary job, giving full semantic search over the back
               catalogue once the queue drains.</td>
           </tr>
           <tr>
             <td>Playlists, comments, stats, channel art?</td>
             <td><strong>Dropped</strong></td>
-            <td>peeq has no home for them. Importing them would mean new tables and new UI for data
-              that isn't wanted.</td>
+            <td>peeq has no home for them. Importing would mean new tables and new UI for data that
+              isn't wanted.</td>
           </tr>
           <tr>
             <td>Where does the code live?</td>
             <td><strong><code>peeq import-ta</code> subcommand</strong></td>
-            <td>The container's <code>ENTRYPOINT</code> is already the peeq binary
+            <td>The container <code>ENTRYPOINT</code> is already the peeq binary
               (<code>backend/Containerfile:64</code>), so this ships with no Containerfile change
-              and inherits the exact SQLite + sqlite-vec wiring the app uses.</td>
+              and inherits the exact SQLite + sqlite-vec wiring the app uses. No new HTTP route and
+              no auth surface on a public repo.</td>
           </tr>
         </tbody>
       </table>
@@ -135,10 +165,10 @@
   <section>
     <h2>Why no schema migration is needed</h2>
     <p>peeq already has a complete write path for "a video that is already downloaded" — it is what
-      the download worker uses on success. The importer reuses it verbatim:</p>
+      the download worker uses on success. Both phases reuse it verbatim:</p>
     <ol>
       <li><code>channels.Store.Upsert</code> — <code>internal/channels/store.go:171</code></li>
-      <li><code>channels.Store.Subscribe(id, nextScanAt)</code> — note <code>next_scan_at</code> is
+      <li><code>channels.Store.Subscribe(id, nextScanAt)</code> — <code>next_scan_at</code> is
         <code>NOT NULL</code> with no default and must be supplied</li>
       <li><code>videos.Store.Upsert</code> — <code>internal/videos/store.go:103</code>; metadata
         only, deliberately does not touch download-owned columns</li>
@@ -151,15 +181,96 @@
     <p>The summarize worker then reads the <code>.vtt</code> off disk and generates summary,
       chapters, key points, embeddings and category on its own. <strong>The importer never touches
       yt-dlp, the LLM, or the embedder.</strong></p>
-    <p>Note also that <code>videos</code> has <strong>no foreign key to <code>channels</code></strong>,
-      so a video whose channel is untracked is a normal supported state — the importer does not have
-      to order its work around that.</p>
+    <p><code>videos</code> has <strong>no foreign key to <code>channels</code></strong>, so a video
+      whose channel is untracked is a normal supported state. The phases are genuinely independent:
+      Phase B does not require Phase A to have run.</p>
   </section>
 
+  <hr style="border:none;border-top:1px solid var(--border);margin:0">
+
   <section>
-    <h2>The path convention — the highest-risk detail</h2>
+    <h2>Phase A — subscriptions</h2>
+    <p><code>peeq import-ta-channels</code>. Reads one TA endpoint, writes two tables, touches no
+      files.</p>
+
+    <div class="note risk">
+      <h3>The filter is a correctness issue, not a preference</h3>
+      <p><strong>TA indexes a channel for every video you ever downloaded</strong>, not just ones
+        you subscribed to. One-off downloads leave channel records behind. Importing
+        <code>ta_channel</code> unfiltered would therefore create subscriptions for a potentially
+        large number of channels that were never followed — and peeq would then start scanning all
+        of them on a schedule.</p>
+      <p>The import must request <code>GET /api/channel/?filter=subscribed</code> and rely on TA's
+        own <code>channel_subscribed</code> flag. Channels that exist in TA only because of a
+        one-off download are skipped.</p>
+    </div>
+
+    <h3>Mapping</h3>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>TA field</th><th>peeq</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td><code>channel_id</code></td><td><code>channels.id</code></td><td>the UCID</td></tr>
+          <tr><td><code>channel_name</code></td><td><code>channels.name</code></td><td></td></tr>
+          <tr><td>—</td><td><code>channels.handle</code></td><td>left empty; TA does not store the <code>@handle</code></td></tr>
+          <tr><td><code>channel_subscribed</code></td><td>row in <code>subscriptions</code></td><td>the filter, not a stored column</td></tr>
+          <tr><td><code>channel_active</code></td><td>—</td><td>not stored; imported either way, reported in the summary</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>An empty <code>handle</code> is already normal in peeq — it is parsed best-effort from a
+      pasted URL (<code>httpapi/channels_handlers.go:79</code>), is <code>omitempty</code> in the
+      API, and existing production rows have it blank. No special handling needed.</p>
+
+    <h3>Subscription settings</h3>
+    <p>Every imported subscription gets <strong><code>autodownload</code> off</strong> and a future
+      <code>next_scan_at</code>. peeq's first scan of a channel <strong>baselines</strong> it —
+      marking everything currently on the channel as "seen" rather than pending
+      (<code>scan/scheduler.go</code>). So importing a subscription carries it over
+      <em>without</em> flooding the pending queue or re-downloading the back catalogue. Turn
+      autodownload on per channel afterwards.</p>
+
+    <div class="note key">
+      <h3>Inactive channels, and the auto-unsubscribe interaction</h3>
+      <p>Dead channels are imported as subscriptions by decision. Worth knowing what happens next:
+        peeq's auto-unsubscribe feature will scan them, classify the failure as
+        <code>deleted</code>, and unsubscribe them on its own. So peeq re-discovers what TA already
+        knew, rather than being told. That is acceptable — but it means the subscription list will
+        shrink by itself over the following days, and that is working as intended, not data loss.</p>
+    </div>
+
+    <h3>Flags</h3>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>--dry-run</code></td><td>Report which channels would be subscribed, split by active/inactive, and which are skipped as never-subscribed. Writes nothing.</td></tr>
+          <tr><td><code>--ta-url</code>, <code>--ta-token</code></td><td>TA endpoint and token, from TA's settings UI or <code>GET /api/appsettings/token/</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Verification</h3>
+    <ol>
+      <li><code>--dry-run</code>; confirm the subscribed count matches TA's own subscription list,
+        and that the skipped never-subscribed count is plausible.</li>
+      <li>Real run with peeq stopped, then start peeq.</li>
+      <li>Channels page lists them; autodownload is off on all of them.</li>
+      <li>After the first scheduled scan, confirm the pending queue is <strong>not</strong> flooded
+        — that is the baseline working.</li>
+    </ol>
+  </section>
+
+  <hr style="border:none;border-top:1px solid var(--border);margin:0">
+
+  <section>
+    <h2>Phase B — video archive and media</h2>
+    <p><code>peeq import-ta</code>. Pages TA's videos per channel, copies three files each, and
+      enqueues a summary job.</p>
+
+    <h3>The path convention — the highest-risk detail</h3>
     <p>peeq stores three file paths per video and <strong>they do not use the same convention</strong>.
-      Verified against a real downloaded row rather than read from source:</p>
+      Verified against a real downloaded row, not read from source:</p>
     <div class="scroller">
       <table>
         <thead><tr><th>Column</th><th>Form</th><th>Example</th></tr></thead>
@@ -176,15 +287,13 @@
         does not error — it simply resolves to nothing. The summarize worker treats a missing
         subtitle file as a <strong>clean terminal <code>no_transcript</code> state</strong>
         (<code>internal/summarize/worker.go:110-139</code>), not a failure. Get this wrong and the
-        import reports total success while every single video ends up with no summary, no chapters
-        and no embeddings — and nothing anywhere says why.</p>
+        import reports total success while every video ends up with no summary, no chapters and no
+        embeddings — and nothing anywhere says why.</p>
     </div>
-  </section>
 
-  <section>
-    <h2>Source → destination mapping</h2>
-    <p>TubeArchivist's layout is nearly identical to peeq's, differing by one directory level. TA
-      stores <code>UCxxx/VID.mp4</code>; peeq stores <code>UCxxx/VID/VID.mp4</code>.</p>
+    <h3>Source → destination</h3>
+    <p>TA's layout is nearly identical to peeq's, differing by one directory level. TA stores
+      <code>UCxxx/VID.mp4</code>; peeq stores <code>UCxxx/VID/VID.mp4</code>.</p>
     <div class="scroller">
       <table>
         <thead><tr><th>TA source</th><th>peeq destination</th><th>Stored as</th></tr></thead>
@@ -198,44 +307,38 @@
     <div class="note key">
       <h3>Thumbnails are on a second volume</h3>
       <p>TA keeps thumbnails in its <strong>cache</strong> volume, not its media volume:
-        <code>/cache/videos/&lt;lowercased-first-char-of-video-id&gt;/VID.jpg</code>. The import
-        invocation must mount <strong>both</strong> TA volumes read-only or every thumbnail is
-        silently missing. This is easy to overlook when the mental model is "copy the media."</p>
+        <code>/cache/videos/&lt;lowercased-first-char-of-video-id&gt;/VID.jpg</code>. The invocation
+        must mount <strong>both</strong> TA volumes read-only or every thumbnail is silently
+        missing. Easy to overlook when the mental model is "copy the media."</p>
       <p>Do <strong>not</strong> use the API's <code>vid_thumb_url</code> to locate the file — TA
         rewrites that field on the way out. Recompute the cache path from the video ID.</p>
     </div>
+
     <h3>Field normalisation</h3>
     <ul>
       <li><code>published</code> — TA returns either an epoch integer or a <code>YYYY-MM-DD</code>
-        string. peeq's <code>published_at</code> is <code>YYYY-MM-DD</code> (confirmed against a
-        live row). Normalise both inputs to that.</li>
-      <li><code>media_url</code> from the API is URL-quoted and prefixed; the importer builds paths
-        from channel ID + video ID itself rather than parsing it.</li>
+        string. peeq's <code>published_at</code> is <code>YYYY-MM-DD</code>, confirmed against a
+        live row. Normalise both inputs to that.</li>
+      <li>Paths are built from channel ID + video ID directly; the API's <code>media_url</code> is
+        URL-quoted and prefixed, so it is not parsed.</li>
       <li>Files are always <code>.mp4</code> in TA — hardcoded on their side.</li>
+      <li>TA pages <code>from</code>/<code>size</code> and so hits Elasticsearch's 10,000-result
+        ceiling. Paging <strong>per channel</strong> keeps every crawl far below it.</li>
     </ul>
-  </section>
 
-  <section>
-    <h2>Deliberately not imported</h2>
+    <h3>Deliberately not imported</h3>
     <p>The summarize worker regenerates all of the following from the subtitles, so importing them
-      would be wasted work that gets overwritten:</p>
-    <ul>
-      <li><strong>summary, chapters, key points, embeddings</strong> — regenerated</li>
-      <li><strong>category</strong> — TA has its own category field, but peeq's
-        <code>Classify</code> overwrites it after summarization. Skip it entirely.</li>
-    </ul>
-    <p>Dropped by decision, as they have no peeq equivalent: playlists, comments, view/like stats,
-      channel banners and TV art.</p>
-  </section>
+      would be work that gets overwritten: <strong>summary, chapters, key points, embeddings</strong>,
+      and <strong>category</strong> — TA has its own category field, but peeq's <code>Classify</code>
+      overwrites it after summarization.</p>
 
-  <section>
-    <h2>Safety rules</h2>
+    <h3>Safety rules</h3>
     <div class="note risk">
       <h3>1. Skip anything already <code>status='downloaded'</code></h3>
       <p><code>summaryjobs.Enqueue</code> is a bare <code>INSERT</code> with no uniqueness
-        constraint. A run that dies halfway and gets restarted would otherwise re-enqueue every
+        constraint. A run that dies halfway and is restarted would otherwise re-enqueue every
         already-imported video — re-summarizing, re-embedding and <strong>re-billing</strong> the
-        entire library. This rule is what makes the importer safely resumable.</p>
+        whole library. This rule is what makes the importer safely resumable.</p>
     </div>
     <div class="note risk">
       <h3>2. Verify the <code>.mp4</code> exists before marking a row downloaded</h3>
@@ -244,39 +347,28 @@
     </div>
     <div class="note">
       <h3>3. Preflight free space, fail closed</h3>
-      <p>Copying means holding two full copies of the library during migration. The importer sums
-        the source size and refuses to start if the target has less free space, rather than filling
-        the disk partway through. peeq already has <code>internal/download/freebytes.go</code> for
-        the free-space check — reuse it.</p>
+      <p>Copying means holding two full copies of the library during migration. Sum the source size
+        and refuse to start if the target has less free space, rather than filling the disk partway
+        through. Reuse <code>internal/download/freebytes.go</code>.</p>
     </div>
-    <h3>Subscriptions</h3>
-    <p>Channels TA had subscribed become peeq subscriptions with <strong><code>autodownload</code>
-      off</strong> and a future <code>next_scan_at</code>. peeq's first scan baselines everything as
-      "seen", so the subscription carries over without triggering a re-download of the back
-      catalogue. Turn autodownload on per channel afterwards.</p>
-    <h3>Degradation</h3>
-    <p>If resume positions cannot be read, the import continues with watched-flags only and reports
-      it. A missing nice-to-have must not fail a migration.</p>
-  </section>
+    <p><strong>Degradation:</strong> if resume positions cannot be read, continue with watched-flags
+      only and report it. A missing nice-to-have must not fail a migration.</p>
 
-  <section>
-    <h2>Flags</h2>
+    <h3>Flags</h3>
     <div class="scroller">
       <table>
         <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
         <tbody>
           <tr><td><code>--dry-run</code></td>
               <td>Walks the API, resolves every source path, checks each file exists and sums total
-                bytes — then reports what <em>would</em> happen. Writes nothing, copies nothing,
+                bytes, then reports what <em>would</em> happen. Writes nothing, copies nothing,
                 enqueues nothing.</td></tr>
           <tr><td><code>--channels N</code></td>
               <td>Process only the first N channels. The crawl is already sharded per channel, so
                 this is just stopping early.</td></tr>
           <tr><td><code>--channel UC…</code></td>
               <td>Repeatable. Import one named channel, for targeted retries.</td></tr>
-          <tr><td><code>--ta-url</code>, <code>--ta-token</code></td>
-              <td>TA API endpoint and token. Token from TA's settings UI or
-                <code>GET /api/appsettings/token/</code>.</td></tr>
+          <tr><td><code>--ta-url</code>, <code>--ta-token</code></td><td>As Phase A.</td></tr>
           <tr><td><code>--ta-media</code>, <code>--ta-cache</code></td>
               <td>Read-only mount points of TA's two volumes.</td></tr>
         </tbody>
@@ -285,12 +377,10 @@
     <p><code>--dry-run</code> doubles as the preflight: it surfaces missing <code>.mp4</code>s and
       missing thumbnails before anything is committed. Combined with the skip-if-downloaded rule, a
       dry run after a partial import reports exactly what remains.</p>
-  </section>
 
-  <section>
-    <h2>Operating sequence</h2>
-    <p>"Queue everything" only works because the running app drains the queue afterwards, so the
-      order matters:</p>
+    <h3>Operating sequence</h3>
+    <p>"Queue everything" only works because the running app drains the queue afterwards, so order
+      matters:</p>
 <pre><span class="c"># 1. survey — writes nothing</span>
 docker compose run --rm peeq import-ta --dry-run …
 
@@ -309,39 +399,38 @@ docker compose start peeq
     <p>peeq is stopped during the import because the importer writes directly to the same SQLite
       database. Step 2 is not optional — it is what catches a wrong path convention before it has
       been applied to the whole library.</p>
+
+    <h3>Verification</h3>
+    <ol>
+      <li><code>make test</code> — including the path-mapping test.</li>
+      <li><code>--dry-run</code> against live TA; confirm counts match TA's own stats and that
+        reported missing files are genuinely missing.</li>
+      <li><code>--channels 2</code> real run, then in the peeq UI: video plays, thumbnail renders,
+        subtitles display, watched state and resume position carried over.</li>
+      <li>Wait for the summarize worker; confirm summary, chapters and key points appear and the
+        video is findable via semantic search. <strong>Any video stuck at
+        <code>no_transcript</code> that has a <code>.vtt</code> on disk means the
+        <code>subtitle_path</code> convention is wrong</strong> — stop and fix before the full run.</li>
+      <li>Full run; spot-check several channels; confirm free space behaved as predicted.</li>
+      <li>Retire TA and reclaim its volumes only after peeq is verified.</li>
+    </ol>
   </section>
 
   <section>
     <h2>Structure and testing</h2>
     <ul>
-      <li><code>backend/internal/taimport/</code> — client, mapper, file copier, runner.</li>
+      <li><code>backend/internal/taimport/</code> — TA client, mappers, file copier, runners. Phase
+        A uses the client and the channel mapper; Phase B adds the rest.</li>
       <li>The TA client sits behind a <strong>narrow interface</strong> so tests fake it with
-        <code>httptest</code>. <code>AGENTS.md</code> forbids calling real endpoints in tests;
-        this is also what makes the mapper testable without a TA instance.</li>
+        <code>httptest</code>. <code>AGENTS.md</code> forbids calling real endpoints in tests; this
+        is also what makes the mappers testable without a TA instance.</li>
       <li>File operations use temp dirs. The path-convention mapping gets a dedicated test — it is
-        the highest-risk logic and the one whose failure is silent.</li>
+        the highest-risk logic and its failure is silent.</li>
       <li>DB tests follow the existing pattern: temp SQLite + <code>store.Migrate(db)</code>, as in
         <code>internal/videos/store_test.go:17</code>. Hand-written fakes, no mocking library.</li>
-      <li>Subcommand dispatch in <code>backend/cmd/peeq/main.go</code>; absent the subcommand the
+      <li>Subcommand dispatch in <code>backend/cmd/peeq/main.go</code>; absent a subcommand the
         binary behaves exactly as today.</li>
     </ul>
-  </section>
-
-  <section>
-    <h2>Verification</h2>
-    <ol>
-      <li><code>make test</code> — Go unit tests, including the path-mapping test.</li>
-      <li><code>--dry-run</code> against the live TA instance; confirm channel and video counts
-        match TA's own stats, and that reported missing files are genuinely missing.</li>
-      <li><code>--channels 2</code> real run, then in the peeq UI: video plays, thumbnail renders,
-        subtitles display, watched state and resume position carried over.</li>
-      <li>Wait for the summarize worker; confirm summary, chapters and key points appear, and that
-        the video is findable via semantic search. <strong>Any video stuck at
-        <code>no_transcript</code> that has a <code>.vtt</code> on disk means the
-        <code>subtitle_path</code> convention is wrong</strong> — stop and fix before the full run.</li>
-      <li>Full run; spot-check several channels; confirm free space behaved as predicted.</li>
-      <li>Retire TA and reclaim its volumes only after peeq has been verified.</li>
-    </ol>
   </section>
 
   <footer>
