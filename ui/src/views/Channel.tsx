@@ -157,7 +157,7 @@ export function Channel({
             <div className="chan-handle">
               {detail.handle ? `${detail.handle} · ` : ""}
               {detail.tracked ? (
-                <>tracked since {new Date(detail.tracked_at ?? "").toLocaleDateString()}</>
+                <>tracked since {new Date((detail.tracked_at ?? "") + "Z").toLocaleDateString()}</>
               ) : (
                 <span style={{ color: "var(--color-faint)" }}>not tracked</span>
               )}

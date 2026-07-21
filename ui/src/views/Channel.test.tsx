@@ -19,7 +19,7 @@ vi.mock("../api/channels", () => ({
 vi.mock("../api/videos", () => ({ listVideos: vi.fn(), thumbnailUrl: (id: string) => `/t/${id}` }));
 vi.mock("../api/pending", () => ({ listPending: vi.fn(), downloadPending: vi.fn(), ignorePending: vi.fn() }));
 
-import { getChannel } from "../api/channels";
+import { getChannel, scanChannel } from "../api/channels";
 import { listVideos } from "../api/videos";
 import { listPending } from "../api/pending";
 
@@ -55,6 +55,8 @@ describe("Channel", () => {
     vi.mocked(getChannel).mockResolvedValue(detail());
     vi.mocked(listVideos).mockResolvedValue([]);
     vi.mocked(listPending).mockResolvedValue([]);
+    vi.mocked(scanChannel).mockReset();
+    vi.mocked(scanChannel).mockResolvedValue({ status: "scheduled" });
   });
 
   it("shows the channel name and its four stats", async () => {
@@ -96,5 +98,40 @@ describe("Channel", () => {
     await waitFor(() => {
       expect(listPending).toHaveBeenCalledWith("UCa");
     });
+  });
+
+  it("the archive tab loads only this channel's videos", async () => {
+    render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />);
+    await screen.findByText("Uncanny Expeditions");
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ channel: "UCa" }));
+    });
+  });
+
+  it("the New tab's empty state says when the next check is due", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listPending).mockResolvedValue([]);
+    render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />);
+    await screen.findByText("Uncanny Expeditions");
+
+    await user.click(screen.getByRole("tab", { name: /new/i }));
+
+    expect(await screen.findByText(/nothing new/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /check now/i })).toBeInTheDocument();
+  });
+
+  it("a blocked scan shows the reason rather than reporting success", async () => {
+    const user = userEvent.setup();
+    vi.mocked(scanChannel).mockResolvedValue({
+      status: "blocked",
+      reason: "Your YouTube cookie needs refreshing before peeq can check this channel.",
+    });
+    render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />);
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /new/i }));
+
+    await user.click(await screen.findByRole("button", { name: /check now/i }));
+
+    expect(await screen.findByText(/cookie needs refreshing/i)).toBeInTheDocument();
   });
 });
