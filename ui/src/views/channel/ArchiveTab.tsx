@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoCard } from "../../components/VideoCard";
-import { listVideos } from "../../api/videos";
+import { listVideos, setFavorite, setWatched } from "../../api/videos";
 import { getSettings } from "../../api";
 import { CATEGORIES } from "../../categories";
 import { SORT_OPTIONS } from "../Library";
@@ -52,6 +52,36 @@ export function ArchiveTab({
       .catch(() => setRetentionDays(0));
   }, []);
 
+  // Mirrors Library's handleToggleFavorite/handleToggleWatched: flip the
+  // field locally first so the card updates without a refetch, then make
+  // the API call; on failure, revert the optimistic update and surface the
+  // error through the tab's own error banner rather than swallowing it.
+  async function handleToggleFavorite(id: string) {
+    const current = videos.find((v) => v.id === id);
+    if (!current) return;
+    const next = !current.favorite;
+    setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, favorite: next } : v)));
+    try {
+      await setFavorite(id, next);
+    } catch (e) {
+      setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, favorite: current.favorite } : v)));
+      setError((e as Error).message);
+    }
+  }
+
+  async function handleToggleWatched(id: string) {
+    const current = videos.find((v) => v.id === id);
+    if (!current) return;
+    const next = !current.watched;
+    setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, watched: next } : v)));
+    try {
+      await setWatched(id, next);
+    } catch (e) {
+      setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, watched: current.watched } : v)));
+      setError((e as Error).message);
+    }
+  }
+
   return (
     <>
       <div className="listbar">
@@ -102,8 +132,8 @@ export function ArchiveTab({
             video={v}
             retentionDays={retentionDays}
             onOpen={onOpenVideo}
-            onToggleFavorite={() => {}}
-            onToggleWatched={() => {}}
+            onToggleFavorite={handleToggleFavorite}
+            onToggleWatched={handleToggleWatched}
           />
         ))}
       </div>

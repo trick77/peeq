@@ -16,12 +16,46 @@ vi.mock("../api/channels", () => ({
   channelAvatarUrl: (id: string) => `/api/channels/${id}/avatar`,
   channelBannerUrl: (id: string) => `/api/channels/${id}/banner`,
 }));
-vi.mock("../api/videos", () => ({ listVideos: vi.fn(), thumbnailUrl: (id: string) => `/t/${id}` }));
+vi.mock("../api/videos", () => ({
+  listVideos: vi.fn(),
+  thumbnailUrl: (id: string) => `/t/${id}`,
+  setFavorite: vi.fn(),
+  setWatched: vi.fn(),
+}));
 vi.mock("../api/pending", () => ({ listPending: vi.fn(), downloadPending: vi.fn(), ignorePending: vi.fn() }));
 
 import { getChannel, scanChannel } from "../api/channels";
-import { listVideos } from "../api/videos";
+import { listVideos, setFavorite } from "../api/videos";
 import { listPending } from "../api/pending";
+import type { Video } from "../api/types";
+
+// archiveVideo — a minimal, valid Video row for the Archive tab's grid,
+// mirroring Library.test.tsx's baseVideo/categoryVideo helpers.
+function archiveVideo(overrides: Partial<Video> = {}): Video {
+  return {
+    id: "v1",
+    url: "https://youtu.be/v1",
+    title: "A Test Video",
+    channel_id: "UCa",
+    channel_name: "Uncanny Expeditions",
+    duration_seconds: 754,
+    has_thumbnail: false,
+    has_media: true,
+    availability: "available",
+    status: "downloaded",
+    watched: false,
+    resume_position_seconds: 0,
+    favorite: false,
+    summary: "",
+    chapters: [],
+    key_points: [],
+    summary_status: "",
+    audio_language: "",
+    has_subtitles: false,
+    category: "uncategorized",
+    ...overrides,
+  };
+}
 
 function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
   return {
@@ -57,6 +91,8 @@ describe("Channel", () => {
     vi.mocked(listPending).mockResolvedValue([]);
     vi.mocked(scanChannel).mockReset();
     vi.mocked(scanChannel).mockResolvedValue({ status: "scheduled" });
+    vi.mocked(setFavorite).mockReset();
+    vi.mocked(setFavorite).mockResolvedValue(true);
   });
 
   it("shows the channel name and its four stats", async () => {
@@ -133,5 +169,22 @@ describe("Channel", () => {
     await user.click(await screen.findByRole("button", { name: /check now/i }));
 
     expect(await screen.findByText(/cookie needs refreshing/i)).toBeInTheDocument();
+  });
+
+  it("clicking a card's favorite button on the Archive tab calls setFavorite and updates optimistically", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listVideos).mockResolvedValue([archiveVideo({ id: "v1", favorite: false })]);
+
+    render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />);
+    await screen.findByText("Uncanny Expeditions");
+    await screen.findByText("A Test Video");
+
+    const favoriteButton = screen.getByRole("button", { name: "Add to favorites" });
+    await user.click(favoriteButton);
+
+    await waitFor(() => {
+      expect(setFavorite).toHaveBeenCalledWith("v1", true);
+    });
+    expect(await screen.findByRole("button", { name: "Remove from favorites" })).toBeInTheDocument();
   });
 });
