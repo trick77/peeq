@@ -168,3 +168,25 @@ func TestAllChannels_propagatesError(t *testing.T) {
 		t.Fatal("err = nil, want the page error propagated")
 	}
 }
+
+func TestAllChannels_capExhaustionErrorsRatherThanTruncating(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Always return a non-empty page so the walk never terminates naturally.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"channel_id":"UC_ch","channel_name":"Channel","channel_subscribed":true,"channel_active":true}]}`))
+	}))
+	defer srv.Close()
+
+	testee := NewClient(srv.URL, "t", srv.Client())
+
+	got, err := testee.AllChannels(context.Background())
+	if err == nil {
+		t.Fatal("err = nil, want an error when cap is exhausted")
+	}
+	if got != nil {
+		t.Errorf("got = %+v, want nil (must not hand back a truncated list)", got)
+	}
+	if !strings.Contains(err.Error(), "2000") {
+		t.Errorf("err = %q, want it to mention the page cap (2000)", err)
+	}
+}
