@@ -46,6 +46,10 @@ vi.mock("../api/channels", () => ({
   subscribeChannel: vi.fn(),
   unsubscribeChannel: vi.fn(),
   deleteChannel: vi.fn(),
+  getChannel: vi.fn(),
+  scanChannel: vi.fn(),
+  channelAvatarUrl: (id: string) => `/api/channels/${id}/avatar`,
+  channelBannerUrl: (id: string) => `/api/channels/${id}/banner`,
   listAutoUnsubscribedChannels: vi.fn(),
   dismissDormantChannel: vi.fn(),
   resubscribeChannel: vi.fn(),
@@ -326,6 +330,17 @@ describe("Channels", () => {
       expect(deleteChannel).toHaveBeenCalledWith("c1");
     });
     confirmSpy.mockRestore();
+  });
+
+  it("clicking a channel's name opens its page", async () => {
+    const user = userEvent.setup();
+    const onOpenChannel = vi.fn();
+    render(<Channels onOpenChannel={onOpenChannel} />);
+    await screen.findByText("Tracked Channel");
+
+    await user.click(screen.getByRole("button", { name: "Tracked Channel" }));
+
+    expect(onOpenChannel).toHaveBeenCalledWith("c1");
   });
 
   it("does not call deleteChannel when confirm is cancelled", async () => {

@@ -16,20 +16,20 @@ beforeEach(() => {
 });
 
 describe("videos api", () => {
-  it("listVideos defaults to filter=all with no category param", async () => {
+  it("listVideos sends no query string when given no options", async () => {
     const f = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response("[]", { status: 200 }));
     await listVideos();
     const [url] = f.mock.calls[0];
-    expect(url).toBe("/api/videos?filter=all");
+    expect(url).toBe("/api/videos");
   });
 
   it("listVideos includes an explicit filter and category", async () => {
     const f = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response("[]", { status: 200 }));
-    await listVideos("watched", "music");
+    await listVideos({ filter: "watched", category: "music" });
     const [url] = f.mock.calls[0];
     expect(url).toBe("/api/videos?filter=watched&category=music");
   });
@@ -38,9 +38,18 @@ describe("videos api", () => {
     const f = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response("[]", { status: 200 }));
-    await listVideos("all", "all");
+    await listVideos({ filter: "all", category: "all" });
     const [url] = f.mock.calls[0];
     expect(url).toBe("/api/videos?filter=all");
+  });
+
+  it("listVideos passes the channel page's q, sort, and channel scope", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("[]", { status: 200 }));
+    await listVideos({ q: "deep field", sort: "oldest", channel: "UC1" });
+    const [url] = f.mock.calls[0];
+    expect(url).toBe("/api/videos?q=deep+field&sort=oldest&channel=UC1");
   });
 
   it("getVideo GETs /api/videos/{id}, encoding the id", async () => {

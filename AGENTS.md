@@ -46,7 +46,9 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
 ## Database / migrations
 - Add a migration as a new numbered file `backend/internal/store/migrations/NNNN_*.sql` (once the store
   package exists). The runner applies pending ones in order and records them in `schema_migrations`.
-- Never edit an already-applied migration — add a new one.
+- Pre-1.0, peeq squashes instead: edit `0001_init.sql` in place and re-create the database. Ask the
+  owner before doing so — it breaks every existing install, which has no upgrade path (the runner
+  skips `0001` once `schema_migrations` records it). Switch to numbered migrations at 1.0.
 
 ## Frontend
 - Vite + React + TS + Tailwind. `npm run build` empties `backend/web/dist` and overwrites the tracked

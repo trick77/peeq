@@ -12,7 +12,13 @@ import { Button } from "../ui";
 // now / Ignore rather than favorite/watched.
 export function Pending({
   onCountChange,
-}: { onCountChange?: (n: number) => void } = {}) {
+  onOpenChannel,
+}: {
+  onCountChange?: (n: number) => void;
+  // onOpenChannel — optional: wired by App (Task 11), rendered as channel
+  // name links in Task 15.
+  onOpenChannel?: (id: string) => void;
+} = {}) {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -82,7 +88,19 @@ export function Pending({
               </span>
             </div>
             <h3>{item.title}</h3>
-            <div className="by">{item.channel_name || item.channel_id}</div>
+            <div className="by">
+              {onOpenChannel && item.channel_id ? (
+                <button
+                  type="button"
+                  className="chan-link"
+                  onClick={() => onOpenChannel(item.channel_id)}
+                >
+                  {item.channel_name || item.channel_id}
+                </button>
+              ) : (
+                item.channel_name || item.channel_id
+              )}
+            </div>
             <div
               className="acts-row"
               style={{ display: "flex", gap: 8, marginTop: 8 }}

@@ -1,9 +1,10 @@
 import { api } from "./http";
 import type { PendingItem } from "./types";
 
-export async function listPending(): Promise<PendingItem[]> {
+export async function listPending(channelId?: string): Promise<PendingItem[]> {
+  const qs = channelId ? `?channel=${encodeURIComponent(channelId)}` : "";
   return api.get<PendingItem[]>(
-    "/api/pending",
+    `/api/pending${qs}`,
     "failed to load pending videos",
   );
 }

@@ -501,4 +501,24 @@ describe("Player", () => {
     await screen.findByText(/watch on youtube/i); // wait for load
     expect(screen.queryByRole("button", { name: /re-download/i })).toBeNull();
   });
+
+  it("renders the channel name as a clickable link when onOpenChannel is provided", async () => {
+    const onOpenChannel = vi.fn();
+    render(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        onOpenChannel={onOpenChannel}
+      />,
+    );
+    const link = await screen.findByRole("button", { name: "Veritasium" });
+    fireEvent.click(link);
+    expect(onOpenChannel).toHaveBeenCalledWith("chan1");
+  });
+
+  it("renders the channel name as plain text when onOpenChannel is absent", async () => {
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByText("Veritasium");
+    expect(screen.queryByRole("button", { name: "Veritasium" })).toBeNull();
+  });
 });

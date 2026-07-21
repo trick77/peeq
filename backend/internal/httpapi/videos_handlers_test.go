@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/settings"
@@ -705,6 +706,49 @@ func TestVideosList_filtersByCategory(t *testing.T) {
 	}
 	if got[0]["category"] != "ai" {
 		t.Fatalf("category = %v, want \"ai\"", got[0]["category"])
+	}
+}
+
+// TestVideosList_channelFilter_usesCachedChannelName asserts that when a
+// channels cache row exists for ?channel=, its name is used to also match
+// older rows that were written before channel ids were recorded (channel_id
+// empty, channel_name matching) — the primary reason the channel page needs
+// this filter to see a channel's full history, not just post-migration rows.
+func TestVideosList_channelFilter_usesCachedChannelName(t *testing.T) {
+	deps, _, db := videosTestDepsDB(t)
+	chStore := channels.New(db)
+	deps.Channels = chStore
+	if err := chStore.Upsert(channels.Channel{ID: "UCx", Name: "Cached Channel", Handle: "@x"}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	// v1 carries the channel id directly; v2 predates channel ids and only
+	// carries the matching channel_name.
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", ChannelID: "UCx", ChannelName: "Cached Channel"}); err != nil {
+		t.Fatalf("seed video v1: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v2", URL: "u2", ChannelID: "", ChannelName: "Cached Channel"}); err != nil {
+		t.Fatalf("seed video v2: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v3", URL: "u3", ChannelID: "UCother", ChannelName: "Other"}); err != nil {
+		t.Fatalf("seed video v3: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos?channel=UCx", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET videos status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, v := range got {
+		ids[v["id"].(string)] = true
+	}
+	if !ids["v1"] || !ids["v2"] || ids["v3"] {
+		t.Fatalf("filtered list ids = %+v, want v1 and v2 only", ids)
 	}
 }
 

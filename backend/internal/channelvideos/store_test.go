@@ -93,3 +93,39 @@ func TestLedger_insertPendingAndDecide(t *testing.T) {
 		t.Fatalf("after ignore, pending = %d, want 0", len(pend))
 	}
 }
+
+// TestListPendingForChannel_scopesToChannel asserts the channel page's
+// pending list only shows that channel's entries, not every channel's.
+func TestListPendingForChannel_scopesToChannel(t *testing.T) {
+	st := newTestStore(t)
+	seedChannel(t, st, "UC1")
+	seedChannel(t, st, "UC2")
+
+	if err := st.Insert(Entry{VideoID: "v1", ChannelID: "UC1", Title: "A", State: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Insert(Entry{VideoID: "v2", ChannelID: "UC2", Title: "B", State: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+
+	pend, err := st.ListPendingForChannel("UC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pend) != 1 || pend[0].VideoID != "v1" {
+		t.Fatalf("pending = %+v, want only v1", pend)
+	}
+}
+
+// TestListPendingForChannel_errorsOnClosedDB asserts a query failure is
+// reported to the caller rather than being mistaken for "no pending videos".
+func TestListPendingForChannel_errorsOnClosedDB(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := st.ListPendingForChannel("UC1"); err == nil {
+		t.Fatal("expected an error listing pending for channel against a closed db")
+	}
+}

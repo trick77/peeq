@@ -33,7 +33,13 @@ const CHIPS: { id: ChannelFilter; label: string }[] = [
 // format-override field, and a delete-with-confirm. Mirrors Library's chip
 // pattern and Settings' panel language (.sect / .ctrl / .btn) for visual
 // consistency — no new look.
-export function Channels() {
+export function Channels({
+  onOpenChannel,
+}: {
+  // onOpenChannel — optional: wired by App (Task 11), rendered as channel
+  // name links in Task 15.
+  onOpenChannel?: (id: string) => void;
+} = {}) {
   const [filter, setFilter] = useState<ChannelFilter>("all");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -341,11 +347,22 @@ export function Channels() {
                     fontWeight: 500,
                   }}
                 >
-                  {c.name}
+                  {onOpenChannel ? (
+                    <button
+                      type="button"
+                      className="chan-link"
+                      onClick={() => onOpenChannel(c.id)}
+                    >
+                      {c.name}
+                    </button>
+                  ) : (
+                    c.name
+                  )}
                 </h3>
-                <div className="by" style={{ marginTop: 2 }}>
+                <div className="channel-by">
                   {c.handle ? `${c.handle} · ` : ""}
-                  {c.pending_count} pending · {c.downloaded_count} downloaded
+                  <b>{c.pending_count}</b> pending · <b>{c.downloaded_count}</b>{" "}
+                  downloaded
                 </div>
               </div>
               <div className="channel-actions">

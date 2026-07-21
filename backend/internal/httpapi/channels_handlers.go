@@ -4,22 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
-// ChannelResolver resolves a canonicalized channel url to its authoritative
-// UCID and display name via yt-dlp. Declaring it here (rather than depending
+// ChannelResolver resolves a canonicalized channel url to its identity via
+// yt-dlp: the authoritative UCID and display name, plus the description and
+// the remote avatar/banner urls the channel page renders. The handle is NOT
+// part of it — that comes from the pasted url, never from yt-dlp.
+// Declaring it here (rather than depending
 // on the concrete *ytdlp.Runner type) keeps the handler testable with a fake
 // that never shells out to yt-dlp; the real *ytdlp.Runner satisfies it.
 type ChannelResolver interface {
-	ResolveChannel(ctx context.Context, url string) (ucid, name string, err error)
+	ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error)
 }
 
 // var _ ChannelResolver = (*ytdlp.Runner)(nil) proves at compile time that
@@ -110,7 +117,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "Paste a channel link (a /channel/, /@handle, /c/, or /user/ URL)")
 		return
 	}
-	ucid, name, err := s.channelResolver.ResolveChannel(r.Context(), channelURL)
+	info, err := s.channelResolver.ResolveChannel(r.Context(), channelURL)
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
 			writeJSONError(w, http.StatusConflict, "cookie required")
@@ -119,15 +126,38 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadGateway, "resolve channel failed: "+err.Error())
 		return
 	}
+	ucid, name := info.UCID, info.Name
 	// ResolveChannel is the authoritative source of the UCID; the handle is
 	// best-effort from the pasted url only (never derived from the UCID).
 	handle := channelHandleFromURL(req.URL)
-	if err := s.channels.Upsert(channels.Channel{ID: ucid, Name: name, Handle: handle}); err != nil {
+	// Images are best-effort: a channel with no banner, or a transient fetch
+	// failure, must not prevent the channel from being tracked.
+	avatarPath, err := media.FetchImage(r.Context(), info.AvatarURL, s.mediaDir, ".channels/"+ucid+"/avatar")
+	if err != nil {
+		slog.Warn("channel avatar fetch failed", "channel_id", ucid, "err", err)
+	}
+	bannerPath, err := media.FetchImage(r.Context(), info.BannerURL, s.mediaDir, ".channels/"+ucid+"/banner")
+	if err != nil {
+		slog.Warn("channel banner fetch failed", "channel_id", ucid, "err", err)
+	}
+	if err := s.channels.Upsert(channels.Channel{
+		ID:          ucid,
+		Name:        name,
+		Handle:      handle,
+		Description: info.Description,
+		AvatarPath:  avatarPath,
+		BannerPath:  bannerPath,
+		ResolvedAt:  time.Now().UTC().Format("2006-01-02 15:04:05"),
+	}); err != nil {
+		serverError(w, r, err, "track channel failed")
+		return
+	}
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	if err := s.channels.Track(ucid, now); err != nil {
 		serverError(w, r, err, "track channel failed")
 		return
 	}
 	if req.Subscribe {
-		now := time.Now().UTC().Format("2006-01-02 15:04:05")
 		if err := s.channels.Subscribe(ucid, now); err != nil {
 			serverError(w, r, err, "subscribe failed")
 			return
@@ -229,6 +259,204 @@ func (s *server) handleChannelsAutoUnsubscribedList(w http.ResponseWriter, r *ht
 	writeJSON(w, out)
 }
 
+// channelDetail is the JSON shape returned by GET /api/channels/{id}. It
+// covers both a tracked channel and one the user has merely visited: Tracked
+// and Subscribed are the flags the page branches on, and the subscription
+// fields are zero when Subscribed is false.
+type channelDetail struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Handle      string `json:"handle,omitempty"`
+	Description string `json:"description,omitempty"`
+	HasAvatar   bool   `json:"has_avatar"`
+	HasBanner   bool   `json:"has_banner"`
+
+	Tracked   bool   `json:"tracked"`
+	TrackedAt string `json:"tracked_at,omitempty"`
+
+	ArchivedCount     int    `json:"archived_count"`
+	RuntimeSeconds    int64  `json:"runtime_seconds"`
+	DiskBytes         int64  `json:"disk_bytes"`
+	NewestPublishedAt string `json:"newest_published_at,omitempty"`
+
+	Subscribed     bool   `json:"subscribed"`
+	Autodownload   bool   `json:"autodownload"`
+	FormatOverride string `json:"format_override,omitempty"`
+	LastScannedAt  string `json:"last_scanned_at,omitempty"`
+	NextScanAt     string `json:"next_scan_at,omitempty"`
+	PendingCount   int    `json:"pending_count"`
+}
+
+// handleChannelDetail returns the data behind the channel page: identity,
+// the four header stats, and (if tracked) the subscription/schedule state.
+// It serves both a tracked channel AND one the user never tracked but whose
+// videos live in the library (added by URL) — videos.channel_id has no
+// foreign key to channels, so that case is real. 404 is reserved for an id
+// that names nothing at all: neither a cached channels row nor any video.
+func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	id := r.PathValue("id")
+
+	c, err := s.channels.Get(id)
+	if err != nil {
+		serverError(w, r, err, "load channel failed")
+		return
+	}
+
+	// No cached row: fall back to what this channel's own videos say, and
+	// find out whether the channel has any videos at all (existence, not
+	// downloaded-ness, is what decides the 404 below).
+	name := ""
+	found := true
+	if c != nil {
+		name = c.Name
+	}
+	if c == nil || name == "" {
+		var videoName string
+		videoName, found, err = s.channels.NameFromVideos(id)
+		if err != nil {
+			serverError(w, r, err, "load channel failed")
+			return
+		}
+		if name == "" {
+			name = videoName
+		}
+	}
+	stats, err := s.channels.Stats(id, name)
+	if err != nil {
+		serverError(w, r, err, "load channel failed")
+		return
+	}
+	if c == nil && !found {
+		writeJSONError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+
+	out := channelDetail{
+		ID:                id,
+		Name:              name,
+		ArchivedCount:     stats.ArchivedCount,
+		RuntimeSeconds:    stats.RuntimeSeconds,
+		DiskBytes:         stats.DiskBytes,
+		NewestPublishedAt: stats.NewestPublishedAt,
+	}
+	if c != nil {
+		out.Handle = c.Handle
+		out.Description = c.Description
+		out.HasAvatar = c.AvatarPath != ""
+		out.HasBanner = c.BannerPath != ""
+		out.Tracked = c.TrackedAt != ""
+		out.TrackedAt = c.TrackedAt
+	}
+
+	if out.Tracked {
+		sub, serr := s.channels.GetSubscription(id)
+		if serr != nil {
+			serverError(w, r, serr, "load subscription failed")
+			return
+		}
+		if sub != nil {
+			out.Subscribed = true
+			out.Autodownload = sub.Autodownload
+			out.FormatOverride = sub.FormatOverride
+			out.LastScannedAt = sub.LastScannedAt
+			out.NextScanAt = sub.NextScanAt
+		}
+		if s.ledger != nil {
+			pending, perr := s.ledger.ListPendingForChannel(id)
+			if perr != nil {
+				serverError(w, r, perr, "load pending failed")
+				return
+			}
+			out.PendingCount = len(pending)
+		}
+	}
+
+	s.maybeResolveChannel(id, c)
+	writeJSON(w, out)
+}
+
+// maybeResolveChannel kicks off a one-shot background metadata fetch for a
+// channel peeq has never resolved. It deliberately does NOT block the
+// response: the page renders from what is already in the database and the
+// header fills in on the next load.
+//
+// resolved_at is written whether the fetch succeeds or fails, so a channel
+// that cannot be resolved — a stale cookie, a deleted channel — is not
+// re-fetched on every single visit.
+//
+// The gate reads the row snapshotted before the goroutine launches, so two
+// near-simultaneous first visits to the same unresolved channel can both
+// fetch. Left as-is deliberately: peeq is single-user, the window is one
+// page load wide, and the cost of losing that race is one redundant yt-dlp
+// call — not worth a dedup map or a queue.
+func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel) {
+	if s.channelResolver == nil || s.channels == nil {
+		return
+	}
+	if cached != nil && cached.ResolvedAt != "" {
+		return
+	}
+	go func() {
+		defer func() {
+			// This goroutine parses yt-dlp output and remote HTTP responses,
+			// both of which are external input. An unrecovered panic here
+			// would take down the whole server, so it is contained the same
+			// way every other background worker in peeq contains one.
+			if r := recover(); r != nil {
+				slog.Error("channel resolve: recovered from panic", "channel_id", channelID, "panic", r)
+			}
+			if s.onChannelResolved != nil {
+				s.onChannelResolved(channelID)
+			}
+		}()
+		// Detached from the request: the browser has its response already.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+
+		now := time.Now().UTC().Format("2006-01-02 15:04:05")
+		url := "https://www.youtube.com/channel/" + channelID
+		info, err := s.channelResolver.ResolveChannel(ctx, url)
+		if err != nil {
+			slog.Warn("channel resolve failed", "channel_id", channelID, "err", err)
+			// Ensure a row exists to carry resolved_at, so the failure is
+			// remembered and not retried on the next visit.
+			if cached == nil {
+				if uerr := s.channels.Upsert(channels.Channel{ID: channelID, ResolvedAt: now}); uerr != nil {
+					slog.Error("cache channel after failed resolve", "channel_id", channelID, "err", uerr)
+				}
+				return
+			}
+			if merr := s.channels.MarkResolveAttempted(channelID, now); merr != nil {
+				slog.Error("mark resolve attempted", "channel_id", channelID, "err", merr)
+			}
+			return
+		}
+
+		avatarPath, aerr := media.FetchImage(ctx, info.AvatarURL, s.mediaDir, ".channels/"+channelID+"/avatar")
+		if aerr != nil {
+			slog.Warn("channel avatar fetch failed", "channel_id", channelID, "err", aerr)
+		}
+		bannerPath, berr := media.FetchImage(ctx, info.BannerURL, s.mediaDir, ".channels/"+channelID+"/banner")
+		if berr != nil {
+			slog.Warn("channel banner fetch failed", "channel_id", channelID, "err", berr)
+		}
+		if uerr := s.channels.Upsert(channels.Channel{
+			ID:          channelID,
+			Name:        info.Name,
+			Description: info.Description,
+			AvatarPath:  avatarPath,
+			BannerPath:  bannerPath,
+			ResolvedAt:  now,
+		}); uerr != nil {
+			slog.Error("cache resolved channel", "channel_id", channelID, "err", uerr)
+		}
+	}()
+}
+
 // handleChannelsDismissDormant suppresses a channel's dormancy flag until it
 // next posts and then goes quiet again. 404s for a channel with no
 // subscription (unknown, or tracked-but-unsubscribed) rather than the
@@ -287,7 +515,11 @@ func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Reques
 		serverError(w, r, err, "get channel failed")
 		return
 	}
-	if c == nil {
+	// A row in channels no longer means the user tracks the channel — it may
+	// be a cache-only row written when the channel page was merely visited.
+	// Resubscribing one would conjure a subscription for a channel the user
+	// never added, so tracked_at is what decides.
+	if c == nil || c.TrackedAt == "" {
 		writeJSONError(w, http.StatusNotFound, "channel not tracked")
 		return
 	}
@@ -351,7 +583,7 @@ func (s *server) handleChannelsSubscribe(w http.ResponseWriter, r *http.Request)
 		serverError(w, r, err, "get channel failed")
 		return
 	}
-	if c == nil {
+	if c == nil || c.TrackedAt == "" {
 		writeJSONError(w, http.StatusNotFound, "channel not tracked")
 		return
 	}
@@ -383,6 +615,57 @@ func (s *server) handleChannelsUnsubscribe(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]string{"status": "unsubscribed"})
 }
 
+// handleChannelScan schedules a scan of one channel by moving its
+// next_scan_at into the past. The scheduler holds no in-memory schedule — it
+// polls ClaimDue(now) — so this single update IS the mechanism, and the scan
+// runs on the scheduler's next poll rather than immediately. The UI must say
+// "checking soon", never imply the scan is happening this instant.
+//
+// Two gates in the scheduler's own loop can still delay it indefinitely: an
+// invalid YouTube cookie and the global pause flag. When either is set, say
+// so rather than reporting a success the user will never see the result of.
+func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	id := r.PathValue("id")
+	sub, err := s.channels.GetSubscription(id)
+	if err != nil {
+		serverError(w, r, err, "schedule scan failed")
+		return
+	}
+	if sub == nil {
+		writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
+		return
+	}
+
+	if s.settings != nil {
+		if paused, reason := s.settings.YoutubePaused(r.Context()); paused {
+			msg := "YouTube access is paused"
+			if reason != "" {
+				msg += ": " + reason
+			}
+			writeJSON(w, map[string]string{"status": "blocked", "reason": msg})
+			return
+		}
+		if status := s.settings.CookieStatus(r.Context()); status != "valid" {
+			writeJSON(w, map[string]string{
+				"status": "blocked",
+				"reason": "Your YouTube cookie needs refreshing before peeq can check this channel.",
+			})
+			return
+		}
+	}
+
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	if err := s.channels.Backoff(id, now); err != nil {
+		serverError(w, r, err, "schedule scan failed")
+		return
+	}
+	writeJSON(w, map[string]string{"status": "scheduled"})
+}
+
 // handleChannelsDelete destructively removes a channel and EVERYTHING
 // belonging to it: its subscription, its scan-ledger rows, and all of its
 // downloaded videos (their jobs and on-disk media files included) — even
@@ -403,10 +686,21 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	// 1. Read refs BEFORE deleting (we need media paths after the rows are gone).
-	refs, err := s.channels.VideoRefs(id)
+	// A cache-only row (visited, never tracked) must not be deletable:
+	// DeleteCascade destroys every video belonging to the channel.
+	c, err := s.channels.Get(id)
 	if err != nil {
 		serverError(w, r, err, "delete failed")
+		return
+	}
+	if c == nil || c.TrackedAt == "" {
+		writeJSONError(w, http.StatusNotFound, "channel not tracked")
+		return
+	}
+	// 1. Read refs BEFORE deleting (we need media paths after the rows are gone).
+	refs, rerr := s.channels.VideoRefs(id)
+	if rerr != nil {
+		serverError(w, r, rerr, "delete failed")
 		return
 	}
 	// 2. Cancel any active jobs for those videos (kills a live child). The
@@ -460,7 +754,13 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
 		return
 	}
-	items, err := s.ledger.ListPending()
+	var items []channelvideos.Entry
+	var err error
+	if channelID := r.URL.Query().Get("channel"); channelID != "" {
+		items, err = s.ledger.ListPendingForChannel(channelID)
+	} else {
+		items, err = s.ledger.ListPending()
+	}
 	if err != nil {
 		serverError(w, r, err, "list pending failed")
 		return
@@ -560,4 +860,54 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ignored"})
+}
+
+// handleChannelAvatar and handleChannelBanner serve a cached channel image
+// off local disk. Like video thumbnails, the stored path never reaches the
+// browser — only these endpoints do — and it is resolved through
+// media.SafeMediaPath so a crafted stored value cannot escape the media dir.
+func (s *server) handleChannelAvatar(w http.ResponseWriter, r *http.Request) {
+	s.serveChannelImage(w, r, func(c *channels.Channel) string { return c.AvatarPath })
+}
+
+func (s *server) handleChannelBanner(w http.ResponseWriter, r *http.Request) {
+	s.serveChannelImage(w, r, func(c *channels.Channel) string { return c.BannerPath })
+}
+
+func (s *server) serveChannelImage(w http.ResponseWriter, r *http.Request, pick func(*channels.Channel) string) {
+	if s.channels == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	c, err := s.channels.Get(r.PathValue("id"))
+	if err != nil {
+		serverError(w, r, err, "load channel failed")
+		return
+	}
+	if c == nil {
+		http.NotFound(w, r)
+		return
+	}
+	stored := pick(c)
+	if stored == "" {
+		http.NotFound(w, r)
+		return
+	}
+	path, err := media.SafeMediaPath(s.mediaDir, stored)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeContent(w, r, filepath.Base(path), fi.ModTime(), f)
 }

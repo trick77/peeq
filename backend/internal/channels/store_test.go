@@ -25,6 +25,92 @@ func newTestStore(t *testing.T) *Store {
 	return New(db)
 }
 
+// TestList_excludesCacheOnlyRows asserts a channel row that exists only as a
+// metadata cache entry (never tracked by the user) is invisible to every
+// ?filter= value the channels list supports. If this regresses, the user's
+// Channels page fills up with channels they merely clicked on once.
+func TestList_excludesCacheOnlyRows(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.Upsert(Channel{ID: "UCcache", Name: "Cache Only"}); err != nil {
+		t.Fatalf("upsert cache row: %v", err)
+	}
+	if err := s.Upsert(Channel{ID: "UCtracked", Name: "Tracked"}); err != nil {
+		t.Fatalf("upsert tracked row: %v", err)
+	}
+	if err := s.Track("UCtracked", "2026-07-20 10:00:00"); err != nil {
+		t.Fatalf("track: %v", err)
+	}
+
+	for _, filter := range []string{"all", "tracked", "subscribed", "autodownload"} {
+		items, err := s.List(filter)
+		if err != nil {
+			t.Fatalf("list %s: %v", filter, err)
+		}
+		for _, it := range items {
+			if it.ID == "UCcache" {
+				t.Fatalf("filter %q returned cache-only channel", filter)
+			}
+		}
+	}
+
+	all, err := s.List("all")
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if len(all) != 1 || all[0].ID != "UCtracked" {
+		t.Fatalf("list all = %+v, want only UCtracked", all)
+	}
+}
+
+// TestGet_returnsCacheOnlyRow asserts Get still finds a cache-only row — the
+// channel page reads its metadata through Get even when untracked, so Get
+// must NOT inherit List's tracked_at filter.
+func TestGet_returnsCacheOnlyRow(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Channel{ID: "UCcache", Name: "Cache Only", Description: "hello"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	c, err := s.Get("UCcache")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c == nil {
+		t.Fatal("get returned nil for a cache-only row")
+	}
+	if c.TrackedAt != "" {
+		t.Fatalf("TrackedAt = %q, want empty for an untracked row", c.TrackedAt)
+	}
+	if c.Description != "hello" {
+		t.Fatalf("Description = %q, want %q", c.Description, "hello")
+	}
+}
+
+// TestUpsert_preservesTrackedAt asserts re-caching a channel's metadata (which
+// happens on every visit-triggered resolve) never silently untracks it.
+func TestUpsert_preservesTrackedAt(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Channel{ID: "UCx", Name: "Before"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.Track("UCx", "2026-07-20 10:00:00"); err != nil {
+		t.Fatalf("track: %v", err)
+	}
+	if err := s.Upsert(Channel{ID: "UCx", Name: "After"}); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	c, err := s.Get("UCx")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.TrackedAt == "" {
+		t.Fatal("re-upsert cleared tracked_at")
+	}
+	if c.Name != "After" {
+		t.Fatalf("Name = %q, want refreshed to %q", c.Name, "After")
+	}
+}
+
 func TestChannels_trackSubscribeClaim(t *testing.T) {
 	st := newTestStore(t)
 
@@ -32,6 +118,12 @@ func TestChannels_trackSubscribeClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.Upsert(Channel{ID: "UC2", Name: "Two"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Track("UC2", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	// Tracked only → ClaimDue returns nothing.
@@ -140,6 +232,13 @@ func TestDeleteCascade_removesEverything(t *testing.T) {
 	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status,media_path) VALUES ('v1','u','UC1','downloaded','/m/v1.mp4')`)
 	mustExec(t, db, `INSERT INTO download_jobs (video_id, state) VALUES ('v1','done')`)
 	mustExec(t, db, `INSERT INTO channel_videos (video_id, channel_id, state) VALUES ('v1','UC1','queued')`)
+	// A second channel with its own subscription, video, job and ledger row.
+	// The delete of UC1 must leave every one of these intact.
+	st.Upsert(Channel{ID: "UC2", Name: "Two"})
+	st.Subscribe("UC2", "2000-01-01 00:00:00")
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status,media_path) VALUES ('v2','u','UC2','downloaded','/m/v2.mp4')`)
+	mustExec(t, db, `INSERT INTO download_jobs (video_id, state) VALUES ('v2','done')`)
+	mustExec(t, db, `INSERT INTO channel_videos (video_id, channel_id, state) VALUES ('v2','UC2','queued')`)
 
 	refs, err := st.VideoRefs("UC1")
 	if err != nil || len(refs) != 1 || refs[0].MediaPath != "/m/v1.mp4" {
@@ -160,6 +259,20 @@ func TestDeleteCascade_removesEverything(t *testing.T) {
 			t.Fatalf("%q → n=%d err=%v, want 0", q, n, err)
 		}
 	}
+	// UC2 is untouched: the cascade must be scoped to the deleted channel, not
+	// an over-broad DELETE that also wipes another channel's rows.
+	for _, q := range []string{
+		`SELECT count(*) FROM channels WHERE id='UC2'`,
+		`SELECT count(*) FROM subscriptions WHERE channel_id='UC2'`,
+		`SELECT count(*) FROM channel_videos WHERE channel_id='UC2'`,
+		`SELECT count(*) FROM videos WHERE channel_id='UC2'`,
+		`SELECT count(*) FROM download_jobs WHERE video_id='v2'`,
+	} {
+		var n int
+		if err := db.QueryRow(q).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("%q → n=%d err=%v, want 1 (UC2 must survive)", q, n, err)
+		}
+	}
 }
 
 // TestDeleteCascade_purgesVecAndFTSChunks asserts DeleteCascade also removes
@@ -174,45 +287,63 @@ func TestDeleteCascade_purgesVecAndFTSChunks(t *testing.T) {
 	ctx := context.Background()
 	st.Upsert(Channel{ID: "UC1", Name: "One"})
 	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status) VALUES ('v1','u','UC1','downloaded')`)
+	// A second channel + video whose chunks must SURVIVE the delete of UC1.
+	// vec_chunks/fts_chunks are keyed by rowid with no channel column, so an
+	// over-broad purge would wipe these too; asserting they remain (the counts
+	// go to 1, not 0) is what lets this test catch that regression.
+	st.Upsert(Channel{ID: "UC2", Name: "Two"})
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status) VALUES ('v2','u','UC2','downloaded')`)
 
 	ragStore := rag.NewStore(db)
 	vec := make([]float32, 1536)
-	if err := ragStore.ReplaceVideoChunks(ctx, "v1", "e5", 1536, []rag.ChunkRow{
-		{Ordinal: 0, Text: "x", StartSeconds: 0, TokenCount: 1},
-	}, [][]float32{vec}); err != nil {
-		t.Fatalf("seed chunks: %v", err)
+	seedChunk := func(videoID string) {
+		if err := ragStore.ReplaceVideoChunks(ctx, videoID, "e5", 1536, []rag.ChunkRow{
+			{Ordinal: 0, Text: "x", StartSeconds: 0, TokenCount: 1},
+		}, [][]float32{vec}); err != nil {
+			t.Fatalf("seed chunks for %s: %v", videoID, err)
+		}
 	}
+	seedChunk("v1")
+	seedChunk("v2")
 
 	var beforeVec, beforeFTS int
-	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&beforeVec); err != nil || beforeVec != 1 {
-		t.Fatalf("vec_chunks before delete = %d err=%v, want 1", beforeVec, err)
+	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&beforeVec); err != nil || beforeVec != 2 {
+		t.Fatalf("vec_chunks before delete = %d err=%v, want 2", beforeVec, err)
 	}
-	if err := db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&beforeFTS); err != nil || beforeFTS != 1 {
-		t.Fatalf("fts_chunks before delete = %d err=%v, want 1", beforeFTS, err)
+	if err := db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&beforeFTS); err != nil || beforeFTS != 2 {
+		t.Fatalf("fts_chunks before delete = %d err=%v, want 2", beforeFTS, err)
 	}
 
 	if err := st.DeleteCascade("UC1"); err != nil {
 		t.Fatal(err)
 	}
 
-	var afterVec, afterFTS, afterChunks, afterVideos int
-	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&afterVec); err != nil || afterVec != 0 {
-		t.Fatalf("vec_chunks after delete = %d err=%v, want 0 (orphaned rows leaked)", afterVec, err)
+	// UC1's chunk rows are purged; UC2's remain (count 1, not 0).
+	var afterVec, afterFTS, afterChunksV1, afterChunksV2, afterVideosV1, afterVideosV2 int
+	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&afterVec); err != nil || afterVec != 1 {
+		t.Fatalf("vec_chunks after delete = %d err=%v, want 1 (UC1 purged, UC2 kept)", afterVec, err)
 	}
-	if err := db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&afterFTS); err != nil || afterFTS != 0 {
-		t.Fatalf("fts_chunks after delete = %d err=%v, want 0 (orphaned rows leaked)", afterFTS, err)
+	if err := db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&afterFTS); err != nil || afterFTS != 1 {
+		t.Fatalf("fts_chunks after delete = %d err=%v, want 1 (UC1 purged, UC2 kept)", afterFTS, err)
 	}
-	if err := db.QueryRow(`SELECT count(*) FROM transcript_chunks WHERE video_id='v1'`).Scan(&afterChunks); err != nil || afterChunks != 0 {
-		t.Fatalf("transcript_chunks after delete = %d err=%v, want 0", afterChunks, err)
+	if err := db.QueryRow(`SELECT count(*) FROM transcript_chunks WHERE video_id='v1'`).Scan(&afterChunksV1); err != nil || afterChunksV1 != 0 {
+		t.Fatalf("transcript_chunks(v1) after delete = %d err=%v, want 0", afterChunksV1, err)
 	}
-	if err := db.QueryRow(`SELECT count(*) FROM videos WHERE id='v1'`).Scan(&afterVideos); err != nil || afterVideos != 0 {
-		t.Fatalf("videos after delete = %d err=%v, want 0", afterVideos, err)
+	if err := db.QueryRow(`SELECT count(*) FROM transcript_chunks WHERE video_id='v2'`).Scan(&afterChunksV2); err != nil || afterChunksV2 != 1 {
+		t.Fatalf("transcript_chunks(v2) after delete = %d err=%v, want 1 (UC2 must survive)", afterChunksV2, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM videos WHERE id='v1'`).Scan(&afterVideosV1); err != nil || afterVideosV1 != 0 {
+		t.Fatalf("videos(v1) after delete = %d err=%v, want 0", afterVideosV1, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM videos WHERE id='v2'`).Scan(&afterVideosV2); err != nil || afterVideosV2 != 1 {
+		t.Fatalf("videos(v2) after delete = %d err=%v, want 1 (UC2 must survive)", afterVideosV2, err)
 	}
 }
 
 func TestChannels_unsubscribeKeepsChannel(t *testing.T) {
 	st := newTestStore(t)
 	st.Upsert(Channel{ID: "UC1", Name: "One"})
+	st.Track("UC1", "2000-01-01 00:00:00")
 	st.Subscribe("UC1", "2000-01-01 00:00:00")
 	ok, err := st.Unsubscribe("UC1")
 	if err != nil || !ok {
@@ -241,6 +372,9 @@ func TestChannels_listAutodownloadFilter(t *testing.T) {
 		if err := st.Upsert(c); err != nil {
 			t.Fatalf("upsert %s: %v", c.ID, err)
 		}
+		if err := st.Track(c.ID, "2000-01-01 00:00:00"); err != nil {
+			t.Fatalf("track %s: %v", c.ID, err)
+		}
 	}
 	for _, id := range []string{"UC2", "UC3"} {
 		if err := st.Subscribe(id, "2000-01-01 00:00:00"); err != nil {
@@ -264,5 +398,141 @@ func TestChannels_listAutodownloadFilter(t *testing.T) {
 	}
 	if !items[0].Autodownload {
 		t.Fatal("listed item must report autodownload on")
+	}
+}
+
+// TestUpsert_blankFieldsDoNotEraseCachedMetadata asserts a partial re-upsert
+// — which is exactly what the track path does, passing only id/name/handle —
+// cannot wipe metadata a previous resolve already cached. Without the
+// COALESCE(NULLIF(...)) in Upsert this silently blanks the description and
+// both image paths.
+func TestUpsert_blankFieldsDoNotEraseCachedMetadata(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.Upsert(Channel{
+		ID:          "UCx",
+		Name:        "Full",
+		Handle:      "@full",
+		Description: "a description",
+		AvatarPath:  ".channels/UCx/avatar.jpg",
+		BannerPath:  ".channels/UCx/banner.jpg",
+		ResolvedAt:  "2026-07-20 10:00:00",
+	}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	// A partial re-upsert: every metadata field is the Go zero value.
+	if err := s.Upsert(Channel{ID: "UCx", Name: "Full", Handle: "@full"}); err != nil {
+		t.Fatalf("partial upsert: %v", err)
+	}
+
+	c, err := s.Get("UCx")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.Description != "a description" {
+		t.Fatalf("Description = %q, want it preserved", c.Description)
+	}
+	if c.AvatarPath != ".channels/UCx/avatar.jpg" {
+		t.Fatalf("AvatarPath = %q, want it preserved", c.AvatarPath)
+	}
+	if c.BannerPath != ".channels/UCx/banner.jpg" {
+		t.Fatalf("BannerPath = %q, want it preserved", c.BannerPath)
+	}
+	if c.ResolvedAt != "2026-07-20 10:00:00" {
+		t.Fatalf("ResolvedAt = %q, want it preserved", c.ResolvedAt)
+	}
+}
+
+// TestTrack_errorsOnClosedDB asserts a failed UPDATE (here forced by closing
+// the handle) is reported to the caller rather than swallowed, so a
+// tracking request that silently didn't happen isn't mistaken for success.
+func TestTrack_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if err := s.Track("UCx", "2026-07-20 10:00:00"); err == nil {
+		t.Fatal("expected an error tracking against a closed db")
+	}
+}
+
+// TestMarkResolveAttempted_setsResolvedAt asserts a successful call stamps
+// resolved_at on the channel row, which is what stops a permanently
+// unresolvable channel from being re-fetched from YouTube on every page
+// visit.
+func TestMarkResolveAttempted_setsResolvedAt(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Channel{ID: "UCx", Name: "X", Handle: "@x"}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	if err := s.MarkResolveAttempted("UCx", "2026-07-20 10:00:00"); err != nil {
+		t.Fatalf("mark resolve attempted: %v", err)
+	}
+
+	c, err := s.Get("UCx")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.ResolvedAt != "2026-07-20 10:00:00" {
+		t.Fatalf("ResolvedAt = %q, want 2026-07-20 10:00:00", c.ResolvedAt)
+	}
+}
+
+// TestMarkResolveAttempted_errorsOnClosedDB asserts a failed write here is
+// surfaced, not swallowed — otherwise a channel that can never be resolved
+// would be silently retried forever instead of the caller finding out the
+// write itself is broken.
+func TestMarkResolveAttempted_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if err := s.MarkResolveAttempted("UCx", "2026-07-20 10:00:00"); err == nil {
+		t.Fatal("expected an error marking resolve attempted against a closed db")
+	}
+}
+
+// TestGetSubscription_errorsOnClosedDB asserts a query failure that is not
+// sql.ErrNoRows is distinguished from "not subscribed" and reported to the
+// caller.
+func TestGetSubscription_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := s.GetSubscription("UCx"); err == nil {
+		t.Fatal("expected an error getting subscription from a closed db")
+	}
+}
+
+// TestStats_errorsOnClosedDB asserts a failed stats query is reported rather
+// than the channel page rendering zeroes as if the channel genuinely has no
+// downloads.
+func TestStats_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := s.Stats("UCx", "Some Channel"); err == nil {
+		t.Fatal("expected an error computing stats against a closed db")
+	}
+}
+
+// TestNameFromVideos_errorsOnClosedDB asserts a failed lookup is reported
+// rather than being confused with "channel has no videos".
+func TestNameFromVideos_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, _, err := s.NameFromVideos("UCx"); err == nil {
+		t.Fatal("expected an error resolving channel name from videos against a closed db")
 	}
 }

@@ -6,6 +6,10 @@ import {
   subscribeChannel,
   unsubscribeChannel,
   deleteChannel,
+  getChannel,
+  scanChannel,
+  channelAvatarUrl,
+  channelBannerUrl,
 } from "./channels";
 
 beforeEach(() => {
@@ -91,5 +95,39 @@ describe("channels api", () => {
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/channels/UC1");
     expect(init!.method).toBe("DELETE");
+  });
+
+  it("getChannel GETs /api/channels/{id} and returns the detail body", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ id: "UC1", name: "One", tracked: true }),
+          { status: 200 },
+        ),
+      );
+    const detail = await getChannel("UC1");
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/channels/UC1");
+    expect(init?.method ?? "GET").toBe("GET");
+    expect(detail).toEqual({ id: "UC1", name: "One", tracked: true });
+  });
+
+  it("scanChannel POSTs to /api/channels/{id}/scan and returns the result", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ status: "scheduled" }), { status: 200 }),
+      );
+    const res = await scanChannel("UC1");
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/channels/UC1/scan");
+    expect(init!.method).toBe("POST");
+    expect(res).toEqual({ status: "scheduled" });
+  });
+
+  it("channelAvatarUrl and channelBannerUrl build encoded per-channel URLs", () => {
+    expect(channelAvatarUrl("UC 1")).toBe("/api/channels/UC%201/avatar");
+    expect(channelBannerUrl("UC 1")).toBe("/api/channels/UC%201/banner");
   });
 });
