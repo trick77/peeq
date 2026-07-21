@@ -365,23 +365,35 @@ describe("Player", () => {
   });
 
   it("toggles the CC track mode between hidden and showing", async () => {
-    // jsdom never populates HTMLMediaElement.textTracks from a <track>
-    // child, so the mode flip is exercised against a stubbed TextTrackList
-    // (mirroring how the existing tests stub `currentTime`).
+    // jsdom never populates HTMLMediaElement.textTracks from a <track> child,
+    // so the mode flip is exercised against a stubbed TextTrackList.
+    //
+    // The stub is installed on the prototype BEFORE render (not on the instance
+    // after it), and we wait for the "captions off on load" effect (Player.tsx
+    // ~L268) to have run before clicking. Otherwise that passive effect can
+    // still be pending when the click fires — React 19 defers passive effects
+    // to a macrotask, and findByRole resolving does not guarantee they flushed.
+    // The click's act() would then drain it *after* the handler set "showing",
+    // reverting the track to "hidden" and failing intermittently under CI's
+    // slower workers (issue #53). The "disabled" sentinel starts as a value
+    // only that effect clears, so the wait proves the effect actually ran.
     vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
-    render(<Player videoId="v1" onDeleted={() => {}} />);
-    const ccBtn = await screen.findByRole("button", { name: /^CC$/ });
-    const vid = document.querySelector("video") as HTMLVideoElement;
-    const fakeTrack = { mode: "hidden" } as unknown as TextTrack;
-    Object.defineProperty(vid, "textTracks", {
-      value: [fakeTrack],
-      configurable: true,
-    });
+    const fakeTrack = { mode: "disabled" } as unknown as TextTrack;
+    const ttSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "textTracks", "get")
+      .mockReturnValue([fakeTrack] as unknown as TextTrackList);
+    try {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      const ccBtn = await screen.findByRole("button", { name: /^CC$/ });
+      await waitFor(() => expect(fakeTrack.mode).toBe("hidden"));
 
-    fireEvent.click(ccBtn);
-    expect(fakeTrack.mode).toBe("showing");
-    fireEvent.click(ccBtn);
-    expect(fakeTrack.mode).toBe("hidden");
+      fireEvent.click(ccBtn);
+      expect(fakeTrack.mode).toBe("showing");
+      fireEvent.click(ccBtn);
+      expect(fakeTrack.mode).toBe("hidden");
+    } finally {
+      ttSpy.mockRestore();
+    }
   });
 
   it("fetches and shows the transcript, seeking on cue click, once expanded", async () => {
