@@ -213,4 +213,33 @@ describe("Channel", () => {
       expect(updateChannel).toHaveBeenCalledWith("UCa", { autodownload: false });
     });
   });
+
+  it("the Settings tab's Check now button is disabled while the scan request is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveScan: (v: { status: "scheduled" }) => void;
+    vi.mocked(scanChannel).mockReturnValue(
+      new Promise((res) => {
+        resolveScan = res as typeof resolveScan;
+      }),
+    );
+
+    render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />);
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /settings/i }));
+
+    const checkNowButton = await screen.findByRole("button", { name: /check now/i });
+
+    await user.click(checkNowButton);
+
+    // While the request is in flight, the button should be disabled
+    expect(checkNowButton).toHaveAttribute("disabled");
+
+    // Resolve the promise
+    resolveScan!({ status: "scheduled" });
+
+    // After the request completes, the button should be enabled again
+    await waitFor(() => {
+      expect(checkNowButton).not.toHaveAttribute("disabled");
+    });
+  });
 });

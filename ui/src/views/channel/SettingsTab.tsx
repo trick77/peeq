@@ -23,6 +23,7 @@ export function SettingsTab({
   const [notice, setNotice] = useState<string | null>(null);
   const [format, setFormat] = useState(detail.format_override ?? "");
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -38,6 +39,7 @@ export function SettingsTab({
   }
 
   async function handleScan() {
+    setScanning(true);
     setNotice(null);
     setError(null);
     try {
@@ -50,6 +52,8 @@ export function SettingsTab({
       onChanged();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setScanning(false);
     }
   }
 
@@ -106,6 +110,7 @@ export function SettingsTab({
               <input
                 id="chan-autoadd"
                 type="checkbox"
+                disabled={busy}
                 checked={detail.autodownload}
                 onChange={() => run(() => updateChannel(detail.id, { autodownload: !detail.autodownload }))}
               />
@@ -146,7 +151,7 @@ export function SettingsTab({
                     : ""}
                 </div>
               </div>
-              <Button type="button" variant="secondary" onClick={handleScan}>
+              <Button type="button" variant="secondary" busy={scanning} onClick={handleScan}>
                 Check now
               </Button>
             </div>
