@@ -5,19 +5,18 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
 ## Working conventions
 - Docs, specs, and code comments are **English only**.
 - One feature branch per phase (`feat/phase-N-...`); never commit to `master`. Conventional commits.
-- TDD: write the failing test first, then the minimal implementation.
+- TDD: failing test first, then the minimal implementation.
 - Keep files focused — one clear responsibility each.
-- YAML files use the `.yaml` extension (never `.yml`).
-- Phase 3 requires chat + embeddings endpoints (`BACKEND_CHAT_*`, `BACKEND_EMBED_*`); tests fake
-  them with httptest — never call a real LLM/embeddings endpoint or the real yt-dlp binary.
-
+- YAML files use `.yaml`, never `.yml`.
+- Phase 3 needs chat + embeddings endpoints (`BACKEND_CHAT_*`, `BACKEND_EMBED_*`); tests fake them
+  with httptest — never call a real LLM/embeddings endpoint or the real yt-dlp binary.
 - Flows needing a real cookie/AI endpoints aren't automated — run `docs/manual-verification.md` by hand.
 
 ## Logging
 - Structured `slog` only. Error attr key is **`err`**, never `error`.
 - Short lowercase messages; variables go in attrs (`snake_case`: `job_id`, `video_id`, `path`).
-- Every 500 goes through `serverError(w, r, err, "client message")` — it logs the cause and returns only the generic message. 4xx uses `writeJSONError` and needs no handler-level log — the request middleware records every request, 4xx at WARN and 5xx at ERROR.
-- A 500 therefore deliberately produces two lines: `request failed` (the cause, from `serverError`) and `request` (the access line, from the middleware). Don't "deduplicate" these by deleting one — they answer different questions.
+- Every 500 goes through `serverError(w, r, err, "client message")` — it logs the cause, returns only the generic message. 4xx uses `writeJSONError`, no handler-level log needed — the request middleware records every request, 4xx at WARN, 5xx at ERROR.
+- A 500 therefore deliberately emits two lines: `request failed` (the cause, from `serverError`) and `request` (the access line, from the middleware). Don't "deduplicate" by deleting one — they answer different questions.
 - **Never log a full URL, `RequestURI()`, or a query string.** The OIDC callback carries a live auth `code`. Log `r.URL.Path`. Wrap errors that may embed a URL in `redactErr()`.
 - Level via `BACKEND_LOG_LEVEL` (debug/info/warn/error), read in `main()` before anything else.
 
@@ -32,11 +31,10 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
 
 ## Locked technical choices (do not change without explicit agreement)
 - Module path `github.com/trick77/peeq`. Go 1.25 (`go.mod`; Containerfile build stage uses `golang:1.25-alpine`).
-- **Pure-Go SQLite**: when a DB is introduced, pin `ncruces/go-sqlite3` to `v0.23.3` (matches loom).
-  `CGO_ENABLED=0` everywhere.
+- **Pure-Go SQLite**: pin `ncruces/go-sqlite3` to `v0.23.3` (matches loom). `CGO_ENABLED=0` everywhere.
 - HTTP: stdlib `net/http` (Go 1.22+ method routing), no web framework.
 - Runtime image is `debian:12-slim` (glibc, apt), **not** distroless — peeq shells out to `ffmpeg` and
-  `yt-dlp`, both of which need a real userland. See the comment in `backend/Containerfile` for why this
+  `yt-dlp`, both needing a real userland. See the comment in `backend/Containerfile` for why this
   deviates from loom's distroless-static runtime.
 
 ## Config
@@ -44,33 +42,30 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
 - Secrets via env only; never commit them.
 
 ## Database / migrations
-- Add a migration as a new numbered file `backend/internal/store/migrations/NNNN_*.sql` (once the store
-  package exists). The runner applies pending ones in order and records them in `schema_migrations`.
+- New migration → a new numbered file `backend/internal/store/migrations/NNNN_*.sql`. The runner applies
+  pending ones in order and records them in `schema_migrations`.
 - Never edit an already-applied migration — add a new one.
 
 ## Frontend
 - Vite + React + TS + Tailwind. `npm run build` empties `backend/web/dist` and overwrites the tracked
-  placeholder `index.html`. Do NOT commit built assets — only that placeholder is tracked; restore it
+  placeholder `index.html`. Never commit built assets — only that placeholder is tracked; restore it
   (`git checkout -- backend/web/dist/index.html`) after a local build.
 
 ## Extension (`extension/`)
-
-- Plain MV3 ES modules. No bundler, no framework, no dependencies. Tests are
-  `node --test`.
-- Never `getAllCookieStores()` — read only this profile's store. Merging
-  stores lets a dead session shadow a live one.
+- Plain MV3 ES modules. No bundler, no framework, no dependencies. Tests are `node --test`.
+- Never `getAllCookieStores()` — read only this profile's store. Merging stores lets a dead session
+  shadow a live one.
 - Never persist a cookie; only `baseUrl` and `token` go in storage.
-- Never send a jar without a gate cookie (`SID`, `__Secure-1PSID`,
-  `__Secure-3PSID`) — an anonymous jar overwrites peeq's good cookie.
-- Netscape column 4 is `secure`, not `httpOnly`. After changing the
-  serializer, regenerate the cross-language fixture:
+- Never send a jar without a gate cookie (`SID`, `__Secure-1PSID`, `__Secure-3PSID`) — an anonymous jar
+  overwrites peeq's good cookie.
+- Netscape column 4 is `secure`, not `httpOnly`. After changing the serializer, regenerate the
+  cross-language fixture:
   `cd extension && node testdata/generate_fixture.js > ../backend/internal/cookie/testdata/extension_output.txt`
 - `Authorization: Bearer`, never `Token`.
-- UI: `system-ui` only, no serif, no font files. "cookie" is singular except
-  when counting.
+- UI: `system-ui` only, no serif, no font files. "cookie" is singular except when counting.
 
 ## peeq invariants (must hold in every feature that talks to YouTube)
-- **Cookie gate**: never make a YouTube call without a valid, currently-loaded cookie. If no valid
-  cookie is configured, the call must fail closed (refuse) rather than attempt an anonymous request.
+- **Cookie gate**: never make a YouTube call without a valid, currently-loaded cookie. No valid cookie
+  configured → fail closed (refuse), never attempt an anonymous request.
 - **Randomized throttle**: every YouTube call is preceded by a randomized delay (not a fixed interval)
   to avoid a bot-detectable request cadence.
