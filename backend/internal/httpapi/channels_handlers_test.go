@@ -932,3 +932,119 @@ func TestListVideos_channelParam_scopes(t *testing.T) {
 		t.Fatalf("channel scoping wrong: %s", body)
 	}
 }
+
+// seedChannelAndPending tracks a channel and inserts one pending ledger row
+// for it directly, without going through the resolver/scan machinery.
+func seedChannelAndPending(t *testing.T, deps Deps, channelID, videoID string) {
+	t.Helper()
+	if err := deps.Channels.Upsert(channels.Channel{ID: channelID, Name: channelID}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	_, err := deps.Channels.DB().Exec(
+		`INSERT INTO channel_videos (video_id, channel_id, title, url, state) VALUES (?, ?, ?, ?, 'pending')`,
+		videoID, channelID, "title "+videoID, "https://y/"+videoID)
+	if err != nil {
+		t.Fatalf("seed pending: %v", err)
+	}
+}
+
+// TestChannelScan_setsNextScanAt asserts "check now" is exactly one update:
+// the scheduler polls ClaimDue(now), so moving next_scan_at into the past is
+// the whole mechanism.
+func TestChannelScan_setsNextScanAt(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "S"}})
+	h := New(deps)
+	if rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@s", "subscribe": true}); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", rec.Code, rec.Body.String())
+	}
+	// A fresh test DB has cookie_status='absent', which the scan gate treats
+	// the same as an expired cookie. This test exercises the happy path, so
+	// mark the cookie valid the way a real machine push would.
+	if err := deps.Settings.SetCookie(context.Background(), "", "valid"); err != nil {
+		t.Fatalf("seed valid cookie: %v", err)
+	}
+	future := time.Now().UTC().Add(6 * time.Hour).Format("2006-01-02 15:04:05")
+	if err := deps.Channels.Backoff("UCs", future); err != nil {
+		t.Fatalf("push scan into the future: %v", err)
+	}
+
+	rec := postJSON(t, h, "/api/channels/UCs/scan", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	sub, err := deps.Channels.GetSubscription("UCs")
+	if err != nil {
+		t.Fatalf("get subscription: %v", err)
+	}
+	if sub.NextScanAt >= future {
+		t.Fatalf("next_scan_at = %q, want moved earlier than %q", sub.NextScanAt, future)
+	}
+}
+
+// TestChannelScan_notSubscribed_400 asserts there is nothing to schedule for
+// a channel with no subscription, rather than a silent success.
+func TestChannelScan_notSubscribed_400(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCt", Name: "T"}})
+	h := New(deps)
+	if rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@t"}); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: %d", rec.Code)
+	}
+	rec := postJSON(t, h, "/api/channels/UCt/scan", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelScan_cookieInvalid_blocked asserts the endpoint is honest when
+// the scheduler's own cookie gate would silently swallow the scan: it
+// reports 200 {"status":"blocked","reason":...} with a reason the user can
+// read, rather than "scheduled" for a scan that will never actually run.
+func TestChannelScan_cookieInvalid_blocked(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "S"}})
+	h := New(deps)
+	if rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@s", "subscribe": true}); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", rec.Code, rec.Body.String())
+	}
+	// Fresh test DB: cookie_status defaults to 'absent', so the gate must trip.
+	before, err := deps.Channels.GetSubscription("UCs")
+	if err != nil {
+		t.Fatalf("get subscription: %v", err)
+	}
+
+	rec := postJSON(t, h, "/api/channels/UCs/scan", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v; body %s", err, rec.Body.String())
+	}
+	if got.Status != "blocked" || got.Reason == "" {
+		t.Fatalf("body = %s, want status=blocked with a non-empty reason", rec.Body.String())
+	}
+
+	after, err := deps.Channels.GetSubscription("UCs")
+	if err != nil {
+		t.Fatalf("get subscription: %v", err)
+	}
+	if after.NextScanAt != before.NextScanAt {
+		t.Fatalf("next_scan_at changed on a blocked scan: %q -> %q", before.NextScanAt, after.NextScanAt)
+	}
+}
+
+// TestPendingList_channelParam_scopes asserts the New tab sees only its own
+// channel's discoveries.
+func TestPendingList_channelParam_scopes(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	h := New(deps)
+	seedChannelAndPending(t, deps, "UCa", "va")
+	seedChannelAndPending(t, deps, "UCb", "vb")
+
+	body := getJSON(t, h, "/api/pending?channel=UCa")
+	if !strings.Contains(body, "va") || strings.Contains(body, "vb") {
+		t.Fatalf("pending scoping wrong: %s", body)
+	}
+}

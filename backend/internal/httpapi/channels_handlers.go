@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -512,6 +513,57 @@ func (s *server) handleChannelsUnsubscribe(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]string{"status": "unsubscribed"})
 }
 
+// handleChannelScan schedules a scan of one channel by moving its
+// next_scan_at into the past. The scheduler holds no in-memory schedule — it
+// polls ClaimDue(now) — so this single update IS the mechanism, and the scan
+// runs on the scheduler's next poll rather than immediately. The UI must say
+// "checking soon", never imply the scan is happening this instant.
+//
+// Two gates in the scheduler's own loop can still delay it indefinitely: an
+// invalid YouTube cookie and the global pause flag. When either is set, say
+// so rather than reporting a success the user will never see the result of.
+func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	id := r.PathValue("id")
+	sub, err := s.channels.GetSubscription(id)
+	if err != nil {
+		serverError(w, r, err, "schedule scan failed")
+		return
+	}
+	if sub == nil {
+		writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
+		return
+	}
+
+	if s.settings != nil {
+		if paused, reason := s.settings.YoutubePaused(r.Context()); paused {
+			msg := "YouTube access is paused"
+			if reason != "" {
+				msg += ": " + reason
+			}
+			writeJSON(w, map[string]string{"status": "blocked", "reason": msg})
+			return
+		}
+		if status := s.settings.CookieStatus(r.Context()); status != "valid" {
+			writeJSON(w, map[string]string{
+				"status": "blocked",
+				"reason": "Your YouTube cookie needs refreshing before peeq can check this channel.",
+			})
+			return
+		}
+	}
+
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	if err := s.channels.Backoff(id, now); err != nil {
+		serverError(w, r, err, "schedule scan failed")
+		return
+	}
+	writeJSON(w, map[string]string{"status": "scheduled"})
+}
+
 // handleChannelsDelete destructively removes a channel and EVERYTHING
 // belonging to it: its subscription, its scan-ledger rows, and all of its
 // downloaded videos (their jobs and on-disk media files included) — even
@@ -600,7 +652,13 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
 		return
 	}
-	items, err := s.ledger.ListPending()
+	var items []channelvideos.Entry
+	var err error
+	if channelID := r.URL.Query().Get("channel"); channelID != "" {
+		items, err = s.ledger.ListPendingForChannel(channelID)
+	} else {
+		items, err = s.ledger.ListPending()
+	}
 	if err != nil {
 		serverError(w, r, err, "list pending failed")
 		return
