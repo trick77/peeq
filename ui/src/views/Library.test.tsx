@@ -235,7 +235,7 @@ describe("Library category chips", () => {
     const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
 
     vi.mocked(listVideos).mockImplementation(async (opts) => {
-      if (opts.category === "ai") return [aiVideo];
+      if (opts?.category === "ai") return [aiVideo];
       return [aiVideo, newsVideo];
     });
 
@@ -257,7 +257,7 @@ describe("Library category chips", () => {
     const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
 
     vi.mocked(listVideos).mockImplementation(async (opts) => {
-      if (opts.category === "ai") return [aiVideo];
+      if (opts?.category === "ai") return [aiVideo];
       return [aiVideo, newsVideo];
     });
 
