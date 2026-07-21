@@ -221,7 +221,7 @@ func (s *server) handleDownloadsStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
-// handlePauseYoutube engages the kill-switch manually (reason '').
+// handlePauseYoutube engages the kill-switch manually (reason ”).
 func (s *server) handlePauseYoutube(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "settings not configured")

@@ -25,12 +25,18 @@ export class ApiError extends Error {
 // expectJSON is the shared success/JSON path: it maps a 401 to
 // AuthExpiredError, any other non-2xx to ApiError (message read from the
 // body's `error` field when present), and otherwise decodes the JSON body.
-export async function expectJSON<T>(response: Response, fallbackMessage: string): Promise<T> {
+export async function expectJSON<T>(
+  response: Response,
+  fallbackMessage: string,
+): Promise<T> {
   if (response.status === 401) {
     throw new AuthExpiredError();
   }
   if (!response.ok) {
-    throw new ApiError(response.status, await readErrorMessage(response, fallbackMessage));
+    throw new ApiError(
+      response.status,
+      await readErrorMessage(response, fallbackMessage),
+    );
   }
   return response.json() as Promise<T>;
 }
@@ -40,16 +46,25 @@ export async function expectJSON<T>(response: Response, fallbackMessage: string)
 // job. It preserves the same 401 -> AuthExpiredError / non-2xx -> ApiError
 // mapping but deliberately never calls response.json() on the success path,
 // so an empty body doesn't throw a SyntaxError.
-export async function expectNoContent(response: Response, fallbackMessage: string): Promise<void> {
+export async function expectNoContent(
+  response: Response,
+  fallbackMessage: string,
+): Promise<void> {
   if (response.status === 401) {
     throw new AuthExpiredError();
   }
   if (!response.ok) {
-    throw new ApiError(response.status, await readErrorMessage(response, fallbackMessage));
+    throw new ApiError(
+      response.status,
+      await readErrorMessage(response, fallbackMessage),
+    );
   }
 }
 
-async function readErrorMessage(response: Response, fallback: string): Promise<string> {
+async function readErrorMessage(
+  response: Response,
+  fallback: string,
+): Promise<string> {
   try {
     const body = (await response.json()) as { error?: unknown };
     if (typeof body.error === "string" && body.error !== "") {
@@ -74,26 +89,44 @@ function jsonInit(method: string, body?: unknown): RequestInit {
 // downloads, settings, auth). Each call decodes JSON on 2xx, throws
 // AuthExpiredError on 401, and ApiError otherwise.
 export const api = {
-  async get<T>(path: string, fallbackMessage = `GET ${path} failed`): Promise<T> {
+  async get<T>(
+    path: string,
+    fallbackMessage = `GET ${path} failed`,
+  ): Promise<T> {
     const response = await fetch(path);
     return expectJSON<T>(response, fallbackMessage);
   },
-  async post<T>(path: string, body?: unknown, fallbackMessage = `POST ${path} failed`): Promise<T> {
+  async post<T>(
+    path: string,
+    body?: unknown,
+    fallbackMessage = `POST ${path} failed`,
+  ): Promise<T> {
     const response = await fetch(path, jsonInit("POST", body));
     return expectJSON<T>(response, fallbackMessage);
   },
   // postNoContent is for endpoints that reply 2xx with an empty body (e.g.
   // 202 Accepted for a queued job) — see expectNoContent above for why this
   // must not decode JSON on the success path.
-  async postNoContent(path: string, body?: unknown, fallbackMessage = `POST ${path} failed`): Promise<void> {
+  async postNoContent(
+    path: string,
+    body?: unknown,
+    fallbackMessage = `POST ${path} failed`,
+  ): Promise<void> {
     const response = await fetch(path, jsonInit("POST", body));
     return expectNoContent(response, fallbackMessage);
   },
-  async put<T>(path: string, body?: unknown, fallbackMessage = `PUT ${path} failed`): Promise<T> {
+  async put<T>(
+    path: string,
+    body?: unknown,
+    fallbackMessage = `PUT ${path} failed`,
+  ): Promise<T> {
     const response = await fetch(path, jsonInit("PUT", body));
     return expectJSON<T>(response, fallbackMessage);
   },
-  async delete<T>(path: string, fallbackMessage = `DELETE ${path} failed`): Promise<T> {
+  async delete<T>(
+    path: string,
+    fallbackMessage = `DELETE ${path} failed`,
+  ): Promise<T> {
     const response = await fetch(path, { method: "DELETE" });
     return expectJSON<T>(response, fallbackMessage);
   },

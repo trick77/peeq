@@ -28,7 +28,10 @@ export function readNowPlaying(): NowPlaying | null {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<NowPlaying>;
-    if (typeof parsed.videoId !== "string" || typeof parsed.playing !== "boolean") {
+    if (
+      typeof parsed.videoId !== "string" ||
+      typeof parsed.playing !== "boolean"
+    ) {
       return null;
     }
     return { videoId: parsed.videoId, playing: parsed.playing };

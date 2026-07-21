@@ -35,12 +35,25 @@ export function VideoCard({
   // name link in Task 15.
   onOpenChannel?: (id: string) => void;
 }) {
-  const downloading = video.status === "queued" || video.status === "downloading";
-  const isNew = !downloading && !video.watched && video.resume_position_seconds === 0 && video.has_media;
+  const downloading =
+    video.status === "queued" || video.status === "downloading";
+  const isNew =
+    !downloading &&
+    !video.watched &&
+    video.resume_position_seconds === 0 &&
+    video.has_media;
   const resuming =
-    !downloading && !video.watched && video.resume_position_seconds > 0 && (video.duration_seconds ?? 0) > 0;
+    !downloading &&
+    !video.watched &&
+    video.resume_position_seconds > 0 &&
+    (video.duration_seconds ?? 0) > 0;
   const resumePercent = resuming
-    ? Math.min(100, Math.round((video.resume_position_seconds / (video.duration_seconds ?? 1)) * 100))
+    ? Math.min(
+        100,
+        Math.round(
+          (video.resume_position_seconds / (video.duration_seconds ?? 1)) * 100,
+        ),
+      )
     : 0;
 
   return (
@@ -64,7 +77,12 @@ export function VideoCard({
           aria-label={`Open ${video.title}`}
         >
           {video.has_thumbnail ? (
-            <img className="fill" src={thumbnailUrl(video.id)} alt="" loading="lazy" />
+            <img
+              className="fill"
+              src={thumbnailUrl(video.id)}
+              alt=""
+              loading="lazy"
+            />
           ) : (
             <div className={`fill ${gradientClassFor(video.id)}`} />
           )}
@@ -96,7 +114,9 @@ export function VideoCard({
           <button
             type="button"
             className={`iconbtn${video.favorite ? " on" : ""}`}
-            aria-label={video.favorite ? "Remove from favorites" : "Add to favorites"}
+            aria-label={
+              video.favorite ? "Remove from favorites" : "Add to favorites"
+            }
             onClick={(e) => {
               e.stopPropagation();
               onToggleFavorite(video.id);
@@ -121,7 +141,11 @@ export function VideoCard({
       <h3>{video.title}</h3>
       <div className="by">
         {onOpenChannel && video.channel_id ? (
-          <button type="button" className="chan-link" onClick={() => onOpenChannel(video.channel_id)}>
+          <button
+            type="button"
+            className="chan-link"
+            onClick={() => onOpenChannel(video.channel_id)}
+          >
             {video.channel_name || video.channel_id}
           </button>
         ) : (
@@ -133,11 +157,16 @@ export function VideoCard({
             {new Date(video.published_at).toLocaleDateString()}
           </>
         ) : null}
-        {video.category && video.category !== UNCATEGORIZED && CATEGORY_BY_ID[video.category] ? (
+        {video.category &&
+        video.category !== UNCATEGORIZED &&
+        CATEGORY_BY_ID[video.category] ? (
           <>
             <span className="dot">·</span>
             <span className="metapill">
-              <span className="dotc" style={{ background: CATEGORY_BY_ID[video.category].color }} />
+              <span
+                className="dotc"
+                style={{ background: CATEGORY_BY_ID[video.category].color }}
+              />
               {CATEGORY_BY_ID[video.category].label}
             </span>
           </>
@@ -172,10 +201,17 @@ function Lifecycle({
       <div className="card-foot">
         <div className={`life ${video.status === "error" ? "err" : "tomb"}`}>
           <span className="led" />
-          {video.status === "error" ? "Download failed" : "Removed to save space · summary kept"}
+          {video.status === "error"
+            ? "Download failed"
+            : "Removed to save space · summary kept"}
         </div>
         {onRedownload && (
-          <Button type="button" variant="tinted" small onClick={() => onRedownload(video.id)}>
+          <Button
+            type="button"
+            variant="tinted"
+            small
+            onClick={() => onRedownload(video.id)}
+          >
             <Icon name="refresh" size="15px" /> Re-download
           </Button>
         )}
@@ -198,7 +234,9 @@ function Lifecycle({
           <Icon name="starFilled" size="13px" />
           Kept forever
         </span>
-        {video.filesize_bytes ? <span className="sz">{formatSize(video.filesize_bytes)}</span> : null}
+        {video.filesize_bytes ? (
+          <span className="sz">{formatSize(video.filesize_bytes)}</span>
+        ) : null}
       </div>
     );
   }
@@ -206,7 +244,9 @@ function Lifecycle({
     const expiresIn = Math.max(0, retentionDays - daysSince(video.watched_at));
     return (
       <div className="life expiring">
-        {expiresIn === 0 ? "Expires soon" : `Expires in ${expiresIn} day${expiresIn === 1 ? "" : "s"}`}
+        {expiresIn === 0
+          ? "Expires soon"
+          : `Expires in ${expiresIn} day${expiresIn === 1 ? "" : "s"}`}
         <span className="decay" />
       </div>
     );
@@ -214,7 +254,9 @@ function Lifecycle({
   return (
     <div className="life fresh">
       Not watched yet
-      {video.filesize_bytes ? <span className="sz">{formatSize(video.filesize_bytes)}</span> : null}
+      {video.filesize_bytes ? (
+        <span className="sz">{formatSize(video.filesize_bytes)}</span>
+      ) : null}
     </div>
   );
 }

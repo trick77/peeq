@@ -46,7 +46,8 @@ func TestValidate_acceptsHttpOnlyPrefixedYoutube(t *testing.T) {
 // serializer to this Go parser. They are two implementations of one file
 // format in two languages with nothing linking them at compile time, so the
 // fixture is the contract. Regenerate it with:
-//   cd extension && node testdata/generate_fixture.js > ../backend/internal/cookie/testdata/extension_output.txt
+//
+//	cd extension && node testdata/generate_fixture.js > ../backend/internal/cookie/testdata/extension_output.txt
 func TestParse_extensionOutput(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "extension_output.txt"))
 	if err != nil {

@@ -60,11 +60,17 @@ export function ArchiveTab({
     const current = videos.find((v) => v.id === id);
     if (!current) return;
     const next = !current.favorite;
-    setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, favorite: next } : v)));
+    setVideos((prev) =>
+      prev.map((v) => (v.id === id ? { ...v, favorite: next } : v)),
+    );
     try {
       await setFavorite(id, next);
     } catch (e) {
-      setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, favorite: current.favorite } : v)));
+      setVideos((prev) =>
+        prev.map((v) =>
+          v.id === id ? { ...v, favorite: current.favorite } : v,
+        ),
+      );
       setError((e as Error).message);
     }
   }
@@ -73,11 +79,15 @@ export function ArchiveTab({
     const current = videos.find((v) => v.id === id);
     if (!current) return;
     const next = !current.watched;
-    setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, watched: next } : v)));
+    setVideos((prev) =>
+      prev.map((v) => (v.id === id ? { ...v, watched: next } : v)),
+    );
     try {
       await setWatched(id, next);
     } catch (e) {
-      setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, watched: current.watched } : v)));
+      setVideos((prev) =>
+        prev.map((v) => (v.id === id ? { ...v, watched: current.watched } : v)),
+      );
       setError((e as Error).message);
     }
   }
@@ -139,7 +149,9 @@ export function ArchiveTab({
       </div>
       {videos.length === 0 && !error ? (
         <p style={{ color: "var(--color-faint)" }}>
-          {debouncedQuery || category !== "all" ? "No videos match." : "Nothing archived from this channel yet."}
+          {debouncedQuery || category !== "all"
+            ? "No videos match."
+            : "Nothing archived from this channel yet."}
         </p>
       ) : null}
     </>

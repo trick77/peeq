@@ -2,7 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { App } from "./App";
-import { downloadsStatus, resumeYoutube, listDownloads, getMe, listPending, cookieHealth, streamDownloads } from "./api";
+import {
+  downloadsStatus,
+  resumeYoutube,
+  listDownloads,
+  getMe,
+  listPending,
+  cookieHealth,
+  streamDownloads,
+} from "./api";
 import { addDownload } from "./api/downloads";
 import type { Job, User, Video } from "./api/types";
 
@@ -20,7 +28,9 @@ vi.mock("./api", () => ({
   getMe: vi.fn().mockResolvedValue({ id: "u1", email: "a@b.c" }),
   listDownloads: vi.fn().mockResolvedValue([]),
   cookieHealth: vi.fn().mockResolvedValue({ status: "active" }),
-  downloadsStatus: vi.fn().mockResolvedValue({ paused: false, low_disk: false }),
+  downloadsStatus: vi
+    .fn()
+    .mockResolvedValue({ paused: false, low_disk: false }),
   resumeYoutube: vi.fn().mockResolvedValue(undefined),
   listPending: vi.fn().mockResolvedValue([]),
   streamDownloads: vi.fn().mockResolvedValue(undefined),
@@ -122,7 +132,10 @@ describe("App dock bootstrap", () => {
       youtube_pause_reason: "",
     });
     vi.mocked(listPending).mockResolvedValue([]);
-    vi.mocked(cookieHealth).mockResolvedValue({ status: "active", present: true });
+    vi.mocked(cookieHealth).mockResolvedValue({
+      status: "active",
+      present: true,
+    });
     vi.mocked(streamDownloads).mockResolvedValue(undefined);
   });
 
@@ -152,7 +165,13 @@ describe("App dock bootstrap", () => {
 
     // Once queued, the dock must reflect it without a reload.
     vi.mocked(listDownloads).mockResolvedValue([
-      { job_id: 7, video_id: "vynCRZwkWhE", title: "Queued video", state: "pending", priority: 10 } as Job,
+      {
+        job_id: 7,
+        video_id: "vynCRZwkWhE",
+        title: "Queued video",
+        state: "pending",
+        priority: 10,
+      } as Job,
     ]);
 
     fireEvent.change(screen.getByLabelText("Video or channel URL"), {
@@ -174,13 +193,19 @@ describe("App reload-restore", () => {
   // as unambiguous discriminators (both "Library" and "Now playing" always
   // appear as rail nav labels).
   it("reopens the Player when a video was playing before reload", async () => {
-    sessionStorage.setItem("peeq.nowPlaying", JSON.stringify({ videoId: "v1", playing: true }));
+    sessionStorage.setItem(
+      "peeq.nowPlaying",
+      JSON.stringify({ videoId: "v1", playing: true }),
+    );
     render(<App />);
     await waitFor(() => expect(document.querySelector("video")).not.toBeNull());
   });
 
   it("lands on Library when the marker says the video was paused", async () => {
-    sessionStorage.setItem("peeq.nowPlaying", JSON.stringify({ videoId: "v1", playing: false }));
+    sessionStorage.setItem(
+      "peeq.nowPlaying",
+      JSON.stringify({ videoId: "v1", playing: false }),
+    );
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
     expect(document.querySelector("video")).toBeNull();
@@ -202,7 +227,12 @@ describe("App youtube-paused banner", () => {
   });
 
   it("shows the YouTube-paused banner with a Resume action", async () => {
-    vi.mocked(downloadsStatus).mockResolvedValue({ paused: false, low_disk: false, youtube_paused: true, youtube_pause_reason: "" });
+    vi.mocked(downloadsStatus).mockResolvedValue({
+      paused: false,
+      low_disk: false,
+      youtube_paused: true,
+      youtube_pause_reason: "",
+    });
     vi.mocked(resumeYoutube).mockResolvedValue(undefined);
     render(<App />);
     const resume = await screen.findByRole("button", { name: /resume/i });
@@ -268,16 +298,22 @@ describe("App routing", () => {
     await screen.findByPlaceholderText("Search titles");
 
     fireEvent.click(screen.getByRole("button", { name: "Channels" }));
-    const channelLink = await screen.findByRole("button", { name: "Uncanny Expeditions" });
+    const channelLink = await screen.findByRole("button", {
+      name: "Uncanny Expeditions",
+    });
     fireEvent.click(channelLink);
 
-    expect(await screen.findByRole("button", { name: /all channels/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /all channels/i }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(getChannel).toHaveBeenCalledWith("UCa"));
 
     fireEvent.click(screen.getByRole("button", { name: /all channels/i }));
 
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: /all channels/i })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /all channels/i }),
+      ).toBeNull();
     });
   });
 

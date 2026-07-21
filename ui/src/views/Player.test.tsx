@@ -82,7 +82,10 @@ describe("Player", () => {
 
     // First timeupdate: lastSentRef starts at 0, so this one posts
     // immediately (a real send, not the one under test).
-    Object.defineProperty(videoEl, "currentTime", { value: 50, writable: true });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 50,
+      writable: true,
+    });
     fireEvent.timeUpdate(videoEl);
     await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 50));
     vi.mocked(setResume).mockClear();
@@ -91,7 +94,10 @@ describe("Player", () => {
     // its own it would NOT post — this is the progress that would
     // otherwise be silently discarded by unmounting (e.g. clicking back to
     // Library, the common in-SPA exit).
-    Object.defineProperty(videoEl, "currentTime", { value: 77, writable: true });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 77,
+      writable: true,
+    });
     fireEvent.timeUpdate(videoEl);
     expect(setResume).not.toHaveBeenCalled();
 
@@ -153,7 +159,14 @@ describe("Player", () => {
 
   it("calls onSeekConsumed exactly once right after applying seekTo", async () => {
     const onSeekConsumed = vi.fn();
-    render(<Player videoId="v1" seekTo={560} onSeekConsumed={onSeekConsumed} onDeleted={() => {}} />);
+    render(
+      <Player
+        videoId="v1"
+        seekTo={560}
+        onSeekConsumed={onSeekConsumed}
+        onDeleted={() => {}}
+      />,
+    );
 
     const videoEl = await waitFor(() => {
       const el = document.querySelector("video");
@@ -182,7 +195,12 @@ describe("Player", () => {
     // 560s jump.
     const onSeekConsumed = vi.fn();
     const { unmount } = render(
-      <Player videoId="v1" seekTo={560} onSeekConsumed={onSeekConsumed} onDeleted={() => {}} />,
+      <Player
+        videoId="v1"
+        seekTo={560}
+        onSeekConsumed={onSeekConsumed}
+        onDeleted={() => {}}
+      />,
     );
 
     const firstEl = await waitFor(() => {
@@ -263,7 +281,10 @@ describe("Player", () => {
       if (!el) throw new Error("video element not mounted yet");
       return el;
     });
-    Object.defineProperty(videoEl, "currentTime", { value: 100, writable: true });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 100,
+      writable: true,
+    });
 
     fireEvent.timeUpdate(videoEl);
 
@@ -282,12 +303,17 @@ describe("Player", () => {
 
   it("shows a placeholder message with nothing selected", () => {
     render(<Player videoId={null} onDeleted={() => {}} />);
-    expect(screen.getByText(/Pick a video from the Library/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Pick a video from the Library/i),
+    ).toBeInTheDocument();
   });
 
   it("renders the summary paragraphs when summary_status is done", async () => {
     vi.mocked(getVideo).mockResolvedValue(
-      makeVideo({ summary_status: "done", summary: "Prose one.\n\nProse two." }),
+      makeVideo({
+        summary_status: "done",
+        summary: "Prose one.\n\nProse two.",
+      }),
     );
     render(<Player videoId="v1" onDeleted={() => {}} />);
     expect(await screen.findByText("Prose one.")).toBeInTheDocument();
@@ -295,13 +321,19 @@ describe("Player", () => {
   });
 
   it("shows No transcript available for a no_transcript summary status", async () => {
-    vi.mocked(getVideo).mockResolvedValue(makeVideo({ summary_status: "no_transcript" }));
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ summary_status: "no_transcript" }),
+    );
     render(<Player videoId="v1" onDeleted={() => {}} />);
-    expect(await screen.findByText(/No transcript available/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/No transcript available/i),
+    ).toBeInTheDocument();
   });
 
   it("shows a Re-summarize button on error status and calls resummarize", async () => {
-    vi.mocked(getVideo).mockResolvedValue(makeVideo({ summary_status: "error" }));
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ summary_status: "error" }),
+    );
     render(<Player videoId="v1" onDeleted={() => {}} />);
     const btn = await screen.findByRole("button", { name: /Re-summarize/i });
     fireEvent.click(btn);
@@ -333,25 +365,41 @@ describe("Player", () => {
   });
 
   it("toggles the CC track mode between hidden and showing", async () => {
-    // jsdom never populates HTMLMediaElement.textTracks from a <track>
-    // child, so the mode flip is exercised against a stubbed TextTrackList
-    // (mirroring how the existing tests stub `currentTime`).
+    // jsdom never populates HTMLMediaElement.textTracks from a <track> child,
+    // so the mode flip is exercised against a stubbed TextTrackList.
+    //
+    // The stub is installed on the prototype BEFORE render (not on the instance
+    // after it), and we wait for the "captions off on load" effect (Player.tsx
+    // ~L268) to have run before clicking. Otherwise that passive effect can
+    // still be pending when the click fires — React 19 defers passive effects
+    // to a macrotask, and findByRole resolving does not guarantee they flushed.
+    // The click's act() would then drain it *after* the handler set "showing",
+    // reverting the track to "hidden" and failing intermittently under CI's
+    // slower workers (issue #53). The "disabled" sentinel starts as a value
+    // only that effect clears, so the wait proves the effect actually ran.
     vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
-    render(<Player videoId="v1" onDeleted={() => {}} />);
-    const ccBtn = await screen.findByRole("button", { name: /^CC$/ });
-    const vid = document.querySelector("video") as HTMLVideoElement;
-    const fakeTrack = { mode: "hidden" } as unknown as TextTrack;
-    Object.defineProperty(vid, "textTracks", { value: [fakeTrack], configurable: true });
+    const fakeTrack = { mode: "disabled" } as unknown as TextTrack;
+    const ttSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "textTracks", "get")
+      .mockReturnValue([fakeTrack] as unknown as TextTrackList);
+    try {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      const ccBtn = await screen.findByRole("button", { name: /^CC$/ });
+      await waitFor(() => expect(fakeTrack.mode).toBe("hidden"));
 
-    fireEvent.click(ccBtn);
-    expect(fakeTrack.mode).toBe("showing");
-    fireEvent.click(ccBtn);
-    expect(fakeTrack.mode).toBe("hidden");
+      fireEvent.click(ccBtn);
+      expect(fakeTrack.mode).toBe("showing");
+      fireEvent.click(ccBtn);
+      expect(fakeTrack.mode).toBe("hidden");
+    } finally {
+      ttSpy.mockRestore();
+    }
   });
 
   it("fetches and shows the transcript, seeking on cue click, once expanded", async () => {
     vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
-    const vtt = "WEBVTT\n\n00:00:05.000 --> 00:00:08.000\nHello there\n\n00:00:10.000 --> 00:00:12.000\nBattery life is great\n";
+    const vtt =
+      "WEBVTT\n\n00:00:05.000 --> 00:00:08.000\nHello there\n\n00:00:10.000 --> 00:00:12.000\nBattery life is great\n";
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(vtt) }),
@@ -359,9 +407,13 @@ describe("Player", () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
     const toggle = await screen.findByRole("button", { name: /Transcript/i });
     fireEvent.click(toggle);
-    expect(await screen.findByText(/Battery life is great/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Battery life is great/i),
+    ).toBeInTheDocument();
 
-    const cueBtn = screen.getByRole("button", { name: /Battery life is great/i });
+    const cueBtn = screen.getByRole("button", {
+      name: /Battery life is great/i,
+    });
     const vid = document.querySelector("video") as HTMLVideoElement;
     const seekSpy = vi.spyOn(vid, "currentTime", "set");
     fireEvent.click(cueBtn);
@@ -370,7 +422,8 @@ describe("Player", () => {
 
   it("highlights matching transcript rows via the find box", async () => {
     vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
-    const vtt = "WEBVTT\n\n00:00:05.000 --> 00:00:08.000\nHello there\n\n00:00:10.000 --> 00:00:12.000\nBattery life is great\n";
+    const vtt =
+      "WEBVTT\n\n00:00:05.000 --> 00:00:08.000\nHello there\n\n00:00:10.000 --> 00:00:12.000\nBattery life is great\n";
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(vtt) }),
@@ -394,7 +447,13 @@ describe("Player", () => {
   it("updates live when a summary SSE event arrives for the open video", async () => {
     vi.mocked(getVideo)
       .mockResolvedValueOnce(makeVideo({ id: "v1", summary_status: "running" }))
-      .mockResolvedValueOnce(makeVideo({ id: "v1", summary_status: "done", summary: "Fresh summary." }));
+      .mockResolvedValueOnce(
+        makeVideo({
+          id: "v1",
+          summary_status: "done",
+          summary: "Fresh summary.",
+        }),
+      );
     // streamSSE (the real ../api/downloads dependency) already parses each
     // frame's JSON body before invoking onEvent — App.tsx's own "progress"
     // handler consumes evt.data the same way, uncast-and-parsed — so the
@@ -407,7 +466,10 @@ describe("Player", () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
     expect(await screen.findByText(/summarizing/i)).toBeInTheDocument();
 
-    emit({ event: "summary", data: { video_id: "v1", status: "done", phase: "" } });
+    emit({
+      event: "summary",
+      data: { video_id: "v1", status: "done", phase: "" },
+    });
 
     expect(await screen.findByText(/fresh summary/i)).toBeInTheDocument();
   });
@@ -421,7 +483,9 @@ describe("Player", () => {
   });
 
   it("shows Re-download for an errored video and queues it", async () => {
-    vi.mocked(getVideo).mockResolvedValue(makeVideo({ id: "v1", status: "error" }));
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", status: "error" }),
+    );
     vi.mocked(redownload).mockResolvedValue(undefined);
     render(<Player videoId="v1" onDeleted={() => {}} />);
     const btn = await screen.findByRole("button", { name: /re-download/i });
@@ -430,7 +494,9 @@ describe("Player", () => {
   });
 
   it("hides Re-download for a downloaded video", async () => {
-    vi.mocked(getVideo).mockResolvedValue(makeVideo({ id: "v1", status: "downloaded" }));
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", status: "downloaded" }),
+    );
     render(<Player videoId="v1" onDeleted={() => {}} />);
     await screen.findByText(/watch on youtube/i); // wait for load
     expect(screen.queryByRole("button", { name: /re-download/i })).toBeNull();
@@ -438,7 +504,13 @@ describe("Player", () => {
 
   it("renders the channel name as a clickable link when onOpenChannel is provided", async () => {
     const onOpenChannel = vi.fn();
-    render(<Player videoId="v1" onDeleted={() => {}} onOpenChannel={onOpenChannel} />);
+    render(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        onOpenChannel={onOpenChannel}
+      />,
+    );
     const link = await screen.findByRole("button", { name: "Veritasium" });
     fireEvent.click(link);
     expect(onOpenChannel).toHaveBeenCalledWith("chan1");

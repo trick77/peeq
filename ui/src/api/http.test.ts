@@ -8,16 +8,22 @@ describe("api http client", () => {
 
   it("api.get throws AuthExpiredError on 401", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+      new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.get("/api/videos")).rejects.toBeInstanceOf(AuthExpiredError);
+    await expect(api.get("/api/videos")).rejects.toBeInstanceOf(
+      AuthExpiredError,
+    );
   });
 
   it("api.get throws ApiError with the server message on other non-2xx", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ error: "video not found" }), { status: 404 }),
+      new Response(JSON.stringify({ error: "video not found" }), {
+        status: 404,
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -28,16 +34,22 @@ describe("api http client", () => {
   });
 
   it("api.get resolves the decoded JSON body on 200", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: "abc" }), { status: 200 }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ id: "abc" }), { status: 200 }),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.get("/api/videos/abc")).resolves.toEqual({ id: "abc" });
   });
 
   it("api.post sends a JSON body and the given method", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
     await api.post("/api/downloads", { url: "https://example.com" });
@@ -53,7 +65,9 @@ describe("api http client", () => {
   });
 
   it("ApiError instances carry a status", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 409 }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 409 }));
     vi.stubGlobal("fetch", fetchMock);
     try {
       await api.post("/api/downloads", { url: "x" }, "add failed");

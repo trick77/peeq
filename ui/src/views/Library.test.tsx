@@ -49,10 +49,16 @@ describe("VideoCard lifecycle line", () => {
   });
 
   it('renders "Expires in N days" for a watched, non-favorite video', () => {
-    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    const fiveDaysAgo = new Date(
+      Date.now() - 5 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     render(
       <VideoCard
-        video={baseVideo({ watched: true, watched_at: fiveDaysAgo, favorite: false })}
+        video={baseVideo({
+          watched: true,
+          watched_at: fiveDaysAgo,
+          favorite: false,
+        })}
         retentionDays={14}
         onOpen={noop}
         onToggleFavorite={noop}
@@ -97,7 +103,13 @@ describe("VideoCard lifecycle line", () => {
   it("calls onOpen with the video id when the thumbnail is clicked", async () => {
     const onOpen = vi.fn();
     render(
-      <VideoCard video={baseVideo()} retentionDays={14} onOpen={onOpen} onToggleFavorite={noop} onToggleWatched={noop} />,
+      <VideoCard
+        video={baseVideo()}
+        retentionDays={14}
+        onOpen={onOpen}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
     );
     screen.getByRole("button", { name: /Open A Test Video/ }).click();
     expect(onOpen).toHaveBeenCalledWith("v1");
@@ -132,7 +144,9 @@ describe("VideoCard lifecycle line", () => {
         onRedownload={noop}
       />,
     );
-    expect(screen.getByText("Removed to save space · summary kept")).toBeInTheDocument();
+    expect(
+      screen.getByText("Removed to save space · summary kept"),
+    ).toBeInTheDocument();
   });
 
   it("shows a category badge when categorized, hides it when uncategorized", () => {
@@ -205,7 +219,9 @@ describe("VideoCard lifecycle line", () => {
       />,
     );
     expect(screen.getByText("Test Channel")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Test Channel" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Test Channel" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -262,8 +278,16 @@ describe("Library category chips", () => {
   });
 
   it("renders a category chip row and filters by category", async () => {
-    const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
-    const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
+    const aiVideo = categoryVideo({
+      id: "v1",
+      title: "ai video title",
+      category: "ai",
+    });
+    const newsVideo = categoryVideo({
+      id: "v2",
+      title: "news video title",
+      category: "news",
+    });
 
     vi.mocked(listVideos).mockImplementation(async (opts) => {
       if (opts?.category === "ai") return [aiVideo];
@@ -284,8 +308,16 @@ describe("Library category chips", () => {
   });
 
   it("applies the category filter independently of the status chip", async () => {
-    const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
-    const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
+    const aiVideo = categoryVideo({
+      id: "v1",
+      title: "ai video title",
+      category: "ai",
+    });
+    const newsVideo = categoryVideo({
+      id: "v2",
+      title: "news video title",
+      category: "news",
+    });
 
     vi.mocked(listVideos).mockImplementation(async (opts) => {
       if (opts?.category === "ai") return [aiVideo];
@@ -300,7 +332,9 @@ describe("Library category chips", () => {
     fireEvent.click(aiChip);
 
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ filter: "unwatched", category: "ai" }));
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: "unwatched", category: "ai" }),
+      );
     });
     // Selecting a category must not reset the status chip, and vice versa.
     expect(screen.getByRole("button", { name: /Unwatched/ })).toHaveClass("on");
@@ -311,7 +345,11 @@ describe("Library category chips", () => {
     // Given: a category filter is active. The 3s poller (Library.tsx:163)
     // only arms while a download job is pending/running, so listDownloads
     // must report one to make the interval fire at all.
-    const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
+    const aiVideo = categoryVideo({
+      id: "v1",
+      title: "ai video title",
+      category: "ai",
+    });
     vi.mocked(listVideos).mockResolvedValue([aiVideo]);
     vi.mocked(listDownloads).mockResolvedValue([
       {
@@ -328,7 +366,9 @@ describe("Library category chips", () => {
     const aiChip = await screen.findByRole("button", { name: /AI/ });
     fireEvent.click(aiChip);
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ filter: "all", category: "ai" }));
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: "all", category: "ai" }),
+      );
     });
     vi.mocked(listVideos).mockClear();
 
@@ -337,7 +377,9 @@ describe("Library category chips", () => {
 
     // Then: the refresh still carries the category, not just the status.
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ filter: "all", category: "ai" }));
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: "all", category: "ai" }),
+      );
     });
   });
 
@@ -351,7 +393,9 @@ describe("Library category chips", () => {
     rerender(<Library onOpenVideo={() => {}} search="abyss" />);
 
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ q: "abyss" }));
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "abyss" }),
+      );
     });
   });
 
@@ -364,7 +408,9 @@ describe("Library category chips", () => {
     await user.selectOptions(screen.getByLabelText(/sort/i), "longest");
 
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ sort: "longest" }));
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: "longest" }),
+      );
     });
   });
 
@@ -378,7 +424,9 @@ describe("Library category chips", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }));
 
     await waitFor(() => expect(setFavorite).toHaveBeenCalledWith("v1", true));
-    expect(await screen.findByRole("button", { name: "Remove from favorites" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Remove from favorites" }),
+    ).toBeInTheDocument();
   });
 
   it("reverts the optimistic favorite flip when setFavorite fails", async () => {
@@ -391,11 +439,15 @@ describe("Library category chips", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }));
 
     // Optimistic update fires immediately.
-    expect(await screen.findByRole("button", { name: "Remove from favorites" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Remove from favorites" }),
+    ).toBeInTheDocument();
 
     // Then reverts once the request rejects.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add to favorites" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Add to favorites" }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -409,7 +461,9 @@ describe("Library category chips", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
 
     await waitFor(() => expect(setWatched).toHaveBeenCalledWith("v1", true));
-    expect(await screen.findByRole("button", { name: "Mark unwatched" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Mark unwatched" }),
+    ).toBeInTheDocument();
   });
 
   it("reverts the optimistic watched flip when setWatched fails", async () => {
@@ -421,10 +475,14 @@ describe("Library category chips", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
 
-    expect(await screen.findByRole("button", { name: "Mark unwatched" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Mark unwatched" }),
+    ).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Mark watched" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Mark watched" }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -434,7 +492,9 @@ describe("Library category chips", () => {
     const { redownload } = await import("../api");
     vi.mocked(redownload).mockResolvedValue(undefined);
     let fixed = false;
-    vi.mocked(listVideos).mockImplementation(async () => (fixed ? [refreshed] : [errored]));
+    vi.mocked(listVideos).mockImplementation(async () =>
+      fixed ? [refreshed] : [errored],
+    );
 
     render(<Library onOpenVideo={() => {}} search="" />);
     await screen.findByText("Download failed");
@@ -444,7 +504,9 @@ describe("Library category chips", () => {
 
     await waitFor(() => expect(redownload).toHaveBeenCalledWith("v1"));
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith(expect.objectContaining({ filter: "all" }));
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: "all" }),
+      );
     });
     expect(await screen.findByText("Not watched yet")).toBeInTheDocument();
   });

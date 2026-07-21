@@ -77,20 +77,34 @@ export function Pending({
         {items.map((item) => (
           <article key={item.video_id} className="card">
             <div className="thumb">
-              <img className="fill" src={item.thumbnail_url} alt="" loading="lazy" />
-              <span className="dur">{formatDuration(item.duration_seconds)}</span>
+              <img
+                className="fill"
+                src={item.thumbnail_url}
+                alt=""
+                loading="lazy"
+              />
+              <span className="dur">
+                {formatDuration(item.duration_seconds)}
+              </span>
             </div>
             <h3>{item.title}</h3>
             <div className="by">
               {onOpenChannel && item.channel_id ? (
-                <button type="button" className="chan-link" onClick={() => onOpenChannel(item.channel_id)}>
+                <button
+                  type="button"
+                  className="chan-link"
+                  onClick={() => onOpenChannel(item.channel_id)}
+                >
                   {item.channel_name || item.channel_id}
                 </button>
               ) : (
                 item.channel_name || item.channel_id
               )}
             </div>
-            <div className="acts-row" style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <div
+              className="acts-row"
+              style={{ display: "flex", gap: 8, marginTop: 8 }}
+            >
               <Button
                 type="button"
                 variant="secondary"
@@ -113,7 +127,9 @@ export function Pending({
           </article>
         ))}
       </div>
-      {items.length === 0 && !error ? <p style={{ color: "var(--color-faint)" }}>Nothing pending.</p> : null}
+      {items.length === 0 && !error ? (
+        <p style={{ color: "var(--color-faint)" }}>Nothing pending.</p>
+      ) : null}
     </>
   );
 }

@@ -71,3 +71,57 @@ Run after any change to the channel page, the `channels` table, or the scan sche
    smaller than the name, with only the numerals lifted — readable, but not competing with the name.
 9. Narrow the window to phone width. The header wraps, the buttons drop below the stats, and the
    page body does not scroll sideways.
+
+## TubeArchivist import — Phase A (subscriptions)
+
+Requires a live TubeArchivist instance, so it cannot be covered by automated
+tests. Get an API token from TubeArchivist's settings UI, or
+`GET /api/appsettings/token/`.
+
+**1. Survey — writes nothing.**
+
+```bash
+docker compose run --rm peeq import-ta-channels \
+  --ta-url http://tubearchivist:8000 \
+  --ta-token "$TA_TOKEN" \
+  --dry-run
+```
+
+Check:
+- The subscription count matches TubeArchivist's own subscribed-channel list.
+- The "Skipped" count is plausible. These are channels TubeArchivist knows only
+  because a video was downloaded from them once; they are deliberately not
+  imported.
+- Any inactive channels listed are ones you recognise as dead.
+
+**2. Real run, with peeq stopped.**
+
+```bash
+docker compose stop peeq
+docker compose run --rm peeq import-ta-channels \
+  --ta-url http://tubearchivist:8000 \
+  --ta-token "$TA_TOKEN"
+docker compose start peeq
+```
+
+peeq must be stopped because the subcommand writes to the same SQLite database.
+
+**3. Verify in the UI.**
+
+- The Channels page lists the imported channels.
+- Every one shows autodownload **off**.
+- Names came across. Handles are blank — expected, TubeArchivist does not store
+  them.
+
+**4. Verify the baseline, after the first scheduled scan.**
+
+The pending queue must **not** fill with each channel's back catalogue. peeq's
+first scan of a channel baselines it, marking existing videos as seen. A
+flooded pending queue means baselining did not happen and should be
+investigated before Phase B.
+
+**5. Expect the list to shrink.**
+
+Inactive channels were imported deliberately. Over the following days peeq's
+auto-unsubscribe will scan them, classify them as `deleted`, and unsubscribe
+them. That is working as intended, not data loss.

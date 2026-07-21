@@ -28,7 +28,10 @@ export function ReviewBand({
   return (
     <div className="band">
       <div className="band-head">
-        <h3>{channels.length} channel{channels.length === 1 ? "" : "s"} need{channels.length === 1 ? "s" : ""} review</h3>
+        <h3>
+          {channels.length} channel{channels.length === 1 ? "" : "s"} need
+          {channels.length === 1 ? "s" : ""} review
+        </h3>
         <span className="why">No new videos in over 6 months</span>
         <span className="spacer" />
         <button type="button" className="abtn" onClick={onKeepAll}>
@@ -43,7 +46,9 @@ export function ReviewBand({
               <div className="by">
                 <span className="life warn">
                   <span className="led" />
-                  {c.last_video_at ? `Last video ${new Date(c.last_video_at).toLocaleDateString()}` : "No video ever recorded"}
+                  {c.last_video_at
+                    ? `Last video ${new Date(c.last_video_at).toLocaleDateString()}`
+                    : "No video ever recorded"}
                 </span>
                 <span className="dot">·</span>
                 <span>{c.downloaded_count} archived</span>
@@ -53,7 +58,11 @@ export function ReviewBand({
               <button type="button" className="abtn" onClick={() => onKeep(c)}>
                 Keep subscribed
               </button>
-              <button type="button" className="abtn danger" onClick={() => onUnsubscribe(c)}>
+              <button
+                type="button"
+                className="abtn danger"
+                onClick={() => onUnsubscribe(c)}
+              >
                 Unsubscribe
               </button>
             </div>

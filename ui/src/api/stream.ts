@@ -51,7 +51,10 @@ export async function streamSSE(
   }
 }
 
-function drainBuffer(buffer: string, onEvent: (event: SSEEvent) => void): string {
+function drainBuffer(
+  buffer: string,
+  onEvent: (event: SSEEvent) => void,
+): string {
   let separator = buffer.indexOf("\n\n");
   while (separator !== -1) {
     const rawEvent = buffer.slice(0, separator);

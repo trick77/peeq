@@ -81,17 +81,26 @@ export function SettingsTab({
         <div className="chan-srow">
           <div>
             <div className="lab">Subscribed</div>
-            <div className="hint">peeq checks this channel for new uploads on a schedule.</div>
+            <div className="hint">
+              peeq checks this channel for new uploads on a schedule.
+            </div>
           </div>
           <Button
             type="button"
             variant={detail.subscribed ? "gold" : "secondary"}
             busy={busy}
             onClick={() =>
-              run(() => (detail.subscribed ? unsubscribeChannel(detail.id) : subscribeChannel(detail.id)))
+              run(() =>
+                detail.subscribed
+                  ? unsubscribeChannel(detail.id)
+                  : subscribeChannel(detail.id),
+              )
             }
           >
-            <Icon name={detail.subscribed ? "starFilled" : "star"} size="16px" />
+            <Icon
+              name={detail.subscribed ? "starFilled" : "star"}
+              size="16px"
+            />
             {detail.subscribed ? "Subscribed" : "Subscribe"}
           </Button>
         </div>
@@ -104,7 +113,8 @@ export function SettingsTab({
                   Add new videos automatically
                 </label>
                 <div className="hint">
-                  New uploads download without asking. Off means they wait in the New tab.
+                  New uploads download without asking. Off means they wait in
+                  the New tab.
                 </div>
               </div>
               <input
@@ -112,7 +122,13 @@ export function SettingsTab({
                 type="checkbox"
                 disabled={busy}
                 checked={detail.autodownload}
-                onChange={() => run(() => updateChannel(detail.id, { autodownload: !detail.autodownload }))}
+                onChange={() =>
+                  run(() =>
+                    updateChannel(detail.id, {
+                      autodownload: !detail.autodownload,
+                    }),
+                  )
+                }
               />
             </div>
 
@@ -121,7 +137,9 @@ export function SettingsTab({
                 <label className="lab" htmlFor="chan-format">
                   Format override
                 </label>
-                <div className="hint">Leave empty to use your global format setting.</div>
+                <div className="hint">
+                  Leave empty to use your global format setting.
+                </div>
               </div>
               <input
                 id="chan-format"
@@ -132,7 +150,9 @@ export function SettingsTab({
                 onChange={(e) => setFormat(e.target.value)}
                 onBlur={() => {
                   if (format !== (detail.format_override ?? "")) {
-                    run(() => updateChannel(detail.id, { format_override: format }));
+                    run(() =>
+                      updateChannel(detail.id, { format_override: format }),
+                    );
                   }
                 }}
                 placeholder="Use the default"
@@ -151,7 +171,12 @@ export function SettingsTab({
                     : ""}
                 </div>
               </div>
-              <Button type="button" variant="secondary" busy={scanning} onClick={handleScan}>
+              <Button
+                type="button"
+                variant="secondary"
+                busy={scanning}
+                onClick={handleScan}
+              >
                 Check now
               </Button>
             </div>
@@ -160,8 +185,14 @@ export function SettingsTab({
       </div>
 
       <div className="chan-danger">
-        <Button type="button" variant="dangerQuiet" busy={busy} onClick={handleDelete}>
-          <Icon name="trash" size="16px" /> Delete channel and its {detail.archived_count} videos
+        <Button
+          type="button"
+          variant="dangerQuiet"
+          busy={busy}
+          onClick={handleDelete}
+        >
+          <Icon name="trash" size="16px" /> Delete channel and its{" "}
+          {detail.archived_count} videos
         </Button>
       </div>
     </>

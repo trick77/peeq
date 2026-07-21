@@ -35,6 +35,28 @@ if ! git rev-parse --verify --quiet "$BASE_REF" >/dev/null; then
   exit 2
 fi
 
+# Escape hatch, deliberately narrow and deliberately loud.
+#
+# Some changes cannot meet a patch bar no matter how good they are: a wholesale
+# prettier or gofmt reformat, a mechanical rename, a vendored import. None of
+# them add logic, but diff-cover counts every touched line, so what gets
+# measured is the pre-existing coverage of code the change did not write. The
+# question the gate asks is simply the wrong one for those.
+#
+# Opt out with [skip patch-coverage] in a commit message on the branch.
+#
+# This skips ONLY patch coverage. hack/coverage-gate.sh still enforces the
+# absolute floor in the same CI job, so overall coverage can never silently
+# fall — the worst this can do is let already-untested lines stay untested.
+if git log --format='%B' "$(git merge-base "$BASE_REF" HEAD)"..HEAD 2>/dev/null |
+  grep -qF '[skip patch-coverage]'; then
+  echo "::warning::patch-coverage SKIPPED — a commit on this branch carries [skip patch-coverage]."
+  echo "patch-coverage: SKIPPED by [skip patch-coverage] in a commit message." >&2
+  echo "  The absolute floor (hack/coverage-gate.sh) still applies and is" >&2
+  echo "  enforced separately, so total coverage cannot fall unnoticed." >&2
+  exit 0
+fi
+
 # diff-cover prints "No lines with coverage information" and exits 0 when none of
 # the report's paths match the diff. That is legitimate for a docs-only PR, but it
 # is also exactly what a broken path mapping looks like — and that bug has shipped
@@ -46,12 +68,21 @@ assert_matched() {
   base="$(git merge-base "$BASE_REF" HEAD)"
   # Test files are excluded from coverage reports by design, so a diff touching
   # only tests legitimately matches no coverage data — don't flag that.
+  #
+  # Vitest setup files are the same category: they are the `setupFiles` entry,
+  # excluded from coverage, and therefore never present in the report. A commit
+  # touching only the setup file would otherwise trip the absent-from-report
+  # check below. Match all the conventions in use across this repo family rather
+  # than one repo's filename — peeq and music use src/test-setup.ts, loom uses
+  # vitest.setup.ts, lens uses src/test/setup.ts, lens-console uses
+  # test-setup.ts. Type-only declarations are likewise never instrumented.
+  #
   # Keep the filtered list rather than testing with `grep -qv`: under ugrep (a
   # common macOS `grep`) the -q/-v combination returns 1 even when non-matching
   # lines exist, which would silently disable this guard locally while it still
   # works under GNU grep. The names are needed below anyway.
   changed="$(git diff --name-only "$base"...HEAD -- "$@" |
-    grep -vE '(_test\.go|\.test\.tsx?)$' || true)"
+    grep -vE '(_test\.go|\.test\.tsx?|\.d\.ts|(^|/)(test-setup|vitest\.setup|setup)\.ts)$' || true)"
 
   [[ -n "$changed" ]] || return 0
   grep -q 'No lines with coverage information' "$report" || return 0
@@ -84,6 +115,23 @@ assert_matched() {
 if [[ -f coverage/backend.xml ]]; then
   checked=1
   echo "== backend patch coverage (>= ${PATCH_MIN}%) =="
+  # Where the Go module lives, relative to the repo root. Repos with a UI keep
+  # the module under backend/; Go-only repos have go.mod at the root. Detect it
+  # rather than hardcoding, so this script stays byte-identical everywhere —
+  # forking it per layout is exactly the drift this file exists to avoid.
+  if [[ -f backend/go.mod ]]; then
+    MODULE_DIR="backend"
+    MODULE_PREFIX="backend/"
+    MODULE_GLOB="backend/*.go"
+  elif [[ -f go.mod ]]; then
+    MODULE_DIR="."
+    MODULE_PREFIX=""
+    MODULE_GLOB="*.go"
+  else
+    echo "patch-coverage: no go.mod at backend/ or the repo root." >&2
+    exit 2
+  fi
+
   # gocover-cobertura writes an ABSOLUTE path into <sources>, e.g.
   # /home/runner/work/peeq/peeq/backend. diff-cover joins that with each
   # class's module-relative filename, producing an absolute path that never
@@ -94,7 +142,7 @@ if [[ -f coverage/backend.xml ]]; then
   # the element to a repo-relative path is what actually makes the match work.
   # Verified: with the absolute path diff-cover reports 0 matched lines; with
   # the rewrite it correctly reports the changed lines and their coverage.
-  sed 's|<source>.*</source>|<source>backend</source>|' \
+  sed "s|<source>.*</source>|<source>${MODULE_DIR}</source>|" \
     coverage/backend.xml > coverage/backend-rooted.xml
 
   diff-cover coverage/backend-rooted.xml \
@@ -102,7 +150,8 @@ if [[ -f coverage/backend.xml ]]; then
     --fail-under "$PATCH_MIN" \
     --format "markdown:coverage/backend-patch.md" || fail=1
   cat coverage/backend-patch.md >> "$summary" 2>/dev/null || true
-  assert_matched coverage/backend-patch.md backend coverage/backend-rooted.xml "backend/" "backend/*.go"
+  assert_matched coverage/backend-patch.md backend coverage/backend-rooted.xml \
+    "$MODULE_PREFIX" "$MODULE_GLOB"
 fi
 
 # --- ui -----------------------------------------------------------------------

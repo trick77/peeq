@@ -2,7 +2,15 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../icons";
 import { Button, Spinner, buttonClass } from "../ui";
 import { Scrubber } from "../components/Scrubber";
-import { getVideo, setFavorite, setWatched, setResume, deleteVideo, redownload, streamUrl } from "../api/videos";
+import {
+  getVideo,
+  setFavorite,
+  setWatched,
+  setResume,
+  deleteVideo,
+  redownload,
+  streamUrl,
+} from "../api/videos";
 import { resummarize, subtitlesUrl } from "../api/search";
 import { streamDownloads } from "../api/downloads";
 import type { Video } from "../api/types";
@@ -33,7 +41,8 @@ type Cue = { ts: number; text: string };
 // timestamp + text pairs to render a searchable, click-to-seek transcript.
 export function parseVtt(text: string): Cue[] {
   const lines = text.split(/\r?\n/);
-  const timingRe = /(\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}\s*-->\s*(\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}/;
+  const timingRe =
+    /(\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}\s*-->\s*(\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}/;
   const cues: Cue[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -80,10 +89,20 @@ function highlightCue(text: string, query: string): ReactNode {
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const splitRe = new RegExp(`(${escaped})`, "gi");
   const isMatch = new RegExp(`^${escaped}$`, "i");
-  return text.split(splitRe).map((part, i) => (isMatch.test(part) ? <mark key={i}>{part}</mark> : part));
+  return text
+    .split(splitRe)
+    .map((part, i) =>
+      isMatch.test(part) ? <mark key={i}>{part}</mark> : part,
+    );
 }
 
-const DONE_STATUSES = new Set(["done", "no_transcript", "pending", "running", "error"]);
+const DONE_STATUSES = new Set([
+  "done",
+  "no_transcript",
+  "pending",
+  "running",
+  "error",
+]);
 
 // Player — the "Now playing" view: an HTML5 <video> stage with a custom
 // scrubber (SponsorBlock overlay + auto-skip), resume tracking, the
@@ -287,14 +306,25 @@ export function Player({
   }, [transcriptOpen, video?.id, video?.has_subtitles]);
 
   if (!videoId) {
-    return <p style={{ color: "var(--color-faint)" }}>Nothing playing. Pick a video from the Library.</p>;
+    return (
+      <p style={{ color: "var(--color-faint)" }}>
+        Nothing playing. Pick a video from the Library.
+      </p>
+    );
   }
   if (error) {
     return <div className="errline">{error}</div>;
   }
   if (!video) {
     return (
-      <p style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-faint)" }}>
+      <p
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          color: "var(--color-faint)",
+        }}
+      >
         <Spinner size="15px" />
         Loading
       </p>
@@ -318,7 +348,10 @@ export function Player({
       setCurrentTime(seekTo);
       positionRef.current = seekTo;
       onSeekConsumed?.();
-    } else if (video.resume_position_seconds > 0 && (!durationKnown || video.resume_position_seconds < el.duration)) {
+    } else if (
+      video.resume_position_seconds > 0 &&
+      (!durationKnown || video.resume_position_seconds < el.duration)
+    ) {
       el.currentTime = video.resume_position_seconds;
       setCurrentTime(video.resume_position_seconds);
       positionRef.current = video.resume_position_seconds;
@@ -362,9 +395,15 @@ export function Player({
         el.currentTime = seg.end_time;
         setCurrentTime(seg.end_time);
         positionRef.current = seg.end_time;
-        setSkipToast(`Skipped ${seg.category} · ${formatDuration(seg.end_time - seg.start_time)}`);
-        if (toastTimerRef.current !== undefined) window.clearTimeout(toastTimerRef.current);
-        toastTimerRef.current = window.setTimeout(() => setSkipToast(null), 2600);
+        setSkipToast(
+          `Skipped ${seg.category} · ${formatDuration(seg.end_time - seg.start_time)}`,
+        );
+        if (toastTimerRef.current !== undefined)
+          window.clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = window.setTimeout(
+          () => setSkipToast(null),
+          2600,
+        );
         break;
       }
     }
@@ -456,7 +495,9 @@ export function Player({
     }
   }
 
-  const hitCount = find ? cues.filter((c) => matchesFind(c.text, find)).length : 0;
+  const hitCount = find
+    ? cues.filter((c) => matchesFind(c.text, find)).length
+    : 0;
 
   return (
     <div className="playgrid">
@@ -473,7 +514,12 @@ export function Player({
             onEnded={handlePauseOrEnded}
           >
             {video.has_subtitles && (
-              <track kind="subtitles" srcLang={video.audio_language || "en"} src={subtitlesUrl(video.id)} default={false} />
+              <track
+                kind="subtitles"
+                srcLang={video.audio_language || "en"}
+                src={subtitlesUrl(video.id)}
+                default={false}
+              />
             )}
           </video>
           <div className={`skip-toast${skipToast ? " show" : ""}`}>
@@ -491,14 +537,22 @@ export function Player({
           <h1>{video.title}</h1>
           <div className="sub">
             {onOpenChannel && video.channel_id ? (
-              <button type="button" className="chan-link" onClick={() => onOpenChannel(video.channel_id)}>
+              <button
+                type="button"
+                className="chan-link"
+                onClick={() => onOpenChannel(video.channel_id)}
+              >
                 {video.channel_name || video.channel_id}
               </button>
             ) : (
               video.channel_name || video.channel_id
             )}
-            {video.format_used ? <span className="pill">{video.format_used}</span> : null}
-            {video.filesize_bytes ? <span className="pill">{formatSize(video.filesize_bytes)}</span> : null}
+            {video.format_used ? (
+              <span className="pill">{video.format_used}</span>
+            ) : null}
+            {video.filesize_bytes ? (
+              <span className="pill">{formatSize(video.filesize_bytes)}</span>
+            ) : null}
           </div>
           <div className="playacts">
             <Button
@@ -509,8 +563,13 @@ export function Player({
               <Icon name={video.favorite ? "starFilled" : "star"} size="17px" />
               <span>{video.favorite ? "Kept forever" : "Keep forever"}</span>
             </Button>
-            <Button type="button" variant="secondary" onClick={handleToggleWatched}>
-              <Icon name="check" size="17px" /> {video.watched ? "Mark unwatched" : "Mark watched"}
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleToggleWatched}
+            >
+              <Icon name="check" size="17px" />{" "}
+              {video.watched ? "Mark unwatched" : "Mark watched"}
             </Button>
             {video.has_subtitles && (
               <Button
@@ -526,11 +585,22 @@ export function Player({
             <Button type="button" variant="dangerQuiet" onClick={handleDelete}>
               <Icon name="trash" size="17px" /> Delete
             </Button>
-            <a className={buttonClass("secondary")} href={video.url} target="_blank" rel="noreferrer">
+            <a
+              className={buttonClass("secondary")}
+              href={video.url}
+              target="_blank"
+              rel="noreferrer"
+            >
               <Icon name="externalLink" size="17px" /> Watch on YouTube
             </a>
             {(video.status === "error" || video.status === "tombstoned") && (
-              <Button type="button" variant="tinted" small busy={redownloading} onClick={handleRedownload}>
+              <Button
+                type="button"
+                variant="tinted"
+                small
+                busy={redownloading}
+                onClick={handleRedownload}
+              >
                 {!redownloading && <Icon name="refresh" size="15px" />}
                 {redownloading ? "Queuing" : "Re-download"}
               </Button>
@@ -544,7 +614,9 @@ export function Player({
               <Icon name="listTree" size="16px" />
               <span className="lbl">Contents</span>
               {video.chapters.length > 0 && (
-                <span className="meta">{video.chapters.length} chapters · click to seek</span>
+                <span className="meta">
+                  {video.chapters.length} chapters · click to seek
+                </span>
               )}
             </div>
             <div className="tabbody">
@@ -553,12 +625,19 @@ export function Player({
               ) : (
                 <div className="toc toc-grid">
                   {video.chapters.map((c, i) => (
-                    <button key={i} type="button" className="row" onClick={() => seek(c.ts)}>
+                    <button
+                      key={i}
+                      type="button"
+                      className="row"
+                      onClick={() => seek(c.ts)}
+                    >
                       <span className="ts mono">{fmt(c.ts)}</span>
                       <span>
                         <span className="ttl">{c.title}</span>
                       </span>
-                      {c.source === "yt-dlp" && <span className="src">yt-dlp</span>}
+                      {c.source === "yt-dlp" && (
+                        <span className="src">yt-dlp</span>
+                      )}
                       {c.source === "mimo" && <span className="src">MiMo</span>}
                     </button>
                   ))}
@@ -578,7 +657,10 @@ export function Player({
                 <Icon
                   name="chevronRight"
                   size="16px"
-                  style={{ transition: "transform .15s", transform: transcriptOpen ? "rotate(90deg)" : "none" }}
+                  style={{
+                    transition: "transform .15s",
+                    transform: transcriptOpen ? "rotate(90deg)" : "none",
+                  }}
                 />
                 <span className="lbl">Transcript</span>
                 <span className="meta">searchable · click to seek</span>
@@ -593,30 +675,42 @@ export function Player({
                         value={find}
                         onChange={(e) => setFind(e.target.value)}
                       />
-                      <span className="count mono">{find ? `${hitCount} / ${cues.length}` : "—"}</span>
+                      <span className="count mono">
+                        {find ? `${hitCount} / ${cues.length}` : "—"}
+                      </span>
                     </div>
                   </div>
                   <div className="tabbody transcript-body">
-                    {transcriptLoading && <p className="placeholder">Loading transcript…</p>}
-                    {transcriptError && <p className="errline">{transcriptError}</p>}
-                    {!transcriptLoading && !transcriptError && cues.length === 0 && (
-                      <p className="placeholder">No transcript available.</p>
+                    {transcriptLoading && (
+                      <p className="placeholder">Loading transcript…</p>
                     )}
-                    {!transcriptLoading && !transcriptError && cues.length > 0 && (
-                      <div className="transcript">
-                        {cues.map((cue, i) => (
-                          <button
-                            key={i}
-                            type="button"
-                            className={`cue${matchesFind(cue.text, find) ? " hit" : ""}`}
-                            onClick={() => seek(cue.ts)}
-                          >
-                            <span className="ts mono">{fmt(cue.ts)}</span>
-                            <span className="line">{highlightCue(cue.text, find)}</span>
-                          </button>
-                        ))}
-                      </div>
+                    {transcriptError && (
+                      <p className="errline">{transcriptError}</p>
                     )}
+                    {!transcriptLoading &&
+                      !transcriptError &&
+                      cues.length === 0 && (
+                        <p className="placeholder">No transcript available.</p>
+                      )}
+                    {!transcriptLoading &&
+                      !transcriptError &&
+                      cues.length > 0 && (
+                        <div className="transcript">
+                          {cues.map((cue, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              className={`cue${matchesFind(cue.text, find) ? " hit" : ""}`}
+                              onClick={() => seek(cue.ts)}
+                            >
+                              <span className="ts mono">{fmt(cue.ts)}</span>
+                              <span className="line">
+                                {highlightCue(cue.text, find)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                   </div>
                 </>
               )}
@@ -641,9 +735,15 @@ export function Player({
               ) : (
                 <p className="placeholder">No summary text.</p>
               ))}
-            {video.summary_status === "no_transcript" && <p className="placeholder">No transcript available.</p>}
-            {(video.summary_status === "pending" || video.summary_status === "running") && (
-              <p className="placeholder" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {video.summary_status === "no_transcript" && (
+              <p className="placeholder">No transcript available.</p>
+            )}
+            {(video.summary_status === "pending" ||
+              video.summary_status === "running") && (
+              <p
+                className="placeholder"
+                style={{ display: "flex", alignItems: "center", gap: 8 }}
+              >
                 <Spinner size="15px" />
                 Summarizing
               </p>
@@ -651,13 +751,21 @@ export function Player({
             {video.summary_status === "error" && (
               <>
                 <p className="errline">Summarization failed.</p>
-                <Button type="button" variant="secondary" small busy={resummarizing} onClick={handleResummarize}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  small
+                  busy={resummarizing}
+                  onClick={handleResummarize}
+                >
                   {!resummarizing && <Icon name="download" size="15px" />}
                   {resummarizing ? "Queuing" : "Re-summarize"}
                 </Button>
               </>
             )}
-            {!DONE_STATUSES.has(video.summary_status) && <p className="placeholder">No summary yet.</p>}
+            {!DONE_STATUSES.has(video.summary_status) && (
+              <p className="placeholder">No summary yet.</p>
+            )}
           </div>
         </div>
 
@@ -672,8 +780,17 @@ export function Player({
             ) : (
               <div className="hl">
                 {video.key_points.map((k, i) => (
-                  <button key={i} type="button" className="row" onClick={() => seek(k.ts)}>
-                    <Icon name="starFilled" size="15px" style={{ color: "var(--color-kept)" }} />
+                  <button
+                    key={i}
+                    type="button"
+                    className="row"
+                    onClick={() => seek(k.ts)}
+                  >
+                    <Icon
+                      name="starFilled"
+                      size="15px"
+                      style={{ color: "var(--color-kept)" }}
+                    />
                     <span className="ts mono">{fmt(k.ts)}</span>
                     <span className="txt">{k.text}</span>
                   </button>

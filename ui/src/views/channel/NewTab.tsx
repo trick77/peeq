@@ -12,18 +12,30 @@ import type { ChannelDetail, PendingItem } from "../../api/types";
 function scheduleLine(detail: ChannelDetail): string {
   const parts: string[] = [];
   if (detail.last_scanned_at) {
-    parts.push(`Checked ${new Date(detail.last_scanned_at + "Z").toLocaleString()}`);
+    parts.push(
+      `Checked ${new Date(detail.last_scanned_at + "Z").toLocaleString()}`,
+    );
   } else {
     parts.push("Never checked");
   }
   if (detail.next_scan_at) {
     const next = new Date(detail.next_scan_at + "Z").getTime();
-    parts.push(next <= Date.now() ? "next check due now" : `next check ${new Date(next).toLocaleString()}`);
+    parts.push(
+      next <= Date.now()
+        ? "next check due now"
+        : `next check ${new Date(next).toLocaleString()}`,
+    );
   }
   return parts.join(" · ");
 }
 
-export function NewTab({ detail, onChanged }: { detail: ChannelDetail; onChanged: () => void }) {
+export function NewTab({
+  detail,
+  onChanged,
+}: {
+  detail: ChannelDetail;
+  onChanged: () => void;
+}) {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -78,7 +90,12 @@ export function NewTab({ detail, onChanged }: { detail: ChannelDetail; onChanged
   }
 
   const checkNow = (
-    <Button type="button" variant="secondary" busy={scanning} onClick={handleScan}>
+    <Button
+      type="button"
+      variant="secondary"
+      busy={scanning}
+      onClick={handleScan}
+    >
       <Icon name="clock" size="16px" /> Check now
     </Button>
   );
@@ -97,18 +114,32 @@ export function NewTab({ detail, onChanged }: { detail: ChannelDetail; onChanged
       ) : (
         <>
           <div className="listbar">
-            <span style={{ fontSize: "var(--text-label)", color: "var(--color-faint)" }}>
+            <span
+              style={{
+                fontSize: "var(--text-label)",
+                color: "var(--color-faint)",
+              }}
+            >
               {scheduleLine(detail)}
             </span>
-            <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>{checkNow}</span>
+            <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              {checkNow}
+            </span>
           </div>
           <div className="chan-plist">
             {items.map((item) => (
               <div key={item.video_id} className="chan-prow">
-                <img className="chan-pthumb" src={item.thumbnail_url} alt="" loading="lazy" />
+                <img
+                  className="chan-pthumb"
+                  src={item.thumbnail_url}
+                  alt=""
+                  loading="lazy"
+                />
                 <div className="chan-pt">
                   <div className="ti">{item.title}</div>
-                  <div className="sub">{formatDuration(item.duration_seconds)}</div>
+                  <div className="sub">
+                    {formatDuration(item.duration_seconds)}
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <Button

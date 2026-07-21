@@ -120,7 +120,8 @@ export function Channel({
     }
   }
 
-  if (!channelId) return <p style={{ color: "var(--color-faint)" }}>No channel selected.</p>;
+  if (!channelId)
+    return <p style={{ color: "var(--color-faint)" }}>No channel selected.</p>;
   if (error && !detail) return <div className="errline">{error}</div>;
   if (!detail) return null;
 
@@ -150,7 +151,10 @@ export function Channel({
           {detail.has_avatar ? (
             <img className="chan-av" src={channelAvatarUrl(detail.id)} alt="" />
           ) : (
-            <div className={`chan-av ${gradientClassFor(detail.id)}`} aria-hidden="true" />
+            <div
+              className={`chan-av ${gradientClassFor(detail.id)}`}
+              aria-hidden="true"
+            />
           )}
           <div className="chan-id">
             <h2>{detail.name}</h2>
@@ -175,12 +179,19 @@ export function Channel({
                 </>
               ) : null}
               {detail.tracked ? (
-                <>tracked since {new Date((detail.tracked_at ?? "") + "Z").toLocaleDateString()}</>
+                <>
+                  tracked since{" "}
+                  {new Date(
+                    (detail.tracked_at ?? "") + "Z",
+                  ).toLocaleDateString()}
+                </>
               ) : (
                 <span style={{ color: "var(--color-faint)" }}>not tracked</span>
               )}
             </div>
-            {detail.description ? <p className="chan-desc">{detail.description}</p> : null}
+            {detail.description ? (
+              <p className="chan-desc">{detail.description}</p>
+            ) : null}
             <div className="chan-stats">
               <div className="chan-stat">
                 <div className="k">{detail.archived_count}</div>
@@ -211,11 +222,19 @@ export function Channel({
                 busy={busy}
                 onClick={handleToggleSubscribe}
               >
-                <Icon name={detail.subscribed ? "starFilled" : "star"} size="16px" />
+                <Icon
+                  name={detail.subscribed ? "starFilled" : "star"}
+                  size="16px"
+                />
                 {detail.subscribed ? "Subscribed" : "Subscribe"}
               </Button>
             ) : (
-              <Button type="button" variant="primary" busy={busy} onClick={handleTrack}>
+              <Button
+                type="button"
+                variant="primary"
+                busy={busy}
+                onClick={handleTrack}
+              >
                 Track this channel
               </Button>
             )}
@@ -236,15 +255,21 @@ export function Channel({
             onClick={() => setTab(t.id)}
           >
             {t.label}
-            {t.count !== undefined ? <span className="chan-cnt">{t.count}</span> : null}
+            {t.count !== undefined ? (
+              <span className="chan-cnt">{t.count}</span>
+            ) : null}
           </button>
         ))}
       </div>
 
       <div className="chan-body">
-        {tab === "archive" ? <ArchiveTab channelId={detail.id} onOpenVideo={onOpenVideo} /> : null}
+        {tab === "archive" ? (
+          <ArchiveTab channelId={detail.id} onOpenVideo={onOpenVideo} />
+        ) : null}
         {tab === "new" ? <NewTab detail={detail} onChanged={reload} /> : null}
-        {tab === "settings" ? <SettingsTab detail={detail} onChanged={reload} onDeleted={onBack} /> : null}
+        {tab === "settings" ? (
+          <SettingsTab detail={detail} onChanged={reload} onDeleted={onBack} />
+        ) : null}
       </div>
     </div>
   );

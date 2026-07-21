@@ -5,7 +5,11 @@
 // formatDuration renders whole seconds as mono "M:SS" (or "H:MM:SS" past an
 // hour), matching the mockup's `.dur`/`.scrub-times` badges.
 export function formatDuration(totalSeconds: number | undefined): string {
-  if (totalSeconds === undefined || !Number.isFinite(totalSeconds) || totalSeconds < 0) {
+  if (
+    totalSeconds === undefined ||
+    !Number.isFinite(totalSeconds) ||
+    totalSeconds < 0
+  ) {
     return "--:--";
   }
   const s = Math.floor(totalSeconds);
@@ -23,7 +27,10 @@ export function formatDuration(totalSeconds: number | undefined): string {
 // timestamp) to now. Negative/invalid input yields 0 rather than NaN, so a
 // caller doing retention arithmetic on it never produces "Expires in NaN
 // days".
-export function daysSince(iso: string | undefined, now: Date = new Date()): number {
+export function daysSince(
+  iso: string | undefined,
+  now: Date = new Date(),
+): number {
   if (!iso) return 0;
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return 0;

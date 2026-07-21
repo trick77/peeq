@@ -57,25 +57,43 @@ export type DownloadsStatus = {
 };
 
 export async function downloadsStatus(): Promise<DownloadsStatus> {
-  return api.get<DownloadsStatus>("/api/downloads/status", "failed to load download status");
+  return api.get<DownloadsStatus>(
+    "/api/downloads/status",
+    "failed to load download status",
+  );
 }
 
 export async function cancelDownload(jobId: number): Promise<void> {
-  await api.post(`/api/downloads/${jobId}/cancel`, undefined, "failed to cancel download");
+  await api.post(
+    `/api/downloads/${jobId}/cancel`,
+    undefined,
+    "failed to cancel download",
+  );
 }
 
 // pauseYoutube / resumeYoutube drive the global kill-switch (202/empty).
 export async function pauseYoutube(): Promise<void> {
-  await api.postNoContent("/api/youtube/pause", undefined, "failed to pause YouTube activity");
+  await api.postNoContent(
+    "/api/youtube/pause",
+    undefined,
+    "failed to pause YouTube activity",
+  );
 }
 export async function resumeYoutube(): Promise<void> {
-  await api.postNoContent("/api/youtube/resume", undefined, "failed to resume YouTube activity");
+  await api.postNoContent(
+    "/api/youtube/resume",
+    undefined,
+    "failed to resume YouTube activity",
+  );
 }
 
 // streamDownloads subscribes to the SSE download progress/queue feed. The
 // only event name the worker currently publishes is "progress" (job_id,
 // percent, speed, eta); onEvent still receives the raw (event, data) pair
 // so callers aren't broken if the backend adds queue-state events later.
-export function streamDownloads(onEvent: (event: SSEEvent) => void, signal?: AbortSignal): Promise<void> {
+export function streamDownloads(
+  onEvent: (event: SSEEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
   return streamSSE("/api/downloads/stream", onEvent, signal);
 }

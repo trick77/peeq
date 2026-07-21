@@ -1,7 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoCard, type DownloadProgress } from "../components/VideoCard";
-import { listVideos, getSettings, listDownloads, streamDownloads, setFavorite, setWatched, redownload } from "../api";
-import type { Video, VideoFilter, VideoSort, Job, Settings } from "../api/types";
+import {
+  listVideos,
+  getSettings,
+  listDownloads,
+  streamDownloads,
+  setFavorite,
+  setWatched,
+  redownload,
+} from "../api";
+import type {
+  Video,
+  VideoFilter,
+  VideoSort,
+  Job,
+  Settings,
+} from "../api/types";
 import { CATEGORIES } from "../categories";
 import { controlClass } from "../ui";
 
@@ -64,7 +78,9 @@ export function Library({
   const [videos, setVideos] = useState<Video[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [progressByVideoId, setProgressByVideoId] = useState<Record<string, DownloadProgress>>({});
+  const [progressByVideoId, setProgressByVideoId] = useState<
+    Record<string, DownloadProgress>
+  >({});
   const jobsRef = useRef<Job[]>([]);
   // jobsRefreshTick forces the polling effect below to re-evaluate
   // jobsRef's hasActive state after jobsRef is (re)populated — jobsRef
@@ -153,7 +169,10 @@ export function Library({
         }
         return;
       }
-      setProgressByVideoId((prev) => ({ ...prev, [job.video_id]: { percent: data.percent, eta: data.eta } }));
+      setProgressByVideoId((prev) => ({
+        ...prev,
+        [job.video_id]: { percent: data.percent, eta: data.eta },
+      }));
     }, controller.signal).catch(() => {});
     return () => controller.abort();
   }, []);
@@ -167,7 +186,9 @@ export function Library({
   // hasActive after each poll; the timeout self-stops once jobsRef reports
   // nothing left in flight.
   useEffect(() => {
-    const hasActive = jobsRef.current.some((j) => j.state === "pending" || j.state === "running");
+    const hasActive = jobsRef.current.some(
+      (j) => j.state === "pending" || j.state === "running",
+    );
     if (!hasActive) return;
     let active = true;
     const id = window.setTimeout(() => {
@@ -198,12 +219,17 @@ export function Library({
   }, [filter, category, debouncedQuery, sort, jobsRefreshTick]);
 
   function applyLocalUpdate(id: string, patch: Partial<Video>) {
-    setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
-    setAllVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+    setVideos((prev) =>
+      prev.map((v) => (v.id === id ? { ...v, ...patch } : v)),
+    );
+    setAllVideos((prev) =>
+      prev.map((v) => (v.id === id ? { ...v, ...patch } : v)),
+    );
   }
 
   async function handleToggleFavorite(id: string) {
-    const current = videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
+    const current =
+      videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
     if (!current) return;
     const next = !current.favorite;
     applyLocalUpdate(id, { favorite: next });
@@ -215,7 +241,8 @@ export function Library({
   }
 
   async function handleToggleWatched(id: string) {
-    const current = videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
+    const current =
+      videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
     if (!current) return;
     const next = !current.watched;
     applyLocalUpdate(id, { watched: next });
@@ -252,7 +279,10 @@ export function Library({
             className={`chip${filter === chip.id ? " on" : ""}`}
             onClick={() => setFilter(chip.id)}
           >
-            {chip.label} <span className="n">{allVideos.filter((v) => matchesFilter(v, chip.id)).length}</span>
+            {chip.label}{" "}
+            <span className="n">
+              {allVideos.filter((v) => matchesFilter(v, chip.id)).length}
+            </span>
           </button>
         ))}
       </div>
@@ -264,7 +294,9 @@ export function Library({
         >
           All categories <span className="n">{allVideos.length}</span>
         </button>
-        {CATEGORIES.filter((c) => allVideos.some((v) => v.category === c.id)).map((c) => (
+        {CATEGORIES.filter((c) =>
+          allVideos.some((v) => v.category === c.id),
+        ).map((c) => (
           <button
             key={c.id}
             type="button"
@@ -272,7 +304,10 @@ export function Library({
             onClick={() => setCategory(c.id)}
           >
             <span className="dotc" style={{ background: c.color }} />
-            {c.label} <span className="n">{allVideos.filter((v) => v.category === c.id).length}</span>
+            {c.label}{" "}
+            <span className="n">
+              {allVideos.filter((v) => v.category === c.id).length}
+            </span>
           </button>
         ))}
       </div>
@@ -307,7 +342,9 @@ export function Library({
           />
         ))}
       </div>
-      {videos.length === 0 && !error ? <p style={{ color: "var(--color-faint)" }}>No videos yet.</p> : null}
+      {videos.length === 0 && !error ? (
+        <p style={{ color: "var(--color-faint)" }}>No videos yet.</p>
+      ) : null}
     </>
   );
 }
