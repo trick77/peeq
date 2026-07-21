@@ -115,6 +115,23 @@ assert_matched() {
 if [[ -f coverage/backend.xml ]]; then
   checked=1
   echo "== backend patch coverage (>= ${PATCH_MIN}%) =="
+  # Where the Go module lives, relative to the repo root. Repos with a UI keep
+  # the module under backend/; Go-only repos have go.mod at the root. Detect it
+  # rather than hardcoding, so this script stays byte-identical everywhere —
+  # forking it per layout is exactly the drift this file exists to avoid.
+  if [[ -f backend/go.mod ]]; then
+    MODULE_DIR="backend"
+    MODULE_PREFIX="backend/"
+    MODULE_GLOB="backend/*.go"
+  elif [[ -f go.mod ]]; then
+    MODULE_DIR="."
+    MODULE_PREFIX=""
+    MODULE_GLOB="*.go"
+  else
+    echo "patch-coverage: no go.mod at backend/ or the repo root." >&2
+    exit 2
+  fi
+
   # gocover-cobertura writes an ABSOLUTE path into <sources>, e.g.
   # /home/runner/work/peeq/peeq/backend. diff-cover joins that with each
   # class's module-relative filename, producing an absolute path that never
@@ -125,7 +142,7 @@ if [[ -f coverage/backend.xml ]]; then
   # the element to a repo-relative path is what actually makes the match work.
   # Verified: with the absolute path diff-cover reports 0 matched lines; with
   # the rewrite it correctly reports the changed lines and their coverage.
-  sed 's|<source>.*</source>|<source>backend</source>|' \
+  sed "s|<source>.*</source>|<source>${MODULE_DIR}</source>|" \
     coverage/backend.xml > coverage/backend-rooted.xml
 
   diff-cover coverage/backend-rooted.xml \
@@ -133,7 +150,8 @@ if [[ -f coverage/backend.xml ]]; then
     --fail-under "$PATCH_MIN" \
     --format "markdown:coverage/backend-patch.md" || fail=1
   cat coverage/backend-patch.md >> "$summary" 2>/dev/null || true
-  assert_matched coverage/backend-patch.md backend coverage/backend-rooted.xml "backend/" "backend/*.go"
+  assert_matched coverage/backend-patch.md backend coverage/backend-rooted.xml \
+    "$MODULE_PREFIX" "$MODULE_GLOB"
 fi
 
 # --- ui -----------------------------------------------------------------------
