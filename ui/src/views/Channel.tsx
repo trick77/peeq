@@ -19,7 +19,7 @@ type TabId = "archive" | "new" | "settings";
 
 // formatRuntime renders a total duration as whole hours ("61 h"), falling
 // back to minutes below an hour so a small channel does not read "0 h".
-function formatRuntime(seconds: number): string {
+export function formatRuntime(seconds: number): string {
   if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
   return `${Math.round(seconds / 3600)} h`;
 }
@@ -27,7 +27,7 @@ function formatRuntime(seconds: number): string {
 // formatBytes renders a size in the largest unit that keeps it readable.
 // Binary (1024-based) units, matching how disk usage is shown elsewhere
 // in peeq — a decimal GB here would read the wrong number vs. the OS.
-function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number): string {
   const TB = 1024 ** 4;
   const GB = 1024 ** 3;
   const MB = 1024 ** 2;
@@ -40,7 +40,7 @@ function formatBytes(bytes: number): string {
 
 // formatAge renders an ISO timestamp as a coarse "how long ago", matching
 // how the rest of peeq talks about time on cards.
-function formatAge(iso: string | undefined): string {
+export function formatAge(iso: string | undefined): string {
   if (!iso) return "—";
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "—";

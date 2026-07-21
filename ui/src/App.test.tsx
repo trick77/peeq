@@ -59,6 +59,8 @@ vi.mock("./api/videos", () => ({
   setWatched: vi.fn(),
   setResume: vi.fn().mockResolvedValue(42),
   deleteVideo: vi.fn(),
+  redownload: vi.fn(),
+  listVideos: vi.fn().mockResolvedValue([]),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
   thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
 }));
@@ -76,6 +78,23 @@ vi.mock("./api/downloads", async (importOriginal) => ({
 vi.mock("./api/channels", () => ({
   addChannel: vi.fn(),
   listChannels: vi.fn().mockResolvedValue([]),
+  updateChannel: vi.fn(),
+  subscribeChannel: vi.fn(),
+  unsubscribeChannel: vi.fn(),
+  deleteChannel: vi.fn(),
+  getChannel: vi.fn(),
+  scanChannel: vi.fn(),
+  listAutoUnsubscribedChannels: vi.fn().mockResolvedValue([]),
+  dismissDormantChannel: vi.fn(),
+  resubscribeChannel: vi.fn(),
+  channelAvatarUrl: (id: string) => `/api/channels/${id}/avatar`,
+  channelBannerUrl: (id: string) => `/api/channels/${id}/banner`,
+}));
+
+vi.mock("./api/pending", () => ({
+  listPending: vi.fn().mockResolvedValue([]),
+  downloadPending: vi.fn(),
+  ignorePending: vi.fn(),
 }));
 
 // The dock only starts its 3s poll once `jobs` already holds an active
@@ -200,5 +219,74 @@ describe("App routing", () => {
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
     expect(screen.queryByRole("button", { name: /^channel$/i })).toBeNull();
+  });
+
+  // Task 11/15: the channel page has no rail entry — it's reached only by
+  // clicking a channel-name link. This drives the real flow (Channels list
+  // -> click a channel name -> Channel page -> "All channels" back button)
+  // to exercise App's openChannel/ViewSwitch wiring end to end, rather than
+  // unit-testing those functions directly.
+  it("clicking a channel name from Channels opens the Channel page, and the back button returns", async () => {
+    const { listChannels, getChannel } = await import("./api/channels");
+    vi.mocked(listChannels).mockReset();
+    vi.mocked(listChannels).mockResolvedValue([
+      {
+        id: "UCa",
+        name: "Uncanny Expeditions",
+        handle: "@UncannyExpeditions",
+        subscribed: true,
+        autodownload: false,
+        format_override: "",
+        pending_count: 0,
+        downloaded_count: 3,
+        dormant: false,
+      },
+    ]);
+    vi.mocked(getChannel).mockReset();
+    vi.mocked(getChannel).mockResolvedValue({
+      id: "UCa",
+      name: "Uncanny Expeditions",
+      handle: "@UncannyExpeditions",
+      description: "",
+      has_avatar: false,
+      has_banner: false,
+      tracked: true,
+      tracked_at: "2026-03-14 09:00:00",
+      archived_count: 3,
+      runtime_seconds: 600,
+      disk_bytes: 1024,
+      newest_published_at: "2026-07-18T00:00:00Z",
+      subscribed: true,
+      autodownload: false,
+      format_override: "",
+      last_scanned_at: "2026-07-20 08:00:00",
+      next_scan_at: "2026-07-20 14:00:00",
+      pending_count: 0,
+    });
+
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+
+    fireEvent.click(screen.getByRole("button", { name: "Channels" }));
+    const channelLink = await screen.findByRole("button", { name: "Uncanny Expeditions" });
+    fireEvent.click(channelLink);
+
+    expect(await screen.findByRole("button", { name: /all channels/i })).toBeInTheDocument();
+    await waitFor(() => expect(getChannel).toHaveBeenCalledWith("UCa"));
+
+    fireEvent.click(screen.getByRole("button", { name: /all channels/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /all channels/i })).toBeNull();
+    });
+  });
+
+  it("the Pending nav item renders the Pending view", async () => {
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+
+    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
+
+    expect(await screen.findByText("Nothing pending.")).toBeInTheDocument();
   });
 });
