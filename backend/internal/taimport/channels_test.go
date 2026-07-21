@@ -21,10 +21,11 @@ func (f *fakeLister) AllChannels(context.Context) ([]Channel, error) { return f.
 
 // spyWriter records what the runner asked for.
 type spyWriter struct {
-	upserted   []channels.Channel
-	subscribed []string
-	nextScanAt []string
-	failOn     string // channel id whose Upsert should fail
+	upserted        []channels.Channel
+	subscribed      []string
+	nextScanAt      []string
+	failOn          string // channel id whose Upsert should fail
+	failOnSubscribe string // channel id whose Subscribe should fail
 }
 
 func (s *spyWriter) Upsert(c channels.Channel) error {
@@ -36,6 +37,9 @@ func (s *spyWriter) Upsert(c channels.Channel) error {
 }
 
 func (s *spyWriter) Subscribe(channelID, nextScanAt string) error {
+	if channelID == s.failOnSubscribe {
+		return errors.New("subscribe boom")
+	}
 	s.subscribed = append(s.subscribed, channelID)
 	s.nextScanAt = append(s.nextScanAt, nextScanAt)
 	return nil
@@ -167,6 +171,22 @@ func TestImportChannels_upsertErrorPropagates(t *testing.T) {
 
 	if _, err := ImportChannels(context.Background(), lister, w, false, fixedNow); err == nil {
 		t.Fatal("err = nil, want the upsert error propagated")
+	}
+}
+
+func TestImportChannels_subscribeErrorPropagates(t *testing.T) {
+	lister := &fakeLister{out: []Channel{
+		{ID: "UC_bad", Name: "Bad", Active: true, Subscribed: true},
+	}}
+	w := &spyWriter{failOnSubscribe: "UC_bad"}
+
+	if _, err := ImportChannels(context.Background(), lister, w, false, fixedNow); err == nil {
+		t.Fatal("err = nil, want the subscribe error propagated")
+	}
+	// The channel was still tracked (Upsert ran and succeeded) even though
+	// the subscription failed.
+	if len(w.upserted) != 1 || w.upserted[0].ID != "UC_bad" {
+		t.Errorf("upserted = %+v, want UC_bad tracked before the subscribe failure", w.upserted)
 	}
 }
 

@@ -54,7 +54,11 @@ func main() {
 	// One-shot CLI subcommands (e.g. the TubeArchivist migration) run instead
 	// of the server. With no arguments — which is how the container starts —
 	// this is a no-op and the server boots exactly as before.
-	if dispatchSubcommand() {
+	if handled, err := dispatchSubcommand(os.Args); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", os.Args[1], err)
+			os.Exit(1)
+		}
 		return
 	}
 

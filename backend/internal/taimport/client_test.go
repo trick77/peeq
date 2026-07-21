@@ -93,6 +93,39 @@ func TestChannelPage_emptyDataMeansNoMorePages(t *testing.T) {
 	}
 }
 
+func TestChannelPage_malformedJSONIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":`)) // truncated / invalid JSON
+	}))
+	defer srv.Close()
+
+	testee := NewClient(srv.URL, "t", srv.Client())
+
+	_, _, err := testee.ChannelPage(context.Background(), 1)
+	if err == nil {
+		t.Fatal("err = nil, want an error decoding malformed JSON")
+	}
+	if !strings.Contains(err.Error(), "decode") {
+		t.Errorf("err = %q, want it to mention decode", err)
+	}
+}
+
+func TestChannelPage_connectionFailureIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close() // closed before use: any request against it fails at the transport level
+
+	testee := NewClient(srv.URL, "t", srv.Client())
+
+	_, _, err := testee.ChannelPage(context.Background(), 1)
+	if err == nil {
+		t.Fatal("err = nil, want an error when the connection itself fails")
+	}
+	if !strings.Contains(err.Error(), "GET") {
+		t.Errorf("err = %q, want it to mention the failed GET", err)
+	}
+}
+
 func TestChannelPage_serverErrorIsAnError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)

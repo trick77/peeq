@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -98,19 +97,22 @@ var importSubcommands = map[string]func([]string) error{
 	"import-ta-channels": runImportChannels,
 }
 
-// dispatchSubcommand runs a subcommand if os.Args names one, reporting whether
-// it handled the invocation.
-func dispatchSubcommand() (handled bool) {
-	if len(os.Args) < 2 {
-		return false
+// dispatchSubcommand runs a subcommand if args names one, reporting whether it
+// handled the invocation and what the subcommand returned. args is the full
+// argv including the program name at index 0.
+//
+// Taking args as a parameter rather than reading os.Args, and returning the
+// error rather than exiting, is what makes the fall-through behaviour testable
+// — and that behaviour is load-bearing: the container starts the server with no
+// arguments, so an unrecognised or absent argument MUST fall through to the
+// normal server boot.
+func dispatchSubcommand(args []string) (handled bool, err error) {
+	if len(args) < 2 {
+		return false, nil
 	}
-	fn, ok := importSubcommands[os.Args[1]]
+	fn, ok := importSubcommands[args[1]]
 	if !ok {
-		return false
+		return false, nil
 	}
-	if err := fn(os.Args[2:]); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", os.Args[1], err)
-		os.Exit(1)
-	}
-	return true
+	return true, fn(args[2:])
 }
