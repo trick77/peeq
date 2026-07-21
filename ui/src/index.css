@@ -2279,3 +2279,45 @@ textarea.cookiebox:focus {
   font-size: var(--text-label);
   margin-top: 3px;
 }
+
+.chan-settings {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-ui);
+  background: var(--color-panel);
+  padding: 0 18px;
+  max-width: 640px;
+}
+.chan-srow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+.chan-srow:last-child {
+  border-bottom: 0;
+}
+.chan-srow .lab {
+  font-size: var(--text-ui);
+  color: var(--color-ink-dim);
+  display: block;
+}
+.chan-srow .hint {
+  font-size: var(--text-label);
+  color: var(--color-faint);
+  margin: 3px 0 0;
+  max-width: 46ch;
+}
+.chan-srow input[type="checkbox"] {
+  accent-color: var(--color-accent);
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+/* Delete sits outside the settings panel: everything inside it is
+   reversible, and this is not. */
+.chan-danger {
+  margin-top: 18px;
+  max-width: 640px;
+}

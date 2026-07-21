@@ -24,7 +24,7 @@ vi.mock("../api/videos", () => ({
 }));
 vi.mock("../api/pending", () => ({ listPending: vi.fn(), downloadPending: vi.fn(), ignorePending: vi.fn() }));
 
-import { getChannel, scanChannel } from "../api/channels";
+import { getChannel, scanChannel, updateChannel, deleteChannel } from "../api/channels";
 import { listVideos, setFavorite } from "../api/videos";
 import { listPending } from "../api/pending";
 import type { Video } from "../api/types";
@@ -93,6 +93,10 @@ describe("Channel", () => {
     vi.mocked(scanChannel).mockResolvedValue({ status: "scheduled" });
     vi.mocked(setFavorite).mockReset();
     vi.mocked(setFavorite).mockResolvedValue(true);
+    vi.mocked(updateChannel).mockReset();
+    vi.mocked(updateChannel).mockResolvedValue({ id: "UCa", autodownload: false, format_override: "" });
+    vi.mocked(deleteChannel).mockReset();
+    vi.mocked(deleteChannel).mockResolvedValue(undefined);
   });
 
   it("shows the channel name and its four stats", async () => {
@@ -186,5 +190,27 @@ describe("Channel", () => {
       expect(setFavorite).toHaveBeenCalledWith("v1", true);
     });
     expect(await screen.findByRole("button", { name: "Remove from favorites" })).toBeInTheDocument();
+  });
+
+  it("the delete button names how many videos it will destroy", async () => {
+    const user = userEvent.setup();
+    render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />);
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /settings/i }));
+
+    expect(await screen.findByRole("button", { name: /delete channel and its 142 videos/i })).toBeInTheDocument();
+  });
+
+  it("toggling auto-add saves it", async () => {
+    const user = userEvent.setup();
+    render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />);
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /settings/i }));
+
+    await user.click(await screen.findByLabelText(/add new videos automatically/i));
+
+    await waitFor(() => {
+      expect(updateChannel).toHaveBeenCalledWith("UCa", { autodownload: false });
+    });
   });
 });
