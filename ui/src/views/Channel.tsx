@@ -155,7 +155,25 @@ export function Channel({
           <div className="chan-id">
             <h2>{detail.name}</h2>
             <div className="chan-handle">
-              {detail.handle ? `${detail.handle} · ` : ""}
+              {/* The handle is the one thing on this page that belongs to
+                  YouTube rather than peeq, so it links back there. Opens in a
+                  new tab: peeq is the archive, and losing your place in it to
+                  a YouTube page would be the wrong trade. */}
+              {detail.handle ? (
+                <>
+                  <a
+                    className="chan-yt"
+                    href={`https://www.youtube.com/${detail.handle}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Open ${detail.handle} on YouTube`}
+                  >
+                    {detail.handle}
+                    <Icon name="externalLink" size="12px" />
+                  </a>
+                  {" · "}
+                </>
+              ) : null}
               {detail.tracked ? (
                 <>tracked since {new Date((detail.tracked_at ?? "") + "Z").toLocaleDateString()}</>
               ) : (

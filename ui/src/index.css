@@ -2370,9 +2370,31 @@ details.tomb-sect[open] > summary svg {
   font-size: var(--text-label);
   color: var(--color-muted);
 }
+/* The handle links out to YouTube. Underlined on hover only, so the header
+   line stays quiet until you reach for it. */
+.chan-yt {
+  color: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid transparent;
+}
+.chan-yt:hover {
+  color: var(--color-ink-dim);
+  border-bottom-color: var(--color-accent);
+}
+.chan-yt:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.chan-yt svg {
+  opacity: 0.6;
+}
 .chan-desc {
   margin: 8px 0 0;
-  font-size: var(--text-label);
+  font-size: var(--text-body);
   color: var(--color-muted);
   max-width: 60ch;
   display: -webkit-box;
@@ -2386,10 +2408,13 @@ details.tomb-sect[open] > summary svg {
   margin-top: 14px;
   flex-wrap: wrap;
 }
+/* The stats are context, not the headline — the channel name and its
+   description lead. Muted rather than full-ink, and a step down in size. */
 .chan-stat .k {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 16px;
+  font-size: var(--text-label);
+  color: var(--color-muted);
 }
 .chan-stat .l {
   font-size: var(--text-micro);
