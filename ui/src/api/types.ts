@@ -191,3 +191,35 @@ export type APITokenCreated = {
   token: string;
   created_at: string;
 };
+
+// ChannelDetail mirrors httpapi.channelDetail — one channel's page data.
+// Tracked is false for a channel the user has only visited; when it is false
+// every subscription field below is at its zero value.
+export type ChannelDetail = {
+  id: string;
+  name: string;
+  handle?: string;
+  description?: string;
+  has_avatar: boolean;
+  has_banner: boolean;
+
+  tracked: boolean;
+  tracked_at?: string;
+
+  archived_count: number;
+  runtime_seconds: number;
+  disk_bytes: number;
+  newest_published_at?: string;
+
+  subscribed: boolean;
+  autodownload: boolean;
+  format_override?: string;
+  last_scanned_at?: string;
+  next_scan_at?: string;
+  pending_count: number;
+};
+
+// ScanResult mirrors POST /api/channels/{id}/scan. "blocked" carries a
+// human-readable reason the scan cannot run — a stale cookie or the global
+// YouTube pause — which the UI shows verbatim.
+export type ScanResult = { status: "scheduled" | "blocked"; reason?: string };

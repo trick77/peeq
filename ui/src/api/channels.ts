@@ -1,6 +1,6 @@
 import { api, ApiError } from "./http";
 import { CookieRequiredError } from "./downloads";
-import type { Channel } from "./types";
+import type { Channel, ChannelDetail, ScanResult } from "./types";
 
 // ChannelFilter mirrors the ?filter= values the channels handler
 // understands (Task 12 brief / channels_handlers.go).
@@ -68,4 +68,20 @@ export async function unsubscribeChannel(id: string): Promise<{ status: string }
 
 export async function deleteChannel(id: string): Promise<void> {
   await api.delete(`/api/channels/${encodeURIComponent(id)}`, "failed to delete channel");
+}
+
+export async function getChannel(id: string): Promise<ChannelDetail> {
+  return api.get<ChannelDetail>(`/api/channels/${encodeURIComponent(id)}`, "failed to load channel");
+}
+
+export async function scanChannel(id: string): Promise<ScanResult> {
+  return api.post<ScanResult>(`/api/channels/${encodeURIComponent(id)}/scan`, undefined, "failed to schedule a check");
+}
+
+export function channelAvatarUrl(id: string): string {
+  return `/api/channels/${encodeURIComponent(id)}/avatar`;
+}
+
+export function channelBannerUrl(id: string): string {
+  return `/api/channels/${encodeURIComponent(id)}/banner`;
 }

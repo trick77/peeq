@@ -43,6 +43,10 @@ vi.mock("../api/channels", () => ({
   subscribeChannel: vi.fn(),
   unsubscribeChannel: vi.fn(),
   deleteChannel: vi.fn(),
+  getChannel: vi.fn(),
+  scanChannel: vi.fn(),
+  channelAvatarUrl: (id: string) => `/api/channels/${id}/avatar`,
+  channelBannerUrl: (id: string) => `/api/channels/${id}/banner`,
 }));
 
 import {
