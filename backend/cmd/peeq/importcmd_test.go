@@ -21,7 +21,18 @@ func TestFormatChannelResult_realRun(t *testing.T) {
 
 	got := formatChannelResult(res, false)
 
-	for _, want := range []string{"12", "10", "2", "37", "Dead Channel", "Gone Too"} {
+	// Assert each count on the same line as its label, so swapping the
+	// active/inactive lines (or dropping the labels) fails this test. A bare
+	// strings.Contains(got, "2") would also match inside "12", so the label
+	// must be part of the match.
+	for _, want := range []string{
+		"Subscriptions:  12",
+		"active:       10",
+		"inactive:     2",
+		"Skipped:        37",
+		"Dead Channel",
+		"Gone Too",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q:\n%s", want, got)
 		}
@@ -60,6 +71,15 @@ func TestRunImportChannels_requiresURLAndToken(t *testing.T) {
 	}
 	if err := runImportChannels([]string{"--ta-url", "http://ta:8000"}); err == nil {
 		t.Fatal("err = nil, want an error when --ta-token is missing")
+	}
+}
+
+func TestRunImportChannels_helpReturnsNil(t *testing.T) {
+	// --help must not look like a failure: flag.ContinueOnError makes
+	// fs.Parse return flag.ErrHelp, which must not propagate as an error
+	// after usage has already been printed.
+	if err := runImportChannels([]string{"--help"}); err != nil {
+		t.Errorf("runImportChannels([--help]) = %v, want nil", err)
 	}
 }
 

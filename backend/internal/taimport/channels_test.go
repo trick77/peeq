@@ -26,6 +26,21 @@ type spyWriter struct {
 	nextScanAt      []string
 	failOn          string // channel id whose Upsert should fail
 	failOnSubscribe string // channel id whose Subscribe should fail
+
+	// existing seeds channels the store already tracks before the import
+	// runs, keyed by ID, so tests can exercise Get returning a pre-existing
+	// row (e.g. one with a handle already resolved from a pasted URL).
+	existing map[string]channels.Channel
+}
+
+func (s *spyWriter) Get(id string) (*channels.Channel, error) {
+	if s.existing == nil {
+		return nil, nil
+	}
+	if c, ok := s.existing[id]; ok {
+		return &c, nil
+	}
+	return nil, nil
 }
 
 func (s *spyWriter) Upsert(c channels.Channel) error {
@@ -190,6 +205,75 @@ func TestImportChannels_subscribeErrorPropagates(t *testing.T) {
 	}
 }
 
+func TestImportChannels_preservesExistingHandle(t *testing.T) {
+	// Given: peeq already tracks this channel with a handle resolved earlier
+	// from a pasted URL. TubeArchivist has no handle to offer.
+	lister := &fakeLister{out: []Channel{
+		{ID: "UC_a", Name: "Alpha", Active: true, Subscribed: true},
+	}}
+	w := &spyWriter{existing: map[string]channels.Channel{
+		"UC_a": {ID: "UC_a", Handle: "@existing", Name: "Alpha (old name)"},
+	}}
+
+	// When
+	if _, err := ImportChannels(context.Background(), lister, w, false, fixedNow); err != nil {
+		t.Fatalf("ImportChannels: %v", err)
+	}
+
+	// Then the existing handle survives the import.
+	if len(w.upserted) != 1 {
+		t.Fatalf("upserted = %d, want 1", len(w.upserted))
+	}
+	if w.upserted[0].Handle != "@existing" {
+		t.Errorf("Handle = %q, want %q (existing handle must be preserved)", w.upserted[0].Handle, "@existing")
+	}
+}
+
+func TestImportChannels_newChannelGetsEmptyHandle(t *testing.T) {
+	// Given: a channel peeq has never seen before.
+	lister := &fakeLister{out: []Channel{
+		{ID: "UC_new", Name: "Brand New", Active: true, Subscribed: true},
+	}}
+	w := &spyWriter{}
+
+	// When
+	if _, err := ImportChannels(context.Background(), lister, w, false, fixedNow); err != nil {
+		t.Fatalf("ImportChannels: %v", err)
+	}
+
+	// Then
+	if len(w.upserted) != 1 {
+		t.Fatalf("upserted = %d, want 1", len(w.upserted))
+	}
+	if w.upserted[0].Handle != "" {
+		t.Errorf("Handle = %q, want empty for a brand-new channel", w.upserted[0].Handle)
+	}
+}
+
+func TestImportChannels_getErrorPropagates(t *testing.T) {
+	lister := &fakeLister{out: []Channel{
+		{ID: "UC_a", Name: "Alpha", Active: true, Subscribed: true},
+	}}
+	w := &failGetWriter{spyWriter: spyWriter{}, failGetOn: "UC_a"}
+
+	if _, err := ImportChannels(context.Background(), lister, w, false, fixedNow); err == nil {
+		t.Fatal("err = nil, want the Get error propagated")
+	}
+}
+
+// failGetWriter wraps spyWriter to fail Get for a specific channel id.
+type failGetWriter struct {
+	spyWriter
+	failGetOn string
+}
+
+func (w *failGetWriter) Get(id string) (*channels.Channel, error) {
+	if id == w.failGetOn {
+		return nil, errors.New("get boom")
+	}
+	return w.spyWriter.Get(id)
+}
+
 func TestImportChannels_againstRealStore(t *testing.T) {
 	// Given a migrated database and the real channels store.
 	dbPath := filepath.Join(t.TempDir(), "test.db")
@@ -202,6 +286,12 @@ func TestImportChannels_againstRealStore(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	realStore := channels.New(db)
+
+	// And: peeq already tracks UC_a with a handle resolved from a pasted URL,
+	// before TubeArchivist's subscription list is imported.
+	if err := realStore.Upsert(channels.Channel{ID: "UC_a", Name: "Alpha (old name)", Handle: "@existing"}); err != nil {
+		t.Fatalf("seed existing channel: %v", err)
+	}
 
 	lister := &fakeLister{out: []Channel{
 		{ID: "UC_a", Name: "Alpha", Active: true, Subscribed: true},
@@ -225,6 +315,17 @@ func TestImportChannels_againstRealStore(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("subscribed channels = %d, want 2", len(items))
 	}
+
+	// And UC_a's pre-existing handle survived the import against the real
+	// store, proving the fix against real SQL rather than a spy.
+	gotA, err := realStore.Get("UC_a")
+	if err != nil {
+		t.Fatalf("Get UC_a: %v", err)
+	}
+	if gotA == nil || gotA.Handle != "@existing" {
+		t.Errorf("UC_a handle after import = %+v, want Handle=@existing", gotA)
+	}
+
 	for _, it := range items {
 		if !it.Subscribed {
 			t.Errorf("%s: Subscribed = false", it.ID)

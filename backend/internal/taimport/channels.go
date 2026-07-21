@@ -22,6 +22,9 @@ type ChannelLister interface {
 type ChannelWriter interface {
 	Upsert(c channels.Channel) error
 	Subscribe(channelID, nextScanAt string) error
+	// Get returns the channel with the given id, or (nil, nil) if it is not
+	// tracked yet.
+	Get(id string) (*channels.Channel, error)
 }
 
 // ChannelResult summarises an import run. Active and Inactive sum to
@@ -83,9 +86,22 @@ func ImportChannels(ctx context.Context, lister ChannelLister, w ChannelWriter, 
 			continue
 		}
 
-		// Handle is left empty on purpose: TubeArchivist does not store the
-		// @handle, and peeq treats an empty handle as normal.
-		if err := w.Upsert(channels.Channel{ID: c.ID, Name: c.Name}); err != nil {
+		// TubeArchivist has no @handle to give us. channels.Store.Upsert treats
+		// Handle as authoritative — it overwrites whatever is already stored,
+		// even with empty — so passing empty here would blank the handle of
+		// any channel peeq already resolved from a pasted URL. Look up the
+		// existing row first and carry its handle forward; a brand-new
+		// channel (Get returns nil, nil) still gets an empty handle, same as
+		// before.
+		existing, err := w.Get(c.ID)
+		if err != nil {
+			return res, fmt.Errorf("taimport: look up existing channel %s: %w", c.ID, err)
+		}
+		var handle string
+		if existing != nil {
+			handle = existing.Handle
+		}
+		if err := w.Upsert(channels.Channel{ID: c.ID, Name: c.Name, Handle: handle}); err != nil {
 			return res, fmt.Errorf("taimport: track channel %s: %w", c.ID, err)
 		}
 		if err := w.Subscribe(c.ID, nextScanAt); err != nil {

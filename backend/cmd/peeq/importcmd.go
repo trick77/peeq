@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -27,6 +28,10 @@ func runImportChannels(args []string) error {
 		dryRun  = fs.Bool("dry-run", false, "report what would be imported without writing anything")
 	)
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			// flag already printed usage; --help is not a failure.
+			return nil
+		}
 		return err
 	}
 	if *taURL == "" {
