@@ -122,3 +122,49 @@ func TestChannelPage_unauthorizedMentionsToken(t *testing.T) {
 		t.Errorf("err = %q, want it to mention the token", err)
 	}
 }
+
+func TestAllChannels_walksUntilEmptyPage(t *testing.T) {
+	var pages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Query().Get("page")
+		pages = append(pages, p)
+		switch p {
+		case "1":
+			_, _ = w.Write([]byte(`{"data":[{"channel_id":"UC_a","channel_name":"A","channel_subscribed":true,"channel_active":true}]}`))
+		case "2":
+			_, _ = w.Write([]byte(`{"data":[{"channel_id":"UC_b","channel_name":"B","channel_subscribed":true,"channel_active":true}]}`))
+		default:
+			http.Error(w, `{"error":"none"}`, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	testee := NewClient(srv.URL, "t", srv.Client())
+
+	got, err := testee.AllChannels(context.Background())
+	if err != nil {
+		t.Fatalf("AllChannels: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].ID != "UC_a" || got[1].ID != "UC_b" {
+		t.Errorf("got = %+v", got)
+	}
+	if len(pages) != 3 {
+		t.Errorf("requested pages = %v, want three requests (1, 2, then the empty 3)", pages)
+	}
+}
+
+func TestAllChannels_propagatesError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	testee := NewClient(srv.URL, "t", srv.Client())
+
+	if _, err := testee.AllChannels(context.Background()); err == nil {
+		t.Fatal("err = nil, want the page error propagated")
+	}
+}

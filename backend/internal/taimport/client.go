@@ -143,3 +143,26 @@ func (c *Client) ChannelPage(ctx context.Context, page int) (chans []Channel, mo
 	}
 	return out, true, nil
 }
+
+// maxChannelPages bounds the pagination walk. TubeArchivist's default page
+// size is 25, so this allows 50k subscribed channels — far beyond any real
+// library, while still guaranteeing the loop terminates if a misbehaving
+// instance or proxy never returns an empty page.
+const maxChannelPages = 2000
+
+// AllChannels pages through every subscribed channel, in the order
+// TubeArchivist returns them.
+func (c *Client) AllChannels(ctx context.Context) ([]Channel, error) {
+	var all []Channel
+	for page := 1; page <= maxChannelPages; page++ {
+		batch, more, err := c.ChannelPage(ctx, page)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, batch...)
+		if !more {
+			return all, nil
+		}
+	}
+	return nil, fmt.Errorf("taimport: channel listing exceeded %d pages; refusing to keep paging", maxChannelPages)
+}
