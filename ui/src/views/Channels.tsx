@@ -42,7 +42,10 @@ export function Channels() {
   const [addSubscribe, setAddSubscribe] = useState(false);
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
-  const [added, setAdded] = useState<{ name: string; subscribed: boolean } | null>(null);
+  const [added, setAdded] = useState<{
+    name: string;
+    subscribed: boolean;
+  } | null>(null);
   const [tombstones, setTombstones] = useState<AutoUnsubscribedChannel[]>([]);
   // dormant is deliberately its own list, fetched with filter "all" rather
   // than derived from `channels`. `channels` follows the active chip (e.g.
@@ -126,7 +129,9 @@ export function Channels() {
     setAddError(null);
     setAdded(null);
     if (!isChannelURL(trimmed)) {
-      setAddError("Paste a channel link (a /channel/, /@handle, /c/, or /user/ URL).");
+      setAddError(
+        "Paste a channel link (a /channel/, /@handle, /c/, or /user/ URL).",
+      );
       return;
     }
     setAddBusy(true);
@@ -137,7 +142,9 @@ export function Channels() {
       load(filterRef.current);
     } catch (err) {
       if (err instanceof CookieRequiredError) {
-        setAddError("No YouTube cookie configured yet. Paste one on the Settings page before adding a channel.");
+        setAddError(
+          "No YouTube cookie configured yet. Paste one on the Settings page before adding a channel.",
+        );
       } else {
         setAddError((err as Error).message ?? "Failed to add channel.");
       }
@@ -147,7 +154,9 @@ export function Channels() {
   }
 
   function applyLocalUpdate(id: string, patch: Partial<Channel>) {
-    setChannels((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    setChannels((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+    );
   }
 
   async function handleToggleSubscribe(c: Channel) {
@@ -200,7 +209,8 @@ export function Channels() {
   }
 
   async function handleDelete(c: Channel) {
-    if (!window.confirm("Delete this channel and ALL its downloaded videos?")) return;
+    if (!window.confirm("Delete this channel and ALL its downloaded videos?"))
+      return;
     try {
       await deleteChannel(c.id);
       setChannels((prev) => prev.filter((x) => x.id !== c.id));
@@ -220,7 +230,9 @@ export function Channels() {
     try {
       await dismissDormantChannel(c.id);
     } catch (err) {
-      setDormant((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]));
+      setDormant((prev) =>
+        prev.some((x) => x.id === c.id) ? prev : [...prev, c],
+      );
       applyLocalUpdate(c.id, { dormant: true });
       setError((err as Error).message);
     }
@@ -251,7 +263,11 @@ export function Channels() {
       <form className="sect channel-add" onSubmit={handleAdd}>
         <div className="paste">
           <label className="field">
-            <Icon name="link" size="18px" style={{ color: "var(--color-faint)" }} />
+            <Icon
+              name="link"
+              size="18px"
+              style={{ color: "var(--color-faint)" }}
+            />
             <input
               value={addUrl}
               onChange={(e) => setAddUrl(e.target.value)}
@@ -264,7 +280,13 @@ export function Channels() {
               Subscribe checkbox visibly changes what the button will do. */}
           <Button type="submit" busy={addBusy} disabled={!addUrl.trim()}>
             {!addBusy && <Icon name="plus" size="18px" />}
-            {addBusy ? (addSubscribe ? "Subscribing" : "Tracking") : addSubscribe ? "Subscribe" : "Track"}
+            {addBusy
+              ? addSubscribe
+                ? "Subscribing"
+                : "Tracking"
+              : addSubscribe
+                ? "Subscribe"
+                : "Track"}
           </Button>
         </div>
         <label className="ctrl channel-toggle" style={{ marginTop: 10 }}>
@@ -306,60 +328,84 @@ export function Channels() {
         onUnsubscribe={handleToggleSubscribe}
       />
       <div className="channel-list">
-        {channels.filter((c) => !c.dormant).map((c) => (
-          <div key={c.id} className="channel-row sect">
-            <div className="channel-info">
-              <h3 style={{ margin: 0, fontFamily: "var(--font-serif)", fontSize: 17, fontWeight: 500 }}>{c.name}</h3>
-              <div className="by" style={{ marginTop: 2 }}>
-                {c.handle ? `${c.handle} · ` : ""}
-                {c.pending_count} pending · {c.downloaded_count} downloaded
+        {channels
+          .filter((c) => !c.dormant)
+          .map((c) => (
+            <div key={c.id} className="channel-row sect">
+              <div className="channel-info">
+                <h3
+                  style={{
+                    margin: 0,
+                    fontFamily: "var(--font-serif)",
+                    fontSize: 17,
+                    fontWeight: 500,
+                  }}
+                >
+                  {c.name}
+                </h3>
+                <div className="by" style={{ marginTop: 2 }}>
+                  {c.handle ? `${c.handle} · ` : ""}
+                  {c.pending_count} pending · {c.downloaded_count} downloaded
+                </div>
+              </div>
+              <div className="channel-actions">
+                <label className="ctrl channel-toggle">
+                  <input
+                    type="checkbox"
+                    checked={c.autodownload}
+                    onChange={() => handleToggleAutodownload(c)}
+                    aria-label="Auto-add"
+                  />
+                  Auto-add
+                </label>
+                <input
+                  type="text"
+                  className="channel-format-input"
+                  value={formatDrafts[c.id] ?? ""}
+                  onChange={(e) =>
+                    setFormatDrafts((prev) => ({
+                      ...prev,
+                      [c.id]: e.target.value,
+                    }))
+                  }
+                  onBlur={() => handleSaveFormatOverride(c)}
+                  placeholder="Format override (optional)"
+                  aria-label="Format override"
+                />
+                <Button
+                  type="button"
+                  variant={c.subscribed ? "gold" : "secondary"}
+                  onClick={() => handleToggleSubscribe(c)}
+                >
+                  <Icon
+                    name={c.subscribed ? "starFilled" : "star"}
+                    size="16px"
+                  />
+                  {c.subscribed ? "Unsubscribe" : "Subscribe"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="dangerQuiet"
+                  onClick={() => handleDelete(c)}
+                  aria-label={`Delete ${c.name}`}
+                >
+                  <Icon name="trash" size="16px" /> Delete
+                </Button>
               </div>
             </div>
-            <div className="channel-actions">
-              <label className="ctrl channel-toggle">
-                <input
-                  type="checkbox"
-                  checked={c.autodownload}
-                  onChange={() => handleToggleAutodownload(c)}
-                  aria-label="Auto-add"
-                />
-                Auto-add
-              </label>
-              <input
-                type="text"
-                className="channel-format-input"
-                value={formatDrafts[c.id] ?? ""}
-                onChange={(e) => setFormatDrafts((prev) => ({ ...prev, [c.id]: e.target.value }))}
-                onBlur={() => handleSaveFormatOverride(c)}
-                placeholder="Format override (optional)"
-                aria-label="Format override"
-              />
-              <Button
-                type="button"
-                variant={c.subscribed ? "gold" : "secondary"}
-                onClick={() => handleToggleSubscribe(c)}
-              >
-                <Icon name={c.subscribed ? "starFilled" : "star"} size="16px" />
-                {c.subscribed ? "Unsubscribe" : "Subscribe"}
-              </Button>
-              <Button
-                type="button"
-                variant="dangerQuiet"
-                onClick={() => handleDelete(c)}
-                aria-label={`Delete ${c.name}`}
-              >
-                <Icon name="trash" size="16px" /> Delete
-              </Button>
-            </div>
-          </div>
-        ))}
+          ))}
       </div>
       {channels.length === 0 && !error ? (
         <p style={{ color: "var(--color-faint)" }}>
-          {filter === "all" ? "No channels yet." : "No channels match this filter."}
+          {filter === "all"
+            ? "No channels yet."
+            : "No channels match this filter."}
         </p>
       ) : null}
-      <AutoUnsubscribedSection channels={tombstones} onResubscribe={handleResubscribe} />
+      <AutoUnsubscribedSection
+        channels={tombstones}
+        onResubscribe={handleResubscribe}
+      />
     </>
   );
 }

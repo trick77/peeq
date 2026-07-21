@@ -14,7 +14,10 @@ import { CATEGORIES } from "./categories";
 // which then fails fileURLToPath with "The URL must be of scheme file".
 // Resolving the directory first sidesteps that transform.
 const HERE = dirname(fileURLToPath(import.meta.url));
-const GO_CATEGORY_FILE = resolve(HERE, "../../backend/internal/videos/category.go");
+const GO_CATEGORY_FILE = resolve(
+  HERE,
+  "../../backend/internal/videos/category.go",
+);
 
 function goCategories(): Array<{ id: string; label: string }> {
   const source = readFileSync(GO_CATEGORY_FILE, "utf8");

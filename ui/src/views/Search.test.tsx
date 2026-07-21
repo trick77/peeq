@@ -20,13 +20,22 @@ describe("Search", () => {
     mockedSearchVideos.mockResolvedValue([
       {
         video: { id: "v1", title: "iPhone 27 review" } as never,
-        matches: [{ start_seconds: 560, snippet: "the new iPhone", distance: 0.1, kind: "transcript" }],
+        matches: [
+          {
+            start_seconds: 560,
+            snippet: "the new iPhone",
+            distance: 0.1,
+            kind: "transcript",
+          },
+        ],
       },
     ]);
     const onOpen = vi.fn();
     render(<Search onOpen={onOpen} />);
 
-    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "iphone" } });
+    fireEvent.change(screen.getByPlaceholderText(/search/i), {
+      target: { value: "iphone" },
+    });
     fireEvent.submit(screen.getByRole("search"));
 
     expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
@@ -38,12 +47,21 @@ describe("Search", () => {
     mockedSearchVideos.mockResolvedValue([
       {
         video: { id: "v1", title: "T" } as never,
-        matches: [{ start_seconds: 0, snippet: "the platypus lives here", distance: 0.1, kind: "summary" }],
+        matches: [
+          {
+            start_seconds: 0,
+            snippet: "the platypus lives here",
+            distance: 0.1,
+            kind: "summary",
+          },
+        ],
       },
     ]);
     render(<Search onOpen={vi.fn()} />);
 
-    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "platypus" } });
+    fireEvent.change(screen.getByPlaceholderText(/search/i), {
+      target: { value: "platypus" },
+    });
     fireEvent.submit(screen.getByRole("search"));
 
     expect(await screen.findByText("Summary")).toBeInTheDocument();
@@ -58,15 +76,21 @@ describe("Search", () => {
   it("calls searchVideos with the typed query on submit", async () => {
     mockedSearchVideos.mockResolvedValue([]);
     render(<Search onOpen={vi.fn()} />);
-    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "battery life" } });
+    fireEvent.change(screen.getByPlaceholderText(/search/i), {
+      target: { value: "battery life" },
+    });
     fireEvent.submit(screen.getByRole("search"));
-    await waitFor(() => expect(mockedSearchVideos).toHaveBeenCalledWith("battery life"));
+    await waitFor(() =>
+      expect(mockedSearchVideos).toHaveBeenCalledWith("battery life"),
+    );
   });
 
   it("shows an empty-results message when a query returns nothing", async () => {
     mockedSearchVideos.mockResolvedValue([]);
     render(<Search onOpen={vi.fn()} />);
-    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "nothing here" } });
+    fireEvent.change(screen.getByPlaceholderText(/search/i), {
+      target: { value: "nothing here" },
+    });
     fireEvent.submit(screen.getByRole("search"));
     expect(await screen.findByText(/no matches/i)).toBeInTheDocument();
   });
@@ -75,17 +99,28 @@ describe("Search", () => {
     mockedSearchVideos.mockResolvedValueOnce([
       {
         video: { id: "v1", title: "iPhone 27 review" } as never,
-        matches: [{ start_seconds: 560, snippet: "the new iPhone", distance: 0.1, kind: "transcript" }],
+        matches: [
+          {
+            start_seconds: 560,
+            snippet: "the new iPhone",
+            distance: 0.1,
+            kind: "transcript",
+          },
+        ],
       },
     ]);
     render(<Search onOpen={vi.fn()} />);
 
-    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "iphone" } });
+    fireEvent.change(screen.getByPlaceholderText(/search/i), {
+      target: { value: "iphone" },
+    });
     fireEvent.submit(screen.getByRole("search"));
     expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
 
     mockedSearchVideos.mockRejectedValueOnce(new Error("search backend down"));
-    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "battery" } });
+    fireEvent.change(screen.getByPlaceholderText(/search/i), {
+      target: { value: "battery" },
+    });
     fireEvent.submit(screen.getByRole("search"));
 
     expect(await screen.findByText(/search backend down/i)).toBeInTheDocument();

@@ -48,10 +48,16 @@ describe("VideoCard lifecycle line", () => {
   });
 
   it('renders "Expires in N days" for a watched, non-favorite video', () => {
-    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    const fiveDaysAgo = new Date(
+      Date.now() - 5 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     render(
       <VideoCard
-        video={baseVideo({ watched: true, watched_at: fiveDaysAgo, favorite: false })}
+        video={baseVideo({
+          watched: true,
+          watched_at: fiveDaysAgo,
+          favorite: false,
+        })}
         retentionDays={14}
         onOpen={noop}
         onToggleFavorite={noop}
@@ -96,7 +102,13 @@ describe("VideoCard lifecycle line", () => {
   it("calls onOpen with the video id when the thumbnail is clicked", async () => {
     const onOpen = vi.fn();
     render(
-      <VideoCard video={baseVideo()} retentionDays={14} onOpen={onOpen} onToggleFavorite={noop} onToggleWatched={noop} />,
+      <VideoCard
+        video={baseVideo()}
+        retentionDays={14}
+        onOpen={onOpen}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
     );
     screen.getByRole("button", { name: /Open A Test Video/ }).click();
     expect(onOpen).toHaveBeenCalledWith("v1");
@@ -131,7 +143,9 @@ describe("VideoCard lifecycle line", () => {
         onRedownload={noop}
       />,
     );
-    expect(screen.getByText("Removed to save space · summary kept")).toBeInTheDocument();
+    expect(
+      screen.getByText("Removed to save space · summary kept"),
+    ).toBeInTheDocument();
   });
 
   it("shows a category badge when categorized, hides it when uncategorized", () => {
@@ -230,8 +244,16 @@ describe("Library category chips", () => {
   });
 
   it("renders a category chip row and filters by category", async () => {
-    const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
-    const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
+    const aiVideo = categoryVideo({
+      id: "v1",
+      title: "ai video title",
+      category: "ai",
+    });
+    const newsVideo = categoryVideo({
+      id: "v2",
+      title: "news video title",
+      category: "news",
+    });
 
     vi.mocked(listVideos).mockImplementation(async (_filter, category) => {
       if (category === "ai") return [aiVideo];
@@ -252,8 +274,16 @@ describe("Library category chips", () => {
   });
 
   it("applies the category filter independently of the status chip", async () => {
-    const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
-    const newsVideo = categoryVideo({ id: "v2", title: "news video title", category: "news" });
+    const aiVideo = categoryVideo({
+      id: "v1",
+      title: "ai video title",
+      category: "ai",
+    });
+    const newsVideo = categoryVideo({
+      id: "v2",
+      title: "news video title",
+      category: "news",
+    });
 
     vi.mocked(listVideos).mockImplementation(async (_filter, category) => {
       if (category === "ai") return [aiVideo];
@@ -279,7 +309,11 @@ describe("Library category chips", () => {
     // Given: a category filter is active. The 3s poller (Library.tsx:163)
     // only arms while a download job is pending/running, so listDownloads
     // must report one to make the interval fire at all.
-    const aiVideo = categoryVideo({ id: "v1", title: "ai video title", category: "ai" });
+    const aiVideo = categoryVideo({
+      id: "v1",
+      title: "ai video title",
+      category: "ai",
+    });
     vi.mocked(listVideos).mockResolvedValue([aiVideo]);
     vi.mocked(listDownloads).mockResolvedValue([
       {

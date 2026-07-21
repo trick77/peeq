@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
 import { TopBar } from "./shell/TopBar";
-import { getMe, listDownloads, cookieHealth, downloadsStatus, streamDownloads, listPending, resumeYoutube } from "./api";
+import {
+  getMe,
+  listDownloads,
+  cookieHealth,
+  downloadsStatus,
+  streamDownloads,
+  listPending,
+  resumeYoutube,
+} from "./api";
 import type { DownloadsStatus } from "./api/downloads";
 import type { Job, User } from "./api/types";
 import { Library } from "./views/Library";
@@ -36,13 +44,17 @@ export function App() {
   // autoplay. Read once, synchronously, so the very first render already
   // routes to the Player instead of flashing Library. See nowPlaying.ts.
   const restored = readNowPlaying();
-  const [view, setView] = useState<ViewId>(restored?.playing ? "player" : "library");
+  const [view, setView] = useState<ViewId>(
+    restored?.playing ? "player" : "library",
+  );
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
-  const [cookieStatus, setCookieStatus] = useState<string | undefined>(undefined);
+  const [cookieStatus, setCookieStatus] = useState<string | undefined>(
+    undefined,
+  );
   const [downloadStatus, setDownloadStatus] = useState<DownloadsStatus>({
     paused: false,
     low_disk: false,
@@ -175,7 +187,9 @@ export function App() {
   // (worker paused, cookie missing, queue busy) emits no progress at all.
   useEffect(() => {
     if (!authChecked || !user) return;
-    const hasActive = jobs.some((j) => j.state === "pending" || j.state === "running");
+    const hasActive = jobs.some(
+      (j) => j.state === "pending" || j.state === "running",
+    );
     if (!hasActive) return;
     const id = window.setInterval(() => {
       listDownloads()
@@ -203,10 +217,19 @@ export function App() {
     const controller = new AbortController();
     streamDownloads((evt) => {
       if (evt.event !== "progress") return;
-      const data = evt.data as { job_id: number; percent: number; speed: string; eta: string };
+      const data = evt.data as {
+        job_id: number;
+        percent: number;
+        speed: string;
+        eta: string;
+      };
       setProgressByJobId((prev) => ({
         ...prev,
-        [data.job_id]: { percent: data.percent, speed: data.speed, eta: data.eta },
+        [data.job_id]: {
+          percent: data.percent,
+          speed: data.speed,
+          eta: data.eta,
+        },
       }));
       // A progress event for a job we haven't seen yet means a download
       // was queued after the initial listDownloads() load (e.g. from the
@@ -223,7 +246,9 @@ export function App() {
 
   if (!authChecked) {
     return (
-      <div style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}>
+      <div
+        style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}
+      >
         <b>peeq</b>
       </div>
     );
@@ -231,10 +256,19 @@ export function App() {
 
   if (!user) {
     return (
-      <div style={{ display: "grid", placeItems: "center", minHeight: "100vh", gap: 12 }}>
+      <div
+        style={{
+          display: "grid",
+          placeItems: "center",
+          minHeight: "100vh",
+          gap: 12,
+        }}
+      >
         <b>peeq</b>
         {authError ? (
-          <p style={{ color: "var(--color-danger)" }}>Couldn't reach the server. Try reloading.</p>
+          <p style={{ color: "var(--color-danger)" }}>
+            Couldn't reach the server. Try reloading.
+          </p>
         ) : null}
         <a href="/api/auth/login">Sign in</a>
       </div>
@@ -268,12 +302,19 @@ export function App() {
         cookieStatus={cookieStatus}
       />
       <main className="main">
-        <TopBar title={meta.title} subtitle={meta.subtitle} showSearch={view === "library"} />
+        <TopBar
+          title={meta.title}
+          subtitle={meta.subtitle}
+          showSearch={view === "library"}
+        />
         <section className="page">
           <DownloadStatusBanner
             status={downloadStatus}
             onFixCookie={() => setView("settings")}
-            onResume={async () => { await resumeYoutube(); setDownloadStatus(await downloadsStatus()); }}
+            onResume={async () => {
+              await resumeYoutube();
+              setDownloadStatus(await downloadsStatus());
+            }}
           />
           <ViewSwitch
             view={view}
@@ -313,9 +354,13 @@ function DownloadStatusBanner({
       <div className="errline" role="status">
         <span className="msg">
           <b>YouTube activity is paused.</b>{" "}
-          {auto ? status.youtube_pause_reason : "You paused all downloads and channel scans."}
+          {auto
+            ? status.youtube_pause_reason
+            : "You paused all downloads and channel scans."}
         </span>
-        <Button type="button" onClick={onResume}>Resume</Button>
+        <Button type="button" onClick={onResume}>
+          Resume
+        </Button>
       </div>
     );
   }
@@ -333,7 +378,15 @@ function DownloadStatusBanner({
         <button
           type="button"
           onClick={onFixCookie}
-          style={{ background: "none", border: "none", padding: 0, color: "inherit", textDecoration: "underline", cursor: "pointer", font: "inherit" }}
+          style={{
+            background: "none",
+            border: "none",
+            padding: 0,
+            color: "inherit",
+            textDecoration: "underline",
+            cursor: "pointer",
+            font: "inherit",
+          }}
         >
           Settings
         </button>

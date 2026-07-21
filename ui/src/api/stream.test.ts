@@ -25,12 +25,17 @@ function makeStreamResponse(chunks: string[], status = 200): Response {
 describe("streamSSE", () => {
   it("parses a well-formed event:/data: frame and invokes onEvent with decoded JSON", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      makeStreamResponse(['event: progress\ndata: {"job_id":1,"percent":50}\n\n']),
+      makeStreamResponse([
+        'event: progress\ndata: {"job_id":1,"percent":50}\n\n',
+      ]),
     );
     const onEvent = vi.fn();
     await streamSSE("/api/downloads/stream", onEvent);
     expect(onEvent).toHaveBeenCalledTimes(1);
-    expect(onEvent).toHaveBeenCalledWith({ event: "progress", data: { job_id: 1, percent: 50 } });
+    expect(onEvent).toHaveBeenCalledWith({
+      event: "progress",
+      data: { job_id: 1, percent: 50 },
+    });
   });
 
   it("reassembles a frame split across chunk boundaries", async () => {
@@ -40,50 +45,80 @@ describe("streamSSE", () => {
     const onEvent = vi.fn();
     await streamSSE("/api/downloads/stream", onEvent);
     expect(onEvent).toHaveBeenCalledTimes(1);
-    expect(onEvent).toHaveBeenCalledWith({ event: "progress", data: { job_id: 2 } });
+    expect(onEvent).toHaveBeenCalledWith({
+      event: "progress",
+      data: { job_id: 2 },
+    });
   });
 
   it("ignores a heartbeat frame with no event:/data: lines, but still processes the next real frame", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      makeStreamResponse([": heartbeat\n\n", 'event: progress\ndata: {"job_id":3}\n\n']),
+      makeStreamResponse([
+        ": heartbeat\n\n",
+        'event: progress\ndata: {"job_id":3}\n\n',
+      ]),
     );
     const onEvent = vi.fn();
     await streamSSE("/api/downloads/stream", onEvent);
     expect(onEvent).toHaveBeenCalledTimes(1);
-    expect(onEvent).toHaveBeenCalledWith({ event: "progress", data: { job_id: 3 } });
+    expect(onEvent).toHaveBeenCalledWith({
+      event: "progress",
+      data: { job_id: 3 },
+    });
   });
 
   it("drops a frame whose data: payload is not valid JSON", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      makeStreamResponse(["event: progress\ndata: {not json\n\n", 'event: progress\ndata: {"job_id":4}\n\n']),
+      makeStreamResponse([
+        "event: progress\ndata: {not json\n\n",
+        'event: progress\ndata: {"job_id":4}\n\n',
+      ]),
     );
     const onEvent = vi.fn();
     await streamSSE("/api/downloads/stream", onEvent);
     expect(onEvent).toHaveBeenCalledTimes(1);
-    expect(onEvent).toHaveBeenCalledWith({ event: "progress", data: { job_id: 4 } });
+    expect(onEvent).toHaveBeenCalledWith({
+      event: "progress",
+      data: { job_id: 4 },
+    });
   });
 
   it("throws AuthExpiredError on a 401", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 401 }));
-    await expect(streamSSE("/api/downloads/stream", vi.fn())).rejects.toBeInstanceOf(AuthExpiredError);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 401 }),
+    );
+    await expect(
+      streamSSE("/api/downloads/stream", vi.fn()),
+    ).rejects.toBeInstanceOf(AuthExpiredError);
   });
 
   it("throws a plain Error on a non-ok status", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
-    await expect(streamSSE("/api/downloads/stream", vi.fn())).rejects.toThrow(/500/);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 500 }),
+    );
+    await expect(streamSSE("/api/downloads/stream", vi.fn())).rejects.toThrow(
+      /500/,
+    );
   });
 
   it("resolves once the stream ends, after dispatching all frames", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      makeStreamResponse(['event: progress\ndata: {"job_id":1}\n\n', 'event: progress\ndata: {"job_id":2}\n\n']),
+      makeStreamResponse([
+        'event: progress\ndata: {"job_id":1}\n\n',
+        'event: progress\ndata: {"job_id":2}\n\n',
+      ]),
     );
     const onEvent = vi.fn();
-    await expect(streamSSE("/api/downloads/stream", onEvent)).resolves.toBeUndefined();
+    await expect(
+      streamSSE("/api/downloads/stream", onEvent),
+    ).resolves.toBeUndefined();
     expect(onEvent).toHaveBeenCalledTimes(2);
   });
 
   it("passes the given AbortSignal through to fetch", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeStreamResponse(["event: x\ndata: 1\n\n"]));
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(makeStreamResponse(["event: x\ndata: 1\n\n"]));
     const controller = new AbortController();
     await streamSSE("/api/downloads/stream", vi.fn(), controller.signal);
     expect(f.mock.calls[0][1]).toEqual({ signal: controller.signal });
@@ -97,7 +132,9 @@ describe("streamSSE", () => {
     const frame = 'event: progress\ndata: {"name":"日"}\n\n';
     const encoder = new TextEncoder();
     const full = encoder.encode(frame);
-    const prefixLen = encoder.encode(frame.slice(0, frame.indexOf("日"))).length;
+    const prefixLen = encoder.encode(
+      frame.slice(0, frame.indexOf("日")),
+    ).length;
     const splitAt = prefixLen + 1; // inside the 3-byte sequence for 日
     const chunk1 = full.slice(0, splitAt);
     const chunk2 = full.slice(splitAt);
@@ -109,23 +146,34 @@ describe("streamSSE", () => {
         controller.close();
       },
     });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(stream, { status: 200 }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(stream, { status: 200 }),
+    );
 
     const onEvent = vi.fn();
     await streamSSE("/api/downloads/stream", onEvent);
     expect(onEvent).toHaveBeenCalledTimes(1);
-    expect(onEvent).toHaveBeenCalledWith({ event: "progress", data: { name: "日" } });
+    expect(onEvent).toHaveBeenCalledWith({
+      event: "progress",
+      data: { name: "日" },
+    });
   });
 
   it("drops a frame that has a data: line but no event: line", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(makeStreamResponse(['data: {"job_id":5}\n\n']));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeStreamResponse(['data: {"job_id":5}\n\n']),
+    );
     const onEvent = vi.fn();
     await streamSSE("/api/downloads/stream", onEvent);
     expect(onEvent).not.toHaveBeenCalled();
   });
 
   it("throws when the response has no body", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
-    await expect(streamSSE("/api/downloads/stream", vi.fn())).rejects.toThrow(/has no body/);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 200 }),
+    );
+    await expect(streamSSE("/api/downloads/stream", vi.fn())).rejects.toThrow(
+      /has no body/,
+    );
   });
 });

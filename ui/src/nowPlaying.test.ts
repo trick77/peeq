@@ -26,7 +26,10 @@ describe("nowPlaying", () => {
   it("returns null for a malformed marker", () => {
     sessionStorage.setItem("peeq.nowPlaying", "not json");
     expect(readNowPlaying()).toBeNull();
-    sessionStorage.setItem("peeq.nowPlaying", JSON.stringify({ videoId: 1, playing: "yes" }));
+    sessionStorage.setItem(
+      "peeq.nowPlaying",
+      JSON.stringify({ videoId: 1, playing: "yes" }),
+    );
     expect(readNowPlaying()).toBeNull();
   });
 });

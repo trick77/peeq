@@ -171,9 +171,9 @@ func TestClassify_precedence(t *testing.T) {
 	genericExit := fmt.Errorf("exit status 1")
 
 	cases := []struct {
-		name              string
-		stderr            string
-		expectErrIs       error
+		name                 string
+		stderr               string
+		expectErrIs          error
 		expectTerminalReason string
 	}{
 		{
@@ -195,8 +195,8 @@ func TestClassify_precedence(t *testing.T) {
 		{
 			// Channel-deleted alone: confirm it still works when no other
 			// signature is present.
-			name:              "channel-deleted alone",
-			stderr:            "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This channel does not exist.",
+			name:                 "channel-deleted alone",
+			stderr:               "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This channel does not exist.",
 			expectTerminalReason: "deleted",
 		},
 	}

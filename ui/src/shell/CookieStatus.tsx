@@ -15,7 +15,13 @@ const FRIENDLY_STATUS_LABELS: Record<string, string> = {
 // cookieHealth().status / Settings.cookie_status returns from the backend;
 // only "valid" reads as healthy — everything else defaults to the warning
 // state.
-export function CookieStatus({ status, updatedAtLabel }: { status: string; updatedAtLabel?: string }) {
+export function CookieStatus({
+  status,
+  updatedAtLabel,
+}: {
+  status: string;
+  updatedAtLabel?: string;
+}) {
   const healthy = status === "valid";
   const label = FRIENDLY_STATUS_LABELS[status] ?? status;
   return (

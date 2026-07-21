@@ -7,7 +7,9 @@ beforeEach(() => {
 
 describe("pending api", () => {
   it("listPending GETs /api/pending", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("[]", { status: 200 }));
     await listPending();
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/pending");
@@ -15,9 +17,11 @@ describe("pending api", () => {
   });
 
   it("downloadPending POSTs to /api/pending/{id}/download", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ status: "queued" }), { status: 200 }),
-    );
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ status: "queued" }), { status: 200 }),
+      );
     await downloadPending("v1");
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/pending/v1/download");
@@ -25,9 +29,11 @@ describe("pending api", () => {
   });
 
   it("ignorePending POSTs to /api/pending/{id}/ignore", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ status: "ignored" }), { status: 200 }),
-    );
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ status: "ignored" }), { status: 200 }),
+      );
     await ignorePending("v1");
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/pending/v1/ignore");

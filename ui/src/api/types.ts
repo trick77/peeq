@@ -18,7 +18,8 @@ export type User = {
 };
 
 // VideoFilter mirrors the ?filter= values videos.Store.List understands.
-export type VideoFilter = "all" | "unwatched" | "watched" | "favorites" | "downloading";
+export type VideoFilter =
+  "all" | "unwatched" | "watched" | "favorites" | "downloading";
 
 // Video mirrors httpapi.videoDTO exactly. media_path is deliberately never
 // exposed (server-local filesystem path); has_media + the /stream endpoint
@@ -50,7 +51,11 @@ export type Video = {
   // downloaded video's own --sponsorblock-mark chapters, parsed server-side
   // from the stored JSON column. Absent (undefined, via omitempty) when
   // there are none. Player.tsx auto-skips [start_time, end_time) ranges.
-  sponsorblock_segments?: { category: string; start_time: number; end_time: number }[];
+  sponsorblock_segments?: {
+    category: string;
+    start_time: number;
+    end_time: number;
+  }[];
   // summary/chapters/key_points/summary_status/audio_language/has_subtitles
   // mirror the Task 14 summarization fields added to httpapi.videoDTO —
   // chapters/key_points arrive as arrays (never omitted, just empty).
