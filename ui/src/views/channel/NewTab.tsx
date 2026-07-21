@@ -109,7 +109,15 @@ export function NewTab({
         <div className="chan-empty">
           <div className="big">Nothing new</div>
           <div className="sub">{scheduleLine(detail)}</div>
-          <div style={{ marginTop: 14 }}>{checkNow}</div>
+          <div style={{ marginTop: 14 }}>
+            {detail.subscribed ? (
+              checkNow
+            ) : (
+              <span className="hint">
+                Subscribe to this channel to check for new videos.
+              </span>
+            )}
+          </div>
         </div>
       ) : (
         <>
@@ -122,9 +130,11 @@ export function NewTab({
             >
               {scheduleLine(detail)}
             </span>
-            <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-              {checkNow}
-            </span>
+            {detail.subscribed ? (
+              <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                {checkNow}
+              </span>
+            ) : null}
           </div>
           <div className="chan-plist">
             {items.map((item) => (

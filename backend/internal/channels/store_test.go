@@ -232,6 +232,13 @@ func TestDeleteCascade_removesEverything(t *testing.T) {
 	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status,media_path) VALUES ('v1','u','UC1','downloaded','/m/v1.mp4')`)
 	mustExec(t, db, `INSERT INTO download_jobs (video_id, state) VALUES ('v1','done')`)
 	mustExec(t, db, `INSERT INTO channel_videos (video_id, channel_id, state) VALUES ('v1','UC1','queued')`)
+	// A second channel with its own subscription, video, job and ledger row.
+	// The delete of UC1 must leave every one of these intact.
+	st.Upsert(Channel{ID: "UC2", Name: "Two"})
+	st.Subscribe("UC2", "2000-01-01 00:00:00")
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status,media_path) VALUES ('v2','u','UC2','downloaded','/m/v2.mp4')`)
+	mustExec(t, db, `INSERT INTO download_jobs (video_id, state) VALUES ('v2','done')`)
+	mustExec(t, db, `INSERT INTO channel_videos (video_id, channel_id, state) VALUES ('v2','UC2','queued')`)
 
 	refs, err := st.VideoRefs("UC1")
 	if err != nil || len(refs) != 1 || refs[0].MediaPath != "/m/v1.mp4" {
@@ -252,6 +259,20 @@ func TestDeleteCascade_removesEverything(t *testing.T) {
 			t.Fatalf("%q → n=%d err=%v, want 0", q, n, err)
 		}
 	}
+	// UC2 is untouched: the cascade must be scoped to the deleted channel, not
+	// an over-broad DELETE that also wipes another channel's rows.
+	for _, q := range []string{
+		`SELECT count(*) FROM channels WHERE id='UC2'`,
+		`SELECT count(*) FROM subscriptions WHERE channel_id='UC2'`,
+		`SELECT count(*) FROM channel_videos WHERE channel_id='UC2'`,
+		`SELECT count(*) FROM videos WHERE channel_id='UC2'`,
+		`SELECT count(*) FROM download_jobs WHERE video_id='v2'`,
+	} {
+		var n int
+		if err := db.QueryRow(q).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("%q → n=%d err=%v, want 1 (UC2 must survive)", q, n, err)
+		}
+	}
 }
 
 // TestDeleteCascade_purgesVecAndFTSChunks asserts DeleteCascade also removes
@@ -266,39 +287,56 @@ func TestDeleteCascade_purgesVecAndFTSChunks(t *testing.T) {
 	ctx := context.Background()
 	st.Upsert(Channel{ID: "UC1", Name: "One"})
 	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status) VALUES ('v1','u','UC1','downloaded')`)
+	// A second channel + video whose chunks must SURVIVE the delete of UC1.
+	// vec_chunks/fts_chunks are keyed by rowid with no channel column, so an
+	// over-broad purge would wipe these too; asserting they remain (the counts
+	// go to 1, not 0) is what lets this test catch that regression.
+	st.Upsert(Channel{ID: "UC2", Name: "Two"})
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status) VALUES ('v2','u','UC2','downloaded')`)
 
 	ragStore := rag.NewStore(db)
 	vec := make([]float32, 1536)
-	if err := ragStore.ReplaceVideoChunks(ctx, "v1", "e5", 1536, []rag.ChunkRow{
-		{Ordinal: 0, Text: "x", StartSeconds: 0, TokenCount: 1},
-	}, [][]float32{vec}); err != nil {
-		t.Fatalf("seed chunks: %v", err)
+	seedChunk := func(videoID string) {
+		if err := ragStore.ReplaceVideoChunks(ctx, videoID, "e5", 1536, []rag.ChunkRow{
+			{Ordinal: 0, Text: "x", StartSeconds: 0, TokenCount: 1},
+		}, [][]float32{vec}); err != nil {
+			t.Fatalf("seed chunks for %s: %v", videoID, err)
+		}
 	}
+	seedChunk("v1")
+	seedChunk("v2")
 
 	var beforeVec, beforeFTS int
-	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&beforeVec); err != nil || beforeVec != 1 {
-		t.Fatalf("vec_chunks before delete = %d err=%v, want 1", beforeVec, err)
+	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&beforeVec); err != nil || beforeVec != 2 {
+		t.Fatalf("vec_chunks before delete = %d err=%v, want 2", beforeVec, err)
 	}
-	if err := db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&beforeFTS); err != nil || beforeFTS != 1 {
-		t.Fatalf("fts_chunks before delete = %d err=%v, want 1", beforeFTS, err)
+	if err := db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&beforeFTS); err != nil || beforeFTS != 2 {
+		t.Fatalf("fts_chunks before delete = %d err=%v, want 2", beforeFTS, err)
 	}
 
 	if err := st.DeleteCascade("UC1"); err != nil {
 		t.Fatal(err)
 	}
 
-	var afterVec, afterFTS, afterChunks, afterVideos int
-	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&afterVec); err != nil || afterVec != 0 {
-		t.Fatalf("vec_chunks after delete = %d err=%v, want 0 (orphaned rows leaked)", afterVec, err)
+	// UC1's chunk rows are purged; UC2's remain (count 1, not 0).
+	var afterVec, afterFTS, afterChunksV1, afterChunksV2, afterVideosV1, afterVideosV2 int
+	if err := db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&afterVec); err != nil || afterVec != 1 {
+		t.Fatalf("vec_chunks after delete = %d err=%v, want 1 (UC1 purged, UC2 kept)", afterVec, err)
 	}
-	if err := db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&afterFTS); err != nil || afterFTS != 0 {
-		t.Fatalf("fts_chunks after delete = %d err=%v, want 0 (orphaned rows leaked)", afterFTS, err)
+	if err := db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&afterFTS); err != nil || afterFTS != 1 {
+		t.Fatalf("fts_chunks after delete = %d err=%v, want 1 (UC1 purged, UC2 kept)", afterFTS, err)
 	}
-	if err := db.QueryRow(`SELECT count(*) FROM transcript_chunks WHERE video_id='v1'`).Scan(&afterChunks); err != nil || afterChunks != 0 {
-		t.Fatalf("transcript_chunks after delete = %d err=%v, want 0", afterChunks, err)
+	if err := db.QueryRow(`SELECT count(*) FROM transcript_chunks WHERE video_id='v1'`).Scan(&afterChunksV1); err != nil || afterChunksV1 != 0 {
+		t.Fatalf("transcript_chunks(v1) after delete = %d err=%v, want 0", afterChunksV1, err)
 	}
-	if err := db.QueryRow(`SELECT count(*) FROM videos WHERE id='v1'`).Scan(&afterVideos); err != nil || afterVideos != 0 {
-		t.Fatalf("videos after delete = %d err=%v, want 0", afterVideos, err)
+	if err := db.QueryRow(`SELECT count(*) FROM transcript_chunks WHERE video_id='v2'`).Scan(&afterChunksV2); err != nil || afterChunksV2 != 1 {
+		t.Fatalf("transcript_chunks(v2) after delete = %d err=%v, want 1 (UC2 must survive)", afterChunksV2, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM videos WHERE id='v1'`).Scan(&afterVideosV1); err != nil || afterVideosV1 != 0 {
+		t.Fatalf("videos(v1) after delete = %d err=%v, want 0", afterVideosV1, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM videos WHERE id='v2'`).Scan(&afterVideosV2); err != nil || afterVideosV2 != 1 {
+		t.Fatalf("videos(v2) after delete = %d err=%v, want 1 (UC2 must survive)", afterVideosV2, err)
 	}
 }
 

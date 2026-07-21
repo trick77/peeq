@@ -752,17 +752,23 @@ func TestList_query_escapesLikeWildcards(t *testing.T) {
 // order. Sorting was previously hardcoded to created_at DESC.
 func TestList_sort_ordersRows(t *testing.T) {
 	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "a", Title: "Bravo", DurationSeconds: 100, CreatedAt: "2026-01-01 00:00:00", Status: "downloaded"})
-	seedVideo(t, s, Video{ID: "b", Title: "Alpha", DurationSeconds: 300, CreatedAt: "2026-02-01 00:00:00", Status: "downloaded"})
+	// Three videos whose four orderings are all DISTINCT (title, duration and
+	// created_at each rank them differently). A two-row fixture made title and
+	// longest coincide with the newest fallback, so a dropped or mis-mapped
+	// sort key could pass unnoticed; with these rows any such regression yields
+	// the wrong first row and fails.
+	seedVideo(t, s, Video{ID: "c1", Title: "Charlie", DurationSeconds: 200, CreatedAt: "2026-03-01 00:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "a2", Title: "Alpha", DurationSeconds: 100, CreatedAt: "2026-02-01 00:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "b3", Title: "Bravo", DurationSeconds: 300, CreatedAt: "2026-01-01 00:00:00", Status: "downloaded"})
 
 	cases := []struct {
 		sort string
 		want []string
 	}{
-		{"newest", []string{"b", "a"}},
-		{"oldest", []string{"a", "b"}},
-		{"longest", []string{"b", "a"}},
-		{"title", []string{"b", "a"}},
+		{"newest", []string{"c1", "a2", "b3"}},  // created_at DESC
+		{"oldest", []string{"b3", "a2", "c1"}},  // created_at ASC
+		{"longest", []string{"b3", "c1", "a2"}}, // duration DESC
+		{"title", []string{"a2", "b3", "c1"}},   // title NOCASE ASC
 	}
 	for _, tc := range cases {
 		got, err := s.List(ListOptions{Sort: tc.sort})
@@ -773,8 +779,13 @@ func TestList_sort_ordersRows(t *testing.T) {
 		for _, v := range got {
 			ids = append(ids, v.ID)
 		}
-		if len(ids) != len(tc.want) || ids[0] != tc.want[0] || ids[1] != tc.want[1] {
+		if len(ids) != len(tc.want) {
 			t.Fatalf("sort=%s ids = %v, want %v", tc.sort, ids, tc.want)
+		}
+		for i := range tc.want {
+			if ids[i] != tc.want[i] {
+				t.Fatalf("sort=%s ids = %v, want %v", tc.sort, ids, tc.want)
+			}
 		}
 	}
 }

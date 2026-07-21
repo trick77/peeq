@@ -790,6 +790,7 @@ type channelsDeleteHarness struct {
 	videos   *videos.Store
 	jobs     *jobs.Store
 	worker   *recordingWorker
+	mediaDir string
 }
 
 func (h *channelsDeleteHarness) seedChannel(id string) {
@@ -829,6 +830,11 @@ func newChannelsDeleteServer(t *testing.T) *channelsDeleteHarness {
 	videosStore := videos.New(db)
 	jobsStore := jobs.New(db)
 	worker := newRecordingWorker()
+	// A real media root so the delete path's file removal is actually
+	// exercised: with MediaDir unset, SafeMediaPath rejects every path and
+	// RemoveVideoFiles silently no-ops, so a dropped removal call would go
+	// unnoticed.
+	mediaDir := t.TempDir()
 	deps := Deps{
 		AuthService:    auth.NewService(nil, sessions, users),
 		AuthMiddleware: auth.NewMiddleware(sessions, users),
@@ -837,6 +843,7 @@ func newChannelsDeleteServer(t *testing.T) *channelsDeleteHarness {
 		Videos:         videosStore,
 		Jobs:           jobsStore,
 		Worker:         worker,
+		MediaDir:       mediaDir,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -850,6 +857,7 @@ func newChannelsDeleteServer(t *testing.T) *channelsDeleteHarness {
 		videos:   videosStore,
 		jobs:     jobsStore,
 		worker:   worker,
+		mediaDir: mediaDir,
 	}
 }
 
@@ -947,7 +955,17 @@ func TestChannelsResubscribe_cacheOnlyRow_404(t *testing.T) {
 func TestChannelsDelete_cancelsAndCascades(t *testing.T) {
 	h := newChannelsDeleteServer(t)
 	h.seedChannel("UC1")
-	h.seedDownloadedVideo("UC1", "v1", "/tmp/does-not-matter.mp4")
+	// A real media file under MediaDir, referenced by a relative path, so the
+	// delete must actually unlink it — not just drop the row.
+	relPath := filepath.Join("UC1", "v1.mp4")
+	mediaFile := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(mediaFile), 0o755); err != nil {
+		t.Fatalf("mkdir media dir: %v", err)
+	}
+	if err := os.WriteFile(mediaFile, []byte("data"), 0o644); err != nil {
+		t.Fatalf("write media file: %v", err)
+	}
+	h.seedDownloadedVideo("UC1", "v1", relPath)
 	jid, _ := h.jobs.Enqueue("v1", 0) // pending job for a channel video
 
 	rr := doDelete(t, h, "/api/channels/UC1")
@@ -959,6 +977,9 @@ func TestChannelsDelete_cancelsAndCascades(t *testing.T) {
 	}
 	if c, _ := h.channels.Get("UC1"); c != nil {
 		t.Fatal("channel still present after delete")
+	}
+	if _, err := os.Stat(mediaFile); !os.IsNotExist(err) {
+		t.Fatalf("media file still on disk after delete: stat err = %v, want not-exist", err)
 	}
 }
 
@@ -1396,6 +1417,18 @@ func TestChannelScan_setsNextScanAt(t *testing.T) {
 	}
 	if sub.NextScanAt >= future {
 		t.Fatalf("next_scan_at = %q, want moved earlier than %q", sub.NextScanAt, future)
+	}
+	// End to end: the scheduler picks channels up via ClaimDue(now), so prove
+	// the channel is actually claimable now — not merely that the timestamp
+	// moved earlier than +6h. A wrong-but-still-future offset would pass the
+	// check above yet leave the channel unclaimable, silently doing nothing.
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	claimed, err := deps.Channels.ClaimDue(now)
+	if err != nil {
+		t.Fatalf("ClaimDue: %v", err)
+	}
+	if claimed == nil || claimed.ChannelID != "UCs" {
+		t.Fatalf("ClaimDue(%q) = %+v, want the UCs subscription due now", now, claimed)
 	}
 }
 
