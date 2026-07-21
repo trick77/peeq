@@ -3,10 +3,12 @@ package taimport
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/store"
 )
 
 // fakeLister returns a canned channel list.
@@ -165,5 +167,62 @@ func TestImportChannels_upsertErrorPropagates(t *testing.T) {
 
 	if _, err := ImportChannels(context.Background(), lister, w, false, fixedNow); err == nil {
 		t.Fatal("err = nil, want the upsert error propagated")
+	}
+}
+
+func TestImportChannels_againstRealStore(t *testing.T) {
+	// Given a migrated database and the real channels store.
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	if err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	realStore := channels.New(db)
+
+	lister := &fakeLister{out: []Channel{
+		{ID: "UC_a", Name: "Alpha", Active: true, Subscribed: true},
+		{ID: "UC_b", Name: "Beta", Active: false, Subscribed: true},
+	}}
+
+	// When
+	got, err := ImportChannels(context.Background(), lister, realStore, false, fixedNow)
+	if err != nil {
+		t.Fatalf("ImportChannels: %v", err)
+	}
+	if got.Subscribed != 2 {
+		t.Fatalf("Subscribed = %d, want 2", got.Subscribed)
+	}
+
+	// Then both channels are tracked AND subscribed, with autodownload off.
+	items, err := realStore.List("subscribed")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("subscribed channels = %d, want 2", len(items))
+	}
+	for _, it := range items {
+		if !it.Subscribed {
+			t.Errorf("%s: Subscribed = false", it.ID)
+		}
+		if it.Autodownload {
+			t.Errorf("%s: Autodownload = true, want off so the first scan baselines instead of downloading the back catalogue", it.ID)
+		}
+	}
+
+	// And re-running changes nothing (idempotent).
+	if _, err := ImportChannels(context.Background(), lister, realStore, false, fixedNow); err != nil {
+		t.Fatalf("second ImportChannels: %v", err)
+	}
+	items2, err := realStore.List("subscribed")
+	if err != nil {
+		t.Fatalf("List after rerun: %v", err)
+	}
+	if len(items2) != 2 {
+		t.Errorf("after rerun subscribed = %d, want still 2", len(items2))
 	}
 }
