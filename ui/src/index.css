@@ -2315,19 +2315,30 @@ details.tomb-sect[open] > summary svg {
   inset: 0;
   background-size: cover;
   background-position: center;
-  opacity: 0.22;
-  filter: saturate(0.75);
+  opacity: 0.45;
+  filter: saturate(0.85);
 }
+/* The gradient does the legibility work, not a low opacity: it stays nearly
+   clear on the right (where there is no text) and thickens to solid panel on
+   the left, under the avatar, name, and description. That way the artwork is
+   actually visible as artwork while the text still sits on a flat ground. */
 .chan-banner::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--color-bg) 45%, transparent) 0%,
-    color-mix(in srgb, var(--color-panel) 88%, transparent) 62%,
-    var(--color-panel) 100%
-  );
+  background:
+    linear-gradient(
+      90deg,
+      var(--color-panel) 0%,
+      color-mix(in srgb, var(--color-panel) 82%, transparent) 42%,
+      color-mix(in srgb, var(--color-panel) 30%, transparent) 100%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-bg) 35%, transparent) 0%,
+      color-mix(in srgb, var(--color-panel) 20%, transparent) 55%,
+      color-mix(in srgb, var(--color-panel) 75%, transparent) 100%
+    );
 }
 .chan-head-in {
   position: relative;
