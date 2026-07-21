@@ -46,12 +46,21 @@ assert_matched() {
   base="$(git merge-base "$BASE_REF" HEAD)"
   # Test files are excluded from coverage reports by design, so a diff touching
   # only tests legitimately matches no coverage data — don't flag that.
+  #
+  # Vitest setup files are the same category: they are the `setupFiles` entry,
+  # excluded from coverage, and therefore never present in the report. A commit
+  # touching only the setup file would otherwise trip the absent-from-report
+  # check below. Match all the conventions in use across this repo family rather
+  # than one repo's filename — peeq and music use src/test-setup.ts, loom uses
+  # vitest.setup.ts, lens uses src/test/setup.ts, lens-console uses
+  # test-setup.ts. Type-only declarations are likewise never instrumented.
+  #
   # Keep the filtered list rather than testing with `grep -qv`: under ugrep (a
   # common macOS `grep`) the -q/-v combination returns 1 even when non-matching
   # lines exist, which would silently disable this guard locally while it still
   # works under GNU grep. The names are needed below anyway.
   changed="$(git diff --name-only "$base"...HEAD -- "$@" |
-    grep -vE '(_test\.go|\.test\.tsx?)$' || true)"
+    grep -vE '(_test\.go|\.test\.tsx?|\.d\.ts|(^|/)(test-setup|vitest\.setup|setup)\.ts)$' || true)"
 
   [[ -n "$changed" ]] || return 0
   grep -q 'No lines with coverage information' "$report" || return 0
