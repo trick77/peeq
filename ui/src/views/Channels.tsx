@@ -228,10 +228,18 @@ export function Channels({
         {channels.map((c) => (
           <div key={c.id} className="channel-row sect">
             <div className="channel-info">
-              <h3 style={{ margin: 0, fontFamily: "var(--font-serif)", fontSize: 17, fontWeight: 500 }}>{c.name}</h3>
-              <div className="by" style={{ marginTop: 2 }}>
+              <h3 style={{ margin: 0, fontFamily: "var(--font-serif)", fontSize: 17, fontWeight: 500 }}>
+                {onOpenChannel ? (
+                  <button type="button" className="chan-link" onClick={() => onOpenChannel(c.id)}>
+                    {c.name}
+                  </button>
+                ) : (
+                  c.name
+                )}
+              </h3>
+              <div className="channel-by">
                 {c.handle ? `${c.handle} · ` : ""}
-                {c.pending_count} pending · {c.downloaded_count} downloaded
+                <b>{c.pending_count}</b> pending · <b>{c.downloaded_count}</b> downloaded
               </div>
             </div>
             <div className="channel-actions">

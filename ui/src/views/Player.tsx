@@ -490,7 +490,13 @@ export function Player({
         <div className="playmeta">
           <h1>{video.title}</h1>
           <div className="sub">
-            {video.channel_name || video.channel_id}
+            {onOpenChannel && video.channel_id ? (
+              <button type="button" className="chan-link" onClick={() => onOpenChannel(video.channel_id)}>
+                {video.channel_name || video.channel_id}
+              </button>
+            ) : (
+              video.channel_name || video.channel_id
+            )}
             {video.format_used ? <span className="pill">{video.format_used}</span> : null}
             {video.filesize_bytes ? <span className="pill">{formatSize(video.filesize_bytes)}</span> : null}
           </div>

@@ -19,6 +19,7 @@ export function VideoCard({
   onToggleFavorite,
   onToggleWatched,
   onRedownload,
+  onOpenChannel,
 }: {
   video: Video;
   /** settings.retention_days — needed to compute "Expires in N days". */
@@ -30,6 +31,9 @@ export function VideoCard({
   onToggleWatched: (id: string) => void;
   /** Re-queues a failed or tombstoned video's download; Library owns the actual call. */
   onRedownload?: (id: string) => void;
+  // onOpenChannel — optional: wired by App (Task 11), rendered as a channel
+  // name link in Task 15.
+  onOpenChannel?: (id: string) => void;
 }) {
   const downloading = video.status === "queued" || video.status === "downloading";
   const isNew = !downloading && !video.watched && video.resume_position_seconds === 0 && video.has_media;
@@ -116,7 +120,13 @@ export function VideoCard({
 
       <h3>{video.title}</h3>
       <div className="by">
-        {video.channel_name || video.channel_id}
+        {onOpenChannel && video.channel_id ? (
+          <button type="button" className="chan-link" onClick={() => onOpenChannel(video.channel_id)}>
+            {video.channel_name || video.channel_id}
+          </button>
+        ) : (
+          video.channel_name || video.channel_id
+        )}
         {video.published_at ? (
           <>
             <span className="dot">·</span>

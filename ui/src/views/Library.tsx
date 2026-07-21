@@ -302,6 +302,7 @@ export function Library({
             onOpen={onOpenVideo}
             onToggleFavorite={handleToggleFavorite}
             onToggleWatched={handleToggleWatched}
+            onOpenChannel={onOpenChannel}
             onRedownload={handleRedownload}
           />
         ))}

@@ -1785,6 +1785,40 @@ textarea.cookiebox:focus {
   border-color: var(--color-accent);
 }
 
+/* chan-link — a channel name that navigates. A button, not an anchor: peeq
+   has no router and no URLs to link to. */
+.chan-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+}
+.chan-link:hover {
+  border-bottom-color: var(--color-accent);
+}
+.chan-link:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* The counts line under a channel name. Faint and one step smaller than the
+   old `.by` treatment so the name leads; only the numerals lift to muted so
+   they stay scannable. */
+.channel-by {
+  margin-top: 2px;
+  font-size: var(--text-label);
+  color: var(--color-faint);
+}
+.channel-by b {
+  font-weight: 500;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Search (Task 18): global semantic-search view — hero query box +
    results grouped by video, each a `.result` card listing matched moments.
    Ported from the approved mockup's `.gsearch-hero`/`.bigsearch`/`.result`/

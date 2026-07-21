@@ -122,6 +122,23 @@ describe("Pending", () => {
     });
   });
 
+  it("clicking a channel name opens its page", async () => {
+    const user = userEvent.setup();
+    const onOpenChannel = vi.fn();
+    render(<Pending onOpenChannel={onOpenChannel} />);
+    await screen.findByText("First pending video");
+
+    await user.click(screen.getByRole("button", { name: "Channel One" }));
+
+    expect(onOpenChannel).toHaveBeenCalledWith("c1");
+  });
+
+  it("renders the channel name as plain text (not a button) when onOpenChannel is absent", async () => {
+    render(<Pending />);
+    await screen.findByText("First pending video");
+    expect(screen.getByText("Channel One").closest("button")).toBeNull();
+  });
+
   it("calls onCountChange with the decremented count after Ignore removes a row", async () => {
     const user = userEvent.setup();
     const onCountChange = vi.fn();

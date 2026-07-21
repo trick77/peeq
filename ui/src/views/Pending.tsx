@@ -81,7 +81,15 @@ export function Pending({
               <span className="dur">{formatDuration(item.duration_seconds)}</span>
             </div>
             <h3>{item.title}</h3>
-            <div className="by">{item.channel_name || item.channel_id}</div>
+            <div className="by">
+              {onOpenChannel && item.channel_id ? (
+                <button type="button" className="chan-link" onClick={() => onOpenChannel(item.channel_id)}>
+                  {item.channel_name || item.channel_id}
+                </button>
+              ) : (
+                item.channel_name || item.channel_id
+              )}
+            </div>
             <div className="acts-row" style={{ display: "flex", gap: 8, marginTop: 8 }}>
               <Button
                 type="button"

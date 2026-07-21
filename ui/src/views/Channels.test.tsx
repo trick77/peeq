@@ -262,6 +262,17 @@ describe("Channels", () => {
     confirmSpy.mockRestore();
   });
 
+  it("clicking a channel's name opens its page", async () => {
+    const user = userEvent.setup();
+    const onOpenChannel = vi.fn();
+    render(<Channels onOpenChannel={onOpenChannel} />);
+    await screen.findByText("Tracked Channel");
+
+    await user.click(screen.getByRole("button", { name: "Tracked Channel" }));
+
+    expect(onOpenChannel).toHaveBeenCalledWith("c1");
+  });
+
   it("does not call deleteChannel when confirm is cancelled", async () => {
     const user = userEvent.setup();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
