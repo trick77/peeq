@@ -67,7 +67,9 @@
     <p class="standfirst">
       A one-time migration lifting an existing TubeArchivist library into peeq so TA can be
       retired. Split into two phases: <strong>subscriptions first</strong> — small, fast and
-      reversible — then the video archive and its media files.
+      reversible — then the videos and their media files. Phase B moves the
+      <strong>unwatched queue, not the whole archive</strong>: watched videos are deliberately
+      left behind.
     </p>
     <div class="meta">
       <span class="chip"><span class="dot"></span>branch <b>feat/tubearchivist-import</b></span>
@@ -97,9 +99,9 @@
         <thead><tr><th></th><th>Phase A — subscriptions</th><th>Phase B — video archive</th></tr></thead>
         <tbody>
           <tr><td>TA endpoints</td><td><code>GET /api/channel/</code> only</td><td>video paging, per channel</td></tr>
-          <tr><td>Runtime</td><td>seconds</td><td>hours to days</td></tr>
-          <tr><td>Disk cost</td><td class="yes">none</td><td class="maybe">2× the library, transiently</td></tr>
-          <tr><td>LLM cost</td><td class="yes">none</td><td class="maybe">one summary per video</td></tr>
+          <tr><td>Runtime</td><td>seconds</td><td>hours</td></tr>
+          <tr><td>Disk cost</td><td class="yes">none</td><td class="maybe">2× the unwatched set, transiently</td></tr>
+          <tr><td>LLM cost</td><td class="yes">none</td><td class="maybe">one summary per imported video</td></tr>
           <tr><td>Reversible?</td><td class="yes">delete some rows</td><td class="no">not cheaply</td></tr>
           <tr><td>Needs TA volumes mounted?</td><td class="yes">no</td><td class="no">yes, both of them</td></tr>
         </tbody>
@@ -132,6 +134,12 @@
               channel TA knows about — see the filter note below.</td>
           </tr>
           <tr>
+            <td>Which videos are imported?</td>
+            <td><strong>Unwatched and partially-watched only</strong></td>
+            <td>Fully-watched videos are not imported, and are therefore discarded when TA's
+              volumes are deleted. Confirmed deliberate — see the section below.</td>
+          </tr>
+          <tr>
             <td>How do media files move?</td>
             <td><strong>Copy</strong></td>
             <td>Chosen over hardlinking. Filesystem-agnostic, and leaves TA's library untouched
@@ -139,9 +147,10 @@
           </tr>
           <tr>
             <td>Summaries and embeddings?</td>
-            <td><strong>Queue everything</strong></td>
-            <td>Every imported video gets a summary job, giving full semantic search over the back
-              catalogue once the queue drains.</td>
+            <td><strong>Queue everything imported</strong></td>
+            <td>Every imported video gets a summary job, giving full semantic search once the queue
+              drains. Scoped by the row above: the watched back catalogue is never fetched, so this
+              is a far smaller bill than it first appears.</td>
           </tr>
           <tr>
             <td>Playlists, comments, stats, channel art?</td>
@@ -268,6 +277,34 @@
     <p><code>peeq import-ta</code>. Pages TA's videos per channel, copies three files each, and
       enqueues a summary job.</p>
 
+    <h3>What gets imported: the unwatched queue, not the archive</h3>
+    <p>Only <strong>unwatched and partially-watched</strong> videos are imported. Fully-watched
+      videos are left behind.</p>
+    <div class="note risk">
+      <h3>This is irreversible, and it was chosen knowingly</h3>
+      <p>Because TubeArchivist is being retired and its volumes deleted, a video that is not
+        imported is <strong>gone permanently</strong>. This decision therefore reframes the whole
+        migration: it is not "move the archive across", it is <strong>"move the to-watch queue
+        across"</strong>. Watched videos are treated as finished with, and discarded.</p>
+      <p>Recorded here explicitly so that no later step — and no later reader — quietly assumes the
+        full library came across. If that assumption ever needs revisiting, it must be revisited
+        <em>before</em> TA's volumes are removed, because afterwards there is nothing to revisit.</p>
+    </div>
+    <p><strong>Partially-watched videos are imported, with their resume position</strong>
+      (<code>videos.SetResume</code>). They are arguably the most valuable set in the migration —
+      they are the ones you are part-way through, and losing the position means starting over.</p>
+    <p>TubeArchivist filters this server-side, so the importer never fetches the watched library
+      only to discard it:</p>
+<pre><span class="k">GET</span> /api/video/?watch=unwatched
+<span class="k">GET</span> /api/video/?watch=continue     <span class="c"># started but not finished</span>
+</pre>
+    <p>Both filters compose with the per-channel <code>channel=</code> sharding described below, so
+      the crawl stays under Elasticsearch's 10,000-result ceiling exactly as before.</p>
+    <p>Two earlier decisions in this document are softened as a direct result: the 2× disk cost that
+      drove the copy-over-hardlink choice now applies only to the unwatched set rather than the
+      whole library, and "queue a summary for everything imported" is a much smaller LLM bill than
+      it would have been across the full back catalogue.</p>
+
     <h3>The path convention — the highest-risk detail</h3>
     <p>peeq stores three file paths per video and <strong>they do not use the same convention</strong>.
       Verified against a real downloaded row, not read from source:</p>
@@ -337,8 +374,8 @@
       <h3>1. Skip anything already <code>status='downloaded'</code></h3>
       <p><code>summaryjobs.Enqueue</code> is a bare <code>INSERT</code> with no uniqueness
         constraint. A run that dies halfway and is restarted would otherwise re-enqueue every
-        already-imported video — re-summarizing, re-embedding and <strong>re-billing</strong> the
-        whole library. This rule is what makes the importer safely resumable.</p>
+        already-imported video — re-summarizing, re-embedding and <strong>re-billing</strong>
+        everything imported so far. This rule is what makes the importer safely resumable.</p>
     </div>
     <div class="note risk">
       <h3>2. Verify the <code>.mp4</code> exists before marking a row downloaded</h3>
@@ -347,12 +384,22 @@
     </div>
     <div class="note">
       <h3>3. Preflight free space, fail closed</h3>
-      <p>Copying means holding two full copies of the library during migration. Sum the source size
-        and refuse to start if the target has less free space, rather than filling the disk partway
-        through. Reuse <code>internal/download/freebytes.go</code>.</p>
+      <p>Copying means holding a second copy of everything imported. Sum the source size of the
+        <em>filtered</em> set — not the whole TA library — and refuse to start if the target has
+        less free space, rather than filling the disk partway through. Reuse
+        <code>internal/download/freebytes.go</code>.</p>
     </div>
-    <p><strong>Degradation:</strong> if resume positions cannot be read, continue with watched-flags
-      only and report it. A missing nice-to-have must not fail a migration.</p>
+    <div class="note key">
+      <h3>Degradation: resume positions are no longer a nice-to-have</h3>
+      <p>An earlier draft treated a missing resume position as a cosmetic loss. Under the
+        unwatched-only scope it is not: partially-watched videos are imported <em>specifically</em>
+        to preserve where you were, so losing the position for the <code>continue</code> set
+        removes most of the reason for importing it.</p>
+      <p>So: if resume positions cannot be read, still complete the migration — a missing extra must
+        not fail a run that is moving files — but <strong>report it prominently rather than as a
+        footnote</strong>. The operator needs to know those videos came across as if never started,
+        while TA is still around to check against.</p>
+    </div>
 
     <h3>Flags</h3>
     <div class="scroller">
@@ -362,7 +409,10 @@
           <tr><td><code>--dry-run</code></td>
               <td>Walks the API, resolves every source path, checks each file exists and sums total
                 bytes, then reports what <em>would</em> happen. Writes nothing, copies nothing,
-                enqueues nothing.</td></tr>
+                enqueues nothing. Must report the unwatched and partially-watched counts
+                <em>separately</em>, and state how many watched videos were skipped — that skipped
+                number is what is about to be discarded, so the operator should see it before
+                committing.</td></tr>
           <tr><td><code>--channels N</code></td>
               <td>Process only the first N channels. The crawl is already sharded per channel, so
                 this is just stopping early.</td></tr>
@@ -398,7 +448,7 @@ docker compose start peeq
 </pre>
     <p>peeq is stopped during the import because the importer writes directly to the same SQLite
       database. Step 2 is not optional — it is what catches a wrong path convention before it has
-      been applied to the whole library.</p>
+      been applied to every imported video.</p>
 
     <h3>Verification</h3>
     <ol>
@@ -406,7 +456,9 @@ docker compose start peeq
       <li><code>--dry-run</code> against live TA; confirm counts match TA's own stats and that
         reported missing files are genuinely missing.</li>
       <li><code>--channels 2</code> real run, then in the peeq UI: video plays, thumbnail renders,
-        subtitles display, watched state and resume position carried over.</li>
+        subtitles display. Pick a video you know you were part-way through and confirm its
+        <strong>resume position survived</strong> — that is the check the unwatched-only scope
+        makes load-bearing. Confirm no fully-watched video was imported.</li>
       <li>Wait for the summarize worker; confirm summary, chapters and key points appear and the
         video is findable via semantic search. <strong>Any video stuck at
         <code>no_transcript</code> that has a <code>.vtt</code> on disk means the
