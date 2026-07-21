@@ -625,10 +625,17 @@ func (h *channelsDeleteHarness) seedChannel(id string) {
 // seedDownloadedVideo inserts a downloaded video row for the channel with the
 // given local media path, so a delete has a file ref to unlink.
 func (h *channelsDeleteHarness) seedDownloadedVideo(channelID, videoID, mediaPath string) {
-	if err := h.videos.Upsert(videos.Video{ID: videoID, URL: "u", ChannelID: channelID}); err != nil {
+	seedDownloadedVideo(h.videos, channelID, videoID, mediaPath)
+}
+
+// seedDownloadedVideo inserts a downloaded video row for the channel with the
+// given local media path. Shared by any harness/deps that expose a
+// *videos.Store, so a delete-vs-data-loss test always has a real video row.
+func seedDownloadedVideo(store *videos.Store, channelID, videoID, mediaPath string) {
+	if err := store.Upsert(videos.Video{ID: videoID, URL: "u", ChannelID: channelID}); err != nil {
 		panic(err)
 	}
-	if err := h.videos.SetDownloaded(videoID, videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
+	if err := store.SetDownloaded(videoID, videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
 		panic(err)
 	}
 }
@@ -679,13 +686,16 @@ func doDelete(t *testing.T, h http.Handler, path string) *httptest.ResponseRecor
 // metadata cache entry cannot be deleted. DeleteCascade destroys every video
 // belonging to a channel, including favorited ones — reaching it for a
 // channel the user never tracked would be data loss from a page they merely
-// visited.
+// visited. A video is seeded up front so this test actually catches that
+// data loss, rather than merely observing the 404 and the (possibly already
+// emptied) channel row.
 func TestChannelsDelete_cacheOnlyRow_404(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}})
 	h := New(deps)
 	if err := deps.Channels.Upsert(channels.Channel{ID: "UCcache", Name: "Cache Only"}); err != nil {
 		t.Fatalf("seed cache row: %v", err)
 	}
+	seedDownloadedVideo(deps.Videos, "UCcache", "v1", "/tmp/does-not-matter.mp4")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/channels/UCcache", nil)
 	req.AddCookie(loginAndGetCookie(t, h))
@@ -701,6 +711,13 @@ func TestChannelsDelete_cacheOnlyRow_404(t *testing.T) {
 	}
 	if c == nil {
 		t.Fatal("delete removed a cache-only channel row")
+	}
+	v, err := deps.Videos.Get("v1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v == nil {
+		t.Fatal("delete destroyed the cache-only channel's video row")
 	}
 }
 
