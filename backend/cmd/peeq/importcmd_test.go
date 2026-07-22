@@ -221,3 +221,68 @@ func TestRunImportChannels_dryRunWritesNoRows(t *testing.T) {
 		t.Errorf("subscriptions = %d, want 0 on --dry-run", got)
 	}
 }
+
+func TestRunImportVideos_requiresFlags(t *testing.T) {
+	if err := runImportVideos([]string{}); err == nil {
+		t.Fatal("err = nil, want an error when --ta-url is missing")
+	}
+	if err := runImportVideos([]string{"--ta-url", "http://ta:8000"}); err == nil {
+		t.Fatal("err = nil, want an error when --ta-token is missing")
+	}
+	if err := runImportVideos([]string{"--ta-url", "http://ta:8000", "--ta-token", "t"}); err == nil {
+		t.Fatal("err = nil, want an error when --ta-media is missing")
+	}
+	if err := runImportVideos([]string{"--ta-url", "http://ta:8000", "--ta-token", "t", "--ta-media", "/m"}); err == nil {
+		t.Fatal("err = nil, want an error when --ta-cache is missing")
+	}
+}
+
+func TestFormatVideoResult_dryRunAndReal(t *testing.T) {
+	dry := formatVideoResult(taimport.VideoResult{Planned: 5, BytesMedia: 3 * 1024 * 1024}, true)
+	if !strings.Contains(strings.ToLower(dry), "dry run") {
+		t.Errorf("dry run not labelled:\n%s", dry)
+	}
+	if !strings.Contains(dry, "5 videos") {
+		t.Errorf("dry run missing the planned count:\n%s", dry)
+	}
+
+	real := formatVideoResult(taimport.VideoResult{Imported: 4, SkippedDownloaded: 2, BytesMedia: 1024 * 1024}, false)
+	if strings.Contains(strings.ToLower(real), "dry run") {
+		t.Errorf("real run mentioned a dry run:\n%s", real)
+	}
+	for _, want := range []string{"Imported:", "4 videos", "2 already imported"} {
+		if !strings.Contains(real, want) {
+			t.Errorf("real output missing %q:\n%s", want, real)
+		}
+	}
+}
+
+func TestFormatVideoResult_resumeUnavailableHeadsUp(t *testing.T) {
+	out := formatVideoResult(taimport.VideoResult{Imported: 3, ResumeUnavailable: 2}, false)
+	if !strings.Contains(strings.ToLower(out), "resume") {
+		t.Errorf("no resume heads-up for missing positions:\n%s", out)
+	}
+}
+
+func TestSelectChannelIDs(t *testing.T) {
+	chans := []taimport.Channel{{ID: "UC1"}, {ID: "UC2"}, {ID: "UC3"}}
+	if got := selectChannelIDs(chans, nil, 0); len(got) != 3 {
+		t.Errorf("all = %v, want 3", got)
+	}
+	if got := selectChannelIDs(chans, nil, 2); len(got) != 2 || got[0] != "UC1" {
+		t.Errorf("first-2 = %v", got)
+	}
+	if got := selectChannelIDs(chans, []string{"UC2"}, 0); len(got) != 1 || got[0] != "UC2" {
+		t.Errorf("filter = %v", got)
+	}
+}
+
+func TestParseTypes(t *testing.T) {
+	if got := parseTypes(""); got != nil {
+		t.Errorf("empty = %v, want nil (all types)", got)
+	}
+	got := parseTypes("videos, shorts ,streams")
+	if len(got) != 3 || got[0] != "videos" || got[1] != "shorts" || got[2] != "streams" {
+		t.Errorf("parsed = %v", got)
+	}
+}
