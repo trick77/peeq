@@ -57,7 +57,7 @@ vi.mock("../api/settings", () => ({
   updateSettings: vi.fn(),
 }));
 
-import { getVideo, setResume, redownload } from "../api/videos";
+import { getVideo, setResume, redownload, deleteVideo } from "../api/videos";
 import { resummarize } from "../api/search";
 import { getSettings, updateSettings } from "../api/settings";
 import type { Settings } from "../api/types";
@@ -80,6 +80,7 @@ describe("Player", () => {
     vi.mocked(setResume).mockClear();
     vi.mocked(resummarize).mockClear();
     vi.mocked(redownload).mockClear();
+    vi.mocked(deleteVideo).mockClear();
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
     vi.mocked(streamDownloads).mockReset();
     vi.mocked(streamDownloads).mockImplementation(() => new Promise(() => {}));
@@ -319,6 +320,72 @@ describe("Player", () => {
     expect(link).toHaveAttribute("href", "https://youtu.be/v1");
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noreferrer");
+  });
+
+  it("renders a download link carrying the download=1 filename flag", async () => {
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const link = await screen.findByRole("link", { name: /download video/i });
+    // download=1 is what makes the server attach a Content-Disposition with
+    // the real filename — a plain `download` attribute cannot, since the UI
+    // never learns the file's extension.
+    expect(link).toHaveAttribute("href", "/api/videos/v1/stream?download=1");
+  });
+
+  it("hides the download link for a video with no media file", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_media: false }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByRole("link", { name: /watch on youtube/i });
+    expect(screen.queryByRole("link", { name: /download video/i })).toBeNull();
+  });
+
+  describe("delete confirmation", () => {
+    it("does not delete on the first click — it only arms the confirm", async () => {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: /delete video/i }),
+      );
+      expect(deleteVideo).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: /delete\?/i })).toBeTruthy();
+    });
+
+    it("deletes on the second click", async () => {
+      const onDeleted = vi.fn();
+      render(<Player videoId="v1" onDeleted={onDeleted} />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: /delete video/i }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: /delete\?/i }));
+      await waitFor(() => expect(deleteVideo).toHaveBeenCalledWith("v1"));
+      await waitFor(() => expect(onDeleted).toHaveBeenCalled());
+    });
+
+    it("disarms on Escape without deleting", async () => {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: /delete video/i }),
+      );
+      fireEvent.keyDown(screen.getByRole("button", { name: /delete\?/i }), {
+        key: "Escape",
+      });
+      await screen.findByRole("button", { name: /delete video/i });
+      expect(deleteVideo).not.toHaveBeenCalled();
+    });
+
+    it("disarms itself after the timeout without deleting", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        render(<Player videoId="v1" onDeleted={() => {}} />);
+        fireEvent.click(
+          await screen.findByRole("button", { name: /delete video/i }),
+        );
+        expect(screen.getByRole("button", { name: /delete\?/i })).toBeTruthy();
+        await vi.advanceTimersByTimeAsync(4100);
+        await screen.findByRole("button", { name: /delete video/i });
+        expect(deleteVideo).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it("shows a placeholder message with nothing selected", () => {
@@ -586,7 +653,7 @@ describe("Player", () => {
       makeVideo({ id: "v1", status: "downloaded" }),
     );
     render(<Player videoId="v1" onDeleted={() => {}} />);
-    await screen.findByText(/watch on youtube/i); // wait for load
+    await screen.findByRole("link", { name: /watch on youtube/i }); // wait for load
     expect(screen.queryByRole("button", { name: /re-download/i })).toBeNull();
   });
 
