@@ -330,11 +330,10 @@ func TestSetWatched_manualTrue_setsWatchedAt(t *testing.T) {
 	}
 }
 
-// TestSetWatched_manualTrue_doesNotResetResumePosition ensures the sticky
-// un-watch fix (which zeroes resume_position_seconds on SetWatched(id,
-// false)) does not bleed into the true branch: manually (re-)marking a
-// video watched must leave an existing resume position untouched.
-func TestSetWatched_manualTrue_doesNotResetResumePosition(t *testing.T) {
+// TestSetWatched_manualTrue_resetsResumePosition covers the manual
+// mark-watched rule: pressing the button means "done", so any stored resume
+// position is cleared and reopening the video starts at 0:00.
+func TestSetWatched_manualTrue_resetsResumePosition(t *testing.T) {
 	s := New(openTestDB(t))
 	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
 		t.Fatalf("upsert: %v", err)
@@ -352,8 +351,32 @@ func TestSetWatched_manualTrue_doesNotResetResumePosition(t *testing.T) {
 	if !got.Watched {
 		t.Fatalf("watched = false, want true")
 	}
-	if got.ResumePositionSeconds != 42 {
-		t.Fatalf("resume_position_seconds = %v, want untouched 42", got.ResumePositionSeconds)
+	if got.ResumePositionSeconds != 0 {
+		t.Fatalf("resume_position_seconds = %v, want 0", got.ResumePositionSeconds)
+	}
+}
+
+// TestSetResume_autoWatched_keepsResumePosition guards the deliberate
+// asymmetry with the test above: a video that crossed the 90% threshold by
+// actually playing keeps its position, so the last few minutes stay
+// resumable. Only the manual button means "done".
+func TestSetResume_autoWatched_keepsResumePosition(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetResume("v", 95); err != nil {
+		t.Fatalf("set resume: %v", err)
+	}
+	got, err := s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !got.Watched {
+		t.Fatalf("watched = false, want true (95 >= 90%% of 100)")
+	}
+	if got.ResumePositionSeconds != 95 {
+		t.Fatalf("resume_position_seconds = %v, want untouched 95", got.ResumePositionSeconds)
 	}
 }
 
@@ -449,6 +472,16 @@ func TestTombstoneClearsSubtitlePathKeepsSummary(t *testing.T) {
 	}
 }
 
+// idsOf collapses a result list to a set of ids, for assertions that care
+// about membership rather than the sort order List happens to apply.
+func idsOf(vs []Video) map[string]bool {
+	ids := make(map[string]bool, len(vs))
+	for _, v := range vs {
+		ids[v.ID] = true
+	}
+	return ids
+}
+
 func TestList_filters(t *testing.T) {
 	s := New(openTestDB(t))
 	if err := s.Upsert(Video{ID: "a", URL: "u", DurationSeconds: 100}); err != nil {
@@ -484,12 +517,15 @@ func TestList_filters(t *testing.T) {
 		t.Fatalf("list all = %d, want 3", len(all))
 	}
 
+	// "unwatched" is the Library's watch queue, so it covers what is already
+	// downloaded (a) *and* what is still on its way (c, downloading) — but
+	// never the watched one (b).
 	unwatched, err := s.List(ListOptions{Filter: "unwatched", Category: ""})
 	if err != nil {
 		t.Fatalf("list unwatched: %v", err)
 	}
-	if len(unwatched) != 1 || unwatched[0].ID != "a" {
-		t.Fatalf("list unwatched = %+v, want [a]", unwatched)
+	if ids := idsOf(unwatched); len(ids) != 2 || !ids["a"] || !ids["c"] {
+		t.Fatalf("list unwatched = %+v, want [a c]", unwatched)
 	}
 
 	watched, err := s.List(ListOptions{Filter: "watched", Category: ""})
@@ -514,6 +550,39 @@ func TestList_filters(t *testing.T) {
 	}
 	if len(downloading) != 1 || downloading[0].ID != "c" {
 		t.Fatalf("list downloading = %+v, want [c]", downloading)
+	}
+}
+
+// TestList_unwatched_excludesDeadRows pins the other half of the watch-queue
+// rule: an unwatched row whose download failed, or whose media the retention
+// sweeper has already reclaimed, is not something to watch and must stay out
+// of the queue — the filter widened to queued/downloading, not to everything.
+func TestList_unwatched_excludesDeadRows(t *testing.T) {
+	s := New(openTestDB(t))
+	for _, id := range []string{"err", "tomb", "ok"} {
+		if err := s.Upsert(Video{ID: id, URL: "u"}); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+	}
+	if err := s.SetDownloaded("ok", DownloadedResult{MediaPath: "/m/ok.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := s.SetStatus("err", "error", "yt-dlp exploded"); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if err := s.SetDownloaded("tomb", DownloadedResult{MediaPath: "/m/tomb.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := s.Tombstone("tomb"); err != nil {
+		t.Fatalf("tombstone: %v", err)
+	}
+
+	unwatched, err := s.List(ListOptions{Filter: "unwatched"})
+	if err != nil {
+		t.Fatalf("list unwatched: %v", err)
+	}
+	if len(unwatched) != 1 || unwatched[0].ID != "ok" {
+		t.Fatalf("list unwatched = %+v, want [ok]", unwatched)
 	}
 }
 

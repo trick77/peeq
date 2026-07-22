@@ -262,7 +262,10 @@ type watchedRequest struct {
 
 // handleWatchedVideo is the manual watched toggle. true marks watched
 // (without resetting watched_at if already set); false clears both watched
-// and watched_at, rescuing the video from the retention sweep.
+// and watched_at, rescuing the video from the retention sweep. Either
+// direction resets resume_position_seconds to 0 — see videos.SetWatched.
+// The response carries only the new watched flag, so a client holding a
+// local copy of the video has to zero the position itself.
 func (s *server) handleWatchedVideo(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.lookupVideo(w, r)
 	if !ok {

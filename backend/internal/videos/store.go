@@ -9,7 +9,10 @@
 // clock. Manual un-watch (SetWatched(id, false)) clears watched, watched_at,
 // AND resume_position_seconds, rescuing the video from the retention sweep
 // and making that rescue sticky (a stale near-end resume ping can't
-// immediately re-mark it watched). Tombstone keeps
+// immediately re-mark it watched). Manual mark-watched zeroes the resume
+// position too — the button means "done", so there is nothing to resume —
+// while the automatic >= 90% path keeps it, so a video watched to nearly
+// the end can still be finished. Tombstone keeps
 // the row (for watched history and a future summary/transcript) but clears
 // media_path and marks status='tombstoned'; the caller is responsible for
 // unlinking the actual media/thumbnail files from disk first.
@@ -245,9 +248,11 @@ func escapeLike(s string) string {
 // List returns videos matching opts, ordered by opts.Sort. The status,
 // category, search, and channel dimensions are orthogonal: all that are set
 // apply together.
-//   - Filter: "unwatched" (downloaded and not watched), "watched", "favorites",
-//     "downloading" (queued or downloading), or anything else/"" (no
-//     constraint, tombstoned included)
+//   - Filter: "unwatched" (not watched and either downloaded or still on its
+//     way — queued/downloading rows count, so the watch queue shows what is
+//     about to be watchable; error/tombstoned rows never do), "watched",
+//     "favorites", "downloading" (queued or downloading), or anything
+//     else/"" (no constraint, tombstoned included)
 //   - Category: empty/"all"/unknown ⇒ no category constraint
 //   - Query: case-insensitive substring match against title
 //   - Sort: newest|oldest|longest|title; anything else falls back to newest.
@@ -261,7 +266,7 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 	args := []any{}
 	switch opts.Filter {
 	case "unwatched":
-		conds = append(conds, "status = 'downloaded' AND watched = 0")
+		conds = append(conds, "status IN ('downloaded', 'queued', 'downloading') AND watched = 0")
 	case "watched":
 		conds = append(conds, "watched = 1")
 	case "favorites":
@@ -535,18 +540,23 @@ func (s *Store) SetFavorite(id string, fav bool) error {
 
 // SetWatched is the manual watched toggle. Setting true marks the video
 // watched, stamping watched_at only if it isn't already set (no life
-// extension on a manual re-confirmation); it leaves resume_position_seconds
-// untouched. Setting false clears watched, watched_at, AND
-// resume_position_seconds — this rescues the video from the retention
-// sweep, per the decided un-watch rule. Zeroing the resume position makes
-// the rescue sticky: without it, a player resume ping still sitting at or
-// above the 90% threshold would immediately re-cross SetResume's
-// auto-watched check and undo the un-watch.
+// extension on a manual re-confirmation), and zeroes
+// resume_position_seconds: pressing the button means "I'm done with this",
+// so there is no meaningful point to resume from and reopening starts at
+// 0:00. Note the deliberate asymmetry with the auto-watched path in
+// SetResume, which keeps the position — someone who genuinely played past
+// 90% may still want the last few minutes. Setting false clears watched,
+// watched_at, AND resume_position_seconds — this rescues the video from the
+// retention sweep, per the decided un-watch rule. Zeroing the resume
+// position makes the rescue sticky: without it, a player resume ping still
+// sitting at or above the 90% threshold would immediately re-cross
+// SetResume's auto-watched check and undo the un-watch.
 func (s *Store) SetWatched(id string, watched bool) error {
 	var err error
 	if watched {
 		_, err = s.db.ExecContext(context.Background(), `
-UPDATE videos SET watched = 1, watched_at = COALESCE(watched_at, datetime('now'))
+UPDATE videos SET watched = 1, watched_at = COALESCE(watched_at, datetime('now')),
+	resume_position_seconds = 0
 WHERE id = ?`, id)
 	} else {
 		_, err = s.db.ExecContext(context.Background(), `

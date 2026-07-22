@@ -62,6 +62,7 @@ vi.mock("../api/settings", () => ({
 import {
   getVideo,
   setResume,
+  setWatched,
   redownload,
   deleteVideo,
   setCategory,
@@ -168,6 +169,39 @@ describe("Player", () => {
     await waitFor(() => {
       expect(setResume).toHaveBeenCalledWith("v1", 77);
     });
+  });
+
+  it("does not re-post the old position after the video is un-watched", async () => {
+    // The regression this guards: un-watching clears resume_position_seconds
+    // server-side, but the Player's own flush effect would then re-POST the
+    // pre-toggle playhead on unmount, restoring what the server just cleared
+    // — and at 95 of 100 seconds that re-crosses the 90% auto-watched
+    // threshold, silently undoing the un-watch.
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ watched: true, duration_seconds: 100 }),
+    );
+    const { unmount } = render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 95,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 95));
+    vi.mocked(setResume).mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark unwatched" }));
+    await waitFor(() => expect(setWatched).toHaveBeenCalledWith("v1", false));
+
+    unmount();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setResume).not.toHaveBeenCalled();
   });
 
   it("does not clobber the stored resume with 0 when unmounted before any position is observed", async () => {
