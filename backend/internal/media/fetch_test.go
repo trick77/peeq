@@ -235,3 +235,48 @@ func TestFetchImage_renameFailure(t *testing.T) {
 		t.Fatalf("temp file %q should have been removed after a failed rename", "avatar.jpg.tmp")
 	}
 }
+
+// TestFetchImage_rejectsEscapingDestination asserts the write path enforces
+// the containment rule the read path (SafeMediaPath) already does. Callers
+// build relBase by interpolating an id — ".channels/"+channelID+"/avatar" —
+// and filepath.Join CLEANS a "../" away rather than rejecting it, so without
+// this check an id carrying traversal would write a fetched image outside the
+// media dir. Rejected before the request, so a caller bug costs nothing.
+func TestFetchImage_rejectsEscapingDestination(t *testing.T) {
+	dir := t.TempDir()
+	served := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served = true
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("not really a png"))
+	}))
+	defer srv.Close()
+
+	for _, relBase := range []string{
+		".channels/../../escaped/avatar",
+		"../escaped",
+		"",
+	} {
+		if _, err := FetchImage(context.Background(), srv.URL, dir, relBase); err == nil {
+			t.Fatalf("relBase %q was accepted", relBase)
+		}
+	}
+	if served {
+		t.Fatal("a rejected destination still cost a network fetch")
+	}
+	// An absolute path is refused too: the contract is a path RELATIVE to the
+	// media dir, and an absolute one that happens to sit inside it today would
+	// stop doing so the moment the media dir moves.
+	if _, err := FetchImage(context.Background(), srv.URL, dir, filepath.Join(dir, "inside")); err == nil {
+		t.Fatal("an absolute relBase was accepted")
+	}
+
+	// The ordinary case still works.
+	rel, err := FetchImage(context.Background(), srv.URL, dir, ".channels/UCa/avatar")
+	if err != nil {
+		t.Fatalf("valid destination rejected: %v", err)
+	}
+	if rel != ".channels/UCa/avatar.png" {
+		t.Fatalf("rel = %q", rel)
+	}
+}

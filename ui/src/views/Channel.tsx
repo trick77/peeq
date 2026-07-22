@@ -176,6 +176,12 @@ export function Channel({
   const descRef = useRef<HTMLParagraphElement>(null);
   const [descOverflows, setDescOverflows] = useState(false);
 
+  // channelIdRef mirrors the channel currently on screen. An in-flight
+  // refresh cannot read channelId directly: handleRefresh closed over the
+  // value it started with, so comparing against that would always say "still
+  // here" no matter where the user has navigated since.
+  const channelIdRef = useRef(channelId);
+
   // loadSeq drops out-of-order responses, the same guard Channels.tsx uses:
   // navigating between two channels quickly must not leave the slower
   // response painted over the newer one.
@@ -197,6 +203,7 @@ export function Channel({
   }
 
   useEffect(() => {
+    channelIdRef.current = channelId;
     setDetail(null);
     setTab("archive");
     setDescOpen(false);
@@ -228,19 +235,29 @@ export function Channel({
   // waiting for, and the error is worth showing rather than swallowing.
   async function handleRefresh() {
     if (!detail) return;
+    // A refresh runs for tens of seconds — long enough for the user to move
+    // to another channel before it lands. Everything after the await is
+    // therefore gated on still being on the channel we asked about, the same
+    // guard reload() applies with loadSeq: otherwise THIS channel's failure
+    // surfaces under ANOTHER channel's header and reads as that one being
+    // broken.
+    const requested = detail.id;
+    const stillHere = () => requested === channelIdRef.current;
     setRefreshing(true);
     setError(null);
     try {
-      await refreshChannel(detail.id);
+      await refreshChannel(requested);
+      if (!stillHere()) return;
       reload();
     } catch (e) {
+      if (!stillHere()) return;
       setError(
         e instanceof CookieRequiredError
           ? "peeq needs a fresh YouTube cookie before it can read this channel."
           : (e as Error).message,
       );
     } finally {
-      setRefreshing(false);
+      if (stillHere()) setRefreshing(false);
     }
   }
 

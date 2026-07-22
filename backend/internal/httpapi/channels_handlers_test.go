@@ -2758,11 +2758,18 @@ func TestChannelRefresh_untrackedButHasVideos(t *testing.T) {
 
 // urlCapturingResolver records the url it was handed so a test can assert how
 // the channel id was put into it.
-type urlCapturingResolver struct{ url string }
+type urlCapturingResolver struct {
+	url string
+	// ucid is echoed back as the resolved identity. It has to match the id
+	// under test: resolveChannel refuses a response whose UCID names a
+	// different channel, and this fake exists to assert how the url was
+	// BUILT, not to exercise that guard.
+	ucid string
+}
 
 func (r *urlCapturingResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
 	r.url = url
-	return ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}, nil
+	return ytdlp.ChannelInfo{UCID: r.ucid, Name: "X"}, nil
 }
 
 // TestResolveChannel_escapesTheIDIntoOneSegment asserts a channel id cannot
@@ -2772,7 +2779,7 @@ func (r *urlCapturingResolver) ResolveChannel(ctx context.Context, url string) (
 // "https://www.youtube.com/channel/../../watch?v=abc" and yt-dlp would have
 // followed it.
 func TestResolveChannel_escapesTheIDIntoOneSegment(t *testing.T) {
-	resolver := &urlCapturingResolver{}
+	resolver := &urlCapturingResolver{ucid: "../../watch?v=abc"}
 	deps := channelsTestDeps(t, resolver)
 	h := New(deps)
 	// Seed the row so the 404 guard is not what stops this.
@@ -2789,5 +2796,149 @@ func TestResolveChannel_escapesTheIDIntoOneSegment(t *testing.T) {
 	}
 	if !strings.HasPrefix(resolver.url, "https://www.youtube.com/channel/") {
 		t.Fatalf("url = %q", resolver.url)
+	}
+}
+
+// cancelWatchingResolver disconnects the client mid-resolve and reports
+// whether that reached the context the resolve is running under. Cancelling
+// the request BEFORE it is sent would not model this: auth's session lookup
+// uses the request context too, so the handler would never be entered.
+type cancelWatchingResolver struct {
+	ucid       string
+	disconnect context.CancelFunc
+	sawCancel  bool
+	sawContext bool
+}
+
+func (r *cancelWatchingResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+	r.sawContext = true
+	// The reader closes the tab while yt-dlp is running.
+	r.disconnect()
+	if ctx.Err() != nil {
+		r.sawCancel = true
+		return ytdlp.ChannelInfo{}, ctx.Err()
+	}
+	return ytdlp.ChannelInfo{UCID: r.ucid, Name: "Uncanny Expeditions"}, nil
+}
+
+// TestChannelRefresh_clientDisconnectDoesNotFailTheChannel asserts a refresh
+// survives the reader going away. A refresh takes tens of seconds, and
+// cancelling it because the tab closed would land in the failure path and
+// stamp resolve_ok = 0 — making a perfectly healthy channel claim its last
+// refresh failed, which is the one state peeq uses to mean "needs attention".
+func TestChannelRefresh_clientDisconnectDoesNotFailTheChannel(t *testing.T) {
+	resolver := &cancelWatchingResolver{ucid: "UCa"}
+	deps := channelsTestDeps(t, resolver)
+	h := New(deps)
+	if err := deps.Channels.SaveResolved(channels.Channel{
+		ID: "UCa", Name: "Uncanny Expeditions", ResolvedAt: "2026-07-01 00:00:00",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	cookie := loginAndGetCookie(t, h)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	resolver.disconnect = cancel
+	req := httptest.NewRequest(http.MethodPost, "/api/channels/UCa/refresh", nil).WithContext(ctx)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if !resolver.sawContext {
+		t.Fatalf("the resolve never ran (status=%d body=%s)", rec.Code, rec.Body.String())
+	}
+	if resolver.sawCancel {
+		t.Fatal("the client's disconnect reached the resolve")
+	}
+	c, err := deps.Channels.Get("UCa")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !c.ResolveOk {
+		t.Fatal("a disconnect marked a healthy channel as refresh-failed")
+	}
+}
+
+// TestChannelRefresh_differentChannelIsRefused asserts peeq will not write one
+// channel's identity onto another's row. A stale or redirecting url resolves
+// to a DIFFERENT channel, and storing that response here would replace this
+// channel's name, artwork and subscriber count with someone else's while
+// resolve_ok claimed the result was current.
+func TestChannelRefresh_differentChannelIsRefused(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{
+		UCID: "UCsomeoneelse", Name: "A Different Channel", Subscribers: 999,
+	}})
+	h := New(deps)
+	if err := deps.Channels.SaveResolved(channels.Channel{
+		ID: "UCa", Name: "Uncanny Expeditions", Subscribers: 412000,
+		ResolvedAt: "2026-07-01 00:00:00",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/channels/UCa/refresh", nil)
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	c, err := deps.Channels.Get("UCa")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.Name != "Uncanny Expeditions" || c.Subscribers != 412000 {
+		t.Fatalf("another channel's identity was written onto this row: %+v", c)
+	}
+}
+
+// TestChannelRefresh_keepsTheHandleTheUserPasted asserts a refresh does not
+// rewrite a handle peeq already has. handleChannelsPost resolves the same
+// conflict the same way — the pasted url wins — and the two write paths
+// disagreeing would mean the header link silently changes the first time the
+// user presses Refresh.
+func TestChannelRefresh_keepsTheHandleTheUserPasted(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{
+		UCID: "UCa", Name: "Uncanny Expeditions", Handle: "@ytdlpsays",
+	}})
+	h := New(deps)
+	if err := deps.Channels.SaveResolved(channels.Channel{
+		ID: "UCa", Name: "Uncanny Expeditions", Handle: "@pasted",
+		ResolvedAt: "2026-07-01 00:00:00",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if rr := postJSON(t, h, "/api/channels/UCa/refresh", nil); rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	c, err := deps.Channels.Get("UCa")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.Handle != "@pasted" {
+		t.Fatalf("Handle = %q, want the stored @pasted", c.Handle)
+	}
+}
+
+// TestChannelRefresh_fillsAnAbsentHandle is the other half of the rule: a
+// channel with no handle at all — every channel imported from TubeArchivist —
+// takes yt-dlp's, which is the only way it can ever get one.
+func TestChannelRefresh_fillsAnAbsentHandle(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{
+		UCID: "UCa", Name: "Uncanny Expeditions", Handle: "@uncanny",
+	}})
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCa", Name: "Uncanny Expeditions"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if rr := postJSON(t, h, "/api/channels/UCa/refresh", nil); rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	c, err := deps.Channels.Get("UCa")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.Handle != "@uncanny" {
+		t.Fatalf("Handle = %q, want @uncanny", c.Handle)
 	}
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Channel } from "./Channel";
 import type { ChannelDetail } from "../api/types";
@@ -1267,6 +1267,43 @@ describe("Channel YouTube metadata", () => {
     } finally {
       restore();
     }
+  });
+
+  it("does not report a refresh failure under a different channel's header", async () => {
+    const user = userEvent.setup();
+    // A refresh that is still in flight when the user moves on.
+    let failRefresh: (e: Error) => void = () => {};
+    vi.mocked(refreshChannel).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        failRefresh = reject;
+      }),
+    );
+    vi.mocked(getChannel).mockResolvedValue(detail({ resolve_ok: false }));
+    const { rerender } = render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("button", { name: /refresh/i }));
+
+    // The user moves to another channel while it runs...
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({ id: "UCb", name: "Deep Field Radio" }),
+    );
+    rerender(
+      <Channel channelId="UCb" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Deep Field Radio");
+
+    // ...and only then does the first channel's refresh fail.
+    await act(async () => {
+      failRefresh(new Error("refresh failed: channel unavailable"));
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.queryByText("refresh failed: channel unavailable"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Deep Field Radio")).toBeInTheDocument();
   });
 
   it("puts the way back above the header, not among the channel's actions", async () => {
