@@ -159,8 +159,8 @@ func TestLoad_summarizeDelays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load (defaults): %v", err)
 	}
-	if cfg.SummarizeRequestDelay != 2*time.Second || cfg.SummarizeVideoDelay != 5*time.Second {
-		t.Errorf("defaults = %v/%v, want 2s/5s", cfg.SummarizeRequestDelay, cfg.SummarizeVideoDelay)
+	if cfg.SummarizeRequestDelay != 10*time.Second || cfg.SummarizeVideoDelay != 30*time.Second {
+		t.Errorf("defaults = %v/%v, want 10s/30s", cfg.SummarizeRequestDelay, cfg.SummarizeVideoDelay)
 	}
 
 	setRequired()

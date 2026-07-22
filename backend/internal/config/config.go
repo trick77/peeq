@@ -150,12 +150,12 @@ func Load() (Config, error) {
 		cfg.EmbedDim = n
 	}
 
-	reqDelay, err := envDuration("BACKEND_SUMMARIZE_REQUEST_DELAY", 2*time.Second)
+	reqDelay, err := envDuration("BACKEND_SUMMARIZE_REQUEST_DELAY", 10*time.Second)
 	if err != nil {
 		return Config{}, err
 	}
 	cfg.SummarizeRequestDelay = reqDelay
-	vidDelay, err := envDuration("BACKEND_SUMMARIZE_VIDEO_DELAY", 5*time.Second)
+	vidDelay, err := envDuration("BACKEND_SUMMARIZE_VIDEO_DELAY", 30*time.Second)
 	if err != nil {
 		return Config{}, err
 	}
