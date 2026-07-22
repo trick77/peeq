@@ -138,6 +138,43 @@ func TestDownload_happyPath(t *testing.T) {
 	if seg.StartTime != 10 || seg.EndTime != 25 {
 		t.Fatalf("segment = %+v, want start=10 end=25", seg)
 	}
+
+	// (f) the release date comes off the same info.json, normalized to the
+	// YYYY-MM-DD shape the videos table stores. Channel-driven downloads have
+	// no other source for it — nothing calls Metadata on their behalf.
+	if res.PublishedAt != "2024-01-15" {
+		t.Fatalf("PublishedAt = %q, want %q", res.PublishedAt, "2024-01-15")
+	}
+}
+
+// TestDownload_noUploadDate_leavesPublishedAtEmpty asserts a download whose
+// info.json carries no upload_date (some live streams and premieres) yields
+// an empty PublishedAt rather than a malformed date — the store treats empty
+// as "leave whatever is already known".
+func TestDownload_noUploadDate_leavesPublishedAtEmpty(t *testing.T) {
+	mediaDir := t.TempDir()
+	t.Setenv("FAKE_YTDLP_ID", "nodate12345")
+	t.Setenv("FAKE_YTDLP_CHANNEL_ID", "UCnodate")
+	t.Setenv("FAKE_YTDLP_UPLOAD_DATE", "")
+
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		MediaDir:       mediaDir,
+	})
+
+	res, err := r.Download(context.Background(), DownloadReq{
+		URL:     "https://youtu.be/nodate12345",
+		VideoID: "nodate12345",
+		Format:  "best-mp4",
+	}, func(Progress) {})
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if res.PublishedAt != "" {
+		t.Fatalf("PublishedAt = %q, want empty", res.PublishedAt)
+	}
 }
 
 // TestDownload_argsIncludeRequiredFlags captures the raw argv the fake

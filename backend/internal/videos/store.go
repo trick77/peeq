@@ -78,6 +78,16 @@ type DownloadedResult struct {
 	SubtitleRelPath      string
 	AudioLanguage        string
 	ChaptersJSON         string
+	// PublishedAt is the release date (YYYY-MM-DD) yt-dlp reported in the
+	// download's own info.json, or "" when it reported none.
+	//
+	// SetDownloaded is the only place a channel-driven download can pick one
+	// up: scan.Scheduler.enqueueAuto seeds its videos row from a flat listing
+	// that carries no release date, and nothing else would ever set one — the
+	// library would sort those videos by download date forever. An empty value
+	// leaves whatever is already stored, so a date the richer Metadata path
+	// wrote is never clobbered.
+	PublishedAt string
 }
 
 // Store persists video rows.
@@ -208,9 +218,18 @@ type ListOptions struct {
 // sortClauses maps the accepted Sort values to ORDER BY fragments. Sort is
 // interpolated into SQL, so it must only ever come from this map — never
 // from the caller's string.
+//
+// newest/oldest rank by RELEASE date (published_at), not by when peeq added
+// the row: an old video downloaded this morning belongs where it was
+// published, not at the top of the library. published_at is NULL when yt-dlp
+// reports no upload_date (some live streams and premieres), so those rows
+// fall back to created_at and stay interleaved rather than sinking to one
+// end forever. date() normalizes the fallback — published_at is 'YYYY-MM-DD'
+// while created_at is 'YYYY-MM-DD HH:MM:SS', and comparing the two shapes
+// lexically would sort a same-day date-only value before the datetime one.
 var sortClauses = map[string]string{
-	"newest":  "created_at DESC, id DESC",
-	"oldest":  "created_at ASC, id ASC",
+	"newest":  "COALESCE(published_at, date(created_at)) DESC, created_at DESC, id DESC",
+	"oldest":  "COALESCE(published_at, date(created_at)) ASC, created_at ASC, id ASC",
 	"longest": "COALESCE(duration_seconds, 0) DESC, id DESC",
 	"title":   "title COLLATE NOCASE ASC, id ASC",
 }
@@ -231,7 +250,9 @@ func escapeLike(s string) string {
 //     constraint, tombstoned included)
 //   - Category: empty/"all"/unknown ⇒ no category constraint
 //   - Query: case-insensitive substring match against title
-//   - Sort: newest|oldest|longest|title; anything else falls back to newest
+//   - Sort: newest|oldest|longest|title; anything else falls back to newest.
+//     newest/oldest order by release date (published_at), falling back to
+//     created_at for rows with no known release date
 //   - ChannelID/ChannelName: scopes to one channel, matching channel_id or,
 //     for rows written before channel ids were recorded, an exact
 //     channel_name match on rows with an empty channel_id
@@ -326,7 +347,8 @@ func (s *Store) SetRequestedFormat(id, format string) error {
 // SetDownloaded records a successful download: media path, filesize, the
 // resolved format, the SponsorBlock segments JSON, status=downloaded, and
 // the downloaded_at timestamp. error_message is cleared (a prior failed
-// attempt's message must not linger on a now-successful video).
+// attempt's message must not linger on a now-successful video). It also fills
+// in published_at — see DownloadedResult.PublishedAt for why that lands here.
 func (s *Store) SetDownloaded(id string, res DownloadedResult) error {
 	segments := res.SponsorblockSegments
 	if segments == "" {
@@ -338,11 +360,13 @@ SET media_path = ?, thumbnail_path = COALESCE(NULLIF(?, ''), thumbnail_path),
 	filesize_bytes = ?, format_used = ?, sponsorblock_segments = ?,
 	subtitle_path = ?, audio_language = ?,
 	chapters = CASE WHEN ? != '' THEN ? ELSE chapters END,
+	published_at = COALESCE(NULLIF(?, ''), published_at),
 	status = 'downloaded', error_message = '', downloaded_at = datetime('now')
 WHERE id = ?`,
 		res.MediaPath, res.ThumbnailPath, res.FilesizeBytes, res.FormatUsed, segments,
 		res.SubtitleRelPath, res.AudioLanguage,
 		res.ChaptersJSON, res.ChaptersJSON,
+		res.PublishedAt,
 		id,
 	)
 	if err != nil {

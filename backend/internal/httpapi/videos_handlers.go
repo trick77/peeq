@@ -129,7 +129,8 @@ func toVideoDTO(v *videos.Video) videoDTO {
 // replacing it. An empty or unrecognized category value means "all
 // categories" (see videos.Store.List). ?q= narrows by a case-insensitive
 // title substring search, and ?sort=newest|oldest|longest|title controls
-// ordering (unrecognized/empty falls back to newest).
+// ordering (unrecognized/empty falls back to newest). newest/oldest mean
+// release date, not when peeq downloaded the video.
 func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 	if s.videos == nil {
 		writeJSON(w, []videoDTO{})

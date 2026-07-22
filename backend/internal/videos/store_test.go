@@ -790,20 +790,24 @@ func TestList_query_escapesLikeWildcards(t *testing.T) {
 func TestList_sort_ordersRows(t *testing.T) {
 	s := newTestStore(t)
 	// Three videos whose four orderings are all DISTINCT (title, duration and
-	// created_at each rank them differently). A two-row fixture made title and
+	// published_at each rank them differently). A two-row fixture made title and
 	// longest coincide with the newest fallback, so a dropped or mis-mapped
 	// sort key could pass unnoticed; with these rows any such regression yields
 	// the wrong first row and fails.
-	seedVideo(t, s, Video{ID: "c1", Title: "Charlie", DurationSeconds: 200, CreatedAt: "2026-03-01 00:00:00", Status: "downloaded"})
-	seedVideo(t, s, Video{ID: "a2", Title: "Alpha", DurationSeconds: 100, CreatedAt: "2026-02-01 00:00:00", Status: "downloaded"})
-	seedVideo(t, s, Video{ID: "b3", Title: "Bravo", DurationSeconds: 300, CreatedAt: "2026-01-01 00:00:00", Status: "downloaded"})
+	//
+	// created_at deliberately runs OPPOSITE to published_at: newest/oldest rank
+	// by RELEASE date, so a fixture where the two agree would still pass with
+	// the old created_at-only clause.
+	seedVideo(t, s, Video{ID: "c1", Title: "Charlie", DurationSeconds: 200, PublishedAt: "2026-03-01", CreatedAt: "2026-01-01 00:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "a2", Title: "Alpha", DurationSeconds: 100, PublishedAt: "2026-02-01", CreatedAt: "2026-02-01 00:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "b3", Title: "Bravo", DurationSeconds: 300, PublishedAt: "2026-01-01", CreatedAt: "2026-03-01 00:00:00", Status: "downloaded"})
 
 	cases := []struct {
 		sort string
 		want []string
 	}{
-		{"newest", []string{"c1", "a2", "b3"}},  // created_at DESC
-		{"oldest", []string{"b3", "a2", "c1"}},  // created_at ASC
+		{"newest", []string{"c1", "a2", "b3"}},  // published_at DESC
+		{"oldest", []string{"b3", "a2", "c1"}},  // published_at ASC
 		{"longest", []string{"b3", "c1", "a2"}}, // duration DESC
 		{"title", []string{"a2", "b3", "c1"}},   // title NOCASE ASC
 	}
@@ -824,6 +828,93 @@ func TestList_sort_ordersRows(t *testing.T) {
 				t.Fatalf("sort=%s ids = %v, want %v", tc.sort, ids, tc.want)
 			}
 		}
+	}
+}
+
+// TestSetDownloaded_fillsPublishedAt asserts the download's own info.json
+// supplies the release date for videos seeded from a metadata-poor flat
+// channel listing — without it, everything peeq auto-downloads would sort by
+// download date forever.
+func TestSetDownloaded_fillsPublishedAt(t *testing.T) {
+	// Given: a row seeded the way scan.Scheduler.enqueueAuto seeds one — no
+	// release date.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "auto", URL: "u"})
+
+	// When: the download completes and reports one.
+	if err := s.SetDownloaded("auto", DownloadedResult{MediaPath: "/m/auto.mp4", PublishedAt: "2025-04-09"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	// Then: the row carries it.
+	got, err := s.Get("auto")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.PublishedAt != "2025-04-09" {
+		t.Fatalf("published_at = %q, want 2025-04-09", got.PublishedAt)
+	}
+}
+
+// TestSetDownloaded_emptyPublishedAt_keepsExisting asserts a re-download of a
+// video whose release date is already known (the manual-add path fetches it
+// up front) never blanks it out when yt-dlp reports no upload_date.
+func TestSetDownloaded_emptyPublishedAt_keepsExisting(t *testing.T) {
+	// Given: a row that already knows its release date.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "known", URL: "u", PublishedAt: "2025-04-09"})
+
+	// When: a download completes without one.
+	if err := s.SetDownloaded("known", DownloadedResult{MediaPath: "/m/known.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	// Then: the stored date survives.
+	got, err := s.Get("known")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.PublishedAt != "2025-04-09" {
+		t.Fatalf("published_at = %q, want it preserved", got.PublishedAt)
+	}
+}
+
+// TestList_sort_missingPublishedAt_fallsBackToCreatedAt asserts a row with no
+// known release date (yt-dlp reports no upload_date for some live streams and
+// premieres) takes the position its download date implies, interleaved with
+// the dated rows rather than sinking to one end of the list.
+func TestList_sort_missingPublishedAt_fallsBackToCreatedAt(t *testing.T) {
+	// Given: two dated rows around one undated row whose created_at sits
+	// between their release dates.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "recent", PublishedAt: "2026-03-01", CreatedAt: "2026-03-02 00:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "nodate", CreatedAt: "2026-02-01 12:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "older", PublishedAt: "2026-01-01", CreatedAt: "2026-01-02 00:00:00", Status: "downloaded"})
+
+	// When: the list is sorted newest-first.
+	got, err := s.List(ListOptions{Sort: "newest"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	// Then: the undated row lands in the middle, not first or last.
+	want := []string{"recent", "nodate", "older"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows %+v, want %v", len(got), got, want)
+	}
+	for i := range want {
+		if got[i].ID != want[i] {
+			t.Fatalf("newest order = %+v, want %v", got, want)
+		}
+	}
+
+	// And: the same fallback applies in the other direction.
+	got, err = s.List(ListOptions{Sort: "oldest"})
+	if err != nil {
+		t.Fatalf("list oldest: %v", err)
+	}
+	if len(got) != 3 || got[1].ID != "nodate" {
+		t.Fatalf("oldest order = %+v, want nodate in the middle", got)
 	}
 }
 

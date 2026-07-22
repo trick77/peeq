@@ -69,6 +69,9 @@ type Result struct {
 	// `[{"ts":int,"title":string,"source":"yt-dlp"}]`, or "" if the video
 	// had none.
 	ChaptersJSON string
+	// PublishedAt is the release date normalized to YYYY-MM-DD (same shape
+	// Metadata produces), or "" if yt-dlp reported no upload_date.
+	PublishedAt string
 }
 
 // Progress is one parsed --newline progress update.
@@ -110,7 +113,12 @@ type downloadInfoJSON struct {
 	ChannelID string `json:"channel_id"`
 	// Language is yt-dlp's reported audio/video language for the download.
 	Language string `json:"language"`
-	Chapters []struct {
+	// UploadDate is yt-dlp's raw YYYYMMDD release date. Read here so that
+	// channel-driven downloads carry a release date too: they never go through
+	// Runner.Metadata (no per-video -J call, to respect the throttle budget),
+	// and release date is what the library sorts on.
+	UploadDate string `json:"upload_date"`
+	Chapters   []struct {
 		StartTime float64 `json:"start_time"`
 		EndTime   float64 `json:"end_time"`
 		Title     string  `json:"title"`
@@ -315,6 +323,7 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 		SubtitleRelPath:      subtitleRelPath,
 		AudioLanguage:        info.Language,
 		ChaptersJSON:         chaptersJSON,
+		PublishedAt:          normalizeUploadDate(info.UploadDate),
 	}, nil
 }
 
