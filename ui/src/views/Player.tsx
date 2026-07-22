@@ -10,12 +10,13 @@ import {
   deleteVideo,
   redownload,
   streamUrl,
+  thumbnailUrl,
 } from "../api/videos";
 import { resummarize, subtitlesUrl } from "../api/search";
 import { streamDownloads } from "../api/downloads";
 import { getSettings, updateSettings } from "../api/settings";
 import type { Video } from "../api/types";
-import { formatDuration } from "../format";
+import { formatDuration, gradientClassFor } from "../format";
 import { writeNowPlaying, clearNowPlaying } from "../nowPlaying";
 
 // RESUME_THROTTLE_MS bounds how often `timeupdate` (which fires ~4x/sec)
@@ -574,9 +575,19 @@ export function Player({
     <div className="playgrid">
       <div className="leftcol">
         <div className="stage stage-wrap">
+          {/* Without a poster the stage is a bare black rectangle until the
+              first frame decodes — which, for a never-played video, only
+              happens once you press play (a resumed video gets a frame for
+              free from the seek in handleLoadedMetadata). Show the downloaded
+              thumbnail there instead, falling back to the same per-id gradient
+              the Library cards use when no local thumbnail exists. */}
           <video
             ref={videoRef}
+            className={
+              video.has_thumbnail ? undefined : gradientClassFor(video.id)
+            }
             src={streamUrl(video.id)}
+            poster={video.has_thumbnail ? thumbnailUrl(video.id) : undefined}
             controls
             onLoadedMetadata={handleLoadedMetadata}
             onTimeUpdate={handleTimeUpdate}

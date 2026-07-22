@@ -1079,11 +1079,15 @@ button {
   background: #000;
   box-shadow: var(--shadow-panel);
 }
+/* No background here: the element stays transparent so a g1..g6 gradient
+   class (applied when the video has no local thumbnail) can paint through,
+   and .stage's own black shows in the letterbox bars otherwise. object-fit
+   keeps a non-16:9 poster letterboxed rather than stretched. */
 .stage video {
   display: block;
   width: 100%;
   aspect-ratio: 16 / 9;
-  background: #000;
+  object-fit: contain;
 }
 .skip-toast {
   position: absolute;

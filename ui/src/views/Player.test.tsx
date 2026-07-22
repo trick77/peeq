@@ -34,6 +34,7 @@ vi.mock("../api/videos", () => ({
   deleteVideo: vi.fn().mockResolvedValue(undefined),
   redownload: vi.fn().mockResolvedValue(undefined),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
+  thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
 }));
 
 vi.mock("../api/search", () => ({
@@ -62,6 +63,7 @@ import { resummarize } from "../api/search";
 import { getSettings, updateSettings } from "../api/settings";
 import type { Settings } from "../api/types";
 import { readNowPlaying } from "../nowPlaying";
+import { gradientClassFor } from "../format";
 import { streamDownloads } from "../api/downloads";
 
 function makeVideo(overrides: Partial<Video> = {}): Video {
@@ -89,6 +91,39 @@ describe("Player", () => {
     vi.mocked(updateSettings).mockResolvedValue(makeSettings(false));
     vi.unstubAllGlobals();
     sessionStorage.clear();
+  });
+
+  describe("stage poster", () => {
+    it("posters the video with its thumbnail when one was downloaded", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_thumbnail: true }));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+
+      const el = await waitFor(() => {
+        const v = document.querySelector("video");
+        if (!v) throw new Error("video element not mounted yet");
+        return v;
+      });
+
+      expect(el).toHaveAttribute("poster", "/api/videos/v1/thumbnail");
+      // A real thumbnail means no gradient fallback — the poster covers it.
+      expect(el.className).toBe("");
+    });
+
+    it("falls back to the per-id gradient when there is no thumbnail", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ has_thumbnail: false }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+
+      const el = await waitFor(() => {
+        const v = document.querySelector("video");
+        if (!v) throw new Error("video element not mounted yet");
+        return v;
+      });
+
+      expect(el).not.toHaveAttribute("poster");
+      expect(el.className).toBe(gradientClassFor("v1"));
+    });
   });
 
   it("flushes the latest position to setResume on unmount", async () => {
