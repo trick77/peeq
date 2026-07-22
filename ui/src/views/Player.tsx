@@ -546,25 +546,33 @@ export function Player({
     }
   }
 
-  // handleToggleWatched — both directions zero the resume position server-side
-  // (see videos.SetWatched), so the local bookkeeping has to follow. The
-  // important line is positionKnownRef = false: without it the flush effect
-  // would re-POST the pre-toggle playhead on unmount or tab-hide, restoring
-  // the position the server just cleared — and if that position was past the
-  // 90% threshold, SetResume would re-mark the video watched and silently
-  // undo an un-watch.
+  // handleToggleWatched — either direction is a deliberate "I'm done with this
+  // for now", so it stops playback and puts everything back to 0:00: the
+  // server zeroes resume_position_seconds (see videos.SetWatched), the local
+  // copy follows, and the playhead itself rewinds.
+  //
+  // Pausing is what makes that stick. A video left playing keeps firing
+  // timeupdate, and handleTimeUpdate would POST the new position within
+  // RESUME_THROTTLE_MS — writing back the position the server just cleared,
+  // and past the 90% mark re-crossing SetResume's auto-watched check, which
+  // silently undoes an un-watch. positionKnownRef = false closes the same hole
+  // for the unmount/tab-hide flush.
   async function handleToggleWatched() {
     if (!video) return;
     const next = !video.watched;
     const previousPosition = video.resume_position_seconds;
+    const el = videoRef.current;
+    // Captured for the rollback below: a failed request must leave the player
+    // exactly as it found it, not paused at 0:00 with the old state restored.
+    const wasPlaying = el ? !el.paused : false;
+    const previousPlayhead = el ? el.currentTime : 0;
+
     setVideo({ ...video, watched: next, resume_position_seconds: 0 });
-    // Un-watching means "I want to see this again", so the playhead itself
-    // goes back to 0:00. Marking watched leaves it alone — yanking a playing
-    // video back to the start would be hostile, and if playback continues,
-    // handleTimeUpdate records a fresh position honestly.
-    if (!next) seek(0);
+    el?.pause();
+    seek(0);
     positionRef.current = 0;
     positionKnownRef.current = false;
+
     try {
       await setWatched(video.id, next);
     } catch {
@@ -573,6 +581,20 @@ export function Player({
           ? { ...v, watched: !next, resume_position_seconds: previousPosition }
           : v,
       );
+      // Undo the playhead move too. Without this, a failed toggle leaves the
+      // video sitting at 0:00 while the restored state still claims the old
+      // position — and the next resume ping would persist that 0.
+      seek(previousPlayhead);
+      if (wasPlaying) {
+        try {
+          // play() returns a promise in browsers but nothing in jsdom, and it
+          // can reject outright (autoplay policy). Resuming is a nicety on an
+          // already-failed path — never let it throw over the real error.
+          void el?.play()?.catch(() => {});
+        } catch {
+          // Left paused; the state rollback above is what actually matters.
+        }
+      }
     }
   }
 

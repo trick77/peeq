@@ -75,18 +75,34 @@ export function ArchiveTab({
     }
   }
 
+  // The watched toggle zeroes resume_position_seconds server-side in both
+  // directions (videos.SetWatched), and the response carries only the watched
+  // flag — so the optimistic update has to mirror the reset. Without it,
+  // un-watching a partly-played video makes its progress bar appear (VideoCard
+  // draws it only when !watched) still showing a position the server has
+  // already cleared.
   async function handleToggleWatched(id: string) {
     const current = videos.find((v) => v.id === id);
     if (!current) return;
     const next = !current.watched;
     setVideos((prev) =>
-      prev.map((v) => (v.id === id ? { ...v, watched: next } : v)),
+      prev.map((v) =>
+        v.id === id ? { ...v, watched: next, resume_position_seconds: 0 } : v,
+      ),
     );
     try {
       await setWatched(id, next);
     } catch (e) {
       setVideos((prev) =>
-        prev.map((v) => (v.id === id ? { ...v, watched: current.watched } : v)),
+        prev.map((v) =>
+          v.id === id
+            ? {
+                ...v,
+                watched: current.watched,
+                resume_position_seconds: current.resume_position_seconds,
+              }
+            : v,
+        ),
       );
       setError((e as Error).message);
     }
