@@ -27,12 +27,18 @@ const DefaultHeartbeat = 15 * time.Second
 // That wait is deliberately UNBOUNDED, which is a trade-off worth stating:
 // callers defer stop() in the request path, so a log sink that blocks (a full
 // pipe with no reader, a wedged container log driver) now stalls the caller
-// rather than just this goroutine. It is still the right side to err on. A
-// sink that blocks has already stopped the process from logging at all, so
-// the caller's next line would block anyway; and a timeout would restore the
-// race precisely when writes are slowest, which is exactly when the goroutine
-// is most likely to still be inside one. Correctness under a wedged sink beats
-// liveness that is already lost.
+// rather than just this goroutine. It is still the right side to err on:
+//
+//   - stop() is DEFERRED, so the caller's own log lines have already run by
+//     the time it fires — llm/client.go and rag/embed.go both log their
+//     outcome and then return. Against a wedged sink the caller is therefore
+//     already stuck on its own write and never reaches stop(), so the wait
+//     adds no stall that was not there.
+//   - A timeout would restore the race precisely when writes are slowest,
+//     which is exactly when the goroutine is most likely to still be inside
+//     one. The bounded version is worst where it matters most.
+//
+// Correctness under a wedged sink beats liveness that is already lost.
 //
 // stop must be called exactly once (a defer at the call site); calling it
 // twice panics on the closed channel, which is the intended loud failure.
