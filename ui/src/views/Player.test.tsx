@@ -30,6 +30,7 @@ vi.mock("../api/videos", () => ({
   getVideo: vi.fn(),
   setFavorite: vi.fn().mockResolvedValue(true),
   setWatched: vi.fn().mockResolvedValue(true),
+  setCategory: vi.fn().mockResolvedValue("ai"),
   setResume: vi.fn().mockResolvedValue(42),
   deleteVideo: vi.fn().mockResolvedValue(undefined),
   redownload: vi.fn().mockResolvedValue(undefined),
@@ -58,7 +59,13 @@ vi.mock("../api/settings", () => ({
   updateSettings: vi.fn(),
 }));
 
-import { getVideo, setResume, redownload, deleteVideo } from "../api/videos";
+import {
+  getVideo,
+  setResume,
+  redownload,
+  deleteVideo,
+  setCategory,
+} from "../api/videos";
 import { resummarize } from "../api/search";
 import { getSettings, updateSettings } from "../api/settings";
 import type { Settings } from "../api/types";
@@ -694,5 +701,33 @@ describe("Player", () => {
     fireEvent.click(screen.getByRole("button", { name: /\.txt/i }));
     expect(createURL).toHaveBeenCalledTimes(1);
     expect(revokeURL).toHaveBeenCalledTimes(1);
+  });
+  it("writes a picked category and shows it at once", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ category: "gaming" }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const pill = await screen.findByRole("button", {
+      name: /Category: Gaming/,
+    });
+    fireEvent.click(pill);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /^AI$/ }));
+
+    expect(setCategory).toHaveBeenCalledWith("v1", "ai");
+    await screen.findByRole("button", { name: /Category: AI/ });
+  });
+
+  // Optimistic, so a failed write must put the old category back rather than
+  // leave the pill showing a choice the server never accepted.
+  it("rolls the pill back when the category write fails", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ category: "gaming" }));
+    vi.mocked(setCategory).mockRejectedValueOnce(new Error("nope"));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Category: Gaming/ }),
+    );
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /^AI$/ }));
+
+    await screen.findByRole("button", { name: /Category: Gaming/ });
   });
 });

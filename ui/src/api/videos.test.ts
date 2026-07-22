@@ -5,6 +5,7 @@ import {
   deleteVideo,
   setFavorite,
   setWatched,
+  setCategory,
   setResume,
   redownload,
   streamUrl,
@@ -84,6 +85,19 @@ describe("videos api", () => {
     expect(url).toBe("/api/videos/v1/favorite");
     expect(JSON.parse(init!.body as string)).toEqual({ favorite: true });
     expect(result).toBe(true);
+  });
+
+  it("setCategory POSTs the id and returns the server's echoed value", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ category: "science" }), { status: 200 }),
+      );
+    const result = await setCategory("v1", "science");
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/videos/v1/category");
+    expect(JSON.parse(init!.body as string)).toEqual({ category: "science" });
+    expect(result).toBe("science");
   });
 
   it("setWatched POSTs the flag and returns the server's echoed value", async () => {

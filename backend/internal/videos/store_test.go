@@ -1012,3 +1012,48 @@ func TestNextUnclassified_errorsOnClosedDB(t *testing.T) {
 		t.Fatal("expected an error querying against a closed db")
 	}
 }
+
+// TestSetCategoryIfUnset_guardsAManualPick is the whole reason the guarded
+// write exists: both classifier paths decide to classify from a row read
+// before a slow LLM call, so the write must re-check rather than trust that
+// decision.
+func TestSetCategoryIfUnset_guardsAManualPick(t *testing.T) {
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", URL: "https://youtu.be/v1", Status: "downloaded"})
+
+	// Unset: the classifier's write lands.
+	applied, err := s.SetCategoryIfUnset("v1", "ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !applied {
+		t.Fatal("applied = false, want the write to land on an uncategorized row")
+	}
+
+	// Already set — the state a manual pick leaves behind: the write is a
+	// no-op and says so, rather than silently overwriting the human.
+	applied, err = s.SetCategoryIfUnset("v1", "gaming")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("applied = true, want the guard to refuse an already-set row")
+	}
+	got, err := s.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Category != "ai" {
+		t.Fatalf("category = %q, want the existing value kept", got.Category)
+	}
+
+	// SetCategory itself stays unconditional: the user is allowed to overwrite
+	// the model, never the other way round.
+	if err := s.SetCategory("v1", "gaming"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Get("v1")
+	if got.Category != "gaming" {
+		t.Fatalf("category = %q, want gaming — a manual write must not be guarded", got.Category)
+	}
+}
