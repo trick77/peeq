@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/videos"
@@ -57,14 +59,32 @@ func findRec(recs []map[string]any, msg string) map[string]any {
 	return nil
 }
 
-// findStep returns the "step done" record for one step, or nil.
+// findStep returns the stage-done record for one step, or nil. The message
+// carries the stage ("stage 2/4 done"), so match on its shape plus the step.
 func findStep(recs []map[string]any, step string) map[string]any {
+	return findStageRec(recs, step, "done")
+}
+
+// findStageRec finds a stage line for one step by its trailing verb
+// ("started", "done", "skipped").
+func findStageRec(recs []map[string]any, step, verb string) map[string]any {
 	for _, r := range recs {
-		if r["msg"] == "summarize worker: step done" && r["step"] == step {
+		msg, _ := r["msg"].(string)
+		if strings.HasPrefix(msg, "summarize worker: stage ") && strings.HasSuffix(msg, " "+verb) && r["step"] == step {
 			return r
 		}
 	}
 	return nil
+}
+
+// recStage pulls "2/4" out of a "summarize worker: stage 2/4 done" message.
+func recStage(rec map[string]any) string {
+	msg, _ := rec["msg"].(string)
+	fields := strings.Fields(msg)
+	if len(fields) < 4 {
+		return ""
+	}
+	return fields[3]
 }
 
 func captureLogger() (*slog.Logger, *logBuf) {
@@ -86,7 +106,13 @@ func (u *usageCompleter) Complete(ctx context.Context, m []llm.Message) (string,
 	u.mu.Lock()
 	u.steps = append(u.steps, info.Step)
 	u.mu.Unlock()
-	info.Totals.Add(llm.Usage{Requests: 1, PromptTokens: 1000, CompletionTokens: 200, ReasoningTokens: 120, TotalTokens: 1200})
+	// Accounted mirrors what the real client counts when the endpoint sends a
+	// usage object; without it the totals log no token fields at all.
+	info.Totals.Add(llm.Usage{
+		Requests: 1, Accounted: 1,
+		PromptTokens: 1000, CompletionTokens: 200, ReasoningTokens: 120, TotalTokens: 1200,
+		InferenceNanos: int64(250 * time.Millisecond),
+	})
 
 	sys := m[0].Content
 	switch {
@@ -178,17 +204,30 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 	}
 	for k, want := range map[string]any{
 		"video_id": "v1", "title": "A Test Video", "channel": "A Test Channel",
-		"attempt": float64(1), "max_attempts": float64(3), "resumed": false,
+		"attempt": "1/3", "resumed": false,
 	} {
 		if start[k] != want {
 			t.Errorf("started.%s = %v, want %v", k, start[k], want)
 		}
 	}
 
-	for _, step := range []string{"summary", "classify", "embedding", "keypoints"} {
+	// Every stage announces itself before it runs and reports when it is done,
+	// both numbered, so the log says where a video is while it is still there.
+	for i, step := range pipelineStages {
+		stage := strconv.Itoa(i+1) + "/4"
+		start := findStageRec(recs, step, "started")
+		if start == nil {
+			t.Fatalf("stage %s (%s) never announced its start", stage, step)
+		}
+		if got := recStage(start); got != stage {
+			t.Errorf("%s started as stage %s, want %s", step, got, stage)
+		}
 		rec := findStep(recs, step)
 		if rec == nil {
-			t.Fatalf("no 'step done' record for %q", step)
+			t.Fatalf("no stage-done record for %q", step)
+		}
+		if got := recStage(rec); got != stage {
+			t.Errorf("%s finished as stage %s, want %s", step, got, stage)
 		}
 		if _, ok := rec["duration_ms"]; !ok {
 			t.Errorf("step %q has no duration_ms: %v", step, rec)
@@ -214,6 +253,26 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 	fin := findRec(recs, "summarize worker: analysis finished")
 	if fin == nil {
 		t.Fatal("no 'analysis finished' record")
+	}
+	// Inference time is the sum of the calls' own durations, and wait_ms is
+	// everything else — pacing, embedding, disk, SQLite.
+	inference, _ := fin["chat_inference_ms"].(float64)
+	if inference <= 0 {
+		t.Errorf("finished record has no inference time: %v", fin)
+	}
+	// duration - inference, floored at zero. The fake bills more inference than
+	// this in-memory run takes in wall time, so here it floors.
+	wantWait := fin["duration_ms"].(float64) - inference
+	if wantWait < 0 {
+		wantWait = 0
+	}
+	if wait, _ := fin["wait_ms"].(float64); wait != wantWait {
+		t.Errorf("wait_ms %v, want %v (duration %v - inference %v)", wait, wantWait, fin["duration_ms"], inference)
+	}
+	// A reported zero must show as a zero rather than vanish (the whole point
+	// of the Reported flag).
+	if fin["chat_tokens_cached"] != "0" {
+		t.Errorf("reported cached zero missing: %v", fin)
 	}
 	if fin["outcome"] != "done" || fin["video_id"] != "v1" || fin["title"] != "A Test Video" {
 		t.Errorf("finished record = %v", fin)
@@ -260,17 +319,25 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	if start := findRec(recs, "summarize worker: analysis started"); start["resumed"] != true {
 		t.Errorf("resumed = %v, want true", start["resumed"])
 	}
-	var skipped []string
-	for _, r := range recs {
-		if r["msg"] == "summarize worker: step skipped" {
-			skipped = append(skipped, r["step"].(string))
+	// A skipped stage keeps its own number, so the stages a resumed job does
+	// run are still numbered where a reader expects them.
+	for _, want := range []struct{ step, stage string }{
+		{"summary", "1/4"}, {"classify", "2/4"}, {"embedding", "3/4"},
+	} {
+		rec := findStageRec(recs, want.step, "skipped")
+		if rec == nil {
+			t.Fatalf("stage %s (%s) was not logged as skipped", want.stage, want.step)
+		}
+		if got := recStage(rec); got != want.stage {
+			t.Errorf("%s skipped as stage %s, want %s", want.step, got, want.stage)
 		}
 	}
-	if len(skipped) != 3 {
-		t.Fatalf("skipped steps = %v, want summary/classify/embedding", skipped)
+	kp := findStep(recs, "keypoints")
+	if kp == nil {
+		t.Fatal("key-points stage did not run on the resumed job")
 	}
-	if findStep(recs, "keypoints") == nil {
-		t.Error("key-points step did not run on the resumed job")
+	if got := recStage(kp); got != "4/4" {
+		t.Errorf("keypoints ran as stage %s, want 4/4", got)
 	}
 }
 
@@ -293,7 +360,7 @@ func TestWorkerLogsRetryAttemptWhenKeyPointsFail(t *testing.T) {
 		t.Fatal("no retry record")
 	}
 	for k, want := range map[string]any{
-		"attempt": float64(1), "max_attempts": float64(3), "will_retry": true,
+		"attempt": "1/3", "will_retry": true,
 		"title": "A Test Video", "channel": "A Test Channel",
 	} {
 		if rec[k] != want {
@@ -327,8 +394,13 @@ func TestWorkerLogsExhaustedRetryAsFinal(t *testing.T) {
 		t.Fatal("expected the key-points failure to surface")
 	}
 	recs := buf.records(t)
-	if rec := findRec(recs, "summarize worker: key-points step failed"); rec["will_retry"] != false {
+	rec := findRec(recs, "summarize worker: key-points step failed")
+	if rec["will_retry"] != false {
 		t.Errorf("retry.will_retry = %v, want false", rec["will_retry"])
+	}
+	// The last allowed attempt reads as such in one field.
+	if rec["attempt"] != "3/3" {
+		t.Errorf("retry.attempt = %v, want 3/3", rec["attempt"])
 	}
 	if fin := findRec(recs, "summarize worker: analysis finished"); fin["will_retry"] != false {
 		t.Errorf("finished.will_retry = %v, want false", fin["will_retry"])
@@ -389,6 +461,27 @@ func TestWorkerLogsNoTranscriptReason(t *testing.T) {
 	}
 }
 
+func TestStageNumbering(t *testing.T) {
+	for i, step := range pipelineStages {
+		want := strconv.Itoa(i+1) + "/4"
+		if got := stageOf(step); got != want {
+			t.Errorf("stageOf(%q) = %q, want %q", step, got, want)
+		}
+	}
+	// A stage that was added to the pipeline but never listed is named rather
+	// than mis-numbered, and its message stays readable instead of collapsing
+	// to "stage  done" with a hole in it.
+	if got := stageOf("not-a-stage"); got != "" {
+		t.Errorf("stageOf an unlisted stage = %q, want empty", got)
+	}
+	if got := stageMessage("not-a-stage", "done"); got != "summarize worker: stage not-a-stage done" {
+		t.Errorf("stageMessage of an unlisted stage = %q", got)
+	}
+	if got := stageMessage("classify", "started"); got != "summarize worker: stage 2/4 started" {
+		t.Errorf("stageMessage(classify) = %q", got)
+	}
+}
+
 func TestAnalysisRunNilIsAnInertRun(t *testing.T) {
 	// The failure paths that run before the analysis is announced — and the
 	// panic recovery, which may fire before it exists — call these on a nil
@@ -402,11 +495,16 @@ func TestAnalysisRunNilIsAnInertRun(t *testing.T) {
 	}
 	run.skipped("summary", "n/a")
 	run.finished("error")
-	ctx, done := run.step("summary")
-	if ctx == nil {
-		t.Fatal("nil run returned a nil context")
-	}
-	done("extra", 1)
+
+	// step is the exception: it would have to invent a context, and an
+	// invented one carries no cancellation, so its LLM calls would outlive a
+	// shutdown. It panics instead of degrading quietly.
+	defer func() {
+		if recover() == nil {
+			t.Error("step on a nil run did not panic")
+		}
+	}()
+	run.step("summary")
 }
 
 // panicCompleter blows up inside the summary step, exercising processOne's

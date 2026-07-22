@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -327,11 +328,37 @@ func (w *Worker) startRun(ctx context.Context, job *summaryjobs.Job, video *vide
 		started: time.Now(),
 	}
 	r.log.Info("summarize worker: analysis started", append(r.ident(),
-		"attempt", job.Attempts, "max_attempts", job.MaxAttempts,
+		"attempt", attemptLabel(job),
 		// A resumed job already has a usable summary and is only redoing the
 		// fragile key-points step.
 		"resumed", video.SummaryStatus == "done")...)
 	return r
+}
+
+// attemptLabel renders the queue's retry counters as "1/3" — one field to read
+// instead of two to correlate. ClaimNext has already incremented attempts, so
+// it reads as "this attempt, of the allowed maximum".
+func attemptLabel(job *summaryjobs.Job) string {
+	return strconv.Itoa(job.Attempts) + "/" + strconv.Itoa(job.MaxAttempts)
+}
+
+// pipelineStages are the analysis stages in execution order. Their position is
+// what "2/4" in a log line counts against, so a stage a resumed job skips still
+// leaves the others numbered where a reader expects them.
+var pipelineStages = []string{"summary", "classify", "embedding", "keypoints"}
+
+// stageMessage builds a stage line's message: "stage 2/4 done". A stage that
+// is not in pipelineStages is named instead of numbered — a wrong number would
+// silently renumber its neighbours, and a bare "stage  done" would just look
+// broken.
+func stageMessage(name, verb string) string {
+	for i, s := range pipelineStages {
+		if s == name {
+			return "summarize worker: stage " + strconv.Itoa(i+1) + "/" +
+				strconv.Itoa(len(pipelineStages)) + " " + verb
+		}
+	}
+	return "summarize worker: stage " + name + " " + verb
 }
 
 // ident is the video identity every line repeats. It returns a fresh slice so
@@ -346,21 +373,40 @@ func (r *analysisRun) ident() []any {
 // step marks the start of a pipeline step and returns the context its LLM
 // calls must use plus the func that logs the step as done. Extra key/values
 // passed to that func are appended to the line.
+// A nil run has no context to hand out, and handing out a background one would
+// give the caller's LLM calls no cancellation — they would outlive a shutdown
+// by up to the client timeout. Steps only ever run once the analysis has
+// started, so this cannot happen; it panics rather than degrading quietly if
+// that ever changes.
 func (r *analysisRun) step(name string) (context.Context, func(extra ...any)) {
 	if r == nil {
-		return context.Background(), func(...any) {}
+		panic("summarize: step on a nil analysis run — a stage ran before the analysis started")
 	}
 	started := time.Now()
 	before := r.totals.Snapshot()
 	r.stepStarted = started
-	sctx := llm.WithStep(r.ctx, name)
+	// The stage rides on the context too, so the client's "still waiting"
+	// heartbeat says which stage of which video is stuck.
+	sctx := llm.WithStage(llm.WithStep(r.ctx, name), stageOf(name))
+	r.log.Info(stageMessage(name, "started"), append([]any{"step", name}, r.ident()...)...)
 	return sctx, func(extra ...any) {
 		attrs := append([]any{"step", name}, r.ident()...)
 		attrs = append(attrs, "duration_ms", time.Since(started).Milliseconds())
 		attrs = append(attrs, extra...)
 		attrs = append(attrs, r.totals.Snapshot().Sub(before).LogAttrs()...)
-		r.log.Info("summarize worker: step done", attrs...)
+		r.log.Info(stageMessage(name, "done"), attrs...)
 	}
+}
+
+// stageOf is the "2/4" the client's heartbeat carries; empty for a stage that
+// is not in pipelineStages, since CallInfo omits an empty stage entirely.
+func stageOf(name string) string {
+	for i, s := range pipelineStages {
+		if s == name {
+			return strconv.Itoa(i+1) + "/" + strconv.Itoa(len(pipelineStages))
+		}
+	}
+	return ""
 }
 
 // stepElapsedMs is the running step's wall time, for that step's own failure
@@ -378,7 +424,8 @@ func (r *analysisRun) skipped(name, reason string) {
 	if r == nil {
 		return
 	}
-	r.log.Debug("summarize worker: step skipped", append([]any{"step", name}, append(r.ident(), "reason", reason)...)...)
+	r.log.Debug(stageMessage(name, "skipped"),
+		append([]any{"step", name}, append(r.ident(), "reason", reason)...)...)
 }
 
 // finished logs the whole analysis: wall time plus the chat tokens it cost.
@@ -390,11 +437,23 @@ func (r *analysisRun) finished(outcome string) {
 	if r == nil {
 		return
 	}
+	total := r.totals.Snapshot()
+	elapsed := time.Since(r.started).Milliseconds()
+	// Everything that was not inference: the pacing gap, embedding, VTT
+	// parsing, SQLite writes. Printed so the numbers on the line add up and a
+	// slow video can be blamed on the right thing. Clamped at zero: inference
+	// is a subset of the run, so a negative here would be an accounting bug,
+	// and a nonsense negative in the log helps nobody.
+	wait := elapsed - total.InferenceMillis()
+	if wait < 0 {
+		wait = 0
+	}
 	attrs := append(r.ident(), "outcome", outcome,
-		"duration_ms", time.Since(r.started).Milliseconds(),
-		"attempt", r.job.Attempts, "max_attempts", r.job.MaxAttempts,
+		"duration_ms", elapsed,
+		"wait_ms", wait,
+		"attempt", attemptLabel(r.job),
 		"will_retry", outcome != "done" && r.job.Attempts < r.job.MaxAttempts)
-	r.log.Info("summarize worker: analysis finished", append(attrs, r.totals.Snapshot().LogAttrs()...)...)
+	r.log.Info("summarize worker: analysis finished", append(attrs, total.LogAttrs()...)...)
 }
 
 // finishNoTranscript closes out a video that has nothing to summarize. It is a
@@ -540,7 +599,7 @@ func (w *Worker) requeueJob(job *summaryjobs.Job, video *videos.Video, run *anal
 	// will_retry=false means Jobs.Fail is about to mark this failed for good
 	// rather than requeue it — same vocabulary as the finished line.
 	w.d.Logger.Warn("summarize worker: key-points step failed",
-		append(run.ident(), "attempt", job.Attempts, "max_attempts", job.MaxAttempts,
+		append(run.ident(), "attempt", attemptLabel(job),
 			"will_retry", job.Attempts < job.MaxAttempts,
 			"step_duration_ms", run.stepElapsedMs(), "err", msg)...)
 	run.finished("keypoints_failed")

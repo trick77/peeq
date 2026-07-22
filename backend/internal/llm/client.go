@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -26,6 +27,7 @@ const (
 	defaultTimeout    = 5 * time.Minute
 	maxErrorBody      = 4 << 10
 	pacedLogThreshold = time.Second
+	maxRawUsage       = 1 << 10
 )
 
 // Config configures the chat client. BaseURL is the OpenAI-compatible root
@@ -139,6 +141,7 @@ type chatUsage struct {
 func (u chatUsage) toUsage() Usage {
 	return Usage{
 		Requests:         1,
+		Accounted:        boolToCount(u.reported()),
 		PromptTokens:     u.PromptTokens,
 		CachedTokens:     u.PromptTokensDetails.CachedTokens,
 		CompletionTokens: u.CompletionTokens,
@@ -147,11 +150,41 @@ func (u chatUsage) toUsage() Usage {
 	}
 }
 
+// boolToCount turns "this call reported usage" into the counter Usage keeps,
+// so a total can say how many of its calls were actually accounted for.
+func boolToCount(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// reported says the endpoint sent a usage object with something in it, so its
+// zeros are answers rather than silence. Mirrors loom's TokenUsage.Present.
+func (u chatUsage) reported() bool {
+	return u.PromptTokens != 0 || u.CompletionTokens != 0 || u.TotalTokens != 0 ||
+		u.PromptTokensDetails.CachedTokens != 0 || u.CompletionTokensDetails.ReasoningTokens != 0
+}
+
 type chatResponse struct {
 	Choices []struct {
 		Message Message `json:"message"`
 	} `json:"choices"`
-	Usage chatUsage `json:"usage"`
+	// Kept verbatim rather than decoded in place: the same bytes then feed both
+	// chatUsage and the debug line that shows what the endpoint really sent,
+	// which is what settles whether a zero is the endpoint's answer or a field
+	// name we do not know about. (Two struct fields cannot share one json tag.)
+	Usage json.RawMessage `json:"usage"`
+}
+
+// usage decodes the raw usage object; an absent or malformed one yields the
+// zero chatUsage, i.e. "not reported", never an error.
+func (r chatResponse) usage() chatUsage {
+	var u chatUsage
+	if len(r.Usage) > 0 {
+		_ = json.Unmarshal(r.Usage, &u)
+	}
+	return u
 }
 
 // Complete runs a single non-streaming chat completion and returns the first
@@ -209,9 +242,39 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 		return fail(fmt.Errorf("chat response had no choices"))
 	}
 
-	usage := parsed.Usage.toUsage()
+	// Inference is measured from `started`, which is taken after pace()
+	// returns, so the deliberate gap between calls is accounted separately
+	// instead of inflating the model's apparent latency.
+	inference := time.Since(started)
+	usage := parsed.usage().toUsage()
+	usage.InferenceNanos = int64(inference)
+	usage.PacedNanos = int64(pacedFor)
 	info.Totals.Add(usage)
-	attrs := append(info.LogAttrs(), "duration_ms", time.Since(started).Milliseconds(), "status", resp.StatusCode)
+
+	if len(parsed.Usage) > 0 {
+		c.log.Debug("llm: usage raw", append(info.LogAttrs(), "usage", truncate(string(parsed.Usage), maxRawUsage))...)
+	} else {
+		c.log.Debug("llm: no usage reported", info.LogAttrs()...)
+	}
+	// chat_inference_ms comes from usage.LogAttrs below and is this call's
+	// duration, so printing duration_ms here too would be the same number
+	// twice. status is what this line adds on top of the accounting.
+	attrs := append(info.LogAttrs(), "status", resp.StatusCode)
 	c.log.Debug("llm: request done", append(attrs, usage.LogAttrs()...)...)
 	return parsed.Choices[0].Message.Content, nil
+}
+
+// truncate caps a log value, marking it so a cut is never mistaken for the
+// endpoint's own output. It cuts on a rune boundary: a byte-offset cut can
+// split a multi-byte character and put invalid UTF-8 in the log, which is not
+// hypothetical against an endpoint that returns non-ASCII field values.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…(truncated)"
 }
