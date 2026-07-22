@@ -1,0 +1,13 @@
+-- category became a queried column in this release, and two hot paths filter
+-- on it with nothing to seek: the Library's ?category= chip, and the summarize
+-- worker's idle classify sweep (videos.Store.NextUnclassified), which runs
+-- every poll interval — 2s — for as long as the queue is empty.
+--
+-- 0001 indexed status, which the sweep used to lean on. It no longer filters
+-- by status (classification reads a title and a summary, never the media), so
+-- without this index every idle turn is a full scan of videos, worst exactly
+-- when the table is largest and the post-0004 backlog is draining.
+--
+-- summary is deliberately not part of the index: it is a TEXT blob, and
+-- 'uncategorized' is selective enough on its own once the backlog is gone.
+CREATE INDEX IF NOT EXISTS idx_videos_category ON videos(category);

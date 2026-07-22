@@ -515,15 +515,24 @@ func (s *Store) SetCategoryIfUnset(id, category string) (bool, error) {
 // video has no summary and so is still excluded, which is the case that stays
 // uncategorized by design.
 //
-// Migration 0004's reset selects on this same "has a summary" rule; the two
-// must stay in step, and TestResetSetMatchesTheSweep pins them together.
+// category_manual = 0 is the second condition, and it is here because
+// SetCategoryIfUnset — the only writer this query feeds — refuses a flagged
+// row. Selecting a row its own writer will reject is not a no-op: classifyOne
+// treats applied=false as "the user picked one meanwhile" and deliberately
+// does not park the video, on the premise that it no longer matches this
+// query. Leave the flag out and that premise is false, so a flagged row still
+// reading 'uncategorized' comes back every idle turn and burns a classify call
+// each time, forever.
+//
+// Migration 0004's reset selects on these same two rules; the two must stay in
+// step, and TestResetSetMatchesTheSweep pins them together.
 //
 // skip is the caller's in-process set of video ids whose classify call errored,
 // excluded so one persistently failing video cannot starve the rest of the
 // backlog.
 func (s *Store) NextUnclassified(skip []string) (*Video, error) {
 	q := "SELECT " + videoColumns + ` FROM videos
-		WHERE category = ? AND summary <> ''`
+		WHERE category = ? AND summary <> '' AND category_manual = 0`
 	args := []any{UncategorizedCategory}
 	if len(skip) > 0 {
 		q += " AND id NOT IN (?" + strings.Repeat(",?", len(skip)-1) + ")"

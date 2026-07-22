@@ -1372,22 +1372,31 @@ func TestClearSummary_errorsOnClosedDB(t *testing.T) {
 func TestResetSetMatchesTheSweep(t *testing.T) {
 	s := newTestStore(t)
 
-	// Given: one row per shape, all carrying an old-enum category.
-	seeds := []struct{ id, status, summary, summaryStatus string }{
-		{"downloaded", "downloaded", "a summary", "done"},
-		{"tombstoned", "tombstoned", "a summary", "done"},   // media reclaimed, summary kept
-		{"notranscript", "downloaded", "", "no_transcript"}, // nothing to classify from
-		{"queued", "queued", "", "pending"},
-		{"errored", "error", "a summary", "error"},
+	// Given: one row per shape. 'category' is the row's category BEFORE the
+	// reset, and 'uncategorized' here is not filler — a no-transcript video
+	// really does sit at the column default in production, and it is the shape
+	// that catches a "cleared" set computed as "uncategorized afterwards".
+	seeds := []struct {
+		id, status, summary, summaryStatus, category string
+		manual                                       bool
+	}{
+		{"downloaded", "downloaded", "a summary", "done", "entertainment", false},
+		{"tombstoned", "tombstoned", "a summary", "done", "history", false},         // media reclaimed, summary kept
+		{"notranscript", "downloaded", "", "no_transcript", "uncategorized", false}, // nothing to classify from
+		{"handpicked", "downloaded", "", "no_transcript", "gaming", true},           // the picker's whole reason to exist
+		{"queued", "queued", "", "pending", "uncategorized", false},
+		{"errored", "error", "a summary", "error", "news", false},
+		{"handpicked-summarized", "downloaded", "a summary", "done", "ai", true},
 	}
 	for _, sd := range seeds {
 		seedVideo(t, s, Video{ID: sd.id, URL: "https://youtu.be/" + sd.id, Status: sd.status})
 		if _, err := s.db.ExecContext(context.Background(),
-			`UPDATE videos SET summary = ?, summary_status = ?, category = 'entertainment' WHERE id = ?`,
-			sd.summary, sd.summaryStatus, sd.id); err != nil {
+			`UPDATE videos SET summary = ?, summary_status = ?, category = ?, category_manual = ? WHERE id = ?`,
+			sd.summary, sd.summaryStatus, sd.category, boolToInt(sd.manual), sd.id); err != nil {
 			t.Fatal(err)
 		}
 	}
+	before := idsWithCategory(t, s, UncategorizedCategory)
 
 	// When: the migration's own UPDATE runs. The test DB is already at 0004,
 	// so replaying just this statement is what an upgrade does to the data.
@@ -1395,11 +1404,12 @@ func TestResetSetMatchesTheSweep(t *testing.T) {
 		t.Fatalf("replay 0004 reset: %v", err)
 	}
 
-	// Then: cleared set == sweep-reachable set, by construction rather than by
-	// a hardcoded list, so tightening either side alone fails here.
-	cleared := idsWithCategory(t, s, UncategorizedCategory)
+	// Then: the set the reset CHANGED — not the set that reads 'uncategorized'
+	// now, which would also count rows that were already there and could never
+	// be reclassified — equals the set the sweep offers.
+	cleared := minusSet(idsWithCategory(t, s, UncategorizedCategory), before)
 	reachable := []string{}
-	for {
+	for i := 0; i <= len(seeds); i++ {
 		v, err := s.NextUnclassified(reachable)
 		if err != nil {
 			t.Fatal(err)
@@ -1408,6 +1418,11 @@ func TestResetSetMatchesTheSweep(t *testing.T) {
 			break
 		}
 		reachable = append(reachable, v.ID)
+		if i == len(seeds) {
+			// Bounded on purpose: an unbounded drain turns a broken skip clause
+			// into a hung suite instead of a failed assertion.
+			t.Fatalf("NextUnclassified still returning rows after %d turns: %v", i+1, reachable)
+		}
 	}
 	if !sameSet(cleared, reachable) {
 		t.Fatalf("reset cleared %v but the sweep can reach %v — a row in the difference is either\n"+
@@ -1416,8 +1431,34 @@ func TestResetSetMatchesTheSweep(t *testing.T) {
 	// And the rule both sides are meant to encode, stated once so a mutual
 	// drift (both sides wrong the same way) still fails.
 	if !sameSet(cleared, []string{"downloaded", "tombstoned", "errored"}) {
-		t.Fatalf("cleared %v, want every row that has a summary and only those", cleared)
+		t.Fatalf("cleared %v, want every row that has a summary and is not a hand pick, and only those", cleared)
 	}
+	// And the hand picks are untouched — the column's entire purpose.
+	for _, id := range []string{"handpicked", "handpicked-summarized"} {
+		var got string
+		if err := s.db.QueryRowContext(context.Background(),
+			`SELECT category FROM videos WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got == UncategorizedCategory {
+			t.Fatalf("%s was cleared; a flagged row must survive a bulk reset", id)
+		}
+	}
+}
+
+// minusSet returns the ids in a that are not in b.
+func minusSet(a, b []string) []string {
+	drop := map[string]bool{}
+	for _, s := range b {
+		drop[s] = true
+	}
+	out := []string{}
+	for _, s := range a {
+		if !drop[s] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // migration0004Update returns the UPDATE statement from the real migration
@@ -1429,8 +1470,12 @@ func migration0004Update(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	for _, stmt := range strings.Split(string(body), ";") {
-		if s := strings.TrimSpace(stripSQLComments(stmt)); strings.HasPrefix(s, "UPDATE") {
+	// Comments first, THEN split: a semicolon inside the migration's prose
+	// would otherwise cut a statement in half, and the half that survives may
+	// still start with UPDATE — a truncated WHERE that quietly clears more
+	// than the real migration does.
+	for _, stmt := range strings.Split(stripSQLComments(string(body)), ";") {
+		if s := strings.TrimSpace(stmt); strings.HasPrefix(s, "UPDATE") {
 			return s
 		}
 	}

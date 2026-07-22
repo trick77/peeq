@@ -12,12 +12,19 @@
 --
 -- The WHERE clause is load-bearing and must keep matching
 -- videos.Store.NextUnclassified, which is what the sweep selects on: a row may
--- only be cleared if the sweep can hand it back. Both sides say "has a
--- summary", and videos.TestResetSetMatchesTheSweep reads this file to pin them
--- together. A no-transcript video has no summary and so is spared here —
--- nothing could ever reclassify it, and a hand pick on the Player is the ONLY
--- way its category could have been set, so clearing it would not reclassify
--- it, it would erase it permanently.
+-- only be cleared if the sweep can hand it back. Both sides say "has a summary
+-- and is not a hand pick", and videos.TestResetSetMatchesTheSweep reads this
+-- file to pin them together. A no-transcript video has no summary and so is
+-- spared — nothing could ever reclassify it, and a hand pick on the Player is
+-- the ONLY way its category could have been set, so clearing it would not
+-- reclassify it, it would erase it permanently.
+--
+-- category_manual is redundant HERE, today: this migration is what creates the
+-- column, so every row is 0 when the statement runs. It is written anyway
+-- because the next bulk reclassification will copy this statement, and by then
+-- the flag is the whole point of the column. Omitting it there would clear a
+-- flagged row into a state the sweep offers but SetCategoryIfUnset refuses —
+-- one classify call per idle turn on that video, forever.
 --
 -- Within the cleared set, hand picks made before this migration go too. That
 -- is accepted, deliberately, and cannot be avoided: those rows carry no flag
@@ -27,4 +34,4 @@
 -- Expect the Library to read Uncategorized until the sweep drains: it is one
 -- LLM call per video, and it only runs when the summary job queue is empty.
 ALTER TABLE videos ADD COLUMN category_manual INTEGER NOT NULL DEFAULT 0;
-UPDATE videos SET category = 'uncategorized' WHERE summary <> '';
+UPDATE videos SET category = 'uncategorized' WHERE summary <> '' AND category_manual = 0;
