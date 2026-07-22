@@ -41,19 +41,27 @@ func New(c Completer) *Summarizer { return &Summarizer{c: c} }
 // or empty reply must degrade to "uncategorized", not error). This is a
 // cheap call: the input is the short summary, not the full transcript.
 //
-// allowed carries labels as well as ids so the model sees what each id means;
-// callers pass videos.ClassifiableCategories(), which excludes the
-// 'uncategorized' fallback. The prompt forces a choice on purpose: offering an
-// escape hatch made the model take it, and a rough-but-real category is more
-// useful in the Library than a bucket nobody browses.
+// allowed carries labels (and, where the neighbours blur, a hint) as well as
+// ids so the model sees what each id means; callers pass
+// videos.ClassifiableCategories(), which excludes the 'uncategorized'
+// fallback. The prompt forces a choice on purpose: offering an escape hatch
+// made the model take it, and a rough-but-real category is more useful in the
+// Library than a bucket nobody browses.
+//
+// The list is rendered one category per line rather than comma-joined: the
+// hints contain commas of their own, and a 20-plus entry inline list reads as
+// one run-on sentence.
 func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowed []videos.Category) (string, error) {
 	labelled := make([]string, len(allowed))
 	for i, c := range allowed {
-		labelled[i] = c.ID + " (" + c.Label + ")"
+		labelled[i] = "- " + c.ID + " (" + c.Label + ")"
+		if c.Hint != "" {
+			labelled[i] += ": " + c.Hint
+		}
 	}
-	sys := "You classify a video into exactly one category. The categories are: " +
-		strings.Join(labelled, ", ") +
-		". Reply with a single category id from that list and nothing else — no punctuation, " +
+	sys := "You classify a video into exactly one category. The categories are:\n" +
+		strings.Join(labelled, "\n") +
+		"\nReply with a single category id from that list and nothing else — no punctuation, " +
 		"no explanation. Always choose the closest match even when the fit is imperfect. " +
 		"Never invent an id and never refuse to choose."
 	return s.c.Complete(ctx, []llm.Message{

@@ -122,6 +122,34 @@ func TestClassifyReturnsRawReplyAndSendsAllowedIDs(t *testing.T) {
 	}
 }
 
+func TestClassifyRendersHintsOnePerLine(t *testing.T) {
+	var gotSystem string
+	fc := completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		gotSystem = m[0].Content
+		return "sports", nil
+	})
+	s := New(fc)
+	if _, err := s.Classify(context.Background(), "Is aero worth it?", "A cycling video.",
+		[]videos.Category{
+			{ID: "sports", Label: "Sports & Fitness", Hint: "cycling, running, gym"},
+			{ID: "gaming", Label: "Gaming"},
+		}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotSystem, "- sports (Sports & Fitness): cycling, running, gym") {
+		t.Fatalf("hinted category not rendered with its hint: %q", gotSystem)
+	}
+	// An unhinted category stops at the label — no stray separator.
+	if !strings.Contains(gotSystem, "- gaming (Gaming)\n") {
+		t.Fatalf("unhinted category should render label-only: %q", gotSystem)
+	}
+	// One per line: the hints carry commas of their own, so a comma-joined list
+	// would read as one category per clause.
+	if strings.Contains(gotSystem, "), - ") {
+		t.Fatalf("categories must be newline-separated, not comma-joined: %q", gotSystem)
+	}
+}
+
 // completerFunc adapts a func to the Completer interface for tests.
 type completerFunc func(context.Context, []llm.Message) (string, error)
 

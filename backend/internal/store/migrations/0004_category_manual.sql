@@ -1,0 +1,22 @@
+-- category_manual: marks a category the human picked on the Player, so a
+-- future bulk reclassification can leave it alone. Everything else on
+-- videos.category is classifier output and is safe to recompute.
+--
+-- The unconditional UPDATE below is the whole point of this migration, not an
+-- oversight. The category enum grew by eight entries (sports, food, travel,
+-- automotive, home, arts, music, politics), and the classify prompt forces a
+-- choice — so every existing row was classified against a list that could not
+-- express half of them, and a cycling video is sitting in 'entertainment'
+-- because nothing better was on offer. Only a full reset fixes that: the
+-- summarize worker's idle sweep re-classifies anything that is 'uncategorized'
+-- and has a summary, so clearing the column IS the backfill.
+--
+-- It also clears hand-picked categories made before this migration. That is
+-- accepted, deliberately, and cannot be avoided: those rows carry no flag and
+-- are indistinguishable from classifier output. The flag protects picks made
+-- from here on.
+--
+-- Expect the Library to read Uncategorized until the sweep drains: it is one
+-- LLM call per video, and it only runs when the summary job queue is empty.
+ALTER TABLE videos ADD COLUMN category_manual INTEGER NOT NULL DEFAULT 0;
+UPDATE videos SET category = 'uncategorized';

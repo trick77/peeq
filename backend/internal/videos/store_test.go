@@ -1218,6 +1218,78 @@ func TestSetCategoryIfUnset_guardsAManualPick(t *testing.T) {
 	}
 }
 
+// categoryManual reads the flag column, which is deliberately not on the Video
+// struct: nothing outside the store needs it.
+func categoryManual(t *testing.T, s *Store, id string) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT category_manual FROM videos WHERE id = ?`, id).Scan(&n); err != nil {
+		t.Fatalf("read category_manual for %s: %v", id, err)
+	}
+	return n
+}
+
+// TestSetCategory_maintainsTheManualFlag pins the rule migration 0004 depends
+// on: a real category is the human speaking and survives a bulk reset, while a
+// reset to 'uncategorized' (Re-summarize) hands the video back to the
+// classifier and must therefore clear the flag too.
+func TestSetCategory_maintainsTheManualFlag(t *testing.T) {
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", URL: "https://youtu.be/v1", Status: "downloaded"})
+	if err := s.SetSummaryText("v1", "A cycling video."); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := categoryManual(t, s, "v1"); got != 0 {
+		t.Fatalf("category_manual = %d on a fresh row, want 0", got)
+	}
+	if err := s.SetCategory("v1", "sports"); err != nil {
+		t.Fatal(err)
+	}
+	if got := categoryManual(t, s, "v1"); got != 1 {
+		t.Fatalf("category_manual = %d after a manual pick, want 1", got)
+	}
+
+	// Flagged and uncategorized at once cannot happen through the UI (the
+	// picker has no "clear" entry), but the guard is what makes that a
+	// guarantee rather than a convention, so exercise it directly.
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET category = ? WHERE id = 'v1'`, UncategorizedCategory); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := s.SetCategoryIfUnset("v1", "gaming")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("applied = true, want the classifier refused on a flagged row")
+	}
+
+	// Re-summarize: back to the classifier, flag cleared, and the idle sweep
+	// can see it again.
+	if err := s.SetCategory("v1", UncategorizedCategory); err != nil {
+		t.Fatal(err)
+	}
+	if got := categoryManual(t, s, "v1"); got != 0 {
+		t.Fatalf("category_manual = %d after a reset, want 0", got)
+	}
+	next, err := s.NextUnclassified(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next == nil || next.ID != "v1" {
+		t.Fatalf("NextUnclassified = %v, want v1 back in the backlog", next)
+	}
+	applied, err = s.SetCategoryIfUnset("v1", "sports")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !applied {
+		t.Fatal("applied = false, want the classifier's write to land once the flag is clear")
+	}
+}
+
 // TestClearSummary_wipesTheAnalysisButNotTheStatus asserts ClearSummary is the
 // exact counterpart of SetSummary: it removes the three artifacts and the error
 // text, and deliberately leaves summary_status for the caller to set, since the

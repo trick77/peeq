@@ -1,11 +1,14 @@
 package videos
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCategoryIDsCoverAllAndIncludeAI(t *testing.T) {
 	ids := CategoryIDs()
-	if len(ids) != 15 {
-		t.Fatalf("want 15 categories, got %d", len(ids))
+	if len(ids) != 23 {
+		t.Fatalf("want 23 categories, got %d", len(ids))
 	}
 	seen := map[string]bool{}
 	for _, id := range ids {
@@ -14,11 +17,51 @@ func TestCategoryIDsCoverAllAndIncludeAI(t *testing.T) {
 		}
 		seen[id] = true
 	}
-	for _, want := range []string{"ai", "uncategorized"} {
+	// The lifestyle half exists because the classify prompt forces a choice: a
+	// missing category does not yield 'uncategorized', it yields a confidently
+	// wrong neighbour (a cycling channel filed under entertainment).
+	for _, want := range []string{
+		"ai", "uncategorized",
+		"politics", "sports", "food", "travel", "automotive", "home", "arts", "music",
+	} {
 		if !seen[want] {
 			t.Fatalf("missing id %q", want)
 		}
 	}
+}
+
+func TestCategoryLabelsAndHints(t *testing.T) {
+	for _, c := range Categories {
+		if c.Label == "" {
+			t.Fatalf("category %q has no label", c.ID)
+		}
+		// Hints are rendered one category per line in the classify prompt, so a
+		// newline inside one would split a category into two bogus entries.
+		if strings.ContainsAny(c.Hint, "\n\r") {
+			t.Fatalf("category %q hint contains a newline", c.ID)
+		}
+	}
+	if hintOf(t, UncategorizedCategory) != "" {
+		t.Fatal("the fallback is never offered to the classifier; a hint on it is dead weight")
+	}
+	// The pairs the enum split apart are exactly the ones the model needs told
+	// apart, so they must carry their disambiguation.
+	for _, id := range []string{"music", "entertainment", "politics", "news", "automotive", "home"} {
+		if hintOf(t, id) == "" {
+			t.Fatalf("category %q needs a hint: it blurs into its neighbour without one", id)
+		}
+	}
+}
+
+func hintOf(t *testing.T, id string) string {
+	t.Helper()
+	for _, c := range Categories {
+		if c.ID == id {
+			return c.Hint
+		}
+	}
+	t.Fatalf("no such category %q", id)
+	return ""
 }
 
 func TestValidCategory(t *testing.T) {
@@ -61,8 +104,21 @@ func TestNormalizeCategory(t *testing.T) {
 		"category: TECH":    "tech",
 
 		// display labels
-		"Science & Research":   "science",
-		"engineering & making": "engineering",
+		"Science & Research":     "science",
+		"engineering & making":   "engineering",
+		"Sports & Fitness":       "sports",
+		"Automotive & Transport": "automotive",
+
+		// the added ids, including the two that used to share a bucket
+		"sports":        "sports",
+		"food":          "food",
+		"travel":        "travel",
+		"automotive":    "automotive",
+		"home":          "home",
+		"arts":          "arts",
+		"music":         "music",
+		"politics":      "politics",
+		"entertainment": "entertainment",
 
 		// the id buried in prose, including a hedged answer that names a real
 		// category alongside the fallback

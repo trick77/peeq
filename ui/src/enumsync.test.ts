@@ -25,10 +25,12 @@ function goCategories(): Array<{ id: string; label: string }> {
   if (!block) {
     throw new Error("could not find the Categories block in category.go");
   }
-  return [...block[1].matchAll(/\{"([^"]+)",\s*"([^"]+)"\}/g)].map((m) => ({
-    id: m[1],
-    label: m[2],
-  }));
+  // Each Go entry is {id, label, hint}. The hint is prompt-steering for the
+  // classifier and is deliberately NOT mirrored here, so it is matched (it may
+  // be empty) and then dropped.
+  return [...block[1].matchAll(/\{"([^"]+)",\s*"([^"]+)",\s*"([^"]*)"\}/g)].map(
+    (m) => ({ id: m[1], label: m[2] }),
+  );
 }
 
 describe("category enum sync", () => {

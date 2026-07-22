@@ -1,6 +1,8 @@
-// Mirrors backend/internal/videos/category.go (the authority). Colors are a
-// muted scanning aid used only as small dots; ai uses the warm accent, the
-// fallback uses --color-faint. Keep this list in sync with the Go enum.
+// Mirrors backend/internal/videos/category.go (the authority): id, label and
+// order, but not the Go enum's Hint field, which steers the classify prompt
+// and is never shown. Colors are a muted scanning aid used only as small dots;
+// ai uses the warm accent, the fallback uses --color-faint. Keep this list in
+// sync with the Go enum.
 export type CategoryMeta = { id: string; label: string; color: string };
 
 export const UNCATEGORIZED = "uncategorized";
@@ -14,12 +16,20 @@ export const CATEGORIES: CategoryMeta[] = [
   { id: "engineering", label: "Engineering & Making", color: "#d6a15a" },
   { id: "business", label: "Business & Finance", color: "#7cc86a" },
   { id: "news", label: "News & Current Events", color: "#c8607a" },
+  { id: "politics", label: "Politics & Society", color: "#a05a7c" },
   { id: "history", label: "History & Culture", color: "#c89a5a" },
   { id: "health", label: "Health & Medicine", color: "#6ac8b4" },
+  { id: "sports", label: "Sports & Fitness", color: "#c8c85a" },
+  { id: "food", label: "Food & Cooking", color: "#c85a5a" },
   { id: "nature", label: "Nature & Environment", color: "#6aa86a" },
+  { id: "travel", label: "Travel & Outdoors", color: "#5ac8c8" },
+  { id: "automotive", label: "Automotive & Transport", color: "#8c6a4a" },
+  { id: "home", label: "Home & DIY", color: "#c8a08a" },
   { id: "education", label: "Education & Tutorials", color: "#8a9ac8" },
+  { id: "arts", label: "Arts & Design", color: "#dca0a0" },
+  { id: "music", label: "Music", color: "#dc6adc" },
   { id: "gaming", label: "Gaming", color: "#b06adc" },
-  { id: "entertainment", label: "Entertainment & Music", color: "#dc6a9c" },
+  { id: "entertainment", label: "Entertainment", color: "#dc6a9c" },
   { id: "uncategorized", label: "Uncategorized", color: "#6f6d66" },
 ];
 

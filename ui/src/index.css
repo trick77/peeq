@@ -1009,7 +1009,11 @@ button.catpick.unset:hover {
   left: 0;
   z-index: 20;
   min-width: 232px;
-  max-height: 268px;
+  /* 22 categories no longer fit; the menu was already scrollable, but at 268px
+     it showed under half the list. The vh term matters more than the 380: the
+     menu opens downward with no flip-up, so a fixed height tall enough for a
+     desktop window runs off the bottom of a short one. */
+  max-height: min(380px, 50vh);
   overflow-y: auto;
   padding: 5px;
   background: var(--color-elevated);

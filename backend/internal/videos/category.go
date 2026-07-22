@@ -1,6 +1,7 @@
 // Package videos: category.go defines the fixed video-category enum (the
-// authority; the TS side mirrors it) plus reply normalization. AI is a
-// first-class category, deliberately split from general technology.
+// authority; the TS side mirrors id + label + colour, never Hint) plus reply
+// normalization. AI is a first-class category, deliberately split from general
+// technology.
 package videos
 
 import (
@@ -10,32 +11,54 @@ import (
 
 // Category is one entry of the fixed enum. ID is the stable machine string
 // stored on videos.category; Label is display-only.
+//
+// Hint is prompt-steering, not display copy: it is rendered into the classify
+// prompt to separate categories a model would otherwise confuse (a car review
+// is automotive, not tech; a workshop build is engineering, a kitchen
+// renovation is home). It is deliberately NOT mirrored into the TS enum, and
+// nothing in the UI may show it. Only ambiguous categories carry one.
 type Category struct {
 	ID    string
 	Label string
+	Hint  string
 }
 
 // UncategorizedCategory is the fallback id: used for no-transcript videos and
 // for any classifier reply that isn't an exact enum id.
 const UncategorizedCategory = "uncategorized"
 
-// Categories is the fixed, ordered enum. Order drives the Library chip order.
+// Categories is the fixed, ordered enum. Order drives the Library chip order,
+// so related buckets sit next to each other (politics beside news, travel
+// beside nature, music beside entertainment).
+//
+// The lifestyle half of the list — politics, sports, food, travel, automotive,
+// home, arts, music — was added after a cycling channel kept landing in
+// entertainment: the classify prompt forces a choice, so a missing category
+// does not produce 'uncategorized', it produces a confidently wrong one.
 var Categories = []Category{
-	{"ai", "Artificial Intelligence"},
-	{"tech", "Technology & Gadgets"},
-	{"software", "Software Engineering"},
-	{"science", "Science & Research"},
-	{"space", "Space & Astronomy"},
-	{"engineering", "Engineering & Making"},
-	{"business", "Business & Finance"},
-	{"news", "News & Current Events"},
-	{"history", "History & Culture"},
-	{"health", "Health & Medicine"},
-	{"nature", "Nature & Environment"},
-	{"education", "Education & Tutorials"},
-	{"gaming", "Gaming"},
-	{"entertainment", "Entertainment & Music"},
-	{"uncategorized", "Uncategorized"},
+	{"ai", "Artificial Intelligence", ""},
+	{"tech", "Technology & Gadgets", ""},
+	{"software", "Software Engineering", ""},
+	{"science", "Science & Research", ""},
+	{"space", "Space & Astronomy", ""},
+	{"engineering", "Engineering & Making", "workshop builds, machining, robotics, infrastructure"},
+	{"business", "Business & Finance", ""},
+	{"news", "News & Current Events", "reported events"},
+	{"politics", "Politics & Society", "politics, geopolitics, social commentary and analysis, as opposed to reported events"},
+	{"history", "History & Culture", ""},
+	{"health", "Health & Medicine", ""},
+	{"sports", "Sports & Fitness", "athletics, cycling, running, gym, training and race coverage"},
+	{"food", "Food & Cooking", "recipes, technique, restaurants, coffee, brewing"},
+	{"nature", "Nature & Environment", ""},
+	{"travel", "Travel & Outdoors", "trips, hiking, camping, places"},
+	{"automotive", "Automotive & Transport", "cars, EVs, motorsport, aviation, rail; road tests and car tech"},
+	{"home", "Home & DIY", "renovation, woodworking, gardening, repair around the house"},
+	{"education", "Education & Tutorials", "how-to and teaching where the subject fits no other category"},
+	{"arts", "Arts & Design", "photography, filmmaking, drawing, architecture, graphic design"},
+	{"music", "Music", "performances, music theory, instruments, gear, album analysis"},
+	{"gaming", "Gaming", ""},
+	{"entertainment", "Entertainment", "film, TV, comedy, celebrity, vlogs"},
+	{"uncategorized", "Uncategorized", ""},
 }
 
 // CategoryIDs returns every id in Categories order.
