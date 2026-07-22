@@ -546,14 +546,33 @@ export function Player({
     }
   }
 
+  // handleToggleWatched — both directions zero the resume position server-side
+  // (see videos.SetWatched), so the local bookkeeping has to follow. The
+  // important line is positionKnownRef = false: without it the flush effect
+  // would re-POST the pre-toggle playhead on unmount or tab-hide, restoring
+  // the position the server just cleared — and if that position was past the
+  // 90% threshold, SetResume would re-mark the video watched and silently
+  // undo an un-watch.
   async function handleToggleWatched() {
     if (!video) return;
     const next = !video.watched;
-    setVideo({ ...video, watched: next });
+    const previousPosition = video.resume_position_seconds;
+    setVideo({ ...video, watched: next, resume_position_seconds: 0 });
+    // Un-watching means "I want to see this again", so the playhead itself
+    // goes back to 0:00. Marking watched leaves it alone — yanking a playing
+    // video back to the start would be hostile, and if playback continues,
+    // handleTimeUpdate records a fresh position honestly.
+    if (!next) seek(0);
+    positionRef.current = 0;
+    positionKnownRef.current = false;
     try {
       await setWatched(video.id, next);
     } catch {
-      setVideo((v) => (v ? { ...v, watched: !next } : v));
+      setVideo((v) =>
+        v
+          ? { ...v, watched: !next, resume_position_seconds: previousPosition }
+          : v,
+      );
     }
   }
 

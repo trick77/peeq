@@ -43,7 +43,12 @@ export const SORT_OPTIONS: { id: VideoSort; label: string }[] = [
 function matchesFilter(v: Video, filter: VideoFilter): boolean {
   switch (filter) {
     case "unwatched":
-      return v.status === "downloaded" && !v.watched;
+      return (
+        (v.status === "downloaded" ||
+          v.status === "queued" ||
+          v.status === "downloading") &&
+        !v.watched
+      );
     case "watched":
       return v.watched;
     case "favorites":
@@ -52,6 +57,29 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
       return v.status === "queued" || v.status === "downloading";
     default:
       return true;
+  }
+}
+
+// WATCHED_OPEN_KEY holds whether the "Already watched" drawer is unfolded.
+// localStorage, not sessionStorage: this is a lasting preference (someone who
+// wants their history in view wants it in view tomorrow too), unlike the
+// per-tab markers this app has used elsewhere. Both accessors are guarded —
+// a disabled or full store (private mode, SSR) must never break the Library.
+const WATCHED_OPEN_KEY = "peeq.library.watchedOpen";
+
+function readWatchedOpen(): boolean {
+  try {
+    return localStorage.getItem(WATCHED_OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeWatchedOpen(open: boolean) {
+  try {
+    localStorage.setItem(WATCHED_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    // Ignore: the drawer still works for this session, it just won't persist.
   }
 }
 
@@ -71,6 +99,7 @@ export function Library({
   search: string;
 }) {
   const [filter, setFilter] = useState<VideoFilter>("all");
+  const [watchedOpen, setWatchedOpen] = useState<boolean>(readWatchedOpen);
   const [category, setCategory] = useState<string>("all");
   const [sort, setSort] = useState<VideoSort>("newest");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -245,11 +274,18 @@ export function Library({
       videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
     if (!current) return;
     const next = !current.watched;
-    applyLocalUpdate(id, { watched: next });
+    // The API answers with the watched flag alone, so the zeroed resume
+    // position has to be mirrored here: without it, un-watching a card would
+    // make the progress bar appear (VideoCard only draws it when !watched)
+    // still showing the position the server has just cleared.
+    applyLocalUpdate(id, { watched: next, resume_position_seconds: 0 });
     try {
       await setWatched(id, next);
     } catch {
-      applyLocalUpdate(id, { watched: current.watched });
+      applyLocalUpdate(id, {
+        watched: current.watched,
+        resume_position_seconds: current.resume_position_seconds,
+      });
     }
   }
 
@@ -268,6 +304,30 @@ export function Library({
   }
 
   const retentionDays = settings?.retention_days ?? 14;
+
+  // The Library leads with what is still to watch: already-watched videos are
+  // split out of the main grid and folded into a drawer below it. The
+  // "watched" chip is the one place the split would leave an empty grid, so
+  // there everything stays where it is.
+  const splitWatched = filter !== "watched";
+  const queue = splitWatched ? videos.filter((v) => !v.watched) : videos;
+  const watchedVideos = splitWatched ? videos.filter((v) => v.watched) : [];
+
+  function renderCard(video: Video) {
+    return (
+      <VideoCard
+        key={video.id}
+        video={video}
+        retentionDays={retentionDays}
+        progress={progressByVideoId[video.id]}
+        onOpen={onOpenVideo}
+        onToggleFavorite={handleToggleFavorite}
+        onToggleWatched={handleToggleWatched}
+        onOpenChannel={onOpenChannel}
+        onRedownload={handleRedownload}
+      />
+    );
+  }
 
   return (
     <>
@@ -327,23 +387,39 @@ export function Library({
         </select>
       </div>
       {error ? <div className="errline">{error}</div> : null}
-      <div className="grid">
-        {videos.map((video) => (
-          <VideoCard
-            key={video.id}
-            video={video}
-            retentionDays={retentionDays}
-            progress={progressByVideoId[video.id]}
-            onOpen={onOpenVideo}
-            onToggleFavorite={handleToggleFavorite}
-            onToggleWatched={handleToggleWatched}
-            onOpenChannel={onOpenChannel}
-            onRedownload={handleRedownload}
-          />
-        ))}
-      </div>
-      {videos.length === 0 && !error ? (
-        <p style={{ color: "var(--color-faint)" }}>No videos yet.</p>
+      <div className="grid">{queue.map(renderCard)}</div>
+      {queue.length === 0 && !error ? (
+        <p style={{ color: "var(--color-faint)" }}>
+          {watchedVideos.length > 0
+            ? "Nothing left to watch."
+            : "No videos yet."}
+        </p>
+      ) : null}
+      {watchedVideos.length > 0 ? (
+        <details
+          className="drawer"
+          open={watchedOpen}
+          onToggle={(e) => {
+            const open = (e.currentTarget as HTMLDetailsElement).open;
+            setWatchedOpen(open);
+            writeWatchedOpen(open);
+          }}
+        >
+          <summary className="drawer-head">
+            <span className="drawer-title">
+              Already watched <span className="n">{watchedVideos.length}</span>
+            </span>
+            <span className="drawer-btn">
+              <span className="caret" aria-hidden="true">
+                ▾
+              </span>
+              {watchedOpen ? "Hide" : "Show"}
+            </span>
+          </summary>
+          <div className="drawer-body">
+            <div className="grid">{watchedVideos.map(renderCard)}</div>
+          </div>
+        </details>
       ) : null}
     </>
   );

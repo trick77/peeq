@@ -110,6 +110,44 @@ func TestVideosResume_autoMarksWatchedAtNinetyPercent(t *testing.T) {
 	}
 }
 
+// TestVideosWatched_clearsResumePosition covers the HTTP layer of the manual
+// mark-watched rule: the toggle drops the stored resume position, and the GET
+// a client would follow up with reports 0. The response body itself only
+// carries the watched flag, which is exactly why the position has to be
+// observable here.
+func TestVideosWatched_clearsResumePosition(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", DurationSeconds: 600}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetResume("v1", 120); err != nil {
+		t.Fatalf("seed resume: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	body, _ := json.Marshal(map[string]bool{"watched": true})
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/watched", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST watched status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET video status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got videoDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode video: %v", err)
+	}
+	if !got.Watched {
+		t.Fatalf("watched = false, want true")
+	}
+	if got.ResumePositionSeconds != 0 {
+		t.Fatalf("resume_position_seconds = %v, want 0", got.ResumePositionSeconds)
+	}
+}
+
 // TestVideosDelete_tombstonesRowAndUnlinksFile is the central Task 11
 // delete guarantee: DELETE removes the media file from disk but keeps the
 // row, clearing media_path and setting status=tombstoned.

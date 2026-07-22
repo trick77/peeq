@@ -323,6 +323,8 @@ describe("Library category chips", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    // Drops the localStorage stub the drawer-persistence test installs.
+    vi.unstubAllGlobals();
   });
 
   it("renders a category chip row and filters by category", async () => {
@@ -529,8 +531,14 @@ describe("Library category chips", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
 
+    // The optimistic flip lands synchronously with the click and the
+    // rejection reverts it on the next macrotask, so this has to be a plain
+    // query rather than a findBy: awaiting first lets the rollback win, and
+    // holding on to a resolved node is no help either — the card moves into
+    // the "Already watched" drawer and back, so its buttons are unmounted and
+    // remounted rather than relabelled in place.
     expect(
-      await screen.findByRole("button", { name: "Mark unwatched" }),
+      screen.getByRole("button", { name: "Mark unwatched" }),
     ).toBeInTheDocument();
 
     await waitFor(() => {
@@ -538,6 +546,75 @@ describe("Library category chips", () => {
         screen.getByRole("button", { name: "Mark watched" }),
       ).toBeInTheDocument();
     });
+  });
+
+  it("moves a watched video into the drawer and clears its progress bar", async () => {
+    // 40% in and unwatched: the card starts with a resume bar in the main
+    // grid. Marking it watched must move it into the drawer *and* drop the
+    // stored position — the API answers with the watched flag alone, so a
+    // Library that forgot to zero it locally would show the bar again the
+    // moment the card is un-watched.
+    const v = categoryVideo({
+      id: "v1",
+      watched: false,
+      duration_seconds: 100,
+      resume_position_seconds: 40,
+    });
+    vi.mocked(listVideos).mockResolvedValue([v]);
+    vi.mocked(setWatched).mockResolvedValue(true);
+    render(<Library onOpenVideo={() => {}} search="" />);
+    await screen.findByText("A Test Video");
+
+    expect(document.querySelector(".resume")).not.toBeNull();
+    expect(screen.queryByText("Already watched")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
+    await waitFor(() => expect(setWatched).toHaveBeenCalledWith("v1", true));
+
+    // Out of the queue, into the drawer.
+    expect(screen.getByText("Already watched")).toBeInTheDocument();
+    expect(document.querySelector(".drawer-body .card")).not.toBeNull();
+    expect(screen.getByText("Nothing left to watch.")).toBeInTheDocument();
+
+    // And the position is gone: un-watching brings the card back with no bar.
+    vi.mocked(setWatched).mockResolvedValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "Mark unwatched" }));
+    await waitFor(() => expect(setWatched).toHaveBeenCalledWith("v1", false));
+    expect(document.querySelector(".resume")).toBeNull();
+  });
+
+  it("remembers the watched drawer's open state across mounts", async () => {
+    // This environment's localStorage is a stub without getItem/setItem — the
+    // Library's guarded accessors swallow that (a disabled store must never
+    // break the view), so persistence needs a real one to be observable.
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    });
+    vi.mocked(listVideos).mockResolvedValue([
+      categoryVideo({ id: "v1", watched: true }),
+    ]);
+    const { unmount } = render(<Library onOpenVideo={() => {}} search="" />);
+    await screen.findByText("Already watched");
+
+    const drawer = document.querySelector(
+      "details.drawer",
+    ) as HTMLDetailsElement;
+    expect(drawer.open).toBe(false);
+
+    // <details> owns its open attribute; React's onToggle is what persists
+    // it, so drive the real element rather than poking at state.
+    fireEvent.click(screen.getByText("Show"));
+    await waitFor(() => expect(screen.getByText("Hide")).toBeInTheDocument());
+
+    unmount();
+    render(<Library onOpenVideo={() => {}} search="" />);
+    await screen.findByText("Already watched");
+    expect(
+      (document.querySelector("details.drawer") as HTMLDetailsElement).open,
+    ).toBe(true);
   });
 
   it("refetches both lists after a successful re-download", async () => {
