@@ -2,41 +2,10 @@ package llm
 
 import (
 	"context"
-	"io"
 	"log/slog"
-	"sync"
 	"testing"
 	"time"
 )
-
-// quietLogger is a logger that goes nowhere. Tests here care about WHEN the
-// heartbeat writes, never what it wrote, and routing that through
-// slog.Default() would spray real lines into the test binary's stderr and
-// couple the test to whatever else has reconfigured the global logger.
-func quietLogger() *slog.Logger {
-	return slog.New(slog.NewJSONHandler(io.Discard, nil))
-}
-
-// countingWriter records how many lines have been written, so a test can
-// assert that the heartbeat has genuinely stopped writing rather than sleep
-// and hope.
-type countingWriter struct {
-	mu sync.Mutex
-	n  int
-}
-
-func (w *countingWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	w.n++
-	w.mu.Unlock()
-	return len(p), nil
-}
-
-func (w *countingWriter) count() int {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.n
-}
 
 // blockingWriter reports when a write starts and holds it there until it is
 // released, so a test can pin the heartbeat goroutine mid-log-line and
@@ -73,8 +42,11 @@ func TestStartHeartbeat_stopWaitsForTheLineInFlight(t *testing.T) {
 	select {
 	case <-w.entered:
 	case <-time.After(5 * time.Second):
+		// Deliberately NOT calling stop() here. It waits without a bound, so
+		// on the very failure this branch reports — a goroutine that is not
+		// responding — it would hang the run until Go's test timeout and bury
+		// this message. The abandoned goroutine dies with the test binary.
 		close(w.release)
-		stop()
 		t.Fatal("the heartbeat never logged")
 	}
 
@@ -104,7 +76,8 @@ func TestStartHeartbeat_stopWaitsForTheLineInFlight(t *testing.T) {
 // branch: it starts no goroutine, so its stop has nothing to wait for and
 // must not block.
 func TestStartHeartbeat_disabledStopIsSafe(t *testing.T) {
-	stop := StartHeartbeat(context.Background(), quietLogger(), 0, "tick")
+	log, _ := capture()
+	stop := StartHeartbeat(context.Background(), log, 0, "tick")
 	done := make(chan struct{})
 	go func() { stop(); close(done) }()
 	select {
@@ -118,40 +91,80 @@ func TestStartHeartbeat_disabledStopIsSafe(t *testing.T) {
 // the goroutine has already exited on its own — the wait must observe a
 // finished goroutine, not hang waiting for one that will never signal again.
 //
-// The "already exited" state is CONFIRMED, not assumed. Sleeping and hoping
-// would let a loaded machine run the ordinary close-then-wait path instead
-// and still pass, reporting success for a path it never exercised. Here the
-// test watches the write count go quiet across many missed ticks first, so if
-// the goroutine were still running the test would fail rather than silently
-// test something else.
+// Reaching that state is the whole difficulty, and both easy ways of doing it
+// are wrong. Sleeping and hoping lets a loaded machine run the ordinary
+// close-then-wait path and pass anyway. Cancelling immediately is no better:
+// the goroutine then exits before its first tick, so "it logged nothing" is
+// equally consistent with a StartHeartbeat that never started a goroutine at
+// all — the assertion proves nothing about the state it names.
+//
+// So the test watches an actual TRANSITION: heartbeats arriving (the
+// goroutine is demonstrably alive), then cancel, then heartbeats stopping
+// (it is demonstrably gone). Only then is stop() asked to handle the
+// already-exited case.
 func TestStartHeartbeat_stopAfterContextCancel(t *testing.T) {
-	w := &countingWriter{}
-	log := slog.New(slog.NewJSONHandler(w, nil))
-
+	log, buf := capture()
 	ctx, cancel := context.WithCancel(context.Background())
-	interval := time.Millisecond
+	const interval = time.Millisecond
 	stop := StartHeartbeat(ctx, log, interval, "tick")
-	cancel()
 
-	// Quiet for 50 intervals running is the goroutine being gone, not slow.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		before := w.count()
-		time.Sleep(50 * interval)
-		if w.count() == before {
-			break
+	ticks := func() int { return countMsg(buf.records(t), "tick") }
+
+	// 1. Prove it is alive.
+	alive := time.Now().Add(5 * time.Second)
+	for ticks() < 2 {
+		if time.Now().After(alive) {
+			// No stop() on this path either: it waits without a bound, and a
+			// heartbeat that is not logging is exactly the case where it would
+			// hang instead of failing. The abandoned goroutine dies with the
+			// test binary.
+			// Report what was actually seen: the loop waits for TWO ticks, so
+			// this also fires after exactly one, and "never logged" would send
+			// a reader hunting for a goroutine that never started when the real
+			// condition was one tick and then a stall.
+			t.Fatalf("the heartbeat logged %d times in 5s, so this test would prove nothing about a goroutine that exited", ticks())
 		}
-		if time.Now().After(deadline) {
-			stop()
+		time.Sleep(interval)
+	}
+
+	// 2. Stop it by its context, and prove it went quiet.
+	//
+	// quietWindowsNeeded consecutive silent windows, not one. A single window
+	// proves nothing on its own: this suite runs under -race alongside every
+	// other package, and a goroutine descheduled for one 50ms window looks
+	// exactly like a goroutine that exited. Concluding "gone" from that would
+	// hand stop() a live goroutine and quietly test the ordinary path instead
+	// — the very substitution this test was rewritten to stop making. Requiring
+	// several in a row means one stall cannot decide it.
+	const quietWindowsNeeded = 3
+	cancel()
+	quiet := time.Now().Add(5 * time.Second)
+	for silent := 0; silent < quietWindowsNeeded; {
+		before := ticks()
+		time.Sleep(50 * interval)
+		if ticks() == before {
+			silent++
+			continue
+		}
+		silent = 0 // it spoke; start counting again
+		if time.Now().After(quiet) {
+			// No stop() here either: see the branch above.
 			t.Fatal("the heartbeat kept logging long after its context was cancelled")
 		}
 	}
 
+	// 3. Only now is stop() facing an already-finished goroutine.
+	//
+	// Tight bound on purpose. Waiting on a goroutine that has already returned
+	// is a nanosecond operation, so the seconds-long allowance the other two
+	// tests need for scheduling jitter would here hide a regression that made
+	// stop() wait on something new — a drain, a lock, a second goroutine —
+	// and stalled every request path that defers it.
 	done := make(chan struct{})
 	go func() { stop(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("stop() hung after the context had already stopped the goroutine")
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("stop() took over 250ms for a goroutine that had already exited")
 	}
 }
