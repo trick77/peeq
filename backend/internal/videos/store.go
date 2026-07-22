@@ -208,9 +208,18 @@ type ListOptions struct {
 // sortClauses maps the accepted Sort values to ORDER BY fragments. Sort is
 // interpolated into SQL, so it must only ever come from this map — never
 // from the caller's string.
+//
+// newest/oldest rank by RELEASE date (published_at), not by when peeq added
+// the row: an old video downloaded this morning belongs where it was
+// published, not at the top of the library. published_at is NULL when yt-dlp
+// reports no upload_date (some live streams and premieres), so those rows
+// fall back to created_at and stay interleaved rather than sinking to one
+// end forever. date() normalizes the fallback — published_at is 'YYYY-MM-DD'
+// while created_at is 'YYYY-MM-DD HH:MM:SS', and comparing the two shapes
+// lexically would sort a same-day date-only value before the datetime one.
 var sortClauses = map[string]string{
-	"newest":  "created_at DESC, id DESC",
-	"oldest":  "created_at ASC, id ASC",
+	"newest":  "COALESCE(published_at, date(created_at)) DESC, created_at DESC, id DESC",
+	"oldest":  "COALESCE(published_at, date(created_at)) ASC, created_at ASC, id ASC",
 	"longest": "COALESCE(duration_seconds, 0) DESC, id DESC",
 	"title":   "title COLLATE NOCASE ASC, id ASC",
 }
@@ -231,7 +240,9 @@ func escapeLike(s string) string {
 //     constraint, tombstoned included)
 //   - Category: empty/"all"/unknown ⇒ no category constraint
 //   - Query: case-insensitive substring match against title
-//   - Sort: newest|oldest|longest|title; anything else falls back to newest
+//   - Sort: newest|oldest|longest|title; anything else falls back to newest.
+//     newest/oldest order by release date (published_at), falling back to
+//     created_at for rows with no known release date
 //   - ChannelID/ChannelName: scopes to one channel, matching channel_id or,
 //     for rows written before channel ids were recorded, an exact
 //     channel_name match on rows with an empty channel_id
