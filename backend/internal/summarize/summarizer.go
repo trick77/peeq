@@ -12,6 +12,7 @@ import (
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/subtitles"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 type Chapter struct {
@@ -39,10 +40,22 @@ func New(c Completer) *Summarizer { return &Summarizer{c: c} }
 // raw reply unchanged; the caller normalizes it against the enum (an invalid
 // or empty reply must degrade to "uncategorized", not error). This is a
 // cheap call: the input is the short summary, not the full transcript.
-func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowed []string) (string, error) {
-	sys := "You classify a video into exactly one category id from this list: " +
-		strings.Join(allowed, ", ") +
-		". Reply with a single category id from the list and nothing else. If none fits, reply uncategorized."
+//
+// allowed carries labels as well as ids so the model sees what each id means;
+// callers pass videos.ClassifiableCategories(), which excludes the
+// 'uncategorized' fallback. The prompt forces a choice on purpose: offering an
+// escape hatch made the model take it, and a rough-but-real category is more
+// useful in the Library than a bucket nobody browses.
+func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowed []videos.Category) (string, error) {
+	labelled := make([]string, len(allowed))
+	for i, c := range allowed {
+		labelled[i] = c.ID + " (" + c.Label + ")"
+	}
+	sys := "You classify a video into exactly one category. The categories are: " +
+		strings.Join(labelled, ", ") +
+		". Reply with a single category id from that list and nothing else — no punctuation, " +
+		"no explanation. Always choose the closest match even when the fit is imperfect. " +
+		"Never invent an id and never refuse to choose."
 	return s.c.Complete(ctx, []llm.Message{
 		{Role: "system", Content: sys},
 		{Role: "user", Content: "TITLE: " + title + "\n\nSUMMARY:\n" + summary},

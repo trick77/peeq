@@ -916,3 +916,99 @@ func TestList_errorsOnClosedDB(t *testing.T) {
 		t.Fatal("expected an error listing against a closed db")
 	}
 }
+
+// TestNextUnclassified_picksOnlySummarizedDownloadedUncategorized covers the
+// three conditions the idle classify sweep depends on: a video is a candidate
+// only when it is downloaded, still uncategorized, and actually has a summary
+// to classify from (the no-transcript case must stay out of the sweep).
+func TestNextUnclassified_picksOnlySummarizedDownloadedUncategorized(t *testing.T) {
+	s := newTestStore(t)
+
+	// Given: one true candidate plus one disqualified row per condition.
+	seed := []struct {
+		id, status, summary, category, createdAt string
+	}{
+		{"v-candidate", "downloaded", "A summary.", "uncategorized", "2026-07-01"},
+		{"v-classified", "downloaded", "A summary.", "ai", "2026-07-02"},
+		{"v-no-summary", "downloaded", "", "uncategorized", "2026-07-03"},
+		{"v-not-downloaded", "queued", "A summary.", "uncategorized", "2026-07-04"},
+	}
+	for _, v := range seed {
+		seedVideo(t, s, Video{ID: v.id, URL: "https://youtu.be/" + v.id, Status: v.status, CreatedAt: v.createdAt})
+		if v.summary != "" {
+			if err := s.SetSummaryText(v.id, v.summary); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.SetCategory(v.id, v.category); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// When/Then: only the candidate is returned.
+	got, err := s.NextUnclassified(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ID != "v-candidate" {
+		t.Fatalf("NextUnclassified = %v, want v-candidate", got)
+	}
+	if got.Summary != "A summary." {
+		t.Fatalf("candidate summary = %q, want it loaded for the classify call", got.Summary)
+	}
+
+	// And: skipping the candidate empties the backlog rather than falling back
+	// to a disqualified row.
+	got, err = s.NextUnclassified([]string{"v-candidate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("NextUnclassified(skip candidate) = %v, want nil", got)
+	}
+}
+
+// TestNextUnclassified_newestFirstAndSkipsMany asserts ordering and that the
+// skip list works with more than one entry (the IN-clause placeholder build).
+func TestNextUnclassified_newestFirstAndSkipsMany(t *testing.T) {
+	s := newTestStore(t)
+
+	for _, id := range []struct{ id, createdAt string }{
+		{"v-old", "2026-07-01"}, {"v-mid", "2026-07-02"}, {"v-new", "2026-07-03"},
+	} {
+		seedVideo(t, s, Video{ID: id.id, URL: "https://youtu.be/" + id.id, Status: "downloaded", CreatedAt: id.createdAt})
+		if err := s.SetSummaryText(id.id, "A summary."); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.NextUnclassified(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ID != "v-new" {
+		t.Fatalf("NextUnclassified = %v, want the newest (v-new)", got)
+	}
+
+	got, err = s.NextUnclassified([]string{"v-new", "v-mid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ID != "v-old" {
+		t.Fatalf("NextUnclassified(skip 2) = %v, want v-old", got)
+	}
+}
+
+// TestNextUnclassified_errorsOnClosedDB asserts a query failure is reported to
+// the caller rather than a nil video masquerading as "backlog empty" — which
+// would silently retire the classify sweep for the rest of the process.
+func TestNextUnclassified_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := s.NextUnclassified(nil); err == nil {
+		t.Fatal("expected an error querying against a closed db")
+	}
+}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/subtitles"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // fakeCompleter dispatches on the system prompt rather than call order: the
@@ -94,15 +95,24 @@ func TestClassifyReturnsRawReplyAndSendsAllowedIDs(t *testing.T) {
 		return " ai \n", nil
 	})
 	s := New(fc)
-	got, err := s.Classify(context.Background(), "GPT-5 is here", "A video about a new model.", []string{"ai", "news"})
+	got, err := s.Classify(context.Background(), "GPT-5 is here", "A video about a new model.",
+		[]videos.Category{{ID: "ai", Label: "AI"}, {ID: "news", Label: "News & Current Events"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != " ai \n" {
 		t.Fatalf("Classify returned %q, want raw reply unchanged", got)
 	}
-	if !strings.Contains(gotSystem, "ai") || !strings.Contains(gotSystem, "news") {
-		t.Fatalf("system prompt missing allowed ids: %q", gotSystem)
+	if !strings.Contains(gotSystem, "ai (AI)") || !strings.Contains(gotSystem, "news (News & Current Events)") {
+		t.Fatalf("system prompt missing allowed id (label) pairs: %q", gotSystem)
+	}
+	// The escape hatch is deliberately absent: offering 'uncategorized' as an
+	// answer is what filled that bucket in the first place.
+	if strings.Contains(gotSystem, "uncategorized") {
+		t.Fatalf("system prompt must not offer uncategorized: %q", gotSystem)
+	}
+	if !strings.Contains(gotSystem, "Always choose the closest match") {
+		t.Fatalf("system prompt missing the forced-choice instruction: %q", gotSystem)
 	}
 	if !strings.Contains(gotSystem, "category id") {
 		t.Fatalf("system prompt missing load-bearing substring %q (worker test's fake completer dispatches on it): %q", "category id", gotSystem)
