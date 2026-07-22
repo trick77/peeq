@@ -231,6 +231,22 @@ export type ChannelDetail = {
   has_avatar: boolean;
   has_banner: boolean;
 
+  // What YouTube publishes, as of the last successful refresh. subscribers is
+  // absent when unknown (hidden by the channel, or never read) — YouTube does
+  // not report a count of 0, so an absent value means "unknown" and has to
+  // render as "—" rather than a number.
+  subscribers?: number;
+  verified: boolean;
+  // resolved_at is when peeq last TRIED to read the channel from YouTube;
+  // resolve_ok says whether that attempt worked. resolved_at set with
+  // resolve_ok false is the stuck case — no avatar, no banner, no
+  // description, and no retry until someone presses Refresh.
+  resolved_at?: string;
+  resolve_ok: boolean;
+  // gone: peeq auto-unsubscribed this channel because YouTube reported it
+  // deleted. The archived videos are unaffected.
+  gone: boolean;
+
   tracked: boolean;
   tracked_at?: string;
 

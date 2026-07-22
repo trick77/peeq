@@ -127,9 +127,13 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ucid, name := info.UCID, info.Name
-	// ResolveChannel is the authoritative source of the UCID; the handle is
-	// best-effort from the pasted url only (never derived from the UCID).
+	// The pasted url wins for the handle — it is what the user typed and what
+	// they expect to see back. yt-dlp's uploader_id is the fallback, which is
+	// what gives a /channel/UC... paste (no @handle in it at all) a handle.
 	handle := channelHandleFromURL(req.URL)
+	if handle == "" {
+		handle = info.Handle
+	}
 	// Images are best-effort: a channel with no banner, or a transient fetch
 	// failure, must not prevent the channel from being tracked.
 	avatarPath, err := media.FetchImage(r.Context(), info.AvatarURL, s.mediaDir, ".channels/"+ucid+"/avatar")
@@ -140,13 +144,15 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("channel banner fetch failed", "channel_id", ucid, "err", err)
 	}
-	if err := s.channels.Upsert(channels.Channel{
+	if err := s.channels.SaveResolved(channels.Channel{
 		ID:          ucid,
 		Name:        name,
 		Handle:      handle,
 		Description: info.Description,
 		AvatarPath:  avatarPath,
 		BannerPath:  bannerPath,
+		Subscribers: info.Subscribers,
+		Verified:    info.Verified,
 		ResolvedAt:  time.Now().UTC().Format("2006-01-02 15:04:05"),
 	}); err != nil {
 		serverError(w, r, err, "track channel failed")
@@ -271,6 +277,23 @@ type channelDetail struct {
 	HasAvatar   bool   `json:"has_avatar"`
 	HasBanner   bool   `json:"has_banner"`
 
+	// What YouTube publishes about the channel, as of the last successful
+	// resolve. Subscribers is omitted when unknown — 0 subscribers is not a
+	// thing YouTube reports, so a zero here means "hidden or never read" and
+	// must not be rendered as a count.
+	Subscribers int64 `json:"subscribers,omitempty"`
+	Verified    bool  `json:"verified"`
+	// ResolvedAt is when metadata was last FETCHED, successfully or not, and
+	// ResolveOk says which. The pair is what lets the page distinguish fresh
+	// metadata from a failed attempt that has been stuck ever since.
+	ResolvedAt string `json:"resolved_at,omitempty"`
+	ResolveOk  bool   `json:"resolve_ok"`
+	// Gone is set when peeq auto-unsubscribed this channel because YouTube
+	// reported it deleted — its most confident "this channel no longer
+	// exists", since it takes several consecutive dead scans to record.
+	// The channel's videos are untouched by it.
+	Gone bool `json:"gone"`
+
 	Tracked   bool   `json:"tracked"`
 	TrackedAt string `json:"tracked_at,omitempty"`
 
@@ -348,9 +371,24 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		out.Description = c.Description
 		out.HasAvatar = c.AvatarPath != ""
 		out.HasBanner = c.BannerPath != ""
+		out.Subscribers = c.Subscribers
+		out.Verified = c.Verified
+		out.ResolvedAt = c.ResolvedAt
+		out.ResolveOk = c.ResolveOk
 		out.Tracked = c.TrackedAt != ""
 		out.TrackedAt = c.TrackedAt
 	}
+
+	// "Gone" is asked for regardless of whether the channel is still tracked
+	// or subscribed: auto-unsubscribe REMOVES the subscription row, so by the
+	// time a channel is gone it is exactly the kind of channel the tracked/
+	// subscribed branches below would skip.
+	au, aerr := s.channels.AutoUnsubscribeFor(id)
+	if aerr != nil {
+		serverError(w, r, aerr, "load channel failed")
+		return
+	}
+	out.Gone = au != nil && au.Reason == channels.ReasonDeleted
 
 	if out.Tracked {
 		sub, serr := s.channels.GetSubscription(id)
@@ -416,45 +454,101 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 		// Detached from the request: the browser has its response already.
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-
-		now := time.Now().UTC().Format("2006-01-02 15:04:05")
-		url := "https://www.youtube.com/channel/" + channelID
-		info, err := s.channelResolver.ResolveChannel(ctx, url)
-		if err != nil {
+		if err := s.resolveChannel(ctx, channelID, cached != nil); err != nil {
 			slog.Warn("channel resolve failed", "channel_id", channelID, "err", err)
-			// Ensure a row exists to carry resolved_at, so the failure is
-			// remembered and not retried on the next visit.
-			if cached == nil {
-				if uerr := s.channels.Upsert(channels.Channel{ID: channelID, ResolvedAt: now}); uerr != nil {
-					slog.Error("cache channel after failed resolve", "channel_id", channelID, "err", uerr)
-				}
-				return
-			}
-			if merr := s.channels.MarkResolveAttempted(channelID, now); merr != nil {
-				slog.Error("mark resolve attempted", "channel_id", channelID, "err", merr)
-			}
-			return
-		}
-
-		avatarPath, aerr := media.FetchImage(ctx, info.AvatarURL, s.mediaDir, ".channels/"+channelID+"/avatar")
-		if aerr != nil {
-			slog.Warn("channel avatar fetch failed", "channel_id", channelID, "err", aerr)
-		}
-		bannerPath, berr := media.FetchImage(ctx, info.BannerURL, s.mediaDir, ".channels/"+channelID+"/banner")
-		if berr != nil {
-			slog.Warn("channel banner fetch failed", "channel_id", channelID, "err", berr)
-		}
-		if uerr := s.channels.Upsert(channels.Channel{
-			ID:          channelID,
-			Name:        info.Name,
-			Description: info.Description,
-			AvatarPath:  avatarPath,
-			BannerPath:  bannerPath,
-			ResolvedAt:  now,
-		}); uerr != nil {
-			slog.Error("cache resolved channel", "channel_id", channelID, "err", uerr)
 		}
 	}()
+}
+
+// resolveChannel fetches a channel's metadata from YouTube and stores it,
+// recording the attempt either way. exists says whether a channels row is
+// already there, which decides how a FAILURE is remembered: an existing row
+// is marked (keeping whatever metadata it holds), while a channel with no row
+// gets a bare one purely to carry resolved_at, so the failure is remembered
+// and not retried on every visit.
+//
+// The returned error is the resolve failure itself. Callers that ran this for
+// a user who is waiting — the Refresh button — report it; the background path
+// only logs it.
+func (s *server) resolveChannel(ctx context.Context, channelID string, exists bool) error {
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	url := "https://www.youtube.com/channel/" + channelID
+	info, err := s.channelResolver.ResolveChannel(ctx, url)
+	if err != nil {
+		if !exists {
+			if uerr := s.channels.Upsert(channels.Channel{ID: channelID, ResolvedAt: now}); uerr != nil {
+				slog.Error("cache channel after failed resolve", "channel_id", channelID, "err", uerr)
+			}
+			return err
+		}
+		if merr := s.channels.MarkResolveAttempted(channelID, now); merr != nil {
+			slog.Error("mark resolve attempted", "channel_id", channelID, "err", merr)
+		}
+		return err
+	}
+
+	avatarPath, aerr := media.FetchImage(ctx, info.AvatarURL, s.mediaDir, ".channels/"+channelID+"/avatar")
+	if aerr != nil {
+		slog.Warn("channel avatar fetch failed", "channel_id", channelID, "err", aerr)
+	}
+	bannerPath, berr := media.FetchImage(ctx, info.BannerURL, s.mediaDir, ".channels/"+channelID+"/banner")
+	if berr != nil {
+		slog.Warn("channel banner fetch failed", "channel_id", channelID, "err", berr)
+	}
+	if uerr := s.channels.SaveResolved(channels.Channel{
+		ID:          channelID,
+		Name:        info.Name,
+		Handle:      info.Handle,
+		Description: info.Description,
+		AvatarPath:  avatarPath,
+		BannerPath:  bannerPath,
+		Subscribers: info.Subscribers,
+		Verified:    info.Verified,
+		ResolvedAt:  now,
+	}); uerr != nil {
+		slog.Error("cache resolved channel", "channel_id", channelID, "err", uerr)
+		return uerr
+	}
+	return nil
+}
+
+// handleChannelRefresh re-reads a channel's metadata from YouTube on demand,
+// ignoring the resolved_at gate that maybeResolveChannel obeys. That gate is
+// what makes this endpoint necessary: it treats a FAILED resolve as final, so
+// a channel whose one attempt failed (no cookie at the time, a network blip
+// during an import) keeps its blank avatar, banner and description forever
+// with no way back. This is that way back, and it is deliberately manual —
+// nothing re-resolves on its own.
+//
+// It runs while the caller waits rather than in the background: the user
+// pressed a button and the answer is either new metadata to re-render or a
+// reason it did not work.
+func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil || s.channelResolver == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	id := r.PathValue("id")
+	c, err := s.channels.Get(id)
+	if err != nil {
+		serverError(w, r, err, "load channel failed")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	if err := s.resolveChannel(ctx, id, c != nil); err != nil {
+		if errors.Is(err, ytdlp.ErrNoCookie) {
+			writeJSONError(w, http.StatusConflict, "cookie required")
+			return
+		}
+		writeJSONError(w, http.StatusBadGateway, "refresh failed: "+err.Error())
+		return
+	}
+	if s.onChannelResolved != nil {
+		s.onChannelResolved(id)
+	}
+	writeJSON(w, map[string]any{"status": "ok"})
 }
 
 // handleChannelsDismissDormant suppresses a channel's dormancy flag until it

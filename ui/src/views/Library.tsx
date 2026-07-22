@@ -314,7 +314,7 @@ export function Library({
       <div className="listbar">
         <select
           className={controlClass}
-          style={{ maxWidth: 180 }}
+          style={{ maxWidth: 190 }}
           value={sort}
           onChange={(e) => setSort(e.target.value as VideoSort)}
           aria-label="Sort"

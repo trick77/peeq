@@ -141,3 +141,43 @@ func TestMigrate_addsSubtitlesDefaultToAnExisting0001DB(t *testing.T) {
 		t.Fatalf("retention_days = %d, want 42 — existing settings were clobbered", retentionDays)
 	}
 }
+
+// TestSchemaHasChannelMetadata guards migration 0003. resolve_ok is the one
+// that matters: resolved_at is stamped even for a FAILED resolve, so without
+// a separate success flag the channel page cannot tell fresh metadata from an
+// attempt that gave up — and would show a confident "Refreshed <date>" over a
+// channel it has never actually read.
+func TestSchemaHasChannelMetadata(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, col := range []string{"subscriber_count", "verified", "resolve_ok"} {
+		var cnt int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name = ?`, col,
+		).Scan(&cnt); err != nil || cnt != 1 {
+			t.Fatalf("channels.%s missing (cnt=%d err=%v)", col, cnt, err)
+		}
+	}
+
+	// An existing row predates the migration, so it must default to "nothing
+	// known and nothing successfully read" rather than to a claim.
+	if _, err := db.Exec(`INSERT INTO channels (id, name) VALUES ('UCa', 'Uncanny')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	var subs, verified, ok int
+	if err := db.QueryRow(
+		`SELECT subscriber_count, verified, resolve_ok FROM channels WHERE id = 'UCa'`,
+	).Scan(&subs, &verified, &ok); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if subs != 0 || verified != 0 || ok != 0 {
+		t.Fatalf("defaults = (%d,%d,%d), want all zero", subs, verified, ok)
+	}
+}

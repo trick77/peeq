@@ -2544,3 +2544,167 @@ func TestChannelAvatar_fileMissingOnDisk_404(t *testing.T) {
 		t.Fatalf("status = %d, want 404, body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestChannelDetail_publishesYouTubeFacts asserts the channel page is served
+// the numbers YouTube publishes, plus the pair (resolved_at, resolve_ok) that
+// says how current they are.
+func TestChannelDetail_publishesYouTubeFacts(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	h := New(deps)
+	if err := deps.Channels.SaveResolved(channels.Channel{
+		ID: "UCa", Name: "Uncanny", Handle: "@uncanny",
+		Subscribers: 7240000, Verified: true, ResolvedAt: "2026-07-21 06:00:00",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	body := getJSON(t, h, "/api/channels/UCa")
+	for _, want := range []string{
+		`"subscribers":7240000`, `"verified":true`,
+		`"resolved_at":"2026-07-21 06:00:00"`, `"resolve_ok":true`, `"gone":false`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("want %s in %s", want, body)
+		}
+	}
+}
+
+// TestChannelDetail_failedResolveIsNotClaimedAsCurrent is the stuck channel:
+// resolved_at is stamped so peeq never retries, but nothing was actually
+// read. resolve_ok:false is what stops the page saying "Refreshed <date>"
+// over an empty header.
+func TestChannelDetail_failedResolveIsNotClaimedAsCurrent(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCa", Name: "Uncanny", ResolvedAt: "2026-07-21 06:00:00"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	body := getJSON(t, h, "/api/channels/UCa")
+	if !strings.Contains(body, `"resolve_ok":false`) {
+		t.Fatalf("want resolve_ok:false, got %s", body)
+	}
+	// An unknown subscriber count is omitted, never sent as 0.
+	if strings.Contains(body, `"subscribers"`) {
+		t.Fatalf("an unknown count must be omitted, got %s", body)
+	}
+}
+
+// TestChannelDetail_goneChannel asserts a channel peeq auto-unsubscribed as
+// deleted is reported as gone. Auto-unsubscribe REMOVES the subscription row,
+// so this has to be read outside the subscribed branch — the bug this guards
+// against is asking only for subscribed channels and never seeing it.
+func TestChannelDetail_goneChannel(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCa", Name: "Uncanny"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := deps.Channels.Track("UCa", "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("track: %v", err)
+	}
+	if err := deps.Channels.Subscribe("UCa", "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if err := deps.Channels.AutoUnsubscribe("UCa", channels.ReasonDeleted, "2026-07-18 00:00:00"); err != nil {
+		t.Fatalf("auto unsubscribe: %v", err)
+	}
+
+	body := getJSON(t, h, "/api/channels/UCa")
+	if !strings.Contains(body, `"gone":true`) {
+		t.Fatalf("want gone:true, got %s", body)
+	}
+	if !strings.Contains(body, `"subscribed":false`) {
+		t.Fatalf("want subscribed:false, got %s", body)
+	}
+}
+
+// TestChannelRefresh_resolvesPastTheResolvedAtGate is the whole point of the
+// endpoint: maybeResolveChannel refuses to re-fetch anything with a
+// resolved_at, so a channel whose only attempt failed is stuck forever.
+// Refresh must ignore that gate and write what it reads.
+func TestChannelRefresh_resolvesPastTheResolvedAtGate(t *testing.T) {
+	resolver := &testResolver{info: ytdlp.ChannelInfo{
+		UCID: "UCa", Name: "Uncanny Expeditions", Handle: "@uncanny",
+		Description: "Field docs.", Subscribers: 7240000, Verified: true,
+	}}
+	deps := channelsTestDeps(t, resolver)
+	h := New(deps)
+	// The stuck state: stamped, but nothing was ever read.
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCa", ResolvedAt: "2026-07-20 00:00:00"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/channels/UCa/refresh", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if resolver.calls != 1 {
+		t.Fatalf("resolver calls = %d, want 1", resolver.calls)
+	}
+
+	body := getJSON(t, h, "/api/channels/UCa")
+	for _, want := range []string{
+		"Uncanny Expeditions", `"subscribers":7240000`,
+		`"verified":true`, `"resolve_ok":true`, `"handle":"@uncanny"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("want %s in %s", want, body)
+		}
+	}
+}
+
+// TestChannelRefresh_failureIsReportedAndRecorded asserts a failed refresh
+// tells the caller (rather than reporting a cheerful ok) and leaves the row
+// marked as not-ok so the page keeps saying the metadata is stale.
+func TestChannelRefresh_failureIsReportedAndRecorded(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{err: errors.New("channel unavailable")})
+	h := New(deps)
+	if err := deps.Channels.SaveResolved(channels.Channel{ID: "UCa", Name: "Uncanny", ResolvedAt: "2026-07-01 00:00:00"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/channels/UCa/refresh", nil)
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	body := getJSON(t, h, "/api/channels/UCa")
+	if !strings.Contains(body, `"resolve_ok":false`) {
+		t.Fatalf("want resolve_ok:false after a failed refresh, got %s", body)
+	}
+	// The name it already had survives — a failed refresh is not a reason to
+	// forget what peeq already knew.
+	if !strings.Contains(body, "Uncanny") {
+		t.Fatalf("a failed refresh erased the stored name: %s", body)
+	}
+}
+
+// TestChannelRefresh_missingCookie_409 asserts the cookie gate surfaces the
+// same way it does when adding a channel, so the UI has one branch for both.
+func TestChannelRefresh_missingCookie_409(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{err: ytdlp.ErrNoCookie})
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCa", Name: "Uncanny"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/channels/UCa/refresh", nil)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelRefresh_unconfigured_503 mirrors every other channels handler:
+// with no resolver wired there is nothing to refresh with, and that is a
+// service-level answer rather than a per-channel failure.
+func TestChannelRefresh_unconfigured_503(t *testing.T) {
+	deps := channelsTestDeps(t, nil)
+	deps.ChannelResolver = nil
+	h := New(deps)
+
+	rr := postJSON(t, h, "/api/channels/UCa/refresh", nil)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+}

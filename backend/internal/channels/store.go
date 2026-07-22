@@ -20,6 +20,11 @@ import (
 // as a metadata cache entry: TrackedAt is empty for a channel the user has
 // visited but never tracked. AvatarPath and BannerPath are relative to the
 // media dir (resolve them with media.SafeMediaPath before serving).
+// Subscribers is 0 when YouTube did not report a count (it is hidden, or the
+// channel has never been resolved) — callers must treat 0 as "unknown", not
+// as a real zero. ResolveOk records whether the LAST resolve attempt actually
+// succeeded; ResolvedAt is stamped either way, so ResolveOk is the only thing
+// that distinguishes fresh metadata from a failed attempt that gave up.
 type Channel struct {
 	ID          string
 	Handle      string
@@ -27,7 +32,10 @@ type Channel struct {
 	Description string
 	AvatarPath  string
 	BannerPath  string
+	Subscribers int64
+	Verified    bool
 	ResolvedAt  string
+	ResolveOk   bool
 	TrackedAt   string
 	AddedAt     string
 }
@@ -181,6 +189,14 @@ WHERE v.channel_id = ?`, channelID)
 // tracked_at: caching a channel's details must never track or untrack it.
 // Empty fields do not overwrite stored values, so a partial refresh cannot
 // blank out a name that was already known.
+//
+// Upsert deliberately does not touch subscriber_count, verified or
+// resolve_ok. Its callers (the TubeArchivist import, tracking a pasted url)
+// know a channel's identity but nothing about its YouTube metadata, and
+// writing the zero values they carry would silently clear a resolved
+// channel's subscriber count and flip resolve_ok back to "never succeeded".
+// Those three columns have exactly one writer each: SaveResolved on success
+// and MarkResolveAttempted on failure.
 func (s *Store) Upsert(c Channel) error {
 	_, err := s.db.ExecContext(context.Background(), `
 INSERT INTO channels (id, handle, name, description, avatar_path, banner_path, resolved_at)
@@ -200,6 +216,43 @@ ON CONFLICT(id) DO UPDATE SET
 	return nil
 }
 
+// SaveResolved writes the result of a SUCCESSFUL metadata resolve: identity
+// plus the YouTube-published facts, with resolve_ok set so the channel page
+// can tell this apart from an attempt that failed.
+//
+// Identity fields keep Upsert's never-blank rule — a resolve that came back
+// without a description must not erase the one already stored. Two fields
+// break it on purpose:
+//
+//   - verified is written as-is. A channel that loses its checkmark has to be
+//     able to say so, and a never-false column could never report that.
+//   - subscriber_count keeps the never-blank rule, because 0 here means
+//     "YouTube did not report it" (hidden counts are omitted, not zeroed),
+//     and the last real count is better than nothing.
+func (s *Store) SaveResolved(c Channel) error {
+	_, err := s.db.ExecContext(context.Background(), `
+INSERT INTO channels (id, handle, name, description, avatar_path, banner_path,
+                      subscriber_count, verified, resolved_at, resolve_ok)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), 1)
+ON CONFLICT(id) DO UPDATE SET
+    handle           = COALESCE(NULLIF(excluded.handle, ''), channels.handle),
+    name             = COALESCE(NULLIF(excluded.name, ''), channels.name),
+    description      = COALESCE(NULLIF(excluded.description, ''), channels.description),
+    avatar_path      = COALESCE(NULLIF(excluded.avatar_path, ''), channels.avatar_path),
+    banner_path      = COALESCE(NULLIF(excluded.banner_path, ''), channels.banner_path),
+    subscriber_count = COALESCE(NULLIF(excluded.subscriber_count, 0), channels.subscriber_count),
+    verified         = excluded.verified,
+    resolved_at      = COALESCE(excluded.resolved_at, channels.resolved_at),
+    resolve_ok       = 1`,
+		c.ID, c.Handle, c.Name, c.Description, c.AvatarPath, c.BannerPath,
+		c.Subscribers, c.Verified, c.ResolvedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("save resolved channel %s: %w", c.ID, err)
+	}
+	return nil
+}
+
 // Track marks a cached channel as explicitly tracked by the user. It is
 // idempotent: re-tracking an already-tracked channel keeps the original
 // timestamp rather than resetting "tracked since".
@@ -214,12 +267,18 @@ func (s *Store) Track(channelID, trackedAt string) error {
 	return nil
 }
 
-// MarkResolveAttempted records that a metadata fetch was tried, whether or
-// not it succeeded. Without this a permanently unresolvable channel would be
-// re-fetched from YouTube on every single page visit.
+// MarkResolveAttempted records that a metadata fetch was tried and FAILED.
+// Stamping resolved_at is what stops a permanently unresolvable channel being
+// re-fetched from YouTube on every single page visit; clearing resolve_ok is
+// what lets the channel page say why it has no artwork instead of showing a
+// blank header with a confident "Refreshed <date>" beside it.
+//
+// Whatever metadata is already stored is left alone: a channel that resolved
+// last week and failed today keeps last week's name and avatar, and only the
+// freshness claim changes.
 func (s *Store) MarkResolveAttempted(channelID, at string) error {
 	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE channels SET resolved_at = ? WHERE id = ?`, at, channelID)
+		`UPDATE channels SET resolved_at = ?, resolve_ok = 0 WHERE id = ?`, at, channelID)
 	if err != nil {
 		return fmt.Errorf("mark resolve attempted %s: %w", channelID, err)
 	}
@@ -233,11 +292,13 @@ func (s *Store) MarkResolveAttempted(channelID, at string) error {
 func (s *Store) Get(id string) (*Channel, error) {
 	row := s.db.QueryRowContext(context.Background(), `
 SELECT id, handle, name, description, avatar_path, banner_path,
-       COALESCE(resolved_at, ''), COALESCE(tracked_at, ''), added_at
+       subscriber_count, verified,
+       COALESCE(resolved_at, ''), resolve_ok, COALESCE(tracked_at, ''), added_at
 FROM channels WHERE id = ?`, id)
 	var c Channel
 	if err := row.Scan(&c.ID, &c.Handle, &c.Name, &c.Description,
-		&c.AvatarPath, &c.BannerPath, &c.ResolvedAt, &c.TrackedAt, &c.AddedAt); err != nil {
+		&c.AvatarPath, &c.BannerPath, &c.Subscribers, &c.Verified,
+		&c.ResolvedAt, &c.ResolveOk, &c.TrackedAt, &c.AddedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}

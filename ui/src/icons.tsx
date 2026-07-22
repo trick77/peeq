@@ -21,6 +21,8 @@ import {
   Captions,
   ChevronRight,
   ChevronDown,
+  ChevronLeft,
+  BadgeCheck,
   RefreshCw,
   Copy,
   LoaderCircle,
@@ -61,6 +63,8 @@ const COMPONENTS = {
   captions: Captions,
   chevronRight: ChevronRight,
   chevronDown: ChevronDown,
+  chevronLeft: ChevronLeft,
+  verified: BadgeCheck, // YouTube's channel checkmark, not a peeq state
   refresh: RefreshCw,
   copy: Copy,
   spinner: LoaderCircle, // spun by .ui-spin — every async wait spins
