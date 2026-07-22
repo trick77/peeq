@@ -80,8 +80,11 @@ func formatChannelResult(res taimport.ChannelResult, dryRun bool) string {
 	fmt.Fprintf(&b, "Skipped:        %d  (channels TubeArchivist knows but was never subscribed to)\n", res.Skipped)
 
 	if len(res.InactiveNames) > 0 {
-		b.WriteString("\nInactive channels imported (gone from YouTube).\n")
-		b.WriteString("peeq's auto-unsubscribe will retire these on its own over the next few days:\n")
+		b.WriteString("\nTubeArchivist marked these inactive — its last refresh could not\n")
+		b.WriteString("fetch the channel, which usually means a transient failure rather\n")
+		b.WriteString("than a deleted channel. peeq imported them normally and re-checks\n")
+		b.WriteString("each against YouTube on its own scan; only genuinely dead ones are\n")
+		b.WriteString("unsubscribed:\n")
 		for _, n := range res.InactiveNames {
 			fmt.Fprintf(&b, "  - %s\n", n)
 		}
