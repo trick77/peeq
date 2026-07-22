@@ -165,20 +165,6 @@ export function VideoCard({
             {new Date(video.published_at).toLocaleDateString()}
           </>
         ) : null}
-        {video.category &&
-        video.category !== UNCATEGORIZED &&
-        CATEGORY_BY_ID[video.category] ? (
-          <>
-            <span className="dot">·</span>
-            <span className="metapill">
-              <span
-                className="dotc"
-                style={{ background: CATEGORY_BY_ID[video.category].color }}
-              />
-              {CATEGORY_BY_ID[video.category].label}
-            </span>
-          </>
-        ) : null}
       </div>
       <Lifecycle
         video={video}
@@ -256,5 +242,25 @@ function Lifecycle({
       </div>
     );
   }
-  return <div className="life fresh">Not watched yet</div>;
+  // Nothing to say about a fresh video's lifecycle that the thumbnail does
+  // not already say (NEW tag, resume bar), so the row carries the category
+  // pill instead. With no category there is nothing left to render at all —
+  // an empty .life would still eat a 10px `.card` flex gap, hence null.
+  const category = categoryMeta(video.category);
+  if (!category) return null;
+  return (
+    <div className="life fresh">
+      <span className="metapill">
+        <span className="dotc" style={{ background: category.color }} />
+        {category.label}
+      </span>
+    </div>
+  );
+}
+
+// categoryMeta resolves the classifier's label/color for a video, or null
+// when it is uncategorized or carries a category this build does not know.
+function categoryMeta(category: string) {
+  if (!category || category === UNCATEGORIZED) return null;
+  return CATEGORY_BY_ID[category] ?? null;
 }
