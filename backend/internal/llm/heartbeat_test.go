@@ -114,21 +114,39 @@ func TestStartHeartbeat_stopAfterContextCancel(t *testing.T) {
 	alive := time.Now().Add(5 * time.Second)
 	for ticks() < 2 {
 		if time.Now().After(alive) {
-			t.Fatal("the heartbeat never logged, so this test would prove nothing about a goroutine that exited")
+			// No stop() on this path either: it waits without a bound, and a
+			// heartbeat that is not logging is exactly the case where it would
+			// hang instead of failing. The abandoned goroutine dies with the
+			// test binary.
+			// Report what was actually seen: the loop waits for TWO ticks, so
+			// this also fires after exactly one, and "never logged" would send
+			// a reader hunting for a goroutine that never started when the real
+			// condition was one tick and then a stall.
+			t.Fatalf("the heartbeat logged %d times in 5s, so this test would prove nothing about a goroutine that exited", ticks())
 		}
 		time.Sleep(interval)
 	}
 
-	// 2. Stop it by its context, and prove it went quiet — a count that holds
-	//    still across many missed ticks is the goroutine being gone, not slow.
+	// 2. Stop it by its context, and prove it went quiet.
+	//
+	// quietWindowsNeeded consecutive silent windows, not one. A single window
+	// proves nothing on its own: this suite runs under -race alongside every
+	// other package, and a goroutine descheduled for one 50ms window looks
+	// exactly like a goroutine that exited. Concluding "gone" from that would
+	// hand stop() a live goroutine and quietly test the ordinary path instead
+	// — the very substitution this test was rewritten to stop making. Requiring
+	// several in a row means one stall cannot decide it.
+	const quietWindowsNeeded = 3
 	cancel()
 	quiet := time.Now().Add(5 * time.Second)
-	for {
+	for silent := 0; silent < quietWindowsNeeded; {
 		before := ticks()
 		time.Sleep(50 * interval)
 		if ticks() == before {
-			break
+			silent++
+			continue
 		}
+		silent = 0 // it spoke; start counting again
 		if time.Now().After(quiet) {
 			// No stop() here either: see the branch above.
 			t.Fatal("the heartbeat kept logging long after its context was cancelled")
@@ -136,11 +154,17 @@ func TestStartHeartbeat_stopAfterContextCancel(t *testing.T) {
 	}
 
 	// 3. Only now is stop() facing an already-finished goroutine.
+	//
+	// Tight bound on purpose. Waiting on a goroutine that has already returned
+	// is a nanosecond operation, so the seconds-long allowance the other two
+	// tests need for scheduling jitter would here hide a regression that made
+	// stop() wait on something new — a drain, a lock, a second goroutine —
+	// and stalled every request path that defers it.
 	done := make(chan struct{})
 	go func() { stop(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("stop() hung after the context had already stopped the goroutine")
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("stop() took over 250ms for a goroutine that had already exited")
 	}
 }
