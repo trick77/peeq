@@ -8,7 +8,7 @@ export const UNCATEGORIZED = "uncategorized";
 export const CATEGORIES: CategoryMeta[] = [
   { id: "ai", label: "AI", color: "#d97757" },
   { id: "tech", label: "Technology & Gadgets", color: "#5aa0c8" },
-  { id: "software", label: "Software & Programming", color: "#7c9cff" },
+  { id: "software", label: "Software Engineering", color: "#7c9cff" },
   { id: "science", label: "Science & Research", color: "#5ac89a" },
   { id: "space", label: "Space & Astronomy", color: "#9c7cdc" },
   { id: "engineering", label: "Engineering & Making", color: "#d6a15a" },

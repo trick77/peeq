@@ -223,6 +223,36 @@ describe("VideoCard lifecycle line", () => {
       screen.queryByRole("button", { name: "Test Channel" }),
     ).not.toBeInTheDocument();
   });
+
+  it("opens the video when the title is clicked", () => {
+    const onOpen = vi.fn();
+    render(
+      <VideoCard
+        video={baseVideo()}
+        retentionDays={14}
+        onOpen={onOpen}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+    // Exact name, not a regex: the thumbnail button is named "Open A Test
+    // Video" and a loose match would hit that one instead.
+    fireEvent.click(screen.getByRole("button", { name: "A Test Video" }));
+    expect(onOpen).toHaveBeenCalledWith("v1");
+  });
+
+  it("does not show the file size", () => {
+    render(
+      <VideoCard
+        video={baseVideo({ filesize_bytes: 1024 ** 3 })}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+    expect(screen.queryByText(/GB|MB|KB/)).not.toBeInTheDocument();
+  });
 });
 
 // Library view: category chip row + filtering. Mocks the "../api" barrel

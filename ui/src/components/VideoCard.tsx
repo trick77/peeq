@@ -138,7 +138,15 @@ export function VideoCard({
         </div>
       </div>
 
-      <h3>{video.title}</h3>
+      <h3>
+        <button
+          type="button"
+          className="title-btn"
+          onClick={() => onOpen(video.id)}
+        >
+          {video.title}
+        </button>
+      </h3>
       <div className="by">
         {onOpenChannel && video.channel_id ? (
           <button
@@ -234,9 +242,6 @@ function Lifecycle({
           <Icon name="starFilled" size="13px" />
           Kept forever
         </span>
-        {video.filesize_bytes ? (
-          <span className="sz">{formatSize(video.filesize_bytes)}</span>
-        ) : null}
       </div>
     );
   }
@@ -251,19 +256,5 @@ function Lifecycle({
       </div>
     );
   }
-  return (
-    <div className="life fresh">
-      Not watched yet
-      {video.filesize_bytes ? (
-        <span className="sz">{formatSize(video.filesize_bytes)}</span>
-      ) : null}
-    </div>
-  );
-}
-
-function formatSize(bytes: number): string {
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${bytes} B`;
+  return <div className="life fresh">Not watched yet</div>;
 }
