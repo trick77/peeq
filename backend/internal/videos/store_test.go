@@ -1148,3 +1148,53 @@ func TestSetCategoryIfUnset_guardsAManualPick(t *testing.T) {
 		t.Fatalf("category = %q, want gaming — a manual write must not be guarded", got.Category)
 	}
 }
+
+// TestClearSummary_wipesTheAnalysisButNotTheStatus asserts ClearSummary is the
+// exact counterpart of SetSummary: it removes the three artifacts and the error
+// text, and deliberately leaves summary_status for the caller to set, since the
+// resulting state differs (pending for a re-summarize, no_transcript for a
+// track that turned out to carry no speech).
+func TestClearSummary_wipesTheAnalysisButNotTheStatus(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetSummary("v1", "prose", `[{"ts":0}]`, `[{"ts":1}]`); err != nil {
+		t.Fatalf("set summary: %v", err)
+	}
+	if err := s.SetSummaryStatus("v1", "error", "boom"); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	if err := s.ClearSummary("v1"); err != nil {
+		t.Fatalf("clear summary: %v", err)
+	}
+
+	got, err := s.Get("v1")
+	if err != nil || got == nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Summary != "" || got.Chapters != "" || got.KeyPoints != "" {
+		t.Fatalf("expected the artifacts wiped, got summary=%q chapters=%q key_points=%q",
+			got.Summary, got.Chapters, got.KeyPoints)
+	}
+	if got.SummaryError != "" {
+		t.Fatalf("expected the stale error cleared, got %q", got.SummaryError)
+	}
+	if got.SummaryStatus != "error" {
+		t.Fatalf("summary_status = %q, want it left for the caller to set", got.SummaryStatus)
+	}
+}
+
+// TestClearSummary_errorsOnClosedDB asserts a failed wipe is reported rather
+// than swallowed — a caller that thinks it cleared the summary but did not
+// would leave the resumable worker skipping the summary step forever.
+func TestClearSummary_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	if err := s.ClearSummary("v1"); err == nil {
+		t.Fatal("expected an error clearing against a closed db")
+	}
+}

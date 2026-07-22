@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { Player } from "./Player";
+import { Player, parseVtt } from "./Player";
 import type { Video } from "../api/types";
 
 const mockVideo: Video = {
@@ -403,24 +403,78 @@ describe("Player", () => {
     expect(screen.getByText("Prose two.")).toBeInTheDocument();
   });
 
-  it("shows No transcript available for a no_transcript summary status", async () => {
+  it("shows No speech in this video for a no_transcript summary status", async () => {
     vi.mocked(getVideo).mockResolvedValue(
       makeVideo({ summary_status: "no_transcript" }),
     );
     render(<Player videoId="v1" onDeleted={() => {}} />);
     expect(
-      await screen.findByText(/No transcript available/i),
+      await screen.findByText(/No speech in this video/i),
     ).toBeInTheDocument();
   });
 
-  it("shows a Re-summarize button on error status and calls resummarize", async () => {
-    vi.mocked(getVideo).mockResolvedValue(
-      makeVideo({ summary_status: "error" }),
-    );
-    render(<Player videoId="v1" onDeleted={() => {}} />);
-    const btn = await screen.findByRole("button", { name: /Re-summarize/i });
-    fireEvent.click(btn);
-    await waitFor(() => expect(resummarize).toHaveBeenCalledWith("v1"));
+  describe("Re-summarize button", () => {
+    it("shows on error status and calls resummarize", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "error", has_subtitles: true }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      const btn = await screen.findByRole("button", { name: /Re-summarize/i });
+      fireEvent.click(btn);
+      await waitFor(() => expect(resummarize).toHaveBeenCalledWith("v1"));
+    });
+
+    // The point of the change: a finished summary can still be wrong or simply
+    // unwanted, so the redo must not be gated on the job having failed.
+    it("shows on a done summary too", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          summary_status: "done",
+          summary: "Prose one.",
+          has_subtitles: true,
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await screen.findByText("Prose one.")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /Re-summarize/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("shows on no_transcript, so a music video can be retried", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "no_transcript", has_subtitles: true }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(
+        await screen.findByRole("button", { name: /Re-summarize/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("hides while a summary is already running", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "running", has_subtitles: true }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await screen.findByText(/Summarizing/i)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Re-summarize/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    // The endpoint answers 409 without subtitles, so the button would be dead.
+    it("hides for a video with no subtitles", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "error", has_subtitles: false }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(
+        await screen.findByText(/Summarization failed/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Re-summarize/i }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("clicking a chapter seeks the video to its timestamp", async () => {
@@ -735,5 +789,43 @@ describe("Player", () => {
     );
 
     await screen.findByRole("button", { name: /Category: Gaming/ });
+  });
+});
+
+// The stripping rules here mirror backend/internal/subtitles/vtt.go; a case
+// added to one side belongs on the other.
+describe("parseVtt sound-event stripping", () => {
+  const vtt = (...cues: string[]) =>
+    "WEBVTT\n\n" +
+    cues
+      .map((c, i) => `00:00:0${i}.000 --> 00:00:0${i + 1}.000\n${c}\n`)
+      .join("\n");
+
+  it("strips [Music] but keeps the words around it", () => {
+    expect(parseVtt(vtt("[Music] I play games with"))).toEqual([
+      { ts: 0, text: "I play games with" },
+    ]);
+  });
+
+  it("drops a cue that was nothing but a marker", () => {
+    expect(parseVtt(vtt("[Music]", "[Applause]", "real words"))).toEqual([
+      { ts: 2, text: "real words" },
+    ]);
+  });
+
+  it("strips music notes", () => {
+    expect(parseVtt(vtt("♪ la la la ♪"))).toEqual([
+      { ts: 0, text: "la la la" },
+    ]);
+  });
+
+  it("strips only allow-listed parenthesised annotations", () => {
+    expect(parseVtt(vtt("(applause) thanks"))).toEqual([
+      { ts: 0, text: "thanks" },
+    ]);
+    // Real speech uses parentheses too — an open rule would eat this.
+    expect(parseVtt(vtt("the result (roughly) doubled"))).toEqual([
+      { ts: 0, text: "the result (roughly) doubled" },
+    ]);
   });
 });

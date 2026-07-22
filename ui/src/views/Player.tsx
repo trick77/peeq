@@ -55,6 +55,43 @@ function transcriptFilenameBase(title: string, id: string): string {
   return base || id;
 }
 
+// PAREN_SOUND_EVENTS / stripSoundEvents mirror the sound-event stripping in
+// backend/internal/subtitles/vtt.go — the backend copy feeds the summary and the
+// embeddings, this one draws the transcript panel, and a rule added to one has
+// to be added to the other or the two views disagree. Square brackets are
+// stripped outright (YouTube uses them only for sound events and speaker
+// labels); parentheses only when the inner text is in this closed list, because
+// real speech does use parentheses.
+const PAREN_SOUND_EVENTS = new Set([
+  "music",
+  "background music",
+  "musique",
+  "applause",
+  "applauses",
+  "cheering",
+  "cheers",
+  "laughter",
+  "laughs",
+  "laughing",
+  "singing",
+  "sings",
+  "silence",
+  "no audio",
+  "inaudible",
+  "foreign",
+]);
+
+function stripSoundEvents(s: string): string {
+  return s
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/[♪♫♬♩]/g, " ")
+    .replace(/\([^)]*\)/g, (m) =>
+      PAREN_SOUND_EVENTS.has(m.slice(1, -1).trim().toLowerCase()) ? " " : m,
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function parseVtt(text: string): Cue[] {
   const lines = text.split(/\r?\n/);
   const timingRe =
@@ -75,10 +112,12 @@ export function parseVtt(text: string): Cue[] {
       textLines.push(lines[i].trim());
       i++;
     }
-    const cueText = textLines
-      .join(" ")
-      .replace(/<[^>]+>/g, "")
-      .trim();
+    const cueText = stripSoundEvents(
+      textLines
+        .join(" ")
+        .replace(/<[^>]+>/g, "")
+        .trim(),
+    );
     if (cueText) cues.push({ ts, text: cueText });
   }
   return cues;
@@ -938,8 +977,11 @@ export function Player({
               ) : (
                 <p className="placeholder">No summary text.</p>
               ))}
+            {/* no_transcript covers both "there are no captions" and "the
+                captions turned out to be music/ambience rather than speech",
+                so the copy has to fit both. */}
             {video.summary_status === "no_transcript" && (
-              <p className="placeholder">No transcript available.</p>
+              <p className="placeholder">No speech in this video.</p>
             )}
             {(video.summary_status === "pending" ||
               video.summary_status === "running") && (
@@ -952,8 +994,16 @@ export function Player({
               </p>
             )}
             {video.summary_status === "error" && (
-              <>
-                <p className="errline">Summarization failed.</p>
+              <p className="errline">Summarization failed.</p>
+            )}
+            {/* Re-summarize is offered for every settled state, not just after
+                a failure: a summary can be wrong or unwanted without the job
+                having errored. Hidden while one is already queued or running,
+                and hidden without subtitles because the endpoint answers 409
+                for a video that has none — the button would be dead. */}
+            {video.has_subtitles &&
+              video.summary_status !== "pending" &&
+              video.summary_status !== "running" && (
                 <Button
                   type="button"
                   variant="secondary"
@@ -964,8 +1014,7 @@ export function Player({
                   {!resummarizing && <Icon name="download" size="15px" />}
                   {resummarizing ? "Queuing" : "Re-summarize"}
                 </Button>
-              </>
-            )}
+              )}
             {!DONE_STATUSES.has(video.summary_status) && (
               <p className="placeholder">No summary yet.</p>
             )}

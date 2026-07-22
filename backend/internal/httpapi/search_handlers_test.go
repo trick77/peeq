@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,6 +20,14 @@ import (
 // plus videos + rag stores sharing one test database.
 func searchTestDeps(t *testing.T) Deps {
 	t.Helper()
+	deps, _ := searchTestDepsWithDB(t)
+	return deps
+}
+
+// searchTestDepsWithDB is searchTestDeps for the tests that also need the raw
+// handle — e.g. to install a trigger that blocks one specific column write.
+func searchTestDepsWithDB(t *testing.T) (Deps, *sql.DB) {
+	t.Helper()
 	db := openTestDB(t)
 	sessions := auth.NewSessionStore(db, false)
 	users := auth.NewUserStore(db)
@@ -34,7 +43,7 @@ func searchTestDeps(t *testing.T) Deps {
 			Email:             "dev@example.local",
 			Name:              "Dev Tester",
 		},
-	}
+	}, db
 }
 
 // fakeEmbedder is a stub SearchEmbedder that returns a fixed vector (or
@@ -291,8 +300,9 @@ func TestResummarizeEnqueues(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
-	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
-		t.Fatalf("seed summary status: %v", err)
+	if err := deps.Videos.SetSummary("v1", "The old summary.",
+		`[{"ts":0,"title":"Intro","source":"mimo"}]`, `[{"ts":5,"text":"Old point."}]`); err != nil {
+		t.Fatalf("seed summary: %v", err)
 	}
 	if err := deps.Videos.SetCategory("v1", "gaming"); err != nil {
 		t.Fatalf("seed category: %v", err)
@@ -325,6 +335,13 @@ func TestResummarizeEnqueues(t *testing.T) {
 	// wrong one.
 	if got.Category != videos.UncategorizedCategory {
 		t.Fatalf("category = %q, want it cleared so the worker re-classifies", got.Category)
+	}
+	// The summarize pipeline is resumable and skips the summary step whenever
+	// summary <> '', so leaving the old text in place would make this endpoint
+	// a no-op: the job would run and the same summary would come back.
+	if got.Summary != "" || got.Chapters != "" || got.KeyPoints != "" {
+		t.Fatalf("expected the stored analysis cleared, got summary=%q chapters=%q key_points=%q",
+			got.Summary, got.Chapters, got.KeyPoints)
 	}
 }
 
@@ -514,6 +531,45 @@ func TestResummarize_categoryResetFailure500(t *testing.T) {
 
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestResummarize_clearSummaryFailureIs500 asserts the endpoint fails loudly
+// when it cannot wipe the stored analysis. Reporting 202 there would be a lie:
+// the summarize pipeline skips the summary step whenever summary <> ”, so the
+// job would run and hand back the exact text the user asked to be redone.
+func TestResummarize_clearSummaryFailureIs500(t *testing.T) {
+	deps, db := searchTestDepsWithDB(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath:       "/media/v1.mp4",
+		SubtitleRelPath: "v1.en.vtt",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
+	if err := deps.Videos.SetSummary("v1", "the old summary", "", ""); err != nil {
+		t.Fatalf("seed summary: %v", err)
+	}
+	deps.SummaryJobs = &spySummaryJobs{}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// Block exactly the summary column, leaving the summary_status write above
+	// it working — closing the db would fail the earlier Get instead.
+	if _, err := db.Exec(`CREATE TRIGGER no_summary BEFORE UPDATE OF summary ON videos
+		BEGIN SELECT RAISE(ABORT, 'summary writes blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
 	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()

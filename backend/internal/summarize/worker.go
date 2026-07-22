@@ -173,7 +173,17 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		return true, w.failJob(job, video, run, "parse vtt: "+perr.Error())
 	}
 	if parsed.Transcript == "" {
+		w.discardStaleAnalysis(ctx, video)
 		w.finishNoTranscript(job, video, "empty transcript")
+		return true, nil
+	}
+	// Captions that are just music/ambience with the odd lyric fragment are not
+	// speech. Summarizing them produces a confident description of a video that
+	// says nothing, so treat them like a missing transcript. Checked here, before
+	// startRun, so a music video never opens an analysis log line either.
+	if parsed.IsNonSpeech(int(video.DurationSeconds)) {
+		w.discardStaleAnalysis(ctx, video)
+		w.finishNoTranscript(job, video, "no speech (music only)")
 		return true, nil
 	}
 
@@ -396,6 +406,40 @@ func (w *Worker) finishNoTranscript(job *summaryjobs.Job, video *videos.Video, r
 	_ = w.d.Jobs.Finish(job.ID, "done", "")
 	w.d.Logger.Info("summarize worker: no transcript", "video_id", video.ID, "title", video.Title,
 		"channel", video.ChannelName, "reason", reason)
+}
+
+// discardStaleAnalysis throws away what an earlier run stored for a video whose
+// subtitles have now been read and found to contain nothing worth summarizing.
+// Without it a re-analysis only flips summary_status: the old summary text and
+// its embedded chunks stay in the database and keep matching semantic search,
+// where the UI gives no sign they are still there. Clearing the summary also
+// drops the video out of NextUnclassified (it requires summary <> ”), so the
+// idle classify sweep stops picking it up.
+//
+// This is deliberately NOT called when the subtitle file is simply absent or
+// unreadable: Tombstone() blanks subtitle_path, so a retention-swept video
+// takes that path and must keep the summary it was archived with.
+//
+// Best-effort throughout — the caller's path is terminal and a cleanup failure
+// must not turn it into a job failure.
+func (w *Worker) discardStaleAnalysis(ctx context.Context, video *videos.Video) {
+	// The row write is skippable when the row is already clean, but the chunk
+	// delete is NOT gated on it. An empty summary column does not mean there are
+	// no chunks: handleResummarize clears the summary before enqueuing, so on
+	// the flow that matters most — a user hitting Re-summarize to fix a video
+	// that was summarized wrongly — the worker sees a blank row and the stale
+	// embeddings would live on in semantic search. DeleteVideoChunks on a video
+	// with no chunks is a no-op, so running it unconditionally costs nothing.
+	if video.Summary != "" || video.Chapters != "" || video.KeyPoints != "" {
+		if err := w.d.Videos.ClearSummary(video.ID); err != nil {
+			w.d.Logger.Error("summarize worker: clear stale summary", "video_id", video.ID, "err", err)
+		}
+	}
+	if w.d.Rag != nil {
+		if err := w.d.Rag.DeleteVideoChunks(ctx, video.ID); err != nil {
+			w.d.Logger.Error("summarize worker: clear stale chunks", "video_id", video.ID, "err", err)
+		}
+	}
 }
 
 // classifyOne repairs one video from the classification backlog: a downloaded

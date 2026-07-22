@@ -407,6 +407,21 @@ func (s *Store) SetSummary(id, summary, chaptersJSON, keyPointsJSON string) erro
 	return nil
 }
 
+// ClearSummary wipes a video's stored analysis — prose summary, chapters and
+// key points — leaving summary_status alone so the caller decides the resulting
+// state. It is the counterpart of SetSummary for two cases: re-analysis that
+// found nothing to summarize, and a user-triggered re-summarize. The worker's
+// pipeline is resumable and skips the summary step when summary <> ”, so
+// without this a redo would silently keep the old text.
+func (s *Store) ClearSummary(id string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET summary='', chapters='', key_points='', summary_error='' WHERE id=?`, id)
+	if err != nil {
+		return fmt.Errorf("clear video %s summary: %w", id, err)
+	}
+	return nil
+}
+
 // SetSummaryText persists just the prose summary, leaving chapters, key points
 // and status untouched, so the resumable summarize worker can save it the
 // moment it is produced — before the fragile key-points step — instead of
