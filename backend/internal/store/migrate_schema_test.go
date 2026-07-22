@@ -181,3 +181,81 @@ func TestSchemaHasChannelMetadata(t *testing.T) {
 		t.Fatalf("defaults = (%d,%d,%d), want all zero", subs, verified, ok)
 	}
 }
+
+// TestMigrate_0004ResetsOnlyWhatTheSweepCanReclassify guards the one migration
+// that touches DATA rather than shape. A fresh-DB test cannot see it: the
+// reset runs against zero rows there and passes no matter what it says. So
+// stand the DB up at 0003 — what a deployed peeq looked like before this
+// release — seed the three row shapes that matter, and let Migrate apply 0004.
+//
+// The rule under test: a category may only be cleared when the summarize
+// worker's idle sweep can hand it back (videos.Store.NextUnclassified selects
+// status = 'downloaded' AND summary <> ”). Clearing anything else does not
+// reclassify it, it erases it — permanently, and for a no-transcript video a
+// hand pick on the Player was the only way that category ever got there.
+func TestMigrate_0004ResetsOnlyWhatTheSweepCanReclassify(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "cat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Given: a DB at 0003, with the enum-era categories already assigned.
+	for _, name := range []string{"0001_init.sql", "0002_subtitles_default.sql", "0003_channel_metadata.sql"} {
+		body, err := migrationsFS.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    TEXT PRIMARY KEY,
+		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"0001_init.sql", "0002_subtitles_default.sql", "0003_channel_metadata.sql"} {
+		if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`
+INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
+	('reachable',    'https://youtu.be/a', 'downloaded', 'a summary', 'done',          'entertainment'),
+	('tombstoned',   'https://youtu.be/b', 'tombstoned', 'a summary', 'done',          'history'),
+	('notranscript', 'https://youtu.be/c', 'downloaded', '',          'no_transcript', 'gaming')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// When: peeq starts and migrates.
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Then: only the row the sweep can pick up was cleared.
+	for _, tc := range []struct{ id, want string }{
+		{"reachable", "uncategorized"},
+		{"tombstoned", "history"},
+		{"notranscript", "gaming"},
+	} {
+		var got string
+		if err := db.QueryRow(`SELECT category FROM videos WHERE id = ?`, tc.id).Scan(&got); err != nil {
+			t.Fatalf("read %s: %v", tc.id, err)
+		}
+		if got != tc.want {
+			t.Fatalf("%s category = %q, want %q", tc.id, got, tc.want)
+		}
+	}
+
+	// And: the flag column arrived, off for every pre-existing row, since none
+	// of them can be proven to be a hand pick.
+	var flagged int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM videos WHERE category_manual <> 0`).Scan(&flagged); err != nil {
+		t.Fatalf("category_manual missing after migrate: %v", err)
+	}
+	if flagged != 0 {
+		t.Fatalf("%d rows flagged manual, want 0", flagged)
+	}
+}

@@ -44,9 +44,11 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
 ## Database / migrations
 - New migration → a new numbered file `backend/internal/store/migrations/NNNN_*.sql`. The runner applies
   pending ones in order and records them in `schema_migrations`.
-- Pre-1.0, squash instead: edit `0001_init.sql` in place and re-create the DB. Ask the owner first — it
-  breaks every existing install (no upgrade path; the runner skips `0001` once recorded). Numbered
-  migrations at 1.0.
+- NEVER squash into `0001_init.sql`. The runner skips `0001` once recorded, so an edit there is silently
+  not applied and the only way to pick it up is wiping `/data` — peeq has live installs.
+- A migration that touches DATA (not just shape) → test it against a populated DB stood up at the previous
+  migration; a fresh-DB test runs it over zero rows and passes whatever it says. See
+  `TestMigrate_0004ResetsOnlyWhatTheSweepCanReclassify`.
 
 ## Frontend
 - Vite + React + TS + Tailwind. `npm run build` empties `backend/web/dist` and overwrites the tracked
