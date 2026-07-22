@@ -10,8 +10,10 @@ import {
   listPending,
   cookieHealth,
   streamDownloads,
+  listVideos,
 } from "./api";
 import { addDownload } from "./api/downloads";
+import { searchVideos } from "./api/search";
 import type { Job, User, Video } from "./api/types";
 
 describe("App (static)", () => {
@@ -78,6 +80,7 @@ vi.mock("./api/videos", () => ({
 vi.mock("./api/search", () => ({
   subtitlesUrl: (id: string) => `/api/videos/${id}/subtitles`,
   resummarize: vi.fn(),
+  searchVideos: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("./api/downloads", async (importOriginal) => ({
@@ -106,6 +109,16 @@ vi.mock("./api/pending", () => ({
   downloadPending: vi.fn(),
   ignorePending: vi.fn(),
 }));
+
+// Reset the URL before every test in this file. useRoute() derives the
+// initial view from window.location.pathname, and jsdom persists location
+// across tests in a file — without this, the deep-link tests below (which
+// enter at /video/<id>, /bogus, …) would leak their path into later
+// describes that assume they start at "/". A root-level hook applies to
+// every describe regardless of textual position.
+beforeEach(() => {
+  window.history.replaceState(null, "", "/");
+});
 
 // The dock only starts its 3s poll once `jobs` already holds an active
 // entry, so adding the first video to an empty dock used to leave it
@@ -183,36 +196,141 @@ describe("App dock bootstrap", () => {
   }, 20000);
 });
 
-describe("App reload-restore", () => {
+// Deep links: the URL is the source of truth for which page is open (route.ts),
+// replacing the old nowPlaying sessionStorage reload-restore. A cold-loaded
+// /video/<id> reopens the Player; a rail click pushes the matching URL; a
+// back/forward re-derives the view from the URL via popstate.
+describe("App deep links", () => {
   beforeEach(() => {
+    // testing-library truncates its failure DOM dump at 7000 chars, which
+    // cuts off the rail's lower nav groups and makes a CI-only failure here
+    // impossible to diagnose from the log.
+    process.env.DEBUG_PRINT_LIMIT = "100000";
     sessionStorage.clear();
+    vi.clearAllMocks();
+    // Restate every mock this describe depends on rather than inheriting
+    // whatever an earlier describe left behind — the paused-banner tests
+    // overwrite downloadsStatus, and clearAllMocks only drops call history,
+    // not implementations.
+    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    vi.mocked(listDownloads).mockResolvedValue([]);
+    vi.mocked(downloadsStatus).mockResolvedValue({
+      paused: false,
+      low_disk: false,
+      youtube_paused: false,
+      youtube_pause_reason: "",
+    });
+    vi.mocked(listPending).mockResolvedValue([]);
+    vi.mocked(cookieHealth).mockResolvedValue({
+      status: "active",
+      present: true,
+    });
+    vi.mocked(streamDownloads).mockResolvedValue(undefined);
+    // Default both video sources to empty so a test that overrides one does
+    // not leak its fixture into the next (clearAllMocks keeps implementations).
+    vi.mocked(listVideos).mockResolvedValue([]);
+    vi.mocked(searchVideos).mockResolvedValue([]);
   });
 
   // Only the Player view renders a <video>; the top bar's search box only
   // shows on the library view (showSearch={view === "library"}). Use those
   // as unambiguous discriminators (both "Library" and "Now playing" always
   // appear as rail nav labels).
-  it("reopens the Player when a video was playing before reload", async () => {
-    sessionStorage.setItem(
-      "peeq.nowPlaying",
-      JSON.stringify({ videoId: "v1", playing: true }),
-    );
+  it("a cold /video/<id> deep link opens the Player on that video", async () => {
+    window.history.replaceState(null, "", "/video/v1");
     render(<App />);
     await waitFor(() => expect(document.querySelector("video")).not.toBeNull());
+    // A valid path is preserved verbatim — not rewritten by normalization.
+    expect(window.location.pathname).toBe("/video/v1");
   });
 
-  it("lands on Library when the marker says the video was paused", async () => {
-    sessionStorage.setItem(
-      "peeq.nowPlaying",
-      JSON.stringify({ videoId: "v1", playing: false }),
-    );
+  it("a cold / lands on the Library", async () => {
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
     expect(document.querySelector("video")).toBeNull();
   });
 
-  it("lands on Library when there is no marker", async () => {
+  it("clicking a Library video opens the Player and pushes /video/<id>", async () => {
+    vi.mocked(listVideos).mockResolvedValue([mockVideo]);
     render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Open The Trillion Dollar Equation",
+      }),
+    );
+
+    await waitFor(() => expect(document.querySelector("video")).not.toBeNull());
+    expect(window.location.pathname).toBe("/video/v1");
+  });
+
+  it("opening a search match pushes /video/<id> (openVideoAt)", async () => {
+    vi.mocked(searchVideos).mockResolvedValue([
+      {
+        video: mockVideo,
+        matches: [
+          {
+            start_seconds: 90,
+            snippet: "matched moment here",
+            distance: 0.1,
+            kind: "transcript",
+          },
+        ],
+      },
+    ]);
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    const input = await screen.findByPlaceholderText(
+      "Search everything you've watched…",
+    );
+    fireEvent.change(input, { target: { value: "equation" } });
+    fireEvent.submit(input.closest("form")!);
+
+    // Click the match snippet; the click bubbles to the match button's onOpen.
+    fireEvent.click(await screen.findByText("matched moment here"));
+
+    await waitFor(() => expect(document.querySelector("video")).not.toBeNull());
+    expect(window.location.pathname).toBe("/video/v1");
+  });
+
+  it("normalizes an unknown path to / and shows the Library", async () => {
+    window.history.replaceState(null, "", "/bogus");
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+    // useRoute's mount normalization replaceState's the bogus entry to the
+    // canonical path so the address bar matches what is shown.
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("clicking a rail item pushes its URL", async () => {
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+
+    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
+
+    expect(await screen.findByText("Nothing pending.")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/pending");
+  });
+
+  it("re-derives the view from the URL on back/forward (popstate)", async () => {
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+
+    // Navigate into Pending — pushes /pending.
+    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
+    await screen.findByText("Nothing pending.");
+    expect(window.location.pathname).toBe("/pending");
+
+    // Simulate the browser Back button: the URL returns to the previous entry
+    // and a popstate fires. jsdom's real history.back() is async and quirky,
+    // so drive the listener directly — this is the exact contract useRoute's
+    // popstate handler implements (re-parse window.location). Real
+    // back/forward is covered by browser verification.
+    window.history.replaceState(null, "", "/");
+    window.dispatchEvent(new Event("popstate"));
+
     await screen.findByPlaceholderText("Search titles");
     expect(document.querySelector("video")).toBeNull();
   });

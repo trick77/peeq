@@ -20,7 +20,7 @@ import { Channels } from "./views/Channels";
 import { Channel } from "./views/Channel";
 import { Pending } from "./views/Pending";
 import { Search } from "./views/Search";
-import { readNowPlaying } from "./nowPlaying";
+import { useRoute } from "./route";
 import { Button } from "./ui";
 
 // Page titles/subtitles per view, per the mockup's `titles` map.
@@ -39,16 +39,20 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
 // views. Routing is manual view-state, no router lib — matches loom's
 // pattern for a single-page app this size.
 export function App() {
-  // Reload-restore: if a video was actively playing when the page was last
-  // torn down (a reload, not an in-app navigation — Player clears the marker
-  // on unmount), reopen the Player on it. It opens paused at the server-side
-  // resume position via Player's existing handleLoadedMetadata seek — no
-  // autoplay. Read once, synchronously, so the very first render already
-  // routes to the Player instead of flashing Library. See nowPlaying.ts.
-  const restored = readNowPlaying();
-  const [view, setView] = useState<ViewId>(
-    restored?.playing ? "player" : "library",
-  );
+  // The URL is the source of truth for which page is open: `view` and the two
+  // selected ids are derived from the path (route.ts), so a page can be deep-
+  // linked, refreshed, and walked with the browser's back/forward buttons. A
+  // cold-loaded /video/<id> therefore reopens the Player straight away (paused
+  // at the server-side resume position via Player's handleLoadedMetadata seek),
+  // which is what retired the old nowPlaying sessionStorage reload-restore.
+  const { route, navigate } = useRoute();
+  const view = route.view;
+  const selectedVideoId = route.videoId;
+  const selectedChannelId = route.channelId;
+  // setView keeps every existing call site (the rail, the banner's "fix
+  // cookie", ViewSwitch's back/deleted handlers) unchanged — it just pushes a
+  // new URL. navigate is stable, so this is too.
+  const setView = useCallback((v: ViewId) => navigate({ view: v }), [navigate]);
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState(false);
@@ -63,12 +67,6 @@ export function App() {
     youtube_paused: false,
     youtube_pause_reason: "",
   });
-  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(
-    restored?.playing ? restored.videoId : null,
-  );
-  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(
-    null,
-  );
   // Library search: lifted here (not owned by Library) because the search
   // box itself now lives in the top bar, which Library doesn't render. The
   // top bar is not channel-aware, so the channel page keeps its own,
@@ -288,24 +286,23 @@ export function App() {
   const meta = VIEW_META[view];
 
   function openVideo(id: string) {
-    setSelectedVideoId(id);
     setPendingSeek(undefined);
-    setView("player");
+    navigate({ view: "player", videoId: id });
   }
 
   // openVideoAt — Search's onOpen: jumps into the Player at a specific
-  // moment (a matched transcript/summary chunk's start_seconds).
+  // moment (a matched transcript/summary chunk's start_seconds). The seek
+  // target stays in App state, not the URL — it is transient sub-page state,
+  // out of the deep-link scope.
   function openVideoAt(id: string, startSeconds: number) {
-    setSelectedVideoId(id);
     setPendingSeek(startSeconds);
-    setView("player");
+    navigate({ view: "player", videoId: id });
   }
 
   // openChannel is the channel page's only entry point: there is no rail
   // item for it, so this is called from every place a channel name appears.
   function openChannel(id: string) {
-    setSelectedChannelId(id);
-    setView("channel");
+    navigate({ view: "channel", channelId: id });
   }
 
   return (
