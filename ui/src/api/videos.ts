@@ -67,6 +67,21 @@ export async function setWatched(
   return res.watched;
 }
 
+// setCategory overrides the classifier's guess from the Player. The choice
+// sticks even against a classify pass already in flight: the backend's
+// classifier write refuses a video that already has a category.
+export async function setCategory(
+  id: string,
+  category: string,
+): Promise<string> {
+  const res = await api.post<{ category: string }>(
+    `/api/videos/${encodeURIComponent(id)}/category`,
+    { category },
+    "failed to set category",
+  );
+  return res.category;
+}
+
 // setResume records the player's resume position (seconds). Note the
 // asymmetry with Video.resume_position_seconds: this is the write body
 // (`position`), the video row is read back with a differently-named field.

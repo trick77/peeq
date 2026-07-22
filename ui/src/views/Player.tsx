@@ -2,10 +2,12 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
 import { Scrubber } from "../components/Scrubber";
+import { CategoryPicker } from "../components/CategoryPicker";
 import {
   getVideo,
   setFavorite,
   setWatched,
+  setCategory,
   setResume,
   deleteVideo,
   redownload,
@@ -487,6 +489,24 @@ export function Player({
     }
   }
 
+  // Optimistic, like the favorite and watched toggles: the pill moves at
+  // once and rolls back if the write fails, since a category is cheap to
+  // re-pick and a spinner on a one-word change reads as friction.
+  async function handlePickCategory(next: string) {
+    if (!video) return;
+    const id = video.id;
+    const prev = video.category;
+    setVideo({ ...video, category: next });
+    try {
+      await setCategory(id, next);
+    } catch {
+      // Roll back only if this is still the same video: a write that fails
+      // after the user has moved on must not paint the old video's category
+      // onto the new one.
+      setVideo((v) => (v && v.id === id ? { ...v, category: prev } : v));
+    }
+  }
+
   async function handleToggleWatched() {
     if (!video) return;
     const next = !video.watched;
@@ -641,6 +661,10 @@ export function Player({
             {video.filesize_bytes ? (
               <span className="pill">{formatSize(video.filesize_bytes)}</span>
             ) : null}
+            <CategoryPicker
+              category={video.category}
+              onPick={handlePickCategory}
+            />
           </div>
           {/* The action row splits on one rule: a control keeps its label if
               the label reports the current state (Keep forever / Kept

@@ -1667,3 +1667,85 @@ func TestDownloadFilename_truncatesLongTitles(t *testing.T) {
 		t.Fatalf("downloadFilename = %q, want the extension preserved", got)
 	}
 }
+
+// TestVideosCategory_overridesAnExistingOne asserts the direction this
+// endpoint owns: the user overrules a category the model already wrote, so
+// the write must be unconditional. The other direction — a classify pass
+// refusing to overwrite a manual pick — belongs to
+// videos.Store.SetCategoryIfUnset and is proven in summarize's worker tests.
+func TestVideosCategory_overridesAnExistingOne(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetCategory("v1", "gaming"); err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	body, _ := json.Marshal(map[string]string{"category": "science"})
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/category", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST category status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"category":"science"`) {
+		t.Fatalf("body = %s, want the new category echoed back", rec.Body.String())
+	}
+	got, err := deps.Videos.Get("v1")
+	if err != nil || got == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.Category != "science" {
+		t.Fatalf("category = %q, want science", got.Category)
+	}
+}
+
+// TestVideosCategory_rejectsUnknownAndMissing: a bad id here is a caller bug,
+// not a model reply, so it must 400 rather than be repaired or silently
+// downgraded to 'uncategorized' the way NormalizeCategory treats an LLM answer.
+func TestVideosCategory_rejectsUnknownAndMissing(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	for _, body := range []string{`{"category":"not-a-category"}`, `{}`, `not json`} {
+		rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/category", []byte(body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: status = %d, want 400", body, rec.Code)
+		}
+	}
+	got, _ := deps.Videos.Get("v1")
+	if got.Category != "uncategorized" {
+		t.Fatalf("category = %q, want it untouched by the rejected writes", got.Category)
+	}
+
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/missing/category",
+		[]byte(`{"category":"ai"}`))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown video: status = %d, want 404", rec.Code)
+	}
+}
+
+// TestVideosCategory_writeFailure500 asserts a store failure surfaces rather
+// than returning 200 with the old category still in place.
+func TestVideosCategory_writeFailure500(t *testing.T) {
+	deps, _, db := videosTestDepsDB(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER no_category BEFORE UPDATE OF category ON videos
+		BEGIN SELECT RAISE(ABORT, 'category writes blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/category", []byte(`{"category":"ai"}`))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}

@@ -20,6 +20,7 @@ import {
   Tv,
   Captions,
   ChevronRight,
+  ChevronDown,
   RefreshCw,
   Copy,
   LoaderCircle,
@@ -59,6 +60,7 @@ const COMPONENTS = {
   playFilled: Play, // rendered solid via the FILLED set below — rail logo + player play button
   captions: Captions,
   chevronRight: ChevronRight,
+  chevronDown: ChevronDown,
   refresh: RefreshCw,
   copy: Copy,
   spinner: LoaderCircle, // spun by .ui-spin — every async wait spins

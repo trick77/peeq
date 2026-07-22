@@ -219,6 +219,41 @@ func (s *server) handleFavoriteVideo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"favorite": newVal})
 }
 
+// categoryRequest is the required body of POST .../category.
+type categoryRequest struct {
+	Category *string `json:"category"`
+}
+
+// handleCategoryVideo sets a video's category by hand, from the Player. The
+// write is unconditional on purpose: the user overrules the model, never the
+// other way round. What makes the choice stick without a "set by a human"
+// flag is the other side — the classifier writes through
+// videos.Store.SetCategoryIfUnset, which refuses a row that already has one.
+//
+// The id must be an exact enum member: unlike a model reply, which
+// videos.NormalizeCategory repairs, a bad id here is a caller bug and is
+// worth a 400 rather than a silent downgrade to 'uncategorized'.
+func (s *server) handleCategoryVideo(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.lookupVideo(w, r)
+	if !ok {
+		return
+	}
+	var req categoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Category == nil {
+		writeJSONError(w, http.StatusBadRequest, "category (string) is required")
+		return
+	}
+	if !videos.ValidCategory(*req.Category) {
+		writeJSONError(w, http.StatusBadRequest, "unknown category")
+		return
+	}
+	if err := s.videos.SetCategory(v.ID, *req.Category); err != nil {
+		serverError(w, r, err, "set category failed")
+		return
+	}
+	writeJSON(w, map[string]string{"category": *req.Category})
+}
+
 // watchedRequest is the required body of POST .../watched.
 type watchedRequest struct {
 	Watched *bool `json:"watched"`

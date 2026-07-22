@@ -207,6 +207,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleDeleteVideo)))
 	mux.Handle("POST /api/videos/{id}/favorite", s.requireAuth(http.HandlerFunc(s.handleFavoriteVideo)))
 	mux.Handle("POST /api/videos/{id}/watched", s.requireAuth(http.HandlerFunc(s.handleWatchedVideo)))
+	mux.Handle("POST /api/videos/{id}/category", s.requireAuth(http.HandlerFunc(s.handleCategoryVideo)))
 	mux.Handle("POST /api/videos/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleResumeVideo)))
 	mux.Handle("POST /api/videos/{id}/redownload", s.requireAuth(http.HandlerFunc(s.handleRedownloadVideo)))
 	mux.Handle("GET /api/videos/{id}/stream", s.requireAuth(http.HandlerFunc(s.handleStreamVideo)))

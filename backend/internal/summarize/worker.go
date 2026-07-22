@@ -204,6 +204,11 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// how a large backlog ended up summarized but 'uncategorized'. A classify
 	// failure must NOT fail the job — the summary above is already saved, and
 	// the idle sweep in classifyOne picks the video up later.
+	//
+	// `video` was read before the summary call above, so this test is against
+	// a stale row; SetCategoryIfUnset re-checks at write time, which is what
+	// actually protects a category the user picked on the Player while the
+	// summary was still running.
 	if video.Category == "" || video.Category == videos.UncategorizedCategory {
 		cctx, done := run.step("classify")
 		raw, cerr := w.d.Summarizer.Classify(cctx, video.Title, summary, videos.ClassifiableCategories())
@@ -212,10 +217,13 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 			w.d.Logger.Warn("summarize worker: classify failed", append(run.ident(), "duration_ms", run.stepElapsedMs(), "err", cerr)...)
 		default:
 			category := videos.NormalizeCategory(raw)
-			if serr := w.d.Videos.SetCategory(video.ID, category); serr != nil {
+			applied, serr := w.d.Videos.SetCategoryIfUnset(video.ID, category)
+			if serr != nil {
 				w.d.Logger.Error("summarize worker: set category failed", append(run.ident(), "err", serr)...)
 			} else {
-				done("category", category)
+				// applied=false means the user picked a category by hand while
+				// this call was in flight, and theirs won.
+				done("category", category, "applied", applied)
 			}
 		}
 	} else {
@@ -397,9 +405,18 @@ func (w *Worker) classifyOne(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	category := videos.NormalizeCategory(raw)
-	if serr := w.d.Videos.SetCategory(video.ID, category); serr != nil {
+	// Guarded, because the classify call above is slow enough for the user to
+	// have picked a category on the Player in the meantime. A no-op write is
+	// not a failure and needs no parking: the video no longer matches
+	// NextUnclassified, so the sweep will not offer it again.
+	applied, serr := w.d.Videos.SetCategoryIfUnset(video.ID, category)
+	if serr != nil {
 		w.classifyFailed[video.ID] = true
 		w.d.Logger.Error("summarize worker: backlog set category failed", append(ident, "duration_ms", elapsed, "err", serr)...)
+		return true, nil
+	}
+	if !applied {
+		w.d.Logger.Info("summarize worker: backlog video was categorized meanwhile; keeping it", "video_id", video.ID)
 		return true, nil
 	}
 	if category == videos.UncategorizedCategory {
