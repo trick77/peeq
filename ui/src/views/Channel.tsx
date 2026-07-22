@@ -92,10 +92,13 @@ export function formatAge(iso: string | undefined): string {
 //                     so it outranks the freshness of the metadata.
 //   refresh failed  — resolved_at is set but the attempt did not succeed.
 //                     This is the state behind a channel with no avatar, no
-//                     banner and no description. It is no longer a dead end:
-//                     a subscribed channel is re-read once a week, so the
-//                     date here is "as of when this was last true", not a
-//                     permanent verdict.
+//                     banner and no description, and what it says next depends
+//                     on whether anything will ever try again: a SUBSCRIBED
+//                     channel is re-read once a week, so the date is "as of
+//                     when this was last true". An unsubscribed one is not in
+//                     that rotation and has nothing else to fall back on now
+//                     that the manual Refresh button is gone, so it says what
+//                     to do about it instead of leaving a dead end on screen.
 //   active          — resolved cleanly, with the date it last read the channel.
 //
 // A channel with no resolved_at at all has simply never been read, and says
@@ -131,6 +134,12 @@ export function ChannelState({ detail }: { detail: ChannelDetail }) {
           <span className="led unknown" />
           Last refresh failed {formatStamp(detail.resolved_at)}
         </span>
+        {detail.subscribed ? null : (
+          <>
+            <span className="sep">·</span>
+            <span>Subscribe to have peeq try again</span>
+          </>
+        )}
       </>
     );
   }

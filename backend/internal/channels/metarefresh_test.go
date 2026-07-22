@@ -241,3 +241,45 @@ func TestSubscribe_seedsTheMetadataSchedule(t *testing.T) {
 		t.Fatal("a freshly subscribed channel is immediately due for a metadata refresh")
 	}
 }
+
+// TestMarkResolveAttemptedIfUnset covers the worker's loop-breaker backstop:
+// it must stamp a never-read channel (taking it out of the backlog) and must
+// NOT touch one that already carries an outcome.
+func TestMarkResolveAttemptedIfUnset(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Channel{ID: "UCnever"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.Upsert(Channel{ID: "UCdone", Name: "Read", ResolvedAt: "2026-07-01 00:00:00"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	// SaveResolved is what a successful read writes; resolve_ok must survive.
+	if err := s.SaveResolved(Channel{ID: "UCdone", Name: "Read", ResolvedAt: "2026-07-01 00:00:00"}); err != nil {
+		t.Fatalf("save resolved: %v", err)
+	}
+
+	for _, id := range []string{"UCnever", "UCdone"} {
+		if err := s.MarkResolveAttemptedIfUnset(id, "2026-07-22 12:00:00"); err != nil {
+			t.Fatalf("mark %s: %v", id, err)
+		}
+	}
+
+	never, err := s.Get("UCnever")
+	if err != nil || never == nil {
+		t.Fatalf("get: %v, %v", never, err)
+	}
+	if never.ResolvedAt != "2026-07-22 12:00:00" {
+		t.Fatalf("never-read channel was not stamped: %q", never.ResolvedAt)
+	}
+
+	done, err := s.Get("UCdone")
+	if err != nil || done == nil {
+		t.Fatalf("get: %v, %v", done, err)
+	}
+	if done.ResolvedAt != "2026-07-01 00:00:00" {
+		t.Fatalf("an existing outcome was overwritten: %q", done.ResolvedAt)
+	}
+	if !done.ResolveOk {
+		t.Fatal("a successful resolve lost resolve_ok")
+	}
+}

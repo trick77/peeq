@@ -1092,6 +1092,41 @@ describe("Channel YouTube metadata", () => {
     expect(screen.getByText("—")).toBeInTheDocument();
   });
 
+  // With the manual Refresh button gone, a failed resolve is only ever retried
+  // by the weekly rotation — and that rotation is subscribed-only. An
+  // unsubscribed channel would otherwise sit on a permanent "Last refresh
+  // failed" with no artwork and nothing the user could do about it, so the
+  // header names the way out instead of being a dead end.
+  it("tells an unsubscribed channel how to get another attempt", async () => {
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({ resolve_ok: false, subscribed: false }),
+    );
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    expect(
+      screen.getByText("Subscribe to have peeq try again"),
+    ).toBeInTheDocument();
+  });
+
+  // A subscribed channel already has the weekly rotation, so the hint would be
+  // noise — and worse, would tell the user to do something already done.
+  it("does not suggest subscribing to a channel that already is", async () => {
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({ resolve_ok: false, subscribed: true }),
+    );
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    expect(
+      screen.queryByText("Subscribe to have peeq try again"),
+    ).not.toBeInTheDocument();
+  });
+
   it("says a channel is gone when peeq auto-unsubscribed it as deleted", async () => {
     vi.mocked(getChannel).mockResolvedValue(
       detail({ gone: true, subscribed: false }),

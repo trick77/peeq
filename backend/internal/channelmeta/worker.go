@@ -34,7 +34,8 @@ const (
 type Deps struct {
 	Refresher *Refresher
 	// CookieStatus reports the current cookie status (settings.CookieStatus).
-	// Required: refreshing without a valid cookie just burns failed attempts.
+	// REQUIRED, and called unconditionally — leaving it nil panics on the first
+	// pass rather than silently skipping the cookie gate.
 	CookieStatus func(ctx context.Context) string
 	// AllowAnonymous is the dev-only escape hatch (config.AllowAnonymousYoutube)
 	// mirrored from the scan scheduler: when true, a non-"valid" CookieStatus
@@ -87,7 +88,13 @@ func (w *Worker) Run(ctx context.Context) {
 		// dev-only anonymous escape hatch is enabled. Without this a
 		// cookieless install would burn a failed refresh on every channel,
 		// and (worse) stamp each one as attempted.
-		if w.d.CookieStatus != nil && w.d.CookieStatus(ctx) != "valid" && !w.d.AllowAnonymous {
+		//
+		// CookieStatus is called unconditionally, matching scan.Scheduler: a
+		// nil-check here would make a caller that forgot to wire it fail OPEN
+		// — silently disabling the gate and calling YouTube with an absent,
+		// stale or blocked cookie. A nil dependency should take the process
+		// down at the first pass, not quietly remove a protection.
+		if w.d.CookieStatus(ctx) != "valid" && !w.d.AllowAnonymous {
 			if !w.sleep(ctx, w.d.PollInterval) {
 				return
 			}
@@ -140,10 +147,10 @@ func (w *Worker) claim() (string, bool) {
 	return channelID, ok
 }
 
-// refresh re-reads one channel under a panic guard, then reschedules it.
+// refresh re-reads one channel under a panic guard, then settles it.
 //
-// The reschedule happens on EVERY outcome — success, failure, or a recovered
-// panic. A failure that skipped it would leave the channel due forever and the
+// Settling happens on EVERY outcome — success, failure, or a recovered panic.
+// An outcome that skipped it would leave the channel claimable forever and the
 // worker would retry it every poll, which is exactly the hammering the whole
 // design avoids. Nothing else is recorded: a failed refresh must not feed the
 // dead-scan counter that auto-unsubscribes channels, because that decision
@@ -157,7 +164,7 @@ func (w *Worker) refresh(ctx context.Context, channelID string) {
 		if r := recover(); r != nil {
 			w.d.Logger.Error("channel metadata: recovered from panic", "channel_id", channelID, "panic", r)
 		}
-		w.reschedule(channelID)
+		w.settle(channelID)
 	}()
 
 	cached, err := w.d.Refresher.Channels.Get(channelID)
@@ -175,14 +182,30 @@ func (w *Worker) refresh(ctx context.Context, channelID string) {
 	w.d.Logger.Info("channel metadata refreshed", "channel_id", channelID)
 }
 
-// reschedule pushes the channel's next refresh out by a jittered interval. It
-// is a no-op for an unsubscribed channel, which has no subscriptions row and
-// so no rotation — a backlog channel resolved once is simply done, its
-// resolved_at stamp being what keeps ClaimUnresolved from returning it again.
-func (w *Worker) reschedule(channelID string) {
+// settle takes the channel back out of the claim set, whatever happened to it.
+// This is the loop-breaker, and it has to cover BOTH claim queries, because
+// each is held off by a different column:
+//
+//   - the weekly rotation is held off by next_meta_refresh_at, pushed out by a
+//     jittered interval;
+//   - the never-read backlog is held off by channels.resolved_at, stamped only
+//     if nothing else stamped it already.
+//
+// Rescheduling alone is not enough. An unsubscribed backlog channel has no
+// subscriptions row, so MarkMetaRefreshed matches zero rows and reports no
+// error — and if the attempt also died before Resolve could record itself (a
+// panic mid-parse, or a channel row that would not load), resolved_at stays
+// NULL and ClaimUnresolved returns that same channel on the next poll, forever.
+// The conditional stamp closes that path without ever overwriting a real
+// outcome.
+func (w *Worker) settle(channelID string) {
 	next := w.d.Now().Add(w.jitteredInterval()).UTC().Format(sqlTimeLayout)
 	if err := w.d.Refresher.Channels.MarkMetaRefreshed(channelID, next); err != nil {
 		w.d.Logger.Error("channel metadata: reschedule failed", "channel_id", channelID, "err", err)
+	}
+	now := w.d.Now().UTC().Format(sqlTimeLayout)
+	if err := w.d.Refresher.Channels.MarkResolveAttemptedIfUnset(channelID, now); err != nil {
+		w.d.Logger.Error("channel metadata: record attempt failed", "channel_id", channelID, "err", err)
 	}
 }
 

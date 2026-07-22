@@ -112,6 +112,35 @@ LIMIT 1`, now, now, now)
 	return channelID, true, nil
 }
 
+// MarkResolveAttemptedIfUnset stamps resolved_at only when it is still NULL,
+// leaving an existing stamp (and everything else on the row) alone.
+//
+// It is the backstop for an attempt that ended without recording itself at
+// all: a panic in the middle of parsing yt-dlp's output, or a failure to even
+// read the channel row. Resolve records its own outcomes, so on every ordinary
+// path this is a no-op — it exists for the paths that never reached Resolve's
+// recording.
+//
+// Without it, such an attempt on an UNSUBSCRIBED channel is invisible: the
+// channel has no subscriptions row, so MarkMetaRefreshed matches nothing,
+// resolved_at stays NULL, and ClaimUnresolved hands the same channel back on
+// the very next poll — a yt-dlp call every poll, forever, which is the exact
+// unbounded-call shape the whole design exists to prevent.
+//
+// Conditional in SQL rather than read-then-write, mirroring SetCategoryIfUnset:
+// the check and the write are one statement, so a concurrent successful resolve
+// cannot be overwritten by this backstop.
+func (s *Store) MarkResolveAttemptedIfUnset(channelID, at string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE channels SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL`,
+		at, channelID,
+	)
+	if err != nil {
+		return fmt.Errorf("mark resolve attempted if unset %s: %w", channelID, err)
+	}
+	return nil
+}
+
 // MarkMetaRefreshed schedules channelID's next metadata refresh, and is called
 // after EVERY attempt — a failed refresh is rescheduled exactly like a
 // successful one, so a channel that cannot be read right now is retried next

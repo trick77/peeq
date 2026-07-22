@@ -500,3 +500,77 @@ func TestResolve_handlePrecedence(t *testing.T) {
 		})
 	}
 }
+
+// seedBacklog tracks a channel WITHOUT subscribing it: the never-read backlog
+// shape. This is the row shape the panic/failure tests above miss, and the one
+// where a missed settle is unbounded rather than merely late — there is no
+// subscriptions row for MarkMetaRefreshed to update, so channels.resolved_at is
+// the only thing that can take it back out of the claim set.
+func seedBacklog(t *testing.T, s *channels.Store, channelID string) {
+	t.Helper()
+	if err := s.Upsert(channels.Channel{ID: channelID}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.Track(channelID, "2026-07-22 11:00:00"); err != nil {
+		t.Fatalf("track: %v", err)
+	}
+}
+
+func resolvedAt(t *testing.T, s *channels.Store, channelID string) string {
+	t.Helper()
+	c, err := s.Get(channelID)
+	if err != nil || c == nil {
+		t.Fatalf("get %s: %v, %v", channelID, c, err)
+	}
+	return c.ResolvedAt
+}
+
+// TestWorker_panickingBacklogChannelIsNotReclaimed is the regression test for
+// the review's top finding. A panic on an UNSUBSCRIBED backlog channel used to
+// leave nothing written at all: MarkMetaRefreshed matched no subscriptions row,
+// resolved_at stayed NULL, and ClaimUnresolved handed the same channel back
+// every poll — a yt-dlp call and a panic every five minutes, forever.
+func TestWorker_panickingBacklogChannelIsNotReclaimed(t *testing.T) {
+	s := newTestStore(t)
+	seedBacklog(t, s, "UCboom")
+	r := &fakeResolver{panics: true}
+	w := newTestWorker(t, s, r, Deps{})
+
+	if !runUntilResolved(t, w, r) {
+		t.Fatal("worker never attempted the backlog channel")
+	}
+
+	if resolvedAt(t, s, "UCboom") == "" {
+		t.Fatal("a panicking backlog channel was left unstamped; it will be re-claimed every poll forever")
+	}
+	// The claim query itself must now pass it over — the property that actually
+	// stops the loop, asserted directly rather than inferred from the column.
+	if id, ok, err := s.ClaimUnresolved("2026-07-22 12:00:00"); err != nil || ok {
+		t.Fatalf("backlog still returns the panicking channel: %q (ok=%v, err=%v)", id, ok, err)
+	}
+}
+
+// TestWorker_settleDoesNotOverwriteARealOutcome: the backstop stamp is
+// conditional, so a successful resolve keeps the timestamp (and resolve_ok)
+// that Resolve wrote rather than having it replaced by the settle that follows.
+func TestWorker_settleDoesNotOverwriteARealOutcome(t *testing.T) {
+	s := newTestStore(t)
+	seedBacklog(t, s, "UCgood")
+	r := &fakeResolver{info: ytdlp.ChannelInfo{UCID: "UCgood", Name: "Filled In", Subscribers: 99}}
+	w := newTestWorker(t, s, r, Deps{})
+
+	if !runUntilResolved(t, w, r) {
+		t.Fatal("worker never picked up the backlog channel")
+	}
+
+	c, err := s.Get("UCgood")
+	if err != nil || c == nil {
+		t.Fatalf("get: %v, %v", c, err)
+	}
+	if c.Name != "Filled In" || c.Subscribers != 99 {
+		t.Fatalf("metadata was not written: %+v", *c)
+	}
+	if !c.ResolveOk {
+		t.Fatal("settle clobbered a successful resolve's resolve_ok")
+	}
+}
