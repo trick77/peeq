@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/videos"
@@ -86,7 +87,13 @@ func (u *usageCompleter) Complete(ctx context.Context, m []llm.Message) (string,
 	u.mu.Lock()
 	u.steps = append(u.steps, info.Step)
 	u.mu.Unlock()
-	info.Totals.Add(llm.Usage{Requests: 1, PromptTokens: 1000, CompletionTokens: 200, ReasoningTokens: 120, TotalTokens: 1200})
+	// Reported mirrors what the real client sets when the endpoint sends a
+	// usage object; without it the totals are logged as "not reported".
+	info.Totals.Add(llm.Usage{
+		Requests: 1, Reported: true,
+		PromptTokens: 1000, CompletionTokens: 200, ReasoningTokens: 120, TotalTokens: 1200,
+		InferenceNanos: int64(250 * time.Millisecond),
+	})
 
 	sys := m[0].Content
 	switch {
@@ -214,6 +221,26 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 	fin := findRec(recs, "summarize worker: analysis finished")
 	if fin == nil {
 		t.Fatal("no 'analysis finished' record")
+	}
+	// Inference time is the sum of the calls' own durations, and wait_ms is
+	// everything else — pacing, embedding, disk, SQLite.
+	inference, _ := fin["chat_inference_ms"].(float64)
+	if inference <= 0 {
+		t.Errorf("finished record has no inference time: %v", fin)
+	}
+	// duration - inference, floored at zero. The fake bills more inference than
+	// this in-memory run takes in wall time, so here it floors.
+	wantWait := fin["duration_ms"].(float64) - inference
+	if wantWait < 0 {
+		wantWait = 0
+	}
+	if wait, _ := fin["wait_ms"].(float64); wait != wantWait {
+		t.Errorf("wait_ms %v, want %v (duration %v - inference %v)", wait, wantWait, fin["duration_ms"], inference)
+	}
+	// A reported zero must show as a zero rather than vanish (the whole point
+	// of the Reported flag).
+	if fin["chat_tokens_cached"] != "0" {
+		t.Errorf("reported cached zero missing: %v", fin)
 	}
 	if fin["outcome"] != "done" || fin["video_id"] != "v1" || fin["title"] != "A Test Video" {
 		t.Errorf("finished record = %v", fin)

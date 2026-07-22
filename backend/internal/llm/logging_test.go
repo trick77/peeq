@@ -93,9 +93,18 @@ func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
 	}
 
 	got := totals.Snapshot()
-	want := Usage{Requests: 1, PromptTokens: 1200, CachedTokens: 800, CompletionTokens: 340, ReasoningTokens: 250, TotalTokens: 1540}
-	if got != want {
-		t.Fatalf("totals = %+v, want %+v", got, want)
+	// Timings vary per run, so compare the accounting and check them separately.
+	tokensOnly := got
+	tokensOnly.InferenceNanos, tokensOnly.PacedNanos = 0, 0
+	want := Usage{Requests: 1, Reported: true, PromptTokens: 1200, CachedTokens: 800, CompletionTokens: 340, ReasoningTokens: 250, TotalTokens: 1540}
+	if tokensOnly != want {
+		t.Fatalf("totals = %+v, want %+v", tokensOnly, want)
+	}
+	if got.InferenceNanos <= 0 {
+		t.Errorf("inference time not recorded: %+v", got)
+	}
+	if got.PacedNanos != 0 {
+		t.Errorf("paced time recorded without a RequestInterval: %+v", got)
 	}
 
 	done := find(buf.records(t), "llm: request done")
@@ -109,6 +118,128 @@ func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
 		if done[k] != want {
 			t.Errorf("%s = %v, want %v", k, done[k], want)
 		}
+	}
+}
+
+func TestComplete_logsAReportedZeroRatherThanDroppingIt(t *testing.T) {
+	// MiMo-shaped reply: the details objects are there, the numbers in them are
+	// zero. That zero is the answer and must reach the log.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}],
+			"usage":{"prompt_tokens":900,"completion_tokens":100,"total_tokens":1000,
+			"prompt_tokens_details":{"cached_tokens":0},
+			"completion_tokens_details":{"reasoning_tokens":0}}}`)
+	}))
+	defer srv.Close()
+	log, buf := capture()
+	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	done := find(buf.records(t), "llm: request done")
+	if done["chat_tokens_reasoning"] != "0" || done["chat_tokens_cached"] != "0" {
+		t.Errorf("reported zeros missing from the line: %v", done)
+	}
+}
+
+func TestComplete_logsRawUsageAndTheAbsenceOfIt(t *testing.T) {
+	t.Run("reported", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, usageBody)
+		}))
+		defer srv.Close()
+		log, buf := capture()
+		c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+		if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+			t.Fatal(err)
+		}
+		raw := find(buf.records(t), "llm: usage raw")
+		if raw == nil {
+			t.Fatal("no raw usage record")
+		}
+		// Verbatim, so a field name we do not parse is still visible.
+		if s, _ := raw["usage"].(string); !strings.Contains(s, "reasoning_tokens") {
+			t.Errorf("raw usage = %v", raw["usage"])
+		}
+	})
+	t.Run("absent", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+		}))
+		defer srv.Close()
+		log, buf := capture()
+		c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+		totals := &Totals{}
+		ctx := WithCall(context.Background(), CallInfo{VideoID: "vid1", Totals: totals})
+		if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
+			t.Fatal(err)
+		}
+		recs := buf.records(t)
+		if find(recs, "llm: no usage reported") == nil {
+			t.Fatal("missing the 'no usage reported' record")
+		}
+		if got := totals.Snapshot(); got.Reported {
+			t.Errorf("totals claim a report that never came: %+v", got)
+		}
+		if done := find(recs, "llm: request done"); done["chat_tokens_total"] != nil {
+			t.Errorf("invented token fields: %v", done)
+		}
+	})
+}
+
+func TestComplete_rawUsageIsCapped(t *testing.T) {
+	// A hostile or chatty endpoint must not be able to push an unbounded blob
+	// into the log through the raw-usage line.
+	padding := strings.Repeat("x", maxRawUsage*2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":5,"note":"`+padding+`"}}`)
+	}))
+	defer srv.Close()
+	log, buf := capture()
+	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := find(buf.records(t), "llm: usage raw")["usage"].(string)
+	if len(raw) > maxRawUsage+len("…(truncated)") {
+		t.Fatalf("raw usage not capped: %d chars", len(raw))
+	}
+	if !strings.HasSuffix(raw, "(truncated)") {
+		t.Errorf("truncation not marked: %q", raw[max(0, len(raw)-40):])
+	}
+}
+
+func TestComplete_inferenceTimeExcludesPacing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, usageBody)
+	}))
+	defer srv.Close()
+	log, _ := capture()
+	const interval = 300 * time.Millisecond
+	c := NewClient(Config{BaseURL: srv.URL, Logger: log, RequestInterval: interval}, srv.Client())
+
+	totals := &Totals{}
+	ctx := WithCall(context.Background(), CallInfo{VideoID: "vid1", Totals: totals})
+	wall := time.Now()
+	for i := 0; i < 2; i++ {
+		if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	elapsed := time.Since(wall)
+	got := totals.Snapshot()
+	if elapsed < interval {
+		t.Fatalf("pacing did not happen: wall %s", elapsed)
+	}
+	// The whole point: the deliberate gap is booked as pacing, not as the
+	// model being slow. A local httptest server answers in microseconds.
+	if got.InferenceNanos >= int64(interval) {
+		t.Errorf("inference %s swallowed the %s gap", time.Duration(got.InferenceNanos), interval)
+	}
+	// Slightly under the interval: pace() waits until the slot, and the first
+	// call's own duration has already eaten part of the gap.
+	if got.PacedNanos < int64(interval)/2 {
+		t.Errorf("paced %s, want roughly %s", time.Duration(got.PacedNanos), interval)
 	}
 }
 
@@ -282,15 +413,53 @@ func TestFormatTokens(t *testing.T) {
 	}
 }
 
-func TestUsageLogAttrs_omitsZeroFields(t *testing.T) {
-	attrs := Usage{Requests: 2, PromptTokens: 500}.LogAttrs()
+func TestUsageLogAttrs_reportedUsageKeepsItsZeros(t *testing.T) {
+	// The regression this exists for: an endpoint that reports
+	// reasoning_tokens: 0 must SAY zero. Dropping the field made a reported
+	// zero look exactly like an endpoint that reports nothing at all.
+	attrs := Usage{Requests: 2, Reported: true, PromptTokens: 500}.LogAttrs()
 	joined := strings.Join(keys(attrs), ",")
-	if strings.Contains(joined, "chat_tokens_reasoning") || strings.Contains(joined, "chat_tokens_cached") {
-		t.Fatalf("zero fields logged: %v", attrs)
+	for _, want := range []string{"chat_requests", "chat_tokens_in", "chat_tokens_cached", "chat_tokens_out", "chat_tokens_reasoning", "chat_tokens_total"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %s: %v", want, attrs)
+		}
 	}
-	if !strings.Contains(joined, "chat_requests") || !strings.Contains(joined, "chat_tokens_in") {
-		t.Fatalf("missing set fields: %v", attrs)
+	if got := attrValue(attrs, "chat_tokens_reasoning"); got != "0" {
+		t.Errorf("chat_tokens_reasoning = %v, want \"0\"", got)
 	}
+}
+
+func TestUsageLogAttrs_unreportedUsageLogsNoTokenFields(t *testing.T) {
+	// Nothing came back: printing zeros here would invent an answer the
+	// endpoint never gave.
+	attrs := Usage{Requests: 2, InferenceNanos: int64(3 * time.Second)}.LogAttrs()
+	joined := strings.Join(keys(attrs), ",")
+	if strings.Contains(joined, "chat_tokens") {
+		t.Fatalf("token fields logged without a usage report: %v", attrs)
+	}
+	if !strings.Contains(joined, "chat_requests") || !strings.Contains(joined, "chat_inference_ms") {
+		t.Fatalf("missing requests/inference: %v", attrs)
+	}
+}
+
+func TestUsageLogAttrs_timings(t *testing.T) {
+	attrs := Usage{Requests: 1, InferenceNanos: int64(2500 * time.Millisecond), PacedNanos: int64(10 * time.Second)}.LogAttrs()
+	if got := attrValue(attrs, "chat_inference_ms"); got != int64(2500) {
+		t.Errorf("chat_inference_ms = %v, want 2500", got)
+	}
+	if got := attrValue(attrs, "chat_paced_ms"); got != int64(10000) {
+		t.Errorf("chat_paced_ms = %v, want 10000", got)
+	}
+}
+
+// attrValue picks one value out of a flat slog key/value slice.
+func attrValue(attrs []any, key string) any {
+	for i := 0; i+1 < len(attrs); i += 2 {
+		if attrs[i] == key {
+			return attrs[i+1]
+		}
+	}
+	return nil
 }
 
 func TestTotals_nilIsSafe(t *testing.T) {

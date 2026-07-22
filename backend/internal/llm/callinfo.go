@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"sync"
+	"time"
 )
 
 // CallInfo describes the work an LLM call belongs to. It rides on the
@@ -63,16 +64,27 @@ func (ci CallInfo) LogAttrs() []any {
 	return attrs
 }
 
-// Usage is the token accounting of a single chat completion, as far as the
-// endpoint reports it. Every field is optional: an endpoint that omits
-// prompt_tokens_details simply leaves CachedTokens at zero.
+// Usage accounts one or more chat completions: the tokens the endpoint
+// reported, plus how the wall time split between inference and the deliberate
+// gap RequestInterval puts in front of each call.
+//
+// Reported says the endpoint sent a usage object at all. It is what separates
+// "the model spent 0 reasoning tokens" from "this endpoint does not report
+// reasoning tokens" — indistinguishable otherwise, since both leave the field
+// at zero, and the whole reason a zero is worth printing.
 type Usage struct {
 	Requests         int64
+	Reported         bool
 	PromptTokens     int64
 	CachedTokens     int64
 	CompletionTokens int64
 	ReasoningTokens  int64
 	TotalTokens      int64
+
+	// InferenceNanos is time spent waiting on the endpoint; PacedNanos is time
+	// spent deliberately not calling it. Nanoseconds so Add can sum them.
+	InferenceNanos int64
+	PacedNanos     int64
 }
 
 // Totals accumulates Usage across the many calls one video costs (the
@@ -92,11 +104,15 @@ func (t *Totals) Add(u Usage) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.u.Requests += u.Requests
+	// One reporting call makes the total worth printing in full.
+	t.u.Reported = t.u.Reported || u.Reported
 	t.u.PromptTokens += u.PromptTokens
 	t.u.CachedTokens += u.CachedTokens
 	t.u.CompletionTokens += u.CompletionTokens
 	t.u.ReasoningTokens += u.ReasoningTokens
 	t.u.TotalTokens += u.TotalTokens
+	t.u.InferenceNanos += u.InferenceNanos
+	t.u.PacedNanos += u.PacedNanos
 }
 
 // Snapshot returns the totals so far. A nil *Totals yields the zero Usage.
@@ -113,14 +129,23 @@ func (t *Totals) Snapshot() Usage {
 // how a caller reports the cost of one pipeline step out of a running total.
 func (u Usage) Sub(earlier Usage) Usage {
 	return Usage{
-		Requests:         u.Requests - earlier.Requests,
+		Requests: u.Requests - earlier.Requests,
+		// Only a delta that contains calls is reportable. Without the request
+		// test, a step that makes no chat call at all (embedding) would inherit
+		// Reported from the running total and print five zeroes it never spent.
+		Reported:         u.Reported && u.Requests > earlier.Requests,
 		PromptTokens:     u.PromptTokens - earlier.PromptTokens,
 		CachedTokens:     u.CachedTokens - earlier.CachedTokens,
 		CompletionTokens: u.CompletionTokens - earlier.CompletionTokens,
 		ReasoningTokens:  u.ReasoningTokens - earlier.ReasoningTokens,
 		TotalTokens:      u.TotalTokens - earlier.TotalTokens,
+		InferenceNanos:   u.InferenceNanos - earlier.InferenceNanos,
+		PacedNanos:       u.PacedNanos - earlier.PacedNanos,
 	}
 }
+
+// InferenceMillis is the time spent waiting on the endpoint, for a log line.
+func (u Usage) InferenceMillis() int64 { return u.InferenceNanos / int64(time.Millisecond) }
 
 // FormatTokens renders a token count for a log line: thousands as "41.2k",
 // millions as "1.35M", anything under a thousand verbatim. Summarizing one
@@ -137,24 +162,41 @@ func FormatTokens(v int64) string {
 	}
 }
 
-// LogAttrs returns the usage as slog key/value pairs, omitting zero fields so
-// an endpoint that reports no cached/reasoning breakdown doesn't pad every
-// line with zeroes. The keys say "chat" because these are chat-model tokens
-// only — embedding tokens are accounted separately, by the embedding client.
+// LogAttrs returns the usage as slog key/value pairs. When the endpoint
+// reported usage, ALL token fields are emitted including zeros: a zero is an
+// answer ("no cache hit on this call", "the model did not think"), and
+// dropping it made it indistinguishable from an endpoint that reports nothing.
+// This mirrors loom's inferenceLogAttrs, which logs the same five numbers
+// whenever usage is present. The keys say "chat" because these are chat-model
+// tokens only — embedding tokens are accounted by the embedding client.
+//
+// Timings are omitted when zero: no inference means no call was made, and no
+// pacing means RequestInterval is off, neither of which is worth a column.
 func (u Usage) LogAttrs() []any {
-	attrs := make([]any, 0, 12)
-	add := func(k string, v int64) {
-		if v != 0 {
-			attrs = append(attrs, k, FormatTokens(v))
-		}
-	}
+	attrs := make([]any, 0, 16)
 	if u.Requests != 0 {
 		attrs = append(attrs, "chat_requests", u.Requests)
 	}
-	add("chat_tokens_in", u.PromptTokens)
-	add("chat_tokens_cached", u.CachedTokens)
-	add("chat_tokens_out", u.CompletionTokens)
-	add("chat_tokens_reasoning", u.ReasoningTokens)
-	add("chat_tokens_total", u.TotalTokens)
+	if u.InferenceNanos != 0 {
+		attrs = append(attrs, "chat_inference_ms", u.InferenceMillis())
+	}
+	if u.PacedNanos != 0 {
+		attrs = append(attrs, "chat_paced_ms", u.PacedNanos/int64(time.Millisecond))
+	}
+	if !u.Reported {
+		return attrs
+	}
+	for _, f := range []struct {
+		key string
+		val int64
+	}{
+		{"chat_tokens_in", u.PromptTokens},
+		{"chat_tokens_cached", u.CachedTokens},
+		{"chat_tokens_out", u.CompletionTokens},
+		{"chat_tokens_reasoning", u.ReasoningTokens},
+		{"chat_tokens_total", u.TotalTokens},
+	} {
+		attrs = append(attrs, f.key, FormatTokens(f.val))
+	}
 	return attrs
 }

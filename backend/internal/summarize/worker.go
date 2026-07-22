@@ -380,11 +380,23 @@ func (r *analysisRun) finished(outcome string) {
 	if r == nil {
 		return
 	}
+	total := r.totals.Snapshot()
+	elapsed := time.Since(r.started).Milliseconds()
+	// Everything that was not inference: the pacing gap, embedding, VTT
+	// parsing, SQLite writes. Printed so the numbers on the line add up and a
+	// slow video can be blamed on the right thing. Clamped at zero: inference
+	// is a subset of the run, so a negative here would be an accounting bug,
+	// and a nonsense negative in the log helps nobody.
+	wait := elapsed - total.InferenceMillis()
+	if wait < 0 {
+		wait = 0
+	}
 	attrs := append(r.ident(), "outcome", outcome,
-		"duration_ms", time.Since(r.started).Milliseconds(),
+		"duration_ms", elapsed,
+		"wait_ms", wait,
 		"attempt", r.job.Attempts, "max_attempts", r.job.MaxAttempts,
 		"will_retry", outcome != "done" && r.job.Attempts < r.job.MaxAttempts)
-	r.log.Info("summarize worker: analysis finished", append(attrs, r.totals.Snapshot().LogAttrs()...)...)
+	r.log.Info("summarize worker: analysis finished", append(attrs, total.LogAttrs()...)...)
 }
 
 // finishNoTranscript closes out a video that has nothing to summarize. It is a
