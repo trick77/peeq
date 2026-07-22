@@ -499,21 +499,40 @@ func (s *Store) SetCategoryIfUnset(id, category string) (bool, error) {
 	return n > 0, nil
 }
 
-// NextUnclassified returns one downloaded video that has a summary but is
-// still 'uncategorized', newest first, or (nil, nil) when there is none. It
-// backs the summarize worker's idle sweep, which repairs videos whose classify
-// step never ran — chiefly those summarized before classification moved ahead
-// of the fragile key-points call, where a key-points failure returned before
-// the category was ever set.
+// NextUnclassified returns one video that has a summary but is still
+// 'uncategorized', newest first, or (nil, nil) when there is none. It backs the
+// summarize worker's idle sweep, which repairs videos whose classify step never
+// ran — chiefly those summarized before classification moved ahead of the
+// fragile key-points call, where a key-points failure returned before the
+// category was ever set.
+//
+// Having a summary is the ONLY requirement, and status deliberately is not one.
+// Classification reads a title and a summary; it never touches the media file,
+// so 'downloaded' was never the real precondition. Requiring it stranded every
+// tombstoned video — media reclaimed, summary and row kept, still listed and
+// still filtered by category in the Library — with whatever category it had
+// when it was archived, unreachable by any later enum change. A no-transcript
+// video has no summary and so is still excluded, which is the case that stays
+// uncategorized by design.
+//
+// category_manual = 0 is the second condition, and it is here because
+// SetCategoryIfUnset — the only writer this query feeds — refuses a flagged
+// row. Selecting a row its own writer will reject is not a no-op: classifyOne
+// treats applied=false as "the user picked one meanwhile" and deliberately
+// does not park the video, on the premise that it no longer matches this
+// query. Leave the flag out and that premise is false, so a flagged row still
+// reading 'uncategorized' comes back every idle turn and burns a classify call
+// each time, forever.
+//
+// Migration 0004's reset selects on these same two rules; the two must stay in
+// step, and TestResetSetMatchesTheSweep pins them together.
 //
 // skip is the caller's in-process set of video ids whose classify call errored,
 // excluded so one persistently failing video cannot starve the rest of the
-// backlog. A non-empty summary is required: with no summary there is nothing
-// to classify from, which is the no-transcript case that stays uncategorized
-// by design.
+// backlog.
 func (s *Store) NextUnclassified(skip []string) (*Video, error) {
 	q := "SELECT " + videoColumns + ` FROM videos
-		WHERE status = 'downloaded' AND category = ? AND summary <> ''`
+		WHERE category = ? AND summary <> '' AND category_manual = 0`
 	args := []any{UncategorizedCategory}
 	if len(skip) > 0 {
 		q += " AND id NOT IN (?" + strings.Repeat(",?", len(skip)-1) + ")"

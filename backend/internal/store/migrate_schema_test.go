@@ -1,10 +1,55 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
+	"io/fs"
 	"path/filepath"
+	"sort"
 	"testing"
 )
+
+// applyThrough stands db up part-way through the migration history: it applies
+// every migration up to and including stopAt and records it, so a following
+// Migrate() sees exactly the pending set a deployed peeq would. Tests that only
+// care about the final schema call Migrate directly instead.
+func applyThrough(t *testing.T, db *sql.DB, stopAt string) {
+	t.Helper()
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    TEXT PRIMARY KEY,
+		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		body, err := migrationsFS.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
+			t.Fatal(err)
+		}
+		if name == stopAt {
+			return
+		}
+	}
+	t.Fatalf("no migration named %q", stopAt)
+}
 
 func TestSchemaHasPhase3Objects(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
@@ -101,22 +146,7 @@ func TestMigrate_addsSubtitlesDefaultToAnExisting0001DB(t *testing.T) {
 	defer db.Close()
 
 	// Given: a DB at 0001 and nothing later, with a row already in it.
-	body, err := migrationsFS.ReadFile("migrations/0001_init.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(string(body)); err != nil {
-		t.Fatalf("apply 0001: %v", err)
-	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-		version    TEXT PRIMARY KEY,
-		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ('0001_init.sql')`); err != nil {
-		t.Fatal(err)
-	}
+	applyThrough(t, db, "0001_init.sql")
 	if _, err := db.Exec(`UPDATE settings SET retention_days = 42 WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
@@ -183,18 +213,20 @@ func TestSchemaHasChannelMetadata(t *testing.T) {
 	}
 }
 
-// TestMigrate_0004ResetsOnlyWhatTheSweepCanReclassify guards the one migration
-// that touches DATA rather than shape. A fresh-DB test cannot see it: the
-// reset runs against zero rows there and passes no matter what it says. So
-// stand the DB up at 0003 — what a deployed peeq looked like before this
-// release — seed the three row shapes that matter, and let Migrate apply 0004.
+// TestMigrate_0004ResetsWhatHasASummary guards the one migration that touches
+// DATA rather than shape. A fresh-DB test cannot see it: the reset runs against
+// zero rows there and passes no matter what it says. So stand the DB up at
+// 0003 — what a deployed peeq looked like before this release — seed the row
+// shapes that matter, and let Migrate apply 0004.
 //
 // The rule under test: a category may only be cleared when the summarize
-// worker's idle sweep can hand it back (videos.Store.NextUnclassified selects
-// status = 'downloaded' AND summary <> ”). Clearing anything else does not
-// reclassify it, it erases it — permanently, and for a no-transcript video a
-// hand pick on the Player was the only way that category ever got there.
-func TestMigrate_0004ResetsOnlyWhatTheSweepCanReclassify(t *testing.T) {
+// worker's idle sweep can hand it back, which means the row has a summary to
+// classify from. A no-transcript video has none, and for it a hand pick on the
+// Player is the only way a category could ever have been set, so clearing it
+// would not reclassify it — it would erase it. The paired
+// videos.TestResetSetMatchesTheSweep asserts the other half, that the sweep
+// really does reach everything cleared here.
+func TestMigrate_0004ResetsWhatHasASummary(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "cat.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -202,43 +234,28 @@ func TestMigrate_0004ResetsOnlyWhatTheSweepCanReclassify(t *testing.T) {
 	defer db.Close()
 
 	// Given: a DB at 0003, with the enum-era categories already assigned.
-	for _, name := range []string{"0001_init.sql", "0002_subtitles_default.sql", "0003_channel_metadata.sql"} {
-		body, err := migrationsFS.ReadFile("migrations/" + name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.Exec(string(body)); err != nil {
-			t.Fatalf("apply %s: %v", name, err)
-		}
-	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-		version    TEXT PRIMARY KEY,
-		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"0001_init.sql", "0002_subtitles_default.sql", "0003_channel_metadata.sql"} {
-		if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
-			t.Fatal(err)
-		}
-	}
+	applyThrough(t, db, "0003_channel_metadata.sql")
 	if _, err := db.Exec(`
 INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
-	('reachable',    'https://youtu.be/a', 'downloaded', 'a summary', 'done',          'entertainment'),
+	('downloaded',   'https://youtu.be/a', 'downloaded', 'a summary', 'done',          'entertainment'),
 	('tombstoned',   'https://youtu.be/b', 'tombstoned', 'a summary', 'done',          'history'),
 	('notranscript', 'https://youtu.be/c', 'downloaded', '',          'no_transcript', 'gaming')`); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	// When: peeq starts and migrates.
-	if err := Migrate(db); err != nil {
-		t.Fatalf("Migrate: %v", err)
+	// When: peeq starts and migrates. Twice — a recorded migration must never
+	// run again, which is the property that makes this reset a one-shot.
+	for i := 0; i < 2; i++ {
+		if err := Migrate(db); err != nil {
+			t.Fatalf("Migrate #%d: %v", i+1, err)
+		}
 	}
 
-	// Then: only the row the sweep can pick up was cleared.
+	// Then: everything with a summary was cleared, including the tombstoned
+	// row the sweep still reaches; the no-transcript hand pick survives.
 	for _, tc := range []struct{ id, want string }{
-		{"reachable", "uncategorized"},
-		{"tombstoned", "history"},
+		{"downloaded", "uncategorized"},
+		{"tombstoned", "uncategorized"},
 		{"notranscript", "gaming"},
 	} {
 		var got string
@@ -258,6 +275,18 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 	}
 	if flagged != 0 {
 		t.Fatalf("%d rows flagged manual, want 0", flagged)
+	}
+
+	// And: 0004 is recorded exactly once, so a later edit to that file is
+	// silently skipped rather than replayed (see AGENTS.md).
+	var recorded int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM schema_migrations WHERE version = '0004_category_manual.sql'`,
+	).Scan(&recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded != 1 {
+		t.Fatalf("0004 recorded %d times, want 1", recorded)
 	}
 }
 
