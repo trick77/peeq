@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,20 +21,26 @@ import (
 )
 
 const (
-	model           = "mimo-v2.5-pro"
-	reasoningEffort = "high"
-	defaultTimeout  = 5 * time.Minute
-	maxErrorBody    = 4 << 10
+	model             = "mimo-v2.5-pro"
+	reasoningEffort   = "high"
+	defaultTimeout    = 5 * time.Minute
+	maxErrorBody      = 4 << 10
+	defaultHeartbeat  = 15 * time.Second
+	pacedLogThreshold = time.Second
 )
 
 // Config configures the chat client. BaseURL is the OpenAI-compatible root
 // (the client appends /chat/completions). APIKey is optional. RequestInterval
 // is the minimum gap between requests — breathing room for a slow or
-// rate-limited endpoint; 0 disables it.
+// rate-limited endpoint; 0 disables it. Logger defaults to slog.Default().
+// HeartbeatInterval is how often an in-flight request logs that it is still
+// waiting (0 uses the default; negative disables the heartbeat).
 type Config struct {
-	BaseURL         string
-	APIKey          string
-	RequestInterval time.Duration
+	BaseURL           string
+	APIKey            string
+	RequestInterval   time.Duration
+	Logger            *slog.Logger
+	HeartbeatInterval time.Duration
 }
 
 // Message is one chat message.
@@ -44,10 +51,12 @@ type Message struct {
 
 // Client calls an OpenAI-compatible /chat/completions endpoint.
 type Client struct {
-	baseURL  string
-	apiKey   string
-	http     *http.Client
-	interval time.Duration
+	baseURL   string
+	apiKey    string
+	http      *http.Client
+	interval  time.Duration
+	log       *slog.Logger
+	heartbeat time.Duration
 
 	mu     sync.Mutex
 	nextAt time.Time // earliest time the next request may start
@@ -59,21 +68,30 @@ func NewClient(cfg Config, hc *http.Client) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: defaultTimeout}
 	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	if cfg.HeartbeatInterval == 0 {
+		cfg.HeartbeatInterval = defaultHeartbeat
+	}
 	return &Client{
-		baseURL:  strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:   cfg.APIKey,
-		http:     hc,
-		interval: cfg.RequestInterval,
+		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
+		apiKey:    cfg.APIKey,
+		http:      hc,
+		interval:  cfg.RequestInterval,
+		log:       cfg.Logger,
+		heartbeat: cfg.HeartbeatInterval,
 	}
 }
 
 // pace blocks until at least RequestInterval has elapsed since the previous
 // request began, spacing calls out for a slow/rate-limited endpoint. It
 // reserves the slot under the mutex so concurrent callers still serialize with
-// the gap. Returns the context error if cancelled while waiting.
-func (c *Client) pace(ctx context.Context) error {
+// the gap. Returns how long it actually blocked (for logging) and the context
+// error if cancelled while waiting.
+func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 	if c.interval <= 0 {
-		return nil
+		return 0, nil
 	}
 	c.mu.Lock()
 	start := time.Now()
@@ -85,15 +103,15 @@ func (c *Client) pace(ctx context.Context) error {
 
 	wait := time.Until(start)
 	if wait <= 0 {
-		return nil
+		return 0, nil
 	}
 	t := time.NewTimer(wait)
 	defer t.Stop()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return 0, ctx.Err()
 	case <-t.C:
-		return nil
+		return wait, nil
 	}
 }
 
@@ -104,17 +122,53 @@ type chatRequest struct {
 	Stream          bool      `json:"stream"`
 }
 
+// chatUsage mirrors the OpenAI-compatible `usage` object. Everything in it is
+// optional — endpoints vary in how much of the breakdown they report, and a
+// missing field must read as "not reported", not as an error.
+type chatUsage struct {
+	PromptTokens        int64 `json:"prompt_tokens"`
+	CompletionTokens    int64 `json:"completion_tokens"`
+	TotalTokens         int64 `json:"total_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens int64 `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	CompletionTokensDetails struct {
+		ReasoningTokens int64 `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+}
+
+func (u chatUsage) toUsage() Usage {
+	return Usage{
+		Requests:         1,
+		PromptTokens:     u.PromptTokens,
+		CachedTokens:     u.PromptTokensDetails.CachedTokens,
+		CompletionTokens: u.CompletionTokens,
+		ReasoningTokens:  u.CompletionTokensDetails.ReasoningTokens,
+		TotalTokens:      u.TotalTokens,
+	}
+}
+
 type chatResponse struct {
 	Choices []struct {
 		Message Message `json:"message"`
 	} `json:"choices"`
+	Usage chatUsage `json:"usage"`
 }
 
 // Complete runs a single non-streaming chat completion and returns the first
-// choice's content.
+// choice's content. It logs the call against whatever CallInfo the caller
+// attached to ctx (see callinfo.go): a debug line on start and finish, an info
+// heartbeat while the endpoint is still thinking, and a warning on failure.
 func (c *Client) Complete(ctx context.Context, messages []Message) (string, error) {
-	if err := c.pace(ctx); err != nil {
+	info := CallFrom(ctx)
+	pacedFor, err := c.pace(ctx)
+	if err != nil {
 		return "", err
+	}
+	if pacedFor >= pacedLogThreshold {
+		// Distinguish our own deliberate spacing from a slow endpoint: without
+		// this, RequestInterval looks like latency.
+		c.log.Debug("llm: paced", append(info.LogAttrs(), "waited_ms", pacedFor.Milliseconds())...)
 	}
 	body, err := json.Marshal(chatRequest{Model: model, Messages: messages, ReasoningEffort: reasoningEffort, Stream: false})
 	if err != nil {
@@ -128,21 +182,66 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
+
+	started := time.Now()
+	c.log.Debug("llm: request start", append(info.LogAttrs(), "messages", len(messages), "request_bytes", len(body))...)
+	stop := c.startHeartbeat(ctx, info, started)
+	defer stop()
+
+	fail := func(err error) (string, error) {
+		c.log.Warn("llm: request failed", append(info.LogAttrs(), "duration_ms", time.Since(started).Milliseconds(), "err", err)...)
+		return "", err
+	}
+
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("chat request: %w", err)
+		return fail(fmt.Errorf("chat request: %w", err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
-		return "", fmt.Errorf("chat failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+		return fail(fmt.Errorf("chat failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg))))
 	}
 	var parsed chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", fmt.Errorf("decode chat response: %w", err)
+		return fail(fmt.Errorf("decode chat response: %w", err))
 	}
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("chat response had no choices")
+		return fail(fmt.Errorf("chat response had no choices"))
 	}
+
+	usage := parsed.Usage.toUsage()
+	info.Totals.Add(usage)
+	attrs := append(info.LogAttrs(), "duration_ms", time.Since(started).Milliseconds(), "status", resp.StatusCode)
+	c.log.Debug("llm: request done", append(attrs, usage.LogAttrs()...)...)
 	return parsed.Choices[0].Message.Content, nil
+}
+
+// startHeartbeat logs "still waiting" every heartbeat interval until the
+// returned stop func is called, so a request that takes minutes is visibly
+// alive rather than indistinguishable from a hung worker. It reports elapsed
+// time since started, which includes building the request but not the pacing
+// wait. Returns a no-op stop when the heartbeat is disabled.
+func (c *Client) startHeartbeat(ctx context.Context, info CallInfo, started time.Time) (stop func()) {
+	if c.heartbeat <= 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		t := time.NewTicker(c.heartbeat)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				c.log.Info("llm: still waiting for response",
+					append(info.LogAttrs(), "elapsed_s", int64(time.Since(started).Seconds()))...)
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
 }

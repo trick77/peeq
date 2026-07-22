@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/subtitles"
@@ -132,15 +133,18 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 
 	video, err := w.d.Videos.Get(job.VideoID)
 	if err != nil || video == nil {
+		w.d.Logger.Warn("summarize worker: video missing", "job_id", job.ID, "video_id", job.VideoID, "err", err)
 		_ = w.d.Jobs.Finish(job.ID, "failed", "video missing")
 		return true, err
 	}
 
+	// Everything from here on is logged against this video: one identity, one
+	// token accumulator, one wall clock for the whole analysis.
+	run := w.startRun(ctx, job, video)
+
 	// No subtitles => clean terminal no_transcript state, not an error.
 	if video.SubtitlePath == "" {
-		_ = w.d.Videos.SetSummaryStatus(video.ID, "no_transcript", "")
-		w.emit(video.ID, "no_transcript", "")
-		_ = w.d.Jobs.Finish(job.ID, "done", "")
+		w.finishNoTranscript(job, video, "no subtitle file")
 		return true, nil
 	}
 
@@ -153,24 +157,20 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 
 	safe, err := media.SafeMediaPath(w.d.MediaDir, video.SubtitlePath)
 	if err != nil {
-		return true, w.failJob(job, video.ID, "unsafe subtitle path")
+		return true, w.failJob(job, video, run, "unsafe subtitle path")
 	}
 	f, err := os.Open(safe)
 	if err != nil {
-		_ = w.d.Videos.SetSummaryStatus(video.ID, "no_transcript", "")
-		w.emit(video.ID, "no_transcript", "")
-		_ = w.d.Jobs.Finish(job.ID, "done", "")
+		w.finishNoTranscript(job, video, "subtitle file unreadable")
 		return true, nil
 	}
 	parsed, perr := subtitles.ParseVTT(f)
 	f.Close()
 	if perr != nil {
-		return true, w.failJob(job, video.ID, "parse vtt: "+perr.Error())
+		return true, w.failJob(job, video, run, "parse vtt: "+perr.Error())
 	}
 	if parsed.Transcript == "" {
-		_ = w.d.Videos.SetSummaryStatus(video.ID, "no_transcript", "")
-		w.emit(video.ID, "no_transcript", "")
-		_ = w.d.Jobs.Finish(job.ID, "done", "")
+		w.finishNoTranscript(job, video, "empty transcript")
 		return true, nil
 	}
 
@@ -182,14 +182,20 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// Step 1 — prose summary. Persist on its own; skip if already saved.
 	summary := video.Summary
 	if summary == "" {
-		s, serr := w.d.Summarizer.SummarizeText(ctx, parsed.Transcript)
+		sctx, done := run.step("summary")
+		s, serr := w.d.Summarizer.SummarizeText(sctx, parsed.Transcript)
 		if serr != nil {
-			return true, w.failJob(job, video.ID, serr.Error())
+			return true, w.failJob(job, video, run, serr.Error())
 		}
 		if err := w.d.Videos.SetSummaryText(video.ID, s); err != nil {
-			return true, w.failJob(job, video.ID, err.Error())
+			return true, w.failJob(job, video, run, err.Error())
 		}
+		// No chunk count here: chat_requests already says how many map calls the
+		// transcript cost, without chunking it a second time just to log it.
+		done()
 		summary = s
+	} else {
+		run.skipped("summary", "already stored")
 	}
 
 	// Step 2 — category (best-effort). It needs only the title and the summary,
@@ -204,19 +210,36 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// actually protects a category the user picked on the Player while the
 	// summary was still running.
 	if video.Category == "" || video.Category == videos.UncategorizedCategory {
-		if raw, cerr := w.d.Summarizer.Classify(ctx, video.Title, summary, videos.ClassifiableCategories()); cerr != nil {
-			w.d.Logger.Warn("summarize worker: classify failed", "video_id", video.ID, "err", cerr)
-		} else if _, serr := w.d.Videos.SetCategoryIfUnset(video.ID, videos.NormalizeCategory(raw)); serr != nil {
-			w.d.Logger.Error("summarize worker: set category failed", "video_id", video.ID, "err", serr)
+		cctx, done := run.step("classify")
+		raw, cerr := w.d.Summarizer.Classify(cctx, video.Title, summary, videos.ClassifiableCategories())
+		switch {
+		case cerr != nil:
+			w.d.Logger.Warn("summarize worker: classify failed", append(run.ident(), "duration_ms", run.stepElapsedMs(), "err", cerr)...)
+		default:
+			category := videos.NormalizeCategory(raw)
+			applied, serr := w.d.Videos.SetCategoryIfUnset(video.ID, category)
+			if serr != nil {
+				w.d.Logger.Error("summarize worker: set category failed", append(run.ident(), "err", serr)...)
+			} else {
+				// applied=false means the user picked a category by hand while
+				// this call was in flight, and theirs won.
+				done("category", category, "applied", applied)
+			}
 		}
+	} else {
+		run.skipped("classify", "already categorized")
 	}
 
 	// Step 3 — embeddings. Skip if already embedded (embed_model is set).
 	if video.EmbedModel == "" {
 		w.emit(video.ID, "running", "embedding")
-		if err := w.embedAndStore(ctx, video.ID, parsed, summary); err != nil {
-			return true, w.failJob(job, video.ID, err.Error())
+		ectx, done := run.step("embedding")
+		if err := w.embedAndStore(ectx, video.ID, parsed, summary); err != nil {
+			return true, w.failJob(job, video, run, err.Error())
 		}
+		done()
+	} else {
+		run.skipped("embedding", "already embedded")
 	}
 
 	// Summary + search are usable now — mark done so the UI shows them even if
@@ -229,17 +252,117 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// Step 4 — key points (and chapters when yt-dlp didn't supply them). The
 	// fragile call, run last so a failure retries only this and costs nothing.
 	ytChapters := decodeChapters(video.Chapters)
-	chapters, keyPoints, err := w.d.Summarizer.KeyPoints(ctx, summary, parsed.Cues, ytChapters)
+	kctx, done := run.step("keypoints")
+	chapters, keyPoints, err := w.d.Summarizer.KeyPoints(kctx, summary, parsed.Cues, ytChapters)
 	if err != nil {
-		return true, w.requeueJob(job, video.ID, err.Error())
+		return true, w.requeueJob(job, video, run, err.Error())
 	}
 	if err := w.d.Videos.SetKeyPoints(video.ID, encodeChapters(chapters), encodeKeyPoints(keyPoints)); err != nil {
-		return true, w.requeueJob(job, video.ID, err.Error())
+		return true, w.requeueJob(job, video, run, err.Error())
 	}
+	done("chapters", len(chapters), "key_points", len(keyPoints))
 	w.emit(video.ID, "done", "")
 
+	run.finished("done")
 	_ = w.d.Jobs.Finish(job.ID, "done", "")
 	return true, nil
+}
+
+// analysisRun carries the logging state of one video's analysis: who it is,
+// when it started, and the chat tokens it has cost so far. It exists so every
+// line about a video — start, each step, failures, the total — carries the same
+// identity (title and channel, not just an opaque id) without threading five
+// arguments through the worker.
+type analysisRun struct {
+	log     *slog.Logger
+	ctx     context.Context // carries the CallInfo the llm client logs against
+	totals  *llm.Totals
+	video   *videos.Video
+	job     *summaryjobs.Job
+	started time.Time
+
+	stepStarted time.Time
+	stepBefore  llm.Usage
+}
+
+// startRun announces the analysis and returns its logging state. attempt/
+// max_attempts come straight from the job row: ClaimNext already incremented
+// attempts, so they read as "attempt N of M" for the retries the queue does on
+// its own.
+func (w *Worker) startRun(ctx context.Context, job *summaryjobs.Job, video *videos.Video) *analysisRun {
+	totals := &llm.Totals{}
+	r := &analysisRun{
+		log:    w.d.Logger,
+		totals: totals,
+		ctx: llm.WithCall(ctx, llm.CallInfo{
+			VideoID: video.ID,
+			Title:   video.Title,
+			Channel: video.ChannelName,
+			Totals:  totals,
+		}),
+		video:   video,
+		job:     job,
+		started: time.Now(),
+	}
+	r.log.Info("summarize worker: analysis started", append(r.ident(),
+		"attempt", job.Attempts, "max_attempts", job.MaxAttempts,
+		// A resumed job already has a usable summary and is only redoing the
+		// fragile key-points step.
+		"resumed", video.SummaryStatus == "done")...)
+	return r
+}
+
+// ident is the video identity every line repeats. It returns a fresh slice so
+// callers can append to it safely.
+func (r *analysisRun) ident() []any {
+	return []any{"video_id", r.video.ID, "title", r.video.Title, "channel", r.video.ChannelName}
+}
+
+// step marks the start of a pipeline step and returns the context its LLM
+// calls must use plus the func that logs the step as done. Extra key/values
+// passed to that func are appended to the line.
+func (r *analysisRun) step(name string) (context.Context, func(extra ...any)) {
+	r.stepStarted = time.Now()
+	r.stepBefore = r.totals.Snapshot()
+	sctx := llm.WithStep(r.ctx, name)
+	return sctx, func(extra ...any) {
+		attrs := append([]any{"step", name}, r.ident()...)
+		attrs = append(attrs, "duration_ms", r.stepElapsedMs())
+		attrs = append(attrs, extra...)
+		attrs = append(attrs, r.totals.Snapshot().Sub(r.stepBefore).LogAttrs()...)
+		r.log.Info("summarize worker: step done", attrs...)
+	}
+}
+
+// stepElapsedMs is the current step's wall time, also used by the step's own
+// failure lines.
+func (r *analysisRun) stepElapsedMs() int64 { return time.Since(r.stepStarted).Milliseconds() }
+
+// skipped records a step a resumed job did not have to redo. Debug, not info:
+// it is context for reading a retry, not news.
+func (r *analysisRun) skipped(name, reason string) {
+	r.log.Debug("summarize worker: step skipped", append([]any{"step", name}, append(r.ident(), "reason", reason)...)...)
+}
+
+// finished logs the whole analysis: wall time plus the chat tokens it cost.
+// Embedding tokens are not in here — they come from a different endpoint and
+// are logged by the embedding client at debug.
+func (r *analysisRun) finished(outcome string) {
+	attrs := append(r.ident(), "outcome", outcome,
+		"duration_ms", time.Since(r.started).Milliseconds(),
+		"attempt", r.job.Attempts, "max_attempts", r.job.MaxAttempts)
+	r.log.Info("summarize worker: analysis finished", append(attrs, r.totals.Snapshot().LogAttrs()...)...)
+}
+
+// finishNoTranscript closes out a video that has nothing to summarize. It is a
+// clean terminal state, not an error, but it must still be visible: otherwise
+// a video simply disappears from the queue with no explanation.
+func (w *Worker) finishNoTranscript(job *summaryjobs.Job, video *videos.Video, reason string) {
+	_ = w.d.Videos.SetSummaryStatus(video.ID, "no_transcript", "")
+	w.emit(video.ID, "no_transcript", "")
+	_ = w.d.Jobs.Finish(job.ID, "done", "")
+	w.d.Logger.Info("summarize worker: no transcript", "video_id", video.ID, "title", video.Title,
+		"channel", video.ChannelName, "reason", reason)
 }
 
 // classifyOne repairs one video from the classification backlog: a downloaded
@@ -262,12 +385,23 @@ func (w *Worker) classifyOne(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	raw, cerr := w.d.Summarizer.Classify(ctx, video.Title, video.Summary, videos.ClassifiableCategories())
+	// Same identity/token plumbing as a full analysis, so a backlog sweep is as
+	// readable as a normal run — including the "still waiting" heartbeat.
+	totals := &llm.Totals{}
+	cctx := llm.WithCall(ctx, llm.CallInfo{
+		VideoID: video.ID, Title: video.Title, Channel: video.ChannelName,
+		Step: "classify-backlog", Totals: totals,
+	})
+	ident := []any{"video_id", video.ID, "title", video.Title, "channel", video.ChannelName}
+	started := time.Now()
+
+	raw, cerr := w.d.Summarizer.Classify(cctx, video.Title, video.Summary, videos.ClassifiableCategories())
+	elapsed := time.Since(started).Milliseconds()
 	if cerr != nil {
 		// Park it for this process so the sweep advances to the next video
 		// rather than retrying this one on every turn.
 		w.classifyFailed[video.ID] = true
-		w.d.Logger.Warn("summarize worker: backlog classify failed", "video_id", video.ID, "err", cerr)
+		w.d.Logger.Warn("summarize worker: backlog classify failed", append(ident, "duration_ms", elapsed, "err", cerr)...)
 		return true, nil
 	}
 	category := videos.NormalizeCategory(raw)
@@ -278,7 +412,7 @@ func (w *Worker) classifyOne(ctx context.Context) (bool, error) {
 	applied, serr := w.d.Videos.SetCategoryIfUnset(video.ID, category)
 	if serr != nil {
 		w.classifyFailed[video.ID] = true
-		w.d.Logger.Error("summarize worker: backlog set category failed", "video_id", video.ID, "err", serr)
+		w.d.Logger.Error("summarize worker: backlog set category failed", append(ident, "duration_ms", elapsed, "err", serr)...)
 		return true, nil
 	}
 	if !applied {
@@ -290,7 +424,8 @@ func (w *Worker) classifyOne(ctx context.Context) (bool, error) {
 		// the same prompt every turn would just burn requests.
 		w.classifyFailed[video.ID] = true
 	}
-	w.d.Logger.Info("summarize worker: classified backlog video", "video_id", video.ID, "category", category)
+	attrs := append(ident, "category", category, "duration_ms", elapsed)
+	w.d.Logger.Info("summarize worker: classified backlog video", append(attrs, totals.Snapshot().LogAttrs()...)...)
 	return true, nil
 }
 
@@ -306,11 +441,13 @@ func (w *Worker) emit(videoID, status, phase string) {
 // returns a non-nil error so the caller (processOne) surfaces the failure
 // to the Run loop, which logs it. Jobs.Fail's own return is often nil on
 // the common path, so it must never be returned as-is.
-func (w *Worker) failJob(job *summaryjobs.Job, videoID, msg string) error {
+func (w *Worker) failJob(job *summaryjobs.Job, video *videos.Video, run *analysisRun, msg string) error {
+	videoID := video.ID
 	if err := w.d.Videos.SetSummaryStatus(videoID, "error", msg); err != nil {
 		w.d.Logger.Error("summarize worker: set error status", "video_id", videoID, "err", err)
 	}
 	w.emit(videoID, "error", "")
+	run.finished("error")
 	if err := w.d.Jobs.Fail(job.ID, job.Attempts, msg); err != nil {
 		return fmt.Errorf("summarize job %d failed (%s); also fail-record error: %w", job.ID, msg, err)
 	}
@@ -322,8 +459,14 @@ func (w *Worker) failJob(job *summaryjobs.Job, videoID, msg string) error {
 // summary is already marked done: a failure there must retry only that step and
 // must NOT regress a usable summary to "error". If retries run out the job is
 // marked failed but the video keeps its summary and search.
-func (w *Worker) requeueJob(job *summaryjobs.Job, videoID, msg string) error {
-	w.d.Logger.Warn("summarize worker: key-points step failed, will retry", "video_id", videoID, "err", msg)
+func (w *Worker) requeueJob(job *summaryjobs.Job, video *videos.Video, run *analysisRun, msg string) error {
+	// last=true means Jobs.Fail is about to mark this failed rather than
+	// requeue it, so "will retry" is not the whole story.
+	w.d.Logger.Warn("summarize worker: key-points step failed, will retry",
+		append(run.ident(), "attempt", job.Attempts, "max_attempts", job.MaxAttempts,
+			"last", job.Attempts >= job.MaxAttempts,
+			"step_duration_ms", run.stepElapsedMs(), "err", msg)...)
+	run.finished("keypoints_failed")
 	if err := w.d.Jobs.Fail(job.ID, job.Attempts, msg); err != nil {
 		return fmt.Errorf("summarize job %d key-points failed (%s); also fail-record error: %w", job.ID, msg, err)
 	}
