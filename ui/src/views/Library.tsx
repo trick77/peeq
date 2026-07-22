@@ -19,10 +19,15 @@ import type {
 import { CATEGORIES } from "../categories";
 import { controlClass } from "../ui";
 
+// No "Watched" chip: the "Already watched" drawer at the foot of every view
+// is where watched videos live now, so a chip for them would be a second,
+// worse route to the same list — one that also swaps the whole page out
+// instead of unfolding in place. The filter itself still exists (the type
+// mirrors what videos.Store.List accepts, and matchesFilter still covers it),
+// it simply has no button.
 const CHIPS: { id: VideoFilter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "unwatched", label: "Unwatched" },
-  { id: "watched", label: "Watched" },
   { id: "favorites", label: "Favorites" },
   { id: "downloading", label: "Downloading" },
 ];
@@ -307,8 +312,10 @@ export function Library({
 
   // The Library leads with what is still to watch: already-watched videos are
   // split out of the main grid and folded into a drawer below it. The
-  // "watched" chip is the one place the split would leave an empty grid, so
-  // there everything stays where it is.
+  // "watched" filter is the one case where the split would leave an empty
+  // grid, so there everything stays where it is. No chip selects it any more,
+  // but the guard stays: the filter is still a valid state, and a view that
+  // renders nothing but a drawer would be a nasty way to find that out.
   const splitWatched = filter !== "watched";
   const queue = splitWatched ? videos.filter((v) => !v.watched) : videos;
   const watchedVideos = splitWatched ? videos.filter((v) => v.watched) : [];

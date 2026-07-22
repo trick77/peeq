@@ -327,6 +327,19 @@ describe("Library category chips", () => {
     vi.unstubAllGlobals();
   });
 
+  it("offers no Watched chip — the drawer is the route to watched videos", async () => {
+    vi.mocked(listVideos).mockResolvedValue([
+      categoryVideo({ id: "v1", watched: true }),
+    ]);
+    render(<Library onOpenVideo={() => {}} search="" />);
+    await screen.findByText("Already watched");
+
+    const chipNames = Array.from(document.querySelectorAll(".chips .chip")).map(
+      (c) => c.textContent?.replace(/\d+$/, "").trim(),
+    );
+    expect(chipNames).toEqual(["All", "Unwatched", "Favorites", "Downloading"]);
+  });
+
   it("renders a category chip row and filters by category", async () => {
     const aiVideo = categoryVideo({
       id: "v1",
