@@ -304,6 +304,16 @@ func TestFlexDate_acceptsEpochAndString(t *testing.T) {
 	if string(got.Published) != want {
 		t.Errorf("epoch published = %q, want %q", got.Published, want)
 	}
+
+	// TubeArchivist's REST layer returns a full ISO timestamp; only the date
+	// part is kept so imported rows match native YYYY-MM-DD.
+	got = videoDoc{}
+	if err := json.Unmarshal([]byte(`{"published":"2023-01-15T13:45:30+00:00"}`), &got); err != nil {
+		t.Fatalf("iso form: %v", err)
+	}
+	if string(got.Published) != "2023-01-15" {
+		t.Errorf("iso published = %q, want 2023-01-15 (date only)", got.Published)
+	}
 }
 
 func TestChannelVideos_walksUntilEmpty(t *testing.T) {

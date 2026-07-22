@@ -8,17 +8,20 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 )
 
-// Watch states peeq imports. "unwatched" is the never-started bulk; "continue"
-// is started-but-not-finished and carries a resume position. Fully-watched
-// videos are deliberately never fetched.
-const (
-	watchUnwatched = "unwatched"
-	watchContinue  = "continue"
-)
+// watchUnwatched is TubeArchivist's filter for not-yet-finished videos. It
+// returns BOTH never-started and partially-watched videos — player.watched is
+// false until a video is finished — and TubeArchivist injects each partial's
+// resume position (player.position) into the response regardless of filter. So
+// one unwatched pass yields the whole to-watch queue WITH resume positions.
+//
+// We deliberately do NOT use TubeArchivist's "continue" filter. It is redundant
+// (its videos are a subset of unwatched, already carrying positions) and it is
+// Redis-backed: it collapses to a null Elasticsearch clause — and errors — when
+// the user has no in-progress videos, which would abort the whole import.
+const watchUnwatched = "unwatched"
 
-// DefaultWatchStates is the pair of TubeArchivist watch filters that make up the
-// to-watch queue.
-var DefaultWatchStates = []string{watchUnwatched, watchContinue}
+// DefaultWatchStates is the single filter that yields the to-watch queue.
+var DefaultWatchStates = []string{watchUnwatched}
 
 // VideoLister reads a channel's videos in one watch state. *Client satisfies it.
 type VideoLister interface {
@@ -74,14 +77,13 @@ type VideoResult struct {
 	SkippedDownloaded int   // already status='downloaded'
 	SkippedType       int   // excluded by the --types filter
 	MissingFile       int   // the .mp4 is not on the TA mount (trap 4)
-	ResumeUnavailable int   // a "continue" video with no resume position (trap 5)
+	WithResume        int   // imported videos that carried a resume position
 	BytesMedia        int64 // total .mp4 bytes to copy / copied
 }
 
 // target is one video that survived filtering and whose .mp4 exists.
 type target struct {
 	v     Video
-	watch string
 	bytes int64
 }
 
@@ -134,7 +136,7 @@ func ImportVideos(ctx context.Context, lister VideoLister, w VideoWriter, channe
 					continue
 				}
 				res.BytesMedia += size
-				targets = append(targets, target{v: v, watch: watch, bytes: size})
+				targets = append(targets, target{v: v, bytes: size})
 			}
 		}
 	}
@@ -212,16 +214,15 @@ func importOne(t target, paths PathMapper, w VideoWriter, res *VideoResult) erro
 		return fmt.Errorf("taimport: set downloaded %s: %w", id, err)
 	}
 
-	// Resume position, only for the continue set, written without the >=90%
-	// auto-watch so a nearly-finished video stays in the queue.
-	if t.watch == watchContinue {
-		if v.Position > 0 {
-			if err := w.SetResumeRaw(id, v.Position); err != nil {
-				return fmt.Errorf("taimport: set resume %s: %w", id, err)
-			}
-		} else {
-			res.ResumeUnavailable++ // trap 5: report prominently
+	// Resume position: TubeArchivist reports one (player.position) for every
+	// partially-watched video, so a non-zero position is exactly the "continue
+	// watching" set. Written via SetResumeRaw so a nearly-finished video keeps
+	// its position without being auto-marked watched — it stays in the queue.
+	if v.Position > 0 {
+		if err := w.SetResumeRaw(id, v.Position); err != nil {
+			return fmt.Errorf("taimport: set resume %s: %w", id, err)
 		}
+		res.WithResume++
 	}
 
 	if _, err := w.EnqueueSummary(id); err != nil {

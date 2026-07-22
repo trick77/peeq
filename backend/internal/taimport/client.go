@@ -183,10 +183,12 @@ type Video struct {
 	SubtitleLangs   []string
 }
 
-// flexDate decodes TubeArchivist's "published" field. Its REST layer normally
-// returns a normalized "YYYY-MM-DD" string, but it can appear as an epoch
-// integer on some paths; either form yields a YYYY-MM-DD string so a one-shot
-// migration never aborts on a type it did not expect.
+// flexDate decodes TubeArchivist's "published" field to a bare YYYY-MM-DD, the
+// form peeq stores for every native download. The REST layer returns a full ISO
+// timestamp string (e.g. "2023-01-15T00:00:00+00:00"); on some paths it can be
+// an epoch integer instead. Either is reduced to the date, so a one-shot
+// migration never aborts on an unexpected type and imported rows match native
+// ones.
 type flexDate string
 
 func (d *flexDate) UnmarshalJSON(b []byte) error {
@@ -199,6 +201,11 @@ func (d *flexDate) UnmarshalJSON(b []byte) error {
 		var str string
 		if err := json.Unmarshal(b, &str); err != nil {
 			return err
+		}
+		// Keep only the date part of an ISO timestamp; a bare YYYY-MM-DD (no
+		// 'T') passes through unchanged.
+		if date, _, found := strings.Cut(str, "T"); found {
+			str = date
 		}
 		*d = flexDate(str)
 		return nil

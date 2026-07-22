@@ -241,9 +241,8 @@ func formatVideoResult(res taimport.VideoResult, dryRun bool) string {
 	if res.MissingFile > 0 {
 		fmt.Fprintf(&b, "Missing files:  %d videos have metadata but no .mp4 on the TA mount (skipped)\n", res.MissingFile)
 	}
-	if res.ResumeUnavailable > 0 {
-		fmt.Fprintf(&b, "\nHeads-up: %d partially-watched videos were imported WITHOUT a resume\n", res.ResumeUnavailable)
-		b.WriteString("position (TubeArchivist did not report one). Check them while TA is still around.\n")
+	if res.WithResume > 0 {
+		fmt.Fprintf(&b, "                %d imported with a saved resume position\n", res.WithResume)
 	}
 	return b.String()
 }

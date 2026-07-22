@@ -257,10 +257,10 @@ func TestFormatVideoResult_dryRunAndReal(t *testing.T) {
 	}
 }
 
-func TestFormatVideoResult_resumeUnavailableHeadsUp(t *testing.T) {
-	out := formatVideoResult(taimport.VideoResult{Imported: 3, ResumeUnavailable: 2}, false)
-	if !strings.Contains(strings.ToLower(out), "resume") {
-		t.Errorf("no resume heads-up for missing positions:\n%s", out)
+func TestFormatVideoResult_reportsResumeCount(t *testing.T) {
+	out := formatVideoResult(taimport.VideoResult{Imported: 3, WithResume: 2}, false)
+	if !strings.Contains(out, "2 imported with a saved resume position") {
+		t.Errorf("resume-position count missing or wrong:\n%s", out)
 	}
 }
 

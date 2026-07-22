@@ -102,11 +102,12 @@ func TestImportVideos_writesInOrderFiltersAndSkips(t *testing.T) {
 	// is skipped at Get; Eid (missing) has no .mp4 on disk. None need files.
 
 	lister := &fakeVideoLister{byKey: map[string][]Video{
-		"UC1|continue": {
-			{ID: "Aid11111111", ChannelID: "UC1", Title: "A", DurationSeconds: 600, Position: 123.5, VidType: "videos", SubtitleLangs: []string{"de", "en"}},
-		},
+		// One unwatched pass returns never-started AND partially-watched videos.
+		// A is a partial (player.watched=false) whose resume position TA injects
+		// — the case the earlier two-pass/dedup code silently dropped.
 		"UC1|unwatched": {
-			{ID: "Bid22222222", ChannelID: "UC1", Title: "B", VidType: "videos"},
+			{ID: "Aid11111111", ChannelID: "UC1", Title: "A", DurationSeconds: 600, Position: 123.5, VidType: "videos", SubtitleLangs: []string{"de", "en"}},
+			{ID: "Bid22222222", ChannelID: "UC1", Title: "B", VidType: "videos"}, // never started, no position
 			{ID: "Cid33333333", ChannelID: "UC1", Title: "C", VidType: "shorts"},
 			{ID: "Did44444444", ChannelID: "UC1", Title: "D", VidType: "videos"},
 			{ID: "Eid55555555", ChannelID: "UC1", Title: "E", VidType: "videos"},
@@ -124,15 +125,15 @@ func TestImportVideos_writesInOrderFiltersAndSkips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportVideos: %v", err)
 	}
-	if res.Imported != 2 || res.SkippedDownloaded != 1 || res.SkippedType != 1 || res.MissingFile != 1 {
-		t.Fatalf("result = %+v, want imported 2 / skippedDownloaded 1 / skippedType 1 / missing 1", res)
+	if res.Imported != 2 || res.SkippedDownloaded != 1 || res.SkippedType != 1 || res.MissingFile != 1 || res.WithResume != 1 {
+		t.Fatalf("result = %+v, want imported 2 / skippedDownloaded 1 / skippedType 1 / missing 1 / withResume 1", res)
 	}
-	// Continue video with a position -> resume written; unwatched -> not.
+	// A carries a position -> resume written; B never-started -> not.
 	if w.resumes["Aid11111111"] != 123.5 {
 		t.Errorf("resume for A = %v, want 123.5", w.resumes["Aid11111111"])
 	}
 	if _, ok := w.resumes["Bid22222222"]; ok {
-		t.Error("B (unwatched) got a resume write, want none")
+		t.Error("B (no position) got a resume write, want none")
 	}
 	if len(w.summaries) != 2 {
 		t.Errorf("summaries = %v, want 2", w.summaries)
@@ -232,19 +233,19 @@ func TestImportVideos_realStoresWriteRowsAndFilesIdempotently(t *testing.T) {
 
 	lister := &fakeVideoLister{byKey: map[string][]Video{
 		// 950/1000 = 95%: SetResume would auto-watch this; the import must not.
-		"UC1|continue": {{ID: "Vid00000001", ChannelID: "UC1", Title: "Real", Description: "desc", DurationSeconds: 1000, Position: 950, VidType: "videos", SubtitleLangs: []string{"en"}}},
+		// A partial video appears in the unwatched set with its position.
+		"UC1|unwatched": {{ID: "Vid00000001", ChannelID: "UC1", Title: "Real", Description: "desc", DurationSeconds: 1000, Position: 950, VidType: "videos", SubtitleLangs: []string{"en"}}},
 	}}
 	opts := ImportOptions{
-		Paths:       PathMapper{TAMediaRoot: taMedia, TACacheRoot: taCache, PeeqMediaDir: peeqMedia},
-		WatchStates: []string{"continue"},
+		Paths: PathMapper{TAMediaRoot: taMedia, TACacheRoot: taCache, PeeqMediaDir: peeqMedia},
 	}
 
 	res, err := ImportVideos(context.Background(), lister, w, []string{"UC1"}, opts, false)
 	if err != nil {
 		t.Fatalf("ImportVideos: %v", err)
 	}
-	if res.Imported != 1 {
-		t.Fatalf("imported = %d, want 1", res.Imported)
+	if res.Imported != 1 || res.WithResume != 1 {
+		t.Fatalf("result = %+v, want imported 1 / withResume 1", res)
 	}
 
 	v, err := vstore.Get("Vid00000001")

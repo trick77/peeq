@@ -131,11 +131,24 @@
       </tbody>
     </table></div>
     <p>
-      Both crawls are fetched <strong>server-side filtered</strong> — the importer never pulls the
-      watched library to discard it client-side. Fetch <code>watch=unwatched</code> and
-      <code>watch=continue</code> as separate passes, sharded per channel (<code>channel=&lt;UC…&gt;</code>)
-      to stay under Elasticsearch's 10,000-hit ceiling.
+      Fetched <strong>server-side filtered</strong> — the importer never pulls the watched library
+      to discard it client-side — sharded per channel (<code>channel=&lt;UC…&gt;</code>) to stay under
+      Elasticsearch's 10,000-hit ceiling.
     </p>
+    <div class="note key">
+      <h3>Correction found in review: one <code>unwatched</code> pass, not two</h3>
+      <p>
+        The original design fetched <code>?watch=unwatched</code> and <code>?watch=continue</code>
+        separately. Reading TubeArchivist's source showed <code>watch=unwatched</code> already
+        returns partially-watched videos (<code>player.watched</code> is false until finished), and
+        TubeArchivist injects each partial's <code>player.position</code> into the response
+        regardless of filter. So the <code>continue</code> pass was <strong>redundant</strong> — and
+        harmful: it is Redis-backed and collapses to a null Elasticsearch clause when the user has no
+        in-progress videos, which aborted the whole import. The runner uses <strong>one
+        <code>unwatched</code> pass</strong> and writes the resume position whenever
+        <code>player.position &gt; 0</code>.
+      </p>
+    </div>
   </section>
 
   <section>
