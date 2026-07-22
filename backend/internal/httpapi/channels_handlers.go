@@ -486,17 +486,27 @@ func (s *server) resolveChannel(ctx context.Context, channelID string, cached *c
 	// steer yt-dlp at a different youtube.com page ("UCx/../../watch?v=…").
 	// Escaping keeps the id a single path segment whatever it contains.
 	url := "https://www.youtube.com/channel/" + neturl.PathEscape(channelID)
-	info, err := s.channelResolver.ResolveChannel(ctx, url)
-	if err != nil {
+	// recordAttempt remembers that a resolve was tried and did not produce
+	// usable metadata. EVERY unsuccessful exit has to go through it: the
+	// resolved_at it writes is what stops maybeResolveChannel re-fetching the
+	// channel on every single page visit, so an early return that skips it
+	// turns one broken channel into an unbounded stream of YouTube calls.
+	recordAttempt := func() {
 		if cached == nil {
+			// No row yet — create a bare one purely to carry resolved_at.
 			if uerr := s.channels.Upsert(channels.Channel{ID: channelID, ResolvedAt: now}); uerr != nil {
 				slog.Error("cache channel after failed resolve", "channel_id", channelID, "err", uerr)
 			}
-			return err
+			return
 		}
 		if merr := s.channels.MarkResolveAttempted(channelID, now); merr != nil {
 			slog.Error("mark resolve attempted", "channel_id", channelID, "err", merr)
 		}
+	}
+
+	info, err := s.channelResolver.ResolveChannel(ctx, url)
+	if err != nil {
+		recordAttempt()
 		return err
 	}
 	// The UCID yt-dlp reports is the authoritative identity of whatever it
@@ -505,7 +515,13 @@ func (s *server) resolveChannel(ctx context.Context, channelID string, cached *c
 	// that response onto this row would silently replace one channel's name,
 	// artwork and subscriber count with another's — while resolve_ok asserts
 	// the result is current. Refuse instead, and let the caller report it.
+	//
+	// A mismatch counts as an unsuccessful attempt and is recorded like any
+	// other. It is a PERSISTENT condition — the url resolves elsewhere and
+	// will keep doing so — so treating it as "not yet resolved" would leave
+	// the channel re-fetching itself on every visit for as long as it exists.
 	if info.UCID != "" && info.UCID != channelID {
+		recordAttempt()
 		return fmt.Errorf("resolved to a different channel (%s)", info.UCID)
 	}
 
