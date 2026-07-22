@@ -175,6 +175,7 @@ type Video struct {
 	ChannelID       string
 	ChannelName     string
 	Title           string
+	Description     string
 	Published       string  // normalized YYYY-MM-DD
 	DurationSeconds int     // player.duration
 	Position        float64 // player.position — resume seconds; 0 when not partially watched
@@ -215,11 +216,12 @@ func (d *flexDate) UnmarshalJSON(b []byte) error {
 // migration writes are decoded; channel id/name are nested, and the resume
 // position, duration and watched state live under player.
 type videoDoc struct {
-	YoutubeID string   `json:"youtube_id"`
-	Title     string   `json:"title"`
-	Published flexDate `json:"published"`
-	VidType   string   `json:"vid_type"`
-	Channel   struct {
+	YoutubeID   string   `json:"youtube_id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Published   flexDate `json:"published"`
+	VidType     string   `json:"vid_type"`
+	Channel     struct {
 		ID   string `json:"channel_id"`
 		Name string `json:"channel_name"`
 	} `json:"channel"`
@@ -244,6 +246,7 @@ func (d videoDoc) toVideo() Video {
 		ChannelID:       d.Channel.ID,
 		ChannelName:     d.Channel.Name,
 		Title:           d.Title,
+		Description:     d.Description,
 		Published:       string(d.Published),
 		DurationSeconds: d.Player.Duration,
 		Position:        d.Player.Position,
