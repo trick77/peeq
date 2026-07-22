@@ -78,6 +78,16 @@ type DownloadedResult struct {
 	SubtitleRelPath      string
 	AudioLanguage        string
 	ChaptersJSON         string
+	// PublishedAt is the release date (YYYY-MM-DD) yt-dlp reported in the
+	// download's own info.json, or "" when it reported none.
+	//
+	// SetDownloaded is the only place a channel-driven download can pick one
+	// up: scan.Scheduler.enqueueAuto seeds its videos row from a flat listing
+	// that carries no release date, and nothing else would ever set one — the
+	// library would sort those videos by download date forever. An empty value
+	// leaves whatever is already stored, so a date the richer Metadata path
+	// wrote is never clobbered.
+	PublishedAt string
 }
 
 // Store persists video rows.
@@ -337,7 +347,8 @@ func (s *Store) SetRequestedFormat(id, format string) error {
 // SetDownloaded records a successful download: media path, filesize, the
 // resolved format, the SponsorBlock segments JSON, status=downloaded, and
 // the downloaded_at timestamp. error_message is cleared (a prior failed
-// attempt's message must not linger on a now-successful video).
+// attempt's message must not linger on a now-successful video). It also fills
+// in published_at — see DownloadedResult.PublishedAt for why that lands here.
 func (s *Store) SetDownloaded(id string, res DownloadedResult) error {
 	segments := res.SponsorblockSegments
 	if segments == "" {
@@ -349,11 +360,13 @@ SET media_path = ?, thumbnail_path = COALESCE(NULLIF(?, ''), thumbnail_path),
 	filesize_bytes = ?, format_used = ?, sponsorblock_segments = ?,
 	subtitle_path = ?, audio_language = ?,
 	chapters = CASE WHEN ? != '' THEN ? ELSE chapters END,
+	published_at = COALESCE(NULLIF(?, ''), published_at),
 	status = 'downloaded', error_message = '', downloaded_at = datetime('now')
 WHERE id = ?`,
 		res.MediaPath, res.ThumbnailPath, res.FilesizeBytes, res.FormatUsed, segments,
 		res.SubtitleRelPath, res.AudioLanguage,
 		res.ChaptersJSON, res.ChaptersJSON,
+		res.PublishedAt,
 		id,
 	)
 	if err != nil {

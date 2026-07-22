@@ -53,6 +53,7 @@ if [ -n "$outtmpl" ]; then
   "channel_id": "${FAKE_YTDLP_CHANNEL_ID:-UCabc}",
   "ext": "mp4",
   "language": "${FAKE_YTDLP_SUBLANG:-en}",
+  "upload_date": "${FAKE_YTDLP_UPLOAD_DATE-20240115}",
   "chapters": [
     {"start_time": 0, "end_time": 10, "title": "Intro"},
     {"start_time": 10, "end_time": 25, "title": "[SponsorBlock]: Sponsor"}

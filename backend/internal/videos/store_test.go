@@ -831,6 +831,54 @@ func TestList_sort_ordersRows(t *testing.T) {
 	}
 }
 
+// TestSetDownloaded_fillsPublishedAt asserts the download's own info.json
+// supplies the release date for videos seeded from a metadata-poor flat
+// channel listing — without it, everything peeq auto-downloads would sort by
+// download date forever.
+func TestSetDownloaded_fillsPublishedAt(t *testing.T) {
+	// Given: a row seeded the way scan.Scheduler.enqueueAuto seeds one — no
+	// release date.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "auto", URL: "u"})
+
+	// When: the download completes and reports one.
+	if err := s.SetDownloaded("auto", DownloadedResult{MediaPath: "/m/auto.mp4", PublishedAt: "2025-04-09"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	// Then: the row carries it.
+	got, err := s.Get("auto")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.PublishedAt != "2025-04-09" {
+		t.Fatalf("published_at = %q, want 2025-04-09", got.PublishedAt)
+	}
+}
+
+// TestSetDownloaded_emptyPublishedAt_keepsExisting asserts a re-download of a
+// video whose release date is already known (the manual-add path fetches it
+// up front) never blanks it out when yt-dlp reports no upload_date.
+func TestSetDownloaded_emptyPublishedAt_keepsExisting(t *testing.T) {
+	// Given: a row that already knows its release date.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "known", URL: "u", PublishedAt: "2025-04-09"})
+
+	// When: a download completes without one.
+	if err := s.SetDownloaded("known", DownloadedResult{MediaPath: "/m/known.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	// Then: the stored date survives.
+	got, err := s.Get("known")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.PublishedAt != "2025-04-09" {
+		t.Fatalf("published_at = %q, want it preserved", got.PublishedAt)
+	}
+}
+
 // TestList_sort_missingPublishedAt_fallsBackToCreatedAt asserts a row with no
 // known release date (yt-dlp reports no upload_date for some live streams and
 // premieres) takes the position its download date implies, interleaved with

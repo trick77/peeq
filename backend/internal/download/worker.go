@@ -537,6 +537,7 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 		SubtitleRelPath:      res.SubtitleRelPath,
 		AudioLanguage:        res.AudioLanguage,
 		ChaptersJSON:         res.ChaptersJSON,
+		PublishedAt:          res.PublishedAt,
 	}); err != nil {
 		w.deps.Logger.Error("download worker: set downloaded failed", "video_id", video.ID, "err", err)
 		// Do not enqueue a summary job: the video row was not updated with
