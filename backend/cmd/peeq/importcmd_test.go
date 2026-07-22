@@ -274,6 +274,27 @@ func TestSelectChannelIDs(t *testing.T) {
 	}
 }
 
+// An explicit --channel must be crawled even when TubeArchivist does not list
+// the channel as subscribed: unsubscribing there leaves its unwatched videos
+// unwatched, and those are exactly what the migration exists to move.
+func TestSelectChannelIDs_explicitIDsBypassTheSubscribedListing(t *testing.T) {
+	// chans is what AllChannels would return; UC9 is absent from it.
+	chans := []taimport.Channel{{ID: "UC1"}, {ID: "UC2"}}
+
+	got := selectChannelIDs(chans, []string{"UC9"}, 0)
+	if len(got) != 1 || got[0] != "UC9" {
+		t.Errorf("unsubscribed explicit id = %v, want [UC9]", got)
+	}
+	// Order is preserved and repeats collapse, so a channel is never crawled twice.
+	if got := selectChannelIDs(nil, []string{"UC9", "UC8", "UC9", ""}, 0); len(got) != 2 || got[0] != "UC9" || got[1] != "UC8" {
+		t.Errorf("dedupe = %v, want [UC9 UC8]", got)
+	}
+	// --channels still caps an explicit list.
+	if got := selectChannelIDs(nil, []string{"UC9", "UC8"}, 1); len(got) != 1 || got[0] != "UC9" {
+		t.Errorf("capped = %v, want [UC9]", got)
+	}
+}
+
 func TestParseTypes(t *testing.T) {
 	if got := parseTypes(""); got != nil {
 		t.Errorf("empty = %v, want nil (all types)", got)

@@ -120,7 +120,7 @@ func runImportVideos(args []string) error {
 		types    = fs.String("types", "", "comma-separated vid_type allowlist (videos,shorts,streams); empty = all")
 	)
 	var onlyChannels []string
-	fs.Func("channel", "import only this channel id; repeatable", func(v string) error {
+	fs.Func("channel", "import only this channel id, subscribed in TubeArchivist or not; repeatable", func(v string) error {
 		onlyChannels = append(onlyChannels, v)
 		return nil
 	})
@@ -157,12 +157,19 @@ func runImportVideos(args []string) error {
 	ctx := context.Background()
 	client := taimport.NewClient(*taURL, *taToken, nil)
 
-	// Shard the video crawl over the subscribed channels.
-	chans, err := client.AllChannels(ctx)
-	if err != nil {
-		return err
+	// Shard the video crawl over the subscribed channels — unless --channel
+	// named the channels outright, in which case the listing is neither needed
+	// nor wanted (see selectChannelIDs).
+	var ids []string
+	if len(onlyChannels) > 0 {
+		ids = selectChannelIDs(nil, onlyChannels, *maxChans)
+	} else {
+		chans, err := client.AllChannels(ctx)
+		if err != nil {
+			return err
+		}
+		ids = selectChannelIDs(chans, nil, *maxChans)
 	}
-	ids := selectChannelIDs(chans, onlyChannels, *maxChans)
 
 	writer := taimport.NewStoreWriter(videos.New(db), summaryjobs.New(db))
 	opts := taimport.ImportOptions{
@@ -189,21 +196,31 @@ func runImportVideos(args []string) error {
 	return nil
 }
 
-// selectChannelIDs applies the --channel (allowlist) and --channels (first N)
-// flags to the resolved channel list and returns the ids to crawl.
+// selectChannelIDs turns the --channel (explicit ids) and --channels (first N)
+// flags into the list of channel ids to crawl.
+//
+// An explicit --channel is an instruction, not a filter over the subscribed
+// listing: the ids are crawled verbatim, so a channel TubeArchivist no longer
+// lists as subscribed still migrates. That matters because unsubscribing in TA
+// does not mark its videos watched — an unsubscribed channel can still hold
+// exactly the unwatched videos a migration must not silently drop. Duplicates
+// are collapsed while keeping the order given, since the same id passed twice
+// would otherwise crawl (and count) that channel twice.
 func selectChannelIDs(chans []taimport.Channel, only []string, maxN int) []string {
 	if len(only) > 0 {
-		set := make(map[string]bool, len(only))
-		for _, c := range only {
-			set[c] = true
-		}
-		kept := chans[:0:0]
-		for _, c := range chans {
-			if set[c.ID] {
-				kept = append(kept, c)
+		seen := make(map[string]bool, len(only))
+		ids := make([]string, 0, len(only))
+		for _, id := range only {
+			if id == "" || seen[id] {
+				continue
 			}
+			seen[id] = true
+			ids = append(ids, id)
 		}
-		chans = kept
+		if maxN > 0 && len(ids) > maxN {
+			ids = ids[:maxN]
+		}
+		return ids
 	}
 	if maxN > 0 && len(chans) > maxN {
 		chans = chans[:maxN]
