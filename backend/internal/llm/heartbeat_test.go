@@ -2,10 +2,41 @@ package llm
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 )
+
+// quietLogger is a logger that goes nowhere. Tests here care about WHEN the
+// heartbeat writes, never what it wrote, and routing that through
+// slog.Default() would spray real lines into the test binary's stderr and
+// couple the test to whatever else has reconfigured the global logger.
+func quietLogger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(io.Discard, nil))
+}
+
+// countingWriter records how many lines have been written, so a test can
+// assert that the heartbeat has genuinely stopped writing rather than sleep
+// and hope.
+type countingWriter struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	w.n++
+	w.mu.Unlock()
+	return len(p), nil
+}
+
+func (w *countingWriter) count() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.n
+}
 
 // blockingWriter reports when a write starts and holds it there until it is
 // released, so a test can pin the heartbeat goroutine mid-log-line and
@@ -73,7 +104,7 @@ func TestStartHeartbeat_stopWaitsForTheLineInFlight(t *testing.T) {
 // branch: it starts no goroutine, so its stop has nothing to wait for and
 // must not block.
 func TestStartHeartbeat_disabledStopIsSafe(t *testing.T) {
-	stop := StartHeartbeat(context.Background(), slog.Default(), 0, "tick")
+	stop := StartHeartbeat(context.Background(), quietLogger(), 0, "tick")
 	done := make(chan struct{})
 	go func() { stop(); close(done) }()
 	select {
@@ -86,11 +117,35 @@ func TestStartHeartbeat_disabledStopIsSafe(t *testing.T) {
 // TestStartHeartbeat_stopAfterContextCancel asserts stop() still returns once
 // the goroutine has already exited on its own — the wait must observe a
 // finished goroutine, not hang waiting for one that will never signal again.
+//
+// The "already exited" state is CONFIRMED, not assumed. Sleeping and hoping
+// would let a loaded machine run the ordinary close-then-wait path instead
+// and still pass, reporting success for a path it never exercised. Here the
+// test watches the write count go quiet across many missed ticks first, so if
+// the goroutine were still running the test would fail rather than silently
+// test something else.
 func TestStartHeartbeat_stopAfterContextCancel(t *testing.T) {
+	w := &countingWriter{}
+	log := slog.New(slog.NewJSONHandler(w, nil))
+
 	ctx, cancel := context.WithCancel(context.Background())
-	stop := StartHeartbeat(ctx, slog.Default(), time.Millisecond, "tick")
+	interval := time.Millisecond
+	stop := StartHeartbeat(ctx, log, interval, "tick")
 	cancel()
-	time.Sleep(20 * time.Millisecond) // let the goroutine notice and exit
+
+	// Quiet for 50 intervals running is the goroutine being gone, not slow.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		before := w.count()
+		time.Sleep(50 * interval)
+		if w.count() == before {
+			break
+		}
+		if time.Now().After(deadline) {
+			stop()
+			t.Fatal("the heartbeat kept logging long after its context was cancelled")
+		}
+	}
 
 	done := make(chan struct{})
 	go func() { stop(); close(done) }()
