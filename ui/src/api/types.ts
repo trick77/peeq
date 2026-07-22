@@ -18,7 +18,11 @@ export type User = {
 };
 
 // VideoFilter mirrors the ?filter= values videos.Store.List understands.
-export type VideoFilter = "all" | "unwatched" | "watched" | "favorites" | "downloading";
+export type VideoFilter =
+  "all" | "unwatched" | "watched" | "favorites" | "downloading";
+
+// VideoSort mirrors the sort keys videos.Store.List accepts.
+export type VideoSort = "newest" | "oldest" | "longest" | "title";
 
 // Video mirrors httpapi.videoDTO exactly. media_path is deliberately never
 // exposed (server-local filesystem path); has_media + the /stream endpoint
@@ -50,7 +54,11 @@ export type Video = {
   // downloaded video's own --sponsorblock-mark chapters, parsed server-side
   // from the stored JSON column. Absent (undefined, via omitempty) when
   // there are none. Player.tsx auto-skips [start_time, end_time) ranges.
-  sponsorblock_segments?: { category: string; start_time: number; end_time: number }[];
+  sponsorblock_segments?: {
+    category: string;
+    start_time: number;
+    end_time: number;
+  }[];
   // summary/chapters/key_points/summary_status/audio_language/has_subtitles
   // mirror the Task 14 summarization fields added to httpapi.videoDTO —
   // chapters/key_points arrive as arrays (never omitted, just empty).
@@ -206,3 +214,35 @@ export type APITokenCreated = {
   token: string;
   created_at: string;
 };
+
+// ChannelDetail mirrors httpapi.channelDetail — one channel's page data.
+// Tracked is false for a channel the user has only visited; when it is false
+// every subscription field below is at its zero value.
+export type ChannelDetail = {
+  id: string;
+  name: string;
+  handle?: string;
+  description?: string;
+  has_avatar: boolean;
+  has_banner: boolean;
+
+  tracked: boolean;
+  tracked_at?: string;
+
+  archived_count: number;
+  runtime_seconds: number;
+  disk_bytes: number;
+  newest_published_at?: string;
+
+  subscribed: boolean;
+  autodownload: boolean;
+  format_override?: string;
+  last_scanned_at?: string;
+  next_scan_at?: string;
+  pending_count: number;
+};
+
+// ScanResult mirrors POST /api/channels/{id}/scan. "blocked" carries a
+// human-readable reason the scan cannot run — a stale cookie or the global
+// YouTube pause — which the UI shows verbatim.
+export type ScanResult = { status: "scheduled" | "blocked"; reason?: string };

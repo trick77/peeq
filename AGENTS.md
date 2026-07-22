@@ -44,7 +44,9 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
 ## Database / migrations
 - New migration → a new numbered file `backend/internal/store/migrations/NNNN_*.sql`. The runner applies
   pending ones in order and records them in `schema_migrations`.
-- Never edit an already-applied migration — add a new one.
+- Pre-1.0, squash instead: edit `0001_init.sql` in place and re-create the DB. Ask the owner first — it
+  breaks every existing install (no upgrade path; the runner skips `0001` once recorded). Numbered
+  migrations at 1.0.
 
 ## Frontend
 - Vite + React + TS + Tailwind. `npm run build` empties `backend/web/dist` and overwrites the tracked

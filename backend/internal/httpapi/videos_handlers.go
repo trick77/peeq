@@ -124,13 +124,31 @@ func toVideoDTO(v *videos.Video) videoDTO {
 // for exact filter semantics; an unrecognized/empty filter means "all") and
 // independently by ?category=<id>, which is ANDed with ?filter= rather than
 // replacing it. An empty or unrecognized category value means "all
-// categories" (see videos.Store.List).
+// categories" (see videos.Store.List). ?q= narrows by a case-insensitive
+// title substring search, and ?sort=newest|oldest|longest|title controls
+// ordering (unrecognized/empty falls back to newest).
 func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 	if s.videos == nil {
 		writeJSON(w, []videoDTO{})
 		return
 	}
-	all, err := s.videos.List(r.URL.Query().Get("filter"), r.URL.Query().Get("category"))
+	channelID := r.URL.Query().Get("channel")
+	channelName := ""
+	if channelID != "" && s.channels != nil {
+		if c, cerr := s.channels.Get(channelID); cerr == nil && c != nil {
+			channelName = c.Name
+		} else if n, found, nerr := s.channels.NameFromVideos(channelID); nerr == nil && found {
+			channelName = n
+		}
+	}
+	all, err := s.videos.List(videos.ListOptions{
+		Filter:      r.URL.Query().Get("filter"),
+		Category:    r.URL.Query().Get("category"),
+		Query:       r.URL.Query().Get("q"),
+		Sort:        r.URL.Query().Get("sort"),
+		ChannelID:   channelID,
+		ChannelName: channelName,
+	})
 	if err != nil {
 		serverError(w, r, err, "list videos failed")
 		return

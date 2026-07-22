@@ -22,6 +22,8 @@ func (f *fakeLister) AllChannels(context.Context) ([]Channel, error) { return f.
 // spyWriter records what the runner asked for.
 type spyWriter struct {
 	upserted        []channels.Channel
+	tracked         []string
+	trackedAt       []string
 	subscribed      []string
 	nextScanAt      []string
 	failOn          string // channel id whose Upsert should fail
@@ -48,6 +50,12 @@ func (s *spyWriter) Upsert(c channels.Channel) error {
 		return errors.New("boom")
 	}
 	s.upserted = append(s.upserted, c)
+	return nil
+}
+
+func (s *spyWriter) Track(channelID, trackedAt string) error {
+	s.tracked = append(s.tracked, channelID)
+	s.trackedAt = append(s.trackedAt, trackedAt)
 	return nil
 }
 
@@ -80,8 +88,13 @@ func TestImportChannels_importsActiveAndInactive(t *testing.T) {
 	if got.Subscribed != 2 || got.Active != 1 || got.Inactive != 1 || got.Skipped != 0 {
 		t.Errorf("result = %+v, want Subscribed:2 Active:1 Inactive:1 Skipped:0", got)
 	}
-	if len(w.upserted) != 2 || len(w.subscribed) != 2 {
-		t.Fatalf("upserted=%d subscribed=%d, want 2 and 2", len(w.upserted), len(w.subscribed))
+	if len(w.upserted) != 2 || len(w.tracked) != 2 || len(w.subscribed) != 2 {
+		t.Fatalf("upserted=%d tracked=%d subscribed=%d, want 2 each",
+			len(w.upserted), len(w.tracked), len(w.subscribed))
+	}
+	// Tracking uses the same import instant as the subscription's next scan.
+	if w.trackedAt[0] != w.nextScanAt[0] {
+		t.Errorf("trackedAt=%q, want it to match nextScanAt=%q", w.trackedAt[0], w.nextScanAt[0])
 	}
 	if w.upserted[0].ID != "UC_a" || w.upserted[0].Name != "Alpha" {
 		t.Errorf("upserted[0] = %+v", w.upserted[0])
@@ -287,8 +300,9 @@ func TestImportChannels_againstRealStore(t *testing.T) {
 	}
 	realStore := channels.New(db)
 
-	// And: peeq already tracks UC_a with a handle resolved from a pasted URL,
-	// before TubeArchivist's subscription list is imported.
+	// And: peeq already has UC_a cached with a handle resolved from a pasted
+	// URL (Upsert caches identity without tracking), before TubeArchivist's
+	// subscription list is imported.
 	if err := realStore.Upsert(channels.Channel{ID: "UC_a", Name: "Alpha (old name)", Handle: "@existing"}); err != nil {
 		t.Fatalf("seed existing channel: %v", err)
 	}

@@ -6,11 +6,18 @@ import { api } from "./http";
 // rather than the cached Settings.ytdlp_version column, so the Update
 // button's result is always fresh.
 export async function getYtdlpVersion(): Promise<string> {
-  const res = await api.get<{ version: string }>("/api/ytdlp/version", "failed to read yt-dlp version");
+  const res = await api.get<{ version: string }>(
+    "/api/ytdlp/version",
+    "failed to read yt-dlp version",
+  );
   return res.version;
 }
 
 export async function updateYtdlp(): Promise<string> {
-  const res = await api.post<{ version: string }>("/api/ytdlp/update", undefined, "failed to update yt-dlp");
+  const res = await api.post<{ version: string }>(
+    "/api/ytdlp/update",
+    undefined,
+    "failed to update yt-dlp",
+  );
   return res.version;
 }

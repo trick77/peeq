@@ -140,7 +140,29 @@ ORDER BY cv.discovered_at DESC, cv.video_id DESC`)
 		return nil, fmt.Errorf("list pending channel videos: %w", err)
 	}
 	defer rows.Close()
+	return scanPendingEntries(rows)
+}
 
+// ListPendingForChannel is ListPending scoped to one channel. The
+// idx_channel_videos_channel index already supports this predicate.
+func (s *Store) ListPendingForChannel(channelID string) ([]Entry, error) {
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name
+FROM channel_videos cv
+LEFT JOIN channels c ON c.id = cv.channel_id
+WHERE cv.state = 'pending' AND cv.channel_id = ?
+ORDER BY cv.discovered_at DESC, cv.video_id DESC`, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending for channel %s: %w", channelID, err)
+	}
+	defer rows.Close()
+	return scanPendingEntries(rows)
+}
+
+// scanPendingEntries reads every remaining row from a ListPending-shaped
+// query (pendingColumns + joined channel_name) into a slice. Shared by
+// ListPending and ListPendingForChannel so the two lists can never diverge.
+func scanPendingEntries(rows *sql.Rows) ([]Entry, error) {
 	var out []Entry
 	for rows.Next() {
 		e, err := scanPendingRow(rows)

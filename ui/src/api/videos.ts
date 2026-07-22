@@ -1,24 +1,52 @@
 import { api } from "./http";
-import type { Video, VideoFilter } from "./types";
+import type { Video, VideoFilter, VideoSort } from "./types";
 
-// listVideos' category defaults to "all" so pre-Task-7 call sites that pass
-// only filter (e.g. Library.tsx) keep compiling and keep filtering across
-// every category, unchanged.
-export async function listVideos(filter: VideoFilter = "all", category = "all"): Promise<Video[]> {
-  const q = new URLSearchParams({ filter });
-  if (category && category !== "all") q.set("category", category);
-  return api.get<Video[]>(`/api/videos?${q.toString()}`, "failed to load videos");
+// ListVideosOptions mirrors the query params handleListVideos understands.
+// Every field is optional; omitting all of them is "everything, newest first".
+export type ListVideosOptions = {
+  filter?: VideoFilter;
+  category?: string;
+  q?: string;
+  sort?: VideoSort;
+  /** Scopes the list to one channel (the channel page's Archive tab). */
+  channel?: string;
+};
+
+export async function listVideos(
+  opts: ListVideosOptions = {},
+): Promise<Video[]> {
+  const p = new URLSearchParams();
+  if (opts.filter) p.set("filter", opts.filter);
+  if (opts.category && opts.category !== "all")
+    p.set("category", opts.category);
+  if (opts.q) p.set("q", opts.q);
+  if (opts.sort) p.set("sort", opts.sort);
+  if (opts.channel) p.set("channel", opts.channel);
+  const qs = p.toString();
+  return api.get<Video[]>(
+    `/api/videos${qs ? `?${qs}` : ""}`,
+    "failed to load videos",
+  );
 }
 
 export async function getVideo(id: string): Promise<Video> {
-  return api.get<Video>(`/api/videos/${encodeURIComponent(id)}`, "failed to load video");
+  return api.get<Video>(
+    `/api/videos/${encodeURIComponent(id)}`,
+    "failed to load video",
+  );
 }
 
 export async function deleteVideo(id: string): Promise<void> {
-  await api.delete(`/api/videos/${encodeURIComponent(id)}`, "failed to delete video");
+  await api.delete(
+    `/api/videos/${encodeURIComponent(id)}`,
+    "failed to delete video",
+  );
 }
 
-export async function setFavorite(id: string, favorite: boolean): Promise<boolean> {
+export async function setFavorite(
+  id: string,
+  favorite: boolean,
+): Promise<boolean> {
   const res = await api.post<{ favorite: boolean }>(
     `/api/videos/${encodeURIComponent(id)}/favorite`,
     { favorite },
@@ -27,7 +55,10 @@ export async function setFavorite(id: string, favorite: boolean): Promise<boolea
   return res.favorite;
 }
 
-export async function setWatched(id: string, watched: boolean): Promise<boolean> {
+export async function setWatched(
+  id: string,
+  watched: boolean,
+): Promise<boolean> {
   const res = await api.post<{ watched: boolean }>(
     `/api/videos/${encodeURIComponent(id)}/watched`,
     { watched },
@@ -51,7 +82,11 @@ export async function setResume(id: string, position: number): Promise<number> {
 // redownload re-queues a failed or tombstoned video. 202/empty, so it uses
 // postNoContent (like resummarize) — never .json() on an empty body.
 export async function redownload(id: string): Promise<void> {
-  await api.postNoContent(`/api/videos/${encodeURIComponent(id)}/redownload`, undefined, "failed to redownload video");
+  await api.postNoContent(
+    `/api/videos/${encodeURIComponent(id)}/redownload`,
+    undefined,
+    "failed to redownload video",
+  );
 }
 
 export function streamUrl(id: string): string {

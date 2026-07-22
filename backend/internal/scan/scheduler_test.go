@@ -140,10 +140,16 @@ func (h *scanHarness) nowStr() string {
 }
 
 // trackAndSubscribe tracks ucid and subscribes it with a next_scan_at in the
-// past, so the first ClaimDue(nowStr) finds it.
+// past, so the first ClaimDue(nowStr) finds it. Mirrors the real API flow
+// (Track before Subscribe — subscribing requires an already-tracked
+// channel), so the harness state matches what enqueueAuto's tracked_at guard
+// sees in production.
 func (h *scanHarness) trackAndSubscribe(ucid string, autodownload bool, format string) {
 	h.t.Helper()
 	if err := h.channels.Upsert(channels.Channel{ID: ucid, Name: ucid}); err != nil {
+		h.t.Fatalf("track %s: %v", ucid, err)
+	}
+	if err := h.channels.Track(ucid, h.nowStr()); err != nil {
 		h.t.Fatalf("track %s: %v", ucid, err)
 	}
 	if err := h.channels.Subscribe(ucid, "2000-01-01 00:00:00"); err != nil {
@@ -317,6 +323,44 @@ func TestScan_autodownloadEnqueueFailure_notMaskedByLedger(t *testing.T) {
 	}
 	if ok, _ := h.ledger.Exists("newv"); ok {
 		t.Fatal("retry must dedup via videos table, not create a ledger row")
+	}
+}
+
+// TestScan_autodownload_notEnqueued_whenChannelUntracked proves enqueueAuto's
+// guard checks tracked_at, not mere row presence. channels is a metadata
+// cache: maybeResolveChannel can re-create a cache-only row (tracked_at
+// NULL) for an id the user just untracked/deleted, while a scan for its
+// still-due subscription is in flight. Get() != nil alone would look
+// identical to a genuinely tracked channel, so a scan should NOT enqueue a
+// download for a channel whose row exists but isn't tracked.
+func TestScan_autodownload_notEnqueued_whenChannelUntracked(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", true /*autodownload*/, "")
+	h.markBaselined("UC1", nil)
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "newv", Title: "N", URL: "https://www.youtube.com/watch?v=newv", DurationSeconds: 600, LiveStatus: "not_live"},
+	})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+
+	// Simulate the race: the channel is untracked (row reverts to cache-only)
+	// after ClaimDue but before the scan's enqueueAuto call. The subscription
+	// row is left dangling, mirroring maybeResolveChannel re-creating a
+	// cache-only row for a just-deleted/untracked channel mid-scan.
+	if _, err := h.db.Exec(`UPDATE channels SET tracked_at = NULL WHERE id = ?`, "UC1"); err != nil {
+		t.Fatalf("untrack UC1: %v", err)
+	}
+
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
+		t.Fatalf("must not enqueue a download for an untracked channel; got %+v", jobsList)
+	}
+	if v, _ := h.videos.Get("newv"); v != nil {
+		t.Fatalf("must not upsert a video row for an untracked channel; got %+v", v)
 	}
 }
 

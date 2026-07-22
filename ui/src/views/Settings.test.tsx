@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Settings } from "./Settings";
 import type { Settings as SettingsType } from "../api/types";
@@ -35,7 +41,12 @@ vi.mock("../api/downloads", () => ({
   resumeYoutube: vi.fn(),
 }));
 
-import { getSettings, putCookie, updateSettings, getAPITokenStatus } from "../api/settings";
+import {
+  getSettings,
+  putCookie,
+  updateSettings,
+  getAPITokenStatus,
+} from "../api/settings";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 
 describe("Settings", () => {
@@ -47,7 +58,10 @@ describe("Settings", () => {
     vi.mocked(resumeYoutube).mockReset();
     vi.mocked(getAPITokenStatus).mockReset();
     vi.mocked(getSettings).mockResolvedValue(baseSettings);
-    vi.mocked(putCookie).mockResolvedValue({ ...baseSettings, cookie_status: "valid" });
+    vi.mocked(putCookie).mockResolvedValue({
+      ...baseSettings,
+      cookie_status: "valid",
+    });
     vi.mocked(updateSettings).mockResolvedValue(baseSettings);
     vi.mocked(pauseYoutube).mockResolvedValue(undefined);
     vi.mocked(resumeYoutube).mockResolvedValue(undefined);
@@ -61,7 +75,9 @@ describe("Settings", () => {
     expect(within(cookieSection).getByText(/Active/)).toBeInTheDocument();
     // Nothing resembling a pasted cookie value should ever render.
     expect(screen.queryByText(/SID/)).toBeNull();
-    const textarea = screen.getByLabelText("YouTube cookie") as HTMLTextAreaElement;
+    const textarea = screen.getByLabelText(
+      "YouTube cookie",
+    ) as HTMLTextAreaElement;
     expect(textarea.value).toBe("");
   });
 
@@ -73,7 +89,9 @@ describe("Settings", () => {
     await user.click(screen.getByRole("button", { name: /Save cookie/i }));
 
     await waitFor(() => {
-      expect(putCookie).toHaveBeenCalledWith(".youtube.com\tTRUE\t/\tTRUE\t123\tSID\tabc");
+      expect(putCookie).toHaveBeenCalledWith(
+        ".youtube.com\tTRUE\t/\tTRUE\t123\tSID\tabc",
+      );
     });
   });
 
@@ -90,7 +108,9 @@ describe("Settings", () => {
     await user.tab();
 
     await waitFor(() => {
-      expect(updateSettings).toHaveBeenCalledWith({ throttle_base_seconds: 45 });
+      expect(updateSettings).toHaveBeenCalledWith({
+        throttle_base_seconds: 45,
+      });
     });
   });
 
@@ -107,14 +127,22 @@ describe("Settings", () => {
     await user.tab();
 
     await waitFor(() => {
-      expect(updateSettings).toHaveBeenCalledWith({ min_video_duration_seconds: 90 });
+      expect(updateSettings).toHaveBeenCalledWith({
+        min_video_duration_seconds: 90,
+      });
     });
   });
 
   it("toggles the YouTube kill-switch", async () => {
-    vi.mocked(getSettings).mockResolvedValue({ ...baseSettings, youtube_paused: false, youtube_pause_reason: "" });
+    vi.mocked(getSettings).mockResolvedValue({
+      ...baseSettings,
+      youtube_paused: false,
+      youtube_pause_reason: "",
+    });
     render(<Settings />);
-    const toggle = await screen.findByRole("checkbox", { name: /pause all youtube/i });
+    const toggle = await screen.findByRole("checkbox", {
+      name: /pause all youtube/i,
+    });
     fireEvent.click(toggle);
     await waitFor(() => expect(pauseYoutube).toHaveBeenCalled());
   });
@@ -126,6 +154,8 @@ describe("Settings", () => {
       youtube_pause_reason: "Auto-paused after repeated extractor failures.",
     });
     render(<Settings />);
-    expect(await screen.findByText(/auto-paused after repeated/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/auto-paused after repeated/i),
+    ).toBeInTheDocument();
   });
 });

@@ -18,11 +18,23 @@ import { Icon } from "./icons";
 
 /** Type scale — six steps, nothing in between. Serif is for content headings only. */
 export const t = {
-  display: { fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: "var(--text-display)" },
-  title: { fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: "var(--text-title)" },
+  display: {
+    fontFamily: "var(--font-serif)",
+    fontWeight: 500,
+    fontSize: "var(--text-display)",
+  },
+  title: {
+    fontFamily: "var(--font-serif)",
+    fontWeight: 500,
+    fontSize: "var(--text-title)",
+  },
   body: { fontSize: "var(--text-body)" },
   ui: { fontSize: "var(--text-ui)" },
-  label: { fontSize: "var(--text-label)", color: "var(--color-muted)", fontWeight: 500 },
+  label: {
+    fontSize: "var(--text-label)",
+    color: "var(--color-muted)",
+    fontWeight: 500,
+  },
   micro: {
     fontSize: "var(--text-micro)",
     textTransform: "uppercase",
@@ -32,7 +44,11 @@ export const t = {
 } satisfies Record<string, CSSProperties>;
 
 /** Field label: 13px muted, 6px above its control. Replaces the 11px uppercase .lab. */
-export const fieldLabel: CSSProperties = { display: "block", ...t.label, marginBottom: 6 };
+export const fieldLabel: CSSProperties = {
+  display: "block",
+  ...t.label,
+  marginBottom: 6,
+};
 
 /**
  * The 40px form control. Prefer the `ui-control` class (it carries the focus ring);
@@ -130,7 +146,9 @@ export function Button({
     <button
       {...rest}
       disabled={disabled || busy}
-      className={[buttonClass(variant, { small, icon }), className].filter(Boolean).join(" ")}
+      className={[buttonClass(variant, { small, icon }), className]
+        .filter(Boolean)
+        .join(" ")}
     >
       {busy && <Spinner size={small || icon ? "13px" : "15px"} />}
       {children}

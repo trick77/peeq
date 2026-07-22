@@ -1,8 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoCard, type DownloadProgress } from "../components/VideoCard";
-import { listVideos, getSettings, listDownloads, streamDownloads, setFavorite, setWatched, redownload } from "../api";
-import type { Video, VideoFilter, Job, Settings } from "../api/types";
+import {
+  listVideos,
+  getSettings,
+  listDownloads,
+  streamDownloads,
+  setFavorite,
+  setWatched,
+  redownload,
+} from "../api";
+import type {
+  Video,
+  VideoFilter,
+  VideoSort,
+  Job,
+  Settings,
+} from "../api/types";
 import { CATEGORIES } from "../categories";
+import { controlClass } from "../ui";
 
 const CHIPS: { id: VideoFilter; label: string }[] = [
   { id: "all", label: "All" },
@@ -10,6 +25,15 @@ const CHIPS: { id: VideoFilter; label: string }[] = [
   { id: "watched", label: "Watched" },
   { id: "favorites", label: "Favorites" },
   { id: "downloading", label: "Downloading" },
+];
+
+// SORT_OPTIONS is shared with the channel page's Archive tab so the two
+// lists can never drift apart in wording or in accepted values.
+export const SORT_OPTIONS: { id: VideoSort; label: string }[] = [
+  { id: "newest", label: "Newest first" },
+  { id: "oldest", label: "Oldest first" },
+  { id: "longest", label: "Longest first" },
+  { id: "title", label: "Title A–Z" },
 ];
 
 // matchesFilter mirrors videos.Store.List's SQL WHERE clauses exactly (see
@@ -32,15 +56,31 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
 }
 
 // Library — the default view: filter chips + a grid of VideoCards, per the
-// mockup's `.chips`/`.grid` blocks.
-export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) {
+// mockup's `.chips`/`.grid` blocks. The search query itself lives in App
+// (it's the top bar's search box, wired there since the top bar is
+// Library-only chrome) and arrives here as the `search` prop.
+export function Library({
+  onOpenVideo,
+  onOpenChannel,
+  search,
+}: {
+  onOpenVideo: (id: string) => void;
+  // onOpenChannel — optional: wired by App (Task 11), rendered as channel
+  // name links in Task 15.
+  onOpenChannel?: (id: string) => void;
+  search: string;
+}) {
   const [filter, setFilter] = useState<VideoFilter>("all");
   const [category, setCategory] = useState<string>("all");
+  const [sort, setSort] = useState<VideoSort>("newest");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [allVideos, setAllVideos] = useState<Video[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [progressByVideoId, setProgressByVideoId] = useState<Record<string, DownloadProgress>>({});
+  const [progressByVideoId, setProgressByVideoId] = useState<
+    Record<string, DownloadProgress>
+  >({});
   const jobsRef = useRef<Job[]>([]);
   // jobsRefreshTick forces the polling effect below to re-evaluate
   // jobsRef's hasActive state after jobsRef is (re)populated — jobsRef
@@ -57,7 +97,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
         if (active) setSettings(s);
       })
       .catch(() => {});
-    listVideos("all")
+    listVideos({ filter: "all" })
       .then((v) => {
         if (active) setAllVideos(v);
       })
@@ -73,12 +113,18 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
     };
   }, []);
 
-  // The chip's own filtered list, refetched whenever the active chip
-  // changes.
+  // Debounce the search box so typing "abyss" fires one request, not five.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(search), 250);
+    return () => clearTimeout(id);
+  }, [search]);
+
+  // The chip's own filtered list, refetched whenever the active chip,
+  // search query, or sort changes.
   useEffect(() => {
     let active = true;
     setError(null);
-    listVideos(filter, category)
+    listVideos({ filter, category, q: debouncedQuery, sort })
       .then((v) => {
         if (active) setVideos(v);
       })
@@ -88,7 +134,7 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
     return () => {
       active = false;
     };
-  }, [filter, category]);
+  }, [filter, category, debouncedQuery, sort]);
 
   // Live download progress: map each SSE "progress" event's job_id to the
   // video_id the download dock/queue knows about, so a downloading card's
@@ -123,7 +169,10 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
         }
         return;
       }
-      setProgressByVideoId((prev) => ({ ...prev, [job.video_id]: { percent: data.percent, eta: data.eta } }));
+      setProgressByVideoId((prev) => ({
+        ...prev,
+        [job.video_id]: { percent: data.percent, eta: data.eta },
+      }));
     }, controller.signal).catch(() => {});
     return () => controller.abort();
   }, []);
@@ -137,7 +186,9 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
   // hasActive after each poll; the timeout self-stops once jobsRef reports
   // nothing left in flight.
   useEffect(() => {
-    const hasActive = jobsRef.current.some((j) => j.state === "pending" || j.state === "running");
+    const hasActive = jobsRef.current.some(
+      (j) => j.state === "pending" || j.state === "running",
+    );
     if (!hasActive) return;
     let active = true;
     const id = window.setTimeout(() => {
@@ -148,12 +199,12 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
         .catch(() => {})
         .finally(() => {
           if (!active) return;
-          listVideos("all")
+          listVideos({ filter: "all" })
             .then((v) => {
               if (active) setAllVideos(v);
             })
             .catch(() => {});
-          listVideos(filter, category)
+          listVideos({ filter, category, q: debouncedQuery, sort })
             .then((v) => {
               if (active) setVideos(v);
             })
@@ -165,15 +216,20 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
       active = false;
       window.clearTimeout(id);
     };
-  }, [filter, category, jobsRefreshTick]);
+  }, [filter, category, debouncedQuery, sort, jobsRefreshTick]);
 
   function applyLocalUpdate(id: string, patch: Partial<Video>) {
-    setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
-    setAllVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+    setVideos((prev) =>
+      prev.map((v) => (v.id === id ? { ...v, ...patch } : v)),
+    );
+    setAllVideos((prev) =>
+      prev.map((v) => (v.id === id ? { ...v, ...patch } : v)),
+    );
   }
 
   async function handleToggleFavorite(id: string) {
-    const current = videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
+    const current =
+      videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
     if (!current) return;
     const next = !current.favorite;
     applyLocalUpdate(id, { favorite: next });
@@ -185,7 +241,8 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
   }
 
   async function handleToggleWatched(id: string) {
-    const current = videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
+    const current =
+      videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
     if (!current) return;
     const next = !current.watched;
     applyLocalUpdate(id, { watched: next });
@@ -199,7 +256,10 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
   async function handleRedownload(id: string) {
     try {
       await redownload(id);
-      const [all, current] = await Promise.all([listVideos("all"), listVideos(filter, category)]);
+      const [all, current] = await Promise.all([
+        listVideos({ filter: "all" }),
+        listVideos({ filter, category, q: debouncedQuery, sort }),
+      ]);
       setAllVideos(all);
       setVideos(current);
     } catch (e) {
@@ -219,7 +279,10 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
             className={`chip${filter === chip.id ? " on" : ""}`}
             onClick={() => setFilter(chip.id)}
           >
-            {chip.label} <span className="n">{allVideos.filter((v) => matchesFilter(v, chip.id)).length}</span>
+            {chip.label}{" "}
+            <span className="n">
+              {allVideos.filter((v) => matchesFilter(v, chip.id)).length}
+            </span>
           </button>
         ))}
       </div>
@@ -231,7 +294,9 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
         >
           All categories <span className="n">{allVideos.length}</span>
         </button>
-        {CATEGORIES.filter((c) => allVideos.some((v) => v.category === c.id)).map((c) => (
+        {CATEGORIES.filter((c) =>
+          allVideos.some((v) => v.category === c.id),
+        ).map((c) => (
           <button
             key={c.id}
             type="button"
@@ -239,9 +304,27 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
             onClick={() => setCategory(c.id)}
           >
             <span className="dotc" style={{ background: c.color }} />
-            {c.label} <span className="n">{allVideos.filter((v) => v.category === c.id).length}</span>
+            {c.label}{" "}
+            <span className="n">
+              {allVideos.filter((v) => v.category === c.id).length}
+            </span>
           </button>
         ))}
+      </div>
+      <div className="listbar">
+        <select
+          className={controlClass}
+          style={{ maxWidth: 180 }}
+          value={sort}
+          onChange={(e) => setSort(e.target.value as VideoSort)}
+          aria-label="Sort"
+        >
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
       </div>
       {error ? <div className="errline">{error}</div> : null}
       <div className="grid">
@@ -254,11 +337,14 @@ export function Library({ onOpenVideo }: { onOpenVideo: (id: string) => void }) 
             onOpen={onOpenVideo}
             onToggleFavorite={handleToggleFavorite}
             onToggleWatched={handleToggleWatched}
+            onOpenChannel={onOpenChannel}
             onRedownload={handleRedownload}
           />
         ))}
       </div>
-      {videos.length === 0 && !error ? <p style={{ color: "var(--color-faint)" }}>No videos yet.</p> : null}
+      {videos.length === 0 && !error ? (
+        <p style={{ color: "var(--color-faint)" }}>No videos yet.</p>
+      ) : null}
     </>
   );
 }

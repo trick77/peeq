@@ -16,38 +16,57 @@ beforeEach(() => {
 });
 
 describe("videos api", () => {
-  it("listVideos defaults to filter=all with no category param", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
+  it("listVideos sends no query string when given no options", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("[]", { status: 200 }));
     await listVideos();
     const [url] = f.mock.calls[0];
-    expect(url).toBe("/api/videos?filter=all");
+    expect(url).toBe("/api/videos");
   });
 
   it("listVideos includes an explicit filter and category", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
-    await listVideos("watched", "music");
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("[]", { status: 200 }));
+    await listVideos({ filter: "watched", category: "music" });
     const [url] = f.mock.calls[0];
     expect(url).toBe("/api/videos?filter=watched&category=music");
   });
 
   it("listVideos omits category=all even when passed explicitly", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
-    await listVideos("all", "all");
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("[]", { status: 200 }));
+    await listVideos({ filter: "all", category: "all" });
     const [url] = f.mock.calls[0];
     expect(url).toBe("/api/videos?filter=all");
   });
 
+  it("listVideos passes the channel page's q, sort, and channel scope", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("[]", { status: 200 }));
+    await listVideos({ q: "deep field", sort: "oldest", channel: "UC1" });
+    const [url] = f.mock.calls[0];
+    expect(url).toBe("/api/videos?q=deep+field&sort=oldest&channel=UC1");
+  });
+
   it("getVideo GETs /api/videos/{id}, encoding the id", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ id: "v1" }), { status: 200 }),
-    );
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ id: "v1" }), { status: 200 }),
+      );
     const v = await getVideo("v 1");
     expect(f.mock.calls[0][0]).toBe("/api/videos/v%201");
     expect(v.id).toBe("v1");
   });
 
   it("deleteVideo DELETEs /api/videos/{id}", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
     await deleteVideo("v1");
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/videos/v1");
@@ -55,9 +74,11 @@ describe("videos api", () => {
   });
 
   it("setFavorite POSTs the flag and returns the server's echoed value", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ favorite: true }), { status: 200 }),
-    );
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ favorite: true }), { status: 200 }),
+      );
     const result = await setFavorite("v1", true);
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/videos/v1/favorite");
@@ -66,9 +87,11 @@ describe("videos api", () => {
   });
 
   it("setWatched POSTs the flag and returns the server's echoed value", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ watched: false }), { status: 200 }),
-    );
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ watched: false }), { status: 200 }),
+      );
     const result = await setWatched("v1", false);
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/videos/v1/watched");
@@ -77,9 +100,11 @@ describe("videos api", () => {
   });
 
   it("setResume POSTs the position and returns the server's echoed value", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ position: 42 }), { status: 200 }),
-    );
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ position: 42 }), { status: 200 }),
+      );
     const result = await setResume("v1", 42);
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/videos/v1/resume");
@@ -88,7 +113,9 @@ describe("videos api", () => {
   });
 
   it("redownload POSTs to /api/videos/{id}/redownload and resolves on an empty 202 body", async () => {
-    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 202 }));
     await expect(redownload("v1")).resolves.toBeUndefined();
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/videos/v1/redownload");

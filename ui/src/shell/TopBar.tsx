@@ -2,14 +2,17 @@ import { Icon } from "../icons";
 
 // TopBar — the sticky header per the mockup's `.topbar`: a serif page title
 // (with a small mono subtitle, e.g. "128 videos · 41 GB") plus the search
-// field. Search is a plain controlled input here; wiring it to a real
-// query is Task 14's job (Library view).
+// field. Search is a plain controlled input; App owns the query state and
+// wires it to the Library view (the top bar's search is Library's — it is
+// only shown there). The channel page keeps its own separate in-page
+// search box instead of using this one, since the top bar isn't
+// channel-aware.
 export function TopBar({
   title,
   subtitle,
   search,
   onSearchChange,
-  searchPlaceholder = "Search titles & subtitles",
+  searchPlaceholder = "Search titles",
   showSearch = true,
 }: {
   title: string;

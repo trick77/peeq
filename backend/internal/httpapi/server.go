@@ -93,6 +93,11 @@ type Deps struct {
 	// a fresh auto-pause window. Optional: when nil, resume only clears the
 	// settings flag.
 	OnResumeYoutube func()
+
+	// OnChannelResolved fires after a background channel-metadata resolve
+	// settles, successfully or not. Test-only: it exists so a test can wait
+	// for the goroutine instead of sleeping. nil in production.
+	OnChannelResolved func(channelID string)
 }
 
 // SearchEmbedder embeds free-text search queries into vectors comparable
@@ -154,6 +159,8 @@ type server struct {
 	summaryJobs SummaryEnqueuer
 
 	onResumeYoutube func()
+
+	onChannelResolved func(channelID string)
 }
 
 // New returns the fully wired HTTP handler.
@@ -185,6 +192,8 @@ func New(d Deps) http.Handler {
 		summaryJobs: d.SummaryJobs,
 
 		onResumeYoutube: d.OnResumeYoutube,
+
+		onChannelResolved: d.OnChannelResolved,
 	}
 
 	mux := http.NewServeMux()
@@ -223,10 +232,14 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/ytdlp/update", s.requireAuth(http.HandlerFunc(s.handleYTDLPUpdate)))
 	mux.Handle("POST /api/channels", s.requireAuth(http.HandlerFunc(s.handleChannelsPost)))
 	mux.Handle("GET /api/channels", s.requireAuth(http.HandlerFunc(s.handleChannelsList)))
+	mux.Handle("GET /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelDetail)))
 	mux.Handle("PUT /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsPut)))
 	mux.Handle("DELETE /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsDelete)))
 	mux.Handle("POST /api/channels/{id}/subscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsSubscribe)))
 	mux.Handle("POST /api/channels/{id}/unsubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsUnsubscribe)))
+	mux.Handle("POST /api/channels/{id}/scan", s.requireAuth(http.HandlerFunc(s.handleChannelScan)))
+	mux.Handle("GET /api/channels/{id}/avatar", s.requireAuth(http.HandlerFunc(s.handleChannelAvatar)))
+	mux.Handle("GET /api/channels/{id}/banner", s.requireAuth(http.HandlerFunc(s.handleChannelBanner)))
 	mux.Handle("GET /api/channels/auto-unsubscribed", s.requireAuth(http.HandlerFunc(s.handleChannelsAutoUnsubscribedList)))
 	mux.Handle("POST /api/channels/{id}/dismiss-dormant", s.requireAuth(http.HandlerFunc(s.handleChannelsDismissDormant)))
 	mux.Handle("POST /api/channels/{id}/resubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsResubscribe)))

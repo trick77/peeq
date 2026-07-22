@@ -43,6 +43,35 @@ Run after any change to captions, embeddings, summaries, chapters, or global sea
 4. Perform a **global search** (search box, top of page) using a keyword from the video's transcript.
    Confirm the result appears and links to the correct timestamp within the video.
 
+## Channel page
+
+Run after any change to the channel page, the `channels` table, or the scan scheduler.
+
+1. Track a channel with loud, busy channel art. On its page, confirm the banner reads as a
+   **backdrop**: the name, handle, description and stats stay fully legible on top of it. If they
+   do not, lower `.chan-banner`'s opacity rather than changing the palette.
+2. Confirm the four header stats are right: archived count, runtime, disk used, and the age of the
+   newest video. They count **downloaded** videos only — a queued or errored video must not be
+   counted as archived.
+3. Track a channel that has no banner, and one whose avatar failed to fetch. The header must fall
+   back to the per-id gradient without collapsing its layout.
+4. Click a channel name from each of the four entry points — the Channels row, a Library card, the
+   player, and a Pending item — and confirm each opens that channel.
+5. Open a channel you never tracked (click the channel name on a video you added by URL). The
+   Archive tab lists its videos, the New and Settings tabs are absent, and the header offers
+   **Track this channel**. Reload: the avatar, banner and description have filled in from the
+   background resolve.
+6. On the Settings tab press **Check now** and confirm it says "Checking soon", never implying the
+   scan already ran. Then break it deliberately — pause YouTube in Settings, or let the cookie go
+   stale — press it again, and confirm the page shows the reason instead of appearing to do nothing.
+7. Confirm the New tab's empty state shows the last-checked and next-check times. Remember this is
+   the normal state for a channel with auto-add on: discoveries are enqueued immediately and never
+   become pending.
+8. On the Channels page, confirm the counts line under each channel name is faint and one step
+   smaller than the name, with only the numerals lifted — readable, but not competing with the name.
+9. Narrow the window to phone width. The header wraps, the buttons drop below the stats, and the
+   page body does not scroll sideways.
+
 ## TubeArchivist import — Phase A (subscriptions)
 
 Requires a live TubeArchivist instance, so it cannot be covered by automated

@@ -27,9 +27,11 @@ func TestEngagesOnDistinctThreshold(t *testing.T) {
 func TestResetClears(t *testing.T) {
 	engaged := 0
 	m := New(2, func() { engaged++ })
-	m.Fail("a"); m.Fail("b") // engage (1)
+	m.Fail("a")
+	m.Fail("b") // engage (1)
 	m.Reset()
-	m.Fail("a"); m.Fail("b") // engage again (2)
+	m.Fail("a")
+	m.Fail("b") // engage again (2)
 	if engaged != 2 {
 		t.Fatalf("engaged=%d, want 2", engaged)
 	}

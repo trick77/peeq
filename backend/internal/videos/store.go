@@ -186,18 +186,59 @@ func (s *Store) Get(id string) (*Video, error) {
 	return &v, nil
 }
 
-// List returns videos matching filter (status dimension) and category
-// (empty/"all"/unknown ⇒ no category constraint), newest first. The two
-// dimensions are orthogonal and both apply when set.
-//   - "unwatched": downloaded and not watched (available to watch now)
-//   - "watched": watched = true
-//   - "favorites": favorite = true
-//   - "downloading": status is queued or downloading
-//   - anything else (including "all"/""): every row, tombstoned included
-func (s *Store) List(filter, category string) ([]Video, error) {
+// ListOptions narrows videos.Store.List. Every field is optional; the zero
+// value means "every video, newest first" — the pre-existing behavior.
+type ListOptions struct {
+	// Filter is the status dimension: unwatched|watched|favorites|downloading.
+	// Anything else (including "" and "all") means no status constraint.
+	Filter string
+	// Category is the classification dimension, ANDed with Filter.
+	Category string
+	// Query matches case-insensitively against the title as a substring.
+	Query string
+	// Sort is newest|oldest|longest|title. Anything else means newest.
+	Sort string
+	// ChannelID scopes to one channel. ChannelName is the fallback for rows
+	// written before channel ids were recorded, and is only consulted when
+	// ChannelID is also set.
+	ChannelID   string
+	ChannelName string
+}
+
+// sortClauses maps the accepted Sort values to ORDER BY fragments. Sort is
+// interpolated into SQL, so it must only ever come from this map — never
+// from the caller's string.
+var sortClauses = map[string]string{
+	"newest":  "created_at DESC, id DESC",
+	"oldest":  "created_at ASC, id ASC",
+	"longest": "COALESCE(duration_seconds, 0) DESC, id DESC",
+	"title":   "title COLLATE NOCASE ASC, id ASC",
+}
+
+// escapeLike escapes the three characters LIKE treats specially so a user
+// typing "100%" searches for a literal percent sign rather than matching
+// every row. Pairs with the ESCAPE '\' clause in the query below.
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
+}
+
+// List returns videos matching opts, ordered by opts.Sort. The status,
+// category, search, and channel dimensions are orthogonal: all that are set
+// apply together.
+//   - Filter: "unwatched" (downloaded and not watched), "watched", "favorites",
+//     "downloading" (queued or downloading), or anything else/"" (no
+//     constraint, tombstoned included)
+//   - Category: empty/"all"/unknown ⇒ no category constraint
+//   - Query: case-insensitive substring match against title
+//   - Sort: newest|oldest|longest|title; anything else falls back to newest
+//   - ChannelID/ChannelName: scopes to one channel, matching channel_id or,
+//     for rows written before channel ids were recorded, an exact
+//     channel_name match on rows with an empty channel_id
+func (s *Store) List(opts ListOptions) ([]Video, error) {
 	conds := []string{}
 	args := []any{}
-	switch filter {
+	switch opts.Filter {
 	case "unwatched":
 		conds = append(conds, "status = 'downloaded' AND watched = 0")
 	case "watched":
@@ -207,20 +248,38 @@ func (s *Store) List(filter, category string) ([]Video, error) {
 	case "downloading":
 		conds = append(conds, "status IN ('queued', 'downloading')")
 	}
-	if category != "" && category != "all" && ValidCategory(category) {
+	if opts.Category != "" && opts.Category != "all" && ValidCategory(opts.Category) {
 		conds = append(conds, "category = ?")
-		args = append(args, category)
+		args = append(args, opts.Category)
+	}
+	if q := strings.TrimSpace(opts.Query); q != "" {
+		conds = append(conds, `title LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+escapeLike(q)+"%")
+	}
+	if opts.ChannelID != "" {
+		if opts.ChannelName != "" {
+			conds = append(conds, "(channel_id = ? OR (channel_id = '' AND channel_name = ?))")
+			args = append(args, opts.ChannelID, opts.ChannelName)
+		} else {
+			conds = append(conds, "channel_id = ?")
+			args = append(args, opts.ChannelID)
+		}
 	}
 	where := ""
 	if len(conds) > 0 {
 		where = "WHERE " + strings.Join(conds, " AND ")
 	}
+	order, ok := sortClauses[opts.Sort]
+	if !ok {
+		order = sortClauses["newest"]
+	}
+
 	rows, err := s.db.QueryContext(context.Background(),
-		"SELECT "+videoColumns+" FROM videos "+where+" ORDER BY created_at DESC, id DESC",
+		"SELECT "+videoColumns+" FROM videos "+where+" ORDER BY "+order,
 		args...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list videos (filter=%s, category=%s): %w", filter, category, err)
+		return nil, fmt.Errorf("list videos (%+v): %w", opts, err)
 	}
 	defer rows.Close()
 
@@ -228,12 +287,12 @@ func (s *Store) List(filter, category string) ([]Video, error) {
 	for rows.Next() {
 		v, err := scanVideo(rows)
 		if err != nil {
-			return nil, fmt.Errorf("list videos (filter=%s, category=%s): %w", filter, category, err)
+			return nil, fmt.Errorf("list videos (%+v): %w", opts, err)
 		}
 		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list videos (filter=%s, category=%s): %w", filter, category, err)
+		return nil, fmt.Errorf("list videos (%+v): %w", opts, err)
 	}
 	return out, nil
 }

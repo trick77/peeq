@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.app.json && tsc -p tsconfig.json && vite build",
-    "test": "vitest"
+    "test": "vitest",
+    "format": "prettier --write 'src/**/*.{ts,tsx,css}'",
+    "format:check": "prettier --check 'src/**/*.{ts,tsx,css}'"
   },
   "dependencies": {
     "lucide-react": "^1.24.0",
@@ -23,6 +25,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "@vitest/coverage-v8": "^4.1.10",
     "jsdom": "^29.1.1",
+    "prettier": "^3.9.5",
     "tailwindcss": "^4.3.0",
     "typescript": "^7.0.2",
     "vite": "^8.0.16",

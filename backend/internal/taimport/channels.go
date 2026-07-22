@@ -21,9 +21,14 @@ type ChannelLister interface {
 // ChannelWriter is the slice of *channels.Store this import needs.
 type ChannelWriter interface {
 	Upsert(c channels.Channel) error
+	// Track marks a cached channel as explicitly tracked. channels is now a
+	// metadata cache and Upsert only stores identity — tracking is a separate
+	// flag (tracked_at) and is what makes the channel appear in the Channels
+	// list, so an import must Track as well as Upsert.
+	Track(channelID, trackedAt string) error
 	Subscribe(channelID, nextScanAt string) error
 	// Get returns the channel with the given id, or (nil, nil) if it is not
-	// tracked yet.
+	// cached yet.
 	Get(id string) (*channels.Channel, error)
 }
 
@@ -102,6 +107,13 @@ func ImportChannels(ctx context.Context, lister ChannelLister, w ChannelWriter, 
 			handle = existing.Handle
 		}
 		if err := w.Upsert(channels.Channel{ID: c.ID, Name: c.Name, Handle: handle}); err != nil {
+			return res, fmt.Errorf("taimport: cache channel %s: %w", c.ID, err)
+		}
+		// Upsert only caches identity; tracking is a separate flag (tracked_at)
+		// and is what lists the channel on the Channels page. Track reuses the
+		// import instant, and its COALESCE keeps any earlier tracked_at, so a
+		// re-run stays idempotent.
+		if err := w.Track(c.ID, nextScanAt); err != nil {
 			return res, fmt.Errorf("taimport: track channel %s: %w", c.ID, err)
 		}
 		if err := w.Subscribe(c.ID, nextScanAt); err != nil {

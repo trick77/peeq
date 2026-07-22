@@ -35,6 +35,17 @@ jobs:
       - run: pip install diff-cover==10.3.0
       - run: go build ./...
       - run: go vet ./...
+      # gofmt is not covered by `go vet`. Five files had already drifted out of
+      # gofmt shape before this check existed, so it is worth enforcing rather
+      # than trusting editors to do it.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt'd. Run: gofmt -w ."
+            echo "$unformatted"
+            exit 1
+          fi
       - run: mkdir -p ../coverage
       # The race detector needs cgo; this is independent of the app's
       # CGO_ENABLED=0 build invariant enforced by the `go build` step above.
@@ -82,6 +93,7 @@ jobs:
           python-version: "3.12"
       - run: pip install diff-cover==10.3.0
       - run: npm ci
+      - run: npm run format:check
       - run: npm run build
       - run: npm test -- --run --coverage
       - run: ./hack/coverage-gate.sh ui

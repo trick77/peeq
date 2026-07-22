@@ -1,7 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Button } from "../ui";
-import { addDownload, CookieRequiredError, InvalidUrlError } from "../api/downloads";
+import {
+  addDownload,
+  CookieRequiredError,
+  InvalidUrlError,
+} from "../api/downloads";
 import { addChannel } from "../api/channels";
 import { isChannelURL } from "../youtube";
 
@@ -16,7 +20,10 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [queued, setQueued] = useState<{ title?: string; channel_name?: string } | null>(null);
+  const [queued, setQueued] = useState<{
+    title?: string;
+    channel_name?: string;
+  } | null>(null);
   const [tracked, setTracked] = useState<{ name: string } | null>(null);
 
   async function handleSubmit(e: FormEvent) {
@@ -40,9 +47,14 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
       }
     } catch (err) {
       if (err instanceof CookieRequiredError) {
-        setError("No YouTube cookie configured yet. Paste one on the Settings page first.");
+        setError(
+          "No YouTube cookie configured yet. Paste one on the Settings page first.",
+        );
       } else if (err instanceof InvalidUrlError) {
-        setError(err.message || "That link isn't a single downloadable video (playlists and live streams aren't supported).");
+        setError(
+          err.message ||
+            "That link isn't a single downloadable video (playlists and live streams aren't supported).",
+        );
       } else {
         setError((err as Error).message ?? "Failed to add.");
       }
@@ -55,7 +67,11 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
     <div className="addwrap">
       <form className="paste" onSubmit={handleSubmit}>
         <label className="field">
-          <Icon name="link" size="18px" style={{ color: "var(--color-faint)" }} />
+          <Icon
+            name="link"
+            size="18px"
+            style={{ color: "var(--color-faint)" }}
+          />
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -66,15 +82,20 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
         </label>
         <Button type="submit" busy={busy} disabled={!url.trim()}>
           {!busy && <Icon name="download" size="18px" />}
-          {busy ? "Adding" : isChannelURL(url) ? "Track channel" : "Download now"}
+          {busy
+            ? "Adding"
+            : isChannelURL(url)
+              ? "Track channel"
+              : "Download now"}
         </Button>
       </form>
 
       <div className="hint">
         <span className="led" />
-        Downloads queue immediately using the format preset from Settings — subtitles &amp; a summary are included
-        automatically once later phases add them. A channel link tracks the channel instead, downloading nothing —
-        you can also add channels from the Channels page.
+        Downloads queue immediately using the format preset from Settings —
+        subtitles &amp; a summary are included automatically once later phases
+        add them. A channel link tracks the channel instead, downloading nothing
+        — you can also add channels from the Channels page.
       </div>
 
       {error ? <div className="errline">{error}</div> : null}
@@ -86,9 +107,12 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
           </div>
           <div>
             <h2>{queued.title || "Queued"}</h2>
-            <div className="by">{queued.channel_name || "Added to the download queue"}</div>
+            <div className="by">
+              {queued.channel_name || "Added to the download queue"}
+            </div>
             <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)" }}>
-              Watch progress in the download dock, or open the video from the Library once it's done.
+              Watch progress in the download dock, or open the video from the
+              Library once it's done.
             </p>
           </div>
         </div>
@@ -101,7 +125,9 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
           </div>
           <div>
             <h2>Tracked {tracked.name}</h2>
-            <div className="by">Not subscribed — new uploads won't auto-download yet.</div>
+            <div className="by">
+              Not subscribed — new uploads won't auto-download yet.
+            </div>
             <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)" }}>
               Subscribe or set an autodownload format from the Channels page.
             </p>

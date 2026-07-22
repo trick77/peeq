@@ -1,6 +1,7 @@
 package videos
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -19,6 +20,35 @@ func openTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+// newTestStore returns a Store backed by a fresh, migrated SQLite db in a
+// temp dir.
+func newTestStore(t *testing.T) *Store {
+	t.Helper()
+	return New(openTestDB(t))
+}
+
+// seedVideo upserts v and, if v.CreatedAt is set, backfills the created_at
+// column directly (Upsert never writes it; the schema default is
+// datetime('now'), which tests need to override to control List sort
+// order).
+func seedVideo(t *testing.T, s *Store, v Video) {
+	t.Helper()
+	if err := s.Upsert(v); err != nil {
+		t.Fatalf("seed video %s: %v", v.ID, err)
+	}
+	if v.Status != "" {
+		if err := s.SetStatus(v.ID, v.Status, ""); err != nil {
+			t.Fatalf("seed video %s status: %v", v.ID, err)
+		}
+	}
+	if v.CreatedAt != "" {
+		if _, err := s.db.ExecContext(context.Background(),
+			`UPDATE videos SET created_at = ? WHERE id = ?`, v.CreatedAt, v.ID); err != nil {
+			t.Fatalf("seed video %s created_at: %v", v.ID, err)
+		}
+	}
 }
 
 func TestUpsert_insertThenGet(t *testing.T) {
@@ -409,7 +439,7 @@ func TestList_filters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	all, err := s.List("all", "")
+	all, err := s.List(ListOptions{Filter: "all", Category: ""})
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
@@ -417,7 +447,7 @@ func TestList_filters(t *testing.T) {
 		t.Fatalf("list all = %d, want 3", len(all))
 	}
 
-	unwatched, err := s.List("unwatched", "")
+	unwatched, err := s.List(ListOptions{Filter: "unwatched", Category: ""})
 	if err != nil {
 		t.Fatalf("list unwatched: %v", err)
 	}
@@ -425,7 +455,7 @@ func TestList_filters(t *testing.T) {
 		t.Fatalf("list unwatched = %+v, want [a]", unwatched)
 	}
 
-	watched, err := s.List("watched", "")
+	watched, err := s.List(ListOptions{Filter: "watched", Category: ""})
 	if err != nil {
 		t.Fatalf("list watched: %v", err)
 	}
@@ -433,7 +463,7 @@ func TestList_filters(t *testing.T) {
 		t.Fatalf("list watched = %+v, want [b]", watched)
 	}
 
-	favs, err := s.List("favorites", "")
+	favs, err := s.List(ListOptions{Filter: "favorites", Category: ""})
 	if err != nil {
 		t.Fatalf("list favorites: %v", err)
 	}
@@ -441,7 +471,7 @@ func TestList_filters(t *testing.T) {
 		t.Fatalf("list favorites = %+v, want [a]", favs)
 	}
 
-	downloading, err := s.List("downloading", "")
+	downloading, err := s.List(ListOptions{Filter: "downloading", Category: ""})
 	if err != nil {
 		t.Fatalf("list downloading: %v", err)
 	}
@@ -608,7 +638,7 @@ func TestSetCategoryAndListByCategory(t *testing.T) {
 	}
 
 	// Category filter, orthogonal to status.
-	ai, err := s.List("all", "ai")
+	ai, err := s.List(ListOptions{Filter: "all", Category: "ai"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +647,7 @@ func TestSetCategoryAndListByCategory(t *testing.T) {
 	}
 
 	// Empty / "all" category => no constraint.
-	all, err := s.List("all", "")
+	all, err := s.List(ListOptions{Filter: "all", Category: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -658,7 +688,7 @@ func TestList_statusAndCategoryAreAnded(t *testing.T) {
 	}
 
 	// When: both filters are applied together.
-	got, err := s.List("unwatched", "ai")
+	got, err := s.List(ListOptions{Filter: "unwatched", Category: "ai"})
 	if err != nil {
 		t.Fatalf("list unwatched+ai: %v", err)
 	}
@@ -670,18 +700,182 @@ func TestList_statusAndCategoryAreAnded(t *testing.T) {
 
 	// And: each filter alone still returns its own two rows, proving the
 	// combination narrowed the result rather than one filter winning.
-	unwatched, err := s.List("unwatched", "")
+	unwatched, err := s.List(ListOptions{Filter: "unwatched", Category: ""})
 	if err != nil {
 		t.Fatalf("list unwatched: %v", err)
 	}
 	if len(unwatched) != 2 {
 		t.Fatalf("list unwatched = %d rows, want 2", len(unwatched))
 	}
-	ai, err := s.List("all", "ai")
+	ai, err := s.List(ListOptions{Filter: "all", Category: "ai"})
 	if err != nil {
 		t.Fatalf("list ai: %v", err)
 	}
 	if len(ai) != 2 {
 		t.Fatalf("list ai = %d rows, want 2", len(ai))
+	}
+}
+
+// TestList_query_matchesTitleCaseInsensitively asserts the search box matches
+// on title regardless of case, and that a non-matching row is excluded.
+func TestList_query_matchesTitleCaseInsensitively(t *testing.T) {
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", Title: "Descending the Hranice Abyss", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "v2", Title: "Night trek across the Salar", Status: "downloaded"})
+
+	got, err := s.List(ListOptions{Query: "HRANICE"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "v1" {
+		t.Fatalf("got %d rows %+v, want only v1", len(got), got)
+	}
+}
+
+// TestList_query_escapesLikeWildcards asserts a literal % in the search box
+// does not turn into a match-everything wildcard.
+func TestList_query_escapesLikeWildcards(t *testing.T) {
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", Title: "100% wool", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "v2", Title: "nothing special", Status: "downloaded"})
+
+	got, err := s.List(ListOptions{Query: "%"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "v1" {
+		t.Fatalf("got %d rows %+v, want only the row literally containing %%", len(got), got)
+	}
+}
+
+// TestList_sort_ordersRows asserts each sort key produces the documented
+// order. Sorting was previously hardcoded to created_at DESC.
+func TestList_sort_ordersRows(t *testing.T) {
+	s := newTestStore(t)
+	// Three videos whose four orderings are all DISTINCT (title, duration and
+	// created_at each rank them differently). A two-row fixture made title and
+	// longest coincide with the newest fallback, so a dropped or mis-mapped
+	// sort key could pass unnoticed; with these rows any such regression yields
+	// the wrong first row and fails.
+	seedVideo(t, s, Video{ID: "c1", Title: "Charlie", DurationSeconds: 200, CreatedAt: "2026-03-01 00:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "a2", Title: "Alpha", DurationSeconds: 100, CreatedAt: "2026-02-01 00:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "b3", Title: "Bravo", DurationSeconds: 300, CreatedAt: "2026-01-01 00:00:00", Status: "downloaded"})
+
+	cases := []struct {
+		sort string
+		want []string
+	}{
+		{"newest", []string{"c1", "a2", "b3"}},  // created_at DESC
+		{"oldest", []string{"b3", "a2", "c1"}},  // created_at ASC
+		{"longest", []string{"b3", "c1", "a2"}}, // duration DESC
+		{"title", []string{"a2", "b3", "c1"}},   // title NOCASE ASC
+	}
+	for _, tc := range cases {
+		got, err := s.List(ListOptions{Sort: tc.sort})
+		if err != nil {
+			t.Fatalf("list sort=%s: %v", tc.sort, err)
+		}
+		var ids []string
+		for _, v := range got {
+			ids = append(ids, v.ID)
+		}
+		if len(ids) != len(tc.want) {
+			t.Fatalf("sort=%s ids = %v, want %v", tc.sort, ids, tc.want)
+		}
+		for i := range tc.want {
+			if ids[i] != tc.want[i] {
+				t.Fatalf("sort=%s ids = %v, want %v", tc.sort, ids, tc.want)
+			}
+		}
+	}
+}
+
+// TestList_unknownSort_fallsBackToNewest asserts an unrecognized sort value
+// from a hand-edited URL yields the default order rather than a SQL error or
+// an injected ORDER BY clause.
+func TestList_unknownSort_fallsBackToNewest(t *testing.T) {
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "a", CreatedAt: "2026-01-01 00:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "b", CreatedAt: "2026-02-01 00:00:00", Status: "downloaded"})
+
+	got, err := s.List(ListOptions{Sort: "id; DROP TABLE videos"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != "b" {
+		t.Fatalf("got %+v, want newest-first fallback", got)
+	}
+}
+
+// TestList_channelID_scopesToOneChannel asserts channel scoping matches on
+// channel_id and, for older rows written before channel ids were recorded,
+// falls back to an exact channel_name match.
+func TestList_channelID_scopesToOneChannel(t *testing.T) {
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", ChannelID: "UCa", ChannelName: "Alpha", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "v2", ChannelID: "", ChannelName: "Alpha", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "v3", ChannelID: "UCb", ChannelName: "Beta", Status: "downloaded"})
+
+	got, err := s.List(ListOptions{ChannelID: "UCa", ChannelName: "Alpha"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d rows %+v, want v1 and v2", len(got), got)
+	}
+	for _, v := range got {
+		if v.ID == "v3" {
+			t.Fatal("channel scoping leaked another channel's video")
+		}
+	}
+}
+
+// TestList_channelID_withoutChannelName_matchesChannelIDOnly asserts that
+// when ChannelName is not supplied, scoping matches strictly on channel_id
+// and does not fall back to matching rows by channel_name (that fallback
+// only makes sense when the caller has a name to fall back to).
+func TestList_channelID_withoutChannelName_matchesChannelIDOnly(t *testing.T) {
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", ChannelID: "UCa", ChannelName: "Alpha", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "v2", ChannelID: "", ChannelName: "Alpha", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "v3", ChannelID: "UCb", ChannelName: "Beta", Status: "downloaded"})
+
+	got, err := s.List(ListOptions{ChannelID: "UCa"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "v1" {
+		t.Fatalf("got %+v, want only v1", got)
+	}
+}
+
+// TestList_errorsOnCorruptRow asserts a row that fails to scan (here, a
+// non-numeric value in an INTEGER column — SQLite's dynamic typing allows
+// writing it directly, bypassing the app-level guarantees Upsert provides)
+// surfaces as an error rather than a panic or a silently truncated list.
+func TestList_errorsOnCorruptRow(t *testing.T) {
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", URL: "https://youtu.be/v1", Status: "downloaded"})
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET watched = 'not-a-number' WHERE id = 'v1'`); err != nil {
+		t.Fatalf("corrupt row: %v", err)
+	}
+
+	if _, err := s.List(ListOptions{}); err == nil {
+		t.Fatal("expected an error scanning a corrupt row")
+	}
+}
+
+// TestList_errorsOnClosedDB asserts a query failure (here, a closed handle)
+// is reported to the caller rather than an empty list masquerading as "no
+// videos".
+func TestList_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := s.List(ListOptions{}); err == nil {
+		t.Fatal("expected an error listing against a closed db")
 	}
 }

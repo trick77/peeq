@@ -2,7 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { App } from "./App";
-import { downloadsStatus, resumeYoutube, listDownloads, getMe, listPending, cookieHealth, streamDownloads } from "./api";
+import {
+  downloadsStatus,
+  resumeYoutube,
+  listDownloads,
+  getMe,
+  listPending,
+  cookieHealth,
+  streamDownloads,
+} from "./api";
 import { addDownload } from "./api/downloads";
 import type { Job, User, Video } from "./api/types";
 
@@ -20,7 +28,9 @@ vi.mock("./api", () => ({
   getMe: vi.fn().mockResolvedValue({ id: "u1", email: "a@b.c" }),
   listDownloads: vi.fn().mockResolvedValue([]),
   cookieHealth: vi.fn().mockResolvedValue({ status: "active" }),
-  downloadsStatus: vi.fn().mockResolvedValue({ paused: false, low_disk: false }),
+  downloadsStatus: vi
+    .fn()
+    .mockResolvedValue({ paused: false, low_disk: false }),
   resumeYoutube: vi.fn().mockResolvedValue(undefined),
   listPending: vi.fn().mockResolvedValue([]),
   streamDownloads: vi.fn().mockResolvedValue(undefined),
@@ -59,6 +69,8 @@ vi.mock("./api/videos", () => ({
   setWatched: vi.fn(),
   setResume: vi.fn().mockResolvedValue(42),
   deleteVideo: vi.fn(),
+  redownload: vi.fn(),
+  listVideos: vi.fn().mockResolvedValue([]),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
   thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
 }));
@@ -76,6 +88,23 @@ vi.mock("./api/downloads", async (importOriginal) => ({
 vi.mock("./api/channels", () => ({
   addChannel: vi.fn(),
   listChannels: vi.fn().mockResolvedValue([]),
+  updateChannel: vi.fn(),
+  subscribeChannel: vi.fn(),
+  unsubscribeChannel: vi.fn(),
+  deleteChannel: vi.fn(),
+  getChannel: vi.fn(),
+  scanChannel: vi.fn(),
+  listAutoUnsubscribedChannels: vi.fn().mockResolvedValue([]),
+  dismissDormantChannel: vi.fn(),
+  resubscribeChannel: vi.fn(),
+  channelAvatarUrl: (id: string) => `/api/channels/${id}/avatar`,
+  channelBannerUrl: (id: string) => `/api/channels/${id}/banner`,
+}));
+
+vi.mock("./api/pending", () => ({
+  listPending: vi.fn().mockResolvedValue([]),
+  downloadPending: vi.fn(),
+  ignorePending: vi.fn(),
 }));
 
 // The dock only starts its 3s poll once `jobs` already holds an active
@@ -103,7 +132,10 @@ describe("App dock bootstrap", () => {
       youtube_pause_reason: "",
     });
     vi.mocked(listPending).mockResolvedValue([]);
-    vi.mocked(cookieHealth).mockResolvedValue({ status: "active", present: true });
+    vi.mocked(cookieHealth).mockResolvedValue({
+      status: "active",
+      present: true,
+    });
     vi.mocked(streamDownloads).mockResolvedValue(undefined);
   });
 
@@ -133,7 +165,13 @@ describe("App dock bootstrap", () => {
 
     // Once queued, the dock must reflect it without a reload.
     vi.mocked(listDownloads).mockResolvedValue([
-      { job_id: 7, video_id: "vynCRZwkWhE", title: "Queued video", state: "pending", priority: 10 } as Job,
+      {
+        job_id: 7,
+        video_id: "vynCRZwkWhE",
+        title: "Queued video",
+        state: "pending",
+        priority: 10,
+      } as Job,
     ]);
 
     fireEvent.change(screen.getByLabelText("Video or channel URL"), {
@@ -150,25 +188,32 @@ describe("App reload-restore", () => {
     sessionStorage.clear();
   });
 
-  // Only the Player view renders a <video>; the library search box only
-  // appears on the library view. Use those as unambiguous discriminators
-  // (both "Library" and "Now playing" always appear as rail nav labels).
+  // Only the Player view renders a <video>; the top bar's search box only
+  // shows on the library view (showSearch={view === "library"}). Use those
+  // as unambiguous discriminators (both "Library" and "Now playing" always
+  // appear as rail nav labels).
   it("reopens the Player when a video was playing before reload", async () => {
-    sessionStorage.setItem("peeq.nowPlaying", JSON.stringify({ videoId: "v1", playing: true }));
+    sessionStorage.setItem(
+      "peeq.nowPlaying",
+      JSON.stringify({ videoId: "v1", playing: true }),
+    );
     render(<App />);
     await waitFor(() => expect(document.querySelector("video")).not.toBeNull());
   });
 
   it("lands on Library when the marker says the video was paused", async () => {
-    sessionStorage.setItem("peeq.nowPlaying", JSON.stringify({ videoId: "v1", playing: false }));
+    sessionStorage.setItem(
+      "peeq.nowPlaying",
+      JSON.stringify({ videoId: "v1", playing: false }),
+    );
     render(<App />);
-    await screen.findByPlaceholderText(/Search titles/i);
+    await screen.findByPlaceholderText("Search titles");
     expect(document.querySelector("video")).toBeNull();
   });
 
   it("lands on Library when there is no marker", async () => {
     render(<App />);
-    await screen.findByPlaceholderText(/Search titles/i);
+    await screen.findByPlaceholderText("Search titles");
     expect(document.querySelector("video")).toBeNull();
   });
 });
@@ -182,11 +227,102 @@ describe("App youtube-paused banner", () => {
   });
 
   it("shows the YouTube-paused banner with a Resume action", async () => {
-    vi.mocked(downloadsStatus).mockResolvedValue({ paused: false, low_disk: false, youtube_paused: true, youtube_pause_reason: "" });
+    vi.mocked(downloadsStatus).mockResolvedValue({
+      paused: false,
+      low_disk: false,
+      youtube_paused: true,
+      youtube_pause_reason: "",
+    });
     vi.mocked(resumeYoutube).mockResolvedValue(undefined);
     render(<App />);
     const resume = await screen.findByRole("button", { name: /resume/i });
     fireEvent.click(resume);
     await waitFor(() => expect(resumeYoutube).toHaveBeenCalled());
+  });
+});
+
+// Task 11: the channel page is a detail destination reached only by clicking
+// a channel name (like the player is reached from a video card), never a
+// rail item — this locks that in as a regression guard.
+describe("App routing", () => {
+  it("channel is not in the nav rail", async () => {
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+    expect(screen.queryByRole("button", { name: /^channel$/i })).toBeNull();
+  });
+
+  // Task 11/15: the channel page has no rail entry — it's reached only by
+  // clicking a channel-name link. This drives the real flow (Channels list
+  // -> click a channel name -> Channel page -> "All channels" back button)
+  // to exercise App's openChannel/ViewSwitch wiring end to end, rather than
+  // unit-testing those functions directly.
+  it("clicking a channel name from Channels opens the Channel page, and the back button returns", async () => {
+    const { listChannels, getChannel } = await import("./api/channels");
+    vi.mocked(listChannels).mockReset();
+    vi.mocked(listChannels).mockResolvedValue([
+      {
+        id: "UCa",
+        name: "Uncanny Expeditions",
+        handle: "@UncannyExpeditions",
+        subscribed: true,
+        autodownload: false,
+        format_override: "",
+        pending_count: 0,
+        downloaded_count: 3,
+        dormant: false,
+      },
+    ]);
+    vi.mocked(getChannel).mockReset();
+    vi.mocked(getChannel).mockResolvedValue({
+      id: "UCa",
+      name: "Uncanny Expeditions",
+      handle: "@UncannyExpeditions",
+      description: "",
+      has_avatar: false,
+      has_banner: false,
+      tracked: true,
+      tracked_at: "2026-03-14 09:00:00",
+      archived_count: 3,
+      runtime_seconds: 600,
+      disk_bytes: 1024,
+      newest_published_at: "2026-07-18T00:00:00Z",
+      subscribed: true,
+      autodownload: false,
+      format_override: "",
+      last_scanned_at: "2026-07-20 08:00:00",
+      next_scan_at: "2026-07-20 14:00:00",
+      pending_count: 0,
+    });
+
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+
+    fireEvent.click(screen.getByRole("button", { name: "Channels" }));
+    const channelLink = await screen.findByRole("button", {
+      name: "Uncanny Expeditions",
+    });
+    fireEvent.click(channelLink);
+
+    expect(
+      await screen.findByRole("button", { name: /all channels/i }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(getChannel).toHaveBeenCalledWith("UCa"));
+
+    fireEvent.click(screen.getByRole("button", { name: /all channels/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: /all channels/i }),
+      ).toBeNull();
+    });
+  });
+
+  it("the Pending nav item renders the Pending view", async () => {
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+
+    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
+
+    expect(await screen.findByText("Nothing pending.")).toBeInTheDocument();
   });
 });
