@@ -480,3 +480,48 @@ func TestSponsorblockSegmentsFromInfo_filtersToCanonicalCategories(t *testing.T)
 		t.Fatalf("sponsor segment = %+v, want start=60 end=75", segs[1])
 	}
 }
+
+// TestSponsorblockSegmentsFromInfo_normalizesLikeTheBackfill: both ingestion
+// paths run through sponsorblock.Normalize, so a download and a later backfill
+// of the same video agree on boundaries and order. Before this was shared, a
+// downloaded video kept unsnapped boundaries (a 0.4s sliver of the ad playing)
+// for the whole refresh interval while a backfilled one did not.
+func TestSponsorblockSegmentsFromInfo_normalizesLikeTheBackfill(t *testing.T) {
+	var info downloadInfoJSON
+	raw := `{"duration":300,"sponsorblock_chapters":[
+	  {"start_time":250,"end_time":299.4,"category":"outro"},
+	  {"start_time":0.4,"end_time":44.6,"category":"sponsor"}
+	]}`
+	if err := json.Unmarshal([]byte(raw), &info); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	segs := sponsorblockSegmentsFromInfo(info)
+	if len(segs) != 2 {
+		t.Fatalf("segments = %+v, want 2", segs)
+	}
+	// Sorted by start time, not left in submission order.
+	if segs[0].Category != "sponsor" || segs[1].Category != "outro" {
+		t.Fatalf("segments = %+v, want sponsor first", segs)
+	}
+	// Sub-second boundaries snapped at both ends.
+	if segs[0].StartTime != 0 {
+		t.Fatalf("first segment start = %v, want it snapped to 0", segs[0].StartTime)
+	}
+	if segs[1].EndTime != 300 {
+		t.Fatalf("second segment end = %v, want it snapped to the duration", segs[1].EndTime)
+	}
+}
+
+// TestSponsorblockSegmentsFromInfo_dropsWholeVideoLabel: a [0,0] entry labels
+// the entire video rather than a part of it, and must never become a band.
+func TestSponsorblockSegmentsFromInfo_dropsWholeVideoLabel(t *testing.T) {
+	var info downloadInfoJSON
+	raw := `{"duration":300,"sponsorblock_chapters":[{"start_time":0,"end_time":0,"category":"selfpromo"}]}`
+	if err := json.Unmarshal([]byte(raw), &info); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if segs := sponsorblockSegmentsFromInfo(info); len(segs) != 0 {
+		t.Fatalf("segments = %+v, want none from a whole-video label", segs)
+	}
+}

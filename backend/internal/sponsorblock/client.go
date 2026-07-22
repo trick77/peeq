@@ -10,7 +10,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -127,45 +126,27 @@ func (c *Client) Segments(ctx context.Context, videoID string, durationSeconds f
 			// One of the decoy videos the hash prefix pulled in.
 			continue
 		}
-		return normalize(d.Segments, durationSeconds), nil
+		return Normalize(fromWire(d.Segments, durationSeconds), durationSeconds), nil
 	}
 	return nil, nil
 }
 
-// normalize turns wire segments into stored ones: unwanted categories and
-// stale submissions are dropped, near-boundary values are snapped, and the
-// result is sorted by start time so the player can rely on the order.
-func normalize(docs []segmentDoc, duration float64) []Segment {
-	var out []Segment
+// fromWire maps the API's segment shape onto the stored one and applies the
+// only rule that needs the wire data: rejecting submissions made against a
+// differently-cut copy of the video. Everything else is Normalize's job, which
+// the yt-dlp path shares.
+func fromWire(docs []segmentDoc, duration float64) []Segment {
+	out := make([]Segment, 0, len(docs))
 	for _, d := range docs {
-		start, end := d.Segment[0], d.Segment[1]
-		// A [0,0] segment marks the ENTIRE video (a full-video label such as
-		// "this whole video is self-promotion"). Skipping it would skip the
-		// video, so it is not a segment peeq can use.
-		if start == 0 && end == 0 {
+		if !keepSegment(d.Segment[0], d.Segment[1], d.VideoDuration, duration) {
 			continue
 		}
-		if end <= start {
-			continue
-		}
-		if !Wanted(d.Category) {
-			continue
-		}
-		// Snap sub-second gaps at both ends, so a segment that starts at
-		// 0.4s doesn't leave 400ms of an ad playing, and one that ends 800ms
-		// before the video does doesn't leave a stub behind.
-		if start <= 1 {
-			start = 0
-		}
-		if duration > 0 && duration-end <= 1 {
-			end = duration
-		}
-		if !keepSegment(start, end, d.VideoDuration, duration) {
-			continue
-		}
-		out = append(out, Segment{Category: d.Category, StartTime: start, EndTime: end})
+		out = append(out, Segment{
+			Category:  d.Category,
+			StartTime: d.Segment[0],
+			EndTime:   d.Segment[1],
+		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StartTime < out[j].StartTime })
 	return out
 }
 

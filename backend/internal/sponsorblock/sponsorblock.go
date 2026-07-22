@@ -8,6 +8,8 @@
 // cookie would park the whole backfill for no reason.
 package sponsorblock
 
+import "sort"
+
 // Categories is the canonical set of SponsorBlock categories peeq stores, and
 // the single source of truth for BOTH ingestion paths: it is sent as the
 // API's `categories` parameter here, and used by the yt-dlp wrapper to filter
@@ -53,4 +55,44 @@ type Segment struct {
 	Category  string  `json:"category"`
 	StartTime float64 `json:"start_time"`
 	EndTime   float64 `json:"end_time"`
+}
+
+// Normalize prepares raw segments for storage, and is shared by BOTH ingestion
+// paths — the API client and the yt-dlp info.json parser — for the same reason
+// Categories is: a video must show the same bands, at the same boundaries,
+// whether its segments arrived with a download or were filled in afterwards.
+//
+// duration is peeq's own duration for the video, or 0 when unknown (which only
+// disables the end-of-video snap; nothing is rejected for it).
+func Normalize(segs []Segment, duration float64) []Segment {
+	out := make([]Segment, 0, len(segs))
+	for _, s := range segs {
+		start, end := s.StartTime, s.EndTime
+		// A [0,0] segment labels the ENTIRE video ("all of this is
+		// self-promotion"). Skipping it would skip the video, so it is not
+		// something peeq can act on.
+		if start == 0 && end == 0 {
+			continue
+		}
+		if end <= start {
+			continue
+		}
+		if !Wanted(s.Category) {
+			continue
+		}
+		// Snap sub-second gaps at both ends, so a segment starting at 0.4s
+		// doesn't leave 400ms of an ad playing, and one ending 800ms early
+		// doesn't leave a stub behind.
+		if start <= 1 {
+			start = 0
+		}
+		if duration > 0 && duration-end <= 1 {
+			end = duration
+		}
+		out = append(out, Segment{Category: s.Category, StartTime: start, EndTime: end})
+	}
+	// Sorted so the player can rely on the order: segments arrive in
+	// submission order from the API, not in playback order.
+	sort.Slice(out, func(i, j int) bool { return out[i].StartTime < out[j].StartTime })
+	return out
 }

@@ -115,6 +115,10 @@ type downloadInfoJSON struct {
 	ChannelID string `json:"channel_id"`
 	// Language is yt-dlp's reported audio/video language for the download.
 	Language string `json:"language"`
+	// Duration is the video length in seconds, used only to snap a SponsorBlock
+	// segment that ends within a second of the end of the video. Absent for
+	// some live streams, in which case that snap is skipped.
+	Duration float64 `json:"duration"`
 	// UploadDate is yt-dlp's raw YYYYMMDD release date. Read here so that
 	// channel-driven downloads carry a release date too: they never go through
 	// Runner.Metadata (no per-video -J call, to respect the throttle budget),
@@ -148,19 +152,31 @@ type downloadInfoJSON struct {
 const sponsorblockChapterPrefix = "[SponsorBlock]: "
 
 // sponsorblockSegmentsFromInfo extracts the segments --sponsorblock-mark
-// fetched for this download. Categories are filtered through the canonical
-// set shared with the backfill client, so a video shows the same bands
-// whether it was downloaded or filled in later.
+// fetched for this download. It runs them through the SAME
+// sponsorblock.Normalize the backfill client uses — category filtering,
+// boundary snapping and ordering alike — so a video shows the same bands, at
+// the same boundaries, whether it was downloaded or filled in later. Doing
+// only half of it here would leave freshly-downloaded videos with unsnapped
+// boundaries for the full refresh interval.
 func sponsorblockSegmentsFromInfo(info downloadInfoJSON) []Segment {
-	var segs []Segment
+	raw := make([]sponsorblock.Segment, 0, len(info.SponsorblockChapters))
 	for _, c := range info.SponsorblockChapters {
-		if !sponsorblock.Wanted(c.Category) {
-			continue
-		}
-		segs = append(segs, Segment{
+		raw = append(raw, sponsorblock.Segment{
 			Category:  c.Category,
 			StartTime: c.StartTime,
 			EndTime:   c.EndTime,
+		})
+	}
+	normalized := sponsorblock.Normalize(raw, info.Duration)
+	if len(normalized) == 0 {
+		return nil
+	}
+	segs := make([]Segment, 0, len(normalized))
+	for _, s := range normalized {
+		segs = append(segs, Segment{
+			Category:  s.Category,
+			StartTime: s.StartTime,
+			EndTime:   s.EndTime,
 		})
 	}
 	return segs
