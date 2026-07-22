@@ -454,9 +454,18 @@ func (s *Store) SetKeyPoints(id, chaptersJSON, keyPointsJSON string) error {
 
 // SetCategory persists a video's classification. The value must already be a
 // valid enum id or 'uncategorized' (callers use videos.NormalizeCategory).
+//
+// It also maintains category_manual, the flag that survives a bulk
+// reclassification (see migration 0004). One rule covers both callers, because
+// both are the human speaking: a Player pick sets a real category and marks
+// the row manual; Re-summarize resets to 'uncategorized' and clears the flag,
+// which is what hands the video back to the classifier. Anything else would
+// leave a re-summarized row flagged and permanently uncategorized, since
+// SetCategoryIfUnset refuses flagged rows.
 func (s *Store) SetCategory(id, category string) error {
 	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET category = ? WHERE id = ?`, category, id)
+		`UPDATE videos SET category = ?, category_manual = ? WHERE id = ?`,
+		category, boolToInt(category != UncategorizedCategory), id)
 	if err != nil {
 		return fmt.Errorf("set video %s category: %w", id, err)
 	}
@@ -472,10 +481,13 @@ func (s *Store) SetCategory(id, category string) error {
 // re-read, because any re-read has the same race one layer up.
 //
 // A manual pick from the Player uses plain SetCategory: the human is allowed
-// to overwrite the model, never the other way round.
+// to overwrite the model, never the other way round. The category_manual guard
+// says the same thing a second way — redundant while the picker offers no
+// "clear" entry (so a flagged row is never 'uncategorized'), but it keeps the
+// guarantee inside the statement that enforces it.
 func (s *Store) SetCategoryIfUnset(id, category string) (bool, error) {
 	res, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET category = ? WHERE id = ? AND category = ?`,
+		`UPDATE videos SET category = ? WHERE id = ? AND category = ? AND category_manual = 0`,
 		category, id, UncategorizedCategory)
 	if err != nil {
 		return false, fmt.Errorf("set video %s category if unset: %w", id, err)
@@ -701,6 +713,14 @@ func nullInt(n int64) any {
 		return nil
 	}
 	return n
+}
+
+// boolToInt maps a Go bool to the 0/1 SQLite stores for it.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // nullStr maps "" to NULL, any other value to itself.

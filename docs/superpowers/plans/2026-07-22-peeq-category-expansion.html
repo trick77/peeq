@@ -1,0 +1,195 @@
+<title>peeq — category enum expansion &amp; full reclassification</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#1f1f1e; --panel:#1b1b1a; --active:#2c2c2a;
+    --border:#323230; --border-soft:#2a2a28;
+    --ink:#faf9f5; --ink-dim:#e4e1d8; --muted:#9c9a92; --faint:#6f6d66;
+    --accent:#c6613f; --accent-strong:#d97757;
+    --online:#5aa06a; --danger:#c14638; --kept:#d6a15a;
+    --radius:10px;
+    --sans:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:"Anthropic Serif",Georgia,"Times New Roman",Times,serif;
+    --mono:ui-monospace,"SF Mono","SFMono-Regular","JetBrains Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    background:
+      radial-gradient(60rem 40rem at 78% -8%,rgba(198,97,63,.06),transparent 60%),
+      radial-gradient(46rem 34rem at 6% 4%,rgba(214,161,90,.03),transparent 62%),
+      var(--bg);
+    color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:62rem;margin:0 auto;padding:3.5rem 1.5rem 6rem;display:flex;flex-direction:column;gap:2.5rem}
+  .eyebrow{font-size:.6875rem;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:600;margin:0 0 .75rem}
+  h1{font-family:var(--serif);font-size:clamp(1.7rem,4.2vw,2.4rem);line-height:1.15;font-weight:500;margin:0;letter-spacing:-.01em;text-wrap:balance}
+  .standfirst{color:var(--ink-dim);font-size:1.0625rem;margin:1rem 0 0;max-width:46rem}
+  .meta{display:flex;flex-wrap:wrap;gap:.5rem .75rem;margin-top:1.5rem;align-items:center}
+  .chip{display:inline-flex;align-items:center;gap:.4rem;font-size:.8125rem;font-family:var(--mono);color:var(--muted);background:var(--panel);border:1px solid var(--border);border-radius:999px;padding:.25rem .7rem}
+  .chip b{color:var(--ink-dim);font-weight:500}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--online);flex:none}
+  section{display:flex;flex-direction:column;gap:1rem}
+  h2{font-family:var(--serif);font-size:1.3rem;font-weight:500;margin:0;padding-bottom:.6rem;border-bottom:1px solid var(--border-soft);text-wrap:balance}
+  h3{font-size:.9375rem;font-weight:600;margin:.4rem 0 0;color:var(--ink-dim)}
+  p{margin:0;max-width:48rem;color:var(--ink-dim)}
+  code{font-family:var(--mono);font-size:.85em;background:var(--active);border:1px solid var(--border);border-radius:5px;padding:.1em .38em;color:var(--ink-dim)}
+  pre{background:#191918;border:1px solid var(--border);border-radius:var(--radius);overflow-x:auto;font-family:var(--mono);font-size:.8125rem;line-height:1.65;padding:1rem 1.15rem;color:var(--ink-dim);margin:0;tab-size:2}
+  pre .c{color:var(--faint)}
+  strong{color:var(--ink);font-weight:600}
+  ul,ol{margin:0;padding-left:1.15rem;color:var(--ink-dim);max-width:48rem}
+  li{margin-bottom:.35rem} li::marker{color:var(--faint)}
+  .scroller{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)}
+  table{border-collapse:collapse;width:100%;font-size:.9375rem;min-width:34rem}
+  th,td{text-align:left;padding:.6rem .9rem;border-bottom:1px solid var(--border-soft);vertical-align:top}
+  th{background:var(--panel);font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:600;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+  td .swatch{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:.5rem;vertical-align:middle}
+  tr.new td:first-child{color:var(--accent-strong);font-family:var(--mono);font-size:.8125rem}
+  td:first-child{font-family:var(--mono);font-size:.8125rem;color:var(--muted)}
+  .note{border:1px solid var(--border);border-left:3px solid var(--accent);background:var(--panel);border-radius:var(--radius);padding:.9rem 1.15rem;display:flex;flex-direction:column;gap:.5rem}
+  .note.risk{border-left-color:var(--danger)}
+  .note.key{border-left-color:var(--kept)}
+  .note p{max-width:none} .note h3{margin-top:0}
+  footer{border-top:1px solid var(--border-soft);padding-top:1.25rem;color:var(--faint);font-size:.8125rem}
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">peeq · implementation plan · 2026-07-22</p>
+    <h1>Category enum expansion &amp; full reclassification</h1>
+    <p class="standfirst">
+      The enum was fourteen knowledge/tech verticals with no lifestyle bucket at all, so a cycling
+      channel had nowhere to go and landed in <strong>Entertainment</strong>. Eight categories are
+      added, the classify prompt gains per-category hints, and every video is reset and
+      re-classified by the worker's existing idle sweep.
+    </p>
+    <div class="meta">
+      <span class="chip"><span class="dot"></span>status <b>implemented</b></span>
+      <span class="chip">enum <b>15 → 23</b></span>
+      <span class="chip">migration <b>0004</b></span>
+      <span class="chip">backfill <b>full reset</b></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Why the classifier was not the problem</h2>
+    <p>
+      The classify prompt deliberately forces a choice — <code>ClassifiableCategories()</code>
+      withholds <code>uncategorized</code> from the model, and the system prompt says "always choose
+      the closest match even when the fit is imperfect". That was the right call (an escape hatch
+      just filled the bucket nobody browses), but it has a consequence: <strong>a missing category
+      does not produce <code>uncategorized</code>, it produces a confidently wrong neighbour.</strong>
+      GCN in Entertainment is the enum's fault, not the model's.
+    </p>
+  </section>
+
+  <section>
+    <h2>The enum (23 entries; order drives the Library chip row)</h2>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>id</th><th>label</th><th>prompt hint</th></tr></thead>
+        <tbody>
+          <tr><td><span class="swatch" style="background:#d97757"></span>ai</td><td>Artificial Intelligence</td><td>—</td></tr>
+          <tr><td><span class="swatch" style="background:#5aa0c8"></span>tech</td><td>Technology &amp; Gadgets</td><td>—</td></tr>
+          <tr><td><span class="swatch" style="background:#7c9cff"></span>software</td><td>Software Engineering</td><td>—</td></tr>
+          <tr><td><span class="swatch" style="background:#5ac89a"></span>science</td><td>Science &amp; Research</td><td>—</td></tr>
+          <tr><td><span class="swatch" style="background:#9c7cdc"></span>space</td><td>Space &amp; Astronomy</td><td>—</td></tr>
+          <tr><td><span class="swatch" style="background:#d6a15a"></span>engineering</td><td>Engineering &amp; Making</td><td>workshop builds, machining, robotics, infrastructure</td></tr>
+          <tr><td><span class="swatch" style="background:#7cc86a"></span>business</td><td>Business &amp; Finance</td><td>—</td></tr>
+          <tr><td><span class="swatch" style="background:#c8607a"></span>news</td><td>News &amp; Current Events</td><td>reported events</td></tr>
+          <tr class="new"><td><span class="swatch" style="background:#a05a7c"></span>politics</td><td>Politics &amp; Society</td><td>commentary and analysis, as opposed to reported events</td></tr>
+          <tr><td><span class="swatch" style="background:#c89a5a"></span>history</td><td>History &amp; Culture</td><td>—</td></tr>
+          <tr><td><span class="swatch" style="background:#6ac8b4"></span>health</td><td>Health &amp; Medicine</td><td>—</td></tr>
+          <tr class="new"><td><span class="swatch" style="background:#c8c85a"></span>sports</td><td>Sports &amp; Fitness</td><td>athletics, cycling, running, gym, training and race coverage</td></tr>
+          <tr class="new"><td><span class="swatch" style="background:#c85a5a"></span>food</td><td>Food &amp; Cooking</td><td>recipes, technique, restaurants, coffee, brewing</td></tr>
+          <tr><td><span class="swatch" style="background:#6aa86a"></span>nature</td><td>Nature &amp; Environment</td><td>—</td></tr>
+          <tr class="new"><td><span class="swatch" style="background:#5ac8c8"></span>travel</td><td>Travel &amp; Outdoors</td><td>trips, hiking, camping, places</td></tr>
+          <tr class="new"><td><span class="swatch" style="background:#8c6a4a"></span>automotive</td><td>Automotive &amp; Transport</td><td>cars, EVs, motorsport, aviation, rail; road tests and car tech</td></tr>
+          <tr class="new"><td><span class="swatch" style="background:#c8a08a"></span>home</td><td>Home &amp; DIY</td><td>renovation, woodworking, gardening, repair around the house</td></tr>
+          <tr><td><span class="swatch" style="background:#8a9ac8"></span>education</td><td>Education &amp; Tutorials</td><td>how-to and teaching where the subject fits no other category</td></tr>
+          <tr class="new"><td><span class="swatch" style="background:#dca0a0"></span>arts</td><td>Arts &amp; Design</td><td>photography, filmmaking, drawing, architecture, graphic design</td></tr>
+          <tr class="new"><td><span class="swatch" style="background:#dc6adc"></span>music</td><td>Music</td><td>performances, music theory, instruments, gear, album analysis</td></tr>
+          <tr><td><span class="swatch" style="background:#b06adc"></span>gaming</td><td>Gaming</td><td>—</td></tr>
+          <tr><td><span class="swatch" style="background:#dc6a9c"></span>entertainment</td><td>Entertainment</td><td>film, TV, comedy, celebrity, vlogs</td></tr>
+          <tr><td><span class="swatch" style="background:#6f6d66"></span>uncategorized</td><td>Uncategorized</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note key">
+      <h3>Hint is Go-only</h3>
+      <p>
+        <code>videos.Category</code> gains a third field, <code>Hint</code>, rendered into the
+        classify prompt for the categories whose neighbours blur (a car review is
+        <code>automotive</code>, not <code>tech</code>; a kitchen renovation is <code>home</code>,
+        not <code>engineering</code>). It is <strong>not</strong> mirrored into
+        <code>ui/src/categories.ts</code> and nothing in the UI shows it —
+        <code>enumsync.test.ts</code> matches the field and drops it. The prompt now renders one
+        category per line, because the hints carry commas of their own.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Backfill: migration 0004</h2>
+    <pre><span class="c">-- backend/internal/store/migrations/0004_category_manual.sql</span>
+ALTER TABLE videos ADD COLUMN category_manual INTEGER NOT NULL DEFAULT 0;
+UPDATE videos SET category = 'uncategorized';</pre>
+    <p>
+      Clearing the column <em>is</em> the backfill: the summarize worker's idle sweep
+      (<code>classifyOne</code> → <code>NextUnclassified</code>) already picks up any downloaded
+      video that is <code>uncategorized</code> and has a summary. No new machinery.
+      <code>SetCategory</code> now also maintains the flag — one rule, both callers: a real category
+      is the human speaking (Player pick → flag set), a reset to <code>uncategorized</code> is
+      Re-summarize handing the video back to the classifier (flag cleared).
+      <code>SetCategoryIfUnset</code> gained <code>AND category_manual = 0</code>.
+    </p>
+    <div class="note risk">
+      <h3>Two things this knowingly costs</h3>
+      <p>
+        <strong>Pre-migration hand-picks are lost.</strong> Those rows carry no flag and are
+        indistinguishable from classifier output, so the reset takes them too. Confirmed with the
+        user; the flag protects picks made from here on.
+      </p>
+      <p>
+        <strong>The Library reads Uncategorized until the sweep drains.</strong> One LLM call per
+        video (summary-only, cheap), and <code>classifyOne</code> runs only when the summary job
+        queue is empty — while the TubeArchivist import is still producing summary jobs,
+        classification is starved entirely. Count the rows before applying on the live host:
+      </p>
+      <pre>sqlite3 /data/peeq.db "SELECT category, COUNT(*) FROM videos GROUP BY category ORDER BY 2 DESC;"</pre>
+    </div>
+  </section>
+
+  <section>
+    <h2>Files</h2>
+    <ul>
+      <li><code>backend/internal/videos/category.go</code> — 8 new entries, reordered, <code>Hint</code> field</li>
+      <li><code>backend/internal/summarize/summarizer.go</code> — one category per line, hint rendered after the label</li>
+      <li><code>backend/internal/store/migrations/0004_category_manual.sql</code> — new</li>
+      <li><code>backend/internal/videos/store.go</code> — flag maintenance in <code>SetCategory</code>, guard in <code>SetCategoryIfUnset</code></li>
+      <li><code>ui/src/categories.ts</code> — mirrored, with a dot colour per entry</li>
+      <li><code>ui/src/index.css</code> — <code>.catmenu</code> max-height 268 → 380px; 22 rows no longer fit</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <ol>
+      <li><code>go test ./...</code> and <code>npx vitest run</code> — green.</li>
+      <li>Fresh DB: 0004 applies, <code>PRAGMA table_info(videos)</code> shows <code>category_manual</code>.</li>
+      <li>On a <strong>copy</strong> of the live DB: record the distribution, apply, confirm every row
+        reads <code>uncategorized</code>, then watch <code>summarize worker: classified backlog
+        video</code> drain. Only with the import's summary queue quiet.</li>
+      <li>Browser (green tests prove nothing about CSS): Library chip row wraps sanely; the Player
+        picker scrolls with 22 entries and focuses the checked row.</li>
+      <li>The actual complaint: a GCN video lands in <strong>Sports &amp; Fitness</strong>. Also check
+        a car review (→ automotive, not tech) and a music video (→ music).</li>
+      <li>Hand-pick a category, then Re-summarize the same video: the pick is respected beforehand,
+        cleared afterwards.</li>
+    </ol>
+  </section>
+
+  <footer>peeq · docs/superpowers/plans/2026-07-22-peeq-category-expansion.html</footer>
+</div>
