@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -257,5 +258,79 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 	}
 	if flagged != 0 {
 		t.Fatalf("%d rows flagged manual, want 0", flagged)
+	}
+}
+
+// TestMigrate_spreadsMetadataRefreshAcrossTheWeek guards 0005's backfill, which
+// is the entire anti-batch mechanism. A DB that already has subscriptions gets
+// them all seeded at once, and if they were all seeded to the SAME time they
+// would refresh together, come due together a week later, and stay a convoy
+// forever — a weekly stampede of yt-dlp calls on whatever day the migration ran.
+//
+// The assertion is on the SPREAD, not merely on non-null: a plain
+// datetime('now','+7 days') backfill would pass a null check and still be the
+// bug this test exists to catch.
+func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "spread.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Given: a DB at 0004 (no next_meta_refresh_at yet) with many subscriptions.
+	applied := []string{"0001_init.sql", "0002_subtitles_default.sql", "0003_channel_metadata.sql", "0004_category_manual.sql"}
+	for _, name := range applied {
+		body, rerr := migrationsFS.ReadFile("migrations/" + name)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    TEXT PRIMARY KEY,
+		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range applied {
+		if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const channelCount = 40
+	for i := 0; i < channelCount; i++ {
+		id := fmt.Sprintf("UC%03d", i)
+		if _, err := db.Exec(`INSERT INTO channels (id, name, tracked_at) VALUES (?, ?, datetime('now'))`, id, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO subscriptions (channel_id, next_scan_at) VALUES (?, datetime('now'))`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// When: peeq starts and migrates.
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Then: every subscription has a due time, all of them inside the coming
+	// week, and they are genuinely scattered rather than stacked on one moment.
+	var seeded, inWindow, distinctDays int
+	if err := db.QueryRow(`
+SELECT COUNT(next_meta_refresh_at),
+       SUM(next_meta_refresh_at BETWEEN datetime('now', '-1 minute') AND datetime('now', '+7 days')),
+       COUNT(DISTINCT date(next_meta_refresh_at))
+FROM subscriptions`).Scan(&seeded, &inWindow, &distinctDays); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if seeded != channelCount || inWindow != channelCount {
+		t.Fatalf("seeded = %d, inside the week = %d; want %d for both", seeded, inWindow, channelCount)
+	}
+	// 40 uniformly random points across 8 calendar days landing on fewer than 5
+	// distinct days is not a spread; it is a convoy.
+	if distinctDays < 5 {
+		t.Fatalf("refreshes land on only %d distinct days; the backfill is not spreading them", distinctDays)
 	}
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Channel } from "./Channel";
 import type { ChannelDetail } from "../api/types";
@@ -13,7 +13,6 @@ vi.mock("../api/channels", () => ({
   deleteChannel: vi.fn(),
   getChannel: vi.fn(),
   scanChannel: vi.fn(),
-  refreshChannel: vi.fn(),
   channelAvatarUrl: (id: string) => `/api/channels/${id}/avatar`,
   channelBannerUrl: (id: string) => `/api/channels/${id}/banner`,
 }));
@@ -40,11 +39,9 @@ import {
   scanChannel,
   updateChannel,
   deleteChannel,
-  refreshChannel,
 } from "../api/channels";
 import { listVideos, setFavorite, setWatched } from "../api/videos";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
-import { CookieRequiredError } from "../api/downloads";
 import { getSettings } from "../api/settings";
 import type { Settings, Video } from "../api/types";
 import {
@@ -140,8 +137,6 @@ describe("Channel", () => {
     vi.mocked(listPending).mockResolvedValue([]);
     vi.mocked(scanChannel).mockReset();
     vi.mocked(scanChannel).mockResolvedValue({ status: "scheduled" });
-    vi.mocked(refreshChannel).mockReset();
-    vi.mocked(refreshChannel).mockResolvedValue({ status: "ok" });
     vi.mocked(setFavorite).mockReset();
     vi.mocked(setFavorite).mockResolvedValue(true);
     vi.mocked(setWatched).mockReset();
@@ -1045,12 +1040,10 @@ describe("Channel YouTube metadata", () => {
     vi.mocked(getChannel).mockReset();
     vi.mocked(listVideos).mockReset();
     vi.mocked(listPending).mockReset();
-    vi.mocked(refreshChannel).mockReset();
     vi.mocked(getSettings).mockReset();
     vi.mocked(listVideos).mockResolvedValue([]);
     vi.mocked(listPending).mockResolvedValue([]);
     vi.mocked(getSettings).mockResolvedValue(settings());
-    vi.mocked(refreshChannel).mockResolvedValue({ status: "ok" });
   });
 
   it("publishes the subscriber count, the verified mark and the refresh date", async () => {
@@ -1126,57 +1119,21 @@ describe("Channel YouTube metadata", () => {
     expect(screen.getByText("Never read from YouTube")).toBeInTheDocument();
   });
 
-  it("Refresh re-reads the channel and re-renders what came back", async () => {
-    const user = userEvent.setup();
-    vi.mocked(getChannel)
-      .mockResolvedValueOnce(
-        detail({ name: "UCa", description: "", resolve_ok: false }),
-      )
-      .mockResolvedValue(detail({ description: "Field documentaries." }));
-    render(
-      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
-    );
-
-    await screen.findByText("UCa");
-    await user.click(screen.getByRole("button", { name: /refresh/i }));
-
-    expect(refreshChannel).toHaveBeenCalledWith("UCa");
-    expect(await screen.findByText("Uncanny Expeditions")).toBeInTheDocument();
-    expect(screen.getByText("Field documentaries.")).toBeInTheDocument();
-  });
-
-  it("names the missing cookie rather than repeating a raw error", async () => {
-    const user = userEvent.setup();
+  // The manual Refresh button is gone: metadata is re-read automatically
+  // once a week (channelmeta.Worker), so a button whose whole purpose was to
+  // escape the "tried once, failed, never again" dead end has nothing left to
+  // rescue. Asserted rather than merely deleted, so re-adding it is a
+  // deliberate act and not an accident.
+  it("offers no manual refresh button", async () => {
     vi.mocked(getChannel).mockResolvedValue(detail({ resolve_ok: false }));
-    vi.mocked(refreshChannel).mockRejectedValue(new CookieRequiredError());
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
     );
 
     await screen.findByText("Uncanny Expeditions");
-    await user.click(screen.getByRole("button", { name: /refresh/i }));
-
     expect(
-      await screen.findByText(/fresh YouTube cookie/i),
-    ).toBeInTheDocument();
-  });
-
-  it("surfaces a refresh failure rather than silently doing nothing", async () => {
-    const user = userEvent.setup();
-    vi.mocked(getChannel).mockResolvedValue(detail({ resolve_ok: false }));
-    vi.mocked(refreshChannel).mockRejectedValue(
-      new Error("refresh failed: channel unavailable"),
-    );
-    render(
-      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
-    );
-
-    await screen.findByText("Uncanny Expeditions");
-    await user.click(screen.getByRole("button", { name: /refresh/i }));
-
-    expect(
-      await screen.findByText("refresh failed: channel unavailable"),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /refresh/i }),
+    ).not.toBeInTheDocument();
   });
 
   // jsdom does no layout, so scrollHeight/clientHeight are both 0 and nothing
@@ -1267,43 +1224,6 @@ describe("Channel YouTube metadata", () => {
     } finally {
       restore();
     }
-  });
-
-  it("does not report a refresh failure under a different channel's header", async () => {
-    const user = userEvent.setup();
-    // A refresh that is still in flight when the user moves on.
-    let failRefresh: (e: Error) => void = () => {};
-    vi.mocked(refreshChannel).mockReturnValue(
-      new Promise((_resolve, reject) => {
-        failRefresh = reject;
-      }),
-    );
-    vi.mocked(getChannel).mockResolvedValue(detail({ resolve_ok: false }));
-    const { rerender } = render(
-      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
-    );
-    await screen.findByText("Uncanny Expeditions");
-    await user.click(screen.getByRole("button", { name: /refresh/i }));
-
-    // The user moves to another channel while it runs...
-    vi.mocked(getChannel).mockResolvedValue(
-      detail({ id: "UCb", name: "Deep Field Radio" }),
-    );
-    rerender(
-      <Channel channelId="UCb" onOpenVideo={() => {}} onBack={() => {}} />,
-    );
-    await screen.findByText("Deep Field Radio");
-
-    // ...and only then does the first channel's refresh fail.
-    await act(async () => {
-      failRefresh(new Error("refresh failed: channel unavailable"));
-      await Promise.resolve();
-    });
-
-    expect(
-      screen.queryByText("refresh failed: channel unavailable"),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("Deep Field Radio")).toBeInTheDocument();
   });
 
   it("puts the way back above the header, not among the channel's actions", async () => {
