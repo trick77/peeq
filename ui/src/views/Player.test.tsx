@@ -266,6 +266,78 @@ describe("Player", () => {
     expect(screen.queryByText(/Skipped sponsor/)).not.toBeInTheDocument();
   });
 
+  it("rolls the favorite back when the write fails", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ favorite: false }));
+    vi.mocked(setFavorite).mockRejectedValueOnce(new Error("network down"));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByText("Keep forever");
+
+    fireEvent.click(screen.getByRole("button", { name: /Keep forever/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Keep forever")).toBeInTheDocument(),
+    );
+    expect(setFavorite).toHaveBeenCalledWith("v1", true);
+  });
+
+  it("leaves the next video alone when a toggle fails after switching away", async () => {
+    // The failure lands after the user has moved on. Everything in the catch
+    // — the state rollback, the playhead restore, the toast — belongs to the
+    // video that was toggled, not to whatever is on screen now.
+    const first = makeVideo({
+      id: "v1",
+      watched: false,
+      duration_seconds: 100,
+      resume_position_seconds: 0,
+    });
+    const second = makeVideo({
+      id: "v2",
+      title: "A Different Video",
+      watched: false,
+      duration_seconds: 100,
+    });
+    vi.mocked(getVideo).mockImplementation(async (id: string) =>
+      id === "v1" ? first : second,
+    );
+    let rejectToggle: (e: Error) => void = () => {};
+    vi.mocked(setWatched).mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectToggle = reject;
+      }),
+    );
+
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    videoEl.pause = vi.fn();
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 40,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
+    // Switch videos with the request still in flight, then let it fail.
+    rerender(<Player videoId="v2" onDeleted={() => {}} />);
+    await screen.findByText("A Different Video");
+    rejectToggle(new Error("network down"));
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // v2's own state, playhead and stage are untouched by v1's failure.
+    expect(
+      screen.getByRole("button", { name: "Mark watched" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Couldn't mark watched."),
+    ).not.toBeInTheDocument();
+    const secondEl = document.querySelector("video") as HTMLVideoElement;
+    expect(secondEl.currentTime).toBe(0);
+  });
+
   it("restores the playhead and resumes playback when the toggle fails", async () => {
     vi.mocked(getVideo).mockResolvedValue(
       makeVideo({ watched: false, duration_seconds: 100 }),

@@ -1300,7 +1300,10 @@ button.catpick.unset:hover {
   aspect-ratio: 16 / 9;
   object-fit: contain;
 }
-.skip-toast {
+/* stage-toast — the transient notice over the video stage. Named for where it
+   lives, not for the SponsorBlock skip it started as: it now carries action
+   failures too (see the .warn variant). */
+.stage-toast {
   position: absolute;
   right: 16px;
   bottom: 74px;
@@ -1319,17 +1322,17 @@ button.catpick.unset:hover {
   transition: 0.3s;
   pointer-events: none;
 }
-.skip-toast.show {
+.stage-toast.show {
   opacity: 1;
   transform: none;
 }
 /* Failure variant: the accent reads as "peeq did something for you", which is
    the wrong note for "that didn't work". */
-.skip-toast.warn {
+.stage-toast.warn {
   border-color: rgba(193, 70, 56, 0.55);
   color: var(--color-danger);
 }
-.skip-toast .mono {
+.stage-toast .mono {
   color: var(--color-muted);
   font-weight: 500;
 }

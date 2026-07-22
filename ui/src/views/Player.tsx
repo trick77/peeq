@@ -195,13 +195,17 @@ export function Player({
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
   // toast — the transient notice over the video stage. It began as the
-  // SponsorBlock skip message and now carries action failures too, so it holds
-  // its own icon. `error` is not an option for those: a non-null error
-  // replaces the whole player view (see the early return below), and losing
-  // the video because a toggle failed is worse than the failure itself.
-  const [toast, setToast] = useState<{ text: string; icon: IconName } | null>(
-    null,
-  );
+  // SponsorBlock skip message and now carries action failures too, hence the
+  // icon and tone: tone drives the styling, so a failure stays red even if it
+  // later picks a more specific icon, and an advisory that happens to use the
+  // warning glyph doesn't turn red by accident. `error` is not an option for
+  // failures — a non-null error replaces the whole player view (see the early
+  // return below), and losing the video is worse than the failure itself.
+  const [toast, setToast] = useState<{
+    text: string;
+    icon: IconName;
+    tone: "info" | "warn";
+  } | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [ccOn, setCcOn] = useState(false);
@@ -245,12 +249,21 @@ export function Player({
   const ccAppliedForRef = useRef<string | null>(null);
   const toastTimerRef = useRef<number | undefined>(undefined);
   const armTimerRef = useRef<number | undefined>(undefined);
+  // openVideoIdRef is which video this Player currently has open, readable
+  // from an async continuation that resumed after the answer changed — null
+  // once the component unmounts. `videoId` itself can't do that job: a handler
+  // closes over the value from the render it was created in, so it keeps
+  // claiming the old video forever. Anything that touches state, the playhead
+  // or the toast *after* an await must compare against this first.
+  const openVideoIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     resumeAppliedRef.current = false;
     positionKnownRef.current = false;
+    openVideoIdRef.current = videoId;
     setVideo(null);
     setError(null);
+    setToast(null);
     setCurrentTime(0);
     setDuration(0);
     setCcOn(false);
@@ -270,6 +283,10 @@ export function Player({
       });
     return () => {
       active = false;
+      // Cleared on unmount as well as on a video change; the next run of this
+      // effect sets the new id back immediately, so only a real teardown
+      // leaves it null.
+      openVideoIdRef.current = null;
     };
   }, [videoId]);
 
@@ -465,8 +482,12 @@ export function Player({
   // replaces an earlier one, so the timer is always reset rather than stacked
   // — two overlapping notices would otherwise leave the second one dismissed
   // early by the first one's timeout.
-  function showToast(text: string, icon: IconName) {
-    setToast({ text, icon });
+  //
+  // Callers reached from an async continuation must check openVideoIdRef
+  // first: a toast raised after the user has moved on both misattributes the
+  // message and schedules a timer the unmount cleanup can no longer clear.
+  function showToast(text: string, icon: IconName, tone: "info" | "warn") {
+    setToast({ text, icon, tone });
     if (toastTimerRef.current !== undefined) {
       window.clearTimeout(toastTimerRef.current);
     }
@@ -492,6 +513,7 @@ export function Player({
         showToast(
           `Skipped ${seg.category} · ${formatDuration(seg.end_time - seg.start_time)}`,
           "skipForward",
+          "info",
         );
         break;
       }
@@ -533,12 +555,16 @@ export function Player({
 
   async function handleToggleFavorite() {
     if (!video) return;
+    const id = video.id;
     const next = !video.favorite;
     setVideo({ ...video, favorite: next });
     try {
-      await setFavorite(video.id, next);
+      await setFavorite(id, next);
     } catch {
-      setVideo((v) => (v ? { ...v, favorite: !next } : v));
+      // Same-video guard as handlePickCategory below: a write that fails
+      // after the user has moved on must not paint this video's favorite
+      // state onto the one now open.
+      setVideo((v) => (v && v.id === id ? { ...v, favorite: !next } : v));
     }
   }
 
@@ -580,6 +606,7 @@ export function Player({
   // function to leave a non-zero playhead behind has to revisit that.
   async function handleToggleWatched() {
     if (!video) return;
+    const id = video.id;
     const next = !video.watched;
     const previousPosition = video.resume_position_seconds;
     const el = videoRef.current;
@@ -595,10 +622,16 @@ export function Player({
     positionKnownRef.current = false;
 
     try {
-      await setWatched(video.id, next);
+      await setWatched(id, next);
     } catch {
+      // Nothing below is safe once the user has moved on — the same rule
+      // handlePickCategory follows. The rollback would paint this video's
+      // watched flag and position onto whichever video is open now, and
+      // seek() would drag that video's playhead to this one's timestamp,
+      // where the next resume ping would persist it.
+      if (openVideoIdRef.current !== id) return;
       setVideo((v) =>
-        v
+        v && v.id === id
           ? { ...v, watched: !next, resume_position_seconds: previousPosition }
           : v,
       );
@@ -616,6 +649,7 @@ export function Player({
       showToast(
         next ? "Couldn't mark watched." : "Couldn't mark unwatched.",
         "warning",
+        "warn",
       );
     }
   }
@@ -733,8 +767,8 @@ export function Player({
             )}
           </video>
           <div
-            className={`skip-toast${toast ? " show" : ""}${
-              toast?.icon === "warning" ? " warn" : ""
+            className={`stage-toast${toast ? " show" : ""}${
+              toast?.tone === "warn" ? " warn" : ""
             }`}
             role="status"
           >
