@@ -423,11 +423,17 @@ func (w *Worker) finishNoTranscript(job *summaryjobs.Job, video *videos.Video, r
 // Best-effort throughout — the caller's path is terminal and a cleanup failure
 // must not turn it into a job failure.
 func (w *Worker) discardStaleAnalysis(ctx context.Context, video *videos.Video) {
-	if video.Summary == "" && video.Chapters == "" && video.KeyPoints == "" {
-		return // nothing was ever stored; skip the writes and the chunk delete
-	}
-	if err := w.d.Videos.ClearSummary(video.ID); err != nil {
-		w.d.Logger.Error("summarize worker: clear stale summary", "video_id", video.ID, "err", err)
+	// The row write is skippable when the row is already clean, but the chunk
+	// delete is NOT gated on it. An empty summary column does not mean there are
+	// no chunks: handleResummarize clears the summary before enqueuing, so on
+	// the flow that matters most — a user hitting Re-summarize to fix a video
+	// that was summarized wrongly — the worker sees a blank row and the stale
+	// embeddings would live on in semantic search. DeleteVideoChunks on a video
+	// with no chunks is a no-op, so running it unconditionally costs nothing.
+	if video.Summary != "" || video.Chapters != "" || video.KeyPoints != "" {
+		if err := w.d.Videos.ClearSummary(video.ID); err != nil {
+			w.d.Logger.Error("summarize worker: clear stale summary", "video_id", video.ID, "err", err)
+		}
 	}
 	if w.d.Rag != nil {
 		if err := w.d.Rag.DeleteVideoChunks(ctx, video.ID); err != nil {

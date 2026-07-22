@@ -1218,6 +1218,16 @@ func TestWorkerMusicOnlyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 		[][]float32{make([]float32, 1536)}); err != nil {
 		t.Fatalf("seed chunks: %v", err)
 	}
+	// Reproduce what handleResummarize actually does before enqueuing: it wipes
+	// the summary row and leaves the chunks for the worker. Seeding the summary
+	// and enqueuing directly would test a state the UI can never produce, and
+	// would hide a worker that skips the chunk delete on a blank row.
+	if err := h.videos.ClearSummary("v9"); err != nil {
+		t.Fatalf("clear summary: %v", err)
+	}
+	if err := h.videos.SetSummaryStatus("v9", "pending", ""); err != nil {
+		t.Fatalf("reset status: %v", err)
+	}
 	if _, err := h.jobs.Enqueue("v9"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -1255,6 +1265,9 @@ func TestWorkerMusicOnlyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 			v.Summary, v.Chapters, v.KeyPoints)
 	}
 
+	// The assertion that matters: the embeddings must go even though the row the
+	// worker read was already blank. Otherwise a phrase from the old summary
+	// keeps returning this video in search, with nothing in the UI to show why.
 	var count int
 	if err := h.db.QueryRow(`SELECT COUNT(*) FROM transcript_chunks WHERE video_id = ?`, "v9").Scan(&count); err != nil {
 		t.Fatalf("count chunks: %v", err)
@@ -1333,14 +1346,37 @@ func TestDiscardStaleAnalysisSurvivesWriteFailures(t *testing.T) {
 	}
 }
 
-// TestDiscardStaleAnalysisSkipsAVideoWithNothingStored asserts the early return:
-// the common case is a video that never had a summary, and it should not pay for
-// two writes and a chunk delete to clear nothing.
-func TestDiscardStaleAnalysisSkipsAVideoWithNothingStored(t *testing.T) {
+// TestDiscardStaleAnalysisSkipsTheRowWriteWhenNothingIsStored asserts the row
+// write is skipped for an already-blank row — but the chunk delete still runs,
+// because a blank summary column does not imply there are no chunks (see the
+// handleResummarize note on discardStaleAnalysis).
+func TestDiscardStaleAnalysisSkipsTheRowWriteWhenNothingIsStored(t *testing.T) {
 	h := newWorkerHarness(t)
-	// A nil Videos store would panic if the early return did not fire first.
-	w := NewWorker(WorkerDeps{Jobs: h.jobs, MediaDir: h.mediaDir})
+	if err := h.videos.Upsert(videos.Video{ID: "v12", URL: "https://youtu.be/v12"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.rag.ReplaceVideoChunks(context.Background(), "v12", "test-model", 1536,
+		[]rag.ChunkRow{{Ordinal: 0, Text: "orphaned", Kind: "summary"}},
+		[][]float32{make([]float32, 1536)}); err != nil {
+		t.Fatalf("seed chunks: %v", err)
+	}
+	// Blocking the summary column proves the row write never happens: if it did,
+	// the trigger would fire and the error would be logged instead of skipped.
+	if _, err := h.db.Exec(`CREATE TRIGGER no_summary_v12 BEFORE UPDATE OF summary ON videos
+		BEGIN SELECT RAISE(ABORT, 'summary writes blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{Jobs: h.jobs, Videos: h.videos, Rag: h.rag, MediaDir: h.mediaDir})
 	w.discardStaleAnalysis(context.Background(), &videos.Video{ID: "v12"})
+
+	var count int
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM transcript_chunks WHERE video_id = ?`, "v12").Scan(&count); err != nil {
+		t.Fatalf("count chunks: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected the orphaned chunks deleted even with a blank row, got %d", count)
+	}
 }
 
 // TestWorkerEmptyTranscriptDiscardsStaleAnalysis covers the other caller: a
