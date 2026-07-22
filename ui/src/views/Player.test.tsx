@@ -171,6 +171,79 @@ describe("Player", () => {
     });
   });
 
+  it.each([
+    { label: "watched", watched: false, name: "Mark watched" },
+    { label: "unwatched", watched: true, name: "Mark unwatched" },
+  ])(
+    "stops playback and rewinds to 0:00 when marking $label",
+    async ({ watched, name }) => {
+      // Both directions are a deliberate "done with this for now": playback
+      // stops and the playhead rewinds to match the position the server has
+      // just zeroed. Leaving it playing is what let the old position get
+      // written straight back by the next timeupdate.
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ watched, duration_seconds: 100 }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+
+      const videoEl = await waitFor(() => {
+        const el = document.querySelector("video");
+        if (!el) throw new Error("video element not mounted yet");
+        return el;
+      });
+      const pause = vi.fn();
+      videoEl.pause = pause;
+      Object.defineProperty(videoEl, "paused", {
+        value: false,
+        writable: true,
+      });
+      Object.defineProperty(videoEl, "currentTime", {
+        value: 40,
+        writable: true,
+      });
+      fireEvent.timeUpdate(videoEl);
+      await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 40));
+      vi.mocked(setResume).mockClear();
+
+      fireEvent.click(screen.getByRole("button", { name }));
+
+      await waitFor(() => expect(setWatched).toHaveBeenCalled());
+      expect(pause).toHaveBeenCalled();
+      expect(videoEl.currentTime).toBe(0);
+    },
+  );
+
+  it("restores the playhead when the watched toggle fails", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ watched: false, duration_seconds: 100 }),
+    );
+    vi.mocked(setWatched).mockRejectedValueOnce(new Error("network down"));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    videoEl.pause = vi.fn();
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 40,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
+
+    // A failed request must leave the player where it found it, not parked at
+    // 0:00 with the pre-toggle state restored around it.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Mark watched/ }),
+      ).toBeInTheDocument();
+      expect(videoEl.currentTime).toBe(40);
+    });
+  });
+
   it("does not re-post the old position after the video is un-watched", async () => {
     // The regression this guards: un-watching clears resume_position_seconds
     // server-side, but the Player's own flush effect would then re-POST the
