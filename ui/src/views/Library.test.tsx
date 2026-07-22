@@ -617,6 +617,27 @@ describe("Library category chips", () => {
     ).toBe(true);
   });
 
+  it("still opens the drawer when localStorage refuses to store the preference", async () => {
+    // Private mode and a full quota both throw from setItem. Losing the
+    // preference is acceptable; losing the drawer is not.
+    vi.stubGlobal("localStorage", {
+      getItem: () => null,
+      setItem: () => {
+        throw new DOMException("QuotaExceededError");
+      },
+      removeItem: () => {},
+    });
+    vi.mocked(listVideos).mockResolvedValue([
+      categoryVideo({ id: "v1", watched: true }),
+    ]);
+    render(<Library onOpenVideo={() => {}} search="" />);
+    await screen.findByText("Already watched");
+
+    fireEvent.click(screen.getByText("Show"));
+
+    await waitFor(() => expect(screen.getByText("Hide")).toBeInTheDocument());
+  });
+
   it("refetches both lists after a successful re-download", async () => {
     const errored = categoryVideo({ id: "v1", status: "error" });
     // Categorized so the recovered card has a visible fresh-state lifecycle
