@@ -13,11 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"time"
 
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -110,7 +110,7 @@ func New(d Deps) *Scheduler {
 	if d.listSize <= 0 {
 		d.listSize = defaultListSize
 	}
-	return &Scheduler{d: d, rand: pseudoRand()}
+	return &Scheduler{d: d, rand: sched.PseudoRand()}
 }
 
 // Run is the scan loop; it blocks until ctx is cancelled. Each pass is
@@ -428,33 +428,11 @@ func (s *Scheduler) enqueueAuto(e ytdlp.ChannelEntry, sub *channels.Subscription
 // jitter in [-scanJitter, +scanJitter], clamped to at least one hour so a
 // pathological rand value can never schedule a near-immediate re-scan.
 func (s *Scheduler) jitteredInterval() time.Duration {
-	d := scanInterval + time.Duration(s.rand()*float64(2*scanJitter)) - scanJitter
-	if d < time.Hour {
-		d = time.Hour
-	}
-	return d
+	return sched.JitteredInterval(scanInterval, scanJitter, time.Hour, s.rand)
 }
 
 // sleep waits d unless ctx is cancelled first. It returns false if ctx was
 // cancelled (the caller should stop), true if the full wait elapsed.
 func (s *Scheduler) sleep(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}
-
-// pseudoRand returns a float64-in-[0,1) source seeded from the wall clock. It
-// is a package-private seam so tests can swap in a deterministic source; the
-// jitter it feeds needs no cryptographic quality.
-func pseudoRand() func() float64 {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return r.Float64
+	return sched.Sleep(ctx, d)
 }

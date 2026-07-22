@@ -2,7 +2,6 @@ package channels
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 )
 
@@ -13,13 +12,18 @@ import (
 // Both are yt-dlp calls against the same channel url, and firing them minutes
 // apart is the shape of traffic that gets an account throttled — for no gain,
 // since the metadata is a week stale either way and waiting an hour costs
-// nothing. Deliberately expressed as a SQLite modifier fragment so the two
-// claim queries can compute the window in SQL rather than in Go.
+// nothing. Expressed as the two SQLite modifier fragments the queries actually
+// need, so the window is computed in SQL without concatenating constants at
+// query time.
 //
 // Skipping is all that is needed to resolve it: the channel stays due and is
 // claimed on a later pass, once its scan has aged out of the window. Nothing
 // is rescheduled and nothing is lost.
-const ScanQuietWindow = "30 minutes"
+const (
+	ScanQuietWindow = "30 minutes"
+	scanQuietBefore = "-" + ScanQuietWindow
+	scanQuietAfter  = "+" + ScanQuietWindow
+)
 
 // scanQuietPredicate is the shared half of both claim queries: true when
 // channelID's scan is far enough away, given a subscription row that may not
@@ -38,40 +42,43 @@ const ScanQuietWindow = "30 minutes"
 const scanQuietPredicate = `
     (s.channel_id IS NULL
      OR (
-          (s.last_scanned_at IS NULL OR s.last_scanned_at <= datetime(?, '-' || '` + ScanQuietWindow + `'))
-      AND (s.next_scan_at <= ? OR s.next_scan_at > datetime(?, '+' || '` + ScanQuietWindow + `'))
+          (s.last_scanned_at IS NULL OR s.last_scanned_at <= datetime(?, '` + scanQuietBefore + `'))
+      AND (s.next_scan_at <= ? OR s.next_scan_at > datetime(?, '` + scanQuietAfter + `'))
         ))`
 
 // ClaimDueMetadata returns the subscribed channel whose metadata refresh is
 // most overdue (next_meta_refresh_at <= now) and whose video scan is not
-// within ScanQuietWindow, or ("", false, nil) if none qualifies. Like ClaimDue
-// it is a plain SELECT rather than an atomic state flip: the refresher runs on
-// a single goroutine, so there is no second claimant to race against.
+// within ScanQuietWindow, or (nil, nil) if none qualifies. Like ClaimDue it is
+// a plain SELECT rather than an atomic state flip: the refresher runs on a
+// single goroutine, so there is no second claimant to race against.
+//
+// It returns the whole channel row rather than an id, because every caller
+// immediately needs it (Resolve wants the cached handle and whether a row
+// exists at all) and the query has already matched it — fetching it again by
+// id would be a second round trip for a row we are holding.
 //
 // Only subscribed channels are in this rotation. A tracked-but-unsubscribed
 // channel has no subscriptions row and so no schedule — ClaimUnresolved is
 // what covers it, once.
-func (s *Store) ClaimDueMetadata(now string) (string, bool, error) {
+func (s *Store) ClaimDueMetadata(now string) (*Channel, error) {
 	row := s.db.QueryRowContext(context.Background(), `
-SELECT s.channel_id
+SELECT `+channelColumns+`
 FROM subscriptions s
+JOIN channels c ON c.id = s.channel_id
 WHERE s.next_meta_refresh_at IS NOT NULL AND s.next_meta_refresh_at <= ?
   AND `+scanQuietPredicate+`
 ORDER BY s.next_meta_refresh_at ASC
 LIMIT 1`, now, now, now, now)
 
-	var channelID string
-	switch err := row.Scan(&channelID); {
-	case err == sql.ErrNoRows:
-		return "", false, nil
-	case err != nil:
-		return "", false, fmt.Errorf("claim due metadata: %w", err)
+	c, err := scanChannel(row)
+	if err != nil {
+		return nil, fmt.Errorf("claim due metadata: %w", err)
 	}
-	return channelID, true, nil
+	return c, nil
 }
 
 // ClaimUnresolved returns the longest-tracked channel peeq has NEVER read from
-// YouTube (resolved_at IS NULL), or ("", false, nil) if there is none. The
+// YouTube (resolved_at IS NULL), or (nil, nil) if there is none. The
 // same ScanQuietWindow applies, for the same reason — most of these channels
 // are unsubscribed and have no scan to collide with at all, but the ones that
 // do are no different from the weekly rotation's.
@@ -92,9 +99,9 @@ LIMIT 1`, now, now, now, now)
 // Untracked cache-only rows are excluded: they exist for any channel peeq has
 // ever glanced at, and reading every one of them from YouTube is a lot of
 // requests for channels the user never asked about.
-func (s *Store) ClaimUnresolved(now string) (string, bool, error) {
+func (s *Store) ClaimUnresolved(now string) (*Channel, error) {
 	row := s.db.QueryRowContext(context.Background(), `
-SELECT c.id
+SELECT `+channelColumns+`
 FROM channels c
 LEFT JOIN subscriptions s ON s.channel_id = c.id
 WHERE c.tracked_at IS NOT NULL AND c.resolved_at IS NULL
@@ -102,14 +109,11 @@ WHERE c.tracked_at IS NOT NULL AND c.resolved_at IS NULL
 ORDER BY c.tracked_at ASC
 LIMIT 1`, now, now, now)
 
-	var channelID string
-	switch err := row.Scan(&channelID); {
-	case err == sql.ErrNoRows:
-		return "", false, nil
-	case err != nil:
-		return "", false, fmt.Errorf("claim unresolved channel: %w", err)
+	c, err := scanChannel(row)
+	if err != nil {
+		return nil, fmt.Errorf("claim unresolved channel: %w", err)
 	}
-	return channelID, true, nil
+	return c, nil
 }
 
 // MarkResolveAttemptedIfUnset stamps resolved_at only when it is still NULL,

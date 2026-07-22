@@ -3,8 +3,10 @@ package channelmeta
 import (
 	"context"
 	"log/slog"
-	"math/rand"
 	"time"
+
+	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/sched"
 )
 
 const (
@@ -73,7 +75,7 @@ func NewWorker(d Deps) *Worker {
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}
-	return &Worker{d: d, rand: pseudoRand()}
+	return &Worker{d: d, rand: sched.PseudoRand()}
 }
 
 // Run is the refresh loop; it blocks until ctx is cancelled. Each pass is
@@ -108,14 +110,14 @@ func (w *Worker) Run(ctx context.Context) {
 			}
 			continue
 		}
-		channelID, ok := w.claim()
-		if !ok {
+		claimed := w.claim()
+		if claimed == nil {
 			if !w.sleep(ctx, w.d.PollInterval) {
 				return
 			}
 			continue
 		}
-		w.refresh(ctx, channelID)
+		w.refresh(ctx, claimed)
 		if !w.sleep(ctx, w.d.PollInterval) {
 			return
 		}
@@ -127,27 +129,30 @@ func (w *Worker) Run(ctx context.Context) {
 // the backlog drains in the gaps, which is the right priority — a channel
 // already showing a name and an avatar can wait, one showing nothing cannot
 // wait *instead* of it.
-func (w *Worker) claim() (string, bool) {
+func (w *Worker) claim() *channels.Channel {
 	now := w.d.Now().UTC().Format(sqlTimeLayout)
 	store := w.d.Refresher.Channels
 
-	channelID, ok, err := store.ClaimDueMetadata(now)
+	due, err := store.ClaimDueMetadata(now)
 	if err != nil {
 		w.d.Logger.Error("channel metadata: claim due failed", "err", err)
-		return "", false
+		return nil
 	}
-	if ok {
-		return channelID, true
+	if due != nil {
+		return due
 	}
-	channelID, ok, err = store.ClaimUnresolved(now)
+	unresolved, err := store.ClaimUnresolved(now)
 	if err != nil {
 		w.d.Logger.Error("channel metadata: claim unresolved failed", "err", err)
-		return "", false
+		return nil
 	}
-	return channelID, ok
+	return unresolved
 }
 
-// refresh re-reads one channel under a panic guard, then settles it.
+// refresh re-reads one channel under a panic guard, then settles it. It takes
+// the row the claim already matched rather than an id: re-reading it here would
+// be a second query for a row we are holding, and its error path was one of the
+// ways an attempt could end without recording itself.
 //
 // Settling happens on EVERY outcome — success, failure, or a recovered panic.
 // An outcome that skipped it would leave the channel claimable forever and the
@@ -156,7 +161,8 @@ func (w *Worker) claim() (string, bool) {
 // dead-scan counter that auto-unsubscribes channels, because that decision
 // belongs to the scan scheduler, which guards it against peeq's own cookie
 // being the real problem.
-func (w *Worker) refresh(ctx context.Context, channelID string) {
+func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
+	channelID := cached.ID
 	defer func() {
 		// This parses yt-dlp output and remote HTTP responses, both external
 		// input. An unrecovered panic here would take down the whole process,
@@ -166,12 +172,6 @@ func (w *Worker) refresh(ctx context.Context, channelID string) {
 		}
 		w.settle(channelID)
 	}()
-
-	cached, err := w.d.Refresher.Channels.Get(channelID)
-	if err != nil {
-		w.d.Logger.Error("channel metadata: load channel failed", "channel_id", channelID, "err", err)
-		return
-	}
 
 	rctx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
@@ -194,7 +194,7 @@ func (w *Worker) refresh(ctx context.Context, channelID string) {
 // Rescheduling alone is not enough. An unsubscribed backlog channel has no
 // subscriptions row, so MarkMetaRefreshed matches zero rows and reports no
 // error — and if the attempt also died before Resolve could record itself (a
-// panic mid-parse, or a channel row that would not load), resolved_at stays
+// panic mid-parse), resolved_at stays
 // NULL and ClaimUnresolved returns that same channel on the next poll, forever.
 // The conditional stamp closes that path without ever overwriting a real
 // outcome.
@@ -216,29 +216,10 @@ func (w *Worker) settle(channelID string) {
 // since importing the scan package for fifteen lines would tie two unrelated
 // schedulers together.
 func (w *Worker) jitteredInterval() time.Duration {
-	delta := time.Duration((w.rand()*2 - 1) * float64(refreshJitter))
-	d := refreshInterval + delta
-	if d < time.Hour {
-		d = time.Hour
-	}
-	return d
+	return sched.JitteredInterval(refreshInterval, refreshJitter, time.Hour, w.rand)
 }
 
 // sleep waits d, returning false if ctx was cancelled first.
 func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
-// pseudoRand returns a seeded, non-cryptographic float64 source. Scheduling
-// jitter needs no cryptographic quality.
-func pseudoRand() func() float64 {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return r.Float64
+	return sched.Sleep(ctx, d)
 }

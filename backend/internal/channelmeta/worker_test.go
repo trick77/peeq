@@ -545,8 +545,8 @@ func TestWorker_panickingBacklogChannelIsNotReclaimed(t *testing.T) {
 	}
 	// The claim query itself must now pass it over — the property that actually
 	// stops the loop, asserted directly rather than inferred from the column.
-	if id, ok, err := s.ClaimUnresolved("2026-07-22 12:00:00"); err != nil || ok {
-		t.Fatalf("backlog still returns the panicking channel: %q (ok=%v, err=%v)", id, ok, err)
+	if got, err := s.ClaimUnresolved("2026-07-22 12:00:00"); err != nil || got != nil {
+		t.Fatalf("backlog still returns the panicking channel: %+v (err=%v)", got, err)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -744,15 +745,5 @@ func (w *Worker) waitWhilePaused(ctx context.Context) bool {
 // sleep waits d unless ctx is cancelled first. It returns false if ctx was
 // cancelled (the caller should stop), true if the full wait elapsed.
 func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
+	return sched.Sleep(ctx, d)
 }

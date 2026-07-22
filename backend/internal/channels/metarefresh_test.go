@@ -47,12 +47,12 @@ func TestClaimDueMetadata_picksTheMostOverdue(t *testing.T) {
 	setScan(t, s, "UCdue", "", "2026-07-23 12:00:00")
 	setScan(t, s, "UCstale", "", "2026-07-23 12:00:00")
 
-	id, ok, err := s.ClaimDueMetadata(metaNow)
+	got, err := s.ClaimDueMetadata(metaNow)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if !ok || id != "UCstale" {
-		t.Fatalf("claimed = %q, %v; want UCstale", id, ok)
+	if got == nil || got.ID != "UCstale" {
+		t.Fatalf("claimed = %+v; want UCstale", got)
 	}
 }
 
@@ -61,12 +61,12 @@ func TestClaimDueMetadata_nothingDue(t *testing.T) {
 	seedSubscribed(t, s, "UCfresh", "2026-07-29 12:00:00")
 	setScan(t, s, "UCfresh", "", "2026-07-23 12:00:00")
 
-	id, ok, err := s.ClaimDueMetadata(metaNow)
+	got, err := s.ClaimDueMetadata(metaNow)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if ok {
-		t.Fatalf("claimed %q from an empty due set", id)
+	if got != nil {
+		t.Fatalf("claimed %q from an empty due set", got.ID)
 	}
 }
 
@@ -96,12 +96,12 @@ func TestClaimDueMetadata_keepsAwayFromScans(t *testing.T) {
 			seedSubscribed(t, s, "UCa", "2026-07-20 12:00:00")
 			setScan(t, s, "UCa", tc.lastScannedAt, tc.nextScanAt)
 
-			id, ok, err := s.ClaimDueMetadata(metaNow)
+			got, err := s.ClaimDueMetadata(metaNow)
 			if err != nil {
 				t.Fatalf("claim: %v", err)
 			}
-			if ok != tc.wantClaimed {
-				t.Fatalf("claimed = %q, %v; want claimed=%v", id, ok, tc.wantClaimed)
+			if (got != nil) != tc.wantClaimed {
+				t.Fatalf("claimed = %+v; want claimed=%v", got, tc.wantClaimed)
 			}
 		})
 	}
@@ -133,12 +133,12 @@ func TestClaimUnresolved_onlyTrackedAndNeverRead(t *testing.T) {
 		t.Fatalf("track: %v", err)
 	}
 
-	id, ok, err := s.ClaimUnresolved(metaNow)
+	got, err := s.ClaimUnresolved(metaNow)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if !ok || id != "UCnew" {
-		t.Fatalf("claimed = %q, %v; want UCnew", id, ok)
+	if got == nil || got.ID != "UCnew" {
+		t.Fatalf("claimed = %+v; want UCnew", got)
 	}
 
 	// A FAILED attempt still stamps resolved_at, and that must be enough to
@@ -147,8 +147,8 @@ func TestClaimUnresolved_onlyTrackedAndNeverRead(t *testing.T) {
 	if err := s.MarkResolveAttempted("UCnew", "2026-07-22 12:00:00"); err != nil {
 		t.Fatalf("mark attempted: %v", err)
 	}
-	if _, ok, err := s.ClaimUnresolved(metaNow); err != nil || ok {
-		t.Fatalf("backlog returned a channel after a failed attempt (ok=%v, err=%v)", ok, err)
+	if got, err := s.ClaimUnresolved(metaNow); err != nil || got != nil {
+		t.Fatalf("backlog returned a channel after a failed attempt (got=%+v, err=%v)", got, err)
 	}
 }
 
@@ -168,8 +168,8 @@ func TestClaimUnresolved_keepsAwayFromScans(t *testing.T) {
 	}
 	setScan(t, s, "UCsub", "2026-07-22 11:50:00", "2026-07-23 11:50:00")
 
-	if _, ok, err := s.ClaimUnresolved(metaNow); err != nil || ok {
-		t.Fatalf("claimed a channel scanned ten minutes ago (ok=%v, err=%v)", ok, err)
+	if got, err := s.ClaimUnresolved(metaNow); err != nil || got != nil {
+		t.Fatalf("claimed a channel scanned ten minutes ago (got=%+v, err=%v)", got, err)
 	}
 
 	// An unsubscribed tracked channel has no subscriptions row and so nothing
@@ -180,12 +180,12 @@ func TestClaimUnresolved_keepsAwayFromScans(t *testing.T) {
 	if err := s.Track("UCloose", "2026-01-02 00:00:00"); err != nil {
 		t.Fatalf("track: %v", err)
 	}
-	id, ok, err := s.ClaimUnresolved(metaNow)
+	got, err := s.ClaimUnresolved(metaNow)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if !ok || id != "UCloose" {
-		t.Fatalf("claimed = %q, %v; want UCloose", id, ok)
+	if got == nil || got.ID != "UCloose" {
+		t.Fatalf("claimed = %+v; want UCloose", got)
 	}
 }
 
@@ -197,8 +197,8 @@ func TestMarkMetaRefreshed_advancesTheSchedule(t *testing.T) {
 	if err := s.MarkMetaRefreshed("UCa", "2026-07-29 12:00:00"); err != nil {
 		t.Fatalf("mark: %v", err)
 	}
-	if _, ok, err := s.ClaimDueMetadata(metaNow); err != nil || ok {
-		t.Fatalf("channel still due after rescheduling (ok=%v, err=%v)", ok, err)
+	if got, err := s.ClaimDueMetadata(metaNow); err != nil || got != nil {
+		t.Fatalf("channel still due after rescheduling (got=%+v, err=%v)", got, err)
 	}
 }
 
@@ -237,7 +237,7 @@ func TestSubscribe_seedsTheMetadataSchedule(t *testing.T) {
 		t.Fatal("subscribing left next_meta_refresh_at NULL; the channel would never refresh")
 	}
 	// Roughly a week out: not due now, and not so far out it never comes.
-	if _, ok, _ := s.ClaimDueMetadata(metaNow); ok {
+	if got, _ := s.ClaimDueMetadata(metaNow); got != nil {
 		t.Fatal("a freshly subscribed channel is immediately due for a metadata refresh")
 	}
 }
