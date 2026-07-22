@@ -710,10 +710,14 @@ describe("Player", () => {
       name: /Category: Gaming/,
     });
     fireEvent.click(pill);
-    fireEvent.click(screen.getByRole("menuitemradio", { name: /^AI$/ }));
+    fireEvent.click(
+      screen.getByRole("menuitemradio", { name: /^Artificial Intelligence$/ }),
+    );
 
     expect(setCategory).toHaveBeenCalledWith("v1", "ai");
-    await screen.findByRole("button", { name: /Category: AI/ });
+    await screen.findByRole("button", {
+      name: /Category: Artificial Intelligence/,
+    });
   });
 
   // Optimistic, so a failed write must put the old category back rather than
@@ -726,7 +730,9 @@ describe("Player", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /Category: Gaming/ }),
     );
-    fireEvent.click(screen.getByRole("menuitemradio", { name: /^AI$/ }));
+    fireEvent.click(
+      screen.getByRole("menuitemradio", { name: /^Artificial Intelligence$/ }),
+    );
 
     await screen.findByRole("button", { name: /Category: Gaming/ });
   });

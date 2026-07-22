@@ -100,7 +100,7 @@ describe("VideoCard lifecycle line", () => {
     // The pill sits in the lifecycle row, not on the channel/date line.
     const pill = document.querySelector(".life.fresh .metapill");
     expect(pill).not.toBeNull();
-    expect(pill).toHaveTextContent("AI");
+    expect(pill).toHaveTextContent("Artificial Intelligence");
     expect(document.querySelector(".by .metapill")).toBeNull();
   });
 
@@ -178,7 +178,7 @@ describe("VideoCard lifecycle line", () => {
         onToggleWatched={noop}
       />,
     );
-    expect(screen.getByText("AI")).toBeInTheDocument();
+    expect(screen.getByText("Artificial Intelligence")).toBeInTheDocument();
     rerender(
       <VideoCard
         video={baseVideo({ category: "uncategorized" })}
@@ -346,7 +346,9 @@ describe("Library category chips", () => {
 
     expect(await screen.findByText("news video title")).toBeInTheDocument();
 
-    const aiChip = await screen.findByRole("button", { name: /AI/ });
+    const aiChip = await screen.findByRole("button", {
+      name: /Artificial Intelligence/,
+    });
     fireEvent.click(aiChip);
 
     await waitFor(() => {
@@ -376,7 +378,9 @@ describe("Library category chips", () => {
     await screen.findByText("news video title");
 
     fireEvent.click(screen.getByRole("button", { name: /Unwatched/ }));
-    const aiChip = await screen.findByRole("button", { name: /AI/ });
+    const aiChip = await screen.findByRole("button", {
+      name: /Artificial Intelligence/,
+    });
     fireEvent.click(aiChip);
 
     await waitFor(() => {
@@ -411,7 +415,9 @@ describe("Library category chips", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
 
     render(<Library onOpenVideo={() => {}} search="" />);
-    const aiChip = await screen.findByRole("button", { name: /AI/ });
+    const aiChip = await screen.findByRole("button", {
+      name: /Artificial Intelligence/,
+    });
     fireEvent.click(aiChip);
     await waitFor(() => {
       expect(listVideos).toHaveBeenCalledWith(
@@ -564,10 +570,10 @@ describe("Library category chips", () => {
     });
     // Back to the fresh lifecycle state — the error line is gone and the
     // category pill has taken its place. Scoped to .life.fresh because the
-    // chip row above the grid also carries an "AI" label.
+    // chip row above the grid also carries an "Artificial Intelligence" label.
     await waitFor(() => {
       expect(document.querySelector(".life.fresh .metapill")).toHaveTextContent(
-        "AI",
+        "Artificial Intelligence",
       );
     });
     expect(screen.queryByText("Download failed")).not.toBeInTheDocument();

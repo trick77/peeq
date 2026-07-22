@@ -96,14 +96,14 @@ func TestClassifyReturnsRawReplyAndSendsAllowedIDs(t *testing.T) {
 	})
 	s := New(fc)
 	got, err := s.Classify(context.Background(), "GPT-5 is here", "A video about a new model.",
-		[]videos.Category{{ID: "ai", Label: "AI"}, {ID: "news", Label: "News & Current Events"}})
+		[]videos.Category{{ID: "ai", Label: "Artificial Intelligence"}, {ID: "news", Label: "News & Current Events"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != " ai \n" {
 		t.Fatalf("Classify returned %q, want raw reply unchanged", got)
 	}
-	if !strings.Contains(gotSystem, "ai (AI)") || !strings.Contains(gotSystem, "news (News & Current Events)") {
+	if !strings.Contains(gotSystem, "ai (Artificial Intelligence)") || !strings.Contains(gotSystem, "news (News & Current Events)") {
 		t.Fatalf("system prompt missing allowed id (label) pairs: %q", gotSystem)
 	}
 	// The escape hatch is deliberately absent: offering 'uncategorized' as an
