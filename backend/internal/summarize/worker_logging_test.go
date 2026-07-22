@@ -288,20 +288,50 @@ func TestWorkerLogsRetryAttemptWhenKeyPointsFail(t *testing.T) {
 	}
 
 	recs := buf.records(t)
-	rec := findRec(recs, "summarize worker: key-points step failed, will retry")
+	rec := findRec(recs, "summarize worker: key-points step failed")
 	if rec == nil {
 		t.Fatal("no retry record")
 	}
 	for k, want := range map[string]any{
-		"attempt": float64(1), "max_attempts": float64(3), "last": false,
+		"attempt": float64(1), "max_attempts": float64(3), "will_retry": true,
 		"title": "A Test Video", "channel": "A Test Channel",
 	} {
 		if rec[k] != want {
 			t.Errorf("retry.%s = %v, want %v", k, rec[k], want)
 		}
 	}
-	if fin := findRec(recs, "summarize worker: analysis finished"); fin == nil || fin["outcome"] != "keypoints_failed" {
-		t.Errorf("finished record = %v", fin)
+	fin := findRec(recs, "summarize worker: analysis finished")
+	if fin == nil || fin["outcome"] != "keypoints_failed" {
+		t.Fatalf("finished record = %v", fin)
+	}
+	// The job has attempts left, so the terminal line must not read as final.
+	if fin["will_retry"] != true {
+		t.Errorf("finished.will_retry = %v, want true", fin["will_retry"])
+	}
+}
+
+func TestWorkerLogsExhaustedRetryAsFinal(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedVideo(t, h, "v3b")
+	// Burn the attempts so this claim is the last one.
+	if _, err := h.db.Exec(`UPDATE summary_jobs SET attempts = 2 WHERE video_id = 'v3b'`); err != nil {
+		t.Fatalf("bump attempts: %v", err)
+	}
+	log, buf := captureLogger()
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(keypointsErrCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
+		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536, Logger: log,
+	})
+	if _, err := w.processOne(context.Background()); err == nil {
+		t.Fatal("expected the key-points failure to surface")
+	}
+	recs := buf.records(t)
+	if rec := findRec(recs, "summarize worker: key-points step failed"); rec["will_retry"] != false {
+		t.Errorf("retry.will_retry = %v, want false", rec["will_retry"])
+	}
+	if fin := findRec(recs, "summarize worker: analysis finished"); fin["will_retry"] != false {
+		t.Errorf("finished.will_retry = %v, want false", fin["will_retry"])
 	}
 }
 
@@ -340,12 +370,76 @@ func TestWorkerLogsNoTranscriptReason(t *testing.T) {
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}
-	rec := findRec(buf.records(t), "summarize worker: no transcript")
+	recs := buf.records(t)
+	rec := findRec(recs, "summarize worker: no transcript")
 	if rec == nil {
 		t.Fatal("no 'no transcript' record")
 	}
 	if rec["reason"] != "no subtitle file" || rec["title"] != "No Subs" {
 		t.Errorf("no-transcript record = %v", rec)
+	}
+	// A video that is never analyzed must not announce an analysis: an import
+	// of subtitle-less videos would otherwise log thousands of starts that
+	// never end.
+	if started := findRec(recs, "summarize worker: analysis started"); started != nil {
+		t.Errorf("no-transcript video logged an analysis start: %v", started)
+	}
+	if fin := findRec(recs, "summarize worker: analysis finished"); fin != nil {
+		t.Errorf("no-transcript video logged an analysis finish: %v", fin)
+	}
+}
+
+func TestAnalysisRunNilIsAnInertRun(t *testing.T) {
+	// The failure paths that run before the analysis is announced — and the
+	// panic recovery, which may fire before it exists — call these on a nil
+	// run. Each must be a silent no-op rather than a second panic.
+	var run *analysisRun
+	if run.ident() != nil {
+		t.Error("nil run returned identity attrs")
+	}
+	if run.stepElapsedMs() != 0 {
+		t.Error("nil run returned a step duration")
+	}
+	run.skipped("summary", "n/a")
+	run.finished("error")
+	ctx, done := run.step("summary")
+	if ctx == nil {
+		t.Fatal("nil run returned a nil context")
+	}
+	done("extra", 1)
+}
+
+// panicCompleter blows up inside the summary step, exercising processOne's
+// recover.
+type panicCompleter struct{}
+
+func (panicCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	panic("boom")
+}
+
+func TestWorkerLogsTerminalLineOnPanic(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedVideo(t, h, "v8")
+	log, buf := captureLogger()
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(panicCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
+		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536, Logger: log,
+	})
+	// The recover in processOne swallows the panic; the loop must survive it.
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	recs := buf.records(t)
+	if findRec(recs, "summarize worker: recovered") == nil {
+		t.Fatal("no recovered record")
+	}
+	fin := findRec(recs, "summarize worker: analysis finished")
+	if fin == nil || fin["outcome"] != "panic" {
+		t.Fatalf("finished record = %v", fin)
+	}
+	if fin["video_id"] != "v8" || fin["title"] != "A Test Video" {
+		t.Errorf("panic finish lost identity: %v", fin)
 	}
 }
 

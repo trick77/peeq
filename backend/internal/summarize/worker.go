@@ -123,9 +123,13 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	if job == nil {
 		return w.classifyOne(ctx)
 	}
+	// Declared before the recover so a panic mid-analysis still gets a terminal
+	// line with the tokens that video had already spent.
+	var run *analysisRun
 	defer func() {
 		if r := recover(); r != nil {
 			w.d.Logger.Error("summarize worker: recovered", "job_id", job.ID, "panic", r)
+			run.finished("panic")
 			_ = w.d.Jobs.Fail(job.ID, job.Attempts, "panic")
 			_ = w.d.Videos.SetSummaryStatus(job.VideoID, "error", "internal error")
 		}
@@ -138,11 +142,10 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		return true, err
 	}
 
-	// Everything from here on is logged against this video: one identity, one
-	// token accumulator, one wall clock for the whole analysis.
-	run := w.startRun(ctx, job, video)
-
-	// No subtitles => clean terminal no_transcript state, not an error.
+	// No subtitles => clean terminal no_transcript state, not an error. Checked
+	// before the analysis is announced: a video that is never analyzed must not
+	// log a start line, or an import of subtitle-less videos fills the log with
+	// analyses that begin and never end.
 	if video.SubtitlePath == "" {
 		w.finishNoTranscript(job, video, "no subtitle file")
 		return true, nil
@@ -173,6 +176,10 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		w.finishNoTranscript(job, video, "empty transcript")
 		return true, nil
 	}
+
+	// There is real work to do: everything from here on is logged against this
+	// video — one identity, one token accumulator, one wall clock.
+	run = w.startRun(ctx, job, video)
 
 	// The pipeline is resumable: each artifact is saved the moment it is
 	// produced, and a retry skips whatever a prior attempt already stored. So a
@@ -273,6 +280,9 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 // line about a video — start, each step, failures, the total — carries the same
 // identity (title and channel, not just an opaque id) without threading five
 // arguments through the worker.
+// A nil *analysisRun is valid and every method on it is a no-op, which is what
+// lets the failure paths that run before the analysis is announced (and the
+// panic recovery) call them unconditionally.
 type analysisRun struct {
 	log     *slog.Logger
 	ctx     context.Context // carries the CallInfo the llm client logs against
@@ -281,8 +291,10 @@ type analysisRun struct {
 	job     *summaryjobs.Job
 	started time.Time
 
+	// stepStarted is only for the failure lines of the step currently running;
+	// each step's own duration and token delta live in its done closure, so a
+	// done() called out of order cannot report another step's numbers.
 	stepStarted time.Time
-	stepBefore  llm.Usage
 }
 
 // startRun announces the analysis and returns its logging state. attempt/
@@ -315,6 +327,9 @@ func (w *Worker) startRun(ctx context.Context, job *summaryjobs.Job, video *vide
 // ident is the video identity every line repeats. It returns a fresh slice so
 // callers can append to it safely.
 func (r *analysisRun) ident() []any {
+	if r == nil {
+		return nil
+	}
 	return []any{"video_id", r.video.ID, "title", r.video.Title, "channel", r.video.ChannelName}
 }
 
@@ -322,35 +337,53 @@ func (r *analysisRun) ident() []any {
 // calls must use plus the func that logs the step as done. Extra key/values
 // passed to that func are appended to the line.
 func (r *analysisRun) step(name string) (context.Context, func(extra ...any)) {
-	r.stepStarted = time.Now()
-	r.stepBefore = r.totals.Snapshot()
+	if r == nil {
+		return context.Background(), func(...any) {}
+	}
+	started := time.Now()
+	before := r.totals.Snapshot()
+	r.stepStarted = started
 	sctx := llm.WithStep(r.ctx, name)
 	return sctx, func(extra ...any) {
 		attrs := append([]any{"step", name}, r.ident()...)
-		attrs = append(attrs, "duration_ms", r.stepElapsedMs())
+		attrs = append(attrs, "duration_ms", time.Since(started).Milliseconds())
 		attrs = append(attrs, extra...)
-		attrs = append(attrs, r.totals.Snapshot().Sub(r.stepBefore).LogAttrs()...)
+		attrs = append(attrs, r.totals.Snapshot().Sub(before).LogAttrs()...)
 		r.log.Info("summarize worker: step done", attrs...)
 	}
 }
 
-// stepElapsedMs is the current step's wall time, also used by the step's own
-// failure lines.
-func (r *analysisRun) stepElapsedMs() int64 { return time.Since(r.stepStarted).Milliseconds() }
+// stepElapsedMs is the running step's wall time, for that step's own failure
+// lines (which have no done closure to read).
+func (r *analysisRun) stepElapsedMs() int64 {
+	if r == nil {
+		return 0
+	}
+	return time.Since(r.stepStarted).Milliseconds()
+}
 
 // skipped records a step a resumed job did not have to redo. Debug, not info:
 // it is context for reading a retry, not news.
 func (r *analysisRun) skipped(name, reason string) {
+	if r == nil {
+		return
+	}
 	r.log.Debug("summarize worker: step skipped", append([]any{"step", name}, append(r.ident(), "reason", reason)...)...)
 }
 
 // finished logs the whole analysis: wall time plus the chat tokens it cost.
-// Embedding tokens are not in here — they come from a different endpoint and
-// are logged by the embedding client at debug.
+// retrying distinguishes a failure the queue will pick up again from a
+// terminal one — without it an outcome of "error" reads as final on a job that
+// still has attempts left. Embedding tokens are not in here: they come from a
+// different endpoint and are logged by the embedding client at debug.
 func (r *analysisRun) finished(outcome string) {
+	if r == nil {
+		return
+	}
 	attrs := append(r.ident(), "outcome", outcome,
 		"duration_ms", time.Since(r.started).Milliseconds(),
-		"attempt", r.job.Attempts, "max_attempts", r.job.MaxAttempts)
+		"attempt", r.job.Attempts, "max_attempts", r.job.MaxAttempts,
+		"will_retry", outcome != "done" && r.job.Attempts < r.job.MaxAttempts)
 	r.log.Info("summarize worker: analysis finished", append(attrs, r.totals.Snapshot().LogAttrs()...)...)
 }
 
@@ -460,11 +493,11 @@ func (w *Worker) failJob(job *summaryjobs.Job, video *videos.Video, run *analysi
 // must NOT regress a usable summary to "error". If retries run out the job is
 // marked failed but the video keeps its summary and search.
 func (w *Worker) requeueJob(job *summaryjobs.Job, video *videos.Video, run *analysisRun, msg string) error {
-	// last=true means Jobs.Fail is about to mark this failed rather than
-	// requeue it, so "will retry" is not the whole story.
-	w.d.Logger.Warn("summarize worker: key-points step failed, will retry",
+	// will_retry=false means Jobs.Fail is about to mark this failed for good
+	// rather than requeue it — same vocabulary as the finished line.
+	w.d.Logger.Warn("summarize worker: key-points step failed",
 		append(run.ident(), "attempt", job.Attempts, "max_attempts", job.MaxAttempts,
-			"last", job.Attempts >= job.MaxAttempts,
+			"will_retry", job.Attempts < job.MaxAttempts,
 			"step_duration_ms", run.stepElapsedMs(), "err", msg)...)
 	run.finished("keypoints_failed")
 	if err := w.d.Jobs.Fail(job.ID, job.Attempts, msg); err != nil {

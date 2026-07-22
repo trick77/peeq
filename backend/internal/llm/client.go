@@ -25,7 +25,6 @@ const (
 	reasoningEffort   = "high"
 	defaultTimeout    = 5 * time.Minute
 	maxErrorBody      = 4 << 10
-	defaultHeartbeat  = 15 * time.Second
 	pacedLogThreshold = time.Second
 )
 
@@ -72,7 +71,7 @@ func NewClient(cfg Config, hc *http.Client) *Client {
 		cfg.Logger = slog.Default()
 	}
 	if cfg.HeartbeatInterval == 0 {
-		cfg.HeartbeatInterval = defaultHeartbeat
+		cfg.HeartbeatInterval = DefaultHeartbeat
 	}
 	return &Client{
 		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
@@ -185,7 +184,7 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 
 	started := time.Now()
 	c.log.Debug("llm: request start", append(info.LogAttrs(), "messages", len(messages), "request_bytes", len(body))...)
-	stop := c.startHeartbeat(ctx, info, started)
+	stop := StartHeartbeat(ctx, c.log, c.heartbeat, "llm: still waiting for response", info.LogAttrs()...)
 	defer stop()
 
 	fail := func(err error) (string, error) {
@@ -215,33 +214,4 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 	attrs := append(info.LogAttrs(), "duration_ms", time.Since(started).Milliseconds(), "status", resp.StatusCode)
 	c.log.Debug("llm: request done", append(attrs, usage.LogAttrs()...)...)
 	return parsed.Choices[0].Message.Content, nil
-}
-
-// startHeartbeat logs "still waiting" every heartbeat interval until the
-// returned stop func is called, so a request that takes minutes is visibly
-// alive rather than indistinguishable from a hung worker. It reports elapsed
-// time since started, which includes building the request but not the pacing
-// wait. Returns a no-op stop when the heartbeat is disabled.
-func (c *Client) startHeartbeat(ctx context.Context, info CallInfo, started time.Time) (stop func()) {
-	if c.heartbeat <= 0 {
-		return func() {}
-	}
-	done := make(chan struct{})
-	var once sync.Once
-	go func() {
-		t := time.NewTicker(c.heartbeat)
-		defer t.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				c.log.Info("llm: still waiting for response",
-					append(info.LogAttrs(), "elapsed_s", int64(time.Since(started).Seconds()))...)
-			}
-		}
-	}()
-	return func() { once.Do(func() { close(done) }) }
 }
