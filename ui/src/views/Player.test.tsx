@@ -227,6 +227,45 @@ describe("Player", () => {
     },
   );
 
+  it("skips a SponsorBlock segment, and a later toast replaces the skip notice", async () => {
+    // Two toasts back to back: the second must reset the shared timer, or the
+    // first one's timeout would dismiss it early.
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({
+        watched: true,
+        duration_seconds: 100,
+        sponsorblock_segments: [
+          { category: "sponsor", start_time: 10, end_time: 25 },
+        ],
+      }),
+    );
+    vi.mocked(setWatched).mockRejectedValueOnce(new Error("network down"));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    videoEl.pause = vi.fn();
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 12,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+
+    // Playhead jumped past the segment, and the skip is announced.
+    expect(videoEl.currentTime).toBe(25);
+    expect(await screen.findByText(/Skipped sponsor/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark unwatched" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Couldn't mark unwatched.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Skipped sponsor/)).not.toBeInTheDocument();
+  });
+
   it("restores the playhead and resumes playback when the toggle fails", async () => {
     vi.mocked(getVideo).mockResolvedValue(
       makeVideo({ watched: false, duration_seconds: 100 }),
