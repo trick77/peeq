@@ -16,6 +16,9 @@ type CallInfo struct {
 	Title   string
 	Channel string
 	Step    string
+	// Stage is the caller's position in its pipeline, rendered as "2/4", so a
+	// heartbeat says how far along the work is and not just that it is slow.
+	Stage string
 	// Totals, when set, accumulates the token usage of every call made with
 	// this info, so the caller can report a per-video total.
 	Totals *Totals
@@ -38,6 +41,14 @@ func WithStep(ctx context.Context, step string) context.Context {
 	return WithCall(ctx, ci)
 }
 
+// WithStage returns a context carrying the same CallInfo with the pipeline
+// position set ("2/4"). Like WithStep, it is safe on a context that has none.
+func WithStage(ctx context.Context, stage string) context.Context {
+	ci := CallFrom(ctx)
+	ci.Stage = stage
+	return WithCall(ctx, ci)
+}
+
 // CallFrom returns the CallInfo attached to ctx, or the zero value when there
 // is none — a caller that never attached one still works and simply logs less.
 func CallFrom(ctx context.Context) CallInfo {
@@ -48,9 +59,12 @@ func CallFrom(ctx context.Context) CallInfo {
 // LogAttrs returns the identity of the call as slog key/value pairs, omitting
 // the fields that are unset.
 func (ci CallInfo) LogAttrs() []any {
-	attrs := make([]any, 0, 8)
+	attrs := make([]any, 0, 10)
 	if ci.Step != "" {
 		attrs = append(attrs, "step", ci.Step)
+	}
+	if ci.Stage != "" {
+		attrs = append(attrs, "stage", ci.Stage)
 	}
 	if ci.VideoID != "" {
 		attrs = append(attrs, "video_id", ci.VideoID)

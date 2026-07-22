@@ -285,6 +285,39 @@ func TestComplete_worksWithoutCallInfo(t *testing.T) {
 	}
 }
 
+func TestWithStage_ridesAlongToTheHeartbeatAndTheLogLines(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		io.WriteString(w, usageBody)
+	}))
+	defer srv.Close()
+	log, buf := capture()
+	c := NewClient(Config{BaseURL: srv.URL, Logger: log, HeartbeatInterval: 10 * time.Millisecond}, srv.Client())
+
+	// The worker sets step and stage together; a stall must say which stage of
+	// which video is stuck, not just that something is slow.
+	ctx := WithStage(WithStep(WithCall(context.Background(), CallInfo{VideoID: "vid1", Title: "A Title"}), "keypoints"), "4/4")
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		close(release)
+	}()
+	if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	recs := buf.records(t)
+	hb := find(recs, "llm: still waiting for response")
+	if hb == nil {
+		t.Fatal("no heartbeat record")
+	}
+	if hb["stage"] != "4/4" || hb["step"] != "keypoints" {
+		t.Errorf("heartbeat = %v, want stage 4/4 keypoints", hb)
+	}
+	if done := find(recs, "llm: request done"); done["stage"] != "4/4" {
+		t.Errorf("request done = %v, want stage 4/4", done)
+	}
+}
+
 func TestComplete_heartbeatsWhileWaiting(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

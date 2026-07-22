@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -58,14 +59,32 @@ func findRec(recs []map[string]any, msg string) map[string]any {
 	return nil
 }
 
-// findStep returns the "step done" record for one step, or nil.
+// findStep returns the stage-done record for one step, or nil. The message
+// carries the stage ("stage 2/4 done"), so match on its shape plus the step.
 func findStep(recs []map[string]any, step string) map[string]any {
+	return findStageRec(recs, step, "done")
+}
+
+// findStageRec finds a stage line for one step by its trailing verb
+// ("started", "done", "skipped").
+func findStageRec(recs []map[string]any, step, verb string) map[string]any {
 	for _, r := range recs {
-		if r["msg"] == "summarize worker: step done" && r["step"] == step {
+		msg, _ := r["msg"].(string)
+		if strings.HasPrefix(msg, "summarize worker: stage ") && strings.HasSuffix(msg, " "+verb) && r["step"] == step {
 			return r
 		}
 	}
 	return nil
+}
+
+// stageOf pulls "2/4" out of a "summarize worker: stage 2/4 done" message.
+func stageOf(rec map[string]any) string {
+	msg, _ := rec["msg"].(string)
+	fields := strings.Fields(msg)
+	if len(fields) < 4 {
+		return ""
+	}
+	return fields[3]
 }
 
 func captureLogger() (*slog.Logger, *logBuf) {
@@ -185,17 +204,30 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 	}
 	for k, want := range map[string]any{
 		"video_id": "v1", "title": "A Test Video", "channel": "A Test Channel",
-		"attempt": float64(1), "max_attempts": float64(3), "resumed": false,
+		"attempt": "1/3", "resumed": false,
 	} {
 		if start[k] != want {
 			t.Errorf("started.%s = %v, want %v", k, start[k], want)
 		}
 	}
 
-	for _, step := range []string{"summary", "classify", "embedding", "keypoints"} {
+	// Every stage announces itself before it runs and reports when it is done,
+	// both numbered, so the log says where a video is while it is still there.
+	for i, step := range pipelineStages {
+		stage := strconv.Itoa(i+1) + "/4"
+		start := findStageRec(recs, step, "started")
+		if start == nil {
+			t.Fatalf("stage %s (%s) never announced its start", stage, step)
+		}
+		if got := stageOf(start); got != stage {
+			t.Errorf("%s started as stage %s, want %s", step, got, stage)
+		}
 		rec := findStep(recs, step)
 		if rec == nil {
-			t.Fatalf("no 'step done' record for %q", step)
+			t.Fatalf("no stage-done record for %q", step)
+		}
+		if got := stageOf(rec); got != stage {
+			t.Errorf("%s finished as stage %s, want %s", step, got, stage)
 		}
 		if _, ok := rec["duration_ms"]; !ok {
 			t.Errorf("step %q has no duration_ms: %v", step, rec)
@@ -287,17 +319,25 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	if start := findRec(recs, "summarize worker: analysis started"); start["resumed"] != true {
 		t.Errorf("resumed = %v, want true", start["resumed"])
 	}
-	var skipped []string
-	for _, r := range recs {
-		if r["msg"] == "summarize worker: step skipped" {
-			skipped = append(skipped, r["step"].(string))
+	// A skipped stage keeps its own number, so the stages a resumed job does
+	// run are still numbered where a reader expects them.
+	for _, want := range []struct{ step, stage string }{
+		{"summary", "1/4"}, {"classify", "2/4"}, {"embedding", "3/4"},
+	} {
+		rec := findStageRec(recs, want.step, "skipped")
+		if rec == nil {
+			t.Fatalf("stage %s (%s) was not logged as skipped", want.stage, want.step)
+		}
+		if got := stageOf(rec); got != want.stage {
+			t.Errorf("%s skipped as stage %s, want %s", want.step, got, want.stage)
 		}
 	}
-	if len(skipped) != 3 {
-		t.Fatalf("skipped steps = %v, want summary/classify/embedding", skipped)
+	kp := findStep(recs, "keypoints")
+	if kp == nil {
+		t.Fatal("key-points stage did not run on the resumed job")
 	}
-	if findStep(recs, "keypoints") == nil {
-		t.Error("key-points step did not run on the resumed job")
+	if got := stageOf(kp); got != "4/4" {
+		t.Errorf("keypoints ran as stage %s, want 4/4", got)
 	}
 }
 
@@ -320,7 +360,7 @@ func TestWorkerLogsRetryAttemptWhenKeyPointsFail(t *testing.T) {
 		t.Fatal("no retry record")
 	}
 	for k, want := range map[string]any{
-		"attempt": float64(1), "max_attempts": float64(3), "will_retry": true,
+		"attempt": "1/3", "will_retry": true,
 		"title": "A Test Video", "channel": "A Test Channel",
 	} {
 		if rec[k] != want {
@@ -354,8 +394,13 @@ func TestWorkerLogsExhaustedRetryAsFinal(t *testing.T) {
 		t.Fatal("expected the key-points failure to surface")
 	}
 	recs := buf.records(t)
-	if rec := findRec(recs, "summarize worker: key-points step failed"); rec["will_retry"] != false {
+	rec := findRec(recs, "summarize worker: key-points step failed")
+	if rec["will_retry"] != false {
 		t.Errorf("retry.will_retry = %v, want false", rec["will_retry"])
+	}
+	// The last allowed attempt reads as such in one field.
+	if rec["attempt"] != "3/3" {
+		t.Errorf("retry.attempt = %v, want 3/3", rec["attempt"])
 	}
 	if fin := findRec(recs, "summarize worker: analysis finished"); fin["will_retry"] != false {
 		t.Errorf("finished.will_retry = %v, want false", fin["will_retry"])
@@ -413,6 +458,20 @@ func TestWorkerLogsNoTranscriptReason(t *testing.T) {
 	}
 	if fin := findRec(recs, "summarize worker: analysis finished"); fin != nil {
 		t.Errorf("no-transcript video logged an analysis finish: %v", fin)
+	}
+}
+
+func TestStageLabel(t *testing.T) {
+	for i, step := range pipelineStages {
+		want := strconv.Itoa(i+1) + "/4"
+		if got := stageLabel(step); got != want {
+			t.Errorf("stageLabel(%q) = %q, want %q", step, got, want)
+		}
+	}
+	// A stage that was added to the pipeline but never listed gets no number,
+	// rather than a wrong one that silently renumbers its neighbours.
+	if got := stageLabel("not-a-stage"); got != "" {
+		t.Errorf("stageLabel of an unlisted stage = %q, want empty", got)
 	}
 }
 
