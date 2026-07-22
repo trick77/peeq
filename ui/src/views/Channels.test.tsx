@@ -323,8 +323,17 @@ describe("Channels", () => {
       .getByText("Tracked Channel")
       .closest(".channel-row") as HTMLElement;
     await user.click(within(row).getByRole("button", { name: /delete/i }));
+    // The warning must name the channel, its video count, the fact that
+    // "kept forever" videos go too, and that it cannot be undone — the same
+    // four things the channel page's own delete says.
     expect(confirmSpy).toHaveBeenCalledWith(
-      "Delete this channel and ALL its downloaded videos?",
+      expect.stringContaining("Delete Tracked Channel and its 0 videos?"),
+    );
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringContaining("including any you kept forever"),
+    );
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringContaining("cannot be undone"),
     );
     await waitFor(() => {
       expect(deleteChannel).toHaveBeenCalledWith("c1");
