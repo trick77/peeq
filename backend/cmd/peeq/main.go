@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/channelmeta"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/config"
@@ -314,15 +315,30 @@ func run() error {
 		},
 	})
 
-	// Bound all five background goroutines' lifetimes to the process: the
+	// metaRefresher is shared: the HTTP layer resolves a channel the first time
+	// someone opens its page, and metaWorker re-reads subscribed channels once
+	// a week. One instance, one implementation of fetch-and-store.
+	metaRefresher := &channelmeta.Refresher{
+		Channels: channelsStore,
+		Resolver: runner,
+		MediaDir: cfg.MediaDir,
+	}
+	metaWorker := channelmeta.NewWorker(channelmeta.Deps{
+		Refresher:      metaRefresher,
+		CookieStatus:   func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
+		AllowAnonymous: cfg.AllowAnonymousYoutube,
+		YoutubePaused:  func(ctx context.Context) bool { p, _ := settingsStore.YoutubePaused(ctx); return p },
+	})
+
+	// Bound all six background goroutines' lifetimes to the process: the
 	// download worker, the retention sweeper, the yt-dlp self-update ticker,
-	// the scan scheduler, and the summarize worker. workerWG.Wait() below
-	// (after serve returns, i.e. after ctx is cancelled) blocks until all
-	// five have actually observed ctx.Done() and returned, rather than
-	// exiting the process out from under them. All five loops exit promptly
-	// on ctx.Done(), so this wait is short.
+	// the scan scheduler, the summarize worker, and the channel-metadata
+	// refresher. workerWG.Wait() below (after serve returns, i.e. after ctx is
+	// cancelled) blocks until all six have actually observed ctx.Done() and
+	// returned, rather than exiting the process out from under them. All six
+	// loops exit promptly on ctx.Done(), so this wait is short.
 	var workerWG sync.WaitGroup
-	workerWG.Add(5)
+	workerWG.Add(6)
 	go func() {
 		defer workerWG.Done()
 		slog.Info("download worker started")
@@ -347,6 +363,11 @@ func run() error {
 		slog.Info("summarize worker started")
 		summarizeWorker.Run(ctx)
 	}()
+	go func() {
+		defer workerWG.Done()
+		slog.Info("channel metadata refresher started")
+		metaWorker.Run(ctx)
+	}()
 
 	slog.Info("SSE hub ready")
 
@@ -370,6 +391,7 @@ func run() error {
 
 		Channels:        channelsStore,
 		ChannelResolver: runner,
+		Metadata:        metaRefresher,
 		Ledger:          ledgerStore,
 
 		Rag:         ragStore,

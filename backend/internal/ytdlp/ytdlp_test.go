@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -680,5 +682,94 @@ func TestMetadata_classifiesBlockedError(t *testing.T) {
 	_, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ")
 	if !errors.Is(err, ErrBlocked) {
 		t.Fatalf("want ErrBlocked, got %v", err)
+	}
+}
+
+// TestThrottle_spacesOutConcurrentCallers is the shared-pacer invariant. Peeq
+// has several things that talk to YouTube at once — the download worker, the
+// scan scheduler, the metadata refresher, and HTTP handlers resolving a
+// channel on demand. When throttle was a private per-call sleep, each of them
+// waited its own 20s+ and they could then all fire in the same instant: peeq's
+// own concurrency defeated its own throttle.
+//
+// Slots are reserved against a shared clock, so consecutive callers are spaced
+// by at least one gap each no matter how many are asking.
+func TestThrottle_spacesOutConcurrentCallers(t *testing.T) {
+	base := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	var waits []time.Duration
+	r := New(RunnerConfig{
+		CookieProvider: func() (string, string) { return "c", "valid" },
+		ThrottleFloor:  20 * time.Second,
+		ThrottleJitter: time.Nanosecond, // effectively no jitter: exact bounds
+		RandFloat64:    func() float64 { return 0 },
+		// A frozen clock is the harsh case: without a shared reservation every
+		// caller would compute the same start time and they would all go at once.
+		Now: func() time.Time { return base },
+		Sleep: func(_ context.Context, d time.Duration) error {
+			mu.Lock()
+			waits = append(waits, d)
+			mu.Unlock()
+			return nil
+		},
+	})
+
+	const callers = 4
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			defer wg.Done()
+			if err := r.throttle(context.Background()); err != nil {
+				t.Errorf("throttle: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	got := append([]time.Duration(nil), waits...)
+	mu.Unlock()
+	if len(got) != callers {
+		t.Fatalf("got %d waits, want %d", len(got), callers)
+	}
+	// Each caller's wait is measured from the same frozen "now", so the set of
+	// waits must be one gap, two gaps, three gaps, four gaps — in some order.
+	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
+	gap := 20*time.Second + time.Nanosecond*0
+	for i, w := range got {
+		want := time.Duration(i+1) * gap
+		// Allow the sub-nanosecond jitter window to land anywhere in [0, 1ns).
+		if w < want || w > want+time.Duration(i+1)*time.Nanosecond {
+			t.Fatalf("wait[%d] = %v, want ~%v — callers were not spaced apart", i, w, want)
+		}
+	}
+}
+
+// TestThrottle_idleRunnerWaitsExactlyOneGap: the pacer must not turn into a
+// growing debt. After the reserved slots have passed, the next call waits its
+// own gap and nothing more.
+func TestThrottle_idleRunnerWaitsExactlyOneGap(t *testing.T) {
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	var got time.Duration
+	r := New(RunnerConfig{
+		CookieProvider: func() (string, string) { return "c", "valid" },
+		ThrottleFloor:  20 * time.Second,
+		ThrottleJitter: time.Nanosecond,
+		RandFloat64:    func() float64 { return 0 },
+		Now:            func() time.Time { return now },
+		Sleep:          func(_ context.Context, d time.Duration) error { got = d; return nil },
+	})
+
+	if err := r.throttle(context.Background()); err != nil {
+		t.Fatalf("throttle: %v", err)
+	}
+	// Advance past the slot that call reserved.
+	now = now.Add(time.Hour)
+	if err := r.throttle(context.Background()); err != nil {
+		t.Fatalf("throttle: %v", err)
+	}
+	if got < 20*time.Second || got > 21*time.Second {
+		t.Fatalf("wait after an idle period = %v, want ~20s (one gap, not accumulated debt)", got)
 	}
 }

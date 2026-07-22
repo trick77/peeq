@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/exec"
+	"sync"
 	"time"
 )
 
@@ -69,6 +70,10 @@ type RunnerConfig struct {
 	// sleeper that selects between a timer and ctx.Done(); tests inject a
 	// no-op (still taking ctx so a cancellation test can exercise it).
 	Sleep func(ctx context.Context, d time.Duration) error
+	// Now is the clock the shared pacer reserves slots against. Injectable so
+	// a test can drive the pacer deterministically instead of waiting real
+	// seconds. Defaults to time.Now.
+	Now func() time.Time
 	// MediaDir is the directory downloads are written into. Not used by
 	// Metadata, but part of the shared config so download-related methods
 	// added later don't need a second constructor.
@@ -92,8 +97,22 @@ type RunnerConfig struct {
 // Runner wraps the yt-dlp binary: cookie gate, throttle, and error
 // classification for every invocation. Runner is the ONLY thing in peeq
 // that shells out to yt-dlp.
+//
+// One Runner is shared by every caller that touches YouTube — the download
+// worker, the scan scheduler, the metadata refresher, and the HTTP handlers
+// that resolve a channel or read a video's metadata on demand. That sharing is
+// what makes the pacer below global rather than per-caller; a second Runner
+// would silently double the call rate.
 type Runner struct {
 	cfg RunnerConfig
+
+	// mu guards nextSlot only. It is never held across a sleep or an exec —
+	// the pacer reserves a slot under the lock and then waits outside it, so a
+	// long download cannot block another caller from computing its own slot.
+	mu sync.Mutex
+	// nextSlot is the earliest wall-clock time at which the NEXT invocation
+	// may start. Zero until the first call. See throttle.
+	nextSlot time.Time
 }
 
 // New builds a Runner from cfg, filling in safe defaults for any
@@ -178,21 +197,63 @@ func (r *Runner) pauseGate() error {
 	return nil
 }
 
-// throttle sleeps floor + rand[0, jitter) via the injected Sleep function,
-// where floor is the configured throttle floor clamped up to the hard 20s
-// minimum (see effectiveThrottleFloor) and jitter is ThrottleJitter. This
-// runs before EVERY yt-dlp invocation (exec is the single choke point), so
-// it covers every call that touches YouTube: Metadata today, and any
-// future Download / channel-scan calls that go through the same Runner.
-// The wait is never a bare fixed duration — the random component is
-// always added on top of the floor. The wait is cancellable: if ctx is
-// cancelled before the wait elapses, throttle returns ctx.Err() without
-// completing the full sleep, so a queued download can be cancelled during
-// its pre-call wait instead of blocking until it ends.
+// throttle spaces out every call peeq makes to YouTube. It runs before EVERY
+// yt-dlp invocation (execWithProgress is the single choke point), so it covers
+// downloads, channel scans, metadata refreshes and on-demand resolves alike.
+//
+// The gap is floor + rand[0, jitter): floor is the configured throttle floor
+// clamped up to the hard 20s minimum (see effectiveThrottleFloor), and the
+// random component is always added on top, so the wait is never a bare fixed
+// duration that a rate-limiter could recognise as a pattern.
+//
+// The gap alone is not enough, and this is the part worth understanding. It
+// used to be a plain per-call sleep, which spaces out one caller's SUCCESSIVE
+// calls but says nothing about DIFFERENT callers: the download worker, the
+// scan scheduler and the metadata refresher each slept their own 20s+ and
+// could then fire at YouTube in the same instant. Peeq's own concurrency —
+// each worker serial, but several workers — was the thing defeating the
+// throttle.
+//
+// So the wait is a reservation against a shared clock rather than a private
+// sleep. Each call takes the lock, claims the earliest slot at least one gap
+// from now AND at or after any slot already claimed, pushes nextSlot past it,
+// and then sleeps outside the lock until its slot arrives. Consecutive starts
+// are therefore always at least one gap apart across the whole process, no
+// matter how many goroutines are asking. A single caller on an idle Runner is
+// unaffected — its slot is exactly now+gap, the same wait as before.
+//
+// A cancelled wait burns its slot: the reservation is not returned to the
+// pool, so the next caller may wait slightly longer than necessary. That is
+// the conservative direction (fewer calls, not more) and not worth the
+// bookkeeping to reclaim.
+//
+// The wait is cancellable: if ctx is cancelled before the slot arrives,
+// throttle returns ctx.Err() without completing the sleep, so a queued
+// download can be cancelled during its pre-call wait instead of blocking
+// until it ends.
 func (r *Runner) throttle(ctx context.Context) error {
 	floor := r.effectiveThrottleFloor()
 	jitter := time.Duration(r.cfg.RandFloat64() * float64(r.cfg.ThrottleJitter))
-	return r.cfg.Sleep(ctx, floor+jitter)
+	gap := floor + jitter
+
+	now := r.now()
+	r.mu.Lock()
+	slot := now.Add(gap)
+	if slot.Before(r.nextSlot) {
+		slot = r.nextSlot
+	}
+	r.nextSlot = slot.Add(gap)
+	r.mu.Unlock()
+
+	return r.cfg.Sleep(ctx, slot.Sub(now))
+}
+
+// now reads the injectable clock, defaulting to time.Now.
+func (r *Runner) now() time.Time {
+	if r.cfg.Now != nil {
+		return r.cfg.Now()
+	}
+	return time.Now()
 }
 
 // defaultSleep is the production Sleep implementation. It waits d unless

@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/channelmeta"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
@@ -72,6 +73,13 @@ type Deps struct {
 	// ChannelResolver resolves a channel url to its authoritative UCID via
 	// yt-dlp. Optional: when nil, POST /api/channels returns 503.
 	ChannelResolver ChannelResolver
+	// Metadata is the shared channel-metadata refresher: the fetch-and-store
+	// step behind both the first-visit resolve here and the background weekly
+	// refresh. Optional — when nil but Channels and ChannelResolver are set,
+	// New builds an equivalent one, so a caller that does not run the
+	// background worker (every test, today) needs no extra wiring. Production
+	// passes the same instance the worker uses.
+	Metadata *channelmeta.Refresher
 
 	// Ledger is the per-channel scan ledger (channel_videos) backing the
 	// pending API. Optional: when nil, the pending endpoints return 503.
@@ -151,6 +159,7 @@ type server struct {
 
 	channels        *channels.Store
 	channelResolver ChannelResolver
+	metadata        *channelmeta.Refresher
 
 	ledger *channelvideos.Store
 
@@ -184,6 +193,7 @@ func New(d Deps) http.Handler {
 
 		channels:        d.Channels,
 		channelResolver: d.ChannelResolver,
+		metadata:        d.Metadata,
 
 		ledger: d.Ledger,
 
@@ -194,6 +204,13 @@ func New(d Deps) http.Handler {
 		onResumeYoutube: d.OnResumeYoutube,
 
 		onChannelResolved: d.OnChannelResolved,
+	}
+	if s.metadata == nil && s.channels != nil && s.channelResolver != nil {
+		s.metadata = &channelmeta.Refresher{
+			Channels: s.channels,
+			Resolver: s.channelResolver,
+			MediaDir: s.mediaDir,
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -239,7 +256,6 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/channels/{id}/subscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsSubscribe)))
 	mux.Handle("POST /api/channels/{id}/unsubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsUnsubscribe)))
 	mux.Handle("POST /api/channels/{id}/scan", s.requireAuth(http.HandlerFunc(s.handleChannelScan)))
-	mux.Handle("POST /api/channels/{id}/refresh", s.requireAuth(http.HandlerFunc(s.handleChannelRefresh)))
 	mux.Handle("GET /api/channels/{id}/avatar", s.requireAuth(http.HandlerFunc(s.handleChannelAvatar)))
 	mux.Handle("GET /api/channels/{id}/banner", s.requireAuth(http.HandlerFunc(s.handleChannelBanner)))
 	mux.Handle("GET /api/channels/auto-unsubscribed", s.requireAuth(http.HandlerFunc(s.handleChannelsAutoUnsubscribedList)))

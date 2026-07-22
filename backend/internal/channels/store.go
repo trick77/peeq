@@ -391,9 +391,17 @@ WHERE c.tracked_at IS NOT NULL`
 // Subscribe subscribes channelID, scheduling its first scan at nextScanAt.
 // It is idempotent: if the channel is already subscribed, this is a no-op
 // that leaves the existing subscription's config and baseline untouched.
+//
+// The first metadata refresh is scheduled here too, one interval out, in SQL
+// rather than as a parameter: no caller has an opinion about it, and none of
+// them (nor the taimport writer interface) should have to grow an argument for
+// a schedule they don't care about. Unlike 0004's backfill this needs no
+// random spread — subscribe events already arrive spread across real time, so
+// they cannot converge into a batch the way a one-shot migration would.
 func (s *Store) Subscribe(channelID, nextScanAt string) error {
 	_, err := s.db.ExecContext(context.Background(), `
-INSERT INTO subscriptions (channel_id, next_scan_at) VALUES (?, ?)
+INSERT INTO subscriptions (channel_id, next_scan_at, next_meta_refresh_at)
+VALUES (?, ?, datetime('now', '+7 days'))
 ON CONFLICT(channel_id) DO NOTHING`,
 		channelID, nextScanAt,
 	)
