@@ -34,7 +34,10 @@ type WorkerDeps struct {
 	EmbedModel   string
 	EmbedDim     int
 	PollInterval time.Duration
-	Logger       *slog.Logger
+	// VideoDelay is a pause between videos, giving a slow/rate-limited LLM
+	// endpoint room to breathe. 0 disables it.
+	VideoDelay time.Duration
+	Logger     *slog.Logger
 
 	// OnPhase, when set, is called at each summary state transition so an SSE
 	// hub can push live progress to the Player. videoID is always set so the
@@ -72,8 +75,14 @@ func (w *Worker) Run(ctx context.Context) {
 		if err != nil {
 			w.d.Logger.Error("summarize worker: process", "err", err)
 		}
-		if !did {
-			t := time.NewTimer(w.d.PollInterval)
+		// Idle: poll again shortly. Busy: pause VideoDelay so the LLM endpoint
+		// gets room to breathe between videos.
+		gap := w.d.PollInterval
+		if did {
+			gap = w.d.VideoDelay
+		}
+		if gap > 0 {
+			t := time.NewTimer(gap)
 			select {
 			case <-ctx.Done():
 				t.Stop()
@@ -115,8 +124,12 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		return true, nil
 	}
 
-	_ = w.d.Videos.SetSummaryStatus(video.ID, "running", "")
-	w.emit(video.ID, "running", "summarizing")
+	// Announce "running" only for a fresh job; a resumed one (retrying just the
+	// key-points step) already has its summary marked done and must not regress.
+	if video.SummaryStatus != "done" {
+		_ = w.d.Videos.SetSummaryStatus(video.ID, "running", "")
+		w.emit(video.ID, "running", "summarizing")
+	}
 
 	safe, err := media.SafeMediaPath(w.d.MediaDir, video.SubtitlePath)
 	if err != nil {
@@ -141,35 +154,59 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		return true, nil
 	}
 
-	// yt-dlp chapters already stored on the video (source=yt-dlp) are preferred.
+	// The pipeline is resumable: each artifact is saved the moment it is
+	// produced, and a retry skips whatever a prior attempt already stored. So a
+	// failure in the fragile key-points step (step 3) never discards the summary
+	// or embeddings, and only that step re-runs.
+
+	// Step 1 — prose summary. Persist on its own; skip if already saved.
+	summary := video.Summary
+	if summary == "" {
+		s, serr := w.d.Summarizer.SummarizeText(ctx, parsed.Transcript)
+		if serr != nil {
+			return true, w.failJob(job, video.ID, serr.Error())
+		}
+		if err := w.d.Videos.SetSummaryText(video.ID, s); err != nil {
+			return true, w.failJob(job, video.ID, err.Error())
+		}
+		summary = s
+	}
+
+	// Step 2 — embeddings. Skip if already embedded (embed_model is set).
+	if video.EmbedModel == "" {
+		w.emit(video.ID, "running", "embedding")
+		if err := w.embedAndStore(ctx, video.ID, parsed, summary); err != nil {
+			return true, w.failJob(job, video.ID, err.Error())
+		}
+	}
+
+	// Summary + search are usable now — mark done so the UI shows them even if
+	// the key-points step below is still pending on a slow endpoint.
+	if video.SummaryStatus != "done" {
+		_ = w.d.Videos.SetSummaryStatus(video.ID, "done", "")
+		w.emit(video.ID, "done", "")
+	}
+
+	// Step 3 — key points (and chapters when yt-dlp didn't supply them). The
+	// fragile call, run last so a failure retries only this and costs nothing.
 	ytChapters := decodeChapters(video.Chapters)
-	art, err := w.d.Summarizer.Run(ctx, parsed.Transcript, parsed.Cues, ytChapters)
+	chapters, keyPoints, err := w.d.Summarizer.KeyPoints(ctx, summary, parsed.Cues, ytChapters)
 	if err != nil {
-		return true, w.failJob(job, video.ID, err.Error())
+		return true, w.requeueJob(job, video.ID, err.Error())
 	}
-
-	w.emit(video.ID, "running", "embedding")
-	if err := w.embedAndStore(ctx, video.ID, parsed, art.Summary); err != nil {
-		return true, w.failJob(job, video.ID, err.Error())
+	if err := w.d.Videos.SetKeyPoints(video.ID, encodeChapters(chapters), encodeKeyPoints(keyPoints)); err != nil {
+		return true, w.requeueJob(job, video.ID, err.Error())
 	}
+	w.emit(video.ID, "done", "")
 
-	chJSON := encodeChapters(art.Chapters)
-	kpJSON := encodeKeyPoints(art.KeyPoints)
-	if err := w.d.Videos.SetSummary(video.ID, art.Summary, chJSON, kpJSON); err != nil {
-		return true, w.failJob(job, video.ID, err.Error())
-	}
-
-	// Classify into one fixed-enum category from the stored summary. This is
-	// best-effort: a classify error or invalid reply leaves the category at
-	// its 'uncategorized' default and must NOT fail the job (the summary is
-	// already stored). Same chat client + throttle/pause path as summarize.
-	if raw, cerr := w.d.Summarizer.Classify(ctx, video.Title, art.Summary, videos.CategoryIDs()); cerr != nil {
+	// Step 4 — category (best-effort): a classify failure leaves 'uncategorized'
+	// and must NOT fail the job, since everything above is already saved.
+	if raw, cerr := w.d.Summarizer.Classify(ctx, video.Title, summary, videos.CategoryIDs()); cerr != nil {
 		w.d.Logger.Warn("summarize worker: classify failed", "video_id", video.ID, "err", cerr)
 	} else if serr := w.d.Videos.SetCategory(video.ID, videos.NormalizeCategory(raw)); serr != nil {
 		w.d.Logger.Error("summarize worker: set category failed", "video_id", video.ID, "err", serr)
 	}
 
-	w.emit(video.ID, "done", "")
 	_ = w.d.Jobs.Finish(job.ID, "done", "")
 	return true, nil
 }
@@ -195,6 +232,19 @@ func (w *Worker) failJob(job *summaryjobs.Job, videoID, msg string) error {
 		return fmt.Errorf("summarize job %d failed (%s); also fail-record error: %w", job.ID, msg, err)
 	}
 	return fmt.Errorf("summarize job %d failed: %s", job.ID, msg)
+}
+
+// requeueJob records a retryable failure and requeues the job WITHOUT touching
+// summary_status. It is used for the key-points step, which runs after the
+// summary is already marked done: a failure there must retry only that step and
+// must NOT regress a usable summary to "error". If retries run out the job is
+// marked failed but the video keeps its summary and search.
+func (w *Worker) requeueJob(job *summaryjobs.Job, videoID, msg string) error {
+	w.d.Logger.Warn("summarize worker: key-points step failed, will retry", "video_id", videoID, "err", msg)
+	if err := w.d.Jobs.Fail(job.ID, job.Attempts, msg); err != nil {
+		return fmt.Errorf("summarize job %d key-points failed (%s); also fail-record error: %w", job.ID, msg, err)
+	}
+	return fmt.Errorf("summarize job %d key-points failed: %s", job.ID, msg)
 }
 
 // embedAndStore chunks the transcript, maps each chunk to its start-second via

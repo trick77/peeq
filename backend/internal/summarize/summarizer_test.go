@@ -2,6 +2,7 @@ package summarize
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -32,51 +33,56 @@ func (f *fakeCompleter) Complete(ctx context.Context, m []llm.Message) (string, 
 	return f.replies[0], nil
 }
 
-func TestRunProducesThreeArtifactsAndPrefersYtdlpChapters(t *testing.T) {
+func TestSummarizeThenKeyPointsPrefersYtdlpChapters(t *testing.T) {
 	cues := []subtitles.Cue{{StartSeconds: 0, Text: "intro"}, {StartSeconds: 108, Text: "titanium frame"}}
 	transcript := strings.Repeat("word ", 2000)
 	fc := &fakeCompleter{replies: []string{
 		"chunk summary",          // map calls
 		"Overall prose summary.", // reduce: summary
-		`{"key_points":[{"ts":108,"text":"weight drop"}]}`, // reduce: key points
+		`{"key_points":[{"ts":108,"text":"weight drop"}]}`, // key points
 	}}
 	s := New(fc)
-	got, err := s.Run(context.Background(), transcript, cues, []Chapter{{TS: 0, Title: "Intro", Source: "yt-dlp"}})
+
+	summary, err := s.SummarizeText(context.Background(), transcript)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Summary == "" {
+	if summary == "" {
 		t.Fatal("empty summary")
 	}
-	if len(got.Chapters) != 1 || got.Chapters[0].Source != "yt-dlp" {
-		t.Fatalf("expected yt-dlp chapters preserved: %+v", got.Chapters)
+
+	chapters, keyPoints, err := s.KeyPoints(context.Background(), summary, cues, []Chapter{{TS: 0, Title: "Intro", Source: "yt-dlp"}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(got.KeyPoints) != 1 || got.KeyPoints[0].TS != 108 {
-		t.Fatalf("key points: %+v", got.KeyPoints)
+	if len(chapters) != 1 || chapters[0].Source != "yt-dlp" {
+		t.Fatalf("expected yt-dlp chapters preserved: %+v", chapters)
+	}
+	if len(keyPoints) != 1 || keyPoints[0].TS != 108 {
+		t.Fatalf("key points: %+v", keyPoints)
 	}
 }
 
-// TestRunParsesProseWrappedJSON is the regression test for the extractJSON
+// TestKeyPointsParsesProseWrappedJSON is the regression test for the extractJSON
 // fix: stripFences only trims a fence at exact string boundaries, so a reply
 // that prefixes prose before the ```json fence used to fail json.Unmarshal
 // silently, leaving key_points/chapters empty. extractJSON instead slices
 // from the first '{' to the last '}', which recovers the object regardless
 // of what surrounds it.
-func TestRunParsesProseWrappedJSON(t *testing.T) {
+func TestKeyPointsParsesProseWrappedJSON(t *testing.T) {
 	cues := []subtitles.Cue{{StartSeconds: 0, Text: "intro"}, {StartSeconds: 108, Text: "titanium frame"}}
-	transcript := strings.Repeat("word ", 2000)
 	fc := &fakeCompleter{replies: []string{
-		"chunk summary",          // map calls
-		"Overall prose summary.", // reduce: summary
-		"Here are the key points:\n```json\n{\"key_points\":[{\"ts\":108,\"text\":\"x\"}]}\n```", // reduce: key points, prose-wrapped
+		"chunk summary",          // (unused here)
+		"Overall prose summary.", // (unused here)
+		"Here are the key points:\n```json\n{\"key_points\":[{\"ts\":108,\"text\":\"x\"}]}\n```", // key points, prose-wrapped
 	}}
 	s := New(fc)
-	got, err := s.Run(context.Background(), transcript, cues, []Chapter{{TS: 0, Title: "Intro", Source: "yt-dlp"}})
+	_, keyPoints, err := s.KeyPoints(context.Background(), "Overall prose summary.", cues, []Chapter{{TS: 0, Title: "Intro", Source: "yt-dlp"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.KeyPoints) != 1 || got.KeyPoints[0].TS != 108 || got.KeyPoints[0].Text != "x" {
-		t.Fatalf("expected prose-wrapped JSON to be parsed, got: %+v", got.KeyPoints)
+	if len(keyPoints) != 1 || keyPoints[0].TS != 108 || keyPoints[0].Text != "x" {
+		t.Fatalf("expected prose-wrapped JSON to be parsed, got: %+v", keyPoints)
 	}
 }
 
@@ -111,4 +117,32 @@ type completerFunc func(context.Context, []llm.Message) (string, error)
 
 func (f completerFunc) Complete(ctx context.Context, m []llm.Message) (string, error) {
 	return f(ctx, m)
+}
+
+func TestSummarizeText_emptyTranscriptErrors(t *testing.T) {
+	s := New(&fakeCompleter{})
+	if _, err := s.SummarizeText(context.Background(), ""); err == nil {
+		t.Error("want an error for an empty transcript")
+	}
+}
+
+func TestSummarizeText_mapErrorPropagates(t *testing.T) {
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		return "", errors.New("map boom")
+	}))
+	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err == nil {
+		t.Error("want the map error propagated")
+	}
+}
+
+func TestSummarizeText_reduceErrorPropagates(t *testing.T) {
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		if strings.Contains(m[0].Content, "Combine these section summaries") {
+			return "", errors.New("reduce boom")
+		}
+		return "chunk summary", nil
+	}))
+	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err == nil {
+		t.Error("want the reduce error propagated")
+	}
 }

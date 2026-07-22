@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCompleteSendsModelAndEffortAndReturnsContent(t *testing.T) {
@@ -53,5 +54,35 @@ func TestCompleteErrorsOnNon2xx(t *testing.T) {
 	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestComplete_pacesRequestsByInterval(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL, RequestInterval: 100 * time.Millisecond}, srv.Client())
+	start := time.Now()
+	for i := 0; i < 2; i++ {
+		if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+			t.Fatalf("complete %d: %v", i, err)
+		}
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Errorf("two paced calls took %v, want >= the 100ms interval between them", elapsed)
+	}
+}
+
+func TestComplete_zeroIntervalDoesNotPace(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL}, srv.Client()) // RequestInterval 0
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("complete: %v", err)
 	}
 }

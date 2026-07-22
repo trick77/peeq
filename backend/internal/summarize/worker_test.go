@@ -649,3 +649,130 @@ func TestWorkerChunkTimestampsAreExactAndMonotonic(t *testing.T) {
 		t.Fatal("expected at least one non-first chunk to have start_seconds > 0 (all zero means the old prefix-match bug regressed)")
 	}
 }
+
+// keyPointsFailOnceCompleter answers the map/summary/classify calls normally,
+// but fails the key-points call on its first invocation and succeeds after —
+// modelling a flaky reasoning endpoint that eventually cooperates.
+type keyPointsFailOnceCompleter struct{ kpCalls int }
+
+func (c *keyPointsFailOnceCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	sys := m[0].Content
+	switch {
+	case strings.Contains(sys, "Combine these section summaries"):
+		return "Overall prose summary.", nil
+	case strings.Contains(sys, "category id"):
+		return "ai", nil
+	case strings.Contains(sys, "JSON"):
+		c.kpCalls++
+		if c.kpCalls == 1 {
+			return "", errors.New("keypoints timeout")
+		}
+		return `{"key_points":[{"ts":0,"text":"a point"}]}`, nil
+	}
+	return "chunk summary", nil
+}
+
+// countingEmbedder records how many times Embed is called, to prove a resumed
+// job does not re-embed.
+type countingEmbedder struct {
+	dim   int
+	calls int
+}
+
+func (c *countingEmbedder) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
+	c.calls++
+	out := make([][]float32, len(inputs))
+	for i := range inputs {
+		v := make([]float32, c.dim)
+		v[0] = 1
+		out[i] = v
+	}
+	return out, nil
+}
+
+// TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints is the
+// point of the split: a key-points timeout must not discard the summary or
+// embeddings or regress the video's status, and the retry must re-run ONLY the
+// key-points step.
+func TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v3/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n\n" +
+		"00:00:02.000 --> 00:00:04.000\nToday we will talk about testing Go workers.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	if err := h.videos.Upsert(videos.Video{ID: "v3", URL: "https://youtu.be/v3"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v3", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	jobID, err := h.jobs.Enqueue("v3")
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	completer := &keyPointsFailOnceCompleter{}
+	embedder := &countingEmbedder{dim: 1536}
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completer), Embedder: embedder,
+		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+
+	// Attempt 1: key-points fails. Summary + embeddings persist, the video is
+	// marked done, and the job requeues.
+	if _, err := w.processOne(context.Background()); err == nil {
+		t.Fatal("expected the key-points failure to surface")
+	}
+	v, err := h.videos.Get("v3")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.Summary == "" {
+		t.Error("summary was discarded on a key-points failure — it must be kept")
+	}
+	if v.EmbedModel == "" {
+		t.Error("embeddings were not persisted before the fragile step")
+	}
+	if v.SummaryStatus != "done" {
+		t.Errorf("summary_status = %q, want done (summary+search usable despite key-points failing)", v.SummaryStatus)
+	}
+	if embedder.calls != 1 {
+		t.Errorf("embedder called %d times, want 1", embedder.calls)
+	}
+	var state string
+	if err := h.db.QueryRow(`SELECT state FROM summary_jobs WHERE id = ?`, jobID).Scan(&state); err != nil {
+		t.Fatalf("job state: %v", err)
+	}
+	if state != "pending" {
+		t.Errorf("job state = %q, want pending (queued for retry)", state)
+	}
+
+	// Attempt 2: skips summary + embeddings; only key-points reruns, succeeds.
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne retry: %v", err)
+	}
+	v, _ = h.videos.Get("v3")
+	if !strings.Contains(v.KeyPoints, "a point") {
+		t.Errorf("key points not set on retry: %q", v.KeyPoints)
+	}
+	if embedder.calls != 1 {
+		t.Errorf("embedder re-called on retry (%d) — resume must skip embedding", embedder.calls)
+	}
+	if completer.kpCalls != 2 {
+		t.Errorf("key-points calls = %d, want 2 (failed, then succeeded)", completer.kpCalls)
+	}
+	if err := h.db.QueryRow(`SELECT state FROM summary_jobs WHERE id = ?`, jobID).Scan(&state); err != nil {
+		t.Fatalf("job state: %v", err)
+	}
+	if state != "done" {
+		t.Errorf("job state after successful retry = %q, want done", state)
+	}
+}
