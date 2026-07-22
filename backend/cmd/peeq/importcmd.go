@@ -77,17 +77,18 @@ func formatChannelResult(res taimport.ChannelResult, dryRun bool) string {
 	if dryRun {
 		b.WriteString("DRY RUN — nothing was written.\n\n")
 	}
-	fmt.Fprintf(&b, "Subscriptions:  %d\n", res.Subscribed)
-	fmt.Fprintf(&b, "  active:       %d\n", res.Active)
-	fmt.Fprintf(&b, "  inactive:     %d\n", res.Inactive)
+	fmt.Fprintf(&b, "Subscriptions:  %d  (all imported)\n", res.Subscribed)
 	fmt.Fprintf(&b, "Skipped:        %d  (channels TubeArchivist knows but was never subscribed to)\n", res.Skipped)
 
+	// TubeArchivist's channel_active flag is not a reliable "dead channel"
+	// signal — it just means TA's last refresh failed to fetch the channel,
+	// usually transiently. peeq never acts on it (it re-verifies every channel
+	// itself), so it is reported only as an FYI, never as a verdict labelling a
+	// live channel "inactive".
 	if len(res.InactiveNames) > 0 {
-		b.WriteString("\nTubeArchivist marked these inactive — its last refresh could not\n")
-		b.WriteString("fetch the channel, which usually means a transient failure rather\n")
-		b.WriteString("than a deleted channel. peeq imported them normally and re-checks\n")
-		b.WriteString("each against YouTube on its own scan; only genuinely dead ones are\n")
-		b.WriteString("unsubscribed:\n")
+		fmt.Fprintf(&b, "\n%d of them TubeArchivist couldn't refresh on its last pass — usually a\n", len(res.InactiveNames))
+		b.WriteString("transient fetch failure, not a dead channel. peeq imported them like the\n")
+		b.WriteString("rest and re-checks each against YouTube itself:\n")
 		for _, n := range res.InactiveNames {
 			fmt.Fprintf(&b, "  - %s\n", n)
 		}

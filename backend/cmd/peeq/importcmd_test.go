@@ -22,14 +22,8 @@ func TestFormatChannelResult_realRun(t *testing.T) {
 
 	got := formatChannelResult(res, false)
 
-	// Assert each count on the same line as its label, so swapping the
-	// active/inactive lines (or dropping the labels) fails this test. A bare
-	// strings.Contains(got, "2") would also match inside "12", so the label
-	// must be part of the match.
 	for _, want := range []string{
 		"Subscriptions:  12",
-		"active:       10",
-		"inactive:     2",
 		"Skipped:        37",
 		"Dead Channel",
 		"Gone Too",
@@ -41,16 +35,18 @@ func TestFormatChannelResult_realRun(t *testing.T) {
 	if strings.Contains(strings.ToLower(got), "dry run") {
 		t.Errorf("real run mentioned a dry run:\n%s", got)
 	}
-	// TA's channel_active=false means its last refresh failed to fetch the
-	// channel — usually transient, NOT that the channel is gone. The summary
-	// must not mislabel it that way or promise it will be auto-retired; it must
-	// say peeq re-checks each channel itself.
+	// TA's channel_active flag is not a reliable "dead channel" signal, so the
+	// summary must not label channels "inactive", claim they are gone, or
+	// promise they'll be retired; it must say peeq re-checks each itself.
 	low := strings.ToLower(got)
-	if strings.Contains(low, "gone from youtube") {
-		t.Errorf("mislabels a TA-inactive channel as gone from YouTube:\n%s", got)
+	if strings.Contains(got, "inactive:") || strings.Contains(low, "marked these inactive") {
+		t.Errorf("still labels live channels 'inactive':\n%s", got)
 	}
-	if !strings.Contains(low, "re-check") {
-		t.Errorf("does not explain that peeq re-checks inactive channels:\n%s", got)
+	if strings.Contains(low, "gone from youtube") {
+		t.Errorf("mislabels a channel as gone from YouTube:\n%s", got)
+	}
+	if !strings.Contains(low, "re-checks each against youtube") {
+		t.Errorf("does not explain that peeq re-checks each channel itself:\n%s", got)
 	}
 }
 
@@ -67,13 +63,13 @@ func TestFormatChannelResult_dryRunSaysSo(t *testing.T) {
 	}
 }
 
-func TestFormatChannelResult_noInactiveOmitsTheList(t *testing.T) {
+func TestFormatChannelResult_noRefreshFailuresOmitsTheList(t *testing.T) {
 	res := taimport.ChannelResult{Subscribed: 5, Active: 5}
 
 	got := formatChannelResult(res, false)
 
-	if strings.Contains(strings.ToLower(got), "inactive channel") {
-		t.Errorf("listed inactive channels when there are none:\n%s", got)
+	if strings.Contains(strings.ToLower(got), "couldn't refresh") {
+		t.Errorf("listed refresh-failed channels when there are none:\n%s", got)
 	}
 }
 
