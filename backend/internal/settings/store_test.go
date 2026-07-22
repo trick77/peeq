@@ -150,6 +150,54 @@ func TestUpdate_minVideoDurationSeconds(t *testing.T) {
 	// Default is 180 on a fresh row — sanity that the column exists & seeds.
 }
 
+func TestUpdate_subtitlesDefault(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	got, err := s.Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SubtitlesDefault {
+		t.Fatal("subtitles_default should seed to false")
+	}
+
+	on := true
+	if err := s.Update(ctx, Patch{SubtitlesDefault: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.Get(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !got.SubtitlesDefault {
+		t.Fatal("subtitles_default = false after setting it true")
+	}
+
+	// A patch that omits the field must leave it alone — this is the whole
+	// point of the COALESCE, and the first bool to go through it.
+	days := 21
+	if err := s.Update(ctx, Patch{RetentionDays: &days}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.Get(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !got.SubtitlesDefault {
+		t.Fatal("subtitles_default was cleared by an unrelated patch")
+	}
+
+	off := false
+	if err := s.Update(ctx, Patch{SubtitlesDefault: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.Get(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got.SubtitlesDefault {
+		t.Fatal("subtitles_default = true after setting it false")
+	}
+}
+
 func TestAPIToken_roundTripsAndReportsPresence(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)

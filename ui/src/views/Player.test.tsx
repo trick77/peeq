@@ -49,13 +49,29 @@ vi.mock("../api/downloads", () => ({
   streamDownloads: vi.fn().mockImplementation(() => new Promise(() => {})),
 }));
 
+// Player reads the global subtitles preference on mount, so this mock is
+// needed by EVERY test in this file, not just the subtitles ones — an
+// unmocked getSettings would reject on mount everywhere.
+vi.mock("../api/settings", () => ({
+  getSettings: vi.fn(),
+  updateSettings: vi.fn(),
+}));
+
 import { getVideo, setResume, redownload } from "../api/videos";
 import { resummarize } from "../api/search";
+import { getSettings, updateSettings } from "../api/settings";
+import type { Settings } from "../api/types";
 import { readNowPlaying } from "../nowPlaying";
 import { streamDownloads } from "../api/downloads";
 
 function makeVideo(overrides: Partial<Video> = {}): Video {
   return { ...mockVideo, ...overrides };
+}
+
+// Player only ever reads subtitles_default off Settings, but the mock
+// returns a whole (cast) object so the shape stays honest.
+function makeSettings(subtitlesDefault: boolean): Settings {
+  return { subtitles_default: subtitlesDefault } as Settings;
 }
 
 describe("Player", () => {
@@ -67,6 +83,10 @@ describe("Player", () => {
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
     vi.mocked(streamDownloads).mockReset();
     vi.mocked(streamDownloads).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(getSettings).mockReset();
+    vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
+    vi.mocked(updateSettings).mockReset();
+    vi.mocked(updateSettings).mockResolvedValue(makeSettings(false));
     vi.unstubAllGlobals();
     sessionStorage.clear();
   });
@@ -384,13 +404,81 @@ describe("Player", () => {
       .mockReturnValue([fakeTrack] as unknown as TextTrackList);
     try {
       render(<Player videoId="v1" onDeleted={() => {}} />);
-      const ccBtn = await screen.findByRole("button", { name: /^CC$/ });
+      const ccBtn = await screen.findByRole("button", {
+        name: /^Subtitles (on|off)$/,
+      });
       await waitFor(() => expect(fakeTrack.mode).toBe("hidden"));
 
       fireEvent.click(ccBtn);
       expect(fakeTrack.mode).toBe("showing");
       fireEvent.click(ccBtn);
       expect(fakeTrack.mode).toBe("hidden");
+    } finally {
+      ttSpy.mockRestore();
+    }
+  });
+
+  it("starts subtitles showing when the global default is on", async () => {
+    // Same prototype-spy + sentinel technique as the toggle test above: the
+    // "disabled" start value is one only the apply-the-default effect can
+    // clear, so waiting for it proves the effect really ran.
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    vi.mocked(getSettings).mockResolvedValue(makeSettings(true));
+    const fakeTrack = { mode: "disabled" } as unknown as TextTrack;
+    const ttSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "textTracks", "get")
+      .mockReturnValue([fakeTrack] as unknown as TextTrackList);
+    try {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await waitFor(() => expect(fakeTrack.mode).toBe("showing"));
+      expect(
+        await screen.findByRole("button", { name: "Subtitles on" }),
+      ).toHaveAttribute("aria-pressed", "true");
+    } finally {
+      ttSpy.mockRestore();
+    }
+  });
+
+  it("writes the flipped value back as the global default when toggled", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    const fakeTrack = { mode: "disabled" } as unknown as TextTrack;
+    const ttSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "textTracks", "get")
+      .mockReturnValue([fakeTrack] as unknown as TextTrackList);
+    try {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      const ccBtn = await screen.findByRole("button", {
+        name: /^Subtitles (on|off)$/,
+      });
+      await waitFor(() => expect(fakeTrack.mode).toBe("hidden"));
+
+      fireEvent.click(ccBtn);
+      expect(updateSettings).toHaveBeenCalledWith({ subtitles_default: true });
+
+      // The toggle updates the preference the apply-effect depends on, so
+      // this is also the regression guard for that effect snapping the
+      // track back to the default mid-video.
+      await waitFor(() => expect(fakeTrack.mode).toBe("showing"));
+
+      fireEvent.click(ccBtn);
+      expect(updateSettings).toHaveBeenCalledWith({ subtitles_default: false });
+    } finally {
+      ttSpy.mockRestore();
+    }
+  });
+
+  it("keeps playing when the settings read fails", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    vi.mocked(getSettings).mockRejectedValue(new Error("settings are down"));
+    const fakeTrack = { mode: "disabled" } as unknown as TextTrack;
+    const ttSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "textTracks", "get")
+      .mockReturnValue([fakeTrack] as unknown as TextTrackList);
+    try {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      // Falls back to subtitles-off, and the video still renders.
+      await waitFor(() => expect(fakeTrack.mode).toBe("hidden"));
+      expect(document.querySelector("video")).toBeInTheDocument();
     } finally {
       ttSpy.mockRestore();
     }

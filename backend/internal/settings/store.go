@@ -32,6 +32,7 @@ type Settings struct {
 	RetentionDays           int    `json:"retention_days"`
 	MinFreeGB               int    `json:"min_free_gb"`
 	MinVideoDurationSeconds int    `json:"min_video_duration_seconds"`
+	SubtitlesDefault        bool   `json:"subtitles_default"`
 	YTDLPVersion            string `json:"ytdlp_version"`
 	YoutubePaused           bool   `json:"youtube_paused"`
 	YoutubePauseReason      string `json:"youtube_pause_reason"`
@@ -48,6 +49,10 @@ type Patch struct {
 	RetentionDays           *int
 	MinFreeGB               *int
 	MinVideoDurationSeconds *int
+	// SubtitlesDefault is the first bool in Patch. database/sql maps a nil
+	// *bool to NULL (so COALESCE leaves the column alone) and a non-nil one
+	// to 0/1, exactly like the *int fields above.
+	SubtitlesDefault *bool
 }
 
 // Store persists the settings singleton row.
@@ -68,13 +73,15 @@ func (s *Store) Get(ctx context.Context) (Settings, error) {
 	var pausedAt sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 SELECT cookie_status, cookie_updated_at, format_preset, format_custom, limit_rate,
-       throttle_base_seconds, retention_days, min_free_gb, min_video_duration_seconds, ytdlp_version,
+       throttle_base_seconds, retention_days, min_free_gb, min_video_duration_seconds,
+       subtitles_default, ytdlp_version,
        youtube_paused, youtube_pause_reason, youtube_paused_at
 FROM settings
 WHERE id = 1`,
 	).Scan(
 		&st.CookieStatus, &cookieUpdatedAt, &st.FormatPreset, &st.FormatCustom, &st.LimitRate,
-		&st.ThrottleBaseSeconds, &st.RetentionDays, &st.MinFreeGB, &st.MinVideoDurationSeconds, &st.YTDLPVersion,
+		&st.ThrottleBaseSeconds, &st.RetentionDays, &st.MinFreeGB, &st.MinVideoDurationSeconds,
+		&st.SubtitlesDefault, &st.YTDLPVersion,
 		&st.YoutubePaused, &st.YoutubePauseReason, &pausedAt,
 	)
 	if err != nil {
@@ -100,10 +107,12 @@ SET format_preset         = COALESCE(?, format_preset),
     throttle_base_seconds = COALESCE(?, throttle_base_seconds),
     retention_days        = COALESCE(?, retention_days),
     min_free_gb           = COALESCE(?, min_free_gb),
-    min_video_duration_seconds = COALESCE(?, min_video_duration_seconds)
+    min_video_duration_seconds = COALESCE(?, min_video_duration_seconds),
+    subtitles_default     = COALESCE(?, subtitles_default)
 WHERE id = 1`,
 		patch.FormatPreset, patch.FormatCustom, patch.LimitRate,
 		patch.ThrottleBaseSeconds, patch.RetentionDays, patch.MinFreeGB, patch.MinVideoDurationSeconds,
+		patch.SubtitlesDefault,
 	)
 	if err != nil {
 		return fmt.Errorf("update settings: %w", err)
