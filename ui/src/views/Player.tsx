@@ -39,6 +39,13 @@ type Cue = { ts: number; text: string };
 // inline <...> markup tags. It intentionally does not implement the full
 // WebVTT spec (cue settings, NOTE blocks, styling) — peeq only needs the
 // timestamp + text pairs to render a searchable, click-to-seek transcript.
+// transcriptFilenameBase makes a filesystem-safe download name from the title,
+// falling back to the video id.
+function transcriptFilenameBase(title: string, id: string): string {
+  const base = (title || id).replace(/[^\w.-]+/g, "_").slice(0, 80);
+  return base || id;
+}
+
 export function parseVtt(text: string): Cue[] {
   const lines = text.split(/\r?\n/);
   const timingRe =
@@ -427,6 +434,21 @@ export function Player({
     positionKnownRef.current = true;
   }
 
+  // downloadTranscriptTxt saves the transcript as plain text, built from the
+  // cues already parsed for the panel (no extra request). The .vtt download is
+  // a plain link to the subtitle endpoint.
+  function downloadTranscriptTxt() {
+    if (!video) return;
+    const text = cues.map((c) => c.text).join("\n");
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = transcriptFilenameBase(video.title, video.id) + ".txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function handleToggleFavorite() {
     if (!video) return;
     const next = !video.favorite;
@@ -614,9 +636,7 @@ export function Player({
               <Icon name="listTree" size="16px" />
               <span className="lbl">Contents</span>
               {video.chapters.length > 0 && (
-                <span className="meta">
-                  {video.chapters.length} chapters · click to seek
-                </span>
+                <span className="meta">{video.chapters.length} chapters</span>
               )}
             </div>
             <div className="tabbody">
@@ -663,7 +683,6 @@ export function Player({
                   }}
                 />
                 <span className="lbl">Transcript</span>
-                <span className="meta">searchable · click to seek</span>
               </button>
               {transcriptOpen && (
                 <>
@@ -679,6 +698,47 @@ export function Player({
                         {find ? `${hitCount} / ${cues.length}` : "—"}
                       </span>
                     </div>
+                    {cues.length > 0 && (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          marginTop: 8,
+                        }}
+                      >
+                        <span className="meta">Download</span>
+                        <button
+                          type="button"
+                          className="pill"
+                          onClick={downloadTranscriptTxt}
+                          style={{
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                          }}
+                        >
+                          <Icon name="download" size="14px" /> .txt
+                        </button>
+                        <a
+                          className="pill"
+                          href={subtitlesUrl(video.id)}
+                          download={
+                            transcriptFilenameBase(video.title, video.id) +
+                            ".vtt"
+                          }
+                          style={{
+                            textDecoration: "none",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                          }}
+                        >
+                          <Icon name="download" size="14px" /> .vtt
+                        </a>
+                      </div>
+                    )}
                   </div>
                   <div className="tabbody transcript-body">
                     {transcriptLoading && (
