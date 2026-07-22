@@ -5,14 +5,21 @@ import { listVideos, setWatched } from "../../api/videos";
 import { getSettings } from "../../api";
 import type { Video } from "../../api/types";
 
-vi.mock("../../api/videos", () => ({
+// Both mocks spread the real module rather than listing only what this file
+// drives. ArchiveTab pulls in VideoCard and, through SORT_OPTIONS, the whole
+// Library module: a mock that replaced either barrel outright would leave
+// every other export undefined, and the next import added anywhere in that
+// tree would fail here with "x is not a function", pointing at a file nobody
+// touched.
+vi.mock("../../api/videos", async (importActual) => ({
+  ...(await importActual<typeof import("../../api/videos")>()),
   listVideos: vi.fn(),
   setFavorite: vi.fn().mockResolvedValue(true),
   setWatched: vi.fn().mockResolvedValue(true),
-  thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
 }));
 
-vi.mock("../../api", () => ({
+vi.mock("../../api", async (importActual) => ({
+  ...(await importActual<typeof import("../../api")>()),
   getSettings: vi.fn(),
 }));
 

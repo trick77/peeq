@@ -261,6 +261,10 @@ export function Library({
     );
   }
 
+  // Both toggles roll back on failure AND say so: a card that silently flips
+  // and flips back reads as a broken button, and the user's next move is to
+  // click it again. The Archive tab and the Player report the same failures;
+  // this was the last of the three that didn't.
   async function handleToggleFavorite(id: string) {
     const current =
       videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
@@ -269,8 +273,9 @@ export function Library({
     applyLocalUpdate(id, { favorite: next });
     try {
       await setFavorite(id, next);
-    } catch {
+    } catch (e) {
       applyLocalUpdate(id, { favorite: current.favorite });
+      setError((e as Error).message);
     }
   }
 
@@ -286,11 +291,12 @@ export function Library({
     applyLocalUpdate(id, { watched: next, resume_position_seconds: 0 });
     try {
       await setWatched(id, next);
-    } catch {
+    } catch (e) {
       applyLocalUpdate(id, {
         watched: current.watched,
         resume_position_seconds: current.resume_position_seconds,
       });
+      setError((e as Error).message);
     }
   }
 

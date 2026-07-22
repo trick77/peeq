@@ -559,6 +559,9 @@ describe("Library category chips", () => {
         screen.getByRole("button", { name: "Mark watched" }),
       ).toBeInTheDocument();
     });
+    // And it says why. A card that flips and flips back with no explanation
+    // reads as a broken button.
+    expect(screen.getByText("network down")).toBeInTheDocument();
   });
 
   it("moves a watched video into the drawer and clears its progress bar", async () => {
