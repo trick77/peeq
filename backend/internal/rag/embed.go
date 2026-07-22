@@ -12,8 +12,9 @@ import (
 	"strings"
 	"time"
 
-	// Only for FormatTokens, so embedding and chat token counts read the same
-	// way in the log. llm depends on nothing in peeq, so this cannot cycle.
+	// For the shared logging vocabulary: the call identity the worker puts on
+	// the context, the heartbeat, and the token formatting, so an embed line
+	// reads like a chat line. llm depends on nothing in peeq, so no cycle.
 	"github.com/trick77/peeq/internal/llm"
 )
 
@@ -23,21 +24,25 @@ const (
 )
 
 // EmbedConfig configures the OpenAI-compatible embedding client. Logger is
-// optional and defaults to slog.Default().
+// optional and defaults to slog.Default(). HeartbeatInterval is how often an
+// in-flight request logs that it is still waiting (0 uses
+// llm.DefaultHeartbeat; negative disables it).
 type EmbedConfig struct {
-	BaseURL string
-	APIKey  string
-	Model   string
-	Logger  *slog.Logger
+	BaseURL           string
+	APIKey            string
+	Model             string
+	Logger            *slog.Logger
+	HeartbeatInterval time.Duration
 }
 
 // EmbedClient generates embeddings via an OpenAI-compatible /embeddings endpoint.
 type EmbedClient struct {
-	baseURL string
-	apiKey  string
-	model   string
-	http    *http.Client
-	log     *slog.Logger
+	baseURL   string
+	apiKey    string
+	model     string
+	http      *http.Client
+	log       *slog.Logger
+	heartbeat time.Duration
 }
 
 // NewEmbedClient builds an EmbedClient. hc is optional.
@@ -48,7 +53,13 @@ func NewEmbedClient(cfg EmbedConfig, hc *http.Client) *EmbedClient {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &EmbedClient{baseURL: strings.TrimRight(cfg.BaseURL, "/"), apiKey: cfg.APIKey, model: cfg.Model, http: hc, log: cfg.Logger}
+	if cfg.HeartbeatInterval == 0 {
+		cfg.HeartbeatInterval = llm.DefaultHeartbeat
+	}
+	return &EmbedClient{
+		baseURL: strings.TrimRight(cfg.BaseURL, "/"), apiKey: cfg.APIKey, model: cfg.Model,
+		http: hc, log: cfg.Logger, heartbeat: cfg.HeartbeatInterval,
+	}
 }
 
 type embedRequest struct {
@@ -88,11 +99,19 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
+	// The worker embeds inside a step context carrying the video's identity, so
+	// every embed line names the video the same way the chat lines do.
+	ident := append(llm.CallFrom(ctx).LogAttrs(), "inputs", len(inputs))
 	started := time.Now()
 	fail := func(err error) ([][]float32, error) {
-		c.log.Warn("embed: request failed", "inputs", len(inputs), "duration_ms", time.Since(started).Milliseconds(), "err", err)
+		c.log.Warn("embed: request failed", append(ident, "duration_ms", time.Since(started).Milliseconds(), "err", err)...)
 		return nil, err
 	}
+
+	// A stalled embedding endpoint would otherwise be silent for the whole
+	// minute-long timeout.
+	stop := llm.StartHeartbeat(ctx, c.log, c.heartbeat, "embed: still waiting for response", ident...)
+	defer stop()
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -110,9 +129,9 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 	if len(parsed.Data) != len(inputs) {
 		return fail(fmt.Errorf("embedding count mismatch: got %d, want %d", len(parsed.Data), len(inputs)))
 	}
-	c.log.Debug("embed: request done", "inputs", len(inputs), "duration_ms", time.Since(started).Milliseconds(),
+	c.log.Debug("embed: request done", append(ident, "duration_ms", time.Since(started).Milliseconds(),
 		"embed_tokens_in", llm.FormatTokens(parsed.Usage.PromptTokens),
-		"embed_tokens_total", llm.FormatTokens(parsed.Usage.TotalTokens))
+		"embed_tokens_total", llm.FormatTokens(parsed.Usage.TotalTokens))...)
 	sort.Slice(parsed.Data, func(i, j int) bool { return parsed.Data[i].Index < parsed.Data[j].Index })
 	out := make([][]float32, len(parsed.Data))
 	for i, d := range parsed.Data {
