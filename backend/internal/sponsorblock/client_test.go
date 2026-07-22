@@ -92,6 +92,8 @@ func TestSegments_filtersUnusableSegments(t *testing.T) {
 	  {"category":"poi_highlight","segment":[100,101],"videoDuration":600},
 	  {"category":"chapter","segment":[120,180],"videoDuration":600},
 	  {"category":"sponsor","segment":[200,230],"videoDuration":900},
+	  {"category":"sponsor","segment":[400,400.0],"videoDuration":600},
+	  {"category":"sponsor","segment":[420,410],"videoDuration":600},
 	  {"category":"sponsor","segment":[300,330],"videoDuration":600}
 	]}]`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -246,5 +248,15 @@ func TestWanted_matchesCategories(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "chapter") {
 		t.Fatalf("Categories = %s, want no chapter category", encoded)
+	}
+}
+
+// TestSegments_invalidBaseURLSurfaces: a misconfigured instance URL must fail
+// loudly at request-build time rather than being retried forever as a
+// transport error.
+func TestSegments_invalidBaseURLSurfaces(t *testing.T) {
+	testee := NewClient("http://bad\x7fhost", nil)
+	if _, err := testee.Segments(context.Background(), "v1", 600); err == nil {
+		t.Fatal("Segments() error = nil, want a request-build error")
 	}
 }

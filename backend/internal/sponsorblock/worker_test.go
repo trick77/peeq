@@ -283,3 +283,72 @@ func TestWorker_claimsConfiguredBatchSize(t *testing.T) {
 		t.Fatalf("claim limit = %d, want 7", store.claimSize)
 	}
 }
+
+// TestWorker_cancelDuringSpacingStopsBatch: the pause between lookups must be
+// a cancellation point too, or shutdown would wait out the rest of a batch's
+// spacing.
+func TestWorker_cancelDuringSpacingStopsBatch(t *testing.T) {
+	store := &fakeStore{pending: []videos.SponsorblockCandidate{{ID: "v1"}, {ID: "v2"}, {ID: "v3"}}}
+	fetcher := &fakeFetcher{}
+	ctx, cancel := context.WithCancel(context.Background())
+	testee := NewWorker(Deps{
+		Fetcher: fetcher, Videos: store,
+		// Long enough that the test would hang if the sleep ignored ctx.
+		BetweenLookups: time.Hour,
+		Logger:         quietLogger(),
+	})
+
+	// Cancel once the first video has been looked up, so the spacing before
+	// the second one is what observes it.
+	go func() {
+		for len(fetcher.calls()) == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+
+	if testee.pass(ctx) {
+		t.Fatal("pass() = true, want false once the spacing observed the cancel")
+	}
+	if got := fetcher.calls(); len(got) != 1 {
+		t.Fatalf("looked up %v, want the batch to stop after the first", got)
+	}
+}
+
+// TestWorker_runLoopsUntilCancelled covers the loop body itself: a pass
+// happens, and the poll interval is a cancellation point.
+func TestWorker_runLoopsUntilCancelled(t *testing.T) {
+	store := &fakeStore{pending: []videos.SponsorblockCandidate{{ID: "v1"}}}
+	fetcher := &fakeFetcher{}
+	testee := NewWorker(Deps{
+		Fetcher: fetcher, Videos: store,
+		PollInterval:   time.Hour, // only the cancel can end the wait
+		BetweenLookups: -1,
+		Logger:         quietLogger(),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		testee.Run(ctx)
+		close(done)
+	}()
+
+	// The first pass must complete before the loop parks on the interval.
+	deadline := time.After(2 * time.Second)
+	for len(store.written()) == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("first pass never stored anything")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+}
