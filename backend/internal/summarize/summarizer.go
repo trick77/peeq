@@ -62,7 +62,7 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 	var chunkSummaries []string
 	for _, ch := range chunks {
 		out, err := s.c.Complete(ctx, []llm.Message{
-			{Role: "system", Content: "You summarize one section of a video transcript in 2-3 sentences. Be concrete."},
+			{Role: "system", Content: "You summarize one section of a video transcript in 1-2 sentences. Be concrete."},
 			{Role: "user", Content: ch.Text},
 		})
 		if err != nil {
@@ -74,7 +74,9 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 
 	// REDUCE: cohesive prose summary.
 	summary, err := s.c.Complete(ctx, []llm.Message{
-		{Role: "system", Content: "Combine these section summaries of one video into a single cohesive summary of 2-4 short paragraphs."},
+		{Role: "system", Content: "Combine these section summaries of one video into a single cohesive summary of at most 2 paragraphs and at most 190 words total. " +
+			"Lead with what the video is about, then its main claims or moments. " +
+			"Be concrete and drop tangents; do not list every topic mentioned."},
 		{Role: "user", Content: joined},
 	})
 	if err != nil {
