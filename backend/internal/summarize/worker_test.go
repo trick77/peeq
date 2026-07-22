@@ -1170,3 +1170,226 @@ func TestIdleSweepDoesNotOverwriteAPickMadeDuringClassify(t *testing.T) {
 		t.Fatalf("category = %q, want gaming — the sweep overwrote a manual pick", v.Category)
 	}
 }
+
+// TestWorkerMusicOnlyTranscriptDiscardsStaleAnalysis is the regression this
+// whole path exists for: a music video whose auto-captions are [Music] markers
+// plus stray lyric fragments once got a confident, entirely invented summary,
+// which was also embedded into semantic search. Re-analysis must now settle it
+// as no_transcript WITHOUT calling the LLM, and must take the old summary and
+// its chunks with it — otherwise the hallucination survives in search, where
+// the UI gives no sign it is still there.
+func TestWorkerMusicOnlyTranscriptDiscardsStaleAnalysis(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v9/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	var b strings.Builder
+	b.WriteString("WEBVTT\n\n")
+	frags := []string{
+		"[Music] I play games with", "[Music] you yeah", "[Music] I'm give a",
+		"[Music] back I give it", "[Music]", "[Music] you scar", "[Music] I get my",
+		"[Music] [Applause]", "[Music] back", "[Music] oh",
+	}
+	for i, f := range frags {
+		fmt.Fprintf(&b, "00:00:%02d.000 --> 00:00:%02d.000\n%s\n\n", i*3, i*3+3, f)
+	}
+	if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+
+	if err := h.videos.Upsert(videos.Video{
+		ID: "v9", URL: "https://youtu.be/v9", DurationSeconds: 200,
+	}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v9", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	// Seed the state a previous, credulous run left behind.
+	if err := h.videos.SetSummary("v9", "A thoughtful essay on trust.",
+		`[{"ts":0,"title":"Intro","source":"mimo"}]`, `[{"ts":5,"text":"Invented."}]`); err != nil {
+		t.Fatalf("seed summary: %v", err)
+	}
+	if err := h.rag.ReplaceVideoChunks(context.Background(), "v9", "test-model", 1536,
+		[]rag.ChunkRow{{Ordinal: 0, Text: "A thoughtful essay on trust.", Kind: "summary"}},
+		[][]float32{make([]float32, 1536)}); err != nil {
+		t.Fatalf("seed chunks: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v9"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	// failCompleter/failEmbedder fail the test if they are called at all, which
+	// is the assertion that no LLM tokens are spent on a music video.
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(failCompleter{t: t}),
+		Embedder:   failEmbedder{t: t},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   4,
+	})
+
+	did, err := w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if !did {
+		t.Fatal("expected processOne to claim and process the job")
+	}
+
+	v, err := h.videos.Get("v9")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.SummaryStatus != "no_transcript" {
+		t.Fatalf("expected summary_status=no_transcript, got %q", v.SummaryStatus)
+	}
+	if v.Summary != "" || v.Chapters != "" || v.KeyPoints != "" {
+		t.Fatalf("expected the stale analysis cleared, got summary=%q chapters=%q key_points=%q",
+			v.Summary, v.Chapters, v.KeyPoints)
+	}
+
+	var count int
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM transcript_chunks WHERE video_id = ?`, "v9").Scan(&count); err != nil {
+		t.Fatalf("count chunks: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected the stale chunks deleted, got %d", count)
+	}
+}
+
+// TestWorkerNoSubtitleFileKeepsTheStoredSummary guards the other side of the
+// cleanup: Tombstone() blanks subtitle_path, so a retention-swept video takes
+// the "no subtitle file" path. That one must NOT discard the summary it was
+// archived with — the whole point of keeping the row is the summary.
+func TestWorkerNoSubtitleFileKeepsTheStoredSummary(t *testing.T) {
+	h := newWorkerHarness(t)
+	if err := h.videos.Upsert(videos.Video{ID: "v10", URL: "https://youtu.be/v10"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSummary("v10", "The archived summary.", "", ""); err != nil {
+		t.Fatalf("seed summary: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v10"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(failCompleter{t: t}),
+		Embedder:   failEmbedder{t: t},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   4,
+	})
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+
+	v, err := h.videos.Get("v10")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.Summary != "The archived summary." {
+		t.Fatalf("expected the archived summary kept, got %q", v.Summary)
+	}
+}
+
+// TestDiscardStaleAnalysisSurvivesWriteFailures asserts the cleanup stays
+// best-effort. The paths that call it are terminal states, not errors, so a
+// failing summary write (or a worker with no Rag store wired at all) must be
+// logged and stepped over rather than turned into a job failure.
+func TestDiscardStaleAnalysisSurvivesWriteFailures(t *testing.T) {
+	h := newWorkerHarness(t)
+	if err := h.videos.Upsert(videos.Video{ID: "v11", URL: "https://youtu.be/v11"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSummary("v11", "stale", "", ""); err != nil {
+		t.Fatalf("seed summary: %v", err)
+	}
+	if _, err := h.db.Exec(`CREATE TRIGGER no_summary BEFORE UPDATE OF summary ON videos
+		BEGIN SELECT RAISE(ABORT, 'summary writes blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	// Rag deliberately left nil: an embedding-less deployment must not panic here.
+	w := NewWorker(WorkerDeps{Jobs: h.jobs, Videos: h.videos, MediaDir: h.mediaDir})
+	w.discardStaleAnalysis(context.Background(), &videos.Video{ID: "v11", Summary: "stale"})
+
+	v, err := h.videos.Get("v11")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.Summary != "stale" {
+		t.Fatalf("expected the blocked write to leave the row alone, got %q", v.Summary)
+	}
+}
+
+// TestDiscardStaleAnalysisSkipsAVideoWithNothingStored asserts the early return:
+// the common case is a video that never had a summary, and it should not pay for
+// two writes and a chunk delete to clear nothing.
+func TestDiscardStaleAnalysisSkipsAVideoWithNothingStored(t *testing.T) {
+	h := newWorkerHarness(t)
+	// A nil Videos store would panic if the early return did not fire first.
+	w := NewWorker(WorkerDeps{Jobs: h.jobs, MediaDir: h.mediaDir})
+	w.discardStaleAnalysis(context.Background(), &videos.Video{ID: "v12"})
+}
+
+// TestWorkerEmptyTranscriptDiscardsStaleAnalysis covers the other caller: a
+// subtitle file that parses to nothing at all (as opposed to music) gets the
+// same cleanup as the non-speech case.
+func TestWorkerEmptyTranscriptDiscardsStaleAnalysis(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v13/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(full, []byte("WEBVTT\n"), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	if err := h.videos.Upsert(videos.Video{ID: "v13", URL: "https://youtu.be/v13"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v13", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if err := h.videos.SetSummary("v13", "stale text", "", ""); err != nil {
+		t.Fatalf("seed summary: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v13"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(failCompleter{t: t}),
+		Embedder:   failEmbedder{t: t},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   1536,
+	})
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+
+	v, err := h.videos.Get("v13")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.SummaryStatus != "no_transcript" || v.Summary != "" {
+		t.Fatalf("expected no_transcript with the stale summary cleared, got status=%q summary=%q",
+			v.SummaryStatus, v.Summary)
+	}
+}

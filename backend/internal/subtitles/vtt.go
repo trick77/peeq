@@ -2,6 +2,12 @@
 // (start-second -> text) for timestamp mapping. It strips WebVTT structure and
 // inline tags and collapses YouTube auto-caption rolling duplicates (each line is
 // re-emitted with the next word appended, so naive concatenation triples length).
+// It also strips non-speech sound-event markers ([Music], (applause), music
+// notes) and can report that a track carries no real speech at all.
+//
+// The UI has its own forgiving WebVTT parser for the transcript panel
+// (ui/src/views/Player.tsx parseVtt); the sound-event rules below are mirrored
+// there and the two must stay in lockstep.
 package subtitles
 
 import (
@@ -22,12 +28,108 @@ type Cue struct {
 type Parsed struct {
 	Transcript string
 	Cues       []Cue
+	// SoundEventCues is how many of the emitted Cues carried at least one
+	// non-speech marker before stripping. Compared against len(Cues) it says how
+	// music-heavy a track is; IsNonSpeech uses it as a guard.
+	SoundEventCues int
 }
 
 var (
 	timingRe = regexp.MustCompile(`^(\d{2,}):(\d{2}):(\d{2})[.,](\d{3})\s*-->`)
 	tagRe    = regexp.MustCompile(`<[^>]*>`)
+
+	// bracketRe matches a square-bracketed span. YouTube uses square brackets
+	// only for sound events and speaker labels, never for spoken words, so an
+	// open rule is safe here.
+	bracketRe = regexp.MustCompile(`\[[^\]]*\]`)
+	// parenRe matches a parenthesised span. Parentheses DO occur in real speech
+	// transcripts, so a match is only stripped when its inner text is in
+	// parenSoundEvents below.
+	parenRe = regexp.MustCompile(`\([^)]*\)`)
+	// noteRe matches the musical-note characters used by Whisper and by manual
+	// caption tracks to bracket lyrics.
+	noteRe = regexp.MustCompile(`[\x{266A}\x{266B}\x{266C}\x{2669}]`)
+	// spaceRe collapses the whitespace a stripped span leaves behind.
+	spaceRe = regexp.MustCompile(`\s+`)
 )
+
+// parenSoundEvents is the closed list of parenthesised annotations treated as
+// non-speech. Anything else in parentheses is kept verbatim.
+var parenSoundEvents = map[string]bool{
+	"music":            true,
+	"background music": true,
+	"musique":          true,
+	"applause":         true,
+	"applauses":        true,
+	"cheering":         true,
+	"cheers":           true,
+	"laughter":         true,
+	"laughs":           true,
+	"laughing":         true,
+	"singing":          true,
+	"sings":            true,
+	"silence":          true,
+	"no audio":         true,
+	"inaudible":        true,
+	"foreign":          true,
+}
+
+// stripSoundEvents removes non-speech markers from one caption line and reports
+// whether it removed anything. An all-marker line comes back empty, which the
+// caller drops the same way it drops a blank line.
+func stripSoundEvents(s string) (string, bool) {
+	out := bracketRe.ReplaceAllString(s, " ")
+	out = noteRe.ReplaceAllString(out, " ")
+	out = parenRe.ReplaceAllStringFunc(out, func(m string) string {
+		inner := strings.ToLower(strings.TrimSpace(m[1 : len(m)-1]))
+		if parenSoundEvents[inner] {
+			return " "
+		}
+		return m
+	})
+	out = strings.TrimSpace(spaceRe.ReplaceAllString(out, " "))
+	return out, out != strings.TrimSpace(s)
+}
+
+// Thresholds for IsNonSpeech. Deliberately conservative: a false positive
+// throws away a legitimate sparse-dialogue video's summary, which is worse than
+// the occasional music video slipping through and getting one.
+const (
+	// nonSpeechMaxWPM — ordinary speech runs 130-160 words per minute and even a
+	// slow, pause-heavy tutorial clears 60. A music track's stray lyric
+	// fragments land far below this.
+	nonSpeechMaxWPM = 25.0
+	// nonSpeechMinMarkerRatio — at least this share of the surviving cues must
+	// have carried a sound-event marker. This is what protects a quiet
+	// documentary or a silent screencast: no [Music] in its captions means it is
+	// never flagged, however few words it has.
+	nonSpeechMinMarkerRatio = 0.25
+	// nonSpeechMinSeconds floors the duration so a very short clip cannot divide
+	// the word rate by ~0 and look like speech.
+	nonSpeechMinSeconds = 30
+)
+
+// IsNonSpeech reports whether the track carries music/ambience rather than
+// speech, so the caller can skip summarization instead of letting the model
+// hallucinate a summary out of stray lyric fragments. durationSeconds is the
+// video's length; pass 0 when unknown and the last cue's start time is used.
+//
+// Both conditions must hold — see the threshold comments above.
+func (p Parsed) IsNonSpeech(durationSeconds int) bool {
+	if len(p.Cues) == 0 {
+		return false // nothing parsed at all is the caller's empty-transcript case
+	}
+	secs := durationSeconds
+	if secs <= 0 {
+		secs = p.Cues[len(p.Cues)-1].StartSeconds
+	}
+	if secs < nonSpeechMinSeconds {
+		secs = nonSpeechMinSeconds
+	}
+	wpm := float64(len(strings.Fields(p.Transcript))) / (float64(secs) / 60.0)
+	ratio := float64(p.SoundEventCues) / float64(len(p.Cues))
+	return wpm < nonSpeechMaxWPM && ratio >= nonSpeechMinMarkerRatio
+}
 
 // equalLines reports whether two line slices contain the same strings in order.
 func equalLines(a, b []string) bool {
@@ -48,12 +150,16 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
 	var cues []Cue
+	var markers []bool // parallel to cues: did this cue carry a sound-event marker?
 	var curStart = -1
 	var curLines []string
+	var curMarker bool     // any line of the cue being built carried a marker
 	var last string        // joined text of the last emitted/merged cue, for whole-cue-dup collapse
 	var lastLines []string // lines of the last emitted/merged cue, for sliding-window line collapse
 
 	flush := func() {
+		hadMarker := curMarker
+		curMarker = false
 		if curStart < 0 {
 			return
 		}
@@ -96,6 +202,7 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 		if last != "" && (text == last || strings.HasPrefix(text, last)) {
 			if len(cues) > 0 {
 				cues[len(cues)-1].Text = text
+				markers[len(markers)-1] = markers[len(markers)-1] || hadMarker
 			}
 			last = text
 			lastLines = lines
@@ -106,6 +213,7 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 			return
 		}
 		cues = append(cues, Cue{StartSeconds: curStart, Text: text})
+		markers = append(markers, hadMarker)
 		last = text
 		lastLines = lines
 	}
@@ -124,6 +232,13 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 			continue // header / NOTE / cue-id lines before the first timing
 		}
 		clean := strings.TrimSpace(tagRe.ReplaceAllString(line, ""))
+		// Strip non-speech markers before the rolling-duplicate collapse below
+		// sees the line: YouTube re-emits "[Music] I play" then "[Music] I play
+		// games", and the collapse only works on the words that remain.
+		clean, hadMarker := stripSoundEvents(clean)
+		if hadMarker {
+			curMarker = true
+		}
 		if clean == "" {
 			continue
 		}
@@ -135,8 +250,16 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 	}
 
 	texts := make([]string, len(cues))
+	soundEvents := 0
 	for i, c := range cues {
 		texts[i] = c.Text
+		if markers[i] {
+			soundEvents++
+		}
 	}
-	return Parsed{Transcript: strings.Join(texts, " "), Cues: cues}, nil
+	return Parsed{
+		Transcript:     strings.Join(texts, " "),
+		Cues:           cues,
+		SoundEventCues: soundEvents,
+	}, nil
 }
