@@ -796,6 +796,54 @@ describe("Player", () => {
     }
   });
 
+  // iPadOS 27 (public beta 1) Safari refuses to load the media at all when a
+  // <track> child is present during resource selection — the player just sits
+  // on the poster. See tubearchivist/tubearchivist#1196.
+  it("mounts the subtitle track only after loadedmetadata", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByRole("button", { name: /^Subtitles (on|off)$/ });
+    expect(document.querySelector("video track")).toBeNull();
+
+    fireEvent.loadedMetadata(
+      document.querySelector("video") as HTMLVideoElement,
+    );
+    await waitFor(() =>
+      expect(document.querySelector("video track")).not.toBeNull(),
+    );
+  });
+
+  // Guard for the apply-the-default effect's subtitlesReadyFor dependency:
+  // with the track deferred, the effect's first run finds no track, and
+  // nothing else it depends on changes when the track later mounts. Unlike
+  // the tests above, the stub only reports a track once one is really in the
+  // DOM, so dropping that dependency makes this fail.
+  it("applies the subtitles default once the deferred track mounts", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    vi.mocked(getSettings).mockResolvedValue(makeSettings(true));
+    const fakeTrack = { mode: "disabled" } as unknown as TextTrack;
+    const ttSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "textTracks", "get")
+      .mockImplementation(
+        () =>
+          (document.querySelector("video track")
+            ? [fakeTrack]
+            : []) as unknown as TextTrackList,
+      );
+    try {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("button", { name: /^Subtitles (on|off)$/ });
+      expect(fakeTrack.mode).toBe("disabled");
+
+      fireEvent.loadedMetadata(
+        document.querySelector("video") as HTMLVideoElement,
+      );
+      await waitFor(() => expect(fakeTrack.mode).toBe("showing"));
+    } finally {
+      ttSpy.mockRestore();
+    }
+  });
+
   it("writes the flipped value back as the global default when toggled", async () => {
     vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
     const fakeTrack = { mode: "disabled" } as unknown as TextTrack;
