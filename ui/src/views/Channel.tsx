@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "../ui";
 import { Icon } from "../icons";
 import {
@@ -167,6 +167,14 @@ export function Channel({
   // Whether the description is expanded past its 5-line clamp. Reset per
   // channel, so navigating to another one does not inherit "expanded".
   const [descOpen, setDescOpen] = useState(false);
+  // descOverflows drives the More button, and is MEASURED rather than guessed
+  // from the text length: how many characters fit in five lines depends on
+  // the glyphs and the window width, and a length threshold gets the band
+  // around the clamp wrong in both directions — hiding More from a
+  // description that is in fact cut off, which is the exact thing the button
+  // exists to prevent.
+  const descRef = useRef<HTMLParagraphElement>(null);
+  const [descOverflows, setDescOverflows] = useState(false);
 
   // loadSeq drops out-of-order responses, the same guard Channels.tsx uses:
   // navigating between two channels quickly must not leave the slower
@@ -195,6 +203,24 @@ export function Channel({
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
+
+  // Measure after layout, and only while the clamp is actually on: an
+  // expanded paragraph never overflows, so measuring one would say "no
+  // overflow" and take the Less button away mid-read. Re-measured on resize
+  // because the answer depends on how wide the column is.
+  useLayoutEffect(() => {
+    if (descOpen) return;
+    const el = descRef.current;
+    if (!el) {
+      setDescOverflows(false);
+      return;
+    }
+    const measure = () =>
+      setDescOverflows(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [detail?.description, descOpen]);
 
   // handleRefresh re-reads the channel from YouTube. It is the only way out
   // of the state where an early failed resolve left the channel with no
@@ -261,14 +287,6 @@ export function Channel({
         { id: "settings", label: "Settings" },
       ]
     : [{ id: "archive", label: "Archive", count: detail.archived_count }];
-
-  // The description is clamped to five lines and only offers "More" when
-  // there is plausibly something behind the fold. The threshold is on the
-  // text, not on measured height: a ResizeObserver would be exact but would
-  // also make the button appear a frame late, and being slightly generous
-  // about offering More costs nothing — the clamp is what actually decides
-  // whether anything is hidden.
-  const descTruncatable = (detail.description?.length ?? 0) > 340;
 
   return (
     <div className="chan">
@@ -340,12 +358,13 @@ export function Channel({
             {detail.description ? (
               <>
                 <p
+                  ref={descRef}
                   className={`chan-desc${descOpen ? "" : " clamped"}`}
                   data-testid="chan-desc"
                 >
                   {detail.description}
                 </p>
-                {descTruncatable ? (
+                {descOverflows || descOpen ? (
                   <button
                     type="button"
                     className="chan-more"

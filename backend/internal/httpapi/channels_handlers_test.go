@@ -2708,3 +2708,86 @@ func TestChannelRefresh_unconfigured_503(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
 	}
 }
+
+// TestChannelRefresh_unknownChannel_404 asserts refreshing an id that names
+// nothing is a 404 and writes NOTHING. Without the guard the endpoint created
+// a row for any id it was handed — on the failure path too, since that path
+// writes a bare row to remember the attempt — which turned an id the detail
+// endpoint 404s into a 200 with an empty channel behind it.
+func TestChannelRefresh_unknownChannel_404(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resolver ChannelResolver
+	}{
+		{"resolve succeeds", &testResolver{info: ytdlp.ChannelInfo{UCID: "UCmadeup", Name: "Whatever"}}},
+		{"resolve fails", &testResolver{err: errors.New("no such channel")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := channelsTestDeps(t, tc.resolver)
+			h := New(deps)
+
+			rr := postJSON(t, h, "/api/channels/UCmadeup/refresh", nil)
+			if rr.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+			}
+			c, err := deps.Channels.Get("UCmadeup")
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if c != nil {
+				t.Fatalf("refreshing an unknown id created a row: %+v", *c)
+			}
+		})
+	}
+}
+
+// TestChannelRefresh_untrackedButHasVideos asserts the 404 guard uses the
+// same existence rule as the detail endpoint: a channel with no channels row
+// but with videos in the library is real, is reachable on the channel page,
+// and must therefore be refreshable.
+func TestChannelRefresh_untrackedButHasVideos(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCloose", Name: "Deep Field Radio"}})
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCloose", "Deep Field Radio")
+
+	rr := postJSON(t, h, "/api/channels/UCloose/refresh", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+}
+
+// urlCapturingResolver records the url it was handed so a test can assert how
+// the channel id was put into it.
+type urlCapturingResolver struct{ url string }
+
+func (r *urlCapturingResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+	r.url = url
+	return ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}, nil
+}
+
+// TestResolveChannel_escapesTheIDIntoOneSegment asserts a channel id cannot
+// steer the resolve at a different page. Go's ServeMux hands back the DECODED
+// path value, so a request for ".. %2F.. %2Fwatch" (without the spaces)
+// arrives here as a real "../../watch" — raw concatenation would have built
+// "https://www.youtube.com/channel/../../watch?v=abc" and yt-dlp would have
+// followed it.
+func TestResolveChannel_escapesTheIDIntoOneSegment(t *testing.T) {
+	resolver := &urlCapturingResolver{}
+	deps := channelsTestDeps(t, resolver)
+	h := New(deps)
+	// Seed the row so the 404 guard is not what stops this.
+	if err := deps.Channels.Upsert(channels.Channel{ID: "../../watch?v=abc", Name: "Crafted"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/channels/..%2F..%2Fwatch%3Fv%3Dabc/refresh", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(resolver.url, "/watch") || strings.Contains(resolver.url, "?v=") {
+		t.Fatalf("the id escaped its path segment: %q", resolver.url)
+	}
+	if !strings.HasPrefix(resolver.url, "https://www.youtube.com/channel/") {
+		t.Fatalf("url = %q", resolver.url)
+	}
+}
