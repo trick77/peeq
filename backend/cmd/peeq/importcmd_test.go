@@ -40,6 +40,17 @@ func TestFormatChannelResult_realRun(t *testing.T) {
 	if strings.Contains(strings.ToLower(got), "dry run") {
 		t.Errorf("real run mentioned a dry run:\n%s", got)
 	}
+	// TA's channel_active=false means its last refresh failed to fetch the
+	// channel — usually transient, NOT that the channel is gone. The summary
+	// must not mislabel it that way or promise it will be auto-retired; it must
+	// say peeq re-checks each channel itself.
+	low := strings.ToLower(got)
+	if strings.Contains(low, "gone from youtube") {
+		t.Errorf("mislabels a TA-inactive channel as gone from YouTube:\n%s", got)
+	}
+	if !strings.Contains(low, "re-check") {
+		t.Errorf("does not explain that peeq re-checks inactive channels:\n%s", got)
+	}
 }
 
 func TestFormatChannelResult_dryRunSaysSo(t *testing.T) {
