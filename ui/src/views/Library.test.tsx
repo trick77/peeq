@@ -87,7 +87,24 @@ describe("VideoCard lifecycle line", () => {
     expect(screen.getByText("Downloading")).toBeInTheDocument();
   });
 
-  it('renders "Not watched yet" for a fresh video', () => {
+  it("renders the category pill on the lifecycle line of a fresh video", () => {
+    render(
+      <VideoCard
+        video={baseVideo({ category: "ai" })}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+    // The pill sits in the lifecycle row, not on the channel/date line.
+    const pill = document.querySelector(".life.fresh .metapill");
+    expect(pill).not.toBeNull();
+    expect(pill).toHaveTextContent("AI");
+    expect(document.querySelector(".by .metapill")).toBeNull();
+  });
+
+  it("renders no lifecycle row at all for a fresh uncategorized video", () => {
     render(
       <VideoCard
         video={baseVideo()}
@@ -97,7 +114,8 @@ describe("VideoCard lifecycle line", () => {
         onToggleWatched={noop}
       />,
     );
-    expect(screen.getByText("Not watched yet")).toBeInTheDocument();
+    // An empty .life would still eat a 10px `.card` flex gap.
+    expect(document.querySelector(".life")).toBeNull();
   });
 
   it("calls onOpen with the video id when the thumbnail is clicked", async () => {
@@ -518,7 +536,13 @@ describe("Library category chips", () => {
 
   it("refetches both lists after a successful re-download", async () => {
     const errored = categoryVideo({ id: "v1", status: "error" });
-    const refreshed = categoryVideo({ id: "v1", status: "downloaded" });
+    // Categorized so the recovered card has a visible fresh-state lifecycle
+    // row (the category pill) to assert on.
+    const refreshed = categoryVideo({
+      id: "v1",
+      status: "downloaded",
+      category: "ai",
+    });
     const { redownload } = await import("../api");
     vi.mocked(redownload).mockResolvedValue(undefined);
     let fixed = false;
@@ -538,6 +562,14 @@ describe("Library category chips", () => {
         expect.objectContaining({ filter: "all" }),
       );
     });
-    expect(await screen.findByText("Not watched yet")).toBeInTheDocument();
+    // Back to the fresh lifecycle state — the error line is gone and the
+    // category pill has taken its place. Scoped to .life.fresh because the
+    // chip row above the grid also carries an "AI" label.
+    await waitFor(() => {
+      expect(document.querySelector(".life.fresh .metapill")).toHaveTextContent(
+        "AI",
+      );
+    });
+    expect(screen.queryByText("Download failed")).not.toBeInTheDocument();
   });
 });
