@@ -3,8 +3,10 @@ package channelmeta
 import (
 	"context"
 	"log/slog"
-	"math/rand"
 	"time"
+
+	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/sched"
 )
 
 const (
@@ -34,7 +36,8 @@ const (
 type Deps struct {
 	Refresher *Refresher
 	// CookieStatus reports the current cookie status (settings.CookieStatus).
-	// Required: refreshing without a valid cookie just burns failed attempts.
+	// REQUIRED, and called unconditionally — leaving it nil panics on the first
+	// pass rather than silently skipping the cookie gate.
 	CookieStatus func(ctx context.Context) string
 	// AllowAnonymous is the dev-only escape hatch (config.AllowAnonymousYoutube)
 	// mirrored from the scan scheduler: when true, a non-"valid" CookieStatus
@@ -72,7 +75,7 @@ func NewWorker(d Deps) *Worker {
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}
-	return &Worker{d: d, rand: pseudoRand()}
+	return &Worker{d: d, rand: sched.PseudoRand()}
 }
 
 // Run is the refresh loop; it blocks until ctx is cancelled. Each pass is
@@ -87,7 +90,13 @@ func (w *Worker) Run(ctx context.Context) {
 		// dev-only anonymous escape hatch is enabled. Without this a
 		// cookieless install would burn a failed refresh on every channel,
 		// and (worse) stamp each one as attempted.
-		if w.d.CookieStatus != nil && w.d.CookieStatus(ctx) != "valid" && !w.d.AllowAnonymous {
+		//
+		// CookieStatus is called unconditionally, matching scan.Scheduler: a
+		// nil-check here would make a caller that forgot to wire it fail OPEN
+		// — silently disabling the gate and calling YouTube with an absent,
+		// stale or blocked cookie. A nil dependency should take the process
+		// down at the first pass, not quietly remove a protection.
+		if w.d.CookieStatus(ctx) != "valid" && !w.d.AllowAnonymous {
 			if !w.sleep(ctx, w.d.PollInterval) {
 				return
 			}
@@ -101,14 +110,14 @@ func (w *Worker) Run(ctx context.Context) {
 			}
 			continue
 		}
-		channelID, ok := w.claim()
-		if !ok {
+		claimed := w.claim()
+		if claimed == nil {
 			if !w.sleep(ctx, w.d.PollInterval) {
 				return
 			}
 			continue
 		}
-		w.refresh(ctx, channelID)
+		w.refresh(ctx, claimed)
 		if !w.sleep(ctx, w.d.PollInterval) {
 			return
 		}
@@ -120,36 +129,40 @@ func (w *Worker) Run(ctx context.Context) {
 // the backlog drains in the gaps, which is the right priority — a channel
 // already showing a name and an avatar can wait, one showing nothing cannot
 // wait *instead* of it.
-func (w *Worker) claim() (string, bool) {
+func (w *Worker) claim() *channels.Channel {
 	now := w.d.Now().UTC().Format(sqlTimeLayout)
 	store := w.d.Refresher.Channels
 
-	channelID, ok, err := store.ClaimDueMetadata(now)
+	due, err := store.ClaimDueMetadata(now)
 	if err != nil {
 		w.d.Logger.Error("channel metadata: claim due failed", "err", err)
-		return "", false
+		return nil
 	}
-	if ok {
-		return channelID, true
+	if due != nil {
+		return due
 	}
-	channelID, ok, err = store.ClaimUnresolved(now)
+	unresolved, err := store.ClaimUnresolved(now)
 	if err != nil {
 		w.d.Logger.Error("channel metadata: claim unresolved failed", "err", err)
-		return "", false
+		return nil
 	}
-	return channelID, ok
+	return unresolved
 }
 
-// refresh re-reads one channel under a panic guard, then reschedules it.
+// refresh re-reads one channel under a panic guard, then settles it. It takes
+// the row the claim already matched rather than an id: re-reading it here would
+// be a second query for a row we are holding, and its error path was one of the
+// ways an attempt could end without recording itself.
 //
-// The reschedule happens on EVERY outcome — success, failure, or a recovered
-// panic. A failure that skipped it would leave the channel due forever and the
+// Settling happens on EVERY outcome — success, failure, or a recovered panic.
+// An outcome that skipped it would leave the channel claimable forever and the
 // worker would retry it every poll, which is exactly the hammering the whole
 // design avoids. Nothing else is recorded: a failed refresh must not feed the
 // dead-scan counter that auto-unsubscribes channels, because that decision
 // belongs to the scan scheduler, which guards it against peeq's own cookie
 // being the real problem.
-func (w *Worker) refresh(ctx context.Context, channelID string) {
+func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
+	channelID := cached.ID
 	defer func() {
 		// This parses yt-dlp output and remote HTTP responses, both external
 		// input. An unrecovered panic here would take down the whole process,
@@ -157,14 +170,8 @@ func (w *Worker) refresh(ctx context.Context, channelID string) {
 		if r := recover(); r != nil {
 			w.d.Logger.Error("channel metadata: recovered from panic", "channel_id", channelID, "panic", r)
 		}
-		w.reschedule(channelID)
+		w.settle(channelID)
 	}()
-
-	cached, err := w.d.Refresher.Channels.Get(channelID)
-	if err != nil {
-		w.d.Logger.Error("channel metadata: load channel failed", "channel_id", channelID, "err", err)
-		return
-	}
 
 	rctx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
@@ -175,14 +182,30 @@ func (w *Worker) refresh(ctx context.Context, channelID string) {
 	w.d.Logger.Info("channel metadata refreshed", "channel_id", channelID)
 }
 
-// reschedule pushes the channel's next refresh out by a jittered interval. It
-// is a no-op for an unsubscribed channel, which has no subscriptions row and
-// so no rotation — a backlog channel resolved once is simply done, its
-// resolved_at stamp being what keeps ClaimUnresolved from returning it again.
-func (w *Worker) reschedule(channelID string) {
+// settle takes the channel back out of the claim set, whatever happened to it.
+// This is the loop-breaker, and it has to cover BOTH claim queries, because
+// each is held off by a different column:
+//
+//   - the weekly rotation is held off by next_meta_refresh_at, pushed out by a
+//     jittered interval;
+//   - the never-read backlog is held off by channels.resolved_at, stamped only
+//     if nothing else stamped it already.
+//
+// Rescheduling alone is not enough. An unsubscribed backlog channel has no
+// subscriptions row, so MarkMetaRefreshed matches zero rows and reports no
+// error — and if the attempt also died before Resolve could record itself (a
+// panic mid-parse), resolved_at stays
+// NULL and ClaimUnresolved returns that same channel on the next poll, forever.
+// The conditional stamp closes that path without ever overwriting a real
+// outcome.
+func (w *Worker) settle(channelID string) {
 	next := w.d.Now().Add(w.jitteredInterval()).UTC().Format(sqlTimeLayout)
 	if err := w.d.Refresher.Channels.MarkMetaRefreshed(channelID, next); err != nil {
 		w.d.Logger.Error("channel metadata: reschedule failed", "channel_id", channelID, "err", err)
+	}
+	now := w.d.Now().UTC().Format(sqlTimeLayout)
+	if err := w.d.Refresher.Channels.MarkResolveAttemptedIfUnset(channelID, now); err != nil {
+		w.d.Logger.Error("channel metadata: record attempt failed", "channel_id", channelID, "err", err)
 	}
 }
 
@@ -193,29 +216,10 @@ func (w *Worker) reschedule(channelID string) {
 // since importing the scan package for fifteen lines would tie two unrelated
 // schedulers together.
 func (w *Worker) jitteredInterval() time.Duration {
-	delta := time.Duration((w.rand()*2 - 1) * float64(refreshJitter))
-	d := refreshInterval + delta
-	if d < time.Hour {
-		d = time.Hour
-	}
-	return d
+	return sched.JitteredInterval(refreshInterval, refreshJitter, time.Hour, w.rand)
 }
 
 // sleep waits d, returning false if ctx was cancelled first.
 func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
-// pseudoRand returns a seeded, non-cryptographic float64 source. Scheduling
-// jitter needs no cryptographic quality.
-func pseudoRand() func() float64 {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return r.Float64
+	return sched.Sleep(ctx, d)
 }

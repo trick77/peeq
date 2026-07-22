@@ -108,7 +108,10 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "Paste a channel link (a /channel/, /@handle, /c/, or /user/ URL)")
 		return
 	}
-	info, err := s.channelResolver.ResolveChannel(r.Context(), channelURL)
+	// Interactive: someone pasted a url and is watching a spinner, so this call
+	// skips the pacer's background queue instead of waiting behind the download
+	// worker, the scan scheduler and the metadata refresher.
+	info, err := s.channelResolver.ResolveChannel(ytdlp.WithInteractive(r.Context()), channelURL)
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
 			writeJSONError(w, http.StatusConflict, "cookie required")

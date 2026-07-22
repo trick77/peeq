@@ -106,13 +106,18 @@ type RunnerConfig struct {
 type Runner struct {
 	cfg RunnerConfig
 
-	// mu guards nextSlot only. It is never held across a sleep or an exec —
-	// the pacer reserves a slot under the lock and then waits outside it, so a
-	// long download cannot block another caller from computing its own slot.
+	// mu guards nextSlot. It is never held across a sleep or an exec — the slot is claimed under the lock and the waiting happens outside
+	// it, so a long download cannot block another caller from claiming.
 	mu sync.Mutex
-	// nextSlot is the earliest wall-clock time at which the NEXT invocation
-	// may start. Zero until the first call. See throttle.
+	// nextSlot is the tail of the queue: the earliest time a BACKGROUND call may
+	// start. Zero until the first call. An interactive call ignores it when
+	// claiming its own slot but still pushes it, so work queued after the jump
+	// stays spaced. See throttle.
 	nextSlot time.Time
+	// nextInteractiveSlot is the same tail for the priority lane. Interactive
+	// calls skip background reservations but still queue behind each other, so
+	// two clicks in the same second do not fire as one burst.
+	nextInteractiveSlot time.Time
 }
 
 // New builds a Runner from cfg, filling in safe defaults for any
@@ -215,22 +220,37 @@ func (r *Runner) pauseGate() error {
 // throttle.
 //
 // So the wait is a reservation against a shared clock rather than a private
-// sleep. Each call takes the lock, claims the earliest slot at least one gap
-// from now AND at or after any slot already claimed, pushes nextSlot past it,
-// and then sleeps outside the lock until its slot arrives. Consecutive starts
-// are therefore always at least one gap apart across the whole process, no
-// matter how many goroutines are asking. A single caller on an idle Runner is
-// unaffected — its slot is exactly now+gap, the same wait as before.
+// sleep. Each caller claims a slot at least one gap from now and at or after
+// the last slot claimed, pushes the queue tail past it, and sleeps outside the
+// lock until its slot arrives — one sleep, computed once. Consecutive starts
+// are therefore at least one gap apart across the whole process. A single
+// caller on an idle Runner waits exactly its own gap, as it always did.
 //
-// A cancelled wait burns its slot: the reservation is not returned to the
-// pool, so the next caller may wait slightly longer than necessary. That is
-// the conservative direction (fewer calls, not more) and not worth the
-// bookkeeping to reclaim.
+// Interactive callers skip the queue. A call a person is waiting on (ctx
+// carries WithInteractive: the add-download and add-channel handlers) claims
+// its slot from the last ADMITTED call rather than from the queue tail, so it
+// waits one gap instead of inheriting however many background reservations
+// happen to be outstanding. Without this a button press could sit behind the
+// download worker, the scan scheduler and the metadata refresher and take
+// minutes to answer — on the request's own context, so a proxy timeout turns a
+// merely-queued call into a visible failure.
+//
+// The cost, stated plainly: a background reservation already made for a time
+// inside the interactive call's gap is NOT pushed back — it is asleep and
+// cannot be told otherwise without a wakeup mechanism that would make every
+// wait a polling loop. So a queue jump can let one background call start closer
+// than a full gap behind the interactive one: a burst of two, never more, and
+// only when a click lands while a worker is already queued. Everything after it
+// is spaced normally, since the tail moves. That is a deliberate trade of a
+// rare two-call burst for an interactive path that cannot hang.
+//
+// A cancelled wait burns its slot: the reservation is not returned to the pool,
+// so the next caller may wait slightly longer than necessary. That is the
+// conservative direction (fewer calls, not more) and not worth reclaiming.
 //
 // The wait is cancellable: if ctx is cancelled before the slot arrives,
-// throttle returns ctx.Err() without completing the sleep, so a queued
-// download can be cancelled during its pre-call wait instead of blocking
-// until it ends.
+// throttle returns ctx.Err() without completing the sleep, so a queued download
+// can be cancelled during its pre-call wait instead of blocking until it ends.
 func (r *Runner) throttle(ctx context.Context) error {
 	floor := r.effectiveThrottleFloor()
 	jitter := time.Duration(r.cfg.RandFloat64() * float64(r.cfg.ThrottleJitter))
@@ -238,14 +258,52 @@ func (r *Runner) throttle(ctx context.Context) error {
 
 	now := r.now()
 	r.mu.Lock()
+	// Every call waits at least its own gap, however idle the Runner is. For an
+	// interactive call that is the whole rule: one gap from now, never sooner
+	// (so it cannot land on top of a call that already fired — anything already
+	// started did so at or before now) and never later (so it does not inherit
+	// the queue). Background calls additionally queue behind the tail.
 	slot := now.Add(gap)
-	if slot.Before(r.nextSlot) {
+	if isInteractive(ctx) {
+		// Skips the background queue, but NOT other interactive calls: two
+		// clicks in the same second must not fire together, so the priority
+		// lane keeps a tail of its own.
+		if slot.Before(r.nextInteractiveSlot) {
+			slot = r.nextInteractiveSlot
+		}
+	} else if slot.Before(r.nextSlot) {
 		slot = r.nextSlot
 	}
-	r.nextSlot = slot.Add(gap)
+	tail := slot.Add(gap)
+	// The background tail always moves, so work queued after an interactive
+	// jump stays spaced behind it. The interactive tail moves ONLY for
+	// interactive calls — letting background reservations push it would put the
+	// priority lane right back at the end of the queue it exists to skip.
+	if tail.After(r.nextSlot) {
+		r.nextSlot = tail
+	}
+	if isInteractive(ctx) && tail.After(r.nextInteractiveSlot) {
+		r.nextInteractiveSlot = tail
+	}
 	r.mu.Unlock()
 
 	return r.cfg.Sleep(ctx, slot.Sub(now))
+}
+
+// interactiveKey marks a context as belonging to a call a person is waiting on.
+type interactiveKey struct{}
+
+// WithInteractive marks ctx as user-facing, so the pacer lets it go ahead of
+// background work instead of behind it. Use it for the handlers a person waits
+// on with a spinner in front of them — never for worker calls, which have no
+// deadline and would only crowd out the ones that do.
+func WithInteractive(ctx context.Context) context.Context {
+	return context.WithValue(ctx, interactiveKey{}, true)
+}
+
+func isInteractive(ctx context.Context) bool {
+	v, _ := ctx.Value(interactiveKey{}).(bool)
+	return v
 }
 
 // now reads the injectable clock, defaulting to time.Now.

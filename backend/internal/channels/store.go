@@ -290,19 +290,38 @@ func (s *Store) MarkResolveAttempted(channelID, at string) error {
 // also finds cache-only rows, since the channel page reads metadata for
 // channels the user has never tracked.
 func (s *Store) Get(id string) (*Channel, error) {
-	row := s.db.QueryRowContext(context.Background(), `
-SELECT id, handle, name, description, avatar_path, banner_path,
-       subscriber_count, verified,
-       COALESCE(resolved_at, ''), resolve_ok, COALESCE(tracked_at, ''), added_at
-FROM channels WHERE id = ?`, id)
+	row := s.db.QueryRowContext(context.Background(),
+		`SELECT `+channelColumns+` FROM channels c WHERE c.id = ?`, id)
+	c, err := scanChannel(row)
+	if err != nil {
+		return nil, fmt.Errorf("get channel %s: %w", id, err)
+	}
+	return c, nil
+}
+
+// channelColumns is the channels row as every reader of a whole Channel wants
+// it: aliased "c" so it drops into a join unchanged, and with the nullable
+// columns already COALESCEd to the empty strings the Channel struct uses.
+// Shared so a reader that joins channels (the metadata claims) cannot drift
+// from Get's column order, which scanChannel depends on.
+const channelColumns = `c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
+       c.subscriber_count, c.verified,
+       COALESCE(c.resolved_at, ''), c.resolve_ok, COALESCE(c.tracked_at, ''), c.added_at`
+
+// rowScanner is *sql.Row and *sql.Rows both.
+type rowScanner interface{ Scan(dest ...any) error }
+
+// scanChannel reads one channelColumns row. A missing row is (nil, nil), not
+// an error: "no such channel" is an ordinary answer everywhere this is used.
+func scanChannel(row rowScanner) (*Channel, error) {
 	var c Channel
 	if err := row.Scan(&c.ID, &c.Handle, &c.Name, &c.Description,
 		&c.AvatarPath, &c.BannerPath, &c.Subscribers, &c.Verified,
 		&c.ResolvedAt, &c.ResolveOk, &c.TrackedAt, &c.AddedAt); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("get channel %s: %w", id, err)
+		return nil, err
 	}
 	return &c, nil
 }

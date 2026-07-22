@@ -773,3 +773,110 @@ func TestThrottle_idleRunnerWaitsExactlyOneGap(t *testing.T) {
 		t.Fatalf("wait after an idle period = %v, want ~20s (one gap, not accumulated debt)", got)
 	}
 }
+
+// TestThrottle_interactiveSkipsTheBackgroundQueue is the reason WithInteractive
+// exists. Three background workers queue up; then a person clicks. Before the
+// priority lane the click inherited their queue and waited four gaps — on the
+// request's own context, so a proxy timeout turned a merely-queued call into a
+// visible failure. It must wait its own gap instead.
+func TestThrottle_interactiveSkipsTheBackgroundQueue(t *testing.T) {
+	base := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	var waits []time.Duration
+	r := New(RunnerConfig{
+		CookieProvider: func() (string, string) { return "c", "valid" },
+		ThrottleFloor:  20 * time.Second,
+		ThrottleJitter: time.Nanosecond,
+		RandFloat64:    func() float64 { return 0 },
+		Now:            func() time.Time { return base },
+		Sleep: func(_ context.Context, d time.Duration) error {
+			mu.Lock()
+			waits = append(waits, d)
+			mu.Unlock()
+			return nil
+		},
+	})
+
+	// Three background callers queue: 1, 2 and 3 gaps.
+	for i := 0; i < 3; i++ {
+		if err := r.throttle(context.Background()); err != nil {
+			t.Fatalf("background throttle: %v", err)
+		}
+	}
+	mu.Lock()
+	backgroundWaits := len(waits)
+	mu.Unlock()
+	if backgroundWaits != 3 {
+		t.Fatalf("expected 3 background waits, got %d", backgroundWaits)
+	}
+
+	if err := r.throttle(WithInteractive(context.Background())); err != nil {
+		t.Fatalf("interactive throttle: %v", err)
+	}
+
+	mu.Lock()
+	got := waits[len(waits)-1]
+	mu.Unlock()
+	// One gap — NOT the four it would inherit by queueing.
+	if got < 20*time.Second || got > 21*time.Second {
+		t.Fatalf("interactive wait = %v, want ~20s (its own gap, not the queue's)", got)
+	}
+}
+
+// TestThrottle_interactiveStillWaitsItsOwnGap: skipping the queue must not mean
+// skipping the throttle. An interactive call never fires immediately, and never
+// lands on top of a call already admitted.
+func TestThrottle_interactiveStillWaitsItsOwnGap(t *testing.T) {
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	var got time.Duration
+	r := New(RunnerConfig{
+		CookieProvider: func() (string, string) { return "c", "valid" },
+		ThrottleFloor:  20 * time.Second,
+		ThrottleJitter: time.Nanosecond,
+		RandFloat64:    func() float64 { return 0 },
+		Now:            func() time.Time { return now },
+		Sleep:          func(_ context.Context, d time.Duration) error { got = d; return nil },
+	})
+
+	// A lone interactive call on an idle Runner waits its gap.
+	if err := r.throttle(WithInteractive(context.Background())); err != nil {
+		t.Fatalf("throttle: %v", err)
+	}
+	if got < 20*time.Second || got > 21*time.Second {
+		t.Fatalf("first interactive wait = %v, want ~20s", got)
+	}
+	// A second interactive call at the same instant is spaced from the first,
+	// not granted alongside it.
+	if err := r.throttle(WithInteractive(context.Background())); err != nil {
+		t.Fatalf("throttle: %v", err)
+	}
+	if got < 40*time.Second {
+		t.Fatalf("second interactive wait = %v, want >=40s (spaced from the first)", got)
+	}
+}
+
+// TestThrottle_backgroundQueuesBehindAnInteractiveJump: the queue tail moves
+// when an interactive call jumps in, so work queued AFTERWARDS stays spaced
+// rather than piling onto the slot the jumper took.
+func TestThrottle_backgroundQueuesBehindAnInteractiveJump(t *testing.T) {
+	base := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	var got time.Duration
+	r := New(RunnerConfig{
+		CookieProvider: func() (string, string) { return "c", "valid" },
+		ThrottleFloor:  20 * time.Second,
+		ThrottleJitter: time.Nanosecond,
+		RandFloat64:    func() float64 { return 0 },
+		Now:            func() time.Time { return base },
+		Sleep:          func(_ context.Context, d time.Duration) error { got = d; return nil },
+	})
+
+	if err := r.throttle(WithInteractive(context.Background())); err != nil {
+		t.Fatalf("interactive throttle: %v", err)
+	}
+	if err := r.throttle(context.Background()); err != nil {
+		t.Fatalf("background throttle: %v", err)
+	}
+	if got < 40*time.Second {
+		t.Fatalf("background wait after an interactive jump = %v, want >=40s", got)
+	}
+}

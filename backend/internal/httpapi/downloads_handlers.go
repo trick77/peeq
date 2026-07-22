@@ -100,7 +100,9 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "That's a channel link — add it under Channels, not here")
 		return
 	}
-	meta, err := s.runner.Metadata(r.Context(), watchURL)
+	// Interactive: the user pasted this url and is waiting on the answer, so it
+	// skips the pacer's background queue (see ytdlp.WithInteractive).
+	meta, err := s.runner.Metadata(ytdlp.WithInteractive(r.Context()), watchURL)
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
 			writeJSONError(w, http.StatusConflict, "cookie required")
