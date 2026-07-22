@@ -63,6 +63,7 @@ import {
   getVideo,
   setResume,
   setWatched,
+  setFavorite,
   redownload,
   deleteVideo,
   setCategory,
@@ -90,6 +91,17 @@ describe("Player", () => {
     vi.mocked(resummarize).mockClear();
     vi.mocked(redownload).mockClear();
     vi.mocked(deleteVideo).mockClear();
+    // mockReset, not mockClear: these carry per-test queued outcomes
+    // (mockRejectedValueOnce). A queued rejection that its own test never
+    // consumed would otherwise detonate in the next test that toggles, and
+    // cumulative call counts make `toHaveBeenCalled()` gates pass on a
+    // previous test's click.
+    vi.mocked(setWatched).mockReset();
+    vi.mocked(setWatched).mockResolvedValue(true);
+    vi.mocked(setFavorite).mockReset();
+    vi.mocked(setFavorite).mockResolvedValue(true);
+    vi.mocked(setCategory).mockReset();
+    vi.mocked(setCategory).mockResolvedValue("ai");
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
     vi.mocked(streamDownloads).mockReset();
     vi.mocked(streamDownloads).mockImplementation(() => new Promise(() => {}));
@@ -207,13 +219,15 @@ describe("Player", () => {
 
       fireEvent.click(screen.getByRole("button", { name }));
 
-      await waitFor(() => expect(setWatched).toHaveBeenCalled());
+      await waitFor(() =>
+        expect(setWatched).toHaveBeenCalledWith("v1", !watched),
+      );
       expect(pause).toHaveBeenCalled();
       expect(videoEl.currentTime).toBe(0);
     },
   );
 
-  it("restores the playhead when the watched toggle fails", async () => {
+  it("restores the playhead and resumes playback when the toggle fails", async () => {
     vi.mocked(getVideo).mockResolvedValue(
       makeVideo({ watched: false, duration_seconds: 100 }),
     );
@@ -226,6 +240,11 @@ describe("Player", () => {
       return el;
     });
     videoEl.pause = vi.fn();
+    const play = vi.fn();
+    videoEl.play = play;
+    // Playing at the moment of the click — that is what the rollback has to
+    // put back, and jsdom's default (paused: true) would skip the branch.
+    Object.defineProperty(videoEl, "paused", { value: false, writable: true });
     Object.defineProperty(videoEl, "currentTime", {
       value: 40,
       writable: true,
@@ -238,10 +257,13 @@ describe("Player", () => {
     // 0:00 with the pre-toggle state restored around it.
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: /Mark watched/ }),
+        screen.getByRole("button", { name: "Mark watched" }),
       ).toBeInTheDocument();
       expect(videoEl.currentTime).toBe(40);
     });
+    expect(play).toHaveBeenCalled();
+    // And it says so, rather than reading as a button that did nothing.
+    expect(screen.getByText("Couldn't mark watched.")).toBeInTheDocument();
   });
 
   it("does not re-post the old position after the video is un-watched", async () => {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Icon } from "../icons";
+import { Icon, type IconName } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
 import { Scrubber } from "../components/Scrubber";
 import { CategoryPicker } from "../components/CategoryPicker";
@@ -194,7 +194,14 @@ export function Player({
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [skipToast, setSkipToast] = useState<string | null>(null);
+  // toast — the transient notice over the video stage. It began as the
+  // SponsorBlock skip message and now carries action failures too, so it holds
+  // its own icon. `error` is not an option for those: a non-null error
+  // replaces the whole player view (see the early return below), and losing
+  // the video because a toggle failed is worse than the failure itself.
+  const [toast, setToast] = useState<{ text: string; icon: IconName } | null>(
+    null,
+  );
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [ccOn, setCcOn] = useState(false);
@@ -454,6 +461,18 @@ export function Player({
     positionKnownRef.current = true;
   }
 
+  // showToast puts a message over the stage for a few seconds. A later toast
+  // replaces an earlier one, so the timer is always reset rather than stacked
+  // — two overlapping notices would otherwise leave the second one dismissed
+  // early by the first one's timeout.
+  function showToast(text: string, icon: IconName) {
+    setToast({ text, icon });
+    if (toastTimerRef.current !== undefined) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 2600);
+  }
+
   function handleTimeUpdate() {
     const el = videoRef.current;
     if (!el || !video) return;
@@ -470,14 +489,9 @@ export function Player({
         el.currentTime = seg.end_time;
         setCurrentTime(seg.end_time);
         positionRef.current = seg.end_time;
-        setSkipToast(
+        showToast(
           `Skipped ${seg.category} · ${formatDuration(seg.end_time - seg.start_time)}`,
-        );
-        if (toastTimerRef.current !== undefined)
-          window.clearTimeout(toastTimerRef.current);
-        toastTimerRef.current = window.setTimeout(
-          () => setSkipToast(null),
-          2600,
+          "skipForward",
         );
         break;
       }
@@ -555,8 +569,15 @@ export function Player({
   // timeupdate, and handleTimeUpdate would POST the new position within
   // RESUME_THROTTLE_MS — writing back the position the server just cleared,
   // and past the 90% mark re-crossing SetResume's auto-watched check, which
-  // silently undoes an un-watch. positionKnownRef = false closes the same hole
-  // for the unmount/tab-hide flush.
+  // silently undoes an un-watch.
+  //
+  // positionRef/positionKnownRef are reset for the same reason, but note they
+  // do not stay reset: setting currentTime queues a timeupdate (the spec fires
+  // it on a seek even while paused), and handleTimeUpdate flips
+  // positionKnownRef back to true. That is harmless *because the position it
+  // then reports is 0* — a flush of 0 matches what the server already stored,
+  // and 0 can never re-cross the 90% threshold. Anything that changes this
+  // function to leave a non-zero playhead behind has to revisit that.
   async function handleToggleWatched() {
     if (!video) return;
     const next = !video.watched;
@@ -585,16 +606,17 @@ export function Player({
       // video sitting at 0:00 while the restored state still claims the old
       // position — and the next resume ping would persist that 0.
       seek(previousPlayhead);
-      if (wasPlaying) {
-        try {
-          // play() returns a promise in browsers but nothing in jsdom, and it
-          // can reject outright (autoplay policy). Resuming is a nicety on an
-          // already-failed path — never let it throw over the real error.
-          void el?.play()?.catch(() => {});
-        } catch {
-          // Left paused; the state rollback above is what actually matters.
-        }
-      }
+      // play() returns a promise that can reject (autoplay policy), and
+      // returns nothing at all under jsdom — resuming is a nicety on an
+      // already-failed path, so neither case may surface.
+      if (wasPlaying) void el?.play()?.catch(() => {});
+      // Say so. Without this the whole thing reads as a button that did
+      // nothing: the label flips back, the video jumps and returns, and the
+      // user is left guessing whether they misclicked.
+      showToast(
+        next ? "Couldn't mark watched." : "Couldn't mark unwatched.",
+        "warning",
+      );
     }
   }
 
@@ -710,9 +732,14 @@ export function Player({
               />
             )}
           </video>
-          <div className={`skip-toast${skipToast ? " show" : ""}`}>
-            <Icon name="skipForward" size="15px" />
-            {skipToast}
+          <div
+            className={`skip-toast${toast ? " show" : ""}${
+              toast?.icon === "warning" ? " warn" : ""
+            }`}
+            role="status"
+          >
+            <Icon name={toast?.icon ?? "skipForward"} size="15px" />
+            {toast?.text}
           </div>
           <Scrubber
             currentSeconds={currentTime}

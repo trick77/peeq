@@ -1323,6 +1323,12 @@ button.catpick.unset:hover {
   opacity: 1;
   transform: none;
 }
+/* Failure variant: the accent reads as "peeq did something for you", which is
+   the wrong note for "that didn't work". */
+.skip-toast.warn {
+  border-color: rgba(193, 70, 56, 0.55);
+  color: var(--color-danger);
+}
 .skip-toast .mono {
   color: var(--color-muted);
   font-weight: 500;
