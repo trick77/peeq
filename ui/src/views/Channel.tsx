@@ -8,7 +8,9 @@ import {
   subscribeChannel,
   unsubscribeChannel,
   addChannel,
+  refreshChannel,
 } from "../api/channels";
+import { CookieRequiredError } from "../api/downloads";
 import { gradientClassFor } from "../format";
 import type { ChannelDetail } from "../api/types";
 import { ArchiveTab } from "./channel/ArchiveTab";
@@ -38,6 +40,37 @@ export function formatBytes(bytes: number): string {
   return `${Math.round(bytes / KB)} kB`;
 }
 
+// formatSubscribers renders a subscriber count the way YouTube itself does —
+// "7.2M", "412K" — because that is the number the user recognises from the
+// channel page they came from. undefined means YouTube never reported one
+// (the channel hides it, or peeq has never read the channel), which is a
+// different thing from zero and reads as "—".
+export function formatSubscribers(n: number | undefined): string {
+  if (!n || n < 0) return "—";
+  // One decimal below 100 of a unit ("7.2M"), whole numbers above it
+  // ("412K") — more precision than that is noise on a number this large.
+  const short = (v: number) =>
+    v >= 100 ? String(Math.round(v)) : v.toFixed(1).replace(/\.0$/, "");
+  if (n >= 1_000_000) return `${short(n / 1_000_000)}M`;
+  if (n >= 1000) {
+    const k = short(n / 1000);
+    // Rounding can push a count just under a million over the boundary
+    // (999,999 → "1000K"), which is not how anyone writes it.
+    return k === "1000" ? "1M" : `${k}K`;
+  }
+  return String(n);
+}
+
+// formatStamp renders one of peeq's stored timestamps as a plain local date.
+// The stored form has no zone marker but is always UTC, so the "Z" is what
+// stops the browser reading it as local time and shifting the date.
+export function formatStamp(stored: string | undefined): string {
+  if (!stored) return "";
+  const d = new Date(stored + "Z");
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString();
+}
+
 // formatAge renders an ISO timestamp as a coarse "how long ago", matching
 // how the rest of peeq talks about time on cards.
 export function formatAge(iso: string | undefined): string {
@@ -50,6 +83,68 @@ export function formatAge(iso: string | undefined): string {
   if (days < 30) return `${days} d ago`;
   if (days < 365) return `${Math.round(days / 30)} mo ago`;
   return `${Math.round(days / 365)} y ago`;
+}
+
+// ChannelState is the part of the handle line that reports on YouTube rather
+// than on peeq: whether the channel is still there, and how current peeq's
+// copy of its details is. It has three readings, in priority order:
+//
+//   gone            — peeq auto-unsubscribed after YouTube kept reporting the
+//                     channel deleted. The most definite thing peeq can say,
+//                     so it outranks the freshness of the metadata.
+//   refresh failed  — resolved_at is set but the attempt did not succeed.
+//                     This is the state behind a channel with no avatar, no
+//                     banner and no description: peeq tried once, failed, and
+//                     will not try again on its own.
+//   active          — resolved cleanly, with the date it last read the channel.
+//
+// A channel with no resolved_at at all has simply never been read, and says
+// so plainly rather than claiming anything about YouTube.
+export function ChannelState({ detail }: { detail: ChannelDetail }) {
+  if (detail.gone) {
+    return (
+      <>
+        <span className="sep">·</span>
+        <span className="chan-state dead">
+          <span className="led dead" />
+          Gone from YouTube
+        </span>
+      </>
+    );
+  }
+  if (!detail.resolved_at) {
+    return (
+      <>
+        <span className="sep">·</span>
+        <span className="chan-state">
+          <span className="led unknown" />
+          Never read from YouTube
+        </span>
+      </>
+    );
+  }
+  if (!detail.resolve_ok) {
+    return (
+      <>
+        <span className="sep">·</span>
+        <span className="chan-state stale">
+          <span className="led unknown" />
+          Last refresh failed {formatStamp(detail.resolved_at)}
+        </span>
+      </>
+    );
+  }
+  return (
+    <>
+      <span className="sep">·</span>
+      <span className="chan-state">
+        <span className="led" />
+        Active on YouTube
+      </span>
+      <span className="sep">·</span>
+      <span>Refreshed {formatStamp(detail.resolved_at)}</span>
+    </>
+  );
 }
 
 export function Channel({
@@ -65,6 +160,13 @@ export function Channel({
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("archive");
   const [busy, setBusy] = useState(false);
+  // Refresh gets its own busy flag rather than sharing `busy`: it runs while
+  // the user waits (yt-dlp, then two image fetches) and must not leave the
+  // Subscribe button spinning alongside it.
+  const [refreshing, setRefreshing] = useState(false);
+  // Whether the description is expanded past its 5-line clamp. Reset per
+  // channel, so navigating to another one does not inherit "expanded".
+  const [descOpen, setDescOpen] = useState(false);
 
   // loadSeq drops out-of-order responses, the same guard Channels.tsx uses:
   // navigating between two channels quickly must not leave the slower
@@ -89,9 +191,32 @@ export function Channel({
   useEffect(() => {
     setDetail(null);
     setTab("archive");
+    setDescOpen(false);
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
+
+  // handleRefresh re-reads the channel from YouTube. It is the only way out
+  // of the state where an early failed resolve left the channel with no
+  // avatar, banner or description and peeq stopped retrying — so it is worth
+  // waiting for, and the error is worth showing rather than swallowing.
+  async function handleRefresh() {
+    if (!detail) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      await refreshChannel(detail.id);
+      reload();
+    } catch (e) {
+      setError(
+        e instanceof CookieRequiredError
+          ? "peeq needs a fresh YouTube cookie before it can read this channel."
+          : (e as Error).message,
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function handleToggleSubscribe() {
     if (!detail) return;
@@ -137,8 +262,23 @@ export function Channel({
       ]
     : [{ id: "archive", label: "Archive", count: detail.archived_count }];
 
+  // The description is clamped to five lines and only offers "More" when
+  // there is plausibly something behind the fold. The threshold is on the
+  // text, not on measured height: a ResizeObserver would be exact but would
+  // also make the button appear a frame late, and being slightly generous
+  // about offering More costs nothing — the clamp is what actually decides
+  // whether anything is hidden.
+  const descTruncatable = (detail.description?.length ?? 0) > 340;
+
   return (
     <div className="chan">
+      {/* Leaving the page is navigation, not something you do TO this
+          channel, so it sits above the header rather than in the action
+          column next to Subscribe and Refresh. */}
+      <button type="button" className="chan-back" onClick={onBack}>
+        <Icon name="chevronLeft" size="14px" />
+        All channels
+      </button>
       <header className="chan-head">
         {detail.has_banner ? (
           <div
@@ -157,7 +297,19 @@ export function Channel({
             />
           )}
           <div className="chan-id">
-            <h2>{detail.name}</h2>
+            <h2>
+              {detail.name}
+              {/* YouTube's verified mark, drawn muted: it is a fact about the
+                  channel, not a peeq state, and must not read as an accent. */}
+              {detail.verified ? (
+                <Icon
+                  name="verified"
+                  size="18px"
+                  label="Verified by YouTube"
+                  style={{ color: "var(--color-muted)" }}
+                />
+              ) : null}
+            </h2>
             <div className="chan-handle">
               {/* The handle is the one thing on this page that belongs to
                   YouTube rather than peeq, so it links back there. Opens in a
@@ -175,24 +327,46 @@ export function Channel({
                     {detail.handle}
                     <Icon name="externalLink" size="12px" />
                   </a>
-                  {" · "}
+                  <span className="sep">·</span>
                 </>
               ) : null}
               {detail.tracked ? (
-                <>
-                  tracked since{" "}
-                  {new Date(
-                    (detail.tracked_at ?? "") + "Z",
-                  ).toLocaleDateString()}
-                </>
+                <span>Tracked since {formatStamp(detail.tracked_at)}</span>
               ) : (
-                <span style={{ color: "var(--color-faint)" }}>not tracked</span>
+                <span style={{ color: "var(--color-faint)" }}>Not tracked</span>
               )}
+              <ChannelState detail={detail} />
             </div>
             {detail.description ? (
-              <p className="chan-desc">{detail.description}</p>
+              <>
+                <p
+                  className={`chan-desc${descOpen ? "" : " clamped"}`}
+                  data-testid="chan-desc"
+                >
+                  {detail.description}
+                </p>
+                {descTruncatable ? (
+                  <button
+                    type="button"
+                    className="chan-more"
+                    aria-expanded={descOpen}
+                    onClick={() => setDescOpen((v) => !v)}
+                  >
+                    {descOpen ? "Less" : "More"}
+                  </button>
+                ) : null}
+              </>
             ) : null}
             <div className="chan-stats">
+              {/* Subscribers leads the row because it is the one number here
+                  that describes the CHANNEL; everything after it describes
+                  peeq's copy of it. */}
+              <div className="chan-stat">
+                <div className={`k${detail.subscribers ? "" : " unknown"}`}>
+                  {formatSubscribers(detail.subscribers)}
+                </div>
+                <div className="l">subscribers</div>
+              </div>
               <div className="chan-stat">
                 <div className="k">{detail.archived_count}</div>
                 <div className="l">archived</div>
@@ -212,9 +386,6 @@ export function Channel({
             </div>
           </div>
           <div className="chan-acts">
-            <Button type="button" variant="ghost" onClick={onBack}>
-              <Icon name="tv" size="16px" /> All channels
-            </Button>
             {detail.tracked ? (
               <Button
                 type="button"
@@ -238,6 +409,17 @@ export function Channel({
                 Track this channel
               </Button>
             )}
+            {/* Refresh turns primary when it is the thing to press: a channel
+                peeq has never managed to read is sitting there with no
+                artwork and no description, and this is the only way out. */}
+            <Button
+              type="button"
+              variant={detail.resolve_ok ? "secondary" : "primary"}
+              busy={refreshing}
+              onClick={handleRefresh}
+            >
+              <Icon name="refresh" size="16px" /> Refresh
+            </Button>
           </div>
         </div>
       </header>

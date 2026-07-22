@@ -2,6 +2,8 @@ package channels
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -112,6 +114,27 @@ ORDER BY au.at DESC, c.id`)
 		return nil, fmt.Errorf("iterate auto unsubscribed: %w", err)
 	}
 	return out, nil
+}
+
+// AutoUnsubscribeFor returns channelID's auto-unsubscribe record, or
+// (nil, nil) if peeq never unsubscribed this channel on its own. The channel
+// page uses it to say "Gone from YouTube": an auto-unsubscribe carrying
+// ReasonDeleted is peeq's most confident statement that a channel no longer
+// exists, since recording one takes DeadScanThreshold consecutive dead scans.
+// The embedded Channel is left zero — the caller already holds the channel
+// row and needs only the reason and the date.
+func (s *Store) AutoUnsubscribeFor(channelID string) (*AutoUnsubscribed, error) {
+	row := s.db.QueryRowContext(context.Background(),
+		`SELECT reason, at FROM auto_unsubscribes WHERE channel_id = ?`, channelID)
+	var a AutoUnsubscribed
+	if err := row.Scan(&a.Reason, &a.At); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("auto unsubscribe for %s: %w", channelID, err)
+	}
+	a.ID = channelID
+	return &a, nil
 }
 
 // ClearAutoUnsubscribe removes channelID's auto-unsubscribe record, clearing

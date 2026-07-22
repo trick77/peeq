@@ -13,6 +13,7 @@ vi.mock("../api/channels", () => ({
   deleteChannel: vi.fn(),
   getChannel: vi.fn(),
   scanChannel: vi.fn(),
+  refreshChannel: vi.fn(),
   channelAvatarUrl: (id: string) => `/api/channels/${id}/avatar`,
   channelBannerUrl: (id: string) => `/api/channels/${id}/banner`,
 }));
@@ -39,12 +40,20 @@ import {
   scanChannel,
   updateChannel,
   deleteChannel,
+  refreshChannel,
 } from "../api/channels";
 import { listVideos, setFavorite, setWatched } from "../api/videos";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
+import { CookieRequiredError } from "../api/downloads";
 import { getSettings } from "../api/settings";
 import type { Settings, Video } from "../api/types";
-import { formatRuntime, formatBytes, formatAge } from "./Channel";
+import {
+  formatRuntime,
+  formatBytes,
+  formatAge,
+  formatSubscribers,
+  formatStamp,
+} from "./Channel";
 
 function settings(overrides: Partial<Settings> = {}): Settings {
   return {
@@ -100,6 +109,11 @@ function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     description: "Field documentaries.",
     has_avatar: true,
     has_banner: true,
+    subscribers: 7240000,
+    verified: true,
+    resolved_at: "2026-07-21 06:00:00",
+    resolve_ok: true,
+    gone: false,
     tracked: true,
     tracked_at: "2026-03-14 09:00:00",
     archived_count: 142,
@@ -126,6 +140,8 @@ describe("Channel", () => {
     vi.mocked(listPending).mockResolvedValue([]);
     vi.mocked(scanChannel).mockReset();
     vi.mocked(scanChannel).mockResolvedValue({ status: "scheduled" });
+    vi.mocked(refreshChannel).mockReset();
+    vi.mocked(refreshChannel).mockResolvedValue({ status: "ok" });
     vi.mocked(setFavorite).mockReset();
     vi.mocked(setFavorite).mockResolvedValue(true);
     vi.mocked(setWatched).mockReset();
@@ -542,7 +558,7 @@ describe("Channel", () => {
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
     );
     await screen.findByText("Uncanny Expeditions");
-    expect(screen.getByText("not tracked")).toBeInTheDocument();
+    expect(screen.getByText("Not tracked")).toBeInTheDocument();
   });
 
   it("the New tab shows its own pending-count badge", async () => {
@@ -1021,5 +1037,217 @@ describe("Channel format helpers", () => {
     expect(formatAge(iso(10 * 86400000))).toBe("10 d ago");
     expect(formatAge(iso(90 * 86400000))).toBe("3 mo ago");
     expect(formatAge(iso(400 * 86400000))).toBe("1 y ago");
+  });
+});
+
+describe("Channel YouTube metadata", () => {
+  beforeEach(() => {
+    vi.mocked(getChannel).mockReset();
+    vi.mocked(listVideos).mockReset();
+    vi.mocked(listPending).mockReset();
+    vi.mocked(refreshChannel).mockReset();
+    vi.mocked(getSettings).mockReset();
+    vi.mocked(listVideos).mockResolvedValue([]);
+    vi.mocked(listPending).mockResolvedValue([]);
+    vi.mocked(getSettings).mockResolvedValue(settings());
+    vi.mocked(refreshChannel).mockResolvedValue({ status: "ok" });
+  });
+
+  it("publishes the subscriber count, the verified mark and the refresh date", async () => {
+    vi.mocked(getChannel).mockResolvedValue(detail());
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    expect(screen.getByText("7.2M")).toBeInTheDocument();
+    expect(screen.getByText("subscribers")).toBeInTheDocument();
+    expect(screen.getByLabelText("Verified by YouTube")).toBeInTheDocument();
+    expect(screen.getByText("Active on YouTube")).toBeInTheDocument();
+    expect(
+      screen.getByText(`Refreshed ${formatStamp("2026-07-21 06:00:00")}`),
+    ).toBeInTheDocument();
+  });
+
+  // The stuck channel: resolved_at is stamped (so peeq will never retry on
+  // its own) but the attempt failed, which is why the header has no artwork.
+  // Saying "Refreshed <date>" here would be a confident lie.
+  it("reports a failed refresh instead of claiming the metadata is current", async () => {
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({
+        description: "",
+        has_avatar: false,
+        has_banner: false,
+        subscribers: undefined,
+        verified: false,
+        resolve_ok: false,
+      }),
+    );
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    expect(
+      screen.getByText(
+        `Last refresh failed ${formatStamp("2026-07-21 06:00:00")}`,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Refreshed /)).not.toBeInTheDocument();
+    expect(screen.queryByText("Active on YouTube")).not.toBeInTheDocument();
+    // An unknown count is a dash, never a number.
+    expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
+  it("says a channel is gone when peeq auto-unsubscribed it as deleted", async () => {
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({ gone: true, subscribed: false }),
+    );
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    expect(screen.getByText("Gone from YouTube")).toBeInTheDocument();
+    expect(screen.queryByText("Active on YouTube")).not.toBeInTheDocument();
+    // The last count peeq saw is history worth keeping, not a live claim.
+    expect(screen.getByText("7.2M")).toBeInTheDocument();
+  });
+
+  it("says so plainly when a channel has never been read", async () => {
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({ resolved_at: undefined, resolve_ok: false }),
+    );
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    expect(screen.getByText("Never read from YouTube")).toBeInTheDocument();
+  });
+
+  it("Refresh re-reads the channel and re-renders what came back", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getChannel)
+      .mockResolvedValueOnce(
+        detail({ name: "UCa", description: "", resolve_ok: false }),
+      )
+      .mockResolvedValue(detail({ description: "Field documentaries." }));
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("UCa");
+    await user.click(screen.getByRole("button", { name: /refresh/i }));
+
+    expect(refreshChannel).toHaveBeenCalledWith("UCa");
+    expect(await screen.findByText("Uncanny Expeditions")).toBeInTheDocument();
+    expect(screen.getByText("Field documentaries.")).toBeInTheDocument();
+  });
+
+  it("names the missing cookie rather than repeating a raw error", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getChannel).mockResolvedValue(detail({ resolve_ok: false }));
+    vi.mocked(refreshChannel).mockRejectedValue(new CookieRequiredError());
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("button", { name: /refresh/i }));
+
+    expect(
+      await screen.findByText(/fresh YouTube cookie/i),
+    ).toBeInTheDocument();
+  });
+
+  it("surfaces a refresh failure rather than silently doing nothing", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getChannel).mockResolvedValue(detail({ resolve_ok: false }));
+    vi.mocked(refreshChannel).mockRejectedValue(
+      new Error("refresh failed: channel unavailable"),
+    );
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("button", { name: /refresh/i }));
+
+    expect(
+      await screen.findByText("refresh failed: channel unavailable"),
+    ).toBeInTheDocument();
+  });
+
+  it("offers More only when the description is long enough to be cut off", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getChannel).mockResolvedValue(detail());
+    const { rerender } = render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    // "Field documentaries." fits well inside five lines.
+    expect(
+      screen.queryByRole("button", { name: "More" }),
+    ).not.toBeInTheDocument();
+
+    const long = Array(20).fill("A very long channel blurb.").join(" ");
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({ id: "UCb", description: long }),
+    );
+    rerender(
+      <Channel channelId="UCb" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText(long);
+
+    const more = await screen.findByRole("button", { name: "More" });
+    expect(screen.getByTestId("chan-desc")).toHaveClass("clamped");
+    await user.click(more);
+    expect(screen.getByTestId("chan-desc")).not.toHaveClass("clamped");
+    expect(screen.getByRole("button", { name: "Less" })).toBeInTheDocument();
+  });
+
+  it("puts the way back above the header, not among the channel's actions", async () => {
+    const user = userEvent.setup();
+    const onBack = vi.fn();
+    vi.mocked(getChannel).mockResolvedValue(detail());
+    const { container } = render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={onBack} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    const back = screen.getByRole("button", { name: /all channels/i });
+    expect(back).toHaveClass("chan-back");
+    expect(container.querySelector(".chan-acts")).not.toContainElement(back);
+
+    await user.click(back);
+    expect(onBack).toHaveBeenCalled();
+  });
+});
+
+describe("formatSubscribers", () => {
+  it("renders counts the way YouTube does, and unknown as a dash", () => {
+    expect(formatSubscribers(undefined)).toBe("—");
+    expect(formatSubscribers(0)).toBe("—");
+    expect(formatSubscribers(-1)).toBe("—");
+    expect(formatSubscribers(742)).toBe("742");
+    expect(formatSubscribers(7240000)).toBe("7.2M");
+    expect(formatSubscribers(412000)).toBe("412K");
+    expect(formatSubscribers(1500)).toBe("1.5K");
+    expect(formatSubscribers(2000)).toBe("2K");
+    expect(formatSubscribers(3000000)).toBe("3M");
+    expect(formatSubscribers(120000000)).toBe("120M");
+    // Rounding must not invent a unit nobody writes.
+    expect(formatSubscribers(999999)).toBe("1M");
+  });
+});
+
+describe("formatStamp", () => {
+  it("reads a stored timestamp as UTC, not local time", () => {
+    expect(formatStamp(undefined)).toBe("");
+    expect(formatStamp("nonsense")).toBe("");
+    expect(formatStamp("2026-07-21 06:00:00")).toBe(
+      new Date("2026-07-21T06:00:00Z").toLocaleDateString(),
+    );
   });
 });

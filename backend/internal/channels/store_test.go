@@ -536,3 +536,128 @@ func TestNameFromVideos_errorsOnClosedDB(t *testing.T) {
 		t.Fatal("expected an error resolving channel name from videos against a closed db")
 	}
 }
+
+// TestSaveResolved_storesPublishedFacts covers the success path: the numbers
+// YouTube publishes land on the row, and resolve_ok records that the fetch
+// actually worked.
+func TestSaveResolved_storesPublishedFacts(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SaveResolved(Channel{
+		ID: "UCa", Name: "Uncanny", Handle: "@uncanny",
+		Description: "Field docs.", Subscribers: 7240000, Verified: true,
+		ResolvedAt: "2026-07-21 06:00:00",
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := s.Get("UCa")
+	if err != nil || got == nil {
+		t.Fatalf("get: %v %v", got, err)
+	}
+	if got.Subscribers != 7240000 || !got.Verified || !got.ResolveOk {
+		t.Fatalf("got %+v", got)
+	}
+	if got.Handle != "@uncanny" {
+		t.Fatalf("Handle = %q", got.Handle)
+	}
+}
+
+// TestSaveResolved_keepsTheLastKnownCount asserts a resolve that comes back
+// without a subscriber count (the channel hides it, or YouTube omitted it)
+// keeps the last real number instead of erasing it to a misleading zero.
+func TestSaveResolved_keepsTheLastKnownCount(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SaveResolved(Channel{ID: "UCa", Name: "Uncanny", Subscribers: 412000, ResolvedAt: "2026-07-01 00:00:00"}); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	if err := s.SaveResolved(Channel{ID: "UCa", Name: "Uncanny", Subscribers: 0, ResolvedAt: "2026-07-21 00:00:00"}); err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	got, err := s.Get("UCa")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Subscribers != 412000 {
+		t.Fatalf("Subscribers = %d, want the last known 412000", got.Subscribers)
+	}
+}
+
+// TestSaveResolved_verifiedCanGoBackToFalse asserts the checkmark is written
+// as-is. A never-false column could not report a channel that lost it, which
+// is why verified deliberately breaks the never-blank rule the other
+// identity fields follow.
+func TestSaveResolved_verifiedCanGoBackToFalse(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SaveResolved(Channel{ID: "UCa", Verified: true, ResolvedAt: "2026-07-01 00:00:00"}); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	if err := s.SaveResolved(Channel{ID: "UCa", Verified: false, ResolvedAt: "2026-07-21 00:00:00"}); err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	got, err := s.Get("UCa")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Verified {
+		t.Fatal("Verified stayed true after a resolve that said otherwise")
+	}
+}
+
+// TestMarkResolveAttempted_clearsOkButKeepsMetadata asserts a failed refresh
+// only downgrades the freshness claim. A channel that resolved last week and
+// failed today keeps last week's name and artwork — losing them would make a
+// transient network error look like a channel with no details.
+func TestMarkResolveAttempted_clearsOkButKeepsMetadata(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SaveResolved(Channel{
+		ID: "UCa", Name: "Uncanny", Description: "Field docs.",
+		AvatarPath: "a.jpg", Subscribers: 412000, ResolvedAt: "2026-07-01 00:00:00",
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := s.MarkResolveAttempted("UCa", "2026-07-21 00:00:00"); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	got, err := s.Get("UCa")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ResolveOk {
+		t.Fatal("ResolveOk stayed true after a failed attempt")
+	}
+	if got.ResolvedAt != "2026-07-21 00:00:00" {
+		t.Fatalf("ResolvedAt = %q, want the failed attempt's time", got.ResolvedAt)
+	}
+	if got.Name != "Uncanny" || got.Description != "Field docs." || got.AvatarPath != "a.jpg" {
+		t.Fatalf("a failed refresh erased stored metadata: %+v", got)
+	}
+	if got.Subscribers != 412000 {
+		t.Fatalf("Subscribers = %d, want the last known 412000", got.Subscribers)
+	}
+}
+
+// TestUpsert_leavesResolveStateAlone is the regression guard for the
+// TubeArchivist import: it calls Upsert with identity only, and must not
+// flip a healthy channel's resolve_ok back to "never succeeded" or wipe its
+// subscriber count just because it has nothing to say about them.
+func TestUpsert_leavesResolveStateAlone(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SaveResolved(Channel{
+		ID: "UCa", Name: "Uncanny", Subscribers: 412000, Verified: true,
+		ResolvedAt: "2026-07-01 00:00:00",
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := s.Upsert(Channel{ID: "UCa", Name: "Uncanny Expeditions"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	got, err := s.Get("UCa")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !got.ResolveOk || !got.Verified || got.Subscribers != 412000 {
+		t.Fatalf("an identity-only upsert clobbered resolve state: %+v", got)
+	}
+	if got.Name != "Uncanny Expeditions" {
+		t.Fatalf("Name = %q, want the upserted one", got.Name)
+	}
+}

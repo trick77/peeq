@@ -106,6 +106,26 @@ export async function scanChannel(id: string): Promise<ScanResult> {
   );
 }
 
+// refreshChannel re-reads a channel's metadata from YouTube on demand. It is
+// the only way out of the "tried once, failed, never again" state, so it
+// deliberately ignores whether peeq already considers the channel resolved.
+// Resolving shells out to yt-dlp, so a missing cookie comes back as the same
+// CookieRequiredError addChannel raises, from the same 409.
+export async function refreshChannel(id: string): Promise<{ status: string }> {
+  try {
+    return await api.post<{ status: string }>(
+      `/api/channels/${encodeURIComponent(id)}/refresh`,
+      undefined,
+      "failed to refresh",
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      throw new CookieRequiredError();
+    }
+    throw err;
+  }
+}
+
 export function channelAvatarUrl(id: string): string {
   return `/api/channels/${encodeURIComponent(id)}/avatar`;
 }

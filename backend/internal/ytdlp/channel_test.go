@@ -122,7 +122,7 @@ func TestParseChannelInfo_picksAvatarAndBanner(t *testing.T) {
       "thumbnails": [
         {"id": "avatar_uncropped", "url": "https://x/avatar.jpg"},
         {"id": "banner_uncropped", "url": "https://x/banner.jpg"},
-        {"id": "0", "url": "https://x/other.jpg"}
+        {"id": "0", "url": "https://x/other.jpg", "width": 900, "height": 900}
       ]
     }`)
 
@@ -233,5 +233,110 @@ func TestResolveChannel_unresolvableChannel_wrapsErrorWithURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "https://www.youtube.com/@mystery") {
 		t.Fatalf("err = %v, want it to name the failing URL", err)
+	}
+}
+
+// TestParseChannelInfo_readsPublishedFacts asserts the subscriber count,
+// verified flag and @handle are read from the SAME metadata-only response
+// peeq already fetches — the whole point of showing them is that they cost no
+// extra call. The field names are yt-dlp's, verified against a live response.
+func TestParseChannelInfo_readsPublishedFacts(t *testing.T) {
+	raw := []byte(`{
+      "channel_id": "UCxyz",
+      "channel": "Uncanny Expeditions",
+      "uploader_id": "@uncanny",
+      "channel_follower_count": 7240000,
+      "channel_is_verified": true
+    }`)
+
+	info, err := parseChannelInfo(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if info.Subscribers != 7240000 {
+		t.Fatalf("Subscribers = %d, want 7240000", info.Subscribers)
+	}
+	if !info.Verified {
+		t.Fatal("Verified = false, want true")
+	}
+	if info.Handle != "@uncanny" {
+		t.Fatalf("Handle = %q, want @uncanny", info.Handle)
+	}
+}
+
+// TestParseChannelInfo_absentFactsAreZero asserts a channel that hides its
+// subscriber count parses cleanly with a zero — which callers read as
+// "unknown". A hidden count must not fail the resolve.
+func TestParseChannelInfo_absentFactsAreZero(t *testing.T) {
+	info, err := parseChannelInfo([]byte(`{"channel_id":"UCx","channel":"X"}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if info.Subscribers != 0 || info.Verified {
+		t.Fatalf("expected unknown/false, got %+v", info)
+	}
+}
+
+// TestChannelHandle_rejectsLegacyUploaderIDs asserts only a real @handle is
+// accepted. Older channels report a bare name or the UCID as uploader_id, and
+// storing either as a handle would render a link to a page that is not there.
+func TestChannelHandle_rejectsLegacyUploaderIDs(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"@uncanny", "@uncanny"},
+		{"UCiDJtJKMICpb9B1qf7qjEOA", ""},
+		{"SomeLegacyName", ""},
+		{"@", ""},
+		{"", ""},
+	} {
+		if got := channelHandle(tc.in); got != tc.want {
+			t.Errorf("channelHandle(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestParseChannelInfo_prefersTheBannerCrop asserts the stored banner is
+// YouTube's own wide crop, not the 16:9 original. The original is the asset a
+// creator uploads and mostly gets cropped away; rendering it in peeq's short,
+// wide header would cover-crop to the middle of the artwork and zoom into
+// whatever sits there. The numbered variants are the strip YouTube actually
+// shows, and the widest of them is the one to keep.
+func TestParseChannelInfo_prefersTheBannerCrop(t *testing.T) {
+	raw := []byte(`{
+      "channel_id": "UCxyz",
+      "thumbnails": [
+        {"id": "0", "url": "https://x/b-small.jpg", "width": 1060, "height": 175},
+        {"id": "5", "url": "https://x/b-wide.jpg", "width": 2560, "height": 424},
+        {"id": "banner_uncropped", "url": "https://x/b-uncropped.jpg"},
+        {"id": "7", "url": "https://x/av.jpg", "width": 900, "height": 900},
+        {"id": "avatar_uncropped", "url": "https://x/avatar.jpg"}
+      ]
+    }`)
+
+	info, err := parseChannelInfo(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if info.BannerURL != "https://x/b-wide.jpg" {
+		t.Fatalf("BannerURL = %q, want the widest 6:1 crop", info.BannerURL)
+	}
+	// The square avatar crop must never be mistaken for a banner.
+	if info.AvatarURL != "https://x/avatar.jpg" {
+		t.Fatalf("AvatarURL = %q", info.AvatarURL)
+	}
+}
+
+// TestPickBanner_fallsBackToUncropped asserts a channel whose thumbnails
+// carry no usable dimensions still gets a banner rather than none — the crop
+// is a better framing, not a requirement.
+func TestPickBanner_fallsBackToUncropped(t *testing.T) {
+	got := pickBanner([]channelThumb{
+		{ID: "0", URL: "https://x/no-dims.jpg"},
+		{ID: "7", URL: "https://x/av.jpg", Width: 900, Height: 900},
+	}, "https://x/uncropped.jpg")
+	if got != "https://x/uncropped.jpg" {
+		t.Fatalf("pickBanner = %q, want the uncropped fallback", got)
+	}
+	if got := pickBanner(nil, ""); got != "" {
+		t.Fatalf("pickBanner with nothing = %q, want empty", got)
 	}
 }

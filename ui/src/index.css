@@ -131,6 +131,19 @@ textarea.ui-control {
   padding: 10px 12px;
   resize: vertical;
 }
+/* A native select draws its own arrow inside the padding box, at a size and
+   inset the platform picks — which is what made the category filter look
+   cramped next to the search box despite both being 40px tall. Drawing the
+   chevron ourselves puts it at peeq's size and colour, and reserves the room
+   for it explicitly so a long option label ("Entertainment & Music") is laid
+   out against the space it actually has. */
+select.ui-control {
+  appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239c9a92' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+}
 
 /* Every async wait spins — the label never carries an ellipsis. */
 .ui-spin {
@@ -2628,10 +2641,47 @@ details.tomb-sect[open] > summary svg {
   font-size: var(--text-display);
   font-weight: 500;
   letter-spacing: -0.01em;
+  /* flex so the verified check sits on the name's baseline block rather than
+     riding the text baseline, which the serif's descenders would drag it below. */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* The way off the channel page. Navigation, not an action on the channel, so
+   it sits above the header rather than in .chan-acts beside Subscribe and
+   Refresh. Quiet at rest: findable without competing with the channel name. */
+.chan-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 2px 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  color: var(--color-muted);
+}
+.chan-back:hover {
+  color: var(--color-ink);
+}
+.chan-back:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-ui-sm);
 }
 .chan-handle {
   font-size: var(--text-label);
   color: var(--color-muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.chan-handle .sep {
+  color: var(--color-faint);
 }
 /* The handle links out to YouTube. Underlined on hover only, so the header
    line stays quiet until you reach for it. */
@@ -2655,15 +2705,71 @@ details.tomb-sect[open] > summary svg {
 .chan-yt svg {
   opacity: 0.6;
 }
+/* The channel's own words about itself. Five lines is enough for most
+   channels to say the whole thing; anything longer opens with More rather
+   than being cut off silently, which is what the old two-line clamp did. */
 .chan-desc {
   margin: 8px 0 0;
   font-size: var(--text-body);
   color: var(--color-muted);
   max-width: 60ch;
+}
+.chan-desc.clamped {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 5;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.chan-more {
+  margin-top: 4px;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  color: var(--color-accent-strong);
+}
+.chan-more:hover {
+  text-decoration: underline;
+}
+.chan-more:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-ui-sm);
+}
+
+/* What YouTube says, on the same line as what peeq says. Three readings —
+   healthy, a refresh that failed, a channel that is gone — told apart by
+   colour and by the led, the same primitive .hint uses. */
+.chan-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chan-state.dead {
+  color: var(--color-danger);
+}
+.chan-state.stale {
+  color: var(--color-kept);
+}
+.chan-handle .led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--color-online);
+  box-shadow: 0 0 7px var(--color-online);
+}
+.chan-handle .led.dead {
+  background: var(--color-danger);
+  box-shadow: 0 0 7px var(--color-danger);
+}
+/* No glow on the unknown led: a channel peeq has not managed to read is not
+   reporting a state, and a lit dot would imply it is. */
+.chan-handle .led.unknown {
+  background: var(--color-faint);
+  box-shadow: none;
 }
 .chan-stats {
   display: flex;
@@ -2678,6 +2784,11 @@ details.tomb-sect[open] > summary svg {
   font-variant-numeric: tabular-nums;
   font-size: var(--text-label);
   color: var(--color-muted);
+}
+/* An unknown value is a dash, and it is dimmer than a real one: a subscriber
+   count YouTube never reported must not read as a measurement. */
+.chan-stat .k.unknown {
+  color: var(--color-faint);
 }
 .chan-stat .l {
   font-size: var(--text-micro);

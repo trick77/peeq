@@ -476,3 +476,42 @@ func TestAutoUnsubscribeReasons_allAcceptedByDBCheck(t *testing.T) {
 		}
 	}
 }
+
+// TestAutoUnsubscribeFor_reportsTheRecord covers the lookup behind the
+// channel page's "Gone from YouTube": it must find the record for a channel
+// peeq retired itself, and return nothing (not an error) for a healthy one.
+func TestAutoUnsubscribeFor_reportsTheRecord(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Channel{ID: "UCgone", Name: "Gone"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.Track("UCgone", "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("track: %v", err)
+	}
+	if err := s.Subscribe("UCgone", "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if err := s.AutoUnsubscribe("UCgone", ReasonDeleted, "2026-07-18 00:00:00"); err != nil {
+		t.Fatalf("auto unsubscribe: %v", err)
+	}
+
+	got, err := s.AutoUnsubscribeFor("UCgone")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if got == nil {
+		t.Fatal("no record for a channel peeq auto-unsubscribed")
+	}
+	if got.Reason != ReasonDeleted || got.At != "2026-07-18 00:00:00" || got.ID != "UCgone" {
+		t.Fatalf("got %+v", got)
+	}
+
+	// A channel that was never auto-unsubscribed is absence, not failure.
+	none, err := s.AutoUnsubscribeFor("UCother")
+	if err != nil {
+		t.Fatalf("lookup unknown: %v", err)
+	}
+	if none != nil {
+		t.Fatalf("got %+v, want nil", none)
+	}
+}

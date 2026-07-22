@@ -104,9 +104,12 @@ export function ArchiveTab({
           placeholder="Search this channel"
           aria-label="Search this channel"
         />
+        {/* Wide enough for the longest category label ("Entertainment &
+            Music") plus the chevron, so the control is not laid out against
+            less room than its own options need. */}
         <select
           className={controlClass}
-          style={{ maxWidth: 200 }}
+          style={{ maxWidth: 250 }}
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           aria-label="Category"
@@ -120,7 +123,7 @@ export function ArchiveTab({
         </select>
         <select
           className={controlClass}
-          style={{ maxWidth: 180 }}
+          style={{ maxWidth: 190 }}
           value={sort}
           onChange={(e) => setSort(e.target.value as VideoSort)}
           aria-label="Sort"
