@@ -2942,3 +2942,75 @@ func TestChannelRefresh_fillsAnAbsentHandle(t *testing.T) {
 		t.Fatalf("Handle = %q, want @uncanny", c.Handle)
 	}
 }
+
+// TestResolveChannel_mismatchIsRecordedNotRetriedForever asserts a UCID
+// mismatch is remembered like every other unsuccessful resolve. It is a
+// persistent condition — the url resolves elsewhere and will keep doing so —
+// so leaving resolved_at unset would make maybeResolveChannel re-fetch the
+// channel from YouTube on EVERY page visit, against peeq's rule that YouTube
+// calls stay rare and paced.
+func TestResolveChannel_mismatchIsRecordedNotRetriedForever(t *testing.T) {
+	resolver := &testResolver{info: ytdlp.ChannelInfo{UCID: "UCsomeoneelse", Name: "Other"}}
+	deps := channelsTestDeps(t, resolver)
+	h := New(deps)
+	// A channel peeq knows only through its videos: no channels row yet, which
+	// is the case that used to leave nothing behind at all.
+	seedVideoRow(t, deps, "v1", "UCloose", "Deep Field Radio")
+
+	rr := postJSON(t, h, "/api/channels/UCloose/refresh", nil)
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	c, err := deps.Channels.Get("UCloose")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c == nil {
+		t.Fatal("a mismatching resolve left no record, so the next visit re-fetches")
+	}
+	if c.ResolvedAt == "" {
+		t.Fatal("resolved_at is empty, so maybeResolveChannel will retry on every visit")
+	}
+	if c.ResolveOk {
+		t.Fatal("a mismatch was recorded as a successful resolve")
+	}
+	// The mismatching identity must not have been written anywhere.
+	if c.Name == "Other" {
+		t.Fatalf("the other channel's name was stored: %+v", c)
+	}
+}
+
+// TestResolveChannel_mismatchOnAnExistingRowKeepsItsMetadata asserts the
+// recorded attempt only downgrades the freshness claim, exactly as a network
+// failure does — a channel that resolved fine last week keeps last week's
+// name and artwork.
+func TestResolveChannel_mismatchOnAnExistingRowKeepsItsMetadata(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{
+		UCID: "UCsomeoneelse", Name: "Other", Subscribers: 999,
+	}})
+	h := New(deps)
+	if err := deps.Channels.SaveResolved(channels.Channel{
+		ID: "UCa", Name: "Uncanny Expeditions", Subscribers: 412000,
+		AvatarPath: "a.jpg", ResolvedAt: "2026-07-01 00:00:00",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if rr := postJSON(t, h, "/api/channels/UCa/refresh", nil); rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	c, err := deps.Channels.Get("UCa")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.ResolveOk {
+		t.Fatal("ResolveOk stayed true after a mismatching resolve")
+	}
+	if c.ResolvedAt != "2026-07-01 00:00:00" && c.Name != "Uncanny Expeditions" {
+		t.Fatalf("the attempt erased stored metadata: %+v", c)
+	}
+	if c.Name != "Uncanny Expeditions" || c.Subscribers != 412000 || c.AvatarPath != "a.jpg" {
+		t.Fatalf("the attempt erased stored metadata: %+v", c)
+	}
+}
