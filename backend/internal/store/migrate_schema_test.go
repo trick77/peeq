@@ -86,3 +86,58 @@ func TestSchemaHasYoutubePauseColumns(t *testing.T) {
 		}
 	}
 }
+
+// subtitles_default arrived in 0002, so the case that matters is the one a
+// fresh-DB test can't see: an existing install already at 0001 must pick the
+// column up on the next start, without its data being wiped. This stands the
+// DB up at 0001 only — exactly what a deployed peeq looks like — and checks
+// Migrate carries it forward.
+func TestMigrate_addsSubtitlesDefaultToAnExisting0001DB(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Given: a DB at 0001 and nothing later, with a row already in it.
+	body, err := migrationsFS.ReadFile("migrations/0001_init.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(string(body)); err != nil {
+		t.Fatalf("apply 0001: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    TEXT PRIMARY KEY,
+		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ('0001_init.sql')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE settings SET retention_days = 42 WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: peeq starts and migrates.
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Then: the new column exists, defaulted off, and the pre-existing
+	// settings survived untouched.
+	var subtitlesDefault bool
+	var retentionDays int
+	if err := db.QueryRow(
+		`SELECT subtitles_default, retention_days FROM settings WHERE id = 1`,
+	).Scan(&subtitlesDefault, &retentionDays); err != nil {
+		t.Fatalf("settings.subtitles_default missing after migrate: %v", err)
+	}
+	if subtitlesDefault {
+		t.Fatal("subtitles_default = true, want false (pre-setting behaviour)")
+	}
+	if retentionDays != 42 {
+		t.Fatalf("retention_days = %d, want 42 — existing settings were clobbered", retentionDays)
+	}
+}

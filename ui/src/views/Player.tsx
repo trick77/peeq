@@ -13,6 +13,7 @@ import {
 } from "../api/videos";
 import { resummarize, subtitlesUrl } from "../api/search";
 import { streamDownloads } from "../api/downloads";
+import { getSettings, updateSettings } from "../api/settings";
 import type { Video } from "../api/types";
 import { formatDuration } from "../format";
 import { writeNowPlaying, clearNowPlaying } from "../nowPlaying";
@@ -150,6 +151,13 @@ export function Player({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [ccOn, setCcOn] = useState(false);
+  // subtitlesDefault is the global "show subtitles by default" preference
+  // (settings.subtitles_default). null means "not loaded yet" — distinct
+  // from false, because the effect below must not apply a default it hasn't
+  // actually read, or every video would flash captions-off first.
+  const [subtitlesDefault, setSubtitlesDefault] = useState<boolean | null>(
+    null,
+  );
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [cues, setCues] = useState<Cue[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -171,6 +179,12 @@ export function Player({
   // a real position has been observed.
   const positionKnownRef = useRef(false);
   const resumeAppliedRef = useRef(false);
+  // ccAppliedForRef holds the video id the subtitles default was last
+  // applied to, so it lands exactly once per video. Without it the toggle
+  // and the default-applier fight: toggling also updates subtitlesDefault
+  // (it *is* the preference), which re-runs that effect and would otherwise
+  // immediately re-apply the default on top of the user's click.
+  const ccAppliedForRef = useRef<string | null>(null);
   const toastTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -274,15 +288,40 @@ export function Player({
     };
   }, [videoId]);
 
-  // CC track starts hidden (captions off) — applied once per video whenever
-  // its <track> becomes available, independent of the click handler below.
+  // Load the global subtitles preference once per mount. A failure is not
+  // fatal — playback must work even if settings can't be read — so it falls
+  // back to "off", the behaviour peeq had before this was a setting.
+  useEffect(() => {
+    let active = true;
+    getSettings()
+      .then((s) => {
+        if (active) setSubtitlesDefault(s.subtitles_default);
+      })
+      .catch(() => {
+        if (active) setSubtitlesDefault(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Apply the subtitles preference once per video, whenever both the
+  // preference and the <track> are available (either can land first). The
+  // ccAppliedForRef guard is what keeps this from stomping on a mid-video
+  // toggle — see the ref's declaration.
   useEffect(() => {
     const el = videoRef.current;
-    if (!el || !video?.has_subtitles) return;
+    if (!el || !video?.has_subtitles || subtitlesDefault === null) return;
+    if (ccAppliedForRef.current === video.id) return;
     const track = el.textTracks[0];
-    if (track) track.mode = "hidden";
+    // No track yet: leave the ref unstamped so a <track> that mounts later
+    // still gets the default applied on a subsequent run.
+    if (!track) return;
+    track.mode = subtitlesDefault ? "showing" : "hidden";
+    setCcOn(subtitlesDefault);
+    ccAppliedForRef.current = video.id;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [video?.id, video?.has_subtitles]);
+  }, [video?.id, video?.has_subtitles, subtitlesDefault]);
 
   // Fetch + client-side parse the VTT transcript the first time the
   // Transcript card is expanded — not on every render, and not for videos
@@ -481,18 +520,28 @@ export function Player({
     }
   }
 
-  // CC toggle — flips the <track>'s TextTrack.mode between 'showing' and
-  // 'hidden' directly (imperative, mirroring the native captions button),
-  // keeping ccOn in sync purely for the button's "on" styling.
+  // Subtitles toggle — flips the <track>'s TextTrack.mode between 'showing'
+  // and 'hidden' directly (imperative, mirroring the native captions
+  // button), keeping ccOn in sync for the button's "on" styling.
+  //
+  // The flip is also written back as the global preference, which is what
+  // makes it stick: the next video opens the way this one was left. The
+  // write is fire-and-forget with no rollback — what the user just clicked
+  // is already visible on this video, and a failed write only means the
+  // choice doesn't carry over.
   function handleToggleCC() {
     const el = videoRef.current;
     const track = el?.textTracks?.[0];
+    let next: boolean;
     if (track) {
       track.mode = track.mode === "showing" ? "hidden" : "showing";
-      setCcOn(track.mode === "showing");
+      next = track.mode === "showing";
     } else {
-      setCcOn((v) => !v);
+      next = !ccOn;
     }
+    setCcOn(next);
+    setSubtitlesDefault(next);
+    updateSettings({ subtitles_default: next }).catch(() => {});
   }
 
   async function handleResummarize() {
@@ -594,14 +643,20 @@ export function Player({
               {video.watched ? "Mark unwatched" : "Mark watched"}
             </Button>
             {video.has_subtitles && (
+              // Icon-only: the state is carried by the is-on fill visually,
+              // and by aria-pressed + the flipping aria-label for anyone who
+              // can't see it.
               <Button
                 type="button"
                 variant="secondary"
+                icon
                 className={ccOn ? "is-on" : undefined}
                 aria-pressed={ccOn}
+                aria-label={ccOn ? "Subtitles on" : "Subtitles off"}
+                title={ccOn ? "Subtitles on" : "Subtitles off"}
                 onClick={handleToggleCC}
               >
-                <Icon name="captions" size="17px" /> CC
+                <Icon name="captions" size="17px" />
               </Button>
             )}
             <Button type="button" variant="dangerQuiet" onClick={handleDelete}>

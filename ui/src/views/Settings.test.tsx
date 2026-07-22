@@ -20,6 +20,7 @@ const baseSettings: SettingsType = {
   retention_days: 14,
   min_free_gb: 5,
   min_video_duration_seconds: 60,
+  subtitles_default: false,
   ytdlp_version: "2026.01.01",
   youtube_paused: false,
   youtube_pause_reason: "",
@@ -131,6 +132,27 @@ describe("Settings", () => {
         min_video_duration_seconds: 90,
       });
     });
+  });
+
+  it("toggles the global subtitles default", async () => {
+    const user = userEvent.setup();
+    vi.mocked(updateSettings).mockResolvedValue({
+      ...baseSettings,
+      subtitles_default: true,
+    });
+    render(<Settings />);
+    const toggle = await screen.findByRole("checkbox", {
+      name: /show subtitles by default/i,
+    });
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalledWith({ subtitles_default: true });
+    });
+    // The checkbox renders straight off the response, not off local state.
+    await waitFor(() => expect(toggle).toBeChecked());
   });
 
   it("toggles the YouTube kill-switch", async () => {

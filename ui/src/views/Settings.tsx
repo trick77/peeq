@@ -198,6 +198,18 @@ export function Settings() {
     }
   }
 
+  // Unlike the text/number fields above there is no local mirror state to
+  // commit on blur — the checkbox renders straight off settings, so the
+  // response from updateSettings is the only place the new value comes from.
+  async function handleToggleSubtitlesDefault(next: boolean) {
+    try {
+      const s = await updateSettings({ subtitles_default: next });
+      setSettingsState(s);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   async function handleCreateToken() {
     setTokenBusy(true);
     setTokenError(null);
@@ -623,6 +635,26 @@ export function Settings() {
             {ytdlpError ? <p className="retain-note">{ytdlpError}</p> : null}
           </div>
         </div>
+      </section>
+
+      <section className="sect">
+        <h2>Playback</h2>
+        <p className="desc">
+          How videos start when you open them in the player.
+        </p>
+        <label className="channel-toggle">
+          <input
+            type="checkbox"
+            checked={settings.subtitles_default}
+            onChange={(e) => handleToggleSubtitlesDefault(e.target.checked)}
+          />
+          Show subtitles by default
+        </label>
+        <p className="retain-note">
+          Videos that have subtitles start with them switched on. The subtitles
+          button in the player still works per video — and flipping it there
+          changes this setting too.
+        </p>
       </section>
 
       <section className="sect">

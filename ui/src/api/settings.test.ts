@@ -22,6 +22,7 @@ const settingsBody = {
   retention_days: 30,
   min_free_gb: 5,
   min_video_duration_seconds: 0,
+  subtitles_default: false,
   ytdlp_version: "2024.1.1",
   youtube_paused: false,
   youtube_pause_reason: "",

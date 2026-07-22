@@ -208,6 +208,51 @@ func TestSettingsHandlers_putSettingsUpdatesFields(t *testing.T) {
 	}
 }
 
+// subtitles_default is the only bool in the patch, so it gets its own
+// round-trip: a bool that never reaches the store would silently read back
+// as the seeded false and look like "the toggle just doesn't stick".
+func TestSettingsHandlers_putSettingsUpdatesSubtitlesDefault(t *testing.T) {
+	h := New(testDeps(t))
+	sessionCookie := loginAndGetCookie(t, h)
+
+	put := func(v bool) map[string]any {
+		body, _ := json.Marshal(map[string]any{"subtitles_default": v})
+		req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+		req.AddCookie(sessionCookie)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PUT /api/settings status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("unmarshal PUT /api/settings body: %v", err)
+		}
+		return got
+	}
+
+	if got := put(true); got["subtitles_default"] != true {
+		t.Fatalf("subtitles_default = %v, want true", got["subtitles_default"])
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	getReq.AddCookie(sessionCookie)
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, getReq)
+	var got map[string]any
+	if err := json.Unmarshal(getRec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal GET /api/settings body: %v", err)
+	}
+	if got["subtitles_default"] != true {
+		t.Fatalf("GET subtitles_default = %v, want true", got["subtitles_default"])
+	}
+
+	if got := put(false); got["subtitles_default"] != false {
+		t.Fatalf("subtitles_default = %v, want false", got["subtitles_default"])
+	}
+}
+
 // TestSettingsHandlers_putCookieResumesWorker is the wiring guarantee for
 // finding 1: a SUCCESSFUL cookie PUT must call Worker.Resume() (so a queue
 // paused on a blocked/expired cookie un-wedges when the user re-pastes), while
