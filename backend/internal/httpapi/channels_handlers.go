@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,9 +20,15 @@ import (
 )
 
 // ChannelResolver resolves a canonicalized channel url to its identity via
-// yt-dlp: the authoritative UCID and display name, plus the description and
-// the remote avatar/banner urls the channel page renders. The handle is NOT
-// part of it — that comes from the pasted url, never from yt-dlp.
+// yt-dlp: the authoritative UCID and display name, the description, the
+// subscriber count and verified flag, and the remote avatar/banner urls the
+// channel page renders.
+//
+// It also reports the channel's @handle, but that one is only a FALLBACK: a
+// pasted url is what the user typed and what they expect to see back, so it
+// wins wherever one exists. yt-dlp's is what gives a handle to a channel peeq
+// never saw a url for — an import, or a channel discovered from a video.
+//
 // Declaring it here (rather than depending
 // on the concrete *ytdlp.Runner type) keeps the handler testable with a fake
 // that never shells out to yt-dlp; the real *ytdlp.Runner satisfies it.
@@ -472,7 +479,12 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 // only logs it.
 func (s *server) resolveChannel(ctx context.Context, channelID string, exists bool) error {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	url := "https://www.youtube.com/channel/" + channelID
+	// PathEscape, not raw concatenation: an id reaches this from a URL path
+	// segment, and Go's ServeMux hands back the DECODED value — so a "%2F" in
+	// the request turns into a real "/" here and a crafted id would otherwise
+	// steer yt-dlp at a different youtube.com page ("UCx/../../watch?v=…").
+	// Escaping keeps the id a single path segment whatever it contains.
+	url := "https://www.youtube.com/channel/" + neturl.PathEscape(channelID)
 	info, err := s.channelResolver.ResolveChannel(ctx, url)
 	if err != nil {
 		if !exists {
@@ -533,6 +545,23 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		serverError(w, r, err, "load channel failed")
 		return
+	}
+	// Same existence rule the detail endpoint applies, and for the same
+	// reason: an id that names nothing must not become something. Without
+	// this, refreshing a made-up id CREATES a row for it — on the failure
+	// path too, since that path writes a bare row to remember the failed
+	// attempt — and an id the detail endpoint 404s starts returning 200 with
+	// an empty channel behind it.
+	if c == nil {
+		_, found, nerr := s.channels.NameFromVideos(id)
+		if nerr != nil {
+			serverError(w, r, nerr, "load channel failed")
+			return
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "channel not found")
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)

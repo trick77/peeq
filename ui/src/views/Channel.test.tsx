@@ -1179,32 +1179,94 @@ describe("Channel YouTube metadata", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers More only when the description is long enough to be cut off", async () => {
-    const user = userEvent.setup();
-    vi.mocked(getChannel).mockResolvedValue(detail());
-    const { rerender } = render(
-      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
-    );
-    await screen.findByText("Uncanny Expeditions");
-    // "Field documentaries." fits well inside five lines.
-    expect(
-      screen.queryByRole("button", { name: "More" }),
-    ).not.toBeInTheDocument();
+  // jsdom does no layout, so scrollHeight/clientHeight are both 0 and nothing
+  // ever "overflows". These stubs stand in for the clamp: clipHeight is what
+  // five lines of the box are worth, and the paragraph's own height is
+  // derived from its text. That is enough to prove the component reads a
+  // MEASUREMENT rather than the character count it used to guess from.
+  function stubLayout(clipHeight: number) {
+    // clientHeight/scrollHeight live on Element.prototype, so defining them
+    // one level down on HTMLParagraphElement.prototype shadows them and
+    // deleting the shadow is the whole of the cleanup.
+    const proto = HTMLParagraphElement.prototype as unknown as Record<
+      string,
+      unknown
+    >;
+    Object.defineProperty(proto, "clientHeight", {
+      configurable: true,
+      get(this: HTMLParagraphElement) {
+        // An expanded paragraph is not clipped: it is as tall as its content.
+        return this.className.includes("clamped")
+          ? clipHeight
+          : (this.textContent?.length ?? 0);
+      },
+    });
+    Object.defineProperty(proto, "scrollHeight", {
+      configurable: true,
+      get(this: HTMLParagraphElement) {
+        return this.textContent?.length ?? 0;
+      },
+    });
+    return () => {
+      delete proto.clientHeight;
+      delete proto.scrollHeight;
+    };
+  }
 
-    const long = Array(20).fill("A very long channel blurb.").join(" ");
-    vi.mocked(getChannel).mockResolvedValue(
-      detail({ id: "UCb", description: long }),
-    );
-    rerender(
-      <Channel channelId="UCb" onOpenVideo={() => {}} onBack={() => {}} />,
-    );
-    await screen.findByText(long);
+  it("offers More only when the clamp actually cuts the description off", async () => {
+    const restore = stubLayout(100);
+    try {
+      const user = userEvent.setup();
+      const short = "Field documentaries.";
+      vi.mocked(getChannel).mockResolvedValue(detail({ description: short }));
+      const { rerender } = render(
+        <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+      );
+      await screen.findByText("Uncanny Expeditions");
+      // Fits inside the clamp — nothing is hidden, so nothing to offer.
+      expect(
+        screen.queryByRole("button", { name: "More" }),
+      ).not.toBeInTheDocument();
 
-    const more = await screen.findByRole("button", { name: "More" });
-    expect(screen.getByTestId("chan-desc")).toHaveClass("clamped");
-    await user.click(more);
-    expect(screen.getByTestId("chan-desc")).not.toHaveClass("clamped");
-    expect(screen.getByRole("button", { name: "Less" })).toBeInTheDocument();
+      const long = Array(20).fill("A very long channel blurb.").join(" ");
+      vi.mocked(getChannel).mockResolvedValue(
+        detail({ id: "UCb", description: long }),
+      );
+      rerender(
+        <Channel channelId="UCb" onOpenVideo={() => {}} onBack={() => {}} />,
+      );
+      await screen.findByText(long);
+
+      const more = await screen.findByRole("button", { name: "More" });
+      expect(screen.getByTestId("chan-desc")).toHaveClass("clamped");
+      await user.click(more);
+      expect(screen.getByTestId("chan-desc")).not.toHaveClass("clamped");
+      // The way back must survive expanding: an unclamped paragraph no longer
+      // overflows, and measuring it again would take Less away mid-read.
+      expect(screen.getByRole("button", { name: "Less" })).toBeInTheDocument();
+    } finally {
+      restore();
+    }
+  });
+
+  // The band the old character threshold got wrong: long enough to be cut off,
+  // short enough that a >340 rule called it safe and hid the button.
+  it("offers More for a description just past the clamp", async () => {
+    const restore = stubLayout(100);
+    try {
+      vi.mocked(getChannel).mockResolvedValue(
+        detail({ description: "x".repeat(120) }),
+      );
+      render(
+        <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+      );
+      await screen.findByText("Uncanny Expeditions");
+      expect(
+        await screen.findByRole("button", { name: "More" }),
+      ).toBeInTheDocument();
+    } finally {
+      restore();
+    }
   });
 
   it("puts the way back above the header, not among the channel's actions", async () => {
