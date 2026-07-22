@@ -227,6 +227,18 @@ export function Player({
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [resummarizing, setResummarizing] = useState(false);
   const [redownloading, setRedownloading] = useState(false);
+  // subtitlesReadyFor holds the video id whose metadata has loaded, gating
+  // the <track> below. On iPadOS 27 (public beta 1) a <track> child present
+  // while the video loads makes Safari fail resource selection outright —
+  // networkState 3 (NETWORK_NO_SOURCE), readyState 0, video.error stays
+  // null — so the player sits on the poster at 0:00 forever with nothing
+  // detectable from JS. Mounting the track only after loadedmetadata loads
+  // the media fine and keeps captions working. Keyed on the video id rather
+  // than a boolean so switching videos starts track-free again without a
+  // reset. See tubearchivist/tubearchivist#1196.
+  const [subtitlesReadyFor, setSubtitlesReadyFor] = useState<string | null>(
+    null,
+  );
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastSentRef = useRef(0);
   // positionRef tracks the latest known playhead position independent of
@@ -390,8 +402,13 @@ export function Player({
     track.mode = subtitlesDefault ? "showing" : "hidden";
     setCcOn(subtitlesDefault);
     ccAppliedForRef.current = video.id;
+    // subtitlesReadyFor is a required dependency, not a tidy-up: the <track>
+    // now mounts only once metadata has loaded, and nothing else here changes
+    // at that moment. Without it this effect would run early, find no track,
+    // return unstamped — and never run again, so a "subtitles on by default"
+    // preference would silently never apply.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [video?.id, video?.has_subtitles, subtitlesDefault]);
+  }, [video?.id, video?.has_subtitles, subtitlesDefault, subtitlesReadyFor]);
 
   // Fetch + client-side parse the VTT transcript the first time the
   // Transcript card is expanded — not on every render, and not for videos
@@ -451,6 +468,9 @@ export function Player({
 
   function handleLoadedMetadata() {
     const el = videoRef.current;
+    // Open the subtitle gate first, ahead of the resumeAppliedRef guard, so
+    // it still opens if this fires more than once on the same media.
+    if (video) setSubtitlesReadyFor(video.id);
     if (!el || !video || resumeAppliedRef.current) return;
     resumeAppliedRef.current = true;
     setDuration(el.duration);
@@ -757,7 +777,7 @@ export function Player({
             onLoadedMetadata={handleLoadedMetadata}
             onTimeUpdate={handleTimeUpdate}
           >
-            {video.has_subtitles && (
+            {video.has_subtitles && subtitlesReadyFor === video.id && (
               <track
                 kind="subtitles"
                 srcLang={video.audio_language || "en"}
