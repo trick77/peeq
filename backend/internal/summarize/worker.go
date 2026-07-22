@@ -61,11 +61,20 @@ func NewWorker(d WorkerDeps) *Worker {
 }
 
 // Run is the worker loop; it blocks until ctx is cancelled. It first resets
-// any orphaned running jobs left by a previous process, then repeatedly
-// claims and processes the next job.
+// any orphaned running jobs left by a previous process and backfills jobs for
+// downloaded videos that never got one, then repeatedly claims and processes
+// the next job.
 func (w *Worker) Run(ctx context.Context) {
 	if err := w.d.Jobs.ResetOrphans(); err != nil {
 		w.d.Logger.Error("summarize worker: reset orphans", "err", err)
+	}
+	// A video can be downloaded without a summary job when a process dies in
+	// the window between the two writes (see taimport.importOne). Nothing else
+	// ever revisits such a video, so sweep for them once at boot.
+	if n, err := w.d.Jobs.EnqueueMissing(); err != nil {
+		w.d.Logger.Error("summarize worker: backfill missing jobs", "err", err)
+	} else if n > 0 {
+		w.d.Logger.Info("summarize worker: backfilled summary jobs", "count", n)
 	}
 	for {
 		if ctx.Err() != nil {
