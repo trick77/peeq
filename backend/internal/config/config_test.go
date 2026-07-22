@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoad_devAuthRejectsNonLoopback(t *testing.T) {
@@ -139,5 +140,56 @@ func TestLoadRequiresAIEndpoints(t *testing.T) {
 		if _, err := Load(); err == nil {
 			t.Fatalf("expected error when %s missing", drop)
 		}
+	}
+}
+
+func TestLoad_summarizeDelays(t *testing.T) {
+	setRequired := func() {
+		t.Setenv("BACKEND_SESSION_SECRET", "x")
+		t.Setenv("BACKEND_AUTH_MODE", "dev")
+		t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
+		t.Setenv("BACKEND_PUBLIC_URL", "")
+		t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
+		t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
+		t.Setenv("BACKEND_EMBED_MODEL", "e5")
+	}
+
+	setRequired()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load (defaults): %v", err)
+	}
+	if cfg.SummarizeRequestDelay != 2*time.Second || cfg.SummarizeVideoDelay != 5*time.Second {
+		t.Errorf("defaults = %v/%v, want 2s/5s", cfg.SummarizeRequestDelay, cfg.SummarizeVideoDelay)
+	}
+
+	setRequired()
+	t.Setenv("BACKEND_SUMMARIZE_REQUEST_DELAY", "250ms")
+	t.Setenv("BACKEND_SUMMARIZE_VIDEO_DELAY", "0s")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load (custom): %v", err)
+	}
+	if cfg.SummarizeRequestDelay != 250*time.Millisecond || cfg.SummarizeVideoDelay != 0 {
+		t.Errorf("custom = %v/%v, want 250ms/0", cfg.SummarizeRequestDelay, cfg.SummarizeVideoDelay)
+	}
+
+	setRequired()
+	t.Setenv("BACKEND_SUMMARIZE_REQUEST_DELAY", "not-a-duration")
+	if _, err := Load(); err == nil {
+		t.Error("want an error for an unparseable duration")
+	}
+
+	setRequired()
+	t.Setenv("BACKEND_SUMMARIZE_REQUEST_DELAY", "-1s")
+	if _, err := Load(); err == nil {
+		t.Error("want an error for a negative duration")
+	}
+
+	setRequired()
+	t.Setenv("BACKEND_SUMMARIZE_REQUEST_DELAY", "1s") // valid, so the video-delay parse is reached
+	t.Setenv("BACKEND_SUMMARIZE_VIDEO_DELAY", "bogus")
+	if _, err := Load(); err == nil {
+		t.Error("want an error for an unparseable video delay")
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,10 +27,13 @@ const (
 )
 
 // Config configures the chat client. BaseURL is the OpenAI-compatible root
-// (the client appends /chat/completions). APIKey is optional.
+// (the client appends /chat/completions). APIKey is optional. RequestInterval
+// is the minimum gap between requests — breathing room for a slow or
+// rate-limited endpoint; 0 disables it.
 type Config struct {
-	BaseURL string
-	APIKey  string
+	BaseURL         string
+	APIKey          string
+	RequestInterval time.Duration
 }
 
 // Message is one chat message.
@@ -40,9 +44,13 @@ type Message struct {
 
 // Client calls an OpenAI-compatible /chat/completions endpoint.
 type Client struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL  string
+	apiKey   string
+	http     *http.Client
+	interval time.Duration
+
+	mu     sync.Mutex
+	nextAt time.Time // earliest time the next request may start
 }
 
 // NewClient builds a Client. hc is optional (a 5-minute-timeout client is used
@@ -51,7 +59,42 @@ func NewClient(cfg Config, hc *http.Client) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: defaultTimeout}
 	}
-	return &Client{baseURL: strings.TrimRight(cfg.BaseURL, "/"), apiKey: cfg.APIKey, http: hc}
+	return &Client{
+		baseURL:  strings.TrimRight(cfg.BaseURL, "/"),
+		apiKey:   cfg.APIKey,
+		http:     hc,
+		interval: cfg.RequestInterval,
+	}
+}
+
+// pace blocks until at least RequestInterval has elapsed since the previous
+// request began, spacing calls out for a slow/rate-limited endpoint. It
+// reserves the slot under the mutex so concurrent callers still serialize with
+// the gap. Returns the context error if cancelled while waiting.
+func (c *Client) pace(ctx context.Context) error {
+	if c.interval <= 0 {
+		return nil
+	}
+	c.mu.Lock()
+	start := time.Now()
+	if !c.nextAt.IsZero() && c.nextAt.After(start) {
+		start = c.nextAt
+	}
+	c.nextAt = start.Add(c.interval)
+	c.mu.Unlock()
+
+	wait := time.Until(start)
+	if wait <= 0 {
+		return nil
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 type chatRequest struct {
@@ -70,6 +113,9 @@ type chatResponse struct {
 // Complete runs a single non-streaming chat completion and returns the first
 // choice's content.
 func (c *Client) Complete(ctx context.Context, messages []Message) (string, error) {
+	if err := c.pace(ctx); err != nil {
+		return "", err
+	}
 	body, err := json.Marshal(chatRequest{Model: model, Messages: messages, ReasoningEffort: reasoningEffort, Stream: false})
 	if err != nil {
 		return "", fmt.Errorf("marshal chat request: %w", err)

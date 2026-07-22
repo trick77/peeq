@@ -383,6 +383,31 @@ func (s *Store) SetSummary(id, summary, chaptersJSON, keyPointsJSON string) erro
 	return nil
 }
 
+// SetSummaryText persists just the prose summary, leaving chapters, key points
+// and status untouched, so the resumable summarize worker can save it the
+// moment it is produced — before the fragile key-points step — instead of
+// discarding it if a later step fails. Clears any prior summary error.
+func (s *Store) SetSummaryText(id, summary string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET summary=?, summary_error='' WHERE id=?`, summary, id)
+	if err != nil {
+		return fmt.Errorf("set video %s summary text: %w", id, err)
+	}
+	return nil
+}
+
+// SetKeyPoints persists the chapters and key points independently of the prose
+// summary, so a failure in that step never discards an already-saved summary
+// and a retry only re-runs the key-points call.
+func (s *Store) SetKeyPoints(id, chaptersJSON, keyPointsJSON string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET chapters=?, key_points=? WHERE id=?`, chaptersJSON, keyPointsJSON, id)
+	if err != nil {
+		return fmt.Errorf("set video %s key points: %w", id, err)
+	}
+	return nil
+}
+
 // SetCategory persists a video's classification. The value must already be a
 // valid enum id or 'uncategorized' (callers use videos.NormalizeCategory).
 func (s *Store) SetCategory(id, category string) error {

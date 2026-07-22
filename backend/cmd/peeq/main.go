@@ -191,7 +191,7 @@ func run() error {
 	embedClient := rag.NewEmbedClient(rag.EmbedConfig{
 		BaseURL: cfg.EmbedBaseURL, APIKey: cfg.EmbedAPIKey, Model: cfg.EmbedModel,
 	}, nil)
-	chatClient := llm.NewClient(llm.Config{BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey}, nil)
+	chatClient := llm.NewClient(llm.Config{BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey, RequestInterval: cfg.SummarizeRequestDelay}, nil)
 	summarizer := summarize.New(chatClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -296,6 +296,7 @@ func run() error {
 		Jobs: summaryJobsStore, Videos: videosStore, Rag: ragStore,
 		Summarizer: summarizer, Embedder: embedClient, MediaDir: cfg.MediaDir,
 		EmbedModel: cfg.EmbedModel, EmbedDim: cfg.EmbedDim,
+		VideoDelay: cfg.SummarizeVideoDelay,
 		OnPhase: func(videoID, status, phase string) {
 			data, err := json.Marshal(map[string]any{
 				"video_id": videoID,

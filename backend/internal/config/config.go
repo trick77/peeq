@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"time"
 )
 
 // AuthMode selects how peeq signs users in.
@@ -38,6 +39,12 @@ type Config struct {
 	EmbedModel     string
 	EmbedDim       int
 	DefaultSubLang string
+
+	// SummarizeRequestDelay is the minimum gap between chat requests, and
+	// SummarizeVideoDelay the gap between videos, so a rate-limited or slow LLM
+	// endpoint gets room to breathe. Both are tunable; 0 disables the pacing.
+	SummarizeRequestDelay time.Duration
+	SummarizeVideoDelay   time.Duration
 
 	// AllowAnonymousYoutube is a dev-only escape hatch: when true, the yt-dlp
 	// Runner is permitted to run WITHOUT a cookie (see internal/ytdlp
@@ -75,6 +82,23 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envDuration reads a Go duration (e.g. "2s", "500ms") from key, returning def
+// when unset/empty and an error on an unparseable or negative value.
+func envDuration(key string, def time.Duration) (time.Duration, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a duration like 2s or 500ms: %w", key, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s must not be negative", key)
+	}
+	return d, nil
 }
 
 // Load reads configuration from the environment, applying defaults.
@@ -125,6 +149,17 @@ func Load() (Config, error) {
 		}
 		cfg.EmbedDim = n
 	}
+
+	reqDelay, err := envDuration("BACKEND_SUMMARIZE_REQUEST_DELAY", 2*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.SummarizeRequestDelay = reqDelay
+	vidDelay, err := envDuration("BACKEND_SUMMARIZE_VIDEO_DELAY", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.SummarizeVideoDelay = vidDelay
 
 	if cfg.SessionSecret == "" {
 		return Config{}, fmt.Errorf("BACKEND_SESSION_SECRET is required")

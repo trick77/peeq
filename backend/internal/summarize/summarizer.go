@@ -25,12 +25,6 @@ type KeyPoint struct {
 	Text string `json:"text"`
 }
 
-type Artifacts struct {
-	Summary   string
-	Chapters  []Chapter
-	KeyPoints []KeyPoint
-}
-
 // Completer is the subset of llm.Client the summarizer needs.
 type Completer interface {
 	Complete(ctx context.Context, messages []llm.Message) (string, error)
@@ -55,10 +49,13 @@ func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowe
 	})
 }
 
-func (s *Summarizer) Run(ctx context.Context, transcript string, cues []subtitles.Cue, ytdlpChapters []Chapter) (Artifacts, error) {
+// SummarizeText produces the prose summary by map-reducing the transcript: one
+// summary per chunk, then a single reduce. It is the resumable worker's first
+// step, persisted on its own so a later failure never discards it.
+func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (string, error) {
 	chunks := rag.Chunk(transcript, rag.DefaultChunkOptions())
 	if len(chunks) == 0 {
-		return Artifacts{}, fmt.Errorf("summarize: empty transcript")
+		return "", fmt.Errorf("summarize: empty transcript")
 	}
 
 	// MAP: summarize each chunk.
@@ -69,23 +66,28 @@ func (s *Summarizer) Run(ctx context.Context, transcript string, cues []subtitle
 			{Role: "user", Content: ch.Text},
 		})
 		if err != nil {
-			return Artifacts{}, fmt.Errorf("summarize map: %w", err)
+			return "", fmt.Errorf("summarize map: %w", err)
 		}
 		chunkSummaries = append(chunkSummaries, strings.TrimSpace(out))
 	}
 	joined := strings.Join(chunkSummaries, "\n\n")
 
-	// REDUCE 1: prose summary.
+	// REDUCE: cohesive prose summary.
 	summary, err := s.c.Complete(ctx, []llm.Message{
 		{Role: "system", Content: "Combine these section summaries of one video into a single cohesive summary of 2-4 short paragraphs."},
 		{Role: "user", Content: joined},
 	})
 	if err != nil {
-		return Artifacts{}, fmt.Errorf("summarize reduce: %w", err)
+		return "", fmt.Errorf("summarize reduce: %w", err)
 	}
+	return strings.TrimSpace(summary), nil
+}
 
-	// REDUCE 2: key points (and chapters if yt-dlp didn't provide them). Provide
-	// the cue index so the model can attach timestamps.
+// KeyPoints extracts key points — and chapters, when yt-dlp did not supply them
+// — from the already-computed summary plus the cue index. It is the worker's
+// fragile last step, split out so a failure here retries only this call and
+// never re-runs the summary.
+func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subtitles.Cue, ytdlpChapters []Chapter) (chapters []Chapter, keyPoints []KeyPoint, err error) {
 	cueIndex := formatCues(cues)
 	wantChapters := len(ytdlpChapters) == 0
 	kpPrompt := "From the video, extract notable/surprising/quotable moments as JSON " +
@@ -99,7 +101,7 @@ func (s *Summarizer) Run(ctx context.Context, transcript string, cues []subtitle
 		{Role: "user", Content: "SUMMARY:\n" + summary + "\n\nCUE INDEX (seconds: text):\n" + cueIndex},
 	})
 	if err != nil {
-		return Artifacts{}, fmt.Errorf("summarize keypoints: %w", err)
+		return nil, nil, fmt.Errorf("summarize keypoints: %w", err)
 	}
 
 	var parsed struct {
@@ -108,16 +110,15 @@ func (s *Summarizer) Run(ctx context.Context, transcript string, cues []subtitle
 	}
 	_ = json.Unmarshal([]byte(extractJSON(raw)), &parsed) // tolerate malformed JSON: leave empty
 
-	art := Artifacts{Summary: strings.TrimSpace(summary), KeyPoints: parsed.KeyPoints}
 	if wantChapters {
 		for i := range parsed.Chapters {
 			parsed.Chapters[i].Source = "mimo"
 		}
-		art.Chapters = parsed.Chapters
+		chapters = parsed.Chapters
 	} else {
-		art.Chapters = ytdlpChapters
+		chapters = ytdlpChapters
 	}
-	return art, nil
+	return chapters, parsed.KeyPoints, nil
 }
 
 func formatCues(cues []subtitles.Cue) string {
