@@ -1384,6 +1384,18 @@ button.catpick.unset:hover {
     color-mix(in srgb, var(--color-online) 45%, transparent) 5px 10px
   );
 }
+/* A marked-only segment (intro, outro, recap, filler, non-music) plays
+   normally, so it reads as information rather than as something already
+   handled: the same stripe, drained of the accent colour that says "acted
+   on". */
+.scrub .sb.mark,
+.sb-legend i.mark {
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--color-muted) 55%, transparent) 0 5px,
+    color-mix(in srgb, var(--color-muted) 22%, transparent) 5px 10px
+  );
+}
 .scrub-times {
   display: flex;
   justify-content: space-between;
@@ -1392,7 +1404,15 @@ button.catpick.unset:hover {
   color: var(--color-muted);
   padding: 9px 2px 0;
 }
+/* Two entries can appear side by side (skipped + marked), so each is its own
+   inline-flex group and the outer gap separates the pair rather than the
+   swatch from its own label. */
 .sb-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.sb-legend > span {
   display: inline-flex;
   align-items: center;
   gap: 6px;

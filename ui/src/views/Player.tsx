@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
-import { Scrubber } from "../components/Scrubber";
+import { AUTO_SKIP, Scrubber, categoryLabel } from "../components/Scrubber";
 import { CategoryPicker } from "../components/CategoryPicker";
 import {
   getVideo,
@@ -521,17 +521,19 @@ export function Player({
     positionRef.current = el.currentTime;
     positionKnownRef.current = true;
 
-    // SponsorBlock auto-skip: jump past whichever segment the playhead has
-    // just entered. sponsorblock_segments is only ever populated once the
-    // backend adds SponsorBlock support to a given video; an empty array
-    // makes this a no-op.
+    // SponsorBlock auto-skip: jump past whichever AUTO_SKIP segment the
+    // playhead has just entered. Segments outside that set (intros, outros,
+    // recaps, non-music sections) are drawn on the scrubber but play — cutting
+    // them without being asked removes video the viewer may well want. A video
+    // with no segments makes this a no-op.
     for (const seg of segments) {
+      if (!AUTO_SKIP.has(seg.category)) continue;
       if (el.currentTime >= seg.start_time && el.currentTime < seg.end_time) {
         el.currentTime = seg.end_time;
         setCurrentTime(seg.end_time);
         positionRef.current = seg.end_time;
         showToast(
-          `Skipped ${seg.category} · ${formatDuration(seg.end_time - seg.start_time)}`,
+          `Skipped ${categoryLabel(seg.category)} · ${formatDuration(seg.end_time - seg.start_time)}`,
           "skipForward",
           "info",
         );

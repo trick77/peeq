@@ -354,6 +354,10 @@ func (s *Store) SetRequestedFormat(id, format string) error {
 // the downloaded_at timestamp. error_message is cleared (a prior failed
 // attempt's message must not linger on a now-successful video). It also fills
 // in published_at — see DownloadedResult.PublishedAt for why that lands here.
+//
+// sponsorblock_refreshed_at is stamped here too: yt-dlp already asked
+// SponsorBlock during this download, so the backfill worker must not
+// immediately ask again for a video whose segments just arrived for free.
 func (s *Store) SetDownloaded(id string, res DownloadedResult) error {
 	segments := res.SponsorblockSegments
 	if segments == "" {
@@ -366,6 +370,7 @@ SET media_path = ?, thumbnail_path = COALESCE(NULLIF(?, ''), thumbnail_path),
 	subtitle_path = ?, audio_language = ?,
 	chapters = CASE WHEN ? != '' THEN ? ELSE chapters END,
 	published_at = COALESCE(NULLIF(?, ''), published_at),
+	sponsorblock_refreshed_at = datetime('now'),
 	status = 'downloaded', error_message = '', downloaded_at = datetime('now')
 WHERE id = ?`,
 		res.MediaPath, res.ThumbnailPath, res.FilesizeBytes, res.FormatUsed, segments,
@@ -376,6 +381,79 @@ WHERE id = ?`,
 	)
 	if err != nil {
 		return fmt.Errorf("set video %s downloaded: %w", id, err)
+	}
+	return nil
+}
+
+// SponsorblockCandidate is one video due a SponsorBlock segment lookup.
+// DurationSeconds travels with it because the client needs it to reject
+// segments submitted against a differently-cut copy of the video.
+type SponsorblockCandidate struct {
+	ID              string
+	DurationSeconds int64
+}
+
+// SponsorblockRefreshInterval is how long stored segments are allowed to stand
+// before they are re-read. Segments keep being submitted and voted on after a
+// video is published, so a video peeq downloaded on release day is exactly the
+// one most likely to have gained segments since.
+const SponsorblockRefreshInterval = "-30 days"
+
+// ClaimSponsorblockStale returns up to limit downloaded videos whose
+// SponsorBlock segments need reading: never-fetched ones first (empty
+// sponsorblock_refreshed_at sorts before any timestamp), then the oldest
+// reads. Like the channel-metadata claim it is a plain SELECT rather than an
+// atomic state flip — the worker is a single goroutine, so there is no second
+// claimant to race against.
+//
+// Tombstoned videos are excluded: their media is gone, so there is nothing
+// left to skip through.
+func (s *Store) ClaimSponsorblockStale(limit int) ([]SponsorblockCandidate, error) {
+	// duration_seconds is nullable and IS null for rows that never got full
+	// metadata (imports, in particular). COALESCE keeps that a scannable zero,
+	// which the client reads as "duration unknown" and handles by skipping its
+	// stale-submission check rather than rejecting every segment.
+	rows, err := s.db.QueryContext(context.Background(), `
+SELECT id, COALESCE(duration_seconds, 0)
+FROM videos
+WHERE status = 'downloaded'
+  AND (sponsorblock_refreshed_at = ''
+       OR sponsorblock_refreshed_at <= datetime('now', ?))
+ORDER BY sponsorblock_refreshed_at ASC
+LIMIT ?`, SponsorblockRefreshInterval, limit)
+	if err != nil {
+		return nil, fmt.Errorf("claim sponsorblock stale: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SponsorblockCandidate
+	for rows.Next() {
+		var c SponsorblockCandidate
+		if err := rows.Scan(&c.ID, &c.DurationSeconds); err != nil {
+			return nil, fmt.Errorf("claim sponsorblock stale: scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("claim sponsorblock stale: %w", err)
+	}
+	return out, nil
+}
+
+// SetSponsorblockSegments stores the segments JSON for id and stamps the
+// refresh time. It is called with "[]" for a video that genuinely has no
+// segments, and the stamp is what stops that video being asked about again on
+// every pass — the far more common case than a video with segments.
+func (s *Store) SetSponsorblockSegments(id, segmentsJSON string) error {
+	if segmentsJSON == "" {
+		segmentsJSON = "[]"
+	}
+	_, err := s.db.ExecContext(context.Background(), `
+UPDATE videos
+SET sponsorblock_segments = ?, sponsorblock_refreshed_at = datetime('now')
+WHERE id = ?`, segmentsJSON, id)
+	if err != nil {
+		return fmt.Errorf("set video %s sponsorblock segments: %w", id, err)
 	}
 	return nil
 }

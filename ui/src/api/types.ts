@@ -50,10 +50,13 @@ export type Video = {
   resume_position_seconds: number;
   favorite: boolean;
   downloaded_at?: string;
-  // sponsorblock_segments mirrors httpapi.sponsorblockSegmentDTO — the
-  // downloaded video's own --sponsorblock-mark chapters, parsed server-side
-  // from the stored JSON column. Absent (undefined, via omitempty) when
-  // there are none. Player.tsx auto-skips [start_time, end_time) ranges.
+  // sponsorblock_segments mirrors httpapi.sponsorblockSegmentDTO, parsed
+  // server-side from the stored JSON column. Segments arrive either from the
+  // download's own --sponsorblock-mark result or from the backfill worker that
+  // reads the SponsorBlock API directly, so an imported video has them too.
+  // Absent (undefined, via omitempty) when there are none. Player.tsx skips
+  // the [start_time, end_time) ranges whose category is in AUTO_SKIP and marks
+  // the rest on the scrubber.
   sponsorblock_segments?: {
     category: string;
     start_time: number;

@@ -21,8 +21,15 @@ done
 # (only Download passes one). Prints two --newline progress lines, then
 # either fails the way FAKE_YTDLP_STDERR/FAKE_YTDLP_EXIT direct (to
 # exercise the retryable/terminal cleanup paths) or writes a dummy media
-# file, thumbnail, and info.json (with a chapters/SponsorBlock stub) into
-# the templated output directory and exits 0.
+# file, thumbnail, and info.json into the templated output directory and
+# exits 0.
+#
+# The info.json mirrors REAL yt-dlp: the video's own chapters under
+# "chapters", and --sponsorblock-mark's result under the separate
+# "sponsorblock_chapters" key. It must never fabricate a
+# "[SponsorBlock]: …" title inside "chapters" — real yt-dlp does not write
+# one there, and a fake that did is why peeq shipped a SponsorBlock pipeline
+# that parsed nothing for months while every test passed.
 outtmpl=""
 prev=""
 for arg in "$@"; do
@@ -55,8 +62,11 @@ if [ -n "$outtmpl" ]; then
   "language": "${FAKE_YTDLP_SUBLANG:-en}",
   "upload_date": "${FAKE_YTDLP_UPLOAD_DATE-20240115}",
   "chapters": [
-    {"start_time": 0, "end_time": 10, "title": "Intro"},
-    {"start_time": 10, "end_time": 25, "title": "[SponsorBlock]: Sponsor"}
+    {"start_time": 0, "end_time": 10, "title": "Intro"}
+  ],
+  "sponsorblock_chapters": [
+    {"start_time": 10, "end_time": 25, "category": "sponsor",
+     "title": "Sponsor", "type": "skip"}
   ]
 }
 EOF

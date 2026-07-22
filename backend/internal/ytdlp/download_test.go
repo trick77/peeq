@@ -2,6 +2,7 @@ package ytdlp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -132,8 +133,10 @@ func TestDownload_happyPath(t *testing.T) {
 		t.Fatalf("SponsorblockSegments = %+v, want 1 segment", res.SponsorblockSegments)
 	}
 	seg := res.SponsorblockSegments[0]
-	if seg.Category != "Sponsor" {
-		t.Fatalf("segment category = %q, want %q", seg.Category, "Sponsor")
+	// The stored category is the API's own slug ("sponsor"), matching what the
+	// backfill client stores for the same video — not yt-dlp's display title.
+	if seg.Category != "sponsor" {
+		t.Fatalf("segment category = %q, want %q", seg.Category, "sponsor")
 	}
 	if seg.StartTime != 10 || seg.EndTime != 25 {
 		t.Fatalf("segment = %+v, want start=10 end=25", seg)
@@ -430,5 +433,50 @@ func TestParseProgressLine(t *testing.T) {
 
 	if _, ok3 := parseProgressLine("[youtube] Extracting URL"); ok3 {
 		t.Fatal("non-progress line should not match")
+	}
+}
+
+// TestSponsorblockSegmentsFromInfo_ignoresChapterTitles pins the bug this
+// parser shipped with for months: it read SponsorBlock segments out of the
+// info.json's "chapters" by their "[SponsorBlock]: " title prefix, a shape
+// real yt-dlp never writes there (SponsorBlockPP writes
+// "sponsorblock_chapters"; the prefixed titles are merged into the media
+// file's own chapters afterwards). Every video therefore stored an empty
+// segment list. A chapter title alone must never produce a segment.
+func TestSponsorblockSegmentsFromInfo_ignoresChapterTitles(t *testing.T) {
+	var info downloadInfoJSON
+	raw := `{"chapters":[{"start_time":10,"end_time":25,"title":"[SponsorBlock]: Sponsor"}]}`
+	if err := json.Unmarshal([]byte(raw), &info); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if segs := sponsorblockSegmentsFromInfo(info); len(segs) != 0 {
+		t.Fatalf("segments = %+v, want none from a chapter title", segs)
+	}
+}
+
+// TestSponsorblockSegmentsFromInfo_filtersToCanonicalCategories: --sponsorblock-mark
+// all returns categories peeq deliberately does not store, and they must be
+// dropped here rather than reaching the player, so a downloaded video shows
+// exactly the bands a backfilled one would.
+func TestSponsorblockSegmentsFromInfo_filtersToCanonicalCategories(t *testing.T) {
+	var info downloadInfoJSON
+	raw := `{"sponsorblock_chapters":[
+	  {"start_time":5,"end_time":9,"category":"chapter"},
+	  {"start_time":30,"end_time":31,"category":"poi_highlight"},
+	  {"start_time":40,"end_time":50,"category":"music_offtopic"},
+	  {"start_time":60,"end_time":75,"category":"sponsor"}
+	]}`
+	if err := json.Unmarshal([]byte(raw), &info); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	segs := sponsorblockSegmentsFromInfo(info)
+	if len(segs) != 2 {
+		t.Fatalf("segments = %+v, want the 2 canonical ones", segs)
+	}
+	if segs[0].Category != "music_offtopic" || segs[1].Category != "sponsor" {
+		t.Fatalf("segments = %+v, want music_offtopic then sponsor", segs)
+	}
+	if segs[1].StartTime != 60 || segs[1].EndTime != 75 {
+		t.Fatalf("sponsor segment = %+v, want start=60 end=75", segs[1])
 	}
 }
