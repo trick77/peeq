@@ -1,0 +1,381 @@
+<title>peeq — TubeArchivist import Phase B (implementation plan)</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#1f1f1e; --panel:#1b1b1a; --active:#2c2c2a;
+    --border:#323230; --border-soft:#2a2a28;
+    --ink:#faf9f5; --ink-dim:#e4e1d8; --muted:#9c9a92; --faint:#6f6d66;
+    --accent:#c6613f; --accent-strong:#d97757;
+    --online:#5aa06a; --danger:#c14638; --kept:#d6a15a;
+    --radius:10px;
+    --sans:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:"Anthropic Serif",Georgia,"Times New Roman",Times,serif;
+    --mono:ui-monospace,"SF Mono","SFMono-Regular","JetBrains Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    background:
+      radial-gradient(60rem 40rem at 78% -8%,rgba(198,97,63,.06),transparent 60%),
+      radial-gradient(46rem 34rem at 6% 4%,rgba(214,161,90,.03),transparent 62%),
+      var(--bg);
+    color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:62rem;margin:0 auto;padding:3.5rem 1.5rem 6rem;display:flex;flex-direction:column;gap:2.5rem}
+  .eyebrow{font-size:.6875rem;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:600;margin:0 0 .75rem}
+  h1{font-family:var(--serif);font-size:clamp(1.7rem,4.2vw,2.4rem);line-height:1.15;font-weight:500;margin:0;letter-spacing:-.01em;text-wrap:balance}
+  .standfirst{color:var(--ink-dim);font-size:1.0625rem;margin:1rem 0 0;max-width:46rem}
+  .meta{display:flex;flex-wrap:wrap;gap:.5rem .75rem;margin-top:1.5rem;align-items:center}
+  .chip{display:inline-flex;align-items:center;gap:.4rem;font-size:.8125rem;font-family:var(--mono);color:var(--muted);background:var(--panel);border:1px solid var(--border);border-radius:999px;padding:.25rem .7rem}
+  .chip b{color:var(--ink-dim);font-weight:500}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--online);flex:none}
+  section{display:flex;flex-direction:column;gap:1rem}
+  h2{font-family:var(--serif);font-size:1.3rem;font-weight:500;margin:0;padding-bottom:.6rem;border-bottom:1px solid var(--border-soft);text-wrap:balance}
+  h3{font-size:.9375rem;font-weight:600;margin:.4rem 0 0;color:var(--ink-dim)}
+  p{margin:0;max-width:48rem;color:var(--ink-dim)}
+  a{color:var(--accent-strong);text-underline-offset:2px}
+  a:focus-visible{outline:2px solid var(--accent-strong);outline-offset:3px;border-radius:3px}
+  strong{color:var(--ink);font-weight:600}
+  code{font-family:var(--mono);font-size:.85em;background:var(--active);border:1px solid var(--border);border-radius:5px;padding:.1em .38em;color:var(--ink-dim)}
+  pre{background:#191918;border:1px solid var(--border);border-radius:var(--radius);overflow-x:auto;font-family:var(--mono);font-size:.8125rem;line-height:1.65;padding:1rem 1.15rem;color:var(--ink-dim);margin:0;tab-size:2}
+  pre .c{color:var(--faint)} pre .g{color:var(--online)} pre .r{color:var(--danger)} pre .k{color:var(--accent-strong)}
+  ul,ol{margin:0;padding-left:1.15rem;color:var(--ink-dim);max-width:48rem}
+  li{margin-bottom:.35rem} li::marker{color:var(--faint)}
+  .scroller{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)}
+  table{border-collapse:collapse;width:100%;font-size:.9375rem;min-width:34rem}
+  th,td{text-align:left;padding:.65rem .9rem;border-bottom:1px solid var(--border-soft);vertical-align:top}
+  th{background:var(--panel);font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:600;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+
+  .task{border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);overflow:hidden}
+  .task>header{display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap;padding:.9rem 1.15rem;background:rgba(198,97,63,.07);border-bottom:1px solid var(--border)}
+  .task>header .idx{font-family:var(--mono);font-size:.75rem;color:var(--accent-strong);border:1px solid var(--border);border-radius:5px;padding:.1rem .45rem;flex:none}
+  .task>header h3{margin:0;font-size:1rem;color:var(--ink)}
+  .task>header .who{margin-left:auto;font-family:var(--mono);font-size:.75rem;color:var(--faint)}
+  .task .body{padding:1.15rem;display:flex;flex-direction:column;gap:.9rem}
+  .files{display:flex;flex-direction:column;gap:.3rem;font-family:var(--mono);font-size:.8125rem}
+  .files .k{color:var(--faint);display:inline-block;min-width:4.5rem}
+  .files .create{color:var(--online)} .files .modify{color:var(--kept)}
+  .step{display:flex;gap:.6rem;align-items:flex-start}
+  .step input[type=checkbox]{margin:.35rem 0 0;accent-color:var(--accent);width:1rem;height:1rem;flex:none}
+  .step input[type=checkbox]:focus-visible{outline:2px solid var(--accent-strong);outline-offset:2px}
+  .step .sbody{display:flex;flex-direction:column;gap:.5rem;flex:1;min-width:0}
+  .step .slabel{font-weight:600;color:var(--ink);font-size:.9375rem}
+  .note{border:1px solid var(--border);border-left:3px solid var(--accent);background:var(--panel);border-radius:var(--radius);padding:.9rem 1.15rem;display:flex;flex-direction:column;gap:.5rem}
+  .note.risk{border-left-color:var(--danger)}
+  .note.key{border-left-color:var(--kept)}
+  .note p{max-width:none} .note h3{margin-top:0}
+  footer{border-top:1px solid var(--border-soft);padding-top:1.25rem;color:var(--faint);font-size:.8125rem}
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">peeq · implementation plan · 2026-07-22</p>
+    <h1>TubeArchivist import — Phase B</h1>
+    <p class="standfirst">
+      Import the unwatched video queue and its media from TubeArchivist into peeq. The shared HTTP
+      client is now <strong>verified against the live instance</strong> (dry-run: 44 subscriptions,
+      <code>Token</code> auth, filter and pagination all confirmed), so this is the executable plan.
+      Nine TDD tasks, no schema migration, ships as <code>peeq import-ta</code>.
+    </p>
+    <div class="meta">
+      <span class="chip"><span class="dot"></span>status <b>ready to build</b></span>
+      <span class="chip">gate <b>dry-run passed</b></span>
+      <span class="chip">resume <b>kept in queue</b></span>
+      <span class="chip">tracked in <b>#47</b></span>
+      <span class="chip">spec <b>2026-07-21 design.html</b></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Read this first</h2>
+    <p>
+      The migration moves <strong>the to-watch queue, not the archive</strong>. Only unwatched and
+      partially-watched videos come across; fully-watched videos are left behind and, because TA's
+      volumes get reclaimed after it is retired, discarded permanently. This was chosen knowingly —
+      do not silently assume the full archive came over.
+    </p>
+    <div class="note key">
+      <h3>What the live dry-run settled (2026-07-22)</h3>
+      <p>
+        <code>import-ta-channels --dry-run</code> returned <code>Subscriptions: 44 (35 active /
+        9 inactive), Skipped: 0</code>. That confirms all three shared-client assumptions on the
+        real instance: auth is <code>Authorization: Token &lt;key&gt;</code> (data came back, not
+        401/403); pagination terminates cleanly; and <code>?filter=subscribed</code> filters
+        (Skipped 0 = no unsubscribed one-off channels leaked through). Phase B builds on this
+        client with no client-behaviour left to guess.
+      </p>
+    </div>
+    <div class="note risk">
+      <h3>Do not trust TA's per-record flags</h3>
+      <p>
+        The "9 inactive" were <em>live</em> channels (DC Rainmaker, GPLama). TA sets
+        <code>channel_active=false</code> whenever its last channel-page fetch returned nothing and
+        it fell back to video metadata (<code>channel/src/index.py</code> <code>_video_fallback</code>) —
+        usually a transient yt-dlp/cookie failure, not deletion. <strong>The same caution applies to
+        a video's watched state and <code>active</code> flag.</strong> Phase B leans on peeq's own
+        re-verification (the summarize worker, peeq's own scans), never on TA's labels as truth.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Scope — which videos cross over</h2>
+    <div class="scroller"><table>
+      <thead><tr><th>TA set</th><th>Endpoint</th><th>Imported?</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Never started</td><td><code>?watch=unwatched</code></td><td><strong>Yes</strong> — the bulk</td><td>The to-watch queue.</td></tr>
+        <tr><td>Part-way through</td><td><code>?watch=continue</code></td><td><strong>Yes</strong> — highest value</td><td>Carries the resume position; mid-watch is the point of migrating.</td></tr>
+        <tr><td>Finished</td><td><code>?watch=watched</code></td><td><strong>No</strong></td><td>Left behind, discarded when TA is retired. Irreversible, chosen knowingly.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      Both crawls are fetched <strong>server-side filtered</strong> — the importer never pulls the
+      watched library to discard it client-side. Fetch <code>watch=unwatched</code> and
+      <code>watch=continue</code> as separate passes, sharded per channel (<code>channel=&lt;UC…&gt;</code>)
+      to stay under Elasticsearch's 10,000-hit ceiling.
+    </p>
+  </section>
+
+  <section>
+    <h2>Locked decisions</h2>
+    <div class="scroller"><table>
+      <thead><tr><th>Decision</th><th>Choice &amp; why</th></tr></thead>
+      <tbody>
+        <tr><td>Media transfer</td><td><strong>Copy</strong>, not hardlink — filesystem-agnostic, leaves TA's library untouched while both coexist during verification. Transient 2× disk, now only for the unwatched set.</td></tr>
+        <tr><td>Resume ≥ 90%</td><td><strong>Keep it in the queue.</strong> A new <code>videos.SetResumeRaw</code> writes the position <em>without</em> the ≥90% auto-watch, so a 92%-watched "continue" video stays in Continue Watching to finish — matching what TA had. (Decided with the owner 2026-07-22.)</td></tr>
+        <tr><td>Summaries</td><td><strong>Queue one for every imported video.</strong> The summarize worker reads the <code>.vtt</code> off disk and regenerates summary, chapters, key points, embeddings and category on its own. The importer never touches yt-dlp, the LLM, or the embedder.</td></tr>
+        <tr><td>Original download date</td><td><strong>Accepted:</strong> imported rows get <code>downloaded_at=now</code>. <code>SetDownloaded</code> stamps it unconditionally and preserving TA's original date is not worth a new write path.</td></tr>
+        <tr><td>Which token</td><td>Resume positions are <strong>per-user</strong> (see traps). The import token must belong to the user whose queue is being migrated.</td></tr>
+        <tr><td>Schema</td><td><strong>No migration.</strong> <code>videos</code> has no FK to <code>channels</code>, so a video whose channel is untracked is a normal supported state. Phase B does not require Phase A to have run.</td></tr>
+        <tr><td>Dropped</td><td>Playlists, comments, view/like stats, channel art — peeq has no home for them. Also not imported: summary/chapters/key-points/embeddings/category — the worker regenerates these (importing would be overwritten).</td></tr>
+        <tr><td>Ships as</td><td><code>peeq import-ta</code> subcommand beside <code>import-ta-channels</code>. Container ENTRYPOINT is already the peeq binary — no Containerfile change, no new HTTP route, no auth surface.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>TA video JSON → peeq write (verified against TA source)</h2>
+    <div class="scroller"><table>
+      <thead><tr><th>peeq field</th><th>TA JSON source</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code></td><td><code>youtube_id</code></td><td>Top-level string.</td></tr>
+        <tr><td><code>channel_id</code> / <code>channel_name</code></td><td><code>channel.channel_id</code> / <code>channel.channel_name</code></td><td>Nested in the embedded channel object.</td></tr>
+        <tr><td><code>title</code></td><td><code>title</code></td><td>Top-level string.</td></tr>
+        <tr><td><code>published_at</code></td><td><code>published</code></td><td>TA already normalizes to <code>YYYY-MM-DD</code>; accept an epoch int too (defensive), write one date string.</td></tr>
+        <tr><td><code>duration_seconds</code></td><td><code>player.duration</code></td><td>Seconds (int).</td></tr>
+        <tr><td>resume position</td><td><code>player.position</code></td><td>Float seconds. Present only for the <code>continue</code> set, only when fetched as that user. → <code>SetResumeRaw</code>.</td></tr>
+        <tr><td>media file</td><td><code>media_url</code></td><td>Container path <code>/youtube/&lt;ch&gt;/&lt;id&gt;.mp4</code>. <strong>Do not parse it</strong> — rebuild from <code>channel_id</code>+<code>youtube_id</code> (always <code>.mp4</code>).</td></tr>
+        <tr><td>subtitle(s)</td><td><code>subtitles[].media_url</code> + <code>.lang</code></td><td><code>/youtube/&lt;ch&gt;/&lt;id&gt;.&lt;lang&gt;.vtt</code>. May be <code>[]</code>.</td></tr>
+        <tr><td>thumbnail</td><td><em>ignore <code>vid_thumb_url</code></em></td><td>TA rewrites it. Recompute the cache path from the id: <code>videos/&lt;lower(id[0])&gt;/&lt;id&gt;.jpg</code>.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Path mapping — copy source → peeq destination</h2>
+    <div class="scroller"><table>
+      <thead><tr><th>File</th><th>Source (TA mount)</th><th>Destination (peeq)</th><th>Stored as</th></tr></thead>
+      <tbody>
+        <tr><td>media</td><td><code>&lt;ta-media&gt;/&lt;ch&gt;/&lt;id&gt;.mp4</code></td><td><code>&lt;MediaDir&gt;/&lt;ch&gt;/&lt;id&gt;/&lt;id&gt;.mp4</code></td><td><strong>absolute</strong></td></tr>
+        <tr><td>thumbnail</td><td><code>&lt;ta-cache&gt;/videos/&lt;c&gt;/&lt;id&gt;.jpg</code></td><td><code>&lt;MediaDir&gt;/&lt;ch&gt;/&lt;id&gt;/&lt;id&gt;.jpg</code></td><td><strong>absolute</strong></td></tr>
+        <tr><td>subtitle</td><td><code>&lt;ta-media&gt;/&lt;ch&gt;/&lt;id&gt;.&lt;lang&gt;.vtt</code></td><td><code>&lt;MediaDir&gt;/&lt;ch&gt;/&lt;id&gt;/&lt;id&gt;.&lt;lang&gt;.vtt</code></td><td><strong>relative</strong> to MediaDir</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      TA stores flat (<code>&lt;ch&gt;/&lt;id&gt;.mp4</code>); peeq nests under a per-video dir
+      (<code>&lt;ch&gt;/&lt;id&gt;/…</code>). Thumbnails come off TA's <em>second</em> (cache) volume — both
+      TA volumes must be mounted read-only. <code>media.SafeMediaPath</code> rejects any stored path
+      that resolves outside peeq's MediaDir, so files must be copied in, never referenced in place.
+    </p>
+  </section>
+
+  <section>
+    <h2>What already exists and must be reused</h2>
+    <div class="scroller"><table>
+      <thead><tr><th>Symbol</th><th>Signature / behaviour</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td><code>taimport.Client</code></td><td><code>NewClient(baseURL, token string, hc *http.Client) *Client</code>; private <code>do(ctx, path, query, out) (found bool, err error)</code> already sets <code>Token</code> auth and treats 404 as empty.</td><td>Shared, unchanged. New video methods call <code>do()</code>.</td></tr>
+        <tr><td><code>ChannelPage</code> / <code>AllChannels</code></td><td>Walk pages 1..N, stop when a page yields zero entries (<code>maxChannelPages=2000</code> guard).</td><td>Template to mirror for videos.</td></tr>
+        <tr><td><code>videos.Store.Upsert</code></td><td><code>Upsert(v Video) error</code> — metadata only; leaves download-owned columns untouched; safe to re-run.</td><td>Step 1 per video.</td></tr>
+        <tr><td><code>videos.Store.SetDownloaded</code></td><td><code>SetDownloaded(id string, res DownloadedResult) error</code> — sets media_path/thumbnail_path/subtitle_path/filesize/format/status=downloaded/downloaded_at.</td><td>Step 2 per video.</td></tr>
+        <tr><td><code>videos.Store.Get</code></td><td><code>Get(id) (*Video, error)</code> → <code>(nil,nil)</code> if absent; <code>.Status</code> populated.</td><td>Idempotent skip (status=downloaded).</td></tr>
+        <tr><td><code>summaryjobs.Store.Enqueue</code></td><td><code>Enqueue(videoID string) (int64, error)</code> — <strong>bare INSERT, no dedup</strong>.</td><td>Step 4; must be guarded by the skip.</td></tr>
+        <tr><td><code>media.SafeMediaPath</code></td><td><code>SafeMediaPath(mediaDir, storedPath) (string, error)</code> — accepts abs or rel; rejects escapes.</td><td>Resolve destinations before writing.</td></tr>
+        <tr><td><code>download/freebytes.go</code></td><td>Free-space probe.</td><td>Preflight.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>The traps — carry every one into the code</h2>
+    <div class="note risk">
+      <h3>1 · Path asymmetry fails silently (highest risk)</h3>
+      <p>
+        <code>media_path</code> and <code>thumbnail_path</code> are stored <strong>absolute</strong>;
+        <code>subtitle_path</code> is <strong>relative</strong> to MediaDir. A wrong subtitle path does
+        not error — the summarize worker treats a missing <code>.vtt</code> as a clean terminal
+        <code>no_transcript</code> (<code>summarize/worker.go</code>), so the import reports total
+        success while every video silently gets no summary, no chapters, no embeddings. The only way
+        to catch it is to wait for a real summary in the 2-channel trial run.
+      </p>
+    </div>
+    <div class="note risk">
+      <h3>2 · <code>SetResume</code> auto-marks watched at ≥ 90% — do not use it here</h3>
+      <p>
+        <code>videos.SetResume</code> sets <code>watched=1</code> and starts the retention clock when
+        the position is ≥ 90% of duration. For the <code>continue</code> set that would drop nearly-done
+        videos out of the queue. <strong>Import via the new <code>SetResumeRaw</code></strong> (Task 5)
+        which writes only <code>resume_position_seconds</code>.
+      </p>
+    </div>
+    <div class="note key">
+      <h3>3 · Skip <code>status='downloaded'</code> rows — <code>Enqueue</code> has no uniqueness</h3>
+      <p>
+        A restarted run would otherwise re-enqueue every already-imported video and re-bill every
+        summary/embedding. Skipping already-downloaded rows is a <strong>correctness rule</strong>, not
+        an optimisation — it is what makes the import resumable.
+      </p>
+    </div>
+    <div class="note key">
+      <h3>4 · Verify the <code>.mp4</code> exists before <code>SetDownloaded</code></h3>
+      <p>TA returns metadata for videos whose files are gone. Mark downloaded only after the copy verifies bytes on disk, or the library fills with rows that fail on play.</p>
+    </div>
+    <div class="note key">
+      <h3>5 · Resume positions are per-user, inline, and load-bearing</h3>
+      <p>
+        <code>player.position</code> appears only in <code>?watch=continue</code> responses fetched with
+        that user's token (TA sources it from Redis). There is no bulk progress endpoint. If a position
+        can't be read, still <strong>complete the migration</strong> but report it <strong>prominently</strong>
+        (not a footnote) while TA is still around to check against.
+      </p>
+    </div>
+    <div class="note key">
+      <h3>6 · Normalise <code>published</code>; build paths from IDs; pagination ends on empty <code>data</code></h3>
+      <p>
+        Accept epoch-int or <code>YYYY-MM-DD</code>, write one. Build every file path from
+        <code>channel_id</code>+<code>youtube_id</code>, never by parsing <code>media_url</code>. The video
+        <em>list</em> endpoint ends pages with HTTP 200 + empty <code>data:[]</code> (only single-video GET
+        404s) — the walk-until-empty pattern already handles both; start pagination at <code>page=1</code>.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Tasks (TDD — failing test first, then minimal code)</h2>
+
+    <div class="task">
+      <header><span class="idx">1</span><h3>Pure path mapping</h3><span class="who">paths.go</span></header>
+      <div class="body">
+        <div class="files"><span><span class="k create">create</span> backend/internal/taimport/paths.go</span><span><span class="k create">create</span> backend/internal/taimport/paths_test.go</span></div>
+        <p>Pure functions, no filesystem/HTTP/DB: given <code>channelID</code>, <code>videoID</code>, <code>lang</code>, and the TA/peeq roots, return the source copy paths and the stored destination paths (absolute media/thumb, MediaDir-relative subtitle), plus the TA cache thumbnail path <code>videos/&lt;lower(id[0])&gt;/&lt;id&gt;.jpg</code>. First because everything depends on it and it hides a silent failure. Table-driven tests cover the dir-nesting difference, the subtitle relative form, and the cache-path lowercasing.</p>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">2</span><h3>Video model + one filtered page</h3><span class="who">client.go</span></header>
+      <div class="body">
+        <div class="files"><span><span class="k modify">modify</span> backend/internal/taimport/client.go</span><span><span class="k modify">modify</span> backend/internal/taimport/client_test.go</span></div>
+        <p>Add a <code>Video</code> struct + video-typed envelope decoding the fields in the mapping table (<code>youtube_id</code>, nested <code>channel.channel_id</code>, <code>title</code>, <code>published</code>, <code>player.duration</code>/<code>player.position</code>, <code>subtitles[]</code>). Add <code>VideoPage(ctx, channelID, watch string, page int) (vids []Video, more bool, err error)</code> hitting <code>/api/video/</code> with <code>channel=</code>, <code>watch=</code>, <code>page=</code>. Test against an <code>httptest</code> server returning the real envelope shape, incl. a 200+empty-<code>data</code> terminator.</p>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">3</span><h3>Walk all videos for a channel + watch state</h3><span class="who">client.go</span></header>
+      <div class="body">
+        <div class="files"><span><span class="k modify">modify</span> backend/internal/taimport/client.go</span><span><span class="k modify">modify</span> backend/internal/taimport/client_test.go</span></div>
+        <p><code>ChannelVideos(ctx, channelID, watch string) ([]Video, error)</code> — mirror <code>AllChannels</code>: pages 1..N, stop on empty, hard-cap (<code>maxVideoPages</code>). Test multi-page walk and the cap error.</p>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">4</span><h3>Verified file copy</h3><span class="who">copy.go</span></header>
+      <div class="body">
+        <div class="files"><span><span class="k create">create</span> backend/internal/taimport/copy.go</span><span><span class="k create">create</span> backend/internal/taimport/copy_test.go</span></div>
+        <p>No API/DB knowledge: <code>copyFile(src, dst string) (bytes int64, err error)</code> — mkdir the dest dir, copy, verify size matches source, return bytes. A missing source is a reported skip, not a crash. <code>ok</code> if dest already exists with matching size (idempotent). Tests use <code>t.TempDir()</code>: happy copy, missing source, pre-existing dest, size mismatch.</p>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">5</span><h3>Neutral resume write</h3><span class="who">videos/store.go</span></header>
+      <div class="body">
+        <div class="files"><span><span class="k modify">modify</span> backend/internal/videos/store.go</span><span><span class="k modify">modify</span> backend/internal/videos/store_test.go</span></div>
+        <p><code>SetResumeRaw(id string, position float64) error</code> — sets <code>resume_position_seconds</code> only, no ≥90% auto-watch, errors if the row is absent. Test: a 95%-of-duration position sets the resume value and leaves <code>watched=0</code> (the discriminator vs <code>SetResume</code>).</p>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">6</span><h3>The runner (against a spy)</h3><span class="who">videos.go</span></header>
+      <div class="body">
+        <div class="files"><span><span class="k create">create</span> backend/internal/taimport/videos.go</span><span><span class="k create">create</span> backend/internal/taimport/videos_test.go</span></div>
+        <p>Define <code>VideoWriter</code> (Get/Upsert/SetDownloaded/SetResumeRaw + Enqueue) and <code>ImportVideos(ctx, lister, writer, copier, opts, dryRun, now) (VideoResult, error)</code>. Per video: skip if <code>Get</code> shows <code>status='downloaded'</code>; else copy files (verify) → <code>Upsert</code> → <code>SetDownloaded</code> → <code>SetResumeRaw</code> (continue set only) → <code>Enqueue</code>. Result breaks out imported / skipped-already / skipped-watched / missing-file / resume-unavailable counts. Spy tests assert the call sequence, the skip guard, and that a missing resume completes the run.</p>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">7</span><h3>Real-DB + real-FS integration test</h3><span class="who">videos_test.go</span></header>
+      <div class="body">
+        <div class="files"><span><span class="k modify">modify</span> backend/internal/taimport/videos_test.go</span></div>
+        <p>The Phase A lesson: a spy proves the interface, not that the write lands. Temp SQLite (<code>store.Migrate</code>) + <code>t.TempDir()</code> media root + a fake lister. Assert the row is <code>downloaded</code> with the right absolute/relative paths, files are on disk, the resume value is set with <code>watched=0</code>, a summary job exists, and a second run enqueues <strong>no</strong> duplicate job.</p>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">8</span><h3>Preflight + safety rules</h3><span class="who">videos.go</span></header>
+      <div class="body">
+        <div class="files"><span><span class="k modify">modify</span> backend/internal/taimport/videos.go</span><span><span class="k modify">modify</span> backend/internal/taimport/videos_test.go</span></div>
+        <p>Free-space preflight sums the filtered set's bytes and <strong>fails closed</strong> before copying rather than filling the disk partway. Each rule (skip watched, verify mp4, guard enqueue) gets its own test.</p>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">9</span><h3>Subcommand, flags, docs, gate</h3><span class="who">importcmd.go</span></header>
+      <div class="body">
+        <div class="files"><span><span class="k modify">modify</span> backend/cmd/peeq/importcmd.go</span><span><span class="k modify">modify</span> backend/cmd/peeq/importcmd_test.go</span><span><span class="k modify">modify</span> docs/manual-verification.md</span></div>
+        <p>Register <code>import-ta</code> in <code>importSubcommands</code>; wire <code>NewClient</code> → <code>ImportVideos</code> with the flags below; a result formatter that prints the counts (and the discarded-watched number). Add the manual-verification steps. Run the full suite + patch-coverage gate.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Flags (<code>peeq import-ta</code>)</h2>
+    <div class="scroller"><table>
+      <thead><tr><th>Flag</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--ta-url</code>, <code>--ta-token</code></td><td>As Phase A. Token must be the queue-owner's user (resume positions are per-user).</td></tr>
+        <tr><td><code>--ta-media</code>, <code>--ta-cache</code></td><td>Read-only mount points of TA's <strong>two</strong> volumes (media + cache/thumbnails).</td></tr>
+        <tr><td><code>--dry-run</code></td><td>Resolve every path, check every file exists, sum bytes; report counts broken out by unwatched / partially-watched / skipped-watched; writes and copies nothing. Doubles as preflight.</td></tr>
+        <tr><td><code>--channels N</code></td><td>First N channels only (crawl is per-channel sharded, so it just stops early).</td></tr>
+        <tr><td><code>--channel UC…</code></td><td>Repeatable; one named channel, for targeted retries.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Operating &amp; verification sequence</h2>
+    <ol>
+      <li><strong>Survey:</strong> <code>docker compose run --rm peeq import-ta --dry-run …</code> — writes nothing; counts must match TA's stats, reported-missing files must genuinely be missing.</li>
+      <li><strong>Prove on 2 channels (NOT optional):</strong> stop peeq, <code>--channels 2</code>, start peeq. In the UI: a video plays, the thumbnail renders, subtitles display; pick one you were part-way through and confirm the resume position survived and it did <em>not</em> flip to watched; confirm no fully-watched video came across. <strong>Wait for the summarize worker</strong> — a summary appearing is the only way to catch trap 1. Any video stuck at <code>no_transcript</code> that <em>has</em> a <code>.vtt</code> on disk means the subtitle path convention is wrong — stop and fix.</li>
+      <li><strong>Full run:</strong> stop peeq, run, start peeq. Spot-check channels; confirm free-space behaved.</li>
+      <li><strong>Retire TA</strong> and reclaim its volumes only after peeq is verified.</li>
+    </ol>
+    <p>peeq is stopped during import because the subcommand writes the same SQLite DB directly.</p>
+  </section>
+
+  <section>
+    <h2>Process notes</h2>
+    <ul>
+      <li><strong>Use the real review templates</strong> — <code>subagent-driven-development/task-reviewer-prompt.md</code> and <code>requesting-code-review/code-reviewer.md</code> (Phase A's hand-written prompts omitted the read-only-reviewer constraint and the strengths calibration).</li>
+      <li><strong>A spy is not a database.</strong> Phase A's spy tests all passed while <code>channels.Upsert</code> blanked an existing <code>@handle</code> — caught only by the real-store test. Any writer passing a partial struct to an Upsert has that footgun; Task 7 is the guard.</li>
+      <li><strong>Patch-coverage gate ≥ 80%</strong> on added lines — the pure <code>paths.go</code>/<code>copy.go</code> split makes that painless.</li>
+      <li>Work in a git worktree off <code>master</code>; plans/specs are HTML; commit as the noreply email.</li>
+    </ul>
+  </section>
+
+  <footer>
+    peeq · TubeArchivist import Phase B · implementation plan · 2026-07-22 · issue #47 ·
+    supersedes the plan skeleton (2026-07-21)
+  </footer>
+
+</div>
