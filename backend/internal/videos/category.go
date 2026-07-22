@@ -20,7 +20,7 @@ const UncategorizedCategory = "uncategorized"
 var Categories = []Category{
 	{"ai", "AI"},
 	{"tech", "Technology & Gadgets"},
-	{"software", "Software & Programming"},
+	{"software", "Software Engineering"},
 	{"science", "Science & Research"},
 	{"space", "Space & Astronomy"},
 	{"engineering", "Engineering & Making"},
