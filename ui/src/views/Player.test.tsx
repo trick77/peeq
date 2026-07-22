@@ -521,4 +521,34 @@ describe("Player", () => {
     await screen.findByText("Veritasium");
     expect(screen.queryByRole("button", { name: "Veritasium" })).toBeNull();
   });
+
+  it("offers .txt and .vtt transcript downloads once the transcript is loaded", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ has_subtitles: true, title: "My Video" }),
+    );
+    const vtt = "WEBVTT\n\n00:00:05.000 --> 00:00:08.000\nHello there\n";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(vtt) }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const toggle = await screen.findByRole("button", { name: /Transcript/i });
+    fireEvent.click(toggle);
+    await screen.findByText(/Hello there/i);
+
+    // .vtt links the subtitle endpoint with a safe filename from the title.
+    const vttLink = screen.getByRole("link", { name: /\.vtt/i });
+    expect(vttLink).toHaveAttribute("href", "/api/videos/v1/subtitles");
+    expect(vttLink).toHaveAttribute("download", "My_Video.vtt");
+
+    // .txt is generated client-side from the cues; clicking it builds a Blob
+    // and triggers a download (jsdom lacks createObjectURL, so stub it).
+    const createURL = vi.fn(() => "blob:mock");
+    const revokeURL = vi.fn();
+    URL.createObjectURL = createURL;
+    URL.revokeObjectURL = revokeURL;
+    fireEvent.click(screen.getByRole("button", { name: /\.txt/i }));
+    expect(createURL).toHaveBeenCalledTimes(1);
+    expect(revokeURL).toHaveBeenCalledTimes(1);
+  });
 });
