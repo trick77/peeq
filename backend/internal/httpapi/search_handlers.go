@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/trick77/peeq/internal/rag"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // searchMatch is one hit within a search result's video, in the shape the
@@ -146,6 +147,14 @@ func (s *server) handleResummarize(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.videos.SetSummaryStatus(id, "pending", ""); err != nil {
 		serverError(w, r, err, "reset summary status failed")
+		return
+	}
+	// Clear the category too, so the worker re-classifies. Classification is
+	// skipped for a video that already has one (otherwise every resumed job
+	// would pay for a redundant call), which would make a wrong category
+	// permanent — Re-summarize is the only way a user can correct one.
+	if err := s.videos.SetCategory(id, videos.UncategorizedCategory); err != nil {
+		serverError(w, r, err, "reset category failed")
 		return
 	}
 	if _, err := s.summaryJobs.Enqueue(id); err != nil {

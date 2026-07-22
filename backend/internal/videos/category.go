@@ -61,16 +61,6 @@ func ClassifiableCategories() []Category {
 	return out
 }
 
-// ClassifiableCategoryIDs returns every id in ClassifiableCategories order.
-func ClassifiableCategoryIDs() []string {
-	cs := ClassifiableCategories()
-	ids := make([]string, len(cs))
-	for i, c := range cs {
-		ids[i] = c.ID
-	}
-	return ids
-}
-
 // ValidCategory reports whether id is an exact enum id.
 func ValidCategory(id string) bool {
 	for _, c := range Categories {
@@ -87,7 +77,7 @@ func ValidCategory(id string) bool {
 // label "Science & Research" all used to fall through to uncategorized.
 //
 // The chain is, in order: exact id after cleaning; exact label after cleaning;
-// first valid id among the reply's word tokens. UncategorizedCategory is
+// last valid id among the reply's word tokens. UncategorizedCategory is
 // returned only when none of those match, i.e. the reply really is junk.
 func NormalizeCategory(reply string) string {
 	s := cleanReply(reply)
@@ -99,18 +89,24 @@ func NormalizeCategory(reply string) string {
 			return c.ID
 		}
 	}
-	// Token scan, for a reply that buries the id in prose. It deliberately
-	// skips 'uncategorized' so a hedging answer ("uncategorized, though ai
-	// fits") still lands on the real category; a reply naming no real id at
-	// all falls through to the fallback below anyway.
+	// Token scan, for a reply that buries the id in prose. The LAST valid id
+	// wins, not the first: models that pad an answer put the verdict at the end
+	// ("this is not tech, it is history") and echo the option list at the start
+	// ("choosing from ai, tech, science: history"), so taking the first token
+	// would reliably pick the wrong one in both shapes.
+	//
+	// 'uncategorized' is deliberately not a candidate, so a hedging answer
+	// ("ai, though it could be uncategorized") still lands on the real
+	// category; a reply naming no real id at all falls through to the fallback.
+	found := UncategorizedCategory
 	for _, tok := range strings.FieldsFunc(s, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	}) {
 		if tok != UncategorizedCategory && ValidCategory(tok) {
-			return tok
+			found = tok
 		}
 	}
-	return UncategorizedCategory
+	return found
 }
 
 // cleanReply lowercases and strips the decoration a model wraps an answer in:

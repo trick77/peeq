@@ -43,9 +43,6 @@ func TestClassifiableCategoriesExcludeTheFallback(t *testing.T) {
 			t.Fatalf("category %q has no label; the prompt needs it", c.ID)
 		}
 	}
-	if ids := ClassifiableCategoryIDs(); len(ids) != len(cs) || ids[0] != cs[0].ID {
-		t.Fatalf("ClassifiableCategoryIDs disagrees with ClassifiableCategories: %v", ids)
-	}
 }
 
 func TestNormalizeCategory(t *testing.T) {
@@ -71,6 +68,12 @@ func TestNormalizeCategory(t *testing.T) {
 		// category alongside the fallback
 		"The best fit is history.":      "history",
 		"uncategorized, though ai fits": "ai",
+
+		// the last id wins: models pad the verdict to the end and echo the
+		// option list at the start, so taking the first token would pick the
+		// negated or merely-listed category in both of these
+		"This is not tech; it is best classified as history.": "history",
+		"Choosing from ai, tech, software, science: history":  "history",
 
 		// genuinely unusable replies
 		"":              "uncategorized",

@@ -294,6 +294,9 @@ func TestResummarizeEnqueues(t *testing.T) {
 	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
 		t.Fatalf("seed summary status: %v", err)
 	}
+	if err := deps.Videos.SetCategory("v1", "gaming"); err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
 	spy := &spySummaryJobs{}
 	deps.SummaryJobs = spy
 	h := New(deps)
@@ -316,6 +319,12 @@ func TestResummarizeEnqueues(t *testing.T) {
 	}
 	if got.SummaryStatus != "pending" {
 		t.Fatalf("summary_status = %q, want pending", got.SummaryStatus)
+	}
+	// The worker skips classification for a video that already has a category,
+	// so the reset here is what keeps Re-summarize a working way to correct a
+	// wrong one.
+	if got.Category != videos.UncategorizedCategory {
+		t.Fatalf("category = %q, want it cleared so the worker re-classifies", got.Category)
 	}
 }
 
