@@ -815,6 +815,15 @@ button {
   background: color-mix(in srgb, var(--color-kept) 14%, transparent);
 }
 
+/* The text rows sit slightly inside the thumbnail's edges instead of flush
+   against them — title, channel line, and the lifecycle row (which carries
+   the category pill). The thumbnail itself stays full-bleed, so the inset
+   reads as breathing room around the text rather than a narrower card. */
+.card > h3,
+.card > .by,
+.card > .life {
+  padding-inline: 4px;
+}
 .card h3 {
   margin: 0;
   font-family: var(--font-serif);
@@ -991,6 +1000,13 @@ button.catpick.unset:hover {
 }
 .life.fresh {
   color: var(--color-faint);
+}
+/* The category pill sits at the right edge of the lifecycle row, lining up
+   with the download percentage in .sz (same margin-left: auto idiom) rather
+   than sitting under the title. It is the row's only child when shown, so
+   this is what moves it. */
+.life .metapill {
+  margin-left: auto;
 }
 .life .sz {
   margin-left: auto;
