@@ -3,7 +3,9 @@ package videos
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/store"
@@ -1077,21 +1079,28 @@ func TestList_errorsOnClosedDB(t *testing.T) {
 	}
 }
 
-// TestNextUnclassified_picksOnlySummarizedDownloadedUncategorized covers the
-// three conditions the idle classify sweep depends on: a video is a candidate
-// only when it is downloaded, still uncategorized, and actually has a summary
-// to classify from (the no-transcript case must stay out of the sweep).
-func TestNextUnclassified_picksOnlySummarizedDownloadedUncategorized(t *testing.T) {
+// TestNextUnclassified_picksAnySummarizedUncategorized covers the two
+// conditions the idle classify sweep depends on: a video is a candidate when it
+// is still uncategorized and actually has a summary to classify from (the
+// no-transcript case must stay out of the sweep).
+//
+// Status is deliberately NOT a condition. Classification reads a title and a
+// summary, never the media file, so a tombstoned video — media reclaimed, row
+// and summary kept, still listed and still filtered by category — is as
+// classifiable as any other and must not be stranded on whatever enum existed
+// when it was archived.
+func TestNextUnclassified_picksAnySummarizedUncategorized(t *testing.T) {
 	s := newTestStore(t)
 
-	// Given: one true candidate plus one disqualified row per condition.
+	// Given: two candidates that differ only in status, plus one disqualified
+	// row per real condition.
 	seed := []struct {
 		id, status, summary, category, createdAt string
 	}{
-		{"v-candidate", "downloaded", "A summary.", "uncategorized", "2026-07-01"},
-		{"v-classified", "downloaded", "A summary.", "ai", "2026-07-02"},
-		{"v-no-summary", "downloaded", "", "uncategorized", "2026-07-03"},
-		{"v-not-downloaded", "queued", "A summary.", "uncategorized", "2026-07-04"},
+		{"v-tombstoned", "tombstoned", "A summary.", "uncategorized", "2026-07-01"},
+		{"v-candidate", "downloaded", "A summary.", "uncategorized", "2026-07-02"},
+		{"v-classified", "downloaded", "A summary.", "ai", "2026-07-03"},
+		{"v-no-summary", "downloaded", "", "uncategorized", "2026-07-04"},
 	}
 	for _, v := range seed {
 		seedVideo(t, s, Video{ID: v.id, URL: "https://youtu.be/" + v.id, Status: v.status, CreatedAt: v.createdAt})
@@ -1117,14 +1126,22 @@ func TestNextUnclassified_picksOnlySummarizedDownloadedUncategorized(t *testing.
 		t.Fatalf("candidate summary = %q, want it loaded for the classify call", got.Summary)
 	}
 
-	// And: skipping the candidate empties the backlog rather than falling back
-	// to a disqualified row.
+	// And: skipping it falls through to the tombstoned row — status is not a
+	// filter — and only then does the backlog empty, rather than a
+	// disqualified row being offered.
 	got, err = s.NextUnclassified([]string{"v-candidate"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got == nil || got.ID != "v-tombstoned" {
+		t.Fatalf("NextUnclassified(skip candidate) = %v, want v-tombstoned", got)
+	}
+	got, err = s.NextUnclassified([]string{"v-candidate", "v-tombstoned"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got != nil {
-		t.Fatalf("NextUnclassified(skip candidate) = %v, want nil", got)
+		t.Fatalf("NextUnclassified(skip both) = %v, want nil", got)
 	}
 }
 
@@ -1338,4 +1355,137 @@ func TestClearSummary_errorsOnClosedDB(t *testing.T) {
 	if err := s.ClearSummary("v1"); err == nil {
 		t.Fatal("expected an error clearing against a closed db")
 	}
+}
+
+// TestResetSetMatchesTheSweep pins migration 0004's reset to the query that is
+// supposed to undo it. The migration clears categories in bulk on the promise
+// that the summarize worker's idle sweep re-classifies whatever it cleared; if
+// the two predicates ever drift, the difference is not a stale category, it is
+// data erased with no path back — which is exactly the bug this pairing was
+// introduced to prevent.
+//
+// So rather than restate the rule, this reads the real UPDATE out of the real
+// migration file, runs it over a table seeded with every row shape peeq can
+// produce, and asserts the rows it cleared are exactly the rows
+// NextUnclassified will offer. Same trick as ui/src/enumsync.test.ts, which
+// reads category.go instead of mirroring it.
+func TestResetSetMatchesTheSweep(t *testing.T) {
+	s := newTestStore(t)
+
+	// Given: one row per shape, all carrying an old-enum category.
+	seeds := []struct{ id, status, summary, summaryStatus string }{
+		{"downloaded", "downloaded", "a summary", "done"},
+		{"tombstoned", "tombstoned", "a summary", "done"},   // media reclaimed, summary kept
+		{"notranscript", "downloaded", "", "no_transcript"}, // nothing to classify from
+		{"queued", "queued", "", "pending"},
+		{"errored", "error", "a summary", "error"},
+	}
+	for _, sd := range seeds {
+		seedVideo(t, s, Video{ID: sd.id, URL: "https://youtu.be/" + sd.id, Status: sd.status})
+		if _, err := s.db.ExecContext(context.Background(),
+			`UPDATE videos SET summary = ?, summary_status = ?, category = 'entertainment' WHERE id = ?`,
+			sd.summary, sd.summaryStatus, sd.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// When: the migration's own UPDATE runs. The test DB is already at 0004,
+	// so replaying just this statement is what an upgrade does to the data.
+	if _, err := s.db.ExecContext(context.Background(), migration0004Update(t)); err != nil {
+		t.Fatalf("replay 0004 reset: %v", err)
+	}
+
+	// Then: cleared set == sweep-reachable set, by construction rather than by
+	// a hardcoded list, so tightening either side alone fails here.
+	cleared := idsWithCategory(t, s, UncategorizedCategory)
+	reachable := []string{}
+	for {
+		v, err := s.NextUnclassified(reachable)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v == nil {
+			break
+		}
+		reachable = append(reachable, v.ID)
+	}
+	if !sameSet(cleared, reachable) {
+		t.Fatalf("reset cleared %v but the sweep can reach %v — a row in the difference is either\n"+
+			"erased with no way back, or left on the pre-expansion enum forever", cleared, reachable)
+	}
+	// And the rule both sides are meant to encode, stated once so a mutual
+	// drift (both sides wrong the same way) still fails.
+	if !sameSet(cleared, []string{"downloaded", "tombstoned", "errored"}) {
+		t.Fatalf("cleared %v, want every row that has a summary and only those", cleared)
+	}
+}
+
+// migration0004Update returns the UPDATE statement from the real migration
+// file, so this test cannot pass against a migration that says something else.
+func migration0004Update(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join("..", "store", "migrations", "0004_category_manual.sql")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, stmt := range strings.Split(string(body), ";") {
+		if s := strings.TrimSpace(stripSQLComments(stmt)); strings.HasPrefix(s, "UPDATE") {
+			return s
+		}
+	}
+	t.Fatalf("no UPDATE statement in %s", path)
+	return ""
+}
+
+func stripSQLComments(s string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+func idsWithCategory(t *testing.T, s *Store, category string) []string {
+	t.Helper()
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT id FROM videos WHERE category = ? ORDER BY id`, category)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, s := range a {
+		seen[s]++
+	}
+	for _, s := range b {
+		seen[s]--
+	}
+	for _, n := range seen {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
 }

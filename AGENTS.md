@@ -42,13 +42,12 @@ Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React 
 - Secrets via env only; never commit them.
 
 ## Database / migrations
-- New migration → a new numbered file `backend/internal/store/migrations/NNNN_*.sql`. The runner applies
-  pending ones in order and records them in `schema_migrations`.
-- NEVER squash into `0001_init.sql`. The runner skips `0001` once recorded, so an edit there is silently
-  not applied and the only way to pick it up is wiping `/data` — peeq has live installs.
-- A migration that touches DATA (not just shape) → test it against a populated DB stood up at the previous
-  migration; a fresh-DB test runs it over zero rows and passes whatever it says. See
-  `TestMigrate_0004ResetsOnlyWhatTheSweepCanReclassify`.
+- New migration → new numbered file `backend/internal/store/migrations/NNNN_*.sql`. Runner applies pending
+  ones in order, records them in `schema_migrations`.
+- NEVER edit a migration that has run anywhere real, `0001_init.sql` included: the runner skips a recorded
+  version, so the edit silently never applies. Safe only before it ships; else write the next number.
+- Migration touching DATA (not just shape) → test on a populated DB stood up at the previous migration
+  (`applyThrough`). Fresh-DB test runs it over zero rows and passes whatever it says.
 
 ## Frontend
 - Vite + React + TS + Tailwind. `npm run build` empties `backend/web/dist` and overwrites the tracked
