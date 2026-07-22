@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -219,5 +220,163 @@ func TestRunImportChannels_dryRunWritesNoRows(t *testing.T) {
 
 	if got := subscriptionCount(t, dbPath); got != 0 {
 		t.Errorf("subscriptions = %d, want 0 on --dry-run", got)
+	}
+}
+
+func TestRunImportVideos_requiresFlags(t *testing.T) {
+	if err := runImportVideos([]string{}); err == nil {
+		t.Fatal("err = nil, want an error when --ta-url is missing")
+	}
+	if err := runImportVideos([]string{"--ta-url", "http://ta:8000"}); err == nil {
+		t.Fatal("err = nil, want an error when --ta-token is missing")
+	}
+	if err := runImportVideos([]string{"--ta-url", "http://ta:8000", "--ta-token", "t"}); err == nil {
+		t.Fatal("err = nil, want an error when --ta-media is missing")
+	}
+	if err := runImportVideos([]string{"--ta-url", "http://ta:8000", "--ta-token", "t", "--ta-media", "/m"}); err == nil {
+		t.Fatal("err = nil, want an error when --ta-cache is missing")
+	}
+}
+
+func TestFormatVideoResult_dryRunAndReal(t *testing.T) {
+	dry := formatVideoResult(taimport.VideoResult{Planned: 5, BytesMedia: 3 * 1024 * 1024}, true)
+	if !strings.Contains(strings.ToLower(dry), "dry run") {
+		t.Errorf("dry run not labelled:\n%s", dry)
+	}
+	if !strings.Contains(dry, "5 videos") {
+		t.Errorf("dry run missing the planned count:\n%s", dry)
+	}
+
+	real := formatVideoResult(taimport.VideoResult{Imported: 4, SkippedDownloaded: 2, BytesMedia: 1024 * 1024}, false)
+	if strings.Contains(strings.ToLower(real), "dry run") {
+		t.Errorf("real run mentioned a dry run:\n%s", real)
+	}
+	for _, want := range []string{"Imported:", "4 videos", "2 already imported"} {
+		if !strings.Contains(real, want) {
+			t.Errorf("real output missing %q:\n%s", want, real)
+		}
+	}
+}
+
+func TestFormatVideoResult_reportsResumeCount(t *testing.T) {
+	out := formatVideoResult(taimport.VideoResult{Imported: 3, WithResume: 2}, false)
+	if !strings.Contains(out, "2 imported with a saved resume position") {
+		t.Errorf("resume-position count missing or wrong:\n%s", out)
+	}
+}
+
+func TestSelectChannelIDs(t *testing.T) {
+	chans := []taimport.Channel{{ID: "UC1"}, {ID: "UC2"}, {ID: "UC3"}}
+	if got := selectChannelIDs(chans, nil, 0); len(got) != 3 {
+		t.Errorf("all = %v, want 3", got)
+	}
+	if got := selectChannelIDs(chans, nil, 2); len(got) != 2 || got[0] != "UC1" {
+		t.Errorf("first-2 = %v", got)
+	}
+	if got := selectChannelIDs(chans, []string{"UC2"}, 0); len(got) != 1 || got[0] != "UC2" {
+		t.Errorf("filter = %v", got)
+	}
+}
+
+func TestParseTypes(t *testing.T) {
+	if got := parseTypes(""); got != nil {
+		t.Errorf("empty = %v, want nil (all types)", got)
+	}
+	got := parseTypes("videos, shorts ,streams")
+	if len(got) != 3 || got[0] != "videos" || got[1] != "shorts" || got[2] != "streams" {
+		t.Errorf("parsed = %v", got)
+	}
+}
+
+// taVideoServer serves both /api/channel/ (one subscribed channel) and
+// /api/video/ (one unwatched video on page 1, empty after) so runImportVideos
+// can be exercised end to end.
+func taVideoServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/channel/"):
+			if r.URL.Query().Get("page") != "1" {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":[{"channel_id":"UC_a","channel_name":"Alpha","channel_active":true,"channel_subscribed":true}]}`))
+		case strings.HasPrefix(r.URL.Path, "/api/video/"):
+			if r.URL.Query().Get("page") != "1" {
+				_, _ = w.Write([]byte(`{"data":[]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":[{"youtube_id":"vid00000001","channel":{"channel_id":"UC_a","channel_name":"Alpha"},"title":"V","player":{"duration":100},"vid_type":"videos"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func setupTAMedia(t *testing.T) (taMedia, taCache string) {
+	t.Helper()
+	taMedia, taCache = t.TempDir(), t.TempDir()
+	dir := filepath.Join(taMedia, "UC_a")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "vid00000001.mp4"), []byte("mp4-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return taMedia, taCache
+}
+
+func videoCount(t *testing.T, dbPath string) int {
+	t.Helper()
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM videos").Scan(&n); err != nil {
+		t.Fatalf("count videos: %v", err)
+	}
+	return n
+}
+
+func TestRunImportVideos_writesRealRows(t *testing.T) {
+	dbPath := setImportEnv(t)
+	t.Setenv("BACKEND_MEDIA_DIR", t.TempDir())
+	taMedia, taCache := setupTAMedia(t)
+	srv := taVideoServer(t)
+
+	if err := runImportVideos([]string{"--ta-url", srv.URL, "--ta-token", "t", "--ta-media", taMedia, "--ta-cache", taCache}); err != nil {
+		t.Fatalf("runImportVideos: %v", err)
+	}
+
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	var status string
+	if err := db.QueryRow(`SELECT status FROM videos WHERE id='vid00000001'`).Scan(&status); err != nil {
+		t.Fatalf("query video: %v", err)
+	}
+	if status != "downloaded" {
+		t.Errorf("status = %q, want downloaded (the wiring must actually write rows)", status)
+	}
+}
+
+func TestRunImportVideos_dryRunWritesNoRows(t *testing.T) {
+	dbPath := setImportEnv(t)
+	t.Setenv("BACKEND_MEDIA_DIR", t.TempDir())
+	taMedia, taCache := setupTAMedia(t)
+	srv := taVideoServer(t)
+
+	if err := runImportVideos([]string{"--ta-url", srv.URL, "--ta-token", "t", "--ta-media", taMedia, "--ta-cache", taCache, "--dry-run"}); err != nil {
+		t.Fatalf("runImportVideos: %v", err)
+	}
+	if got := videoCount(t, dbPath); got != 0 {
+		t.Errorf("videos = %d, want 0 on --dry-run", got)
 	}
 }

@@ -166,3 +166,156 @@ func (c *Client) AllChannels(ctx context.Context) ([]Channel, error) {
 	}
 	return nil, fmt.Errorf("taimport: channel listing exceeded %d pages; refusing to keep paging", maxChannelPages)
 }
+
+// Video is the subset of a TubeArchivist video document the migration needs.
+// Paths are rebuilt from ChannelID+ID (see PathMapper), never from the API's
+// media_url, so no URL field is decoded.
+type Video struct {
+	ID              string
+	ChannelID       string
+	ChannelName     string
+	Title           string
+	Description     string
+	Published       string  // normalized YYYY-MM-DD
+	DurationSeconds int     // player.duration
+	Position        float64 // player.position — resume seconds; 0 when not partially watched
+	VidType         string  // videos | shorts | streams
+	SubtitleLangs   []string
+}
+
+// flexDate decodes TubeArchivist's "published" field to a bare YYYY-MM-DD, the
+// form peeq stores for every native download. The REST layer returns a full ISO
+// timestamp string (e.g. "2023-01-15T00:00:00+00:00"); on some paths it can be
+// an epoch integer instead. Either is reduced to the date, so a one-shot
+// migration never aborts on an unexpected type and imported rows match native
+// ones.
+type flexDate string
+
+func (d *flexDate) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	switch {
+	case s == "" || s == "null":
+		*d = ""
+		return nil
+	case s[0] == '"':
+		var str string
+		if err := json.Unmarshal(b, &str); err != nil {
+			return err
+		}
+		// Keep only the date part of an ISO timestamp; a bare YYYY-MM-DD (no
+		// 'T') passes through unchanged.
+		if date, _, found := strings.Cut(str, "T"); found {
+			str = date
+		}
+		*d = flexDate(str)
+		return nil
+	default:
+		var epoch int64
+		if err := json.Unmarshal(b, &epoch); err != nil {
+			return err
+		}
+		*d = flexDate(time.Unix(epoch, 0).UTC().Format("2006-01-02"))
+		return nil
+	}
+}
+
+// videoDoc is the wire shape of one entry in /api/video/. Only the fields the
+// migration writes are decoded; channel id/name are nested, and the resume
+// position, duration and watched state live under player.
+type videoDoc struct {
+	YoutubeID   string   `json:"youtube_id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Published   flexDate `json:"published"`
+	VidType     string   `json:"vid_type"`
+	Channel     struct {
+		ID   string `json:"channel_id"`
+		Name string `json:"channel_name"`
+	} `json:"channel"`
+	Player struct {
+		Duration int     `json:"duration"`
+		Position float64 `json:"position"`
+	} `json:"player"`
+	Subtitles []struct {
+		Lang string `json:"lang"`
+	} `json:"subtitles"`
+}
+
+func (d videoDoc) toVideo() Video {
+	langs := make([]string, 0, len(d.Subtitles))
+	for _, s := range d.Subtitles {
+		if s.Lang != "" {
+			langs = append(langs, s.Lang)
+		}
+	}
+	return Video{
+		ID:              d.YoutubeID,
+		ChannelID:       d.Channel.ID,
+		ChannelName:     d.Channel.Name,
+		Title:           d.Title,
+		Description:     d.Description,
+		Published:       string(d.Published),
+		DurationSeconds: d.Player.Duration,
+		Position:        d.Player.Position,
+		VidType:         d.VidType,
+		SubtitleLangs:   langs,
+	}
+}
+
+// videoEnvelope is the list wrapper for /api/video/, mirroring pageEnvelope.
+type videoEnvelope struct {
+	Data []videoDoc `json:"data"`
+}
+
+// VideoPage fetches one page of a channel's videos filtered by watch state
+// (watch is "unwatched" or "continue"). more reports whether the page had
+// entries. Mirrors ChannelPage; the video API's filter key is "watch" (not
+// "filter"), and the crawl is sharded by channel to stay under Elasticsearch's
+// 10k-result ceiling.
+func (c *Client) VideoPage(ctx context.Context, channelID, watch string, page int) (vids []Video, more bool, err error) {
+	q := url.Values{}
+	q.Set("channel", channelID)
+	q.Set("watch", watch)
+	q.Set("page", strconv.Itoa(page))
+
+	var env videoEnvelope
+	found, err := c.do(ctx, "/api/video/", q, &env)
+	if err != nil {
+		return nil, false, err
+	}
+	// The video list endpoint ends pages with 200 + empty data (only the
+	// single-video GET 404s), so terminate on an empty batch — do() maps a 404
+	// to found=false, which this also covers.
+	if !found || len(env.Data) == 0 {
+		return nil, false, nil
+	}
+
+	out := make([]Video, 0, len(env.Data))
+	for _, d := range env.Data {
+		out = append(out, d.toVideo())
+	}
+	return out, true, nil
+}
+
+// maxVideoPages bounds the per-channel walk. At TubeArchivist's default page
+// size of 25 this allows 100k videos in one channel — far beyond any real
+// channel, while still guaranteeing the loop terminates on a misbehaving
+// instance.
+const maxVideoPages = 4000
+
+// ChannelVideos pages through every video of one channel in the given watch
+// state, in the order TubeArchivist returns them.
+func (c *Client) ChannelVideos(ctx context.Context, channelID, watch string) ([]Video, error) {
+	var all []Video
+	for page := 1; page <= maxVideoPages; page++ {
+		batch, more, err := c.VideoPage(ctx, channelID, watch, page)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, batch...)
+		if !more {
+			return all, nil
+		}
+	}
+	return nil, fmt.Errorf("taimport: video listing for channel %s exceeded %d pages; refusing to keep paging", channelID, maxVideoPages)
+}

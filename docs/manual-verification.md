@@ -125,3 +125,61 @@ investigated before Phase B.
 Inactive channels were imported deliberately. Over the following days peeq's
 auto-unsubscribe will scan them, classify them as `deleted`, and unsubscribe
 them. That is working as intended, not data loss.
+
+## TubeArchivist import — Phase B (video archive & media)
+
+Requires a live TubeArchivist with its two volumes mounted read-only into the
+peeq container (`--ta-media` = the media volume, `--ta-cache` = the cache
+volume where thumbnails live). peeq must be stopped during the import — the
+subcommand writes the same SQLite database directly. Use the same API token as
+Phase A; resume positions are per-user, so it must be the user whose queue you
+are migrating.
+
+**1. Survey — writes and copies nothing.**
+
+```bash
+docker compose stop peeq
+docker compose run --rm \
+  -v ta_media:/ta-media:ro -v ta_cache:/ta-cache:ro \
+  peeq import-ta \
+  --ta-url http://tubearchivist:8000 --ta-token "$TA_TOKEN" \
+  --ta-media /ta-media --ta-cache /ta-cache --dry-run
+```
+
+Check:
+- "Would import" counts and total size look right for your unwatched queue.
+- "Missing files" is 0, or only videos you know TA no longer has on disk.
+- The size fits your free space (the real run refuses if it would fill the disk).
+
+**2. Prove it on two channels first — NOT optional.**
+
+```bash
+docker compose run --rm -v ta_media:/ta-media:ro -v ta_cache:/ta-cache:ro peeq \
+  import-ta --ta-url http://tubearchivist:8000 --ta-token "$TA_TOKEN" \
+  --ta-media /ta-media --ta-cache /ta-cache --channels 2
+docker compose start peeq
+```
+
+In the peeq UI:
+- A video plays, its thumbnail renders, and captions display.
+- Pick one you were part-way through: the resume position survived, and it did
+  **not** flip to watched (it stays in the queue to finish).
+- No fully-watched video was imported.
+- **Wait for the summarize worker.** A summary, chapters and key points appear,
+  and the video is findable via semantic search. If a video that HAS a `.vtt`
+  on disk is stuck at "no transcript", the subtitle path convention is wrong —
+  stop and fix before the full run.
+
+**3. Full run.**
+
+```bash
+docker compose stop peeq
+docker compose run --rm -v ta_media:/ta-media:ro -v ta_cache:/ta-cache:ro peeq \
+  import-ta --ta-url http://tubearchivist:8000 --ta-token "$TA_TOKEN" \
+  --ta-media /ta-media --ta-cache /ta-cache
+docker compose start peeq
+```
+
+Re-running is safe: already-imported videos are skipped, so no file is
+re-copied and no summary is re-billed. Retire TubeArchivist and reclaim its
+volumes only after peeq is verified.
