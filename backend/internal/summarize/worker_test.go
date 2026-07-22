@@ -1072,3 +1072,101 @@ func TestClassifyWriteFailureDoesNotFailTheJob(t *testing.T) {
 		t.Fatalf("summary work was discarded: status=%q summary=%q", v.SummaryStatus, v.Summary)
 	}
 }
+
+// TestClassifyDoesNotOverwriteAPickMadeDuringTheJob is the race the guarded
+// write exists for. The worker reads the video row before the summary call,
+// so its "is it still uncategorized?" test is against a stale snapshot — and
+// on a self-hosted endpoint that call is slow enough for the user to open the
+// Player and pick a category while it runs. The completer below writes the
+// category mid-job to stand in for that user, which no amount of re-reading
+// before the call could catch.
+func TestClassifyDoesNotOverwriteAPickMadeDuringTheJob(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v8/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	if err := h.videos.Upsert(videos.Video{ID: "v8", URL: "https://youtu.be/v8"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v8", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v8"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+			sys := m[0].Content
+			if strings.Contains(sys, "Combine these section summaries") {
+				// The user picks a category on the Player while the summary
+				// call is still in flight.
+				if err := h.videos.SetCategory("v8", "gaming"); err != nil {
+					t.Errorf("simulate manual pick: %v", err)
+				}
+				return "Overall prose summary.", nil
+			}
+			if strings.Contains(sys, "category id") {
+				return "ai", nil
+			}
+			if strings.Contains(sys, "JSON") {
+				return `{"key_points":[]}`, nil
+			}
+			return "chunk summary", nil
+		})),
+		Embedder: fakeWorkerEmbedder{dim: 1536},
+		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+
+	v, err := h.videos.Get("v8")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.Category != "gaming" {
+		t.Fatalf("category = %q, want gaming — the classifier overwrote a manual pick", v.Category)
+	}
+}
+
+// TestIdleSweepDoesNotOverwriteAPickMadeDuringClassify is the same race on the
+// backlog sweep: NextUnclassified selects the row, then the classify call is
+// slow enough for the user to pick in the meantime.
+func TestIdleSweepDoesNotOverwriteAPickMadeDuringClassify(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedBacklogVideo(t, h, "v-raced")
+
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+			if err := h.videos.SetCategory("v-raced", "gaming"); err != nil {
+				t.Errorf("simulate manual pick: %v", err)
+			}
+			return "ai", nil
+		})),
+		Embedder: fakeWorkerEmbedder{dim: 1536},
+		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+
+	did, err := w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if !did {
+		t.Fatal("the sweep still spent a turn on this video")
+	}
+	v, _ := h.videos.Get("v-raced")
+	if v.Category != "gaming" {
+		t.Fatalf("category = %q, want gaming — the sweep overwrote a manual pick", v.Category)
+	}
+}

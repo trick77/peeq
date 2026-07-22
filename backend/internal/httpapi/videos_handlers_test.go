@@ -1668,11 +1668,12 @@ func TestDownloadFilename_truncatesLongTitles(t *testing.T) {
 	}
 }
 
-// TestVideosCategory_setsAndSticks: the manual override is the whole point of
-// the endpoint, and what makes it stick is that the classifier only ever
-// writes a video still sitting at 'uncategorized' — so this asserts the write
-// lands on a video that had a category already, not just on a blank one.
-func TestVideosCategory_setsAndSticks(t *testing.T) {
+// TestVideosCategory_overridesAnExistingOne asserts the direction this
+// endpoint owns: the user overrules a category the model already wrote, so
+// the write must be unconditional. The other direction — a classify pass
+// refusing to overwrite a manual pick — belongs to
+// videos.Store.SetCategoryIfUnset and is proven in summarize's worker tests.
+func TestVideosCategory_overridesAnExistingOne(t *testing.T) {
 	deps, _ := videosTestDeps(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
 		t.Fatalf("seed video: %v", err)

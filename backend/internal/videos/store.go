@@ -419,6 +419,30 @@ func (s *Store) SetCategory(id, category string) error {
 	return nil
 }
 
+// SetCategoryIfUnset writes category only while the row is still
+// 'uncategorized', and reports whether it actually wrote. It is the
+// classifier's write: both worker paths decide to classify from a row read
+// BEFORE a slow LLM call, so by the time the answer arrives the user may have
+// picked a category by hand on the Player. An unconditional UPDATE would
+// silently overwrite that — the guard belongs in the statement, not in a
+// re-read, because any re-read has the same race one layer up.
+//
+// A manual pick from the Player uses plain SetCategory: the human is allowed
+// to overwrite the model, never the other way round.
+func (s *Store) SetCategoryIfUnset(id, category string) (bool, error) {
+	res, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET category = ? WHERE id = ? AND category = ?`,
+		category, id, UncategorizedCategory)
+	if err != nil {
+		return false, fmt.Errorf("set video %s category if unset: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("set video %s category if unset: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // NextUnclassified returns one downloaded video that has a summary but is
 // still 'uncategorized', newest first, or (nil, nil) when there is none. It
 // backs the summarize worker's idle sweep, which repairs videos whose classify

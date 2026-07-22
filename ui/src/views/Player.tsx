@@ -494,12 +494,16 @@ export function Player({
   // re-pick and a spinner on a one-word change reads as friction.
   async function handlePickCategory(next: string) {
     if (!video) return;
+    const id = video.id;
     const prev = video.category;
     setVideo({ ...video, category: next });
     try {
-      await setCategory(video.id, next);
+      await setCategory(id, next);
     } catch {
-      setVideo((v) => (v ? { ...v, category: prev } : v));
+      // Roll back only if this is still the same video: a write that fails
+      // after the user has moved on must not paint the old video's category
+      // onto the new one.
+      setVideo((v) => (v && v.id === id ? { ...v, category: prev } : v));
     }
   }
 

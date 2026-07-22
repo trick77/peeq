@@ -68,8 +68,8 @@ export async function setWatched(
 }
 
 // setCategory overrides the classifier's guess from the Player. The choice
-// sticks: the classifier only writes a video that is still uncategorized, so
-// nothing later overwrites it.
+// sticks even against a classify pass already in flight: the backend's
+// classifier write refuses a video that already has a category.
 export async function setCategory(
   id: string,
   category: string,

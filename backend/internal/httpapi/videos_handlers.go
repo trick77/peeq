@@ -225,9 +225,10 @@ type categoryRequest struct {
 }
 
 // handleCategoryVideo sets a video's category by hand, from the Player. The
-// classifier only ever writes a video whose category is still 'uncategorized'
-// (see summarize.Worker), so a choice made here is never overwritten by a
-// later classify pass — no "set by a human" flag is needed to make it stick.
+// write is unconditional on purpose: the user overrules the model, never the
+// other way round. What makes the choice stick without a "set by a human"
+// flag is the other side — the classifier writes through
+// videos.Store.SetCategoryIfUnset, which refuses a row that already has one.
 //
 // The id must be an exact enum member: unlike a model reply, which
 // videos.NormalizeCategory repairs, a bad id here is a caller bug and is

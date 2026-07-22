@@ -198,10 +198,15 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// how a large backlog ended up summarized but 'uncategorized'. A classify
 	// failure must NOT fail the job — the summary above is already saved, and
 	// the idle sweep in classifyOne picks the video up later.
+	//
+	// `video` was read before the summary call above, so this test is against
+	// a stale row; SetCategoryIfUnset re-checks at write time, which is what
+	// actually protects a category the user picked on the Player while the
+	// summary was still running.
 	if video.Category == "" || video.Category == videos.UncategorizedCategory {
 		if raw, cerr := w.d.Summarizer.Classify(ctx, video.Title, summary, videos.ClassifiableCategories()); cerr != nil {
 			w.d.Logger.Warn("summarize worker: classify failed", "video_id", video.ID, "err", cerr)
-		} else if serr := w.d.Videos.SetCategory(video.ID, videos.NormalizeCategory(raw)); serr != nil {
+		} else if _, serr := w.d.Videos.SetCategoryIfUnset(video.ID, videos.NormalizeCategory(raw)); serr != nil {
 			w.d.Logger.Error("summarize worker: set category failed", "video_id", video.ID, "err", serr)
 		}
 	}
@@ -266,9 +271,18 @@ func (w *Worker) classifyOne(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	category := videos.NormalizeCategory(raw)
-	if serr := w.d.Videos.SetCategory(video.ID, category); serr != nil {
+	// Guarded, because the classify call above is slow enough for the user to
+	// have picked a category on the Player in the meantime. A no-op write is
+	// not a failure and needs no parking: the video no longer matches
+	// NextUnclassified, so the sweep will not offer it again.
+	applied, serr := w.d.Videos.SetCategoryIfUnset(video.ID, category)
+	if serr != nil {
 		w.classifyFailed[video.ID] = true
 		w.d.Logger.Error("summarize worker: backlog set category failed", "video_id", video.ID, "err", serr)
+		return true, nil
+	}
+	if !applied {
+		w.d.Logger.Info("summarize worker: backlog video was categorized meanwhile; keeping it", "video_id", video.ID)
 		return true, nil
 	}
 	if category == videos.UncategorizedCategory {
