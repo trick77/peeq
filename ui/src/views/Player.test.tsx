@@ -34,6 +34,7 @@ vi.mock("../api/videos", () => ({
   deleteVideo: vi.fn().mockResolvedValue(undefined),
   redownload: vi.fn().mockResolvedValue(undefined),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
+  thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
 }));
 
 vi.mock("../api/search", () => ({
@@ -49,12 +50,29 @@ vi.mock("../api/downloads", () => ({
   streamDownloads: vi.fn().mockImplementation(() => new Promise(() => {})),
 }));
 
-import { getVideo, setResume, redownload } from "../api/videos";
+// Player reads the global subtitles preference on mount, so this mock is
+// needed by EVERY test in this file, not just the subtitles ones — an
+// unmocked getSettings would reject on mount everywhere.
+vi.mock("../api/settings", () => ({
+  getSettings: vi.fn(),
+  updateSettings: vi.fn(),
+}));
+
+import { getVideo, setResume, redownload, deleteVideo } from "../api/videos";
 import { resummarize } from "../api/search";
+import { getSettings, updateSettings } from "../api/settings";
+import type { Settings } from "../api/types";
+import { gradientClassFor } from "../format";
 import { streamDownloads } from "../api/downloads";
 
 function makeVideo(overrides: Partial<Video> = {}): Video {
   return { ...mockVideo, ...overrides };
+}
+
+// Player only ever reads subtitles_default off Settings, but the mock
+// returns a whole (cast) object so the shape stays honest.
+function makeSettings(subtitlesDefault: boolean): Settings {
+  return { subtitles_default: subtitlesDefault } as Settings;
 }
 
 describe("Player", () => {
@@ -63,11 +81,49 @@ describe("Player", () => {
     vi.mocked(setResume).mockClear();
     vi.mocked(resummarize).mockClear();
     vi.mocked(redownload).mockClear();
+    vi.mocked(deleteVideo).mockClear();
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
     vi.mocked(streamDownloads).mockReset();
     vi.mocked(streamDownloads).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(getSettings).mockReset();
+    vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
+    vi.mocked(updateSettings).mockReset();
+    vi.mocked(updateSettings).mockResolvedValue(makeSettings(false));
     vi.unstubAllGlobals();
     sessionStorage.clear();
+  });
+
+  describe("stage poster", () => {
+    it("posters the video with its thumbnail when one was downloaded", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_thumbnail: true }));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+
+      const el = await waitFor(() => {
+        const v = document.querySelector("video");
+        if (!v) throw new Error("video element not mounted yet");
+        return v;
+      });
+
+      expect(el).toHaveAttribute("poster", "/api/videos/v1/thumbnail");
+      // A real thumbnail means no gradient fallback — the poster covers it.
+      expect(el.className).toBe("");
+    });
+
+    it("falls back to the per-id gradient when there is no thumbnail", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ has_thumbnail: false }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+
+      const el = await waitFor(() => {
+        const v = document.querySelector("video");
+        if (!v) throw new Error("video element not mounted yet");
+        return v;
+      });
+
+      expect(el).not.toHaveAttribute("poster");
+      expect(el.className).toBe(gradientClassFor("v1"));
+    });
   });
 
   it("flushes the latest position to setResume on unmount", async () => {
@@ -255,6 +311,72 @@ describe("Player", () => {
     expect(link).toHaveAttribute("rel", "noreferrer");
   });
 
+  it("renders a download link carrying the download=1 filename flag", async () => {
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const link = await screen.findByRole("link", { name: /download video/i });
+    // download=1 is what makes the server attach a Content-Disposition with
+    // the real filename — a plain `download` attribute cannot, since the UI
+    // never learns the file's extension.
+    expect(link).toHaveAttribute("href", "/api/videos/v1/stream?download=1");
+  });
+
+  it("hides the download link for a video with no media file", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_media: false }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByRole("link", { name: /watch on youtube/i });
+    expect(screen.queryByRole("link", { name: /download video/i })).toBeNull();
+  });
+
+  describe("delete confirmation", () => {
+    it("does not delete on the first click — it only arms the confirm", async () => {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: /delete video/i }),
+      );
+      expect(deleteVideo).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: /delete\?/i })).toBeTruthy();
+    });
+
+    it("deletes on the second click", async () => {
+      const onDeleted = vi.fn();
+      render(<Player videoId="v1" onDeleted={onDeleted} />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: /delete video/i }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: /delete\?/i }));
+      await waitFor(() => expect(deleteVideo).toHaveBeenCalledWith("v1"));
+      await waitFor(() => expect(onDeleted).toHaveBeenCalled());
+    });
+
+    it("disarms on Escape without deleting", async () => {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: /delete video/i }),
+      );
+      fireEvent.keyDown(screen.getByRole("button", { name: /delete\?/i }), {
+        key: "Escape",
+      });
+      await screen.findByRole("button", { name: /delete video/i });
+      expect(deleteVideo).not.toHaveBeenCalled();
+    });
+
+    it("disarms itself after the timeout without deleting", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        render(<Player videoId="v1" onDeleted={() => {}} />);
+        fireEvent.click(
+          await screen.findByRole("button", { name: /delete video/i }),
+        );
+        expect(screen.getByRole("button", { name: /delete\?/i })).toBeTruthy();
+        await vi.advanceTimersByTimeAsync(4100);
+        await screen.findByRole("button", { name: /delete video/i });
+        expect(deleteVideo).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it("shows a placeholder message with nothing selected", () => {
     render(<Player videoId={null} onDeleted={() => {}} />);
     expect(
@@ -338,13 +460,81 @@ describe("Player", () => {
       .mockReturnValue([fakeTrack] as unknown as TextTrackList);
     try {
       render(<Player videoId="v1" onDeleted={() => {}} />);
-      const ccBtn = await screen.findByRole("button", { name: /^CC$/ });
+      const ccBtn = await screen.findByRole("button", {
+        name: /^Subtitles (on|off)$/,
+      });
       await waitFor(() => expect(fakeTrack.mode).toBe("hidden"));
 
       fireEvent.click(ccBtn);
       expect(fakeTrack.mode).toBe("showing");
       fireEvent.click(ccBtn);
       expect(fakeTrack.mode).toBe("hidden");
+    } finally {
+      ttSpy.mockRestore();
+    }
+  });
+
+  it("starts subtitles showing when the global default is on", async () => {
+    // Same prototype-spy + sentinel technique as the toggle test above: the
+    // "disabled" start value is one only the apply-the-default effect can
+    // clear, so waiting for it proves the effect really ran.
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    vi.mocked(getSettings).mockResolvedValue(makeSettings(true));
+    const fakeTrack = { mode: "disabled" } as unknown as TextTrack;
+    const ttSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "textTracks", "get")
+      .mockReturnValue([fakeTrack] as unknown as TextTrackList);
+    try {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await waitFor(() => expect(fakeTrack.mode).toBe("showing"));
+      expect(
+        await screen.findByRole("button", { name: "Subtitles on" }),
+      ).toHaveAttribute("aria-pressed", "true");
+    } finally {
+      ttSpy.mockRestore();
+    }
+  });
+
+  it("writes the flipped value back as the global default when toggled", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    const fakeTrack = { mode: "disabled" } as unknown as TextTrack;
+    const ttSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "textTracks", "get")
+      .mockReturnValue([fakeTrack] as unknown as TextTrackList);
+    try {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      const ccBtn = await screen.findByRole("button", {
+        name: /^Subtitles (on|off)$/,
+      });
+      await waitFor(() => expect(fakeTrack.mode).toBe("hidden"));
+
+      fireEvent.click(ccBtn);
+      expect(updateSettings).toHaveBeenCalledWith({ subtitles_default: true });
+
+      // The toggle updates the preference the apply-effect depends on, so
+      // this is also the regression guard for that effect snapping the
+      // track back to the default mid-video.
+      await waitFor(() => expect(fakeTrack.mode).toBe("showing"));
+
+      fireEvent.click(ccBtn);
+      expect(updateSettings).toHaveBeenCalledWith({ subtitles_default: false });
+    } finally {
+      ttSpy.mockRestore();
+    }
+  });
+
+  it("keeps playing when the settings read fails", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    vi.mocked(getSettings).mockRejectedValue(new Error("settings are down"));
+    const fakeTrack = { mode: "disabled" } as unknown as TextTrack;
+    const ttSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "textTracks", "get")
+      .mockReturnValue([fakeTrack] as unknown as TextTrackList);
+    try {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      // Falls back to subtitles-off, and the video still renders.
+      await waitFor(() => expect(fakeTrack.mode).toBe("hidden"));
+      expect(document.querySelector("video")).toBeInTheDocument();
     } finally {
       ttSpy.mockRestore();
     }
@@ -452,7 +642,7 @@ describe("Player", () => {
       makeVideo({ id: "v1", status: "downloaded" }),
     );
     render(<Player videoId="v1" onDeleted={() => {}} />);
-    await screen.findByText(/watch on youtube/i); // wait for load
+    await screen.findByRole("link", { name: /watch on youtube/i }); // wait for load
     expect(screen.queryByRole("button", { name: /re-download/i })).toBeNull();
   });
 

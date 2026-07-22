@@ -1079,11 +1079,15 @@ button {
   background: #000;
   box-shadow: var(--shadow-panel);
 }
+/* No background here: the element stays transparent so a g1..g6 gradient
+   class (applied when the video has no local thumbnail) can paint through,
+   and .stage's own black shows in the letterbox bars otherwise. object-fit
+   keeps a non-16:9 poster letterboxed rather than stretched. */
 .stage video {
   display: block;
   width: 100%;
   aspect-ratio: 16 / 9;
-  background: #000;
+  object-fit: contain;
 }
 .skip-toast {
   position: absolute;
@@ -2351,6 +2355,81 @@ details.tomb-sect[open] > summary svg {
 }
 .ui-btn--tinted:hover:not(:disabled) {
   border-color: var(--color-accent-strong);
+}
+
+/* ── IconAction (ui.tsx) ───────────────────────────────────────────────────
+   A bare icon that IS the button: no border, no fill at rest. Used in the
+   Now-playing action row for the controls whose label only ever named an
+   action (subtitles, download, YouTube, delete) — as opposed to the ones
+   whose label reports current state (Keep forever / Mark watched), which
+   stay full .ui-btn's because the words are the state.
+
+   The box is still 40px even though nothing is drawn around it: dropping the
+   chrome must not shrink the tap target. Colour alone carries the on-state
+   (--color-accent-strong); there is no fill and no dot. */
+.ui-iconact {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  flex: none;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-ui);
+  color: var(--color-muted);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.ui-iconact:hover:not(:disabled) {
+  background: var(--color-active);
+  color: var(--color-ink);
+}
+.ui-iconact:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* on = terracotta, off = the same muted grey as its neighbours, so the trio
+   reads as one group and the accent is the only thing that ever changes. */
+.ui-iconact.is-on,
+.ui-iconact.is-on:hover {
+  color: var(--color-accent-strong);
+}
+.ui-iconact--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+  color: var(--color-danger);
+}
+
+/* The armed half of the two-step delete: the bare trash icon expands into a
+   labelled red control, so the second click is unambiguous and the state is
+   impossible to miss. */
+.ui-iconact--armed {
+  width: auto;
+  gap: 7px;
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+  color: var(--color-danger);
+  font-family: var(--font-sans);
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+.ui-iconact--armed:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 22%, transparent);
+  color: var(--color-danger);
+}
+
+/* Hairline between the state buttons and the bare icon cluster. */
+.playacts .acts-sep {
+  width: 1px;
+  height: 22px;
+  background: var(--color-border);
+  margin: 0 4px;
+  flex: none;
 }
 
 /* pressed state for toggles (the captions button) — was .abtn.cc-btn.on. */

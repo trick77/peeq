@@ -29,6 +29,21 @@ export type RouteState = {
 
 const LIBRARY: RouteState = { view: "library", videoId: null, channelId: null };
 
+// decodeSegment decodes a percent-encoded path segment, tolerating a malformed
+// escape (a lone or invalid `%` from a hand-typed or mangled external URL) by
+// returning the raw segment instead of throwing. parsePath runs synchronously
+// in App's initial render (the useState initializer in useRoute) with no error
+// boundary above it, so a bare `decodeURIComponent` throwing URIError here would
+// white-screen the whole SPA. Falling back to the raw id keeps the view open and
+// lets it resolve to a normal "not found" instead.
+function decodeSegment(seg: string): string {
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return seg;
+  }
+}
+
 // parsePath maps a URL pathname to a RouteState. The first path segment picks
 // the view; `video`/`channel` take the next segment as their id (a missing id
 // is allowed — the view renders its own "nothing selected" state). Anything
@@ -43,14 +58,14 @@ export function parsePath(pathname: string): RouteState {
     case "video":
       return {
         view: "player",
-        videoId: seg[1] ? decodeURIComponent(seg[1]) : null,
+        videoId: seg[1] ? decodeSegment(seg[1]) : null,
         channelId: null,
       };
     case "channel":
       return {
         view: "channel",
         videoId: null,
-        channelId: seg[1] ? decodeURIComponent(seg[1]) : null,
+        channelId: seg[1] ? decodeSegment(seg[1]) : null,
       };
     case "channels":
       return { view: "channels", videoId: null, channelId: null };

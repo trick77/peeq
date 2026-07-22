@@ -65,6 +65,28 @@ func (s *Store) Fail(id int64, attempts int, lastErr string) error {
 	return err
 }
 
+// EnqueueMissing enqueues a job for every downloaded video that has no
+// summary_jobs row at all, and returns how many it added. It closes the gap
+// left by a process killed between marking a video downloaded and enqueueing
+// its summary — chiefly `peeq import-ta`, whose re-runs skip anything already
+// downloaded and would therefore never revisit such a video.
+//
+// "No row at all" is the deliberate criterion: a video whose job exhausted
+// max_attempts keeps its 'failed' row and is NOT retried here, so a poison
+// video cannot be re-queued on every boot. Those stay a manual Re-summarize.
+func (s *Store) EnqueueMissing() (int64, error) {
+	res, err := s.db.Exec(`
+		INSERT INTO summary_jobs (video_id)
+		SELECT v.id FROM videos v
+		WHERE v.status = 'downloaded'
+		  AND v.summary_status NOT IN ('done', 'no_transcript')
+		  AND NOT EXISTS (SELECT 1 FROM summary_jobs j WHERE j.video_id = v.id)`)
+	if err != nil {
+		return 0, fmt.Errorf("summaryjobs: enqueue missing: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // ResetOrphans returns jobs left 'running' by a crashed process to 'pending'.
 func (s *Store) ResetOrphans() error {
 	_, err := s.db.Exec(`UPDATE summary_jobs SET state='pending', started_at=NULL WHERE state='running'`)

@@ -124,6 +124,10 @@ export type Settings = {
   retention_days: number;
   min_free_gb: number;
   min_video_duration_seconds: number;
+  // subtitles_default — the global "start videos with subtitles showing"
+  // preference. Written from both the Settings page and the player's own
+  // subtitles toggle, which is what makes that toggle sticky across videos.
+  subtitles_default: boolean;
   ytdlp_version: string;
   // youtube_paused/youtube_pause_reason mirror the Task 10 global kill-switch
   // fields — user-writable, but only via the dedicated POST
@@ -144,6 +148,7 @@ export type SettingsPatch = Partial<{
   retention_days: number;
   min_free_gb: number;
   min_video_duration_seconds: number;
+  subtitles_default: boolean;
 }>;
 
 // Channel mirrors httpapi.channelItem — one tracked channel, joined with

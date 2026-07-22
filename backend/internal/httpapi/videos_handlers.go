@@ -2,9 +2,12 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/videos"
@@ -307,7 +310,51 @@ func (s *server) handleStreamVideo(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "media not available")
 		return
 	}
+	// ?download=1 turns the same stream into a save-to-disk. It has to be the
+	// server that names the file: media_path is deliberately never exposed in
+	// videoDTO, so the UI cannot know whether this video is .mp4, .webm or
+	// .mkv, and an <a download="…"> guessing an extension would rename the
+	// file to something that no longer matches its contents.
+	if r.URL.Query().Get("download") == "1" {
+		w.Header().Set("Content-Disposition", attachmentDisposition(
+			downloadFilename(v.Title, v.ID, filepath.Ext(safe)),
+		))
+	}
 	http.ServeContent(w, r, filepath.Base(safe), stat.ModTime(), f)
+}
+
+// downloadFilename builds the name a downloaded media file is saved under:
+// the video's title, stripped of anything that upsets a filesystem, plus the
+// real extension of the stored file. Falls back to the video id for titles
+// that reduce to nothing (e.g. a purely CJK or emoji title).
+func downloadFilename(title, id, ext string) string {
+	base := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		case r == ' ', r == '-', r == '_', r == '.':
+			return r
+		default:
+			return '_'
+		}
+	}, title)
+	base = strings.Trim(strings.TrimSpace(base), "._")
+	if len(base) > 120 {
+		base = strings.TrimSpace(base[:120])
+	}
+	if base == "" {
+		base = id
+	}
+	return base + ext
+}
+
+// attachmentDisposition emits both the plain and the RFC 5987 encoded form of
+// the filename, which is what browsers expect when the name may contain
+// non-ASCII: the bare `filename` is the legacy fallback, `filename*` is the
+// one every current browser actually reads.
+func attachmentDisposition(name string) string {
+	return fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s",
+		name, url.PathEscape(name))
 }
 
 // handleVideoThumbnail serves the video's thumbnail image file, resolved

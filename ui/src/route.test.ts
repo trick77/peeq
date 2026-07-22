@@ -63,6 +63,21 @@ describe("parsePath", () => {
     expect(parsePath("/channel/UC%2Fweird").channelId).toBe("UC/weird");
   });
 
+  it("tolerates a malformed percent-escape instead of throwing", () => {
+    // A hand-typed or mangled external URL can carry a lone/invalid `%`
+    // (e.g. `/video/100%`) or an invalid UTF-8 escape (`/video/%FF`).
+    // parsePath runs in App's first render with no error boundary, so it must
+    // never throw — it keeps the view and falls back to the raw id.
+    expect(() => parsePath("/video/100%")).not.toThrow();
+    expect(parsePath("/video/100%")).toEqual({
+      view: "player",
+      videoId: "100%",
+      channelId: null,
+    });
+    expect(() => parsePath("/channel/%FF")).not.toThrow();
+    expect(parsePath("/channel/%FF").channelId).toBe("%FF");
+  });
+
   it("ignores extra path segments after the id", () => {
     expect(parsePath("/video/v1/extra")).toEqual({
       view: "player",

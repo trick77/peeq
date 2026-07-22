@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../icons";
-import { Button, Spinner, buttonClass } from "../ui";
+import { Button, Spinner, iconActionClass } from "../ui";
 import { Scrubber } from "../components/Scrubber";
 import {
   getVideo,
@@ -10,17 +10,25 @@ import {
   deleteVideo,
   redownload,
   streamUrl,
+  thumbnailUrl,
 } from "../api/videos";
 import { resummarize, subtitlesUrl } from "../api/search";
 import { streamDownloads } from "../api/downloads";
+import { getSettings, updateSettings } from "../api/settings";
 import type { Video } from "../api/types";
-import { formatDuration } from "../format";
+import { formatDuration, gradientClassFor } from "../format";
 
 // RESUME_THROTTLE_MS bounds how often `timeupdate` (which fires ~4x/sec)
 // is allowed to actually POST the resume position — see handleTimeUpdate.
 // visibilitychange/pagehide bypass this throttle entirely (flushOnHide
 // below), so closing the tab never loses more than this much progress.
 const RESUME_THROTTLE_MS = 5000;
+
+// DELETE_ARM_MS is how long the two-step delete stays armed before it gives
+// up and returns to a plain trash icon. Long enough to read "Delete?" and
+// decide, short enough that an armed control never sits waiting on screen
+// for a later, unrelated click to land on it.
+const DELETE_ARM_MS = 4000;
 
 // fmt is the Task 17 alias for formatDuration used throughout the
 // intelligence panels below (chapters/highlights/transcript cues) — kept as
@@ -149,11 +157,22 @@ export function Player({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [ccOn, setCcOn] = useState(false);
+  // subtitlesDefault is the global "show subtitles by default" preference
+  // (settings.subtitles_default). null means "not loaded yet" — distinct
+  // from false, because the effect below must not apply a default it hasn't
+  // actually read, or every video would flash captions-off first.
+  const [subtitlesDefault, setSubtitlesDefault] = useState<boolean | null>(
+    null,
+  );
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [cues, setCues] = useState<Cue[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [find, setFind] = useState("");
+  // deleteArmed is the second half of the two-step delete: false renders the
+  // bare trash icon, true renders the labelled "Delete?" that actually
+  // deletes. See the row for why a single click must not be enough.
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const [resummarizing, setResummarizing] = useState(false);
   const [redownloading, setRedownloading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -170,7 +189,14 @@ export function Player({
   // a real position has been observed.
   const positionKnownRef = useRef(false);
   const resumeAppliedRef = useRef(false);
+  // ccAppliedForRef holds the video id the subtitles default was last
+  // applied to, so it lands exactly once per video. Without it the toggle
+  // and the default-applier fight: toggling also updates subtitlesDefault
+  // (it *is* the preference), which re-runs that effect and would otherwise
+  // immediately re-apply the default on top of the user's click.
+  const ccAppliedForRef = useRef<string | null>(null);
   const toastTimerRef = useRef<number | undefined>(undefined);
+  const armTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     resumeAppliedRef.current = false;
@@ -184,6 +210,7 @@ export function Player({
     setCues([]);
     setTranscriptError(null);
     setFind("");
+    setDeleteArmed(false);
     if (!videoId) return;
     let active = true;
     getVideo(videoId)
@@ -225,6 +252,9 @@ export function Player({
       if (toastTimerRef.current !== undefined) {
         window.clearTimeout(toastTimerRef.current);
       }
+      if (armTimerRef.current !== undefined) {
+        window.clearTimeout(armTimerRef.current);
+      }
     };
   }, []);
 
@@ -263,15 +293,40 @@ export function Player({
     };
   }, [videoId]);
 
-  // CC track starts hidden (captions off) — applied once per video whenever
-  // its <track> becomes available, independent of the click handler below.
+  // Load the global subtitles preference once per mount. A failure is not
+  // fatal — playback must work even if settings can't be read — so it falls
+  // back to "off", the behaviour peeq had before this was a setting.
+  useEffect(() => {
+    let active = true;
+    getSettings()
+      .then((s) => {
+        if (active) setSubtitlesDefault(s.subtitles_default);
+      })
+      .catch(() => {
+        if (active) setSubtitlesDefault(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Apply the subtitles preference once per video, whenever both the
+  // preference and the <track> are available (either can land first). The
+  // ccAppliedForRef guard is what keeps this from stomping on a mid-video
+  // toggle — see the ref's declaration.
   useEffect(() => {
     const el = videoRef.current;
-    if (!el || !video?.has_subtitles) return;
+    if (!el || !video?.has_subtitles || subtitlesDefault === null) return;
+    if (ccAppliedForRef.current === video.id) return;
     const track = el.textTracks[0];
-    if (track) track.mode = "hidden";
+    // No track yet: leave the ref unstamped so a <track> that mounts later
+    // still gets the default applied on a subsequent run.
+    if (!track) return;
+    track.mode = subtitlesDefault ? "showing" : "hidden";
+    setCcOn(subtitlesDefault);
+    ccAppliedForRef.current = video.id;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [video?.id, video?.has_subtitles]);
+  }, [video?.id, video?.has_subtitles, subtitlesDefault]);
 
   // Fetch + client-side parse the VTT transcript the first time the
   // Transcript card is expanded — not on every render, and not for videos
@@ -443,8 +498,30 @@ export function Player({
     }
   }
 
+  // armDelete / disarmDelete drive the two-step delete. Arming starts a
+  // self-disarm timer so the confirm never lingers; disarming always clears
+  // it, so a second arm can't inherit the first one's countdown.
+  function armDelete() {
+    setDeleteArmed(true);
+    if (armTimerRef.current !== undefined)
+      window.clearTimeout(armTimerRef.current);
+    armTimerRef.current = window.setTimeout(
+      () => setDeleteArmed(false),
+      DELETE_ARM_MS,
+    );
+  }
+
+  function disarmDelete() {
+    if (armTimerRef.current !== undefined) {
+      window.clearTimeout(armTimerRef.current);
+      armTimerRef.current = undefined;
+    }
+    setDeleteArmed(false);
+  }
+
   async function handleDelete() {
     if (!video) return;
+    disarmDelete();
     try {
       await deleteVideo(video.id);
       onDeleted();
@@ -453,18 +530,28 @@ export function Player({
     }
   }
 
-  // CC toggle — flips the <track>'s TextTrack.mode between 'showing' and
-  // 'hidden' directly (imperative, mirroring the native captions button),
-  // keeping ccOn in sync purely for the button's "on" styling.
+  // Subtitles toggle — flips the <track>'s TextTrack.mode between 'showing'
+  // and 'hidden' directly (imperative, mirroring the native captions
+  // button), keeping ccOn in sync for the button's "on" styling.
+  //
+  // The flip is also written back as the global preference, which is what
+  // makes it stick: the next video opens the way this one was left. The
+  // write is fire-and-forget with no rollback — what the user just clicked
+  // is already visible on this video, and a failed write only means the
+  // choice doesn't carry over.
   function handleToggleCC() {
     const el = videoRef.current;
     const track = el?.textTracks?.[0];
+    let next: boolean;
     if (track) {
       track.mode = track.mode === "showing" ? "hidden" : "showing";
-      setCcOn(track.mode === "showing");
+      next = track.mode === "showing";
     } else {
-      setCcOn((v) => !v);
+      next = !ccOn;
     }
+    setCcOn(next);
+    setSubtitlesDefault(next);
+    updateSettings({ subtitles_default: next }).catch(() => {});
   }
 
   async function handleResummarize() {
@@ -497,9 +584,19 @@ export function Player({
     <div className="playgrid">
       <div className="leftcol">
         <div className="stage stage-wrap">
+          {/* Without a poster the stage is a bare black rectangle until the
+              first frame decodes — which, for a never-played video, only
+              happens once you press play (a resumed video gets a frame for
+              free from the seek in handleLoadedMetadata). Show the downloaded
+              thumbnail there instead, falling back to the same per-id gradient
+              the Library cards use when no local thumbnail exists. */}
           <video
             ref={videoRef}
+            className={
+              video.has_thumbnail ? undefined : gradientClassFor(video.id)
+            }
             src={streamUrl(video.id)}
+            poster={video.has_thumbnail ? thumbnailUrl(video.id) : undefined}
             controls
             onLoadedMetadata={handleLoadedMetadata}
             onTimeUpdate={handleTimeUpdate}
@@ -545,6 +642,11 @@ export function Player({
               <span className="pill">{formatSize(video.filesize_bytes)}</span>
             ) : null}
           </div>
+          {/* The action row splits on one rule: a control keeps its label if
+              the label reports the current state (Keep forever / Kept
+              forever, Mark watched / Mark unwatched). Controls whose label
+              only ever named an action carry that meaning in the icon alone
+              — see iconActionClass. */}
           <div className="playacts">
             <Button
               type="button"
@@ -562,28 +664,76 @@ export function Player({
               <Icon name="check" size="17px" />{" "}
               {video.watched ? "Mark unwatched" : "Mark watched"}
             </Button>
+            <span className="acts-sep" aria-hidden="true" />
             {video.has_subtitles && (
-              <Button
+              // On is terracotta, off is the same muted grey as the icons
+              // beside it — no fill, no dot. aria-pressed + the flipping
+              // aria-label carry the state for anyone who can't see colour.
+              <button
                 type="button"
-                variant="secondary"
-                className={ccOn ? "is-on" : undefined}
+                className={iconActionClass({ on: ccOn })}
                 aria-pressed={ccOn}
+                aria-label={ccOn ? "Subtitles on" : "Subtitles off"}
+                title={ccOn ? "Subtitles on" : "Subtitles off"}
                 onClick={handleToggleCC}
               >
-                <Icon name="captions" size="17px" /> CC
-              </Button>
+                <Icon name="captions" size="19px" />
+              </button>
             )}
-            <Button type="button" variant="dangerQuiet" onClick={handleDelete}>
-              <Icon name="trash" size="17px" /> Delete
-            </Button>
+            {video.has_media && (
+              // download=1 makes the stream endpoint attach a proper filename
+              // (title + the file's real extension). A bare `download`
+              // attribute here would not: the UI never learns whether the
+              // file is .mp4, .webm or .mkv, so only the server can name it.
+              <a
+                className={iconActionClass()}
+                href={`${streamUrl(video.id)}?download=1`}
+                aria-label="Download video file"
+                title="Download video file"
+              >
+                <Icon name="download" size="19px" />
+              </a>
+            )}
             <a
-              className={buttonClass("secondary")}
+              className={iconActionClass()}
               href={video.url}
               target="_blank"
               rel="noreferrer"
+              aria-label="Watch on YouTube"
+              title="Watch on YouTube"
             >
-              <Icon name="externalLink" size="17px" /> Watch on YouTube
+              <Icon name="externalLink" size="19px" />
             </a>
+            {/* Two-step delete. The first click only arms it; the control
+                then expands into a labelled red "Delete?" that the second
+                click confirms. Deleting is irreversible and the icon sits in
+                a row of harmless ones, so a single click must never be
+                enough. It disarms itself after DELETE_ARM_MS, on Escape, and
+                on blur. */}
+            {deleteArmed ? (
+              <button
+                type="button"
+                className={iconActionClass({ danger: true, armed: true })}
+                onClick={handleDelete}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") disarmDelete();
+                }}
+                onBlur={disarmDelete}
+                autoFocus
+              >
+                <Icon name="trash" size="17px" /> Delete?
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={iconActionClass({ danger: true })}
+                aria-label="Delete video"
+                title="Delete video"
+                onClick={armDelete}
+              >
+                <Icon name="trash" size="19px" />
+              </button>
+            )}
             {(video.status === "error" || video.status === "tombstoned") && (
               <Button
                 type="button"
