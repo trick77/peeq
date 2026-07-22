@@ -21,7 +21,7 @@ const UncategorizedCategory = "uncategorized"
 
 // Categories is the fixed, ordered enum. Order drives the Library chip order.
 var Categories = []Category{
-	{"ai", "AI"},
+	{"ai", "Artificial Intelligence"},
 	{"tech", "Technology & Gadgets"},
 	{"software", "Software Engineering"},
 	{"science", "Science & Research"},
