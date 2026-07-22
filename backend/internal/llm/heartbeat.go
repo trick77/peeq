@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,16 @@ const DefaultHeartbeat = 15 * time.Second
 // heartbeat output does exactly this — reads it while the goroutine is still
 // writing. That is a real data race, and it failed CI on unrelated PRs.
 //
+// That wait is deliberately UNBOUNDED, which is a trade-off worth stating:
+// callers defer stop() in the request path, so a log sink that blocks (a full
+// pipe with no reader, a wedged container log driver) now stalls the caller
+// rather than just this goroutine. It is still the right side to err on. A
+// sink that blocks has already stopped the process from logging at all, so
+// the caller's next line would block anyway; and a timeout would restore the
+// race precisely when writes are slowest, which is exactly when the goroutine
+// is most likely to still be inside one. Correctness under a wedged sink beats
+// liveness that is already lost.
+//
 // stop must be called exactly once (a defer at the call site); calling it
 // twice panics on the closed channel, which is the intended loud failure.
 func StartHeartbeat(ctx context.Context, log *slog.Logger, interval time.Duration, msg string, attrs ...any) (stop func()) {
@@ -31,9 +42,13 @@ func StartHeartbeat(ctx context.Context, log *slog.Logger, interval time.Duratio
 	}
 	started := time.Now()
 	done := make(chan struct{})
-	finished := make(chan struct{})
+	// A WaitGroup rather than a second channel: "wait for this goroutine to
+	// finish" is exactly what it says, and it leaves one fewer invariant than
+	// a done/finished pair whose difference a reader has to infer.
+	var running sync.WaitGroup
+	running.Add(1)
 	go func() {
-		defer close(finished)
+		defer running.Done()
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
@@ -54,6 +69,6 @@ func StartHeartbeat(ctx context.Context, log *slog.Logger, interval time.Duratio
 	}()
 	return func() {
 		close(done)
-		<-finished
+		running.Wait()
 	}
 }
