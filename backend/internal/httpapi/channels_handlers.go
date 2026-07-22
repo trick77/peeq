@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	neturl "net/url"
@@ -461,23 +462,23 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 		// Detached from the request: the browser has its response already.
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		if err := s.resolveChannel(ctx, channelID, cached != nil); err != nil {
+		if err := s.resolveChannel(ctx, channelID, cached); err != nil {
 			slog.Warn("channel resolve failed", "channel_id", channelID, "err", err)
 		}
 	}()
 }
 
 // resolveChannel fetches a channel's metadata from YouTube and stores it,
-// recording the attempt either way. exists says whether a channels row is
-// already there, which decides how a FAILURE is remembered: an existing row
-// is marked (keeping whatever metadata it holds), while a channel with no row
-// gets a bare one purely to carry resolved_at, so the failure is remembered
-// and not retried on every visit.
+// recording the attempt either way. cached is the channel's existing row, or
+// nil when it has none, which decides how a FAILURE is remembered: an
+// existing row is marked (keeping whatever metadata it holds), while a
+// channel with no row gets a bare one purely to carry resolved_at, so the
+// failure is remembered and not retried on every visit.
 //
 // The returned error is the resolve failure itself. Callers that ran this for
 // a user who is waiting — the Refresh button — report it; the background path
 // only logs it.
-func (s *server) resolveChannel(ctx context.Context, channelID string, exists bool) error {
+func (s *server) resolveChannel(ctx context.Context, channelID string, cached *channels.Channel) error {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	// PathEscape, not raw concatenation: an id reaches this from a URL path
 	// segment, and Go's ServeMux hands back the DECODED value — so a "%2F" in
@@ -487,7 +488,7 @@ func (s *server) resolveChannel(ctx context.Context, channelID string, exists bo
 	url := "https://www.youtube.com/channel/" + neturl.PathEscape(channelID)
 	info, err := s.channelResolver.ResolveChannel(ctx, url)
 	if err != nil {
-		if !exists {
+		if cached == nil {
 			if uerr := s.channels.Upsert(channels.Channel{ID: channelID, ResolvedAt: now}); uerr != nil {
 				slog.Error("cache channel after failed resolve", "channel_id", channelID, "err", uerr)
 			}
@@ -497,6 +498,24 @@ func (s *server) resolveChannel(ctx context.Context, channelID string, exists bo
 			slog.Error("mark resolve attempted", "channel_id", channelID, "err", merr)
 		}
 		return err
+	}
+	// The UCID yt-dlp reports is the authoritative identity of whatever it
+	// actually fetched, and it is not necessarily the channel we asked for: a
+	// stale or redirecting url resolves to a DIFFERENT channel, and writing
+	// that response onto this row would silently replace one channel's name,
+	// artwork and subscriber count with another's — while resolve_ok asserts
+	// the result is current. Refuse instead, and let the caller report it.
+	if info.UCID != "" && info.UCID != channelID {
+		return fmt.Errorf("resolved to a different channel (%s)", info.UCID)
+	}
+
+	// The stored handle wins over yt-dlp's, matching how handleChannelsPost
+	// resolves the same conflict: a handle peeq already has came from a url
+	// the user pasted, and a refresh must not rewrite it underneath them.
+	// yt-dlp's is what gives a handle to a channel that has none.
+	handle := info.Handle
+	if cached != nil && cached.Handle != "" {
+		handle = cached.Handle
 	}
 
 	avatarPath, aerr := media.FetchImage(ctx, info.AvatarURL, s.mediaDir, ".channels/"+channelID+"/avatar")
@@ -510,7 +529,7 @@ func (s *server) resolveChannel(ctx context.Context, channelID string, exists bo
 	if uerr := s.channels.SaveResolved(channels.Channel{
 		ID:          channelID,
 		Name:        info.Name,
-		Handle:      info.Handle,
+		Handle:      handle,
 		Description: info.Description,
 		AvatarPath:  avatarPath,
 		BannerPath:  bannerPath,
@@ -564,9 +583,16 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	// WithoutCancel, not r.Context() straight through: a refresh takes tens of
+	// seconds (yt-dlp's throttle, then two image fetches), and cancelling it
+	// because the reader closed the tab would land in the FAILURE path, which
+	// stamps resolve_ok = 0. The channel would then claim "last refresh
+	// failed" — the one state peeq uses to mean "this needs your attention" —
+	// because someone navigated away. The work is worth finishing either way;
+	// only the response is lost.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Minute)
 	defer cancel()
-	if err := s.resolveChannel(ctx, id, c != nil); err != nil {
+	if err := s.resolveChannel(ctx, id, c); err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
 			writeJSONError(w, http.StatusConflict, "cookie required")
 			return
@@ -574,9 +600,10 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadGateway, "refresh failed: "+err.Error())
 		return
 	}
-	if s.onChannelResolved != nil {
-		s.onChannelResolved(id)
-	}
+	// No onChannelResolved here: that hook exists so a test can await the
+	// BACKGROUND goroutine (see Deps.OnChannelResolved). This path is
+	// synchronous, so the response itself is the signal, and firing it would
+	// hand waiting tests a second, unrelated wakeup.
 	writeJSON(w, map[string]any{"status": "ok"})
 }
 

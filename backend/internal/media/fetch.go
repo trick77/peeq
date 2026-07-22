@@ -30,6 +30,14 @@ var imageExts = map[string]string{
 // mediaDir, WITHOUT an extension — the extension comes from the response's
 // content type) and returns the stored path relative to mediaDir.
 //
+// relBase is CONTAINMENT-CHECKED before anything is written: callers build it
+// by interpolating an id (".channels/"+channelID+"/avatar"), and an id
+// carrying "../" would otherwise resolve outside mediaDir, since
+// filepath.Join cleans the traversal away rather than rejecting it. Every
+// read path already goes through SafeMediaPath; this is the write side of the
+// same rule, enforced here rather than at each call site so no future caller
+// has to remember it.
+//
 // An empty url is a no-op returning ("", nil): a channel with no banner is
 // normal, not an error.
 func FetchImage(ctx context.Context, url, mediaDir, relBase string) (string, error) {
@@ -38,6 +46,19 @@ func FetchImage(ctx context.Context, url, mediaDir, relBase string) (string, err
 	}
 	if mediaDir == "" {
 		return "", fmt.Errorf("fetch image: media dir not configured")
+	}
+	// Checked BEFORE the request, not just before the write: a relBase that
+	// points outside mediaDir is a caller bug, and there is no reason to
+	// spend a network fetch discovering it.
+	absMediaDir, err := filepath.Abs(mediaDir)
+	if err != nil {
+		return "", fmt.Errorf("fetch image: resolve media dir: %w", err)
+	}
+	if relBase == "" || filepath.IsAbs(relBase) {
+		return "", fmt.Errorf("fetch image: relative destination required, got %q", relBase)
+	}
+	if err := requireWithin(absMediaDir, filepath.Join(absMediaDir, relBase)); err != nil {
+		return "", fmt.Errorf("fetch image: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
