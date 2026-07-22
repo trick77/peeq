@@ -979,3 +979,96 @@ func TestIdleSweepParksUnusableReply(t *testing.T) {
 		t.Fatalf("classify called %d times, want 1 — the same prompt must not be retried", calls)
 	}
 }
+
+// blockCategoryWrites makes exactly the category UPDATE fail, leaving every
+// other write on the videos row working. Closing the db would be blunter than
+// the situation under test — it would break the job claim before the worker
+// ever reached the category write.
+func blockCategoryWrites(t *testing.T, h *workerHarness) {
+	t.Helper()
+	if _, err := h.db.Exec(`CREATE TRIGGER no_category BEFORE UPDATE OF category ON videos
+		BEGIN SELECT RAISE(ABORT, 'category writes blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+}
+
+// TestIdleSweepSurvivesCategoryWriteFailure: the sweep must park a video whose
+// category write fails, exactly as it parks a failed classify call. Without
+// that, the video stays in the result set and the sweep retries it — and its
+// doomed LLM call — on every single turn.
+func TestIdleSweepSurvivesCategoryWriteFailure(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedBacklogVideo(t, h, "v-writefail")
+	blockCategoryWrites(t, h)
+
+	calls := 0
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+			calls++
+			return "ai", nil
+		})),
+		Embedder: fakeWorkerEmbedder{dim: 1536},
+		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+
+	did, err := w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("a category write failure must not surface as a worker error: %v", err)
+	}
+	if !did {
+		t.Fatal("the attempt still counts as a turn's work")
+	}
+
+	did, err = w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if did || calls != 1 {
+		t.Fatalf("did=%v calls=%d — a video whose write fails must be parked, not retried", did, calls)
+	}
+}
+
+// TestClassifyWriteFailureDoesNotFailTheJob: the category write is best-effort
+// on a job whose summary is already stored. A failing write must be logged and
+// stepped over, never turned into a job failure that would discard that work.
+func TestClassifyWriteFailureDoesNotFailTheJob(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v7/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	if err := h.videos.Upsert(videos.Video{ID: "v7", URL: "https://youtu.be/v7"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := h.videos.SetSubtitle("v7", relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v7"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	blockCategoryWrites(t, h)
+
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(fakeWorkerCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
+		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("a category write failure must not surface as a job error: %v", err)
+	}
+	v, err := h.videos.Get("v7")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.Summary == "" || v.SummaryStatus != "done" {
+		t.Fatalf("summary work was discarded: status=%q summary=%q", v.SummaryStatus, v.Summary)
+	}
+}

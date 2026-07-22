@@ -478,3 +478,48 @@ func TestResummarize_downloadedWithSubtitleReturns202(t *testing.T) {
 		t.Fatalf("SummaryJobs.Enqueue called with %q, want v1", spy.lastID)
 	}
 }
+
+// TestResummarize_categoryResetFailure500 asserts the endpoint fails loudly
+// when it cannot clear the category. Swallowing that error would return 202
+// while leaving the old category pinned — the worker skips classification for
+// a video that already has one, so the user's correction would be silently
+// dropped.
+func TestResummarize_categoryResetFailure500(t *testing.T) {
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	deps := Deps{
+		AuthService:    auth.NewService(nil, sessions, users),
+		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Settings:       settings.New(db),
+		Videos:         videos.New(db),
+		Rag:            rag.NewStore(db),
+		SummaryJobs:    &spySummaryJobs{},
+		DevAuthClaims:  auth.Claims{Subject: "dev-tester", PreferredUsername: "dev"},
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath: "/media/v1.mp4", SubtitleRelPath: "v1.en.vtt",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
+	// Block only the category UPDATE, so the handler reaches the reset with
+	// every earlier write having succeeded.
+	if _, err := db.Exec(`CREATE TRIGGER no_category BEFORE UPDATE OF category ON videos
+		BEGIN SELECT RAISE(ABORT, 'category writes blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}

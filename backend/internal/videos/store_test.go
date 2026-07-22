@@ -998,3 +998,17 @@ func TestNextUnclassified_newestFirstAndSkipsMany(t *testing.T) {
 		t.Fatalf("NextUnclassified(skip 2) = %v, want v-old", got)
 	}
 }
+
+// TestNextUnclassified_errorsOnClosedDB asserts a query failure is reported to
+// the caller rather than a nil video masquerading as "backlog empty" — which
+// would silently retire the classify sweep for the rest of the process.
+func TestNextUnclassified_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := s.NextUnclassified(nil); err == nil {
+		t.Fatal("expected an error querying against a closed db")
+	}
+}
