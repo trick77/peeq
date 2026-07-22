@@ -47,7 +47,14 @@ type WorkerDeps struct {
 
 // Worker is the single-concurrency summarization+embedding loop: the twin of
 // internal/download/worker.go for the summary_jobs queue.
-type Worker struct{ d WorkerDeps }
+type Worker struct {
+	d WorkerDeps
+	// classifyFailed holds video ids whose idle-sweep classify call errored, so
+	// the sweep moves past them instead of retrying the same video forever.
+	// Process-lifetime only: a restart gives every video another chance, which
+	// is the right bound for a transient LLM outage.
+	classifyFailed map[string]bool
+}
 
 // NewWorker builds a Worker, filling in defaults for the optional deps.
 func NewWorker(d WorkerDeps) *Worker {
@@ -57,7 +64,7 @@ func NewWorker(d WorkerDeps) *Worker {
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}
-	return &Worker{d: d}
+	return &Worker{d: d, classifyFailed: map[string]bool{}}
 }
 
 // Run is the worker loop; it blocks until ctx is cancelled. It first resets
@@ -102,14 +109,18 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// processOne claims and processes a single job. Returns false when the queue
-// is empty. Panics are recovered so one bad job never kills the loop. This is
-// the test seam: tests call it directly to drive one job deterministically,
-// without goroutine/ticker timing.
+// processOne claims and processes a single job. When the queue is empty it
+// spends the turn on the classification backlog instead, and returns false
+// only when there is nothing left to do at all. Panics are recovered so one bad
+// job never kills the loop. This is the test seam: tests call it directly to
+// drive one job deterministically, without goroutine/ticker timing.
 func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	job, err := w.d.Jobs.ClaimNext()
-	if err != nil || job == nil {
+	if err != nil {
 		return false, err
+	}
+	if job == nil {
+		return w.classifyOne(ctx)
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -181,7 +192,21 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		summary = s
 	}
 
-	// Step 2 — embeddings. Skip if already embedded (embed_model is set).
+	// Step 2 — category (best-effort). It needs only the title and the summary,
+	// so it runs here rather than at the end: behind the fragile key-points call
+	// it never ran at all for videos whose endpoint timed out there, which is
+	// how a large backlog ended up summarized but 'uncategorized'. A classify
+	// failure must NOT fail the job — the summary above is already saved, and
+	// the idle sweep in classifyOne picks the video up later.
+	if video.Category == "" || video.Category == videos.UncategorizedCategory {
+		if raw, cerr := w.d.Summarizer.Classify(ctx, video.Title, summary, videos.ClassifiableCategories()); cerr != nil {
+			w.d.Logger.Warn("summarize worker: classify failed", "video_id", video.ID, "err", cerr)
+		} else if serr := w.d.Videos.SetCategory(video.ID, videos.NormalizeCategory(raw)); serr != nil {
+			w.d.Logger.Error("summarize worker: set category failed", "video_id", video.ID, "err", serr)
+		}
+	}
+
+	// Step 3 — embeddings. Skip if already embedded (embed_model is set).
 	if video.EmbedModel == "" {
 		w.emit(video.ID, "running", "embedding")
 		if err := w.embedAndStore(ctx, video.ID, parsed, summary); err != nil {
@@ -196,7 +221,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		w.emit(video.ID, "done", "")
 	}
 
-	// Step 3 — key points (and chapters when yt-dlp didn't supply them). The
+	// Step 4 — key points (and chapters when yt-dlp didn't supply them). The
 	// fragile call, run last so a failure retries only this and costs nothing.
 	ytChapters := decodeChapters(video.Chapters)
 	chapters, keyPoints, err := w.d.Summarizer.KeyPoints(ctx, summary, parsed.Cues, ytChapters)
@@ -208,15 +233,50 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	}
 	w.emit(video.ID, "done", "")
 
-	// Step 4 — category (best-effort): a classify failure leaves 'uncategorized'
-	// and must NOT fail the job, since everything above is already saved.
-	if raw, cerr := w.d.Summarizer.Classify(ctx, video.Title, summary, videos.CategoryIDs()); cerr != nil {
-		w.d.Logger.Warn("summarize worker: classify failed", "video_id", video.ID, "err", cerr)
-	} else if serr := w.d.Videos.SetCategory(video.ID, videos.NormalizeCategory(raw)); serr != nil {
-		w.d.Logger.Error("summarize worker: set category failed", "video_id", video.ID, "err", serr)
+	_ = w.d.Jobs.Finish(job.ID, "done", "")
+	return true, nil
+}
+
+// classifyOne repairs one video from the classification backlog: a downloaded
+// video that has a summary but is still 'uncategorized'. It runs only when the
+// summary queue is empty, so real work always wins, and reports did=true only
+// when it actually made an LLM call — returning true on an empty backlog would
+// spin the Run loop, which skips its poll interval whenever a turn did work.
+//
+// The backlog exists because classification used to sit behind the key-points
+// call and was skipped whenever that failed; it also absorbs any future
+// best-effort classify failure. Errors are logged, never returned as job
+// failures — there is no job here to fail.
+func (w *Worker) classifyOne(ctx context.Context) (bool, error) {
+	skip := make([]string, 0, len(w.classifyFailed))
+	for id := range w.classifyFailed {
+		skip = append(skip, id)
+	}
+	video, err := w.d.Videos.NextUnclassified(skip)
+	if err != nil || video == nil {
+		return false, err
 	}
 
-	_ = w.d.Jobs.Finish(job.ID, "done", "")
+	raw, cerr := w.d.Summarizer.Classify(ctx, video.Title, video.Summary, videos.ClassifiableCategories())
+	if cerr != nil {
+		// Park it for this process so the sweep advances to the next video
+		// rather than retrying this one on every turn.
+		w.classifyFailed[video.ID] = true
+		w.d.Logger.Warn("summarize worker: backlog classify failed", "video_id", video.ID, "err", cerr)
+		return true, nil
+	}
+	category := videos.NormalizeCategory(raw)
+	if serr := w.d.Videos.SetCategory(video.ID, category); serr != nil {
+		w.classifyFailed[video.ID] = true
+		w.d.Logger.Error("summarize worker: backlog set category failed", "video_id", video.ID, "err", serr)
+		return true, nil
+	}
+	if category == videos.UncategorizedCategory {
+		// The call succeeded but the reply was unusable. Park it too: retrying
+		// the same prompt every turn would just burn requests.
+		w.classifyFailed[video.ID] = true
+	}
+	w.d.Logger.Info("summarize worker: classified backlog video", "video_id", video.ID, "category", category)
 	return true, nil
 }
 

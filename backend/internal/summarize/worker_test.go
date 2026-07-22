@@ -744,6 +744,12 @@ func TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints(t *
 	if v.SummaryStatus != "done" {
 		t.Errorf("summary_status = %q, want done (summary+search usable despite key-points failing)", v.SummaryStatus)
 	}
+	// The reason classification moved ahead of key points: while it sat behind
+	// them, a key-points failure meant the video was never classified at all,
+	// which is how a whole backlog ended up summarized but 'uncategorized'.
+	if v.Category != "ai" {
+		t.Errorf("category = %q, want ai — classify must not sit behind the fragile key-points step", v.Category)
+	}
 	if embedder.calls != 1 {
 		t.Errorf("embedder called %d times, want 1", embedder.calls)
 	}
@@ -812,5 +818,164 @@ func TestWorkerRunBackfillsDownloadedVideosWithNoJob(t *testing.T) {
 	}
 	if state != "pending" {
 		t.Fatalf("backfilled job state=%q, want pending", state)
+	}
+}
+
+// seedBacklogVideo makes a downloaded video that already has a summary but is
+// still 'uncategorized' — exactly the rows left behind by the era when
+// classification sat behind the key-points call.
+func seedBacklogVideo(t *testing.T, h *workerHarness, id string) {
+	t.Helper()
+	if err := h.videos.Upsert(videos.Video{ID: id, URL: "https://youtu.be/" + id, Title: "A video"}); err != nil {
+		t.Fatalf("upsert %s: %v", id, err)
+	}
+	if _, err := h.db.Exec(`UPDATE videos SET status='downloaded' WHERE id=?`, id); err != nil {
+		t.Fatalf("mark %s downloaded: %v", id, err)
+	}
+	if err := h.videos.SetSummaryText(id, "Overall prose summary."); err != nil {
+		t.Fatalf("set summary %s: %v", id, err)
+	}
+}
+
+// TestProcessOneIdleSweepClassifiesBacklog: with the job queue empty, the
+// worker spends the turn repairing an uncategorized video instead of idling,
+// and reports it did work so the loop's pacing applies. Once the backlog is
+// drained it must report did=false — returning true on an empty backlog would
+// spin the Run loop, which skips its poll interval whenever a turn did work.
+func TestProcessOneIdleSweepClassifiesBacklog(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedBacklogVideo(t, h, "v-backlog")
+
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(fakeWorkerCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
+		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+
+	did, err := w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if !did {
+		t.Fatal("idle sweep should report it did work, so VideoDelay pacing applies")
+	}
+	v, err := h.videos.Get("v-backlog")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.Category != "ai" {
+		t.Fatalf("category = %q, want ai — the idle sweep must classify the backlog", v.Category)
+	}
+
+	// Backlog drained: nothing left to do.
+	did, err = w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne (drained): %v", err)
+	}
+	if did {
+		t.Fatal("an empty backlog must report did=false, or the Run loop spins without its poll interval")
+	}
+}
+
+// TestIdleSweepParksFailuresAndAdvances: one video whose classify call always
+// errors must not starve the rest of the backlog — the worker parks it for the
+// process lifetime and moves on to the next video.
+func TestIdleSweepParksFailuresAndAdvances(t *testing.T) {
+	h := newWorkerHarness(t)
+	// v-b is newer, so it is picked first; its classify call is the failing one.
+	seedBacklogVideo(t, h, "v-a")
+	seedBacklogVideo(t, h, "v-b")
+	if _, err := h.db.Exec(`UPDATE videos SET created_at='2026-07-01' WHERE id='v-a'`); err != nil {
+		t.Fatalf("age v-a: %v", err)
+	}
+	if _, err := h.db.Exec(`UPDATE videos SET created_at='2026-07-02' WHERE id='v-b'`); err != nil {
+		t.Fatalf("age v-b: %v", err)
+	}
+
+	failFor := "Title: "
+	_ = failFor
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+			// The classify user message carries the title; fail only v-b's.
+			if strings.Contains(m[1].Content, "v-b video") {
+				return "", errors.New("classify boom")
+			}
+			return "ai", nil
+		})),
+		Embedder: fakeWorkerEmbedder{dim: 1536},
+		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+	if _, err := h.db.Exec(`UPDATE videos SET title='v-b video' WHERE id='v-b'`); err != nil {
+		t.Fatalf("title v-b: %v", err)
+	}
+
+	// Turn 1: v-b fails and is parked, but the turn still counts as work.
+	did, err := w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if !did {
+		t.Fatal("a failed classify is still a turn's work")
+	}
+
+	// Turn 2: the sweep advances to v-a rather than retrying v-b forever.
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	a, _ := h.videos.Get("v-a")
+	if a.Category != "ai" {
+		t.Fatalf("v-a category = %q, want ai — a poison video must not starve the backlog", a.Category)
+	}
+	b, _ := h.videos.Get("v-b")
+	if b.Category != "uncategorized" {
+		t.Fatalf("v-b category = %q, want it left uncategorized", b.Category)
+	}
+
+	// Turn 3: both are accounted for, so the sweep is idle.
+	did, err = w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if did {
+		t.Fatal("with the only remaining video parked, the sweep must report idle")
+	}
+}
+
+// TestIdleSweepParksUnusableReply: the call succeeded but the reply named no
+// category. Retrying the identical prompt every turn would just burn requests,
+// so the video is parked for the process lifetime like an outright failure.
+func TestIdleSweepParksUnusableReply(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedBacklogVideo(t, h, "v-junk")
+
+	calls := 0
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+			calls++
+			return "I'm not sure about this one.", nil
+		})),
+		Embedder: fakeWorkerEmbedder{dim: 1536},
+		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	v, _ := h.videos.Get("v-junk")
+	if v.Category != "uncategorized" {
+		t.Fatalf("category = %q, want uncategorized for an unusable reply", v.Category)
+	}
+
+	did, err := w.processOne(context.Background())
+	if err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if did {
+		t.Fatal("the parked video must not be picked up again this process")
+	}
+	if calls != 1 {
+		t.Fatalf("classify called %d times, want 1 — the same prompt must not be retried", calls)
 	}
 }

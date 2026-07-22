@@ -419,6 +419,40 @@ func (s *Store) SetCategory(id, category string) error {
 	return nil
 }
 
+// NextUnclassified returns one downloaded video that has a summary but is
+// still 'uncategorized', newest first, or (nil, nil) when there is none. It
+// backs the summarize worker's idle sweep, which repairs videos whose classify
+// step never ran — chiefly those summarized before classification moved ahead
+// of the fragile key-points call, where a key-points failure returned before
+// the category was ever set.
+//
+// skip is the caller's in-process set of video ids whose classify call errored,
+// excluded so one persistently failing video cannot starve the rest of the
+// backlog. A non-empty summary is required: with no summary there is nothing
+// to classify from, which is the no-transcript case that stays uncategorized
+// by design.
+func (s *Store) NextUnclassified(skip []string) (*Video, error) {
+	q := "SELECT " + videoColumns + ` FROM videos
+		WHERE status = 'downloaded' AND category = ? AND summary <> ''`
+	args := []any{UncategorizedCategory}
+	if len(skip) > 0 {
+		q += " AND id NOT IN (?" + strings.Repeat(",?", len(skip)-1) + ")"
+		for _, id := range skip {
+			args = append(args, id)
+		}
+	}
+	q += " ORDER BY created_at DESC, id DESC LIMIT 1"
+
+	v, err := scanVideo(s.db.QueryRowContext(context.Background(), q, args...))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("next unclassified video: %w", err)
+	}
+	return &v, nil
+}
+
 // SetFavorite sets a video's favorite flag, stamping (or clearing)
 // favorited_at to match.
 func (s *Store) SetFavorite(id string, fav bool) error {
