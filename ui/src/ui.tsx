@@ -109,6 +109,33 @@ export function buttonClass(
     .join(" ");
 }
 
+/**
+ * iconActionClass — a bare icon that is itself the button: no border, no fill
+ * at rest, a 40px tap target regardless. For actions whose label only ever
+ * named the action (Watch on YouTube, Download, Delete, the subtitles
+ * toggle); keep a full Button whenever the label reports current state
+ * ("Kept forever", "Mark unwatched"), because there the words are the state.
+ *
+ * A class helper rather than a component, like buttonClass above: these
+ * render as <button> and as <a> in the same row, so the shared thing has to
+ * be the class list. Always pass aria-label AND title — there is no visible
+ * text, and title is the only affordance a mouse user gets.
+ */
+export function iconActionClass(opts?: {
+  on?: boolean;
+  danger?: boolean;
+  armed?: boolean;
+}): string {
+  return [
+    "ui-iconact",
+    opts?.on ? "is-on" : null,
+    opts?.danger ? "ui-iconact--danger" : null,
+    opts?.armed ? "ui-iconact--armed" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 /** Spinner — every async wait spins. Never an ellipsis in the label. */
 export function Spinner({ size = "15px" }: { size?: string }) {
   return (

@@ -215,7 +215,15 @@ export function Channels({
   }
 
   async function handleDelete(c: Channel) {
-    if (!window.confirm("Delete this channel and ALL its downloaded videos?"))
+    // Same wording as the channel page's own delete (channel/SettingsTab):
+    // it is the same irreversible action, so it must not warn less here just
+    // because the button is smaller. Both name the video count, both say
+    // "kept forever" videos go too, and both say it cannot be undone.
+    if (
+      !window.confirm(
+        `Delete ${c.name} and its ${c.downloaded_count} videos? This removes the files from disk, including any you kept forever. This cannot be undone.`,
+      )
+    )
       return;
     try {
       await deleteChannel(c.id);

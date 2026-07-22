@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../icons";
-import { Button, Spinner, buttonClass } from "../ui";
+import { Button, Spinner, iconActionClass } from "../ui";
 import { Scrubber } from "../components/Scrubber";
 import {
   getVideo,
@@ -24,6 +24,12 @@ import { writeNowPlaying, clearNowPlaying } from "../nowPlaying";
 // visibilitychange/pagehide bypass this throttle entirely (flushOnHide
 // below), so closing the tab never loses more than this much progress.
 const RESUME_THROTTLE_MS = 5000;
+
+// DELETE_ARM_MS is how long the two-step delete stays armed before it gives
+// up and returns to a plain trash icon. Long enough to read "Delete?" and
+// decide, short enough that an armed control never sits waiting on screen
+// for a later, unrelated click to land on it.
+const DELETE_ARM_MS = 4000;
 
 // fmt is the Task 17 alias for formatDuration used throughout the
 // intelligence panels below (chapters/highlights/transcript cues) — kept as
@@ -164,6 +170,10 @@ export function Player({
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [find, setFind] = useState("");
+  // deleteArmed is the second half of the two-step delete: false renders the
+  // bare trash icon, true renders the labelled "Delete?" that actually
+  // deletes. See the row for why a single click must not be enough.
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const [resummarizing, setResummarizing] = useState(false);
   const [redownloading, setRedownloading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -187,6 +197,7 @@ export function Player({
   // immediately re-apply the default on top of the user's click.
   const ccAppliedForRef = useRef<string | null>(null);
   const toastTimerRef = useRef<number | undefined>(undefined);
+  const armTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     resumeAppliedRef.current = false;
@@ -200,6 +211,7 @@ export function Player({
     setCues([]);
     setTranscriptError(null);
     setFind("");
+    setDeleteArmed(false);
     if (!videoId) return;
     let active = true;
     getVideo(videoId)
@@ -240,6 +252,9 @@ export function Player({
     return () => {
       if (toastTimerRef.current !== undefined) {
         window.clearTimeout(toastTimerRef.current);
+      }
+      if (armTimerRef.current !== undefined) {
+        window.clearTimeout(armTimerRef.current);
       }
     };
   }, []);
@@ -511,8 +526,30 @@ export function Player({
     }
   }
 
+  // armDelete / disarmDelete drive the two-step delete. Arming starts a
+  // self-disarm timer so the confirm never lingers; disarming always clears
+  // it, so a second arm can't inherit the first one's countdown.
+  function armDelete() {
+    setDeleteArmed(true);
+    if (armTimerRef.current !== undefined)
+      window.clearTimeout(armTimerRef.current);
+    armTimerRef.current = window.setTimeout(
+      () => setDeleteArmed(false),
+      DELETE_ARM_MS,
+    );
+  }
+
+  function disarmDelete() {
+    if (armTimerRef.current !== undefined) {
+      window.clearTimeout(armTimerRef.current);
+      armTimerRef.current = undefined;
+    }
+    setDeleteArmed(false);
+  }
+
   async function handleDelete() {
     if (!video) return;
+    disarmDelete();
     try {
       await deleteVideo(video.id);
       onDeleted();
@@ -636,6 +673,11 @@ export function Player({
               <span className="pill">{formatSize(video.filesize_bytes)}</span>
             ) : null}
           </div>
+          {/* The action row splits on one rule: a control keeps its label if
+              the label reports the current state (Keep forever / Kept
+              forever, Mark watched / Mark unwatched). Controls whose label
+              only ever named an action carry that meaning in the icon alone
+              — see iconActionClass. */}
           <div className="playacts">
             <Button
               type="button"
@@ -653,34 +695,76 @@ export function Player({
               <Icon name="check" size="17px" />{" "}
               {video.watched ? "Mark unwatched" : "Mark watched"}
             </Button>
+            <span className="acts-sep" aria-hidden="true" />
             {video.has_subtitles && (
-              // Icon-only: the state is carried by the is-on fill visually,
-              // and by aria-pressed + the flipping aria-label for anyone who
-              // can't see it.
-              <Button
+              // On is terracotta, off is the same muted grey as the icons
+              // beside it — no fill, no dot. aria-pressed + the flipping
+              // aria-label carry the state for anyone who can't see colour.
+              <button
                 type="button"
-                variant="secondary"
-                icon
-                className={ccOn ? "is-on" : undefined}
+                className={iconActionClass({ on: ccOn })}
                 aria-pressed={ccOn}
                 aria-label={ccOn ? "Subtitles on" : "Subtitles off"}
                 title={ccOn ? "Subtitles on" : "Subtitles off"}
                 onClick={handleToggleCC}
               >
-                <Icon name="captions" size="17px" />
-              </Button>
+                <Icon name="captions" size="19px" />
+              </button>
             )}
-            <Button type="button" variant="dangerQuiet" onClick={handleDelete}>
-              <Icon name="trash" size="17px" /> Delete
-            </Button>
+            {video.has_media && (
+              // download=1 makes the stream endpoint attach a proper filename
+              // (title + the file's real extension). A bare `download`
+              // attribute here would not: the UI never learns whether the
+              // file is .mp4, .webm or .mkv, so only the server can name it.
+              <a
+                className={iconActionClass()}
+                href={`${streamUrl(video.id)}?download=1`}
+                aria-label="Download video file"
+                title="Download video file"
+              >
+                <Icon name="download" size="19px" />
+              </a>
+            )}
             <a
-              className={buttonClass("secondary")}
+              className={iconActionClass()}
               href={video.url}
               target="_blank"
               rel="noreferrer"
+              aria-label="Watch on YouTube"
+              title="Watch on YouTube"
             >
-              <Icon name="externalLink" size="17px" /> Watch on YouTube
+              <Icon name="externalLink" size="19px" />
             </a>
+            {/* Two-step delete. The first click only arms it; the control
+                then expands into a labelled red "Delete?" that the second
+                click confirms. Deleting is irreversible and the icon sits in
+                a row of harmless ones, so a single click must never be
+                enough. It disarms itself after DELETE_ARM_MS, on Escape, and
+                on blur. */}
+            {deleteArmed ? (
+              <button
+                type="button"
+                className={iconActionClass({ danger: true, armed: true })}
+                onClick={handleDelete}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") disarmDelete();
+                }}
+                onBlur={disarmDelete}
+                autoFocus
+              >
+                <Icon name="trash" size="17px" /> Delete?
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={iconActionClass({ danger: true })}
+                aria-label="Delete video"
+                title="Delete video"
+                onClick={armDelete}
+              >
+                <Icon name="trash" size="19px" />
+              </button>
+            )}
             {(video.status === "error" || video.status === "tombstoned") && (
               <Button
                 type="button"

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/auth"
@@ -1574,5 +1575,95 @@ func TestRedownload_enqueueStoreError_500(t *testing.T) {
 	got, err := h.videos.Get("v1")
 	if err != nil || got == nil {
 		t.Fatalf("get video: %v", err)
+	}
+}
+
+// TestStreamVideo_downloadFlagAttachesFilename covers the ?download=1 arm of
+// the stream handler: the same bytes, but with a Content-Disposition naming
+// the file after the video's title and the *stored* file's extension. The
+// UI cannot do this itself — media_path is deliberately absent from
+// videoDTO, so the browser never learns whether this is .mp4 or .webm.
+func TestStreamVideo_downloadFlagAttachesFilename(t *testing.T) {
+	deps, mediaDir := videosTestDeps(t)
+	videoDir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mediaPath := filepath.Join(videoDir, "v1.webm")
+	if err := os.WriteFile(mediaPath, []byte("media bytes"), 0o644); err != nil {
+		t.Fatalf("write media file: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{
+		ID: "v1", URL: "u", ChannelID: "chan1", Title: "How trains work",
+	}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// Without the flag the stream stays inline — the player must not be
+	// handed an attachment mid-playback.
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/stream", nil)
+	if got := rec.Header().Get("Content-Disposition"); got != "" {
+		t.Fatalf("plain stream Content-Disposition = %q, want empty", got)
+	}
+
+	rec = doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/stream?download=1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "media bytes" {
+		t.Fatalf("body = %q, want the media bytes", got)
+	}
+	got := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(got, `filename="How trains work.webm"`) {
+		t.Fatalf("Content-Disposition = %q, want it to name How trains work.webm", got)
+	}
+	if !strings.HasPrefix(got, "attachment;") {
+		t.Fatalf("Content-Disposition = %q, want an attachment", got)
+	}
+}
+
+func TestDownloadFilename(t *testing.T) {
+	tests := []struct {
+		name  string
+		title string
+		id    string
+		ext   string
+		want  string
+	}{
+		{"plain title", "How trains work", "v1", ".mp4", "How trains work.mp4"},
+		{"strips path separators", "a/b\\c", "v1", ".mp4", "a_b_c.mp4"},
+		// The trailing quote becomes "_" and is then trimmed off the end,
+		// which is why this is "say _hi" and not "say _hi_".
+		{"strips quotes that would break the header", `say "hi"`, "v1", ".mp4", "say _hi.mp4"},
+		{"falls back to the id when nothing survives", "日本語", "v1", ".mkv", "v1.mkv"},
+		{"trims leading and trailing dots", "...title...", "v1", ".mp4", "title.mp4"},
+		{"keeps the id when the title is empty", "", "v1", ".webm", "v1.webm"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := downloadFilename(tt.title, tt.id, tt.ext); got != tt.want {
+				t.Fatalf("downloadFilename(%q, %q, %q) = %q, want %q", tt.title, tt.id, tt.ext, got, tt.want)
+			}
+		})
+	}
+}
+
+// A 200-character title must not produce a 200-character filename — some
+// filesystems cap a single path component at 255 bytes, and the extension
+// still has to fit.
+func TestDownloadFilename_truncatesLongTitles(t *testing.T) {
+	long := strings.Repeat("a", 200)
+	got := downloadFilename(long, "v1", ".mp4")
+	if len(got) > 130 {
+		t.Fatalf("downloadFilename produced a %d-char name, want it truncated", len(got))
+	}
+	if !strings.HasSuffix(got, ".mp4") {
+		t.Fatalf("downloadFilename = %q, want the extension preserved", got)
 	}
 }
