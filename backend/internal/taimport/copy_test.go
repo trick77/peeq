@@ -76,3 +76,27 @@ func TestStatSize(t *testing.T) {
 		t.Error("statSize(dir) ok=true, want false — not a regular file")
 	}
 }
+
+func TestCopyFile_sourceIsDirectoryErrors(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := copyFile(dir, filepath.Join(dir, "dst.mp4")); err == nil {
+		t.Fatal("err = nil, want an error when the source is a directory, not a regular file")
+	}
+}
+
+func TestCopyFile_destParentIsAFileErrors(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.mp4")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A regular file stands where the destination's parent directory must be,
+	// so MkdirAll fails.
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := copyFile(src, filepath.Join(blocker, "sub", "dst.mp4")); err == nil {
+		t.Fatal("err = nil, want a mkdir error when the dest parent is a file")
+	}
+}

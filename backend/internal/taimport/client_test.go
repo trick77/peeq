@@ -314,6 +314,15 @@ func TestFlexDate_acceptsEpochAndString(t *testing.T) {
 	if string(got.Published) != "2023-01-15" {
 		t.Errorf("iso published = %q, want 2023-01-15 (date only)", got.Published)
 	}
+
+	// A null/absent published decodes to empty rather than erroring.
+	got = videoDoc{Published: "seed"}
+	if err := json.Unmarshal([]byte(`{"published":null}`), &got); err != nil {
+		t.Fatalf("null form: %v", err)
+	}
+	if got.Published != "" {
+		t.Errorf("null published = %q, want empty", got.Published)
+	}
 }
 
 func TestChannelVideos_walksUntilEmpty(t *testing.T) {
