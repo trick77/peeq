@@ -489,6 +489,31 @@ WHERE id = ?`, position, id)
 	return nil
 }
 
+// SetResumeRaw sets a video's resume position WITHOUT the >=90% auto-watch that
+// SetResume applies. The TubeArchivist import uses it so a partially-watched
+// "continue" video imported at, say, 92% keeps its position and stays in the
+// Continue Watching queue rather than being flipped to watched (which would
+// drop it out of exactly the queue the migration exists to preserve). It errors
+// on a missing row, so callers must Upsert the video first.
+func (s *Store) SetResumeRaw(id string, position float64) error {
+	if position < 0 {
+		position = 0
+	}
+	res, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET resume_position_seconds = ? WHERE id = ?`, position, id)
+	if err != nil {
+		return fmt.Errorf("set video %s resume (raw): %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set video %s resume (raw): %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("set video %s resume (raw): not found", id)
+	}
+	return nil
+}
+
 // SweepCandidates returns videos eligible for the retention sweeper
 // (Task 12): watched, not favorited, not already tombstoned, and last
 // watched strictly before cutoff (an absolute point in time, formatted

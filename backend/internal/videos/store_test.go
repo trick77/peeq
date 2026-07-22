@@ -256,6 +256,43 @@ func TestSetResume_autoMarksWatchedAtNinetyPercent_noResetOnRewatch(t *testing.T
 	}
 }
 
+// TestSetResumeRaw_doesNotAutoWatch is the discriminator against SetResume: the
+// TubeArchivist import writes resume positions with SetResumeRaw so a
+// nearly-finished "continue" video keeps its position without being flipped to
+// watched (which would drop it out of the Continue Watching queue).
+func TestSetResumeRaw_doesNotAutoWatch(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	// 95/100 = 95%: SetResume would auto-mark this watched; SetResumeRaw must not.
+	if err := s.SetResumeRaw("v", 95); err != nil {
+		t.Fatalf("set resume raw: %v", err)
+	}
+	got, err := s.Get("v")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ResumePositionSeconds != 95 {
+		t.Fatalf("resume_position_seconds = %v, want 95", got.ResumePositionSeconds)
+	}
+	if got.Watched {
+		t.Fatalf("watched = true, want false — SetResumeRaw must not auto-watch")
+	}
+	if got.WatchedAt != "" {
+		t.Fatalf("watched_at = %q, want empty", got.WatchedAt)
+	}
+}
+
+// TestSetResumeRaw_missingRow errors rather than silently no-op'ing, so the
+// import's Upsert-before-resume ordering is enforced.
+func TestSetResumeRaw_missingRow(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.SetResumeRaw("nope", 10); err == nil {
+		t.Fatal("err = nil, want a not-found error for a missing row")
+	}
+}
+
 func TestSetResume_belowThreshold_doesNotMarkWatched(t *testing.T) {
 	s := New(openTestDB(t))
 	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
