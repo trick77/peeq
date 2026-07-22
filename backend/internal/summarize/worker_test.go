@@ -776,3 +776,41 @@ func TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints(t *
 		t.Errorf("job state after successful retry = %q, want done", state)
 	}
 }
+
+// A process killed between marking a video downloaded and enqueueing its
+// summary leaves the video with no job at all, and nothing else ever revisits
+// it (taimport re-runs skip downloaded videos). Run's boot sweep must adopt it.
+func TestWorkerRunBackfillsDownloadedVideosWithNoJob(t *testing.T) {
+	h := newWorkerHarness(t)
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "https://youtu.be/v1"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if _, err := h.db.Exec(`UPDATE videos SET status='downloaded' WHERE id='v1'`); err != nil {
+		t.Fatalf("mark downloaded: %v", err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(failCompleter{t: t}),
+		Embedder:   failEmbedder{t: t},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   4,
+	})
+
+	// Cancelled up front: Run does its boot sweep, then returns before
+	// claiming anything, so the assertion is about the sweep alone.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w.Run(ctx)
+
+	var state string
+	if err := h.db.QueryRow(`SELECT state FROM summary_jobs WHERE video_id='v1'`).Scan(&state); err != nil {
+		t.Fatalf("no job backfilled for the downloaded video: %v", err)
+	}
+	if state != "pending" {
+		t.Fatalf("backfilled job state=%q, want pending", state)
+	}
+}
