@@ -82,13 +82,16 @@ func (ci CallInfo) LogAttrs() []any {
 // reported, plus how the wall time split between inference and the deliberate
 // gap RequestInterval puts in front of each call.
 //
-// Reported says the endpoint sent a usage object at all. It is what separates
-// "the model spent 0 reasoning tokens" from "this endpoint does not report
-// reasoning tokens" — indistinguishable otherwise, since both leave the field
-// at zero, and the whole reason a zero is worth printing.
+// Accounted counts the calls that came back with a usage object. It is what
+// separates "the model spent 0 reasoning tokens" from "this endpoint does not
+// report reasoning tokens" — indistinguishable otherwise, since both leave the
+// field at zero, and the whole reason a zero is worth printing. Counting
+// rather than flagging also exposes a partial total: an endpoint that reports
+// usage on some calls and not others would otherwise print sums that look
+// complete.
 type Usage struct {
 	Requests         int64
-	Reported         bool
+	Accounted        int64
 	PromptTokens     int64
 	CachedTokens     int64
 	CompletionTokens int64
@@ -118,8 +121,7 @@ func (t *Totals) Add(u Usage) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.u.Requests += u.Requests
-	// One reporting call makes the total worth printing in full.
-	t.u.Reported = t.u.Reported || u.Reported
+	t.u.Accounted += u.Accounted
 	t.u.PromptTokens += u.PromptTokens
 	t.u.CachedTokens += u.CachedTokens
 	t.u.CompletionTokens += u.CompletionTokens
@@ -143,11 +145,8 @@ func (t *Totals) Snapshot() Usage {
 // how a caller reports the cost of one pipeline step out of a running total.
 func (u Usage) Sub(earlier Usage) Usage {
 	return Usage{
-		Requests: u.Requests - earlier.Requests,
-		// Only a delta that contains calls is reportable. Without the request
-		// test, a step that makes no chat call at all (embedding) would inherit
-		// Reported from the running total and print five zeroes it never spent.
-		Reported:         u.Reported && u.Requests > earlier.Requests,
+		Requests:         u.Requests - earlier.Requests,
+		Accounted:        u.Accounted - earlier.Accounted,
 		PromptTokens:     u.PromptTokens - earlier.PromptTokens,
 		CachedTokens:     u.CachedTokens - earlier.CachedTokens,
 		CompletionTokens: u.CompletionTokens - earlier.CompletionTokens,
@@ -197,8 +196,13 @@ func (u Usage) LogAttrs() []any {
 	if u.PacedNanos != 0 {
 		attrs = append(attrs, "chat_paced_ms", u.PacedNanos/int64(time.Millisecond))
 	}
-	if !u.Reported {
+	if u.Accounted == 0 {
 		return attrs
+	}
+	if u.Accounted != u.Requests {
+		// Some calls came back without usage, so the sums below cover only part
+		// of the work. Say so rather than presenting a short total as complete.
+		attrs = append(attrs, "chat_accounted", u.Accounted)
 	}
 	for _, f := range []struct {
 		key string

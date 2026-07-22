@@ -337,15 +337,18 @@ func attemptLabel(job *summaryjobs.Job) string {
 // leaves the others numbered where a reader expects them.
 var pipelineStages = []string{"summary", "classify", "embedding", "keypoints"}
 
-// stageLabel renders a stage as "2/4". An unknown name (a stage added without
-// being listed above) degrades to no label rather than a wrong one.
-func stageLabel(name string) string {
+// stageMessage builds a stage line's message: "stage 2/4 done". A stage that
+// is not in pipelineStages is named instead of numbered — a wrong number would
+// silently renumber its neighbours, and a bare "stage  done" would just look
+// broken.
+func stageMessage(name, verb string) string {
 	for i, s := range pipelineStages {
 		if s == name {
-			return strconv.Itoa(i+1) + "/" + strconv.Itoa(len(pipelineStages))
+			return "summarize worker: stage " + strconv.Itoa(i+1) + "/" +
+				strconv.Itoa(len(pipelineStages)) + " " + verb
 		}
 	}
-	return ""
+	return "summarize worker: stage " + name + " " + verb
 }
 
 // ident is the video identity every line repeats. It returns a fresh slice so
@@ -360,25 +363,40 @@ func (r *analysisRun) ident() []any {
 // step marks the start of a pipeline step and returns the context its LLM
 // calls must use plus the func that logs the step as done. Extra key/values
 // passed to that func are appended to the line.
+// A nil run has no context to hand out, and handing out a background one would
+// give the caller's LLM calls no cancellation — they would outlive a shutdown
+// by up to the client timeout. Steps only ever run once the analysis has
+// started, so this cannot happen; it panics rather than degrading quietly if
+// that ever changes.
 func (r *analysisRun) step(name string) (context.Context, func(extra ...any)) {
 	if r == nil {
-		return context.Background(), func(...any) {}
+		panic("summarize: step on a nil analysis run — a stage ran before the analysis started")
 	}
 	started := time.Now()
 	before := r.totals.Snapshot()
 	r.stepStarted = started
-	stage := stageLabel(name)
 	// The stage rides on the context too, so the client's "still waiting"
 	// heartbeat says which stage of which video is stuck.
-	sctx := llm.WithStage(llm.WithStep(r.ctx, name), stage)
-	r.log.Info("summarize worker: stage "+stage+" started", append([]any{"step", name}, r.ident()...)...)
+	sctx := llm.WithStage(llm.WithStep(r.ctx, name), stageOf(name))
+	r.log.Info(stageMessage(name, "started"), append([]any{"step", name}, r.ident()...)...)
 	return sctx, func(extra ...any) {
 		attrs := append([]any{"step", name}, r.ident()...)
 		attrs = append(attrs, "duration_ms", time.Since(started).Milliseconds())
 		attrs = append(attrs, extra...)
 		attrs = append(attrs, r.totals.Snapshot().Sub(before).LogAttrs()...)
-		r.log.Info("summarize worker: stage "+stage+" done", attrs...)
+		r.log.Info(stageMessage(name, "done"), attrs...)
 	}
+}
+
+// stageOf is the "2/4" the client's heartbeat carries; empty for a stage that
+// is not in pipelineStages, since CallInfo omits an empty stage entirely.
+func stageOf(name string) string {
+	for i, s := range pipelineStages {
+		if s == name {
+			return strconv.Itoa(i+1) + "/" + strconv.Itoa(len(pipelineStages))
+		}
+	}
+	return ""
 }
 
 // stepElapsedMs is the running step's wall time, for that step's own failure
@@ -396,7 +414,7 @@ func (r *analysisRun) skipped(name, reason string) {
 	if r == nil {
 		return
 	}
-	r.log.Debug("summarize worker: stage "+stageLabel(name)+" skipped",
+	r.log.Debug(stageMessage(name, "skipped"),
 		append([]any{"step", name}, append(r.ident(), "reason", reason)...)...)
 }
 

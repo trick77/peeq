@@ -77,8 +77,8 @@ func findStageRec(recs []map[string]any, step, verb string) map[string]any {
 	return nil
 }
 
-// stageOf pulls "2/4" out of a "summarize worker: stage 2/4 done" message.
-func stageOf(rec map[string]any) string {
+// recStage pulls "2/4" out of a "summarize worker: stage 2/4 done" message.
+func recStage(rec map[string]any) string {
 	msg, _ := rec["msg"].(string)
 	fields := strings.Fields(msg)
 	if len(fields) < 4 {
@@ -106,10 +106,10 @@ func (u *usageCompleter) Complete(ctx context.Context, m []llm.Message) (string,
 	u.mu.Lock()
 	u.steps = append(u.steps, info.Step)
 	u.mu.Unlock()
-	// Reported mirrors what the real client sets when the endpoint sends a
-	// usage object; without it the totals are logged as "not reported".
+	// Accounted mirrors what the real client counts when the endpoint sends a
+	// usage object; without it the totals log no token fields at all.
 	info.Totals.Add(llm.Usage{
-		Requests: 1, Reported: true,
+		Requests: 1, Accounted: 1,
 		PromptTokens: 1000, CompletionTokens: 200, ReasoningTokens: 120, TotalTokens: 1200,
 		InferenceNanos: int64(250 * time.Millisecond),
 	})
@@ -219,14 +219,14 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 		if start == nil {
 			t.Fatalf("stage %s (%s) never announced its start", stage, step)
 		}
-		if got := stageOf(start); got != stage {
+		if got := recStage(start); got != stage {
 			t.Errorf("%s started as stage %s, want %s", step, got, stage)
 		}
 		rec := findStep(recs, step)
 		if rec == nil {
 			t.Fatalf("no stage-done record for %q", step)
 		}
-		if got := stageOf(rec); got != stage {
+		if got := recStage(rec); got != stage {
 			t.Errorf("%s finished as stage %s, want %s", step, got, stage)
 		}
 		if _, ok := rec["duration_ms"]; !ok {
@@ -328,7 +328,7 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 		if rec == nil {
 			t.Fatalf("stage %s (%s) was not logged as skipped", want.stage, want.step)
 		}
-		if got := stageOf(rec); got != want.stage {
+		if got := recStage(rec); got != want.stage {
 			t.Errorf("%s skipped as stage %s, want %s", want.step, got, want.stage)
 		}
 	}
@@ -336,7 +336,7 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	if kp == nil {
 		t.Fatal("key-points stage did not run on the resumed job")
 	}
-	if got := stageOf(kp); got != "4/4" {
+	if got := recStage(kp); got != "4/4" {
 		t.Errorf("keypoints ran as stage %s, want 4/4", got)
 	}
 }
@@ -461,17 +461,24 @@ func TestWorkerLogsNoTranscriptReason(t *testing.T) {
 	}
 }
 
-func TestStageLabel(t *testing.T) {
+func TestStageNumbering(t *testing.T) {
 	for i, step := range pipelineStages {
 		want := strconv.Itoa(i+1) + "/4"
-		if got := stageLabel(step); got != want {
-			t.Errorf("stageLabel(%q) = %q, want %q", step, got, want)
+		if got := stageOf(step); got != want {
+			t.Errorf("stageOf(%q) = %q, want %q", step, got, want)
 		}
 	}
-	// A stage that was added to the pipeline but never listed gets no number,
-	// rather than a wrong one that silently renumbers its neighbours.
-	if got := stageLabel("not-a-stage"); got != "" {
-		t.Errorf("stageLabel of an unlisted stage = %q, want empty", got)
+	// A stage that was added to the pipeline but never listed is named rather
+	// than mis-numbered, and its message stays readable instead of collapsing
+	// to "stage  done" with a hole in it.
+	if got := stageOf("not-a-stage"); got != "" {
+		t.Errorf("stageOf an unlisted stage = %q, want empty", got)
+	}
+	if got := stageMessage("not-a-stage", "done"); got != "summarize worker: stage not-a-stage done" {
+		t.Errorf("stageMessage of an unlisted stage = %q", got)
+	}
+	if got := stageMessage("classify", "started"); got != "summarize worker: stage 2/4 started" {
+		t.Errorf("stageMessage(classify) = %q", got)
 	}
 }
 
@@ -488,11 +495,16 @@ func TestAnalysisRunNilIsAnInertRun(t *testing.T) {
 	}
 	run.skipped("summary", "n/a")
 	run.finished("error")
-	ctx, done := run.step("summary")
-	if ctx == nil {
-		t.Fatal("nil run returned a nil context")
-	}
-	done("extra", 1)
+
+	// step is the exception: it would have to invent a context, and an
+	// invented one carries no cancellation, so its LLM calls would outlive a
+	// shutdown. It panics instead of degrading quietly.
+	defer func() {
+		if recover() == nil {
+			t.Error("step on a nil run did not panic")
+		}
+	}()
+	run.step("summary")
 }
 
 // panicCompleter blows up inside the summary step, exercising processOne's

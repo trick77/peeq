@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // capture returns a debug-level JSON logger writing into buf, plus a reader for
@@ -96,7 +97,7 @@ func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
 	// Timings vary per run, so compare the accounting and check them separately.
 	tokensOnly := got
 	tokensOnly.InferenceNanos, tokensOnly.PacedNanos = 0, 0
-	want := Usage{Requests: 1, Reported: true, PromptTokens: 1200, CachedTokens: 800, CompletionTokens: 340, ReasoningTokens: 250, TotalTokens: 1540}
+	want := Usage{Requests: 1, Accounted: 1, PromptTokens: 1200, CachedTokens: 800, CompletionTokens: 340, ReasoningTokens: 250, TotalTokens: 1540}
 	if tokensOnly != want {
 		t.Fatalf("totals = %+v, want %+v", tokensOnly, want)
 	}
@@ -178,7 +179,7 @@ func TestComplete_logsRawUsageAndTheAbsenceOfIt(t *testing.T) {
 		if find(recs, "llm: no usage reported") == nil {
 			t.Fatal("missing the 'no usage reported' record")
 		}
-		if got := totals.Snapshot(); got.Reported {
+		if got := totals.Snapshot(); got.Accounted != 0 {
 			t.Errorf("totals claim a report that never came: %+v", got)
 		}
 		if done := find(recs, "llm: request done"); done["chat_tokens_total"] != nil {
@@ -206,6 +207,29 @@ func TestComplete_rawUsageIsCapped(t *testing.T) {
 	}
 	if !strings.HasSuffix(raw, "(truncated)") {
 		t.Errorf("truncation not marked: %q", raw[max(0, len(raw)-40):])
+	}
+}
+
+func TestComplete_rawUsageCutsOnARuneBoundary(t *testing.T) {
+	// Non-ASCII values are ordinary from a Chinese-hosted endpoint. Shifting
+	// the payload by 0-3 ASCII bytes walks the cut across every byte position
+	// of a multi-byte rune, so at least one case cuts mid-character.
+	for shift := 0; shift < 4; shift++ {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":5,"note":"`+
+				strings.Repeat("x", shift)+strings.Repeat("é", maxRawUsage)+`"}}`)
+		}))
+		log, buf := capture()
+		c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+		_, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := find(buf.records(t), "llm: usage raw")["usage"].(string)
+		if !utf8.ValidString(raw) {
+			t.Fatalf("shift %d: truncated raw usage is not valid UTF-8", shift)
+		}
 	}
 }
 
@@ -450,7 +474,7 @@ func TestUsageLogAttrs_reportedUsageKeepsItsZeros(t *testing.T) {
 	// The regression this exists for: an endpoint that reports
 	// reasoning_tokens: 0 must SAY zero. Dropping the field made a reported
 	// zero look exactly like an endpoint that reports nothing at all.
-	attrs := Usage{Requests: 2, Reported: true, PromptTokens: 500}.LogAttrs()
+	attrs := Usage{Requests: 2, Accounted: 2, PromptTokens: 500}.LogAttrs()
 	joined := strings.Join(keys(attrs), ",")
 	for _, want := range []string{"chat_requests", "chat_tokens_in", "chat_tokens_cached", "chat_tokens_out", "chat_tokens_reasoning", "chat_tokens_total"} {
 		if !strings.Contains(joined, want) {
@@ -472,6 +496,20 @@ func TestUsageLogAttrs_unreportedUsageLogsNoTokenFields(t *testing.T) {
 	}
 	if !strings.Contains(joined, "chat_requests") || !strings.Contains(joined, "chat_inference_ms") {
 		t.Fatalf("missing requests/inference: %v", attrs)
+	}
+}
+
+func TestUsageLogAttrs_partialAccountingIsDeclared(t *testing.T) {
+	// Three calls, two of which came back with usage: the sums cover part of
+	// the work, so the line has to say how much rather than read as complete.
+	attrs := Usage{Requests: 3, Accounted: 2, PromptTokens: 900, TotalTokens: 900}.LogAttrs()
+	if got := attrValue(attrs, "chat_accounted"); got != int64(2) {
+		t.Errorf("chat_accounted = %v, want 2", got)
+	}
+	// When every call reported, the extra field would be noise.
+	full := Usage{Requests: 3, Accounted: 3, PromptTokens: 900}.LogAttrs()
+	if got := attrValue(full, "chat_accounted"); got != nil {
+		t.Errorf("chat_accounted present on a complete total: %v", got)
 	}
 }
 

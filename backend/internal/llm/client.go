@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -140,13 +141,22 @@ type chatUsage struct {
 func (u chatUsage) toUsage() Usage {
 	return Usage{
 		Requests:         1,
-		Reported:         u.reported(),
+		Accounted:        boolToCount(u.reported()),
 		PromptTokens:     u.PromptTokens,
 		CachedTokens:     u.PromptTokensDetails.CachedTokens,
 		CompletionTokens: u.CompletionTokens,
 		ReasoningTokens:  u.CompletionTokensDetails.ReasoningTokens,
 		TotalTokens:      u.TotalTokens,
 	}
+}
+
+// boolToCount turns "this call reported usage" into the counter Usage keeps,
+// so a total can say how many of its calls were actually accounted for.
+func boolToCount(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // reported says the endpoint sent a usage object with something in it, so its
@@ -246,16 +256,25 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 	} else {
 		c.log.Debug("llm: no usage reported", info.LogAttrs()...)
 	}
-	attrs := append(info.LogAttrs(), "duration_ms", inference.Milliseconds(), "status", resp.StatusCode)
+	// chat_inference_ms comes from usage.LogAttrs below and is this call's
+	// duration, so printing duration_ms here too would be the same number
+	// twice. status is what this line adds on top of the accounting.
+	attrs := append(info.LogAttrs(), "status", resp.StatusCode)
 	c.log.Debug("llm: request done", append(attrs, usage.LogAttrs()...)...)
 	return parsed.Choices[0].Message.Content, nil
 }
 
 // truncate caps a log value, marking it so a cut is never mistaken for the
-// endpoint's own output.
+// endpoint's own output. It cuts on a rune boundary: a byte-offset cut can
+// split a multi-byte character and put invalid UTF-8 in the log, which is not
+// hypothetical against an endpoint that returns non-ASCII field values.
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "…(truncated)"
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…(truncated)"
 }
