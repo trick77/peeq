@@ -190,8 +190,12 @@ func run() error {
 	ragStore := rag.NewStore(db)
 	embedClient := rag.NewEmbedClient(rag.EmbedConfig{
 		BaseURL: cfg.EmbedBaseURL, APIKey: cfg.EmbedAPIKey, Model: cfg.EmbedModel,
+		Logger: slog.Default(),
 	}, nil)
-	chatClient := llm.NewClient(llm.Config{BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey, RequestInterval: cfg.SummarizeRequestDelay}, nil)
+	chatClient := llm.NewClient(llm.Config{
+		BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey,
+		RequestInterval: cfg.SummarizeRequestDelay, Logger: slog.Default(),
+	}, nil)
 	summarizer := summarize.New(chatClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
