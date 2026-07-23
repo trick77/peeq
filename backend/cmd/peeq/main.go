@@ -414,6 +414,7 @@ func run() error {
 		Rag:         ragStore,
 		Embedder:    embedClient,
 		SummaryJobs: summaryJobsStore,
+		SummaryList: summaryJobsStore,
 	}
 	handler := httpapi.New(deps)
 

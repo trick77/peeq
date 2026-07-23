@@ -10,7 +10,7 @@ function renderRail() {
 }
 
 describe("Rail", () => {
-  it("renders the six nav items", () => {
+  it("renders every nav item", () => {
     const html = renderRail();
     expect(html).toContain("Library");
     expect(html).toContain("Now playing");
@@ -19,7 +19,8 @@ describe("Rail", () => {
     // pass for "Add a video", so it could not pin the rename.
     expect(html).toContain(">Add<");
     expect(html).not.toContain("Add a video");
-    expect(html).toContain("Pending");
+    expect(html).toContain("Decide");
+    expect(html).toContain("Queue");
     expect(html).toContain("Settings");
   });
 

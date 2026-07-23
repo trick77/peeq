@@ -14,9 +14,11 @@ Run after any change to channels, scanning, or the download pipeline.
 3. Wait for (or force) the scheduler's first pass on that channel — it should show `baselined_at`
    set and queue **nothing** (first-run baseline, no backfill).
 4. Once a genuinely new upload exists on a subscribed, non-autodownload channel, confirm it lands
-   in **Pending** on the next scan. **Download now** should enqueue it (progress visible in
-   the dock) and it should land in Library as `downloaded`. **Ignore** on another pending item
-   should remove it from the list.
+   in **Decide** on the next scan. **Download now** should enqueue it (it moves to the **Queue**
+   page, where progress is visible, and the rail's status panel names the stage) and it should
+   land in Library as `downloaded`. **Ignore** on another item should remove it from the list.
+   With several items from one channel present, the **channel filter chips** and the **Download
+   all** action (which confirms before a large batch) should queue every visible item.
 5. Flip a channel to **Autodownload** with a format override — the next new upload on that channel
    should enqueue automatically at low priority and download using the override format.
 6. Paste a **video** URL (not a channel URL) into Add — confirm its channel is silently tracked
@@ -56,7 +58,7 @@ Run after any change to the channel page, the `channels` table, or the scan sche
 3. Track a channel that has no banner, and one whose avatar failed to fetch. The header must fall
    back to the per-id gradient without collapsing its layout.
 4. Click a channel name from each of the four entry points — the Channels row, a Library card, the
-   player, and a Pending item — and confirm each opens that channel.
+   player, and a Decide card — and confirm each opens that channel.
 5. Open a channel you never tracked (click the channel name on a video you added by URL). The
    Archive tab lists its videos, the New and Settings tabs are absent, and the header offers
    **Track this channel**. Reload: the avatar, banner and description have filled in from the

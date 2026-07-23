@@ -16,7 +16,8 @@ export type ViewId =
   | "player"
   | "search"
   | "add"
-  | "pending"
+  | "decide"
+  | "queue"
   | "channels"
   | "channel"
   | "settings";
@@ -43,7 +44,8 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     label: "Collect",
     items: [
       { id: "add", label: "Add", icon: "plus" },
-      { id: "pending", label: "Pending", icon: "clock", hot: true },
+      { id: "decide", label: "Decide", icon: "clock", hot: true },
+      { id: "queue", label: "Queue", icon: "download" },
       { id: "channels", label: "Channels", icon: "tv" },
     ],
   },
@@ -57,6 +59,8 @@ export function Rail({
   active,
   onNavigate,
   pendingCount = 0,
+  queueCount = 0,
+  summarizingCount = 0,
   jobs = [],
   progressByJobId,
   cookieStatus,
@@ -65,8 +69,12 @@ export function Rail({
 }: {
   active: ViewId;
   onNavigate: (view: ViewId) => void;
-  /** Badge count for "Pending". */
+  /** Badge count for "Decide" — uploads awaiting a keep/ignore decision. */
   pendingCount?: number;
+  /** Badge count for "Queue" — downloads + summaries in flight. */
+  queueCount?: number;
+  /** How many summaries are in flight; feeds the status panel's own row. */
+  summarizingCount?: number;
   jobs?: Job[];
   /** Live per-job percent/speed/eta from the download SSE feed. */
   progressByJobId?: Record<
@@ -99,7 +107,12 @@ export function Rail({
           <div key={section.label} style={{ display: "contents" }}>
             <div className="rail-nav-label">{section.label}</div>
             {section.items.map((item) => {
-              const count = item.id === "pending" ? pendingCount : item.count;
+              const count =
+                item.id === "decide"
+                  ? pendingCount
+                  : item.id === "queue"
+                    ? queueCount
+                    : item.count;
               return (
                 <button
                   key={item.id}
@@ -131,8 +144,10 @@ export function Rail({
           jobs={jobs}
           progressByJobId={progressByJobId}
           pendingCount={pendingCount}
+          summarizingCount={summarizingCount}
           status={downloadStatus}
-          onOpenPending={() => onNavigate("pending")}
+          onOpenPending={() => onNavigate("decide")}
+          onOpenQueue={() => onNavigate("queue")}
         />
         {cookieStatus !== undefined ? (
           <CookieStatus

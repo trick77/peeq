@@ -30,6 +30,32 @@ func (s *Store) Enqueue(videoID string) (int64, error) {
 	return res.LastInsertId()
 }
 
+// ListActive returns the in-flight summary queue — every pending or running
+// job — in claim order (oldest enqueued first), so the Queue page can show what
+// is being summarized right now. Terminal jobs ('done'/'failed') are omitted:
+// the queue is about work still to happen, and a failed job's only recovery is
+// the Player's manual Re-summarize, not this list.
+func (s *Store) ListActive() ([]Job, error) {
+	rows, err := s.db.Query(`
+		SELECT id, video_id, state, attempts, max_attempts, last_error
+		FROM summary_jobs
+		WHERE state IN ('pending','running')
+		ORDER BY enqueued_at, id`)
+	if err != nil {
+		return nil, fmt.Errorf("summaryjobs: list active: %w", err)
+	}
+	defer rows.Close()
+	var out []Job
+	for rows.Next() {
+		var j Job
+		if err := rows.Scan(&j.ID, &j.VideoID, &j.State, &j.Attempts, &j.MaxAttempts, &j.LastError); err != nil {
+			return nil, fmt.Errorf("summaryjobs: list active scan: %w", err)
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 // ClaimNext atomically moves the oldest pending job to running and returns it,
 // or (nil, nil) when the queue is empty.
 func (s *Store) ClaimNext() (*Job, error) {

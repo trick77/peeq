@@ -106,6 +106,18 @@ export type Job = {
   enqueued_at?: string;
 };
 
+// SummaryJob mirrors httpapi.summaryItem — one in-flight summary job (pending
+// or running), optionally joined with its video's title/channel for display.
+// The queue only ever surfaces active jobs; a done/failed job leaves this list.
+export type SummaryJob = {
+  id: number;
+  video_id: string;
+  title?: string;
+  channel_name?: string;
+  state: string;
+  last_error?: string;
+};
+
 // DownloadProgressEvent mirrors the payload of the SSE "progress" event
 // published by the worker's OnProgress callback (cmd/peeq/main.go).
 export type DownloadProgressEvent = {
