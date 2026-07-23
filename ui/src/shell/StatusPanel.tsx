@@ -28,8 +28,10 @@ export function StatusPanel({
   jobs,
   progressByJobId,
   pendingCount = 0,
+  summarizingCount = 0,
   status,
   onOpenPending,
+  onOpenQueue,
 }: {
   jobs: Job[];
   /** Live per-job percent/speed/eta from the download SSE feed. */
@@ -39,10 +41,14 @@ export function StatusPanel({
   >;
   /** Uploads waiting on a manual download/ignore decision. */
   pendingCount?: number;
+  /** Summary+embedding jobs in flight — the Queue's second lane. */
+  summarizingCount?: number;
   /** Why the queue may be stalled; see DownloadsStatus. */
   status?: DownloadsStatus;
   /** Opens the decisions page. Omitted in tests that only assert rendering. */
   onOpenPending?: () => void;
+  /** Opens the Queue page. Omitted in tests that only assert rendering. */
+  onOpenQueue?: () => void;
 }) {
   const running = jobs.filter((j) => j.state === "running");
   const queued = jobs.filter((j) => j.state === "pending");
@@ -51,7 +57,10 @@ export function StatusPanel({
   const stalled = Boolean(
     status?.youtube_paused || status?.low_disk || status?.paused,
   );
-  const busy = running.length > 0 || queued.length > 0;
+  // "busy" spans every self-driven stage the panel can show — downloads AND
+  // summaries — so an idle download queue with a summary still running reads
+  // as "working", not "idle", and the "Nothing waiting" line stays hidden.
+  const busy = running.length > 0 || queued.length > 0 || summarizingCount > 0;
 
   const lead = running[0] ?? queued[0];
   const progress = lead ? progressByJobId?.[lead.job_id] : undefined;
@@ -79,18 +88,40 @@ export function StatusPanel({
         </button>
       ) : null}
       {running.length > 0 ? (
-        <div className="srow run">
+        <button
+          type="button"
+          className="srow run"
+          onClick={onOpenQueue}
+          disabled={!onOpenQueue}
+        >
           <i />
           Downloading
           <b>{running.length}</b>
-        </div>
+        </button>
       ) : null}
       {queued.length > 0 ? (
-        <div className="srow">
+        <button
+          type="button"
+          className="srow"
+          onClick={onOpenQueue}
+          disabled={!onOpenQueue}
+        >
           <i />
           Queued
           <b>{queued.length}</b>
-        </div>
+        </button>
+      ) : null}
+      {summarizingCount > 0 ? (
+        <button
+          type="button"
+          className="srow"
+          onClick={onOpenQueue}
+          disabled={!onOpenQueue}
+        >
+          <i />
+          Summarizing
+          <b>{summarizingCount}</b>
+        </button>
       ) : null}
 
       {/* Every row can be absent at once — nothing to decide, nothing in

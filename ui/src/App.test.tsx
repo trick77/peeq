@@ -8,6 +8,8 @@ import {
   listDownloads,
   getMe,
   listPending,
+  listSummaries,
+  cancelDownload,
   cookieHealth,
   streamDownloads,
   listVideos,
@@ -35,6 +37,8 @@ vi.mock("./api", () => ({
     .mockResolvedValue({ paused: false, low_disk: false }),
   resumeYoutube: vi.fn().mockResolvedValue(undefined),
   listPending: vi.fn().mockResolvedValue([]),
+  listSummaries: vi.fn().mockResolvedValue([]),
+  cancelDownload: vi.fn().mockResolvedValue(undefined),
   streamDownloads: vi.fn().mockResolvedValue(undefined),
   listVideos: vi.fn().mockResolvedValue([]),
   getSettings: vi.fn().mockResolvedValue({}),
@@ -311,20 +315,20 @@ describe("App deep links", () => {
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
 
-    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
+    fireEvent.click(screen.getByRole("button", { name: "Decide" }));
 
-    expect(await screen.findByText("Nothing pending.")).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/pending");
+    expect(await screen.findByText("Nothing to decide.")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/decide");
   });
 
   it("re-derives the view from the URL on back/forward (popstate)", async () => {
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
 
-    // Navigate into Pending — pushes /pending.
-    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
-    await screen.findByText("Nothing pending.");
-    expect(window.location.pathname).toBe("/pending");
+    // Navigate into Decide — pushes /decide.
+    fireEvent.click(screen.getByRole("button", { name: "Decide" }));
+    await screen.findByText("Nothing to decide.");
+    expect(window.location.pathname).toBe("/decide");
 
     // Simulate the browser Back button: the URL returns to the previous entry
     // and a popstate fires. jsdom's real history.back() is async and quirky,
@@ -441,12 +445,94 @@ describe("App routing", () => {
     });
   });
 
-  it("the Pending nav item renders the Pending view", async () => {
+  it("the Decide nav item renders the Decide view", async () => {
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
 
-    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
+    fireEvent.click(screen.getByRole("button", { name: "Decide" }));
 
-    expect(await screen.findByText("Nothing pending.")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing to decide.")).toBeInTheDocument();
   });
+});
+
+// Queue + summaries wiring: App owns both lanes' data. A summary SSE event
+// updates the in-flight set (and the live phase) without a reload, and the
+// Queue page cancels a download through App's shared handler.
+describe("App queue and summaries", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.clearAllMocks();
+    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    vi.mocked(downloadsStatus).mockResolvedValue({
+      paused: false,
+      low_disk: false,
+      youtube_paused: false,
+      youtube_pause_reason: "",
+    });
+    vi.mocked(listPending).mockResolvedValue([]);
+    vi.mocked(cookieHealth).mockResolvedValue({
+      status: "active",
+      present: true,
+    });
+    vi.mocked(streamDownloads).mockResolvedValue(undefined);
+    vi.mocked(listDownloads).mockResolvedValue([]);
+    vi.mocked(listSummaries).mockResolvedValue([]);
+    vi.mocked(cancelDownload).mockResolvedValue(undefined);
+  });
+
+  it("reflects a summary SSE event in the rail and the Queue page", async () => {
+    // The summarize worker publishes a "summary" phase event on the same SSE
+    // stream as download progress; App must route it to the summaries lane.
+    vi.mocked(streamDownloads).mockImplementation((onEvent) => {
+      onEvent({
+        event: "summary",
+        data: { video_id: "s1", status: "running", phase: "summarizing" },
+      });
+      return Promise.resolve();
+    });
+    // The event triggers a re-list; return the now-active job.
+    vi.mocked(listSummaries).mockResolvedValue([
+      {
+        id: 1,
+        video_id: "s1",
+        title: "A clip being summarized",
+        channel_name: "Chan",
+        state: "running",
+      },
+    ]);
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
+
+    // The rail's status panel names the stage once the re-list settles.
+    expect(await screen.findByText("Summarizing")).toBeInTheDocument();
+
+    // The Queue page shows the job with its live phase.
+    fireEvent.click(screen.getByRole("button", { name: /Queue/ }));
+    expect(
+      await screen.findByText("A clip being summarized"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Being summarized")).toBeInTheDocument();
+  }, 20000);
+
+  it("cancels a download from the Queue page", async () => {
+    vi.mocked(listDownloads).mockResolvedValue([
+      {
+        job_id: 5,
+        video_id: "v5",
+        title: "Downloading clip",
+        state: "running",
+        priority: 10,
+      } as Job,
+    ]);
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
+
+    fireEvent.click(screen.getByRole("button", { name: /Queue/ }));
+    const cancel = await screen.findByRole("button", { name: /cancel/i });
+    fireEvent.click(cancel);
+
+    await waitFor(() => expect(cancelDownload).toHaveBeenCalledWith(5));
+  }, 20000);
 });

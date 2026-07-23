@@ -8,8 +8,8 @@ AI endpoints described below.
 
 **Channels.** Adding a channel URL or `@handle` *tracks* it: it appears under Channels, but nothing
 is downloaded. *Subscribing* opts it into the daily scan for new uploads. New uploads either land
-under **Pending** for a manual decision, or — if the channel has **autodownload** on — are enqueued
-automatically, optionally with a per-channel format override. A channel's first scan only records a
+under **Decide** for a manual keep/ignore call, or — if the channel has **autodownload** on — are
+enqueued automatically, optionally with a per-channel format override. A channel's first scan only records a
 baseline of its current videos and queues nothing, so subscribing never triggers a bulk backfill.
 
 **Captions and AI artifacts.** Downloaded videos get their captions extracted, and from those peeq

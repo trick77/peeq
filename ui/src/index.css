@@ -464,6 +464,80 @@ button.srow:not(:disabled):hover {
   color: var(--color-faint);
 }
 
+/* Queue page — two lanes (downloads, summaries) of in-flight work. Each lane
+   is a stack of .qrow cards; a lane with nothing in it hides its heading, the
+   same "absence is absence" rule the status panel follows. */
+.queue-lane {
+  margin-bottom: 26px;
+}
+.queue-lane > h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted);
+  margin: 0 0 11px;
+  font-weight: 600;
+}
+.qrow {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 11px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-ui);
+  background: var(--color-panel);
+  margin-bottom: 8px;
+}
+.qrow > .qmeta {
+  min-width: 0;
+  flex: 1;
+}
+.qrow .qtitle {
+  font-size: 13.5px;
+  color: var(--color-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qrow .qsub {
+  font-size: 12px;
+  color: var(--color-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qrow .qstate {
+  font-family:
+    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
+    monospace;
+  font-size: 11px;
+  color: var(--color-ink-dim);
+  flex: none;
+}
+.qrow .qbar {
+  width: 120px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--color-elevated);
+  overflow: hidden;
+  flex: none;
+}
+.qrow .qbar > i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--color-accent-dim),
+    var(--color-accent)
+  );
+  border-radius: 4px;
+}
+.queue-empty {
+  color: var(--color-faint);
+  font-size: 13px;
+}
+
 .cookie-status {
   display: flex;
   align-items: center;

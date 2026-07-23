@@ -79,6 +79,30 @@ describe("StatusPanel", () => {
     expect(onOpenPending).toHaveBeenCalled();
   });
 
+  // A summary running with nothing downloading must still read as "working",
+  // and must show its own row — the queue is not just downloads.
+  it("counts summaries as work, not idle", () => {
+    render(<StatusPanel jobs={[]} pendingCount={0} summarizingCount={2} />);
+    expect(rowFor("Summarizing")).toHaveTextContent("2");
+    expect(screen.getByText("working")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing waiting")).not.toBeInTheDocument();
+  });
+
+  it("opens the queue from the work rows", () => {
+    const onOpenQueue = vi.fn();
+    render(
+      <StatusPanel
+        jobs={[job({ state: "running" })]}
+        pendingCount={0}
+        summarizingCount={1}
+        onOpenQueue={onOpenQueue}
+      />,
+    );
+    fireEvent.click(screen.getByText("Downloading"));
+    fireEvent.click(screen.getByText("Summarizing"));
+    expect(onOpenQueue).toHaveBeenCalledTimes(2);
+  });
+
   // Three different stalls, one state word. The panel deliberately does not
   // explain any of them — DownloadStatusBanner does, with the buttons to act.
   // What the panel adds is that the rail never scrolls away, so a stall stays

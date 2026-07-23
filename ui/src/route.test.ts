@@ -42,8 +42,16 @@ describe("parsePath", () => {
   it("maps the plain views", () => {
     expect(parsePath("/search").view).toBe("search");
     expect(parsePath("/add").view).toBe("add");
-    expect(parsePath("/pending").view).toBe("pending");
+    expect(parsePath("/decide").view).toBe("decide");
+    expect(parsePath("/queue").view).toBe("queue");
     expect(parsePath("/settings").view).toBe("settings");
+  });
+
+  it("keeps the old /pending path pointing at Decide (soft redirect)", () => {
+    // /pending was the page's path before the Decide/Queue split. It still
+    // parses to the decide view so a bookmark or open tab doesn't 404;
+    // useRoute's mount normalize then rewrites the bar to /decide.
+    expect(parsePath("/pending").view).toBe("decide");
   });
 
   it("falls back to the Library for an unknown path", () => {
@@ -53,7 +61,7 @@ describe("parsePath", () => {
 
   it("ignores a trailing slash and doubled slashes", () => {
     expect(parsePath("/settings/")).toEqual(parsePath("/settings"));
-    expect(parsePath("//pending//")).toEqual(parsePath("/pending"));
+    expect(parsePath("//decide//")).toEqual(parsePath("/decide"));
     expect(parsePath("/channel/UCabc123/")).toEqual(
       parsePath("/channel/UCabc123"),
     );
@@ -97,7 +105,8 @@ describe("toPath", () => {
     [{ view: "channels", videoId: null, channelId: null }, "/channels"],
     [{ view: "search", videoId: null, channelId: null }, "/search"],
     [{ view: "add", videoId: null, channelId: null }, "/add"],
-    [{ view: "pending", videoId: null, channelId: null }, "/pending"],
+    [{ view: "decide", videoId: null, channelId: null }, "/decide"],
+    [{ view: "queue", videoId: null, channelId: null }, "/queue"],
     [{ view: "settings", videoId: null, channelId: null }, "/settings"],
   ];
 
@@ -127,7 +136,8 @@ describe("round-trip", () => {
     "/channels",
     "/search",
     "/add",
-    "/pending",
+    "/decide",
+    "/queue",
     "/settings",
   ];
 

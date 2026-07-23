@@ -95,6 +95,11 @@ type Deps struct {
 	// SummaryJobs enqueues a (re)summarize job for a video. Optional: when
 	// nil, /api/videos/{id}/resummarize returns 503.
 	SummaryJobs SummaryEnqueuer
+	// SummaryList reads the in-flight summary queue backing GET /api/summaries
+	// (the Queue page's "being summarized" lane). Optional: when nil, that
+	// endpoint reports an empty queue. Production wires the same
+	// *summaryjobs.Store as SummaryJobs.
+	SummaryList SummaryLister
 
 	// OnResumeYoutube is invoked after POST /api/youtube/resume clears the
 	// kill-switch, so the shared failure monitor gets reset and the user gets
@@ -166,6 +171,7 @@ type server struct {
 	rag         *rag.Store
 	embedder    SearchEmbedder
 	summaryJobs SummaryEnqueuer
+	summaryList SummaryLister
 
 	onResumeYoutube func()
 
@@ -200,6 +206,7 @@ func New(d Deps) http.Handler {
 		rag:         d.Rag,
 		embedder:    d.Embedder,
 		summaryJobs: d.SummaryJobs,
+		summaryList: d.SummaryList,
 
 		onResumeYoutube: d.OnResumeYoutube,
 
@@ -241,6 +248,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("PUT /api/machine/cookie", s.requireToken(http.HandlerFunc(s.handleMachineCookie)))
 	mux.Handle("POST /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsPost)))
 	mux.Handle("GET /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsList)))
+	mux.Handle("GET /api/summaries", s.requireAuth(http.HandlerFunc(s.handleSummariesList)))
 	mux.Handle("GET /api/downloads/status", s.requireAuth(http.HandlerFunc(s.handleDownloadsStatus)))
 	mux.Handle("POST /api/downloads/{id}/cancel", s.requireAuth(http.HandlerFunc(s.handleDownloadsCancel)))
 	mux.Handle("GET /api/downloads/stream", s.requireAuth(http.HandlerFunc(s.handleDownloadsStream)))

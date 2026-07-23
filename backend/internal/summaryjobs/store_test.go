@@ -39,6 +39,53 @@ func TestEnqueueClaimFinishResetOrphans(t *testing.T) {
 	}
 }
 
+func TestListActive(t *testing.T) {
+	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	defer db.Close()
+	store.Migrate(db)
+	db.Exec(`INSERT INTO videos (id, url) VALUES ('a','u'),('b','u'),('c','u'),('d','u')`)
+	// pending 'a' and 'c', running 'b', and terminal 'd' (done) — only the
+	// first three are in flight and should come back, oldest enqueued first.
+	db.Exec(`INSERT INTO summary_jobs (video_id, state, enqueued_at) VALUES
+		('a','pending','2026-01-01 00:00:01'),
+		('b','running','2026-01-01 00:00:02'),
+		('c','pending','2026-01-01 00:00:03'),
+		('d','done','2026-01-01 00:00:00')`)
+	s := New(db)
+
+	active, err := s.ListActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, len(active))
+	for i, j := range active {
+		got[i] = j.VideoID
+	}
+	want := []string{"a", "b", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("ListActive returned %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ListActive order = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestListActiveEmpty(t *testing.T) {
+	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	defer db.Close()
+	store.Migrate(db)
+	s := New(db)
+	active, err := s.ListActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("empty queue returned %d jobs", len(active))
+	}
+}
+
 func TestEnqueueMissing(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()

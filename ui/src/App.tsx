@@ -8,17 +8,20 @@ import {
   downloadsStatus,
   streamDownloads,
   listPending,
+  listSummaries,
+  cancelDownload,
   resumeYoutube,
 } from "./api";
 import type { DownloadsStatus } from "./api/downloads";
-import type { Job, User } from "./api/types";
+import type { Job, SummaryJob, User } from "./api/types";
 import { Library } from "./views/Library";
 import { Add } from "./views/Add";
 import { Player } from "./views/Player";
 import { Settings } from "./views/Settings";
 import { Channels } from "./views/Channels";
 import { Channel } from "./views/Channel";
-import { Pending } from "./views/Pending";
+import { Decide } from "./views/Decide";
+import { Queue } from "./views/Queue";
 import { Search } from "./views/Search";
 import { useRoute } from "./route";
 import { Button } from "./ui";
@@ -29,7 +32,8 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
   player: { title: "Now playing" },
   search: { title: "Search" },
   add: { title: "Add" },
-  pending: { title: "Pending" },
+  decide: { title: "Decide" },
+  queue: { title: "Queue" },
   channels: { title: "Channels" },
   channel: { title: "Channel" },
   settings: { title: "Settings" },
@@ -58,6 +62,16 @@ export function App() {
   const [authError, setAuthError] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
+  // The in-flight summary queue (pending/running), for the Queue page and the
+  // rail's Queue badge. Kept alongside jobs because summaries are the second
+  // half of "work in flight" — the Queue count is downloads + summaries.
+  const [summaries, setSummaries] = useState<SummaryJob[]>([]);
+  // Live summary phase per video (summarizing → embedding), accumulated from
+  // the same "summary" SSE event the Player consumes, so the Queue lane can
+  // show a job advancing without a reload.
+  const [summaryPhaseByVideoId, setSummaryPhaseByVideoId] = useState<
+    Record<string, string>
+  >({});
   const [cookieStatus, setCookieStatus] = useState<string | undefined>(
     undefined,
   );
@@ -125,6 +139,11 @@ export function App() {
         if (active) setJobs(j);
       })
       .catch(() => {});
+    listSummaries()
+      .then((s) => {
+        if (active) setSummaries(s);
+      })
+      .catch(() => {});
     cookieHealth()
       .then((h) => {
         if (active) setCookieStatus(h.status);
@@ -187,6 +206,38 @@ export function App() {
       .catch(() => {});
   }, []);
 
+  // Cancel a download from the Queue page, then refresh so the row leaves the
+  // list even if no further progress/terminal SSE arrives for it.
+  const onCancelDownload = useCallback(
+    (jobId: number) => {
+      cancelDownload(jobId)
+        .catch(() => {})
+        .finally(refreshQueue);
+    },
+    [refreshQueue],
+  );
+
+  // Re-list the in-flight summaries and prune the phase map to match. Pruning
+  // is what keeps summaryPhaseByVideoId bounded: a job that has left the queue
+  // is no longer in the list, so its phase entry is dropped rather than
+  // accumulating for every video summarized this session — and a re-summarized
+  // video can't inherit a stale phase label from its previous run.
+  const refreshSummaries = useCallback(() => {
+    listSummaries()
+      .then((list) => {
+        setSummaries(list);
+        setSummaryPhaseByVideoId((prev) => {
+          const next: Record<string, string> = {};
+          for (const s of list) {
+            if (prev[s.video_id] !== undefined)
+              next[s.video_id] = prev[s.video_id];
+          }
+          return next;
+        });
+      })
+      .catch(() => {});
+  }, []);
+
   // Poll the queue every 3s while any job is pending/running. There is no
   // SSE "job finished" event (the worker only ever publishes "progress"),
   // so without this a job that completes right after its last progress
@@ -201,11 +252,18 @@ export function App() {
   // (worker paused, cookie missing, queue busy) emits no progress at all.
   useEffect(() => {
     if (!authChecked || !user) return;
-    if (activeDownloads === 0) return;
+    // Poll while EITHER lane has work. Downloads have no "finished" SSE, so the
+    // poll is what retires a completed job. For summaries the poll tracks a job
+    // already in flight through to completion; a summary enqueued while both
+    // lanes are idle is picked up instead by the worker's "summarizing" SSE
+    // event when it claims the job (within a poll interval), which re-arms this
+    // effect — the poll does not itself observe an unclaimed pending summary.
+    if (activeDownloads === 0 && summaries.length === 0) return;
     const id = window.setInterval(() => {
       listDownloads()
         .then((j) => setJobs(j))
         .catch(() => {});
+      refreshSummaries();
       // Refresh the stalled-queue state alongside the queue so the diagnostic
       // banner clears/appears as the worker pauses or resumes.
       downloadsStatus()
@@ -213,7 +271,7 @@ export function App() {
         .catch(() => {});
     }, 3000);
     return () => window.clearInterval(id);
-  }, [authChecked, user, activeDownloads]);
+  }, [authChecked, user, activeDownloads, summaries.length, refreshSummaries]);
 
   // Live download progress for the rail's dock (Task 14 carry-forward):
   // accumulate per-job percent/speed/eta from the SSE feed directly rather
@@ -227,6 +285,27 @@ export function App() {
     if (!authChecked || !user) return;
     const controller = new AbortController();
     streamDownloads((evt) => {
+      // The one SSE stream carries both download "progress" and summary phase
+      // "summary" events (see the shared hub in cmd/peeq/main.go).
+      if (evt.event === "summary") {
+        const s = evt.data as {
+          video_id?: string;
+          status?: string;
+          phase?: string;
+        };
+        if (s.video_id) {
+          setSummaryPhaseByVideoId((prev) => ({
+            ...prev,
+            [s.video_id as string]: s.phase ?? s.status ?? "",
+          }));
+        }
+        // Any phase transition changes the in-flight set — a job just started
+        // (running/summarizing) or just left it (done/error/no_transcript) —
+        // so re-list so the Queue lane and its badge match (and the phase map
+        // is pruned to the survivors).
+        refreshSummaries();
+        return;
+      }
       if (evt.event !== "progress") return;
       const data = evt.data as {
         job_id: number;
@@ -253,7 +332,7 @@ export function App() {
       }
     }, controller.signal).catch(() => {});
     return () => controller.abort();
-  }, [authChecked, user]);
+  }, [authChecked, user, refreshSummaries]);
 
   if (!authChecked) {
     return (
@@ -314,6 +393,8 @@ export function App() {
         active={view}
         onNavigate={setView}
         pendingCount={pendingCount}
+        queueCount={activeDownloads + summaries.length}
+        summarizingCount={summaries.length}
         jobs={jobs}
         progressByJobId={progressByJobId}
         cookieStatus={cookieStatus}
@@ -350,6 +431,11 @@ export function App() {
             onQueued={refreshQueue}
             librarySearch={librarySearch}
             activeDownloads={activeDownloads}
+            jobs={jobs}
+            progressByJobId={progressByJobId}
+            summaries={summaries}
+            summaryPhaseByVideoId={summaryPhaseByVideoId}
+            onCancelDownload={onCancelDownload}
           />
         </section>
       </main>
@@ -435,6 +521,11 @@ function ViewSwitch({
   onQueued,
   librarySearch,
   activeDownloads,
+  jobs,
+  progressByJobId,
+  summaries,
+  summaryPhaseByVideoId,
+  onCancelDownload,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
@@ -449,6 +540,14 @@ function ViewSwitch({
   onQueued: () => void;
   librarySearch: string;
   activeDownloads: number;
+  jobs: Job[];
+  progressByJobId: Record<
+    number,
+    { percent: number; speed: string; eta: string }
+  >;
+  summaries: SummaryJob[];
+  summaryPhaseByVideoId: Record<string, string>;
+  onCancelDownload: (jobId: number) => void;
 }) {
   switch (view) {
     case "library":
@@ -477,15 +576,29 @@ function ViewSwitch({
       // card confirms the queue, it doesn't jump into Player before the
       // download has even started); onOpenVideo is Library's job.
       return <Add onQueued={onQueued} />;
-    case "pending":
+    case "decide":
       // onCountChange keeps the rail badge in sync while the user acts on
       // items (Download now/Ignore) without leaving this view — the
       // nav-refetch effect above only covers count changes that happen
-      // while the user is elsewhere.
+      // while the user is elsewhere. onQueued seeds the download poll the
+      // moment an item is approved (mirroring Add), so a video queued while
+      // the worker is paused — which emits no progress SSE — still appears on
+      // Queue immediately instead of only after the queue next drains.
       return (
-        <Pending
+        <Decide
           onCountChange={setPendingCount}
           onOpenChannel={onOpenChannel}
+          onQueued={onQueued}
+        />
+      );
+    case "queue":
+      return (
+        <Queue
+          jobs={jobs}
+          progressByJobId={progressByJobId}
+          summaries={summaries}
+          summaryPhaseByVideoId={summaryPhaseByVideoId}
+          onCancel={onCancelDownload}
         />
       );
     case "channels":
