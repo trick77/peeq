@@ -43,6 +43,21 @@ const DefaultHeartbeat = 15 * time.Second
 // stop must be called exactly once (a defer at the call site); calling it
 // twice panics on the closed channel, which is the intended loud failure.
 func StartHeartbeat(ctx context.Context, log *slog.Logger, interval time.Duration, msg string, attrs ...any) (stop func()) {
+	return StartHeartbeatFunc(ctx, log, interval, msg, nil, attrs...)
+}
+
+// StartHeartbeatFunc is StartHeartbeat with a per-tick attribute provider. It
+// exists because the useful thing to say about a streaming request is not that
+// it is still waiting — the plain heartbeat already said that, and said it
+// identically for a model mid-thought and a socket that died — but how much has
+// arrived since the last line. A tick reading chunks=0 and one reading
+// chunks=412 are the two cases we could not tell apart before.
+//
+// progress is called ON THE HEARTBEAT GOROUTINE while the request goroutine is
+// still writing those counters, so whatever it reads must be safe to read
+// concurrently (the chat client uses atomics). It may be nil, which is exactly
+// StartHeartbeat. Its attrs come after the static ones and before elapsed_s.
+func StartHeartbeatFunc(ctx context.Context, log *slog.Logger, interval time.Duration, msg string, progress func() []any, attrs ...any) (stop func()) {
 	if interval <= 0 {
 		return func() {}
 	}
@@ -66,8 +81,13 @@ func StartHeartbeat(ctx context.Context, log *slog.Logger, interval time.Duratio
 			case <-t.C:
 				// Copy attrs per tick: appending into a shared backing array
 				// across ticks would have each line quietly overwrite the last.
-				line := make([]any, 0, len(attrs)+2)
+				var extra []any
+				if progress != nil {
+					extra = progress()
+				}
+				line := make([]any, 0, len(attrs)+len(extra)+2)
 				line = append(line, attrs...)
+				line = append(line, extra...)
 				line = append(line, "elapsed_s", int64(time.Since(started).Seconds()))
 				log.Info(msg, line...)
 			}

@@ -74,10 +74,14 @@ func countMsg(recs []map[string]any, msg string) int {
 	return n
 }
 
-const usageBody = `{"choices":[{"message":{"content":"ok"}}],
-	"usage":{"prompt_tokens":1200,"completion_tokens":340,"total_tokens":1540,
-	"prompt_tokens_details":{"cached_tokens":800},
-	"completion_tokens_details":{"reasoning_tokens":250}}}`
+const usageJSON = `{"prompt_tokens":1200,"completion_tokens":340,"total_tokens":1540,` +
+	`"prompt_tokens_details":{"cached_tokens":800},` +
+	`"completion_tokens_details":{"reasoning_tokens":250}}`
+
+// usageBody is the whole event stream for a one-word answer that reports usage.
+// These tests are about logging and accounting rather than framing, so they
+// serve it in one write; the framing itself is exercised in stream_test.go.
+var usageBody = sseStream("ok", usageJSON)
 
 func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -126,10 +130,9 @@ func TestComplete_logsAReportedZeroRatherThanDroppingIt(t *testing.T) {
 	// MiMo-shaped reply: the details objects are there, the numbers in them are
 	// zero. That zero is the answer and must reach the log.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}],
-			"usage":{"prompt_tokens":900,"completion_tokens":100,"total_tokens":1000,
-			"prompt_tokens_details":{"cached_tokens":0},
-			"completion_tokens_details":{"reasoning_tokens":0}}}`)
+		io.WriteString(w, sseStream("ok", `{"prompt_tokens":900,"completion_tokens":100,"total_tokens":1000,`+
+			`"prompt_tokens_details":{"cached_tokens":0},`+
+			`"completion_tokens_details":{"reasoning_tokens":0}}`))
 	}))
 	defer srv.Close()
 	log, buf := capture()
@@ -165,7 +168,7 @@ func TestComplete_logsRawUsageAndTheAbsenceOfIt(t *testing.T) {
 	})
 	t.Run("absent", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+			io.WriteString(w, sseStream("ok", ""))
 		}))
 		defer srv.Close()
 		log, buf := capture()
@@ -193,7 +196,7 @@ func TestComplete_rawUsageIsCapped(t *testing.T) {
 	// into the log through the raw-usage line.
 	padding := strings.Repeat("x", maxRawUsage*2)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":5,"note":"`+padding+`"}}`)
+		io.WriteString(w, sseStream("ok", `{"prompt_tokens":5,"note":"`+padding+`"}`))
 	}))
 	defer srv.Close()
 	log, buf := capture()
@@ -216,8 +219,8 @@ func TestComplete_rawUsageCutsOnARuneBoundary(t *testing.T) {
 	// of a multi-byte rune, so at least one case cuts mid-character.
 	for shift := 0; shift < 4; shift++ {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":5,"note":"`+
-				strings.Repeat("x", shift)+strings.Repeat("é", maxRawUsage)+`"}}`)
+			io.WriteString(w, sseStream("ok", `{"prompt_tokens":5,"note":"`+
+				strings.Repeat("x", shift)+strings.Repeat("é", maxRawUsage)+`"}`))
 		}))
 		log, buf := capture()
 		c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
@@ -402,14 +405,22 @@ func TestComplete_logsFailuresWithDurationAndKeepsErrorText(t *testing.T) {
 			wantErr: "chat failed with status 500",
 		},
 		{
-			name:    "undecodable body",
+			// A 200 that is not an event stream at all — a proxy's HTML error
+			// page is the realistic version. Nothing parses as an event, so the
+			// stream ends unfinished rather than returning an empty summary.
+			name:    "not an event stream",
 			handler: func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "not json") },
-			wantErr: "decode chat response",
+			wantErr: "without finish_reason",
 		},
 		{
-			name:    "no choices",
-			handler: func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"choices":[]}`) },
-			wantErr: "no choices",
+			// Content arrives and the connection then closes cleanly, with no
+			// finish_reason and no [DONE]. Returning the fragment would store
+			// half a summary permanently; it must be an error the queue retries.
+			name: "truncated mid-answer",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, sseEvent(`{"choices":[{"delta":{"content":"half an ans"},"index":0}]}`))
+			},
+			wantErr: "without finish_reason",
 		},
 	}
 	for _, tc := range cases {

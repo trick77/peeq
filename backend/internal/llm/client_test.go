@@ -22,7 +22,7 @@ func TestCompleteSendsModelAndEffortAndReturnsContent(t *testing.T) {
 		}
 		b, _ := io.ReadAll(r.Body)
 		json.Unmarshal(b, &gotBody)
-		io.WriteString(w, `{"choices":[{"message":{"content":"hello world"}}]}`)
+		io.WriteString(w, sseStream("hello world", ""))
 	}))
 	defer srv.Close()
 
@@ -40,7 +40,7 @@ func TestCompleteSendsModelAndEffortAndReturnsContent(t *testing.T) {
 	if gotBody["reasoning_effort"] != "high" {
 		t.Fatalf("reasoning_effort = %v", gotBody["reasoning_effort"])
 	}
-	if gotBody["stream"] != false {
+	if gotBody["stream"] != true {
 		t.Fatalf("stream = %v", gotBody["stream"])
 	}
 	// Thinking is on unless the caller opts out, and it is sent explicitly:
@@ -56,7 +56,7 @@ func TestComplete_withoutThinkingDisablesItOnTheWire(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		json.Unmarshal(b, &gotBody)
-		io.WriteString(w, `{"choices":[{"message":{"content":"news"}}]}`)
+		io.WriteString(w, sseStream("news", ""))
 	}))
 	defer srv.Close()
 
@@ -100,7 +100,7 @@ func TestCompleteErrorsOnNon2xx(t *testing.T) {
 
 func TestComplete_pacesRequestsByInterval(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+		io.WriteString(w, sseStream("ok", ""))
 	}))
 	defer srv.Close()
 
@@ -118,7 +118,7 @@ func TestComplete_pacesRequestsByInterval(t *testing.T) {
 
 func TestComplete_zeroIntervalDoesNotPace(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+		io.WriteString(w, sseStream("ok", ""))
 	}))
 	defer srv.Close()
 
