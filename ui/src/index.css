@@ -370,54 +370,76 @@ button {
   color: var(--color-muted);
   font-weight: 500;
 }
-.dock-item {
+/* .srow — one "<label> <count>" line in the rail status panel. Rendered as a
+   <button> when it navigates and a <div> when it doesn't, so the reset below
+   has to neutralise button chrome rather than assume a div. */
+.srow {
   display: flex;
-  gap: 10px;
   align-items: center;
-}
-.dock-thumb {
-  width: 46px;
-  height: 30px;
-  border-radius: 6px;
-  flex: none;
-  background: linear-gradient(
-    135deg,
-    var(--color-elevated),
-    var(--color-panel)
-  );
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-}
-.dock-thumb::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    circle at 30% 30%,
-    var(--glow-accent),
-    transparent 60%
-  );
-  opacity: 0.4;
-}
-.dock-meta {
-  min-width: 0;
-  flex: 1;
-}
-.dock-meta .dock-title {
+  gap: 9px;
+  width: 100%;
+  padding: 5px 0;
   font-size: 12.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--color-muted);
+  background: none;
+  border: 0;
+  text-align: left;
+  font-family: inherit;
 }
-.dock-meta .dock-sub {
+.srow > b {
+  margin-left: auto;
+  font-family:
+    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
+    monospace;
+  font-size: 11.5px;
+  color: var(--color-ink-dim);
+  font-weight: 600;
+}
+.srow > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--color-faint);
+}
+/* Exactly one row is accented, and it is the one that wants a person. See the
+   comment in StatusPanel.tsx for why the other two deliberately stay quiet. */
+.srow.hot {
+  color: var(--color-ink-dim);
+}
+.srow.hot > b {
+  color: var(--color-accent);
+}
+.srow.hot > i {
+  background: var(--color-accent);
+  box-shadow: 0 0 7px var(--glow-accent);
+}
+.srow.run > i {
+  background: var(--color-online);
+  box-shadow: 0 0 7px var(--color-online);
+}
+button.srow:not(:disabled) {
+  cursor: pointer;
+}
+button.srow:not(:disabled):hover {
+  color: var(--color-ink);
+}
+/* The state word. "paused" is the only one that earns a colour: idle and
+   working are both fine, and colouring "working" would make routine activity
+   look like something to attend to. */
+.dock-top b.stalled {
+  color: var(--color-danger);
+}
+.dock-sub {
   font-family:
     ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
     monospace;
   font-size: 10.5px;
   color: var(--color-accent);
-  margin-top: 2px;
+  margin-top: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .dock-bar {
   height: 4px;

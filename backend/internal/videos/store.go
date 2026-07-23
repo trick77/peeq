@@ -245,14 +245,31 @@ func escapeLike(s string) string {
 	return r.Replace(s)
 }
 
+// notInFlight excludes the three states that mean "peeq is still working on
+// this": freshly recorded, queued, and actively downloading. EVERY filter below
+// applies it, which is what makes the Library mean one thing — videos that are
+// here — rather than doubling as a view of the download queue. That queue has
+// its own page now.
+//
+// Note what it does NOT exclude. An 'error' row (a failed download) and a
+// 'tombstoned' row (media reclaimed by the retention sweeper, watched history
+// kept) both stay: the Library grid is the only place either can be recovered
+// from, since VideoCard's re-download button is rendered nowhere else. The rule
+// is "not in the pipeline", not "playable".
+const notInFlight = "status NOT IN ('new', 'queued', 'downloading')"
+
 // List returns videos matching opts, ordered by opts.Sort. The status,
 // category, search, and channel dimensions are orthogonal: all that are set
 // apply together.
-//   - Filter: "unwatched" (not watched and either downloaded or still on its
-//     way — queued/downloading rows count, so the watch queue shows what is
-//     about to be watchable; error/tombstoned rows never do), "watched",
-//     "favorites", "downloading" (queued or downloading), or anything
-//     else/"" (no constraint, tombstoned included)
+//   - Filter: "unwatched" (downloaded and not watched), "watched", "favorites",
+//     or anything else/"" (no further constraint). Every one of them also
+//     applies notInFlight — see that constant for why, and for why error and
+//     tombstoned rows deliberately survive it.
+//
+// "downloading" was a filter value until the Library became ready-only. It is
+// gone rather than kept as a no-op alias: the UI type dropped it too, so a
+// caller still passing it is a bug, and it now lands in the default branch
+// where it returns the same thing "all" does.
 //   - Category: empty/"all"/unknown ⇒ no category constraint
 //   - Query: case-insensitive substring match against title
 //   - Sort: newest|oldest|longest|title; anything else falls back to newest.
@@ -262,17 +279,18 @@ func escapeLike(s string) string {
 //     for rows written before channel ids were recorded, an exact
 //     channel_name match on rows with an empty channel_id
 func (s *Store) List(opts ListOptions) ([]Video, error) {
-	conds := []string{}
+	conds := []string{notInFlight}
 	args := []any{}
 	switch opts.Filter {
 	case "unwatched":
-		conds = append(conds, "status IN ('downloaded', 'queued', 'downloading') AND watched = 0")
+		// Narrower than notInFlight on purpose: "unwatched" answers "what can I
+		// press play on", so a failed or swept row is excluded here even though
+		// it is still reachable through "all".
+		conds = append(conds, "status = 'downloaded' AND watched = 0")
 	case "watched":
 		conds = append(conds, "watched = 1")
 	case "favorites":
 		conds = append(conds, "favorite = 1")
-	case "downloading":
-		conds = append(conds, "status IN ('queued', 'downloading')")
 	}
 	if opts.Category != "" && opts.Category != "all" && ValidCategory(opts.Category) {
 		conds = append(conds, "category = ?")

@@ -1,11 +1,9 @@
 import { Icon } from "../icons";
-import { Button, Spinner } from "../ui";
+import { Button } from "../ui";
 import { thumbnailUrl } from "../api/videos";
 import type { Video } from "../api/types";
 import { daysSince, formatDuration, gradientClassFor } from "../format";
 import { CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
-
-export type DownloadProgress = { percent: number; eta?: string };
 
 // VideoCard — one grid tile, per the mockup's `.card`/`.thumb`/`.life`
 // blocks. Pure presentational: all data comes in as props, all mutation
@@ -14,7 +12,6 @@ export type DownloadProgress = { percent: number; eta?: string };
 export function VideoCard({
   video,
   retentionDays,
-  progress,
   onOpen,
   onToggleFavorite,
   onToggleWatched,
@@ -24,8 +21,6 @@ export function VideoCard({
   video: Video;
   /** settings.retention_days — needed to compute "Expires in N days". */
   retentionDays: number;
-  /** Live SSE progress for this video's download job, if it's downloading. */
-  progress?: DownloadProgress;
   onOpen: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   onToggleWatched: (id: string) => void;
@@ -35,15 +30,13 @@ export function VideoCard({
   // name link in Task 15.
   onOpenChannel?: (id: string) => void;
 }) {
-  const downloading =
-    video.status === "queued" || video.status === "downloading";
+  // No "downloading" branch any more: the library list excludes in-flight
+  // rows entirely (see videos.Store.List), so a card is never rendered for a
+  // video that is still being fetched. Progress lives in the rail's status
+  // panel, which is on screen wherever you are.
   const isNew =
-    !downloading &&
-    !video.watched &&
-    video.resume_position_seconds === 0 &&
-    video.has_media;
+    !video.watched && video.resume_position_seconds === 0 && video.has_media;
   const resuming =
-    !downloading &&
     !video.watched &&
     video.resume_position_seconds > 0 &&
     (video.duration_seconds ?? 0) > 0;
@@ -91,16 +84,6 @@ export function VideoCard({
           {resuming ? (
             <div className="resume">
               <i style={{ width: `${resumePercent}%` }} />
-            </div>
-          ) : null}
-          {downloading ? (
-            <div className="dl">
-              <div
-                className="ring"
-                data-p={`${Math.round(progress?.percent ?? 0)}%`}
-                style={{ ["--p" as string]: `${progress?.percent ?? 0}%` }}
-              />
-              {progress?.eta ? <small>{progress.eta} left</small> : null}
             </div>
           ) : null}
         </button>
@@ -169,8 +152,6 @@ export function VideoCard({
       <Lifecycle
         video={video}
         retentionDays={retentionDays}
-        progress={progress}
-        downloading={downloading}
         onRedownload={onRedownload}
       />
     </article>
@@ -180,14 +161,10 @@ export function VideoCard({
 function Lifecycle({
   video,
   retentionDays,
-  progress,
-  downloading,
   onRedownload,
 }: {
   video: Video;
   retentionDays: number;
-  progress?: DownloadProgress;
-  downloading: boolean;
   onRedownload?: (id: string) => void;
 }) {
   if (video.status === "error" || video.status === "tombstoned") {
@@ -209,15 +186,6 @@ function Lifecycle({
             <Icon name="refresh" size="15px" /> Re-download
           </Button>
         )}
-      </div>
-    );
-  }
-  if (downloading) {
-    return (
-      <div className="life fresh">
-        <Spinner size="12px" />
-        Downloading
-        <span className="sz">{Math.round(progress?.percent ?? 0)}%</span>
       </div>
     );
   }

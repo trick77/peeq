@@ -1,7 +1,8 @@
 import { Icon, type IconName } from "../icons";
-import { DownloadDock } from "./DownloadDock";
+import { StatusPanel } from "./StatusPanel";
 import { CookieStatus } from "./CookieStatus";
 import type { Job } from "../api/types";
+import type { DownloadsStatus } from "../api/downloads";
 
 // ViewId enumerates the destinations App routes to. App.tsx owns the actual
 // view-state (manual, no router lib — see App.tsx); Rail is purely
@@ -60,6 +61,7 @@ export function Rail({
   progressByJobId,
   cookieStatus,
   cookieUpdatedAtLabel,
+  downloadStatus,
 }: {
   active: ViewId;
   onNavigate: (view: ViewId) => void;
@@ -73,6 +75,8 @@ export function Rail({
   >;
   cookieStatus?: string;
   cookieUpdatedAtLabel?: string;
+  /** Why the queue may be stalled; shown as the panel's state word. */
+  downloadStatus?: DownloadsStatus;
 }) {
   return (
     <aside className="rail">
@@ -123,7 +127,13 @@ export function Rail({
       </nav>
 
       <div className="rail-foot">
-        <DownloadDock jobs={jobs} progressByJobId={progressByJobId} />
+        <StatusPanel
+          jobs={jobs}
+          progressByJobId={progressByJobId}
+          pendingCount={pendingCount}
+          status={downloadStatus}
+          onOpenPending={() => onNavigate("pending")}
+        />
         {cookieStatus !== undefined ? (
           <CookieStatus
             status={cookieStatus}

@@ -72,6 +72,12 @@ export function App() {
   // top bar is not channel-aware, so the channel page keeps its own,
   // separately-owned in-page search box — this state is Library-only.
   const [librarySearch, setLibrarySearch] = useState("");
+  // How many jobs are pending or running. It drives the queue poll below, and
+  // is handed to Library as the signal to refetch — a video enters the library
+  // exactly when its download leaves this count.
+  const activeDownloads = jobs.filter(
+    (j) => j.state === "pending" || j.state === "running",
+  ).length;
   // pendingSeek is the jump-to-moment target set by Search's onOpen (Task
   // 18): Player consumes it once on the loadedmetadata handler that already
   // applies the resume position, taking priority over resume. openVideo
@@ -195,10 +201,7 @@ export function App() {
   // (worker paused, cookie missing, queue busy) emits no progress at all.
   useEffect(() => {
     if (!authChecked || !user) return;
-    const hasActive = jobs.some(
-      (j) => j.state === "pending" || j.state === "running",
-    );
-    if (!hasActive) return;
+    if (activeDownloads === 0) return;
     const id = window.setInterval(() => {
       listDownloads()
         .then((j) => setJobs(j))
@@ -210,7 +213,7 @@ export function App() {
         .catch(() => {});
     }, 3000);
     return () => window.clearInterval(id);
-  }, [authChecked, user, jobs]);
+  }, [authChecked, user, activeDownloads]);
 
   // Live download progress for the rail's dock (Task 14 carry-forward):
   // accumulate per-job percent/speed/eta from the SSE feed directly rather
@@ -314,6 +317,7 @@ export function App() {
         jobs={jobs}
         progressByJobId={progressByJobId}
         cookieStatus={cookieStatus}
+        downloadStatus={downloadStatus}
       />
       <main className="main">
         <TopBar
@@ -345,6 +349,7 @@ export function App() {
             setPendingCount={setPendingCount}
             onQueued={refreshQueue}
             librarySearch={librarySearch}
+            activeDownloads={activeDownloads}
           />
         </section>
       </main>
@@ -429,6 +434,7 @@ function ViewSwitch({
   setPendingCount,
   onQueued,
   librarySearch,
+  activeDownloads,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
@@ -442,6 +448,7 @@ function ViewSwitch({
   setPendingCount: (n: number) => void;
   onQueued: () => void;
   librarySearch: string;
+  activeDownloads: number;
 }) {
   switch (view) {
     case "library":
@@ -450,6 +457,7 @@ function ViewSwitch({
           onOpenVideo={onOpenVideo}
           onOpenChannel={onOpenChannel}
           search={librarySearch}
+          activeDownloads={activeDownloads}
         />
       );
     case "player":

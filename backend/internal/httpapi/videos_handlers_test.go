@@ -693,6 +693,12 @@ func TestVideosList_filtersByQueryParam(t *testing.T) {
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
 		t.Fatalf("seed video: %v", err)
 	}
+	// Downloaded, not merely Upserted: the library list hides in-flight rows
+	// (Upsert alone leaves status 'new'), so a bare Upsert would seed a video
+	// the API is correct to omit and this test would be asserting nothing.
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: "/m/v1.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
 	if err := deps.Videos.SetFavorite("v1", true); err != nil {
 		t.Fatalf("set favorite: %v", err)
 	}
@@ -722,6 +728,13 @@ func TestVideosList_filtersByCategory(t *testing.T) {
 	}
 	if err := deps.Videos.Upsert(videos.Video{ID: "v2", URL: "u2"}); err != nil {
 		t.Fatalf("seed video v2: %v", err)
+	}
+	// See the note in TestVideosList_filtersByQueryParam: an Upsert-only row is
+	// status 'new' and the library list hides it.
+	for _, id := range []string{"v1", "v2"} {
+		if err := deps.Videos.SetDownloaded(id, videos.DownloadedResult{MediaPath: "/m/" + id + ".mp4"}); err != nil {
+			t.Fatalf("set downloaded %s: %v", id, err)
+		}
 	}
 	if err := deps.Videos.SetCategory("v1", "ai"); err != nil {
 		t.Fatalf("set category v1: %v", err)
@@ -770,6 +783,13 @@ func TestVideosList_channelFilter_usesCachedChannelName(t *testing.T) {
 	}
 	if err := deps.Videos.Upsert(videos.Video{ID: "v3", URL: "u3", ChannelID: "UCother", ChannelName: "Other"}); err != nil {
 		t.Fatalf("seed video v3: %v", err)
+	}
+	// See the note in TestVideosList_filtersByQueryParam: an Upsert-only row is
+	// status 'new' and the library list hides it.
+	for _, id := range []string{"v1", "v2", "v3"} {
+		if err := deps.Videos.SetDownloaded(id, videos.DownloadedResult{MediaPath: "/m/" + id + ".mp4"}); err != nil {
+			t.Fatalf("set downloaded %s: %v", id, err)
+		}
 	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
