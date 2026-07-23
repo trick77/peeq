@@ -250,6 +250,41 @@ describe("Decide", () => {
     });
   });
 
+  it("fires onQueued after a Download now so the queue can seed", async () => {
+    const user = userEvent.setup();
+    const onQueued = vi.fn();
+    render(<Decide onQueued={onQueued} />);
+    await screen.findByText("First pending video");
+    const row = screen
+      .getByText("First pending video")
+      .closest(".card") as HTMLElement;
+    await user.click(
+      within(row).getByRole("button", { name: /download now/i }),
+    );
+    await waitFor(() => expect(onQueued).toHaveBeenCalled());
+  });
+
+  it("fires onQueued once after a Download all batch", async () => {
+    const user = userEvent.setup();
+    const onQueued = vi.fn();
+    render(<Decide onQueued={onQueued} />);
+    await screen.findByText("First pending video");
+    await user.click(screen.getByRole("button", { name: /^download all$/i }));
+    await waitFor(() => expect(downloadPending).toHaveBeenCalledTimes(2));
+    expect(onQueued).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire onQueued when the very first bulk item fails", async () => {
+    const user = userEvent.setup();
+    const onQueued = vi.fn();
+    vi.mocked(downloadPending).mockRejectedValue(new Error("cookie required"));
+    render(<Decide onQueued={onQueued} />);
+    await screen.findByText("First pending video");
+    await user.click(screen.getByRole("button", { name: /^download all$/i }));
+    expect(await screen.findByText("cookie required")).toBeInTheDocument();
+    expect(onQueued).not.toHaveBeenCalled();
+  });
+
   it("surfaces a failure from Download now and keeps the row", async () => {
     const user = userEvent.setup();
     vi.mocked(downloadPending).mockRejectedValue(new Error("disk is full"));

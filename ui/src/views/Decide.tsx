@@ -18,9 +18,13 @@ import { Button } from "../ui";
 export function Decide({
   onCountChange,
   onOpenChannel,
+  onQueued,
 }: {
   onCountChange?: (n: number) => void;
   onOpenChannel?: (id: string) => void;
+  // onQueued — fired after a video is queued for download, so App can seed the
+  // queue poll and the item shows on Queue right away (mirrors the Add view).
+  onQueued?: () => void;
 } = {}) {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +94,7 @@ export function Decide({
     try {
       await downloadPending(item.video_id);
       remove(item.video_id);
+      onQueued?.();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -124,15 +129,20 @@ export function Decide({
     setConfirmBulk(false);
     setBulkBusy(true);
     setError(null);
+    let queuedAny = false;
     try {
       for (const item of batch) {
         await downloadPending(item.video_id);
         remove(item.video_id);
+        queuedAny = true;
       }
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBulkBusy(false);
+      // Seed the queue once for the whole batch (not per item) if anything was
+      // actually queued — even when the batch stopped early on a failure.
+      if (queuedAny) onQueued?.();
     }
   }
 
