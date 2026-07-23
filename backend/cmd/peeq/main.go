@@ -197,6 +197,7 @@ func run() error {
 	chatClient := llm.NewClient(llm.Config{
 		BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey,
 		RequestInterval: cfg.SummarizeRequestDelay, Logger: slog.Default(),
+		StreamIdleTimeout: cfg.ChatStreamIdleTimeout,
 	}, nil)
 	summarizer := summarize.New(chatClient)
 

@@ -46,6 +46,14 @@ type Config struct {
 	SummarizeRequestDelay time.Duration
 	SummarizeVideoDelay   time.Duration
 
+	// ChatStreamIdleTimeout is how long a started chat stream may go completely
+	// silent before the call is abandoned and retried. Tunable because it is the
+	// one bound whose right value depends on the endpoint: it must sit above the
+	// longest gap that endpoint leaves between events while thinking, and below
+	// the point where waiting is pointless. The other two bounds (headers, whole
+	// call) are fixed in internal/llm.
+	ChatStreamIdleTimeout time.Duration
+
 	// AllowAnonymousYoutube is a dev-only escape hatch: when true, the yt-dlp
 	// Runner is permitted to run WITHOUT a cookie (see internal/ytdlp
 	// cookieGate). It exists because authenticated yt-dlp requests currently
@@ -160,6 +168,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.SummarizeVideoDelay = vidDelay
+	idle, err := envDuration("BACKEND_CHAT_STREAM_IDLE_TIMEOUT", 90*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ChatStreamIdleTimeout = idle
 
 	if cfg.SessionSecret == "" {
 		return Config{}, fmt.Errorf("BACKEND_SESSION_SECRET is required")
