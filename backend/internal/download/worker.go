@@ -10,10 +10,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
@@ -34,6 +36,12 @@ type Runner interface {
 type FailMonitor interface {
 	Fail(entityID string)
 	Reset()
+}
+
+// ActivityRecorder records a download outcome for the Activity feed. Narrow and
+// nil-safe like FailMonitor; nil in tests, the shared *activity.Store in prod.
+type ActivityRecorder interface {
+	Record(activity.Event)
 }
 
 // SummaryEnqueuer is the subset of *summaryjobs.Store the worker needs to
@@ -103,6 +111,8 @@ type Deps struct {
 	// FailMonitor, when set, is fed a Fail(videoID) on each count-worthy
 	// failure and Reset() on each success, driving auto-pause.
 	FailMonitor FailMonitor
+	// Activity, when set, records each terminal download for the Activity feed.
+	Activity ActivityRecorder
 }
 
 // Worker is the download loop. Construct with New and drive with Run; other
@@ -559,6 +569,31 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 	if w.deps.FailMonitor != nil {
 		w.deps.FailMonitor.Reset()
 	}
+	w.recordActivity(activity.Event{
+		Kind: activity.KindDownload, Outcome: activity.OutcomeOK,
+		SubjectID: video.ID, Subject: video.Title, Summary: "downloaded",
+		Detail: humanSize(res.FilesizeBytes),
+	})
+}
+
+// recordActivity records a download event for the Activity feed, nil-safe.
+func (w *Worker) recordActivity(e activity.Event) {
+	if w.deps.Activity != nil {
+		w.deps.Activity.Record(e)
+	}
+}
+
+// humanSize renders a byte count as a compact MB/GB string for a download's
+// activity detail. Zero bytes (yt-dlp did not report a size) yields "".
+func humanSize(b int64) string {
+	switch {
+	case b <= 0:
+		return ""
+	case b >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(b)/(1<<30))
+	default:
+		return fmt.Sprintf("%.0f MB", float64(b)/(1<<20))
+	}
 }
 
 // fail marks both the job and its video terminally failed, recording attempts
@@ -577,6 +612,11 @@ func (w *Worker) fail(job *jobs.Job, video *videos.Video, attempts int, msg stri
 		if err := w.deps.Videos.SetStatus(video.ID, "error", msg); err != nil {
 			w.deps.Logger.Error("download worker: set error status failed", "video_id", video.ID, "err", err)
 		}
+		w.recordActivity(activity.Event{
+			Kind: activity.KindDownload, Outcome: activity.OutcomeFail,
+			SubjectID: video.ID, Subject: video.Title, Summary: "download failed",
+			Detail: msg,
+		})
 	}
 }
 

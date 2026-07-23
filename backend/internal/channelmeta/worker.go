@@ -5,9 +5,17 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/sched"
 )
+
+// ActivityRecorder records a metadata-refresh outcome for the Activity feed.
+// Nil-safe. Only failures are recorded — a routine weekly refresh succeeding is
+// the definition of no-news, so recording it would just be noise.
+type ActivityRecorder interface {
+	Record(activity.Event)
+}
 
 const (
 	// refreshInterval is how long a subscribed channel's metadata is allowed
@@ -46,9 +54,11 @@ type Deps struct {
 	// YoutubePaused, when set and returning true, skips passes (the global
 	// kill-switch).
 	YoutubePaused func(ctx context.Context) bool
-	Now           func() time.Time // injectable clock (defaults to time.Now)
-	PollInterval  time.Duration    // defaults to pollInterval
-	Logger        *slog.Logger
+	// Activity, when set, records a FAILED metadata refresh for the Activity feed.
+	Activity     ActivityRecorder
+	Now          func() time.Time // injectable clock (defaults to time.Now)
+	PollInterval time.Duration    // defaults to pollInterval
+	Logger       *slog.Logger
 }
 
 // Worker keeps stored channel metadata from going stale. Construct with
@@ -177,6 +187,16 @@ func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
 	defer cancel()
 	if err := w.d.Refresher.Resolve(rctx, channelID, cached); err != nil {
 		w.d.Logger.Warn("channel metadata refresh failed", "channel_id", channelID, "err", err)
+		if w.d.Activity != nil {
+			name := cached.Name
+			if name == "" {
+				name = channelID
+			}
+			w.d.Activity.Record(activity.Event{
+				Kind: activity.KindChannelMeta, Outcome: activity.OutcomeWarn,
+				SubjectID: channelID, Subject: name, Summary: "metadata refresh failed",
+			})
+		}
 		return
 	}
 	w.d.Logger.Info("channel metadata refreshed", "channel_id", channelID)

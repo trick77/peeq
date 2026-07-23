@@ -54,6 +54,39 @@ func TestMigrate_createsPhase2Tables(t *testing.T) {
 	}
 }
 
+func TestMigrate_0007CreatesActivityEvents(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(
+		"select count(*) from sqlite_master where type='table' and name='activity_events'",
+	).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("activity_events table missing (n=%d err=%v)", n, err)
+	}
+	// A row inserted with only the required columns takes the timestamp/text
+	// defaults, and the CHECK enums accept a valid kind/outcome.
+	if _, err := db.Exec(`INSERT INTO activity_events (kind, outcome) VALUES ('scan','ok')`); err != nil {
+		t.Fatalf("insert with defaults failed: %v", err)
+	}
+	var at, subject string
+	if err := db.QueryRow(`SELECT at, subject FROM activity_events LIMIT 1`).Scan(&at, &subject); err != nil {
+		t.Fatal(err)
+	}
+	if at == "" || subject != "" {
+		t.Fatalf("defaults wrong: at=%q subject=%q", at, subject)
+	}
+	// The kind CHECK rejects an unlisted kind — widening is a conscious act.
+	if _, err := db.Exec(`INSERT INTO activity_events (kind, outcome) VALUES ('bogus','ok')`); err == nil {
+		t.Fatal("expected CHECK to reject an unlisted kind")
+	}
+}
+
 func TestMigrate_idempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "t.db")
 

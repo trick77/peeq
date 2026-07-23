@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/rag"
@@ -21,6 +22,11 @@ import (
 // Embedder is the subset of rag.EmbedClient the worker needs.
 type Embedder interface {
 	Embed(ctx context.Context, inputs []string) ([][]float32, error)
+}
+
+// ActivityRecorder records a summary outcome for the Activity feed. Nil-safe.
+type ActivityRecorder interface {
+	Record(activity.Event)
 }
 
 // WorkerDeps are the worker's collaborators and tunables. The stores,
@@ -45,6 +51,8 @@ type WorkerDeps struct {
 	// hub can push live progress to the Player. videoID is always set so the
 	// client can filter to the open video.
 	OnPhase func(videoID, status, phase string)
+	// Activity, when set, records each terminal summary for the Activity feed.
+	Activity ActivityRecorder
 }
 
 // Worker is the single-concurrency summarization+embedding loop: the twin of
@@ -283,7 +291,19 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 
 	run.finished("done")
 	_ = w.d.Jobs.Finish(job.ID, "done", "")
+	w.recordActivity(activity.Event{
+		Kind: activity.KindSummary, Outcome: activity.OutcomeOK,
+		SubjectID: video.ID, Subject: video.Title, Summary: "summarized",
+		Detail: fmt.Sprintf("%d key points", len(keyPoints)),
+	})
 	return true, nil
+}
+
+// recordActivity records a summary event for the Activity feed, nil-safe.
+func (w *Worker) recordActivity(e activity.Event) {
+	if w.d.Activity != nil {
+		w.d.Activity.Record(e)
+	}
 }
 
 // analysisRun carries the logging state of one video's analysis: who it is,
