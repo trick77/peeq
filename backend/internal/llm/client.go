@@ -104,14 +104,6 @@ type Client struct {
 // timeout (see the consts above — it would truncate a stream) and instead
 // carries ResponseHeaderTimeout as a backstop under the stallGuard.
 func NewClient(cfg Config, hc *http.Client) *Client {
-	if hc == nil {
-		// Clone the stdlib default rather than build a bare Transport, so proxy
-		// support, dial timeouts and connection pooling stay at their tuned
-		// defaults instead of being silently dropped.
-		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.ResponseHeaderTimeout = defaultHeaderTimeout
-		hc = &http.Client{Transport: tr}
-	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -126,6 +118,18 @@ func NewClient(cfg Config, hc *http.Client) *Client {
 	}
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = defaultCallTimeout
+	}
+	if hc == nil {
+		// Built after the defaults are resolved, so the backstop matches the
+		// bound the caller actually configured rather than silently reverting to
+		// the package default.
+		//
+		// Clone the stdlib default rather than build a bare Transport, so proxy
+		// support, dial timeouts and connection pooling stay at their tuned
+		// values instead of being dropped.
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.ResponseHeaderTimeout = cfg.HeaderTimeout
+		hc = &http.Client{Transport: tr}
 	}
 	return &Client{
 		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
@@ -346,6 +350,18 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 	res, err := readStream(resp.Body, guard, &counters, c.idle)
 	if err != nil {
 		return fail(fmt.Errorf("chat stream: %w", c.explain(ctx, callCtx, guard, err)))
+	}
+
+	// A finish_reason other than "stop" means the endpoint ended the answer on
+	// its own terms — "length" being a completion cut off at a token limit,
+	// i.e. a genuinely partial summary. It is not treated as an error, because
+	// retrying an answer the model chose to truncate would just truncate again,
+	// and the non-streaming client accepted it silently too. But it stops being
+	// silent: a half summary that nobody can explain later is worse than a
+	// warning nobody reads.
+	if res.finishReason != "" && res.finishReason != "stop" {
+		c.log.Warn("llm: answer ended early", append(info.LogAttrs(),
+			"finish_reason", res.finishReason, "chars", res.chars)...)
 	}
 
 	// Inference is measured from `started`, which is taken after pace()

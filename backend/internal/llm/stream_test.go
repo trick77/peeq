@@ -239,8 +239,10 @@ func TestComplete_namesTheIdleBoundAndHowFarItGot(t *testing.T) {
 // overall cap must then be what stops an endpoint that never finishes.
 func TestComplete_keepalivesHoldOffTheIdleBound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Six keepalives at 20ms span 120ms, well past the 60ms idle bound.
-		for i := 0; i < 6; i++ {
+		// Ten keepalives at 20ms span 200ms, well past the 150ms idle bound,
+		// while each individual gap stays far enough below it that a scheduling
+		// hiccup on a loaded CI machine cannot fail this by itself.
+		for i := 0; i < 10; i++ {
 			flush(t, w, ": ping\n\n")
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -248,7 +250,7 @@ func TestComplete_keepalivesHoldOffTheIdleBound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), StreamIdleTimeout: 60 * time.Millisecond}), srv.Client())
+	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), StreamIdleTimeout: 150 * time.Millisecond}), srv.Client())
 	got, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
 		t.Fatalf("keepalives did not re-arm the idle bound: %v", err)
@@ -378,8 +380,10 @@ func TestComplete_failureLineCarriesItsOwnCounts(t *testing.T) {
 	if failed == nil {
 		t.Fatal("no failure record")
 	}
-	if chunks, _ := failed["chunks"].(float64); chunks < 1 {
-		t.Errorf("failure line has no chunk count: %v", failed)
+	// Exactly one: the handler sent one data event, and its blank separator is
+	// not a second chunk.
+	if chunks, _ := failed["chunks"].(float64); chunks != 1 {
+		t.Errorf("chunks = %v, want 1", failed["chunks"])
 	}
 	if chars, _ := failed["chars"].(float64); chars != 3 {
 		t.Errorf("chars = %v, want 3", failed["chars"])
@@ -461,6 +465,53 @@ func TestStallGuard_firesOnceAndRemembersTheArmedReason(t *testing.T) {
 		t.Fatalf("reason after late arm = %q, want %q", got, stallIdle)
 	}
 	g.stop()
+	if got := fired.Load(); got != 1 {
+		t.Fatalf("cancel called %d times, want 1", got)
+	}
+}
+
+// The stale-firing window: an event lands after the timer has expired and its
+// callback is already scheduled, but before that callback takes the mutex.
+// time.Reset is powerless against an in-flight AfterFunc callback, so without
+// the deadline check in fire() this cancels a stream that had just revived —
+// and labels it with the reason arm() just wrote rather than the bound that
+// elapsed. Driving fire() directly is what makes the window reachable at all;
+// by wall-clock it is microseconds wide.
+func TestStallGuard_ignoresAFiringOvertakenByAnEvent(t *testing.T) {
+	var fired atomic.Int64
+	g := newStallGuard(func() { fired.Add(1) }, time.Hour, stallHeaders)
+	defer g.stop()
+
+	// Expire the header deadline, then let an event re-arm for idleness — the
+	// order a real stream produces when its first byte arrives right on the
+	// bound.
+	g.arm(-time.Second, stallHeaders)
+	g.arm(time.Hour, stallIdle)
+
+	// The firing the expired deadline had already scheduled now runs.
+	g.fire()
+
+	if got := g.firedReason(); got != "" {
+		t.Fatalf("stale firing cancelled a revived stream, blaming %q", got)
+	}
+	if got := fired.Load(); got != 0 {
+		t.Fatalf("cancel called %d times, want 0", got)
+	}
+}
+
+// The mirror case: nothing revived it, so the firing is real and must report
+// the bound whose deadline actually elapsed.
+func TestStallGuard_firesWhenTheDeadlineTrulyPassed(t *testing.T) {
+	var fired atomic.Int64
+	g := newStallGuard(func() { fired.Add(1) }, time.Hour, stallHeaders)
+	defer g.stop()
+
+	g.arm(-time.Second, stallIdle)
+	g.fire()
+
+	if got := g.firedReason(); got != stallIdle {
+		t.Fatalf("reason = %q, want %q", got, stallIdle)
+	}
 	if got := fired.Load(); got != 1 {
 		t.Fatalf("cancel called %d times, want 1", got)
 	}

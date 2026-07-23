@@ -100,14 +100,20 @@ func readStream(body io.Reader, guard *stallGuard, counters *streamCounters, idl
 	sc.Buffer(make([]byte, 0, 64<<10), maxStreamLine)
 
 	for sc.Scan() {
+		// Every line re-arms the guard, blank ones included: any byte proves the
+		// socket is alive, which is the only question the idle bound asks.
 		guard.arm(idle, stallIdle)
 		line := strings.TrimRight(sc.Text(), "\r")
-		res.events = counters.events.Add(1)
 		if line == "" || !strings.HasPrefix(line, dataPrefix) {
 			// Blank separators and SSE comment lines (": ping") are liveness and
-			// nothing more. They already re-armed the guard above.
+			// nothing more.
 			continue
 		}
+		// Counted here rather than per line: an event is "data:…" followed by a
+		// blank separator, so counting lines reported double, and a log that
+		// says 824 for a 412-chunk stream is a log nobody can reconcile with the
+		// endpoint.
+		res.events = counters.events.Add(1)
 		payload := strings.TrimSpace(strings.TrimPrefix(line, dataPrefix))
 		if payload == doneMarker {
 			res.done = true
@@ -174,16 +180,17 @@ const (
 type stallGuard struct {
 	cancel context.CancelFunc
 
-	mu      sync.Mutex
-	timer   *time.Timer
-	pending string // reason the currently-armed deadline would report
-	reason  string // reason it actually fired with, "" while healthy
-	fired   bool
+	mu       sync.Mutex
+	timer    *time.Timer
+	deadline time.Time // when the current arming expires
+	pending  string    // reason the currently-armed deadline would report
+	reason   string    // reason it actually fired with, "" while healthy
+	fired    bool
 }
 
 // newStallGuard arms the guard for its first deadline. Callers must stop() it.
 func newStallGuard(cancel context.CancelFunc, d time.Duration, reason string) *stallGuard {
-	g := &stallGuard{cancel: cancel, pending: reason}
+	g := &stallGuard{cancel: cancel, pending: reason, deadline: time.Now().Add(d)}
 	g.timer = time.AfterFunc(d, g.fire)
 	return g
 }
@@ -191,6 +198,9 @@ func newStallGuard(cancel context.CancelFunc, d time.Duration, reason string) *s
 // arm resets the deadline and the reason it would report. It is a no-op once
 // the guard has fired: the request is already being cancelled, and re-arming
 // would leave a cancelled call looking healthy.
+//
+// The deadline is recorded as a timestamp, not just handed to Reset, because
+// Reset alone is not enough — see fire.
 func (g *stallGuard) arm(d time.Duration, reason string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -198,12 +208,30 @@ func (g *stallGuard) arm(d time.Duration, reason string) {
 		return
 	}
 	g.pending = reason
+	g.deadline = time.Now().Add(d)
 	g.timer.Reset(d)
 }
 
+// fire cancels the request, unless the deadline moved while this firing was
+// already on its way.
+//
+// Reset cannot recall a callback the runtime has ALREADY scheduled. So an event
+// arriving in the window between expiry and this function taking the mutex
+// leaves arm() believing it disarmed the guard — it saw fired == false — while
+// this firing proceeds anyway. Two things went wrong without the check below: a
+// stream that had just revived was cancelled regardless, and the failure was
+// labelled with the reason arm() had just written rather than the bound that
+// actually elapsed. The second is the worse one, since naming the right bound
+// is the entire purpose of this type. Comparing against the recorded deadline
+// makes a stale firing detectable and re-arms for the remaining time instead.
 func (g *stallGuard) fire() {
 	g.mu.Lock()
 	if g.fired {
+		g.mu.Unlock()
+		return
+	}
+	if remaining := time.Until(g.deadline); remaining > 0 {
+		g.timer.Reset(remaining)
 		g.mu.Unlock()
 		return
 	}
