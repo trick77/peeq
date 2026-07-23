@@ -44,6 +44,7 @@ describe("parsePath", () => {
     expect(parsePath("/add").view).toBe("add");
     expect(parsePath("/decide").view).toBe("decide");
     expect(parsePath("/queue").view).toBe("queue");
+    expect(parsePath("/activity").view).toBe("activity");
     expect(parsePath("/settings").view).toBe("settings");
   });
 
@@ -107,6 +108,7 @@ describe("toPath", () => {
     [{ view: "add", videoId: null, channelId: null }, "/add"],
     [{ view: "decide", videoId: null, channelId: null }, "/decide"],
     [{ view: "queue", videoId: null, channelId: null }, "/queue"],
+    [{ view: "activity", videoId: null, channelId: null }, "/activity"],
     [{ view: "settings", videoId: null, channelId: null }, "/settings"],
   ];
 
@@ -138,6 +140,7 @@ describe("round-trip", () => {
     "/add",
     "/decide",
     "/queue",
+    "/activity",
     "/settings",
   ];
 

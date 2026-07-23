@@ -20,6 +20,7 @@ export type ViewId =
   | "queue"
   | "channels"
   | "channel"
+  | "activity"
   | "settings";
 
 type NavItem = {
@@ -51,7 +52,10 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
   },
   {
     label: "Setup",
-    items: [{ id: "settings", label: "Settings", icon: "settings" }],
+    items: [
+      { id: "activity", label: "Activity", icon: "listTree" },
+      { id: "settings", label: "Settings", icon: "settings" },
+    ],
   },
 ];
 

@@ -92,6 +92,31 @@ export type KeyPoint = {
   text: string;
 };
 
+// ActivityEvent mirrors httpapi.activity.Event — one recorded piece of
+// automatic background work (the past half of the Activity agenda). subject is
+// frozen at write time; outcome is ok|warn|fail.
+export type ActivityEvent = {
+  id: number;
+  at: string;
+  kind: string;
+  outcome: string;
+  subject_id?: string;
+  subject?: string;
+  summary?: string;
+  detail?: string;
+};
+
+// UpcomingItem mirrors httpapi.activity.UpcomingItem — one projected future
+// task. `at` is an exact instant for scheduled work and absent for an ordered
+// (imminent) job; `approx` marks the ordered/estimated ones.
+export type UpcomingItem = {
+  at?: string;
+  kind: string;
+  approx: boolean;
+  subject?: string;
+  summary?: string;
+};
+
 // Job mirrors httpapi.downloadItem — one download-queue entry, optionally
 // joined with its video's title/channel for display.
 export type Job = {

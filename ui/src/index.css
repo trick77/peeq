@@ -538,6 +538,135 @@ button.srow:not(:disabled):hover {
   font-size: 13px;
 }
 
+/* Activity — a single agenda through a "now" marker. Future rows sit above the
+   marker (muted, "planned"), the running items at it, the log below. Each row is
+   a left dot (colored by outcome), a body, and a right-aligned relative time. */
+.agenda {
+  position: relative;
+  max-width: 760px;
+}
+.agenda-empty {
+  color: var(--color-faint);
+  font-size: 13px;
+}
+.ag {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 9px 2px 9px 4px;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+.ag .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  margin-top: 5px;
+  background: var(--color-faint);
+}
+.ag .dot.ok {
+  background: var(--color-online);
+}
+.ag .dot.warn {
+  background: var(--color-kept);
+}
+.ag .dot.fail {
+  background: var(--color-danger);
+}
+.ag .dot.running {
+  background: var(--color-accent);
+  box-shadow: 0 0 7px var(--glow-accent);
+}
+.ag .dot.planned {
+  background: transparent;
+  border: 1.5px solid var(--color-faint);
+}
+.ag-body {
+  min-width: 0;
+  flex: 1;
+}
+.ag-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ag-kind {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted);
+  flex: none;
+}
+.ag-subject {
+  font-size: 13.5px;
+  color: var(--color-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ag-sub {
+  font-size: 12px;
+  color: var(--color-muted);
+  margin-top: 2px;
+}
+.ag.planned .ag-subject {
+  color: var(--color-ink-dim);
+}
+.ag.planned .ag-sub {
+  font-style: italic;
+  color: var(--color-faint);
+}
+.ag-when {
+  font-family:
+    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
+    monospace;
+  font-size: 11px;
+  color: var(--color-faint);
+  flex: none;
+  margin-top: 3px;
+  white-space: nowrap;
+}
+/* The now marker: a full-width rule with a centered accent pill. */
+.nowline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+}
+.nowline::before,
+.nowline::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: linear-gradient(90deg, transparent, var(--color-accent-dim));
+}
+.nowline::after {
+  background: linear-gradient(90deg, var(--color-accent-dim), transparent);
+}
+.nowline .mark {
+  font-family:
+    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
+    monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-accent);
+  padding: 2px 9px;
+  border: 1px solid var(--color-accent-dim);
+  border-radius: 999px;
+  flex: none;
+}
+/* Both ends of the agenda render a labelled edge (top: "N more scheduled";
+   bottom: "load older" / "oldest kept"). */
+.edge {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0;
+  font-size: 11.5px;
+  color: var(--color-faint);
+}
+
 .cookie-status {
   display: flex;
   align-items: center;

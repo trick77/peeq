@@ -13,7 +13,7 @@ import {
   resumeYoutube,
 } from "./api";
 import type { DownloadsStatus } from "./api/downloads";
-import type { Job, SummaryJob, User } from "./api/types";
+import type { ActivityEvent, Job, SummaryJob, User } from "./api/types";
 import { Library } from "./views/Library";
 import { Add } from "./views/Add";
 import { Player } from "./views/Player";
@@ -22,6 +22,7 @@ import { Channels } from "./views/Channels";
 import { Channel } from "./views/Channel";
 import { Decide } from "./views/Decide";
 import { Queue } from "./views/Queue";
+import { Activity } from "./views/Activity";
 import { Search } from "./views/Search";
 import { useRoute } from "./route";
 import { Button } from "./ui";
@@ -36,6 +37,7 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
   queue: { title: "Queue" },
   channels: { title: "Channels" },
   channel: { title: "Channel" },
+  activity: { title: "Activity" },
   settings: { title: "Settings" },
 };
 
@@ -72,6 +74,10 @@ export function App() {
   const [summaryPhaseByVideoId, setSummaryPhaseByVideoId] = useState<
     Record<string, string>
   >({});
+  // A bounded buffer of the newest background-work events, appended from the
+  // "activity" SSE event. The Activity page loads its own history and merges
+  // these in by id, so the single session SSE subscription stays in App.
+  const [liveActivity, setLiveActivity] = useState<ActivityEvent[]>([]);
   const [cookieStatus, setCookieStatus] = useState<string | undefined>(
     undefined,
   );
@@ -285,8 +291,15 @@ export function App() {
     if (!authChecked || !user) return;
     const controller = new AbortController();
     streamDownloads((evt) => {
-      // The one SSE stream carries both download "progress" and summary phase
-      // "summary" events (see the shared hub in cmd/peeq/main.go).
+      // The one SSE stream carries download "progress", summary "summary", and
+      // background-work "activity" events (see the shared hub in main.go).
+      if (evt.event === "activity") {
+        const e = evt.data as ActivityEvent;
+        // Keep a bounded buffer of the newest events; the Activity page merges
+        // them into its log by id, so a live row appears without a reload.
+        setLiveActivity((prev) => [...prev, e].slice(-50));
+        return;
+      }
       if (evt.event === "summary") {
         const s = evt.data as {
           video_id?: string;
@@ -436,6 +449,7 @@ export function App() {
             summaries={summaries}
             summaryPhaseByVideoId={summaryPhaseByVideoId}
             onCancelDownload={onCancelDownload}
+            liveActivity={liveActivity}
           />
         </section>
       </main>
@@ -526,6 +540,7 @@ function ViewSwitch({
   summaries,
   summaryPhaseByVideoId,
   onCancelDownload,
+  liveActivity,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
@@ -548,6 +563,7 @@ function ViewSwitch({
   summaries: SummaryJob[];
   summaryPhaseByVideoId: Record<string, string>;
   onCancelDownload: (jobId: number) => void;
+  liveActivity: ActivityEvent[];
 }) {
   switch (view) {
     case "library":
@@ -599,6 +615,16 @@ function ViewSwitch({
           summaries={summaries}
           summaryPhaseByVideoId={summaryPhaseByVideoId}
           onCancel={onCancelDownload}
+        />
+      );
+    case "activity":
+      return (
+        <Activity
+          live={liveActivity}
+          jobs={jobs}
+          progressByJobId={progressByJobId}
+          summaries={summaries}
+          summaryPhaseByVideoId={summaryPhaseByVideoId}
         />
       );
     case "channels":
