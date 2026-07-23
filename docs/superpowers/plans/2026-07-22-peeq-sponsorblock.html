@@ -1,0 +1,359 @@
+<title>peeq — SponsorBlock (implementation plan)</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#1f1f1e; --panel:#1b1b1a; --active:#2c2c2a;
+    --border:#323230; --border-soft:#2a2a28;
+    --ink:#faf9f5; --ink-dim:#e4e1d8; --muted:#9c9a92; --faint:#6f6d66;
+    --accent:#c6613f; --accent-strong:#d97757;
+    --online:#5aa06a; --danger:#c14638; --kept:#d6a15a;
+    --radius:10px;
+    --sans:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:"Anthropic Serif",Georgia,"Times New Roman",Times,serif;
+    --mono:ui-monospace,"SF Mono","SFMono-Regular","JetBrains Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    background:
+      radial-gradient(60rem 40rem at 78% -8%,rgba(198,97,63,.06),transparent 60%),
+      radial-gradient(46rem 34rem at 6% 4%,rgba(90,160,106,.035),transparent 62%),
+      var(--bg);
+    color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:62rem;margin:0 auto;padding:3.5rem 1.5rem 6rem;display:flex;flex-direction:column;gap:2.5rem}
+  .eyebrow{font-size:.6875rem;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:600;margin:0 0 .75rem}
+  h1{font-family:var(--serif);font-size:clamp(1.7rem,4.2vw,2.4rem);line-height:1.15;font-weight:500;margin:0;letter-spacing:-.01em;text-wrap:balance}
+  .standfirst{color:var(--ink-dim);font-size:1.0625rem;margin:1rem 0 0;max-width:46rem}
+  .meta{display:flex;flex-wrap:wrap;gap:.5rem .75rem;margin-top:1.5rem;align-items:center}
+  .chip{display:inline-flex;align-items:center;gap:.4rem;font-size:.8125rem;font-family:var(--mono);color:var(--muted);background:var(--panel);border:1px solid var(--border);border-radius:999px;padding:.25rem .7rem}
+  .chip b{color:var(--ink-dim);font-weight:500}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--kept);flex:none}
+  section{display:flex;flex-direction:column;gap:1rem}
+  h2{font-family:var(--serif);font-size:1.3rem;font-weight:500;margin:0;padding-bottom:.6rem;border-bottom:1px solid var(--border-soft);text-wrap:balance}
+  h3{font-size:.9375rem;font-weight:600;margin:.4rem 0 0;color:var(--ink-dim)}
+  p{margin:0;max-width:48rem;color:var(--ink-dim)}
+  a{color:var(--accent-strong);text-underline-offset:2px}
+  a:focus-visible{outline:2px solid var(--accent-strong);outline-offset:3px;border-radius:3px}
+  strong{color:var(--ink);font-weight:600}
+  code{font-family:var(--mono);font-size:.85em;background:var(--active);border:1px solid var(--border);border-radius:5px;padding:.1em .38em;color:var(--ink-dim)}
+  pre{background:#191918;border:1px solid var(--border);border-radius:var(--radius);overflow-x:auto;font-family:var(--mono);font-size:.8125rem;line-height:1.65;padding:1rem 1.15rem;color:var(--ink-dim);margin:0;tab-size:2}
+  pre .c{color:var(--faint)} pre .g{color:var(--online)} pre .r{color:var(--danger)} pre .k{color:var(--accent-strong)}
+  ul,ol{margin:0;padding-left:1.15rem;color:var(--ink-dim);max-width:48rem}
+  li{margin-bottom:.35rem} li::marker{color:var(--faint)}
+  .scroller{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)}
+  table{border-collapse:collapse;width:100%;font-size:.9375rem;min-width:34rem}
+  th,td{text-align:left;padding:.65rem .9rem;border-bottom:1px solid var(--border-soft);vertical-align:top}
+  th{background:var(--panel);font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:600;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+  td.mono{font-family:var(--mono);font-size:.8125rem;white-space:nowrap}
+
+  .task{border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);overflow:hidden}
+  .task>header{display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap;padding:.9rem 1.15rem;background:rgba(198,97,63,.07);border-bottom:1px solid var(--border)}
+  .task>header .idx{font-family:var(--mono);font-size:.75rem;color:var(--accent-strong);border:1px solid var(--border);border-radius:5px;padding:.1rem .45rem;flex:none}
+  .task>header h3{margin:0;font-size:1rem;color:var(--ink)}
+  .task>header .who{margin-left:auto;font-family:var(--mono);font-size:.75rem;color:var(--faint)}
+  .task .body{padding:1.15rem;display:flex;flex-direction:column;gap:.9rem}
+  .files{display:flex;flex-direction:column;gap:.3rem;font-family:var(--mono);font-size:.8125rem}
+  .files .k{color:var(--faint);display:inline-block;min-width:4.5rem}
+  .files .create{color:var(--online)} .files .modify{color:var(--kept)}
+  .note{border:1px solid var(--border);border-left:3px solid var(--accent);background:var(--panel);border-radius:var(--radius);padding:.9rem 1.15rem;display:flex;flex-direction:column;gap:.5rem}
+  .note.risk{border-left-color:var(--danger)}
+  .note.key{border-left-color:var(--kept)}
+  .note p{max-width:none} .note h3{margin-top:0}
+
+  /* Segment legend — the actual band styling proposed for the scrubber. */
+  .demo{background:#141413;border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem 1.15rem 1rem}
+  .bar{position:relative;height:8px;border-radius:6px;background:var(--active)}
+  .bar .played{position:absolute;left:0;top:0;bottom:0;width:34%;background:var(--accent);border-radius:6px}
+  .bar .seg{position:absolute;top:0;bottom:0;border-radius:2px}
+  .seg.skip{background:repeating-linear-gradient(45deg,rgba(90,160,106,.85) 0 5px,rgba(90,160,106,.45) 5px 10px)}
+  .seg.mark{background:repeating-linear-gradient(45deg,rgba(156,154,146,.5) 0 5px,rgba(156,154,146,.22) 5px 10px)}
+  .legend{display:flex;flex-wrap:wrap;gap:1.1rem;margin-top:.85rem;font-size:.8125rem;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:.5rem}
+  .legend i{width:22px;height:7px;border-radius:2px;flex:none}
+  footer{border-top:1px solid var(--border-soft);padding-top:1.25rem;color:var(--faint);font-size:.8125rem}
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">peeq · implementation plan · 2026-07-22</p>
+    <h1>SponsorBlock — feeding a feature that was already built</h1>
+    <p class="standfirst">
+      SponsorBlock was never removed. The striped bands, the skip toast, the legend, the storage
+      column and the API field are all still in the tree and shipping. One parsing assumption in
+      the yt-dlp wrapper is wrong, so <strong>every video has always stored an empty segment
+      list</strong> — the overlay has been rendering nothing. This plan fixes the parse, adds a
+      direct SponsorBlock client so the existing library gets filled in too, and stops the player
+      from skipping things you actually want to watch.
+    </p>
+    <div class="meta">
+      <span class="chip"><span class="dot"></span>status <b>ready to build</b></span>
+      <span class="chip">root cause <b>confirmed in yt-dlp source</b></span>
+      <span class="chip">migration <b>0006</b></span>
+      <span class="chip">new package <b>internal/sponsorblock</b></span>
+      <span class="chip">UI <b>unchanged layout</b></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Why nothing ever showed up</h2>
+    <p>
+      Downloads already pass <code>--sponsorblock-mark all</code>
+      (<code>backend/internal/ytdlp/download.go:203</code>). The wrapper then looks for the segments
+      in the wrong place: <code>sponsorblockSegmentsFromInfo</code> (<code>download.go:132</code>)
+      scans the info.json's <code>chapters[]</code> for titles starting with
+      <code>"[SponsorBlock]: "</code>. Real yt-dlp never writes that into the info.json.
+    </p>
+    <ul>
+      <li><code>SponsorBlockPP</code> runs at the <code>after_filter</code> stage and puts its result
+        under a <strong>separate key</strong>, <code>sponsorblock_chapters</code>, with fields
+        <code>start_time</code>, <code>end_time</code>, <code>category</code>, <code>title</code>,
+        <code>type</code>.</li>
+      <li>The <code>[SponsorBlock]: …</code> titles are produced later by <code>ModifyChapters</code>,
+        which runs in <code>post_process</code> (<code>YoutubeDL.py:3667</code>) — <em>after</em> the
+        info.json has already been written (<code>YoutubeDL.py:3404</code>). Those titles only ever
+        reach the media file's embedded chapters, never the sidecar JSON.</li>
+      <li>Confirmed against a real download in this repo:
+        <code>data/media/…/jNQXAC9IVRw.info.json</code> carries both <code>chapters</code> (real
+        titles, untouched) and a distinct <code>sponsorblock_chapters</code> key.</li>
+    </ul>
+    <div class="note risk">
+      <h3>The test fake is the reason this shipped green</h3>
+      <p>
+        <code>backend/internal/ytdlp/testdata/fake-ytdlp.sh:59</code> fabricates
+        <code>{"title": "[SponsorBlock]: Sponsor"}</code> inside <code>chapters</code> — a shape real
+        yt-dlp does not produce. Every test down the chain asserts against that invention, so the
+        whole pipeline is "covered" and none of it works. <strong>Correcting the fake is part of the
+        fix, not cleanup.</strong> Same failure mode as the earlier availability bug: the fakes were
+        too kind.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>What already exists and stays untouched</h2>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Piece</th><th>Where</th><th>State</th></tr></thead>
+        <tbody>
+          <tr><td>Storage column</td><td class="mono">0001_init.sql:45 · sponsorblock_segments</td><td>keep</td></tr>
+          <tr><td>Write on download</td><td class="mono">videos/store.go SetDownloaded</td><td>keep</td></tr>
+          <tr><td>API field</td><td class="mono">httpapi/videos_handlers.go:41,54,64</td><td>keep</td></tr>
+          <tr><td>Bands + legend + toast</td><td class="mono">ui/src/components/Scrubber.tsx · index.css:1330–1395</td><td>restyle only</td></tr>
+          <tr><td>Skip logic</td><td class="mono">ui/src/views/Player.tsx:464</td><td>needs a category filter</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Playback: skip ads, mark the rest</h2>
+    <p>
+      Today's loop skips <em>every</em> segment. The moment real data arrives that means intros,
+      outros, recaps, filler and non-music sections get cut silently — bad in general, worse for a
+      library that holds music. Auto-skip is limited to <strong>sponsor, self-promo and interaction
+      reminders</strong>; every other category is drawn on the bar and plays normally, so a
+      deliberate jump stays one click away.
+    </p>
+    <div class="demo">
+      <div class="bar">
+        <div class="seg mark" style="left:2%;width:7%"></div>
+        <div class="seg skip" style="left:16%;width:11%"></div>
+        <div class="seg mark" style="left:52%;width:9%"></div>
+        <div class="seg skip" style="left:74%;width:8%"></div>
+        <div class="played"></div>
+      </div>
+      <div class="legend">
+        <span><i class="seg skip" style="position:static"></i> skipped — sponsor · self-promo · interaction</span>
+        <span><i class="seg mark" style="position:static"></i> marked — intro · outro · recap · filler · music</span>
+      </div>
+    </div>
+    <p>
+      The stored shape already carries <code>category</code>, so this is a frontend-only change. The
+      legend copy <code>"SponsorBlock — auto-skipped"</code> becomes untrue once some bands are
+      mark-only and is reworded alongside it. No settings screen for v1: a constant skip-set in the
+      player is enough, and can grow into a setting later if it ever chafes.
+    </p>
+  </section>
+
+  <section>
+    <h2>Filling in the existing library</h2>
+    <p>
+      Fixing the parse only helps videos downloaded from now on. Everything already in the library —
+      including everything imported from TubeArchivist — would stay empty forever unless it were
+      re-downloaded. So peeq gets its own client for the SponsorBlock API, the way TubeArchivist does
+      it (<code>backend/video/src/index.py</code>, class <code>SponsorBlock</code>), using the
+      privacy hash-prefix endpoint yt-dlp itself uses: only the first four characters of the video
+      id's SHA-256 go over the wire, so the server never learns which video was asked for.
+    </p>
+    <div class="note key">
+      <h3>sponsor.ajay.app is not YouTube</h3>
+      <p>
+        It must <strong>not</strong> pass through the cookie gate, the shared yt-dlp pacer, or the
+        global YouTube kill-switch. Those exist to protect a Google account; a public segment API has
+        nothing to do with them and gating on them would park the backfill behind an expired cookie
+        for no reason.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Tasks</h2>
+
+    <div class="task">
+      <header><span class="idx">1</span><h3>Read the segments yt-dlp actually returns</h3><span class="who">backend/ytdlp</span></header>
+      <div class="body">
+        <div class="files">
+          <div><span class="k modify">modify</span> backend/internal/ytdlp/download.go</div>
+          <div><span class="k modify">modify</span> backend/internal/ytdlp/testdata/fake-ytdlp.sh</div>
+          <div><span class="k modify">modify</span> backend/internal/ytdlp/download_test.go · download_subs_test.go</div>
+        </div>
+        <ul>
+          <li>Add <code>SponsorblockChapters</code> to <code>downloadInfoJSON</code> and rewrite
+            <code>sponsorblockSegmentsFromInfo</code> to read it. Stored shape is unchanged
+            (<code>{category,start_time,end_time}</code>), so nothing downstream moves.</li>
+          <li>Keep the <code>[SponsorBlock]:</code> skip in the TOC builder
+            (<code>download.go:305</code>) as defence, with a comment saying why it never fires.</li>
+          <li>Fake yt-dlp emits a populated <code>sponsorblock_chapters</code> in the real shape and
+            <strong>drops</strong> the fabricated prefixed chapter.</li>
+          <li>New test: a <code>[SponsorBlock]:</code>-titled entry in <code>chapters</code> alone
+            must yield <em>no</em> segments — the exact bug, pinned.</li>
+        </ul>
+        <div class="note key">
+          <h3>One category list, used by both paths</h3>
+          <p>
+            <code>--sponsorblock-mark all</code> means yt-dlp's full eleven categories, including
+            <code>hook</code> and <code>chapter</code>; the API client below would ask for nine. Left
+            alone, the same video shows different bands depending on whether it was downloaded or
+            backfilled. The canonical set is declared <strong>once</strong> in
+            <code>internal/sponsorblock</code> and applied twice — as the API's
+            <code>categories</code> parameter and as a filter inside
+            <code>sponsorblockSegmentsFromInfo</code> — with a test asserting both paths agree on the
+            same input.
+          </p>
+          <p>
+            <strong>In (8):</strong> sponsor · selfpromo · interaction · intro · outro · preview ·
+            filler · music_offtopic.
+            <strong>Out:</strong> <code>chapter</code> (crowdsourced navigation chapters — drawing
+            one as a dim "boring bit" band is simply wrong), <code>hook</code>, and
+            <code>poi_highlight</code> (a <em>point</em>, padded to one second — a "jump to the good
+            part" marker, the opposite of a skip; left out of v1 rather than rendered as a
+            meaningless one-second sliver).
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">2</span><h3>SponsorBlock API client</h3><span class="who">new package</span></header>
+      <div class="body">
+        <div class="files">
+          <div><span class="k create">create</span> backend/internal/sponsorblock/client.go · client_test.go</div>
+        </div>
+<pre>GET https://sponsor.ajay.app/api/skipSegments/&lt;sha256(videoID)[:4]&gt;
+    ?service=YouTube
+    &amp;categories=["sponsor","selfpromo","interaction","intro","outro",
+                 "preview","filler","music_offtopic","poi_highlight"]
+    &amp;actionTypes=["skip","poi"]</pre>
+        <ul>
+          <li>Response is a list of <code>{videoID, segments:[…]}</code>; pick the entry whose
+            <code>videoID</code> matches ours and ignore the decoys the hash prefix pulls in.</li>
+          <li>Port yt-dlp's duration filter: drop <code>[0,0]</code> whole-video segments, and drop
+            segments whose reported <code>videoDuration</code> disagrees with ours — those belong to
+            a different cut of the video and would skip the wrong minute.</li>
+          <li>Own <code>http.Client</code>, 10s timeout, <code>peeq/&lt;version&gt;</code>
+            User-Agent. 404 means "no segments", not an error. Tested against
+            <code>httptest.Server</code> — no network in tests.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">3</span><h3>Backfill + refresh worker</h3><span class="who">backend</span></header>
+      <div class="body">
+        <div class="files">
+          <div><span class="k create">create</span> backend/internal/store/migrations/0006_sponsorblock_refresh.sql</div>
+          <div><span class="k create">create</span> backend/internal/sponsorblock/worker.go · worker_test.go</div>
+          <div><span class="k modify">modify</span> backend/internal/videos/store.go · backend/cmd/peeq/main.go</div>
+        </div>
+        <ul>
+          <li>Migration adds <code>sponsorblock_refreshed_at TEXT NOT NULL DEFAULT ''</code> to
+            <code>videos</code>. Its own numbered file, never squashed into 0001, no data wipe.</li>
+          <li>Store: <code>ClaimSponsorblockStale(limit)</code> — downloaded, non-tombstoned videos,
+            never-fetched first, then anything older than 30 days — and
+            <code>SetSponsorblockSegments</code>, which stamps the timestamp <strong>even for an
+            empty result</strong> so "this video genuinely has no segments" isn't re-asked every
+            pass.</li>
+          <li>Worker mirrors <code>backend/internal/channelmeta/worker.go</code>: injectable clock,
+            poll interval and logger, exits on <code>ctx.Done()</code>. Claims a small batch
+            (≈20, spaced ~1s) per pass rather than one, so a fresh TA import drains in hours.</li>
+          <li>Wire next to <code>metaWorker</code> in <code>main.go</code>; bump
+            <code>workerWG.Add(6)</code> → <code>7</code> and update the "all six background
+            goroutines" comment.</li>
+          <li>Fresh downloads stamp the timestamp too, so the worker never re-fetches what the
+            download already got for free.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="task">
+      <header><span class="idx">4</span><h3>Player: skip ads, mark the rest</h3><span class="who">ui</span></header>
+      <div class="body">
+        <div class="files">
+          <div><span class="k modify">modify</span> ui/src/views/Player.tsx · components/Scrubber.tsx · index.css · api/types.ts</div>
+        </div>
+        <ul>
+          <li>Skip-set constant (<code>sponsor</code>, <code>selfpromo</code>,
+            <code>interaction</code>) filters the auto-skip in <code>handleTimeUpdate</code>; all
+            segments still render. It is exported from <strong>one</strong> module — both the player
+            (what to skip) and the scrubber (which band style to draw) read it, and two copies would
+            drift apart.</li>
+          <li>Two band styles per the legend above; <code>title</code> keeps the category name. Toast
+            copy uses human words ("Skipped ad"), not the API's category slug.</li>
+          <li><code>api/types.ts:53</code>'s comment ("once the backend adds SponsorBlock support")
+            is now false — correct it.</li>
+          <li>Test: an <code>intro</code> segment is not skipped while a <code>sponsor</code> one
+            is.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <ol>
+      <li><strong>Real yt-dlp on a real sponsored video</strong> — the step whose absence caused this:
+        <code>yt-dlp --skip-download --write-info-json --sponsorblock-mark all &lt;url&gt;</code>,
+        confirm <code>sponsorblock_chapters</code> is populated, then run the parser over that exact
+        file.</li>
+      <li><code>go test ./...</code> in <code>backend</code>, <code>npm test</code> in <code>ui</code>,
+        and <code>hack/patch-coverage.sh</code> (the gate counts comment lines — cover the error
+        paths).</li>
+      <li>Dev stack via <code>hack/dev.sh</code>: download a sponsored video → open the player →
+        bands appear, the ad jumps, the intro does not, toast fires once.</li>
+      <li>Backfill: watch the worker log against the existing dev rows and confirm segments appear on
+        an already-downloaded video with no re-download.</li>
+      <li>Look at it in a browser. Green tests say nothing about whether the bands render.</li>
+    </ol>
+    <p>
+      Work in a git worktree; branch and PR against <code>master</code>. This document belongs in
+      <code>docs/superpowers/plans/2026-07-22-peeq-sponsorblock.html</code> once the implementation
+      branch exists.
+    </p>
+  </section>
+
+  <section>
+    <h2>After the PR is open</h2>
+    <ol>
+      <li>Review the branch diff with a subagent at <strong>medium</strong> effort.</li>
+      <li>Fix the findings that hold up and push them to the same PR; say plainly which findings were
+        dismissed and why, rather than quietly dropping them.</li>
+      <li>Stop there. <strong>No automerge</strong> — merging waits for an explicit go-ahead on this
+        specific PR.</li>
+    </ol>
+  </section>
+
+  <footer>peeq · SponsorBlock implementation plan · drafted 2026-07-22</footer>
+</div>

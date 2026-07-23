@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/trick77/peeq/internal/sponsorblock"
 )
 
 // DownloadReq describes a single video download.
@@ -106,13 +108,17 @@ func parseProgressLine(line string) (Progress, bool) {
 }
 
 // downloadInfoJSON is the subset of yt-dlp's *.info.json peeq needs after
-// a download: the channel id (to place the final directory) and chapters
-// (to extract SponsorBlock segments inserted by --sponsorblock-mark).
+// a download: the channel id (to place the final directory), the video's own
+// chapters, and the SponsorBlock segments fetched by --sponsorblock-mark.
 type downloadInfoJSON struct {
 	ID        string `json:"id"`
 	ChannelID string `json:"channel_id"`
 	// Language is yt-dlp's reported audio/video language for the download.
 	Language string `json:"language"`
+	// Duration is the video length in seconds, used only to snap a SponsorBlock
+	// segment that ends within a second of the end of the video. Absent for
+	// some live streams, in which case that snap is skipped.
+	Duration float64 `json:"duration"`
 	// UploadDate is yt-dlp's raw YYYYMMDD release date. Read here so that
 	// channel-driven downloads carry a release date too: they never go through
 	// Runner.Metadata (no per-video -J call, to respect the throttle budget),
@@ -123,22 +129,54 @@ type downloadInfoJSON struct {
 		EndTime   float64 `json:"end_time"`
 		Title     string  `json:"title"`
 	} `json:"chapters"`
+	// SponsorblockChapters is where --sponsorblock-mark's result actually
+	// lands: its own top-level key, NOT merged into Chapters. See
+	// sponsorblockSegmentsFromInfo.
+	SponsorblockChapters []struct {
+		StartTime float64 `json:"start_time"`
+		EndTime   float64 `json:"end_time"`
+		Category  string  `json:"category"`
+	} `json:"sponsorblock_chapters"`
 }
 
-// sponsorblockChapterPrefix is how yt-dlp titles chapters it inserts via
-// --sponsorblock-mark: "[SponsorBlock]: <category>".
+// sponsorblockChapterPrefix is how yt-dlp titles chapters it MERGES into the
+// media file's embedded chapter list for --sponsorblock-mark:
+// "[SponsorBlock]: <category>".
+//
+// It never appears in the *.info.json. yt-dlp's SponsorBlockPP runs at the
+// after_filter stage and writes its result to the separate
+// sponsorblock_chapters key; the prefixed titles are produced later by the
+// ModifyChapters postprocessor, which runs after the info.json has already
+// been written. Reading the prefix out of Chapters is exactly the bug that
+// made peeq store an empty segment list for every video ever downloaded.
 const sponsorblockChapterPrefix = "[SponsorBlock]: "
 
+// sponsorblockSegmentsFromInfo extracts the segments --sponsorblock-mark
+// fetched for this download. It runs them through the SAME
+// sponsorblock.Normalize the backfill client uses — category filtering,
+// boundary snapping and ordering alike — so a video shows the same bands, at
+// the same boundaries, whether it was downloaded or filled in later. Doing
+// only half of it here would leave freshly-downloaded videos with unsnapped
+// boundaries for the full refresh interval.
 func sponsorblockSegmentsFromInfo(info downloadInfoJSON) []Segment {
-	var segs []Segment
-	for _, c := range info.Chapters {
-		if !strings.HasPrefix(c.Title, sponsorblockChapterPrefix) {
-			continue
-		}
-		segs = append(segs, Segment{
-			Category:  strings.TrimPrefix(c.Title, sponsorblockChapterPrefix),
+	raw := make([]sponsorblock.Segment, 0, len(info.SponsorblockChapters))
+	for _, c := range info.SponsorblockChapters {
+		raw = append(raw, sponsorblock.Segment{
+			Category:  c.Category,
 			StartTime: c.StartTime,
 			EndTime:   c.EndTime,
+		})
+	}
+	normalized := sponsorblock.Normalize(raw, info.Duration)
+	if len(normalized) == 0 {
+		return nil
+	}
+	segs := make([]Segment, 0, len(normalized))
+	for _, s := range normalized {
+		segs = append(segs, Segment{
+			Category:  s.Category,
+			StartTime: s.StartTime,
+			EndTime:   s.EndTime,
 		})
 	}
 	return segs
@@ -294,7 +332,12 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 		}
 	}
 
-	// non-SponsorBlock chapters become the provisional yt-dlp TOC
+	// non-SponsorBlock chapters become the provisional yt-dlp TOC. The prefix
+	// check is defensive: as documented on sponsorblockChapterPrefix, yt-dlp
+	// does not merge SponsorBlock titles into the info.json's chapters, so it
+	// never fires today. It stays because a chapter list is written into the
+	// media file with those titles, and a future yt-dlp that also wrote them
+	// to the sidecar would otherwise silently pollute the table of contents.
 	type chapterOut struct {
 		TS     int    `json:"ts"`
 		Title  string `json:"title"`

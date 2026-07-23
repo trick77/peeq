@@ -256,14 +256,71 @@ describe("Player", () => {
 
     // Playhead jumped past the segment, and the skip is announced.
     expect(videoEl.currentTime).toBe(25);
-    expect(await screen.findByText(/Skipped sponsor/)).toBeInTheDocument();
+    expect(await screen.findByText(/Skipped ad/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Mark unwatched" }));
 
     await waitFor(() =>
       expect(screen.getByText("Couldn't mark unwatched.")).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/Skipped sponsor/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Skipped ad/)).not.toBeInTheDocument();
+  });
+
+  it("plays through a marked segment and skips only the ad", async () => {
+    // The categories outside AUTO_SKIP are drawn on the scrubber but must
+    // never be cut: skipping an intro or a non-music section would silently
+    // remove video the viewer chose to watch.
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({
+        duration_seconds: 100,
+        sponsorblock_segments: [
+          { category: "intro", start_time: 0, end_time: 8 },
+          { category: "sponsor", start_time: 10, end_time: 25 },
+        ],
+      }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+
+    // Inside the intro: the playhead stays put and nothing is announced.
+    Object.defineProperty(videoEl, "currentTime", { value: 3, writable: true });
+    fireEvent.timeUpdate(videoEl);
+    expect(videoEl.currentTime).toBe(3);
+    expect(screen.queryByText(/Skipped/)).not.toBeInTheDocument();
+
+    // Inside the sponsor read: skipped, as before.
+    videoEl.currentTime = 12;
+    fireEvent.timeUpdate(videoEl);
+    expect(videoEl.currentTime).toBe(25);
+    expect(await screen.findByText(/Skipped ad/)).toBeInTheDocument();
+  });
+
+  it("labels both band styles on the scrubber legend", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({
+        duration_seconds: 100,
+        sponsorblock_segments: [
+          { category: "intro", start_time: 0, end_time: 8 },
+          { category: "sponsor", start_time: 10, end_time: 25 },
+        ],
+      }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    expect(await screen.findByText("skipped")).toBeInTheDocument();
+    expect(screen.getByText("marked")).toBeInTheDocument();
+    // The bands themselves carry the human-readable category.
+    expect(
+      document.querySelector('[title="Marked: intro"]'),
+    ).toBeInTheDocument();
+    expect(
+      document.querySelector('[title="Skipped automatically: ad"]'),
+    ).toBeInTheDocument();
   });
 
   it("rolls the favorite back when the write fails", async () => {

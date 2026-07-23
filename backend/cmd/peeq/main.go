@@ -34,6 +34,7 @@ import (
 	"github.com/trick77/peeq/internal/retention"
 	"github.com/trick77/peeq/internal/scan"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/sponsorblock"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/summarize"
@@ -330,15 +331,25 @@ func run() error {
 		YoutubePaused:  func(ctx context.Context) bool { p, _ := settingsStore.YoutubePaused(ctx); return p },
 	})
 
-	// Bound all six background goroutines' lifetimes to the process: the
+	// sponsorblockWorker backfills and refreshes the segments the player skips
+	// and marks. It is the only background loop that talks to a host other than
+	// YouTube, and so deliberately carries none of the YouTube guards: no
+	// cookie gate, no throttle, no kill-switch (see the package doc).
+	sponsorblockWorker := sponsorblock.NewWorker(sponsorblock.Deps{
+		Fetcher: sponsorblock.NewClient("", nil),
+		Videos:  videosStore,
+	})
+
+	// Bound all seven background goroutines' lifetimes to the process: the
 	// download worker, the retention sweeper, the yt-dlp self-update ticker,
-	// the scan scheduler, the summarize worker, and the channel-metadata
-	// refresher. workerWG.Wait() below (after serve returns, i.e. after ctx is
-	// cancelled) blocks until all six have actually observed ctx.Done() and
-	// returned, rather than exiting the process out from under them. All six
-	// loops exit promptly on ctx.Done(), so this wait is short.
+	// the scan scheduler, the summarize worker, the channel-metadata
+	// refresher, and the SponsorBlock backfill. workerWG.Wait() below (after
+	// serve returns, i.e. after ctx is cancelled) blocks until all seven have
+	// actually observed ctx.Done() and returned, rather than exiting the
+	// process out from under them. All seven loops exit promptly on
+	// ctx.Done(), so this wait is short.
 	var workerWG sync.WaitGroup
-	workerWG.Add(6)
+	workerWG.Add(7)
 	go func() {
 		defer workerWG.Done()
 		slog.Info("download worker started")
@@ -367,6 +378,11 @@ func run() error {
 		defer workerWG.Done()
 		slog.Info("channel metadata refresher started")
 		metaWorker.Run(ctx)
+	}()
+	go func() {
+		defer workerWG.Done()
+		slog.Info("sponsorblock backfill started")
+		sponsorblockWorker.Run(ctx)
 	}()
 
 	slog.Info("SSE hub ready")
