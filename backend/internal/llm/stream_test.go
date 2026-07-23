@@ -499,6 +499,96 @@ func TestStallGuard_ignoresAFiringOvertakenByAnEvent(t *testing.T) {
 	}
 }
 
+// A second firing must not cancel twice. The timer is re-armed by fire() on the
+// stale path, so a real deadline followed by that rescheduled callback is an
+// ordinary sequence, not a contrived one.
+func TestStallGuard_secondFiringIsANoOp(t *testing.T) {
+	var fired atomic.Int64
+	g := newStallGuard(func() { fired.Add(1) }, time.Hour, stallHeaders)
+	defer g.stop()
+
+	g.arm(-time.Second, stallIdle)
+	g.fire()
+	g.fire()
+
+	if got := fired.Load(); got != 1 {
+		t.Fatalf("cancel called %d times, want 1", got)
+	}
+	if got := g.firedReason(); got != stallIdle {
+		t.Fatalf("reason = %q, want %q", got, stallIdle)
+	}
+}
+
+// A model that stops because it hit a token limit has produced a partial
+// answer. That is not retried — retrying truncates again — so the only defence
+// against an unexplainable half summary later is that it was logged.
+func TestComplete_warnsWhenTheAnswerEndedEarly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"cut off mid-"},"finish_reason":"length","index":0}]}`))
+		flush(t, w, sseEvent(doneMarker))
+	}))
+	defer srv.Close()
+
+	log, buf := capture()
+	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client())
+	got, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+	if err != nil {
+		t.Fatalf("a length-limited answer must not be an error: %v", err)
+	}
+	if got != "cut off mid-" {
+		t.Fatalf("content = %q", got)
+	}
+	rec := find(buf.records(t), "llm: answer ended early")
+	if rec == nil {
+		t.Fatal("a truncated answer was accepted silently")
+	}
+	if rec["finish_reason"] != "length" || rec["level"] != "WARN" {
+		t.Errorf("warning record = %v", rec)
+	}
+}
+
+// A "stop" finish is the normal case and must stay quiet, or the warning above
+// becomes noise nobody reads.
+func TestComplete_doesNotWarnOnANormalFinish(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flush(t, w, sseStream("fine", ""))
+	}))
+	defer srv.Close()
+
+	log, buf := capture()
+	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client())
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := find(buf.records(t), "llm: answer ended early"); rec != nil {
+		t.Errorf("warned about a normal finish: %v", rec)
+	}
+}
+
+// The nil-client path is what production actually uses: cmd/peeq passes nil, so
+// every real request runs through the transport built here. Left untested, a
+// whole-request timeout could reappear in it and silently truncate streams
+// again — the exact failure this package was rewritten to remove.
+func TestNewClient_defaultTransportBoundsHeadersAndNotTheWholeRequest(t *testing.T) {
+	c := NewClient(Config{BaseURL: "http://example.invalid/v1", HeaderTimeout: 7 * time.Second}, nil)
+
+	if c.http.Timeout != 0 {
+		t.Errorf("whole-request timeout = %v, want none: it caps body reads and truncates streams", c.http.Timeout)
+	}
+	tr, ok := c.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport = %T, want *http.Transport", c.http.Transport)
+	}
+	if tr.ResponseHeaderTimeout != 7*time.Second {
+		t.Errorf("ResponseHeaderTimeout = %v, want the configured 7s", tr.ResponseHeaderTimeout)
+	}
+	// Cloned from the stdlib default rather than built bare, so proxy support
+	// and dial timeouts survive.
+	if tr.Proxy == nil {
+		t.Error("transport lost proxy support")
+	}
+}
+
 // The mirror case: nothing revived it, so the firing is real and must report
 // the bound whose deadline actually elapsed.
 func TestStallGuard_firesWhenTheDeadlineTrulyPassed(t *testing.T) {

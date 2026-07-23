@@ -193,3 +193,43 @@ func TestLoad_summarizeDelays(t *testing.T) {
 		t.Error("want an error for an unparseable video delay")
 	}
 }
+
+func TestLoad_chatStreamIdleTimeout(t *testing.T) {
+	setRequired := func() {
+		t.Setenv("BACKEND_SESSION_SECRET", "x")
+		t.Setenv("BACKEND_AUTH_MODE", "dev")
+		t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
+		t.Setenv("BACKEND_PUBLIC_URL", "")
+		t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
+		t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
+		t.Setenv("BACKEND_EMBED_MODEL", "e5")
+	}
+
+	setRequired()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load (default): %v", err)
+	}
+	if cfg.ChatStreamIdleTimeout != 90*time.Second {
+		t.Errorf("default = %v, want 90s", cfg.ChatStreamIdleTimeout)
+	}
+
+	setRequired()
+	t.Setenv("BACKEND_CHAT_STREAM_IDLE_TIMEOUT", "45s")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load (custom): %v", err)
+	}
+	if cfg.ChatStreamIdleTimeout != 45*time.Second {
+		t.Errorf("custom = %v, want 45s", cfg.ChatStreamIdleTimeout)
+	}
+
+	// A typo here would otherwise mean the bound silently reverts to its
+	// default, which is the one knob an operator reaches for when the endpoint
+	// pauses longer than we assumed.
+	setRequired()
+	t.Setenv("BACKEND_CHAT_STREAM_IDLE_TIMEOUT", "ninety")
+	if _, err := Load(); err == nil {
+		t.Error("want an error for an unparseable idle timeout")
+	}
+}
