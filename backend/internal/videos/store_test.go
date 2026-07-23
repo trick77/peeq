@@ -511,23 +511,25 @@ func TestList_filters(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Every filter now hides in-flight rows, so c (downloading) is absent from
+	// all of them. The queue is the Queue page's subject, not the Library's.
 	all, err := s.List(ListOptions{Filter: "all", Category: ""})
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
-	if len(all) != 3 {
-		t.Fatalf("list all = %d, want 3", len(all))
+	if ids := idsOf(all); len(ids) != 2 || !ids["a"] || !ids["b"] {
+		t.Fatalf("list all = %+v, want [a b]", all)
 	}
 
-	// "unwatched" is the Library's watch queue, so it covers what is already
-	// downloaded (a) *and* what is still on its way (c, downloading) — but
-	// never the watched one (b).
+	// "unwatched" is what there is to watch right now: downloaded and not yet
+	// watched. It used to also count queued/downloading rows so the Library
+	// could double as a watch queue; that job moved to the Queue page.
 	unwatched, err := s.List(ListOptions{Filter: "unwatched", Category: ""})
 	if err != nil {
 		t.Fatalf("list unwatched: %v", err)
 	}
-	if ids := idsOf(unwatched); len(ids) != 2 || !ids["a"] || !ids["c"] {
-		t.Fatalf("list unwatched = %+v, want [a c]", unwatched)
+	if len(unwatched) != 1 || unwatched[0].ID != "a" {
+		t.Fatalf("list unwatched = %+v, want [a]", unwatched)
 	}
 
 	watched, err := s.List(ListOptions{Filter: "watched", Category: ""})
@@ -546,19 +548,96 @@ func TestList_filters(t *testing.T) {
 		t.Fatalf("list favorites = %+v, want [a]", favs)
 	}
 
-	downloading, err := s.List(ListOptions{Filter: "downloading", Category: ""})
+	// "downloading" is no longer a filter value. It must not silently keep
+	// working as one, and it must not fail open to "everything either" — an
+	// unrecognized value means "all", which now excludes in-flight rows like
+	// every other filter does.
+	gone, err := s.List(ListOptions{Filter: "downloading", Category: ""})
 	if err != nil {
 		t.Fatalf("list downloading: %v", err)
 	}
-	if len(downloading) != 1 || downloading[0].ID != "c" {
-		t.Fatalf("list downloading = %+v, want [c]", downloading)
+	if ids := idsOf(gone); len(ids) != 2 || !ids["a"] || !ids["b"] {
+		t.Fatalf(`list "downloading" = %+v, want it treated as all → [a b]`, gone)
 	}
 }
 
-// TestList_unwatched_excludesDeadRows pins the other half of the watch-queue
-// rule: an unwatched row whose download failed, or whose media the retention
-// sweeper has already reclaimed, is not something to watch and must stay out
-// of the queue — the filter widened to queued/downloading, not to everything.
+// TestList_all_keepsRowsOnlyTheLibraryCanRecover is the guard on how far
+// "ready-only" goes. It is tempting to read it as status='downloaded', but the
+// Library grid is the ONLY place a failed download can be retried (VideoCard's
+// re-download button lives there and nowhere else), and a tombstoned row is the
+// watched-history entry the retention sweeper deliberately kept re-downloadable.
+// Hiding either would delete the only route back for both. The rule is
+// therefore "not in the pipeline", not "playable".
+func TestList_all_keepsRowsOnlyTheLibraryCanRecover(t *testing.T) {
+	s := New(openTestDB(t))
+	for _, id := range []string{"err", "tomb", "queued", "ok"} {
+		if err := s.Upsert(Video{ID: id, URL: "u"}); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+	}
+	if err := s.SetDownloaded("ok", DownloadedResult{MediaPath: "/m/ok.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := s.SetStatus("err", "error", "yt-dlp exploded"); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if err := s.SetStatus("queued", "queued", ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if err := s.SetDownloaded("tomb", DownloadedResult{MediaPath: "/m/tomb.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := s.Tombstone("tomb"); err != nil {
+		t.Fatalf("tombstone: %v", err)
+	}
+
+	all, err := s.List(ListOptions{Filter: "all"})
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	ids := idsOf(all)
+	if !ids["err"] || !ids["tomb"] || !ids["ok"] {
+		t.Errorf("list all = %+v, want it to keep err, tomb and ok", all)
+	}
+	if ids["queued"] {
+		t.Errorf("list all = %+v, want the queued row hidden", all)
+	}
+}
+
+// TestList_channelScoped_agreesWithArchivedCount pins a mismatch this change
+// closes. channels.Store.Stats and the channel list's archived_count have
+// always counted status='downloaded' only, while the channel page's Archive tab
+// lists with no filter at all — so the badge and the list disagreed whenever
+// anything was queued. Excluding in-flight rows from List is what brings them
+// back into step, and this test fails if List ever widens again.
+func TestList_channelScoped_agreesWithArchivedCount(t *testing.T) {
+	s := New(openTestDB(t))
+	for _, id := range []string{"done", "busy"} {
+		if err := s.Upsert(Video{ID: id, URL: "u", ChannelID: "UC1"}); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+	}
+	if err := s.SetDownloaded("done", DownloadedResult{MediaPath: "/m/done.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := s.SetStatus("busy", "downloading", ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	got, err := s.List(ListOptions{ChannelID: "UC1"})
+	if err != nil {
+		t.Fatalf("list by channel: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "done" {
+		t.Fatalf("list by channel = %+v, want [done] to match archived_count = 1", got)
+	}
+}
+
+// TestList_unwatched_excludesDeadRows pins the other half of the rule: an
+// unwatched row whose download failed, or whose media the retention sweeper has
+// already reclaimed, is not something to watch. Those rows still belong in
+// "all" — that is where they are recovered from — but never in the list of
+// things you could press play on.
 func TestList_unwatched_excludesDeadRows(t *testing.T) {
 	s := New(openTestDB(t))
 	for _, id := range []string{"err", "tomb", "ok"} {

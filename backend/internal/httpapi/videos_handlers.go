@@ -123,8 +123,8 @@ func toVideoDTO(v *videos.Video) videoDTO {
 }
 
 // handleListVideos returns the video library, optionally narrowed by
-// ?filter=all|unwatched|watched|favorites|downloading (see videos.Store.List
-// for exact filter semantics; an unrecognized/empty filter means "all") and
+// ?filter=all|unwatched|watched|favorites (see videos.Store.List for exact
+// filter semantics; an unrecognized/empty filter means "all") and
 // independently by ?category=<id>, which is ANDed with ?filter= rather than
 // replacing it. An empty or unrecognized category value means "all
 // categories" (see videos.Store.List). ?q= narrows by a case-insensitive

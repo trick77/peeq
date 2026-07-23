@@ -69,22 +69,25 @@ describe("VideoCard lifecycle line", () => {
     expect(screen.getByText(/Expires in 9 days/)).toBeInTheDocument();
   });
 
-  it("renders the progress ring for a downloading video", () => {
+  // The card used to draw a progress ring and a "Downloading" lifecycle line.
+  // Both are gone: the library list no longer returns in-flight rows at all, so
+  // this state is unreachable through the app, and download progress lives in
+  // the rail's status panel where it is visible from every page. Rendering the
+  // card directly with an in-flight status is the only way to reach the old
+  // code path, which is exactly what makes it a useful guard against the
+  // progress UI creeping back onto the card.
+  it("shows no download progress even when handed an in-flight video", () => {
     render(
       <VideoCard
         video={baseVideo({ status: "downloading", has_media: false })}
         retentionDays={14}
-        progress={{ percent: 42, eta: "1m12s" }}
         onOpen={noop}
         onToggleFavorite={noop}
         onToggleWatched={noop}
       />,
     );
-    const ring = document.querySelector(".ring");
-    expect(ring).not.toBeNull();
-    expect(ring?.getAttribute("data-p")).toBe("42%");
-    // Busy states are a spinner plus a plain label — never an ellipsis.
-    expect(screen.getByText("Downloading")).toBeInTheDocument();
+    expect(document.querySelector(".ring")).toBeNull();
+    expect(screen.queryByText("Downloading")).not.toBeInTheDocument();
   });
 
   it("renders the category pill on the lifecycle line of a fresh video", () => {
@@ -337,7 +340,9 @@ describe("Library category chips", () => {
     const chipNames = Array.from(document.querySelectorAll(".chips .chip")).map(
       (c) => c.textContent?.replace(/\d+$/, "").trim(),
     );
-    expect(chipNames).toEqual(["All", "Unwatched", "Favorites", "Downloading"]);
+    // No "Downloading" chip either: the library only lists videos that are
+    // actually here, so a chip for in-flight ones would always be empty.
+    expect(chipNames).toEqual(["All", "Unwatched", "Favorites"]);
   });
 
   it("renders a category chip row and filters by category", async () => {
@@ -408,28 +413,20 @@ describe("Library category chips", () => {
     expect(aiChip).toHaveClass("on");
   });
 
-  it("keeps the selected category when the 3s poller refreshes", async () => {
-    // Given: a category filter is active. The 3s poller (Library.tsx:163)
-    // only arms while a download job is pending/running, so listDownloads
-    // must report one to make the interval fire at all.
+  it("keeps the selected category when a finishing download refreshes the list", async () => {
+    // Given: a category filter is active. A video joins the library the moment
+    // its download completes, and App signals that by handing down a changed
+    // activeDownloads count — Library no longer runs its own queue poll.
     const aiVideo = categoryVideo({
       id: "v1",
       title: "ai video title",
       category: "ai",
     });
     vi.mocked(listVideos).mockResolvedValue([aiVideo]);
-    vi.mocked(listDownloads).mockResolvedValue([
-      {
-        job_id: 1,
-        video_id: "v1",
-        state: "running",
-        priority: 0,
-        attempts: 0,
-      },
-    ]);
-    vi.useFakeTimers({ shouldAdvanceTime: true });
 
-    render(<Library onOpenVideo={() => {}} search="" />);
+    const { rerender } = render(
+      <Library onOpenVideo={() => {}} search="" activeDownloads={1} />,
+    );
     const aiChip = await screen.findByRole("button", {
       name: /Artificial Intelligence/,
     });
@@ -441,10 +438,11 @@ describe("Library category chips", () => {
     });
     vi.mocked(listVideos).mockClear();
 
-    // When: the 3s poller fires.
-    await vi.advanceTimersByTimeAsync(3000);
+    // When: the last download finishes.
+    rerender(<Library onOpenVideo={() => {}} search="" activeDownloads={0} />);
 
-    // Then: the refresh still carries the category, not just the status.
+    // Then: the refresh still carries the category, not just the status — the
+    // bug this pins is a refresh that silently resets the user's filter.
     await waitFor(() => {
       expect(listVideos).toHaveBeenCalledWith(
         expect.objectContaining({ filter: "all", category: "ai" }),

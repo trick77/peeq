@@ -1,21 +1,13 @@
-import { useEffect, useRef, useState } from "react";
-import { VideoCard, type DownloadProgress } from "../components/VideoCard";
+import { useEffect, useState } from "react";
+import { VideoCard } from "../components/VideoCard";
 import {
   listVideos,
   getSettings,
-  listDownloads,
-  streamDownloads,
   setFavorite,
   setWatched,
   redownload,
 } from "../api";
-import type {
-  Video,
-  VideoFilter,
-  VideoSort,
-  Job,
-  Settings,
-} from "../api/types";
+import type { Video, VideoFilter, VideoSort, Settings } from "../api/types";
 import { CATEGORIES } from "../categories";
 import { controlClass } from "../ui";
 
@@ -29,7 +21,6 @@ const CHIPS: { id: VideoFilter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "unwatched", label: "Unwatched" },
   { id: "favorites", label: "Favorites" },
-  { id: "downloading", label: "Downloading" },
 ];
 
 // SORT_OPTIONS is shared with the channel page's Archive tab so the two
@@ -96,12 +87,19 @@ export function Library({
   onOpenVideo,
   onOpenChannel,
   search,
+  activeDownloads = 0,
 }: {
   onOpenVideo: (id: string) => void;
   // onOpenChannel — optional: wired by App (Task 11), rendered as channel
   // name links in Task 15.
   onOpenChannel?: (id: string) => void;
   search: string;
+  /**
+   * How many downloads are pending or running, from App's queue state. Used
+   * only as a change signal: a video appears in the Library the moment its
+   * download finishes, and this is what tells the list to go and look.
+   */
+  activeDownloads?: number;
 }) {
   const [filter, setFilter] = useState<VideoFilter>("all");
   const [watchedOpen, setWatchedOpen] = useState<boolean>(readWatchedOpen);
@@ -112,18 +110,11 @@ export function Library({
   const [videos, setVideos] = useState<Video[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [progressByVideoId, setProgressByVideoId] = useState<
-    Record<string, DownloadProgress>
-  >({});
-  const jobsRef = useRef<Job[]>([]);
-  // jobsRefreshTick forces the polling effect below to re-evaluate
-  // jobsRef's hasActive state after jobsRef is (re)populated — jobsRef
-  // itself is a ref, so mutating it alone doesn't trigger a re-render.
-  const [jobsRefreshTick, setJobsRefreshTick] = useState(0);
 
   // Unfiltered list (for chip counts) + settings (for the "Expires in N
-  // days" calc) + the download queue (to map job_id -> video_id for the
-  // SSE progress feed below) are all loaded once.
+  // days" calc) are loaded once. The download queue used to be loaded here
+  // too, purely to map job_id -> video_id for a per-card progress ring;
+  // both are gone with the in-flight cards themselves.
   useEffect(() => {
     let active = true;
     getSettings()
@@ -134,12 +125,6 @@ export function Library({
     listVideos({ filter: "all" })
       .then((v) => {
         if (active) setAllVideos(v);
-      })
-      .catch(() => {});
-    listDownloads()
-      .then((j) => {
-        jobsRef.current = j;
-        if (active) setJobsRefreshTick((n) => n + 1);
       })
       .catch(() => {});
     return () => {
@@ -170,87 +155,32 @@ export function Library({
     };
   }, [filter, category, debouncedQuery, sort]);
 
-  // Live download progress: map each SSE "progress" event's job_id to the
-  // video_id the download dock/queue knows about, so a downloading card's
-  // ring stays current without polling.
-  //
-  // jobsRef is only ever populated once, at mount, from listDownloads() —
-  // so a download queued afterward (e.g. from the Add view) produces
-  // progress events whose job_id isn't in the map yet, and its card would
-  // never show a ring. Mirror App.tsx's catch-up refetch: on an unknown
-  // job_id, refetch listDownloads() once to learn the new mapping (guarded
-  // so a burst of progress events for the same unknown job only triggers
-  // one in-flight refetch, not one per event).
+  // A video only enters the Library once its download finishes, so the list
+  // has to refresh when one does. App.tsx already owns the single SSE
+  // subscription and the queue poll for the whole session, so rather than run
+  // a second copy of both here, it hands down how many downloads are in
+  // flight: when that number changes, something started or finished and both
+  // lists are refetched.
   useEffect(() => {
-    const controller = new AbortController();
-    let refetching = false;
-    streamDownloads((evt) => {
-      if (evt.event !== "progress") return;
-      const data = evt.data as { job_id: number; percent: number; eta: string };
-      const job = jobsRef.current.find((j) => j.job_id === data.job_id);
-      if (!job) {
-        if (!refetching) {
-          refetching = true;
-          listDownloads()
-            .then((j) => {
-              jobsRef.current = j;
-              setJobsRefreshTick((n) => n + 1);
-            })
-            .catch(() => {})
-            .finally(() => {
-              refetching = false;
-            });
-        }
-        return;
-      }
-      setProgressByVideoId((prev) => ({
-        ...prev,
-        [job.video_id]: { percent: data.percent, eta: data.eta },
-      }));
-    }, controller.signal).catch(() => {});
-    return () => controller.abort();
-  }, []);
-
-  // While any download is pending/running, periodically refresh the job
-  // list (jobsRef) plus the unfiltered video list (chip counts) and the
-  // active chip's own list, so a finished download's status/counts don't
-  // drift stale — there is no SSE "job finished" event, only "progress"
-  // (see App.tsx's poller for the same reasoning). jobsRefreshTick (bumped
-  // wherever jobsRef.current is written) forces this effect to re-evaluate
-  // hasActive after each poll; the timeout self-stops once jobsRef reports
-  // nothing left in flight.
-  useEffect(() => {
-    const hasActive = jobsRef.current.some(
-      (j) => j.state === "pending" || j.state === "running",
-    );
-    if (!hasActive) return;
     let active = true;
-    const id = window.setTimeout(() => {
-      listDownloads()
-        .then((j) => {
-          jobsRef.current = j;
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (!active) return;
-          listVideos({ filter: "all" })
-            .then((v) => {
-              if (active) setAllVideos(v);
-            })
-            .catch(() => {});
-          listVideos({ filter, category, q: debouncedQuery, sort })
-            .then((v) => {
-              if (active) setVideos(v);
-            })
-            .catch(() => {});
-          setJobsRefreshTick((n) => n + 1);
-        });
-    }, 3000);
+    listVideos({ filter: "all" })
+      .then((v) => {
+        if (active) setAllVideos(v);
+      })
+      .catch(() => {});
+    listVideos({ filter, category, q: debouncedQuery, sort })
+      .then((v) => {
+        if (active) setVideos(v);
+      })
+      .catch(() => {});
     return () => {
       active = false;
-      window.clearTimeout(id);
     };
-  }, [filter, category, debouncedQuery, sort, jobsRefreshTick]);
+    // filter/category/query/sort are deliberately NOT dependencies: their own
+    // effect above already refetches on a change, and repeating them here
+    // would double every request the user makes while a download runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDownloads]);
 
   function applyLocalUpdate(id: string, patch: Partial<Video>) {
     setVideos((prev) =>
@@ -332,7 +262,6 @@ export function Library({
         key={video.id}
         video={video}
         retentionDays={retentionDays}
-        progress={progressByVideoId[video.id]}
         onOpen={onOpenVideo}
         onToggleFavorite={handleToggleFavorite}
         onToggleWatched={handleToggleWatched}

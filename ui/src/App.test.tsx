@@ -174,7 +174,7 @@ describe("App dock bootstrap", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
     // Starts empty — this is the state that used to be terminal.
-    expect(await screen.findByText("Nothing queued")).toBeTruthy();
+    expect(await screen.findByText("Nothing waiting")).toBeTruthy();
 
     // Once queued, the dock must reflect it without a reload.
     vi.mocked(listDownloads).mockResolvedValue([
@@ -192,7 +192,10 @@ describe("App dock bootstrap", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Download now/ }));
 
-    expect(await screen.findByText("1 queued")).toBeTruthy();
+    // The panel names the stage rather than reporting a bare "N queued", so
+    // the assertion is on the Queued row's own count.
+    const queuedRow = await screen.findByText("Queued");
+    expect(queuedRow.closest(".srow")).toHaveTextContent("1");
   }, 20000);
 });
 
