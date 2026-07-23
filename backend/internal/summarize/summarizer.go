@@ -64,7 +64,10 @@ func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowe
 		"\nReply with a single category id from that list and nothing else — no punctuation, " +
 		"no explanation. Always choose the closest match even when the fit is imperfect. " +
 		"Never invent an id and never refuse to choose."
-	return s.c.Complete(ctx, []llm.Message{
+	// No thinking: the answer is one id picked from a list the prompt already
+	// spells out, and letting the model reason spends several hundred
+	// completion tokens to emit a single word.
+	return s.c.Complete(llm.WithoutThinking(ctx), []llm.Message{
 		{Role: "system", Content: sys},
 		{Role: "user", Content: "TITLE: " + title + "\n\nSUMMARY:\n" + summary},
 	})
@@ -79,10 +82,15 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 		return "", fmt.Errorf("summarize: empty transcript")
 	}
 
-	// MAP: summarize each chunk.
+	// MAP: summarize each chunk. No thinking — condensing one section into two
+	// sentences is a rewrite of text already in front of the model, and this is
+	// the step that runs once per chunk, so it is where reasoning costs most.
+	// The REDUCE below keeps it: that one call produces the summary a person
+	// actually reads.
+	mapCtx := llm.WithoutThinking(ctx)
 	var chunkSummaries []string
 	for _, ch := range chunks {
-		out, err := s.c.Complete(ctx, []llm.Message{
+		out, err := s.c.Complete(mapCtx, []llm.Message{
 			{Role: "system", Content: "You summarize one section of a video transcript in 1-2 sentences. Be concrete."},
 			{Role: "user", Content: ch.Text},
 		})

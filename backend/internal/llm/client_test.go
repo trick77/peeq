@@ -43,7 +43,48 @@ func TestCompleteSendsModelAndEffortAndReturnsContent(t *testing.T) {
 	if gotBody["stream"] != false {
 		t.Fatalf("stream = %v", gotBody["stream"])
 	}
+	// Thinking is on unless the caller opts out, and it is sent explicitly:
+	// omitting it costs the reasoning-token accounting, not the reasoning.
+	if got := thinkingType(t, gotBody); got != "enabled" {
+		t.Fatalf("thinking.type = %q", got)
+	}
 	_ = strings.TrimSpace
+}
+
+func TestComplete_withoutThinkingDisablesItOnTheWire(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		io.WriteString(w, `{"choices":[{"message":{"content":"news"}}]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	if _, err := c.Complete(WithoutThinking(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := thinkingType(t, gotBody); got != "disabled" {
+		t.Fatalf("thinking.type = %q", got)
+	}
+	// Effort still rides along: the endpoint ignores it while thinking is off,
+	// and dropping it would be a second, untested divergence from every other
+	// request the client makes.
+	if gotBody["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %v", gotBody["reasoning_effort"])
+	}
+}
+
+// thinkingType digs the switch out of a decoded request body, failing the test
+// when the field is missing entirely — an absent object is exactly the bug this
+// pair of tests exists to catch, and it would otherwise read as an empty type.
+func thinkingType(t *testing.T, body map[string]any) string {
+	t.Helper()
+	obj, ok := body["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("request carried no thinking object: %v", body)
+	}
+	return obj["type"].(string)
 }
 
 func TestCompleteErrorsOnNon2xx(t *testing.T) {

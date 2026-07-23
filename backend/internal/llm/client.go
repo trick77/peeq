@@ -3,8 +3,9 @@
 // upstream model identifier sent on the wire, not a config name — it is
 // deliberately NOT renamed alongside those env vars. It targets
 // reasoning_effort=high on every call (an offline summarization job, so latency
-// is free and quality is the priority). Modeled on loom's llm/client.go, minus
-// loom's tool/vision/streaming machinery.
+// is free and quality is the priority), and sends MiMo's thinking switch
+// explicitly — see thinking.go for why, and for the steps that turn it off.
+// Modeled on loom's llm/client.go, minus loom's tool/vision/streaming machinery.
 package llm
 
 import (
@@ -117,10 +118,11 @@ func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 }
 
 type chatRequest struct {
-	Model           string    `json:"model"`
-	Messages        []Message `json:"messages"`
-	ReasoningEffort string    `json:"reasoning_effort"`
-	Stream          bool      `json:"stream"`
+	Model           string         `json:"model"`
+	Messages        []Message      `json:"messages"`
+	ReasoningEffort string         `json:"reasoning_effort"`
+	Thinking        thinkingOption `json:"thinking"`
+	Stream          bool           `json:"stream"`
 }
 
 // chatUsage mirrors the OpenAI-compatible `usage` object. Everything in it is
@@ -202,7 +204,10 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 		// this, RequestInterval looks like latency.
 		c.log.Debug("llm: paced", append(info.LogAttrs(), "waited_ms", pacedFor.Milliseconds())...)
 	}
-	body, err := json.Marshal(chatRequest{Model: model, Messages: messages, ReasoningEffort: reasoningEffort, Stream: false})
+	body, err := json.Marshal(chatRequest{
+		Model: model, Messages: messages, ReasoningEffort: reasoningEffort,
+		Thinking: thinkingOptionFor(ctx), Stream: false,
+	})
 	if err != nil {
 		return "", fmt.Errorf("marshal chat request: %w", err)
 	}
@@ -216,7 +221,8 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 	}
 
 	started := time.Now()
-	c.log.Debug("llm: request start", append(info.LogAttrs(), "messages", len(messages), "request_bytes", len(body))...)
+	c.log.Debug("llm: request start", append(info.LogAttrs(),
+		"messages", len(messages), "request_bytes", len(body), "thinking", ThinkingFrom(ctx))...)
 	stop := StartHeartbeat(ctx, c.log, c.heartbeat, "llm: still waiting for response", info.LogAttrs()...)
 	defer stop()
 
