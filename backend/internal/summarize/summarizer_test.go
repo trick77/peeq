@@ -184,3 +184,62 @@ func TestSummarizeText_reduceErrorPropagates(t *testing.T) {
 		t.Error("want the reduce error propagated")
 	}
 }
+
+// Thinking is spent per step on purpose: the steps whose answer is a rewrite or
+// a lookup turn it off, the ones that have to deduce something keep it. The map
+// step is the expensive one to get wrong — it runs once per chunk.
+func TestSummarizeText_thinksOnlyOnTheReduce(t *testing.T) {
+	var mapThought, reduceThought []bool
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		if strings.Contains(m[0].Content, "Combine these section summaries") {
+			reduceThought = append(reduceThought, llm.ThinkingFrom(ctx))
+			return "Overall prose summary.", nil
+		}
+		mapThought = append(mapThought, llm.ThinkingFrom(ctx))
+		return "chunk summary", nil
+	}))
+
+	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err != nil {
+		t.Fatal(err)
+	}
+	if len(mapThought) == 0 {
+		t.Fatal("no map calls were made, so the assertion below proves nothing")
+	}
+	for i, thought := range mapThought {
+		if thought {
+			t.Errorf("map call %d reasoned; the chunk summaries are meant to be cheap", i)
+		}
+	}
+	if len(reduceThought) != 1 || !reduceThought[0] {
+		t.Errorf("reduce thinking = %v, want exactly one call that reasoned", reduceThought)
+	}
+}
+
+func TestClassify_doesNotThink(t *testing.T) {
+	var thought bool
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		thought = llm.ThinkingFrom(ctx)
+		return "science", nil
+	}))
+	if _, err := s.Classify(context.Background(), "Title", "A summary.", videos.ClassifiableCategories()); err != nil {
+		t.Fatal(err)
+	}
+	if thought {
+		t.Error("classify reasoned; picking one id from a list it was just handed should not cost a chain of thought")
+	}
+}
+
+func TestKeyPoints_thinks(t *testing.T) {
+	var thought bool
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		thought = llm.ThinkingFrom(ctx)
+		return `{"key_points":[{"ts":0,"text":"intro"}]}`, nil
+	}))
+	cues := []subtitles.Cue{{StartSeconds: 0, Text: "intro"}}
+	if _, _, err := s.KeyPoints(context.Background(), "A summary.", cues, []Chapter{{TS: 0, Title: "Intro", Source: "yt-dlp"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !thought {
+		t.Error("key points did not reason; grounding timestamps in the cue index is the fragile step")
+	}
+}
