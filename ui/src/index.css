@@ -939,6 +939,7 @@ button.srow:not(:disabled):hover {
   display: grid;
   place-items: center;
   cursor: pointer;
+  z-index: 1;
 }
 .pillstrip-prev:hover,
 .pillstrip-next:hover {
