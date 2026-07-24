@@ -561,6 +561,63 @@ func TestList_filters(t *testing.T) {
 	}
 }
 
+// TestList_unwatchedVsInProgress pins the split between "never opened" and
+// "partially watched": a resume position of zero keeps a row under "unwatched",
+// a non-zero one moves it to "in_progress", and the two sets never overlap.
+func TestList_unwatchedVsInProgress(t *testing.T) {
+	s := New(openTestDB(t))
+	// "fresh" is downloaded but never opened (resume stays 0).
+	if err := s.Upsert(Video{ID: "fresh", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDownloaded("fresh", DownloadedResult{MediaPath: "/m/fresh.mp4"}); err != nil {
+		t.Fatal(err)
+	}
+	// "partial" is downloaded and played to 30s of 100s — started, not finished
+	// (30 < the 90% auto-watch threshold, so it stays unwatched).
+	if err := s.Upsert(Video{ID: "partial", URL: "u", DurationSeconds: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDownloaded("partial", DownloadedResult{MediaPath: "/m/partial.mp4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetResume("partial", 30); err != nil {
+		t.Fatal(err)
+	}
+
+	unwatched, err := s.List(ListOptions{Filter: "unwatched"})
+	if err != nil {
+		t.Fatalf("list unwatched: %v", err)
+	}
+	if len(unwatched) != 1 || unwatched[0].ID != "fresh" {
+		t.Fatalf("list unwatched = %+v, want [fresh]", unwatched)
+	}
+
+	inProgress, err := s.List(ListOptions{Filter: "in_progress"})
+	if err != nil {
+		t.Fatalf("list in_progress: %v", err)
+	}
+	if len(inProgress) != 1 || inProgress[0].ID != "partial" {
+		t.Fatalf("list in_progress = %+v, want [partial]", inProgress)
+	}
+
+	// Both remain reachable through "all"; neither is watched.
+	all, err := s.List(ListOptions{Filter: "all"})
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if ids := idsOf(all); len(ids) != 2 || !ids["fresh"] || !ids["partial"] {
+		t.Fatalf("list all = %+v, want [fresh partial]", all)
+	}
+	watched, err := s.List(ListOptions{Filter: "watched"})
+	if err != nil {
+		t.Fatalf("list watched: %v", err)
+	}
+	if len(watched) != 0 {
+		t.Fatalf("list watched = %+v, want []", watched)
+	}
+}
+
 // TestList_all_keepsRowsOnlyTheLibraryCanRecover is the guard on how far
 // "ready-only" goes. It is tempting to read it as status='downloaded', but the
 // Library grid is the ONLY place a failed download can be retried (VideoCard's

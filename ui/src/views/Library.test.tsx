@@ -334,18 +334,82 @@ describe("Library category chips", () => {
       categoryVideo({ id: "v1", title: "watched video", watched: true }),
     ]);
     render(<Library onOpenVideo={() => {}} search="" />);
+    // The default chip is Unwatched, so select Watched to see watched videos.
+    fireEvent.click(screen.getByRole("button", { name: /Watched/ }));
     await screen.findByText("watched video");
 
     const chipNames = Array.from(document.querySelectorAll(".chips .chip")).map(
       (c) => c.textContent?.replace(/\d+$/, "").trim(),
     );
     // No "Downloading" chip: the library only lists videos that are actually
-    // here, so a chip for in-flight ones would always be empty.
-    expect(chipNames).toEqual(["All", "Unwatched", "Favorites", "Watched"]);
+    // here, so a chip for in-flight ones would always be empty. Unwatched leads
+    // (it is the default), All sits to its right, then the In progress split.
+    expect(chipNames).toEqual([
+      "Unwatched",
+      "All",
+      "In progress",
+      "Favorites",
+      "Watched",
+    ]);
 
     // Watched videos live in the main grid now, not a separate drawer.
     expect(document.querySelector(".drawer")).toBeNull();
     expect(document.querySelector(".grid .card")).not.toBeNull();
+  });
+
+  it("defaults to the Unwatched chip and fetches with the unwatched filter", async () => {
+    vi.mocked(listVideos).mockResolvedValue([
+      categoryVideo({ id: "v1", title: "fresh video", watched: false }),
+    ]);
+    render(<Library onOpenVideo={() => {}} search="" />);
+    await screen.findByText("fresh video");
+
+    // Unwatched leads and is active on first paint — no click needed.
+    expect(screen.getByRole("button", { name: /Unwatched/ })).toHaveClass("on");
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: "unwatched" }),
+      );
+    });
+  });
+
+  it("selecting In progress refetches with the in_progress filter", async () => {
+    vi.mocked(listVideos).mockResolvedValue([
+      categoryVideo({
+        id: "v1",
+        title: "half-watched video",
+        watched: false,
+        duration_seconds: 100,
+        resume_position_seconds: 40,
+      }),
+    ]);
+    render(<Library onOpenVideo={() => {}} search="" />);
+    // The default Unwatched filter hides a partially-watched card (resume > 0),
+    // so switch to In progress first, then the card appears.
+    fireEvent.click(screen.getByRole("button", { name: /In progress/ }));
+    await screen.findByText("half-watched video");
+
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: "in_progress" }),
+      );
+    });
+    expect(screen.getByRole("button", { name: /In progress/ })).toHaveClass(
+      "on",
+    );
+  });
+
+  it("names the active filter in the empty state instead of claiming the library is empty", async () => {
+    // A library whose only videos are watched shows nothing under the default
+    // Unwatched filter — the message must say "Nothing unwatched", not falsely
+    // report an empty library.
+    vi.mocked(listVideos).mockResolvedValue([
+      categoryVideo({ id: "v1", watched: true }),
+    ]);
+    render(<Library onOpenVideo={() => {}} search="" />);
+
+    expect(await screen.findByText("Nothing unwatched.")).toBeInTheDocument();
+    expect(screen.queryByText("No videos yet.")).not.toBeInTheDocument();
   });
 
   it("drops a card from the Unwatched grid the moment it is marked watched", async () => {
@@ -380,9 +444,10 @@ describe("Library category chips", () => {
       categoryVideo({ id: "v1", watched: true }),
     ]);
     render(<Library onOpenVideo={() => {}} search="" />);
-    await screen.findByText("A Test Video");
-
+    // The chip row renders immediately; the watched card is hidden under the
+    // default Unwatched filter until this chip is selected.
     fireEvent.click(screen.getByRole("button", { name: /Watched/ }));
+    await screen.findByText("A Test Video");
 
     await waitFor(() => {
       expect(listVideos).toHaveBeenCalledWith(
@@ -480,7 +545,7 @@ describe("Library category chips", () => {
     fireEvent.click(aiChip);
     await waitFor(() => {
       expect(listVideos).toHaveBeenCalledWith(
-        expect.objectContaining({ filter: "all", category: "ai" }),
+        expect.objectContaining({ filter: "unwatched", category: "ai" }),
       );
     });
     vi.mocked(listVideos).mockClear();
@@ -489,10 +554,11 @@ describe("Library category chips", () => {
     rerender(<Library onOpenVideo={() => {}} search="" activeDownloads={0} />);
 
     // Then: the refresh still carries the category, not just the status — the
-    // bug this pins is a refresh that silently resets the user's filter.
+    // bug this pins is a refresh that silently resets the user's filter. The
+    // status chip is left at its default (Unwatched); only the category moved.
     await waitFor(() => {
       expect(listVideos).toHaveBeenCalledWith(
-        expect.objectContaining({ filter: "all", category: "ai" }),
+        expect.objectContaining({ filter: "unwatched", category: "ai" }),
       );
     });
   });
@@ -570,6 +636,9 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockResolvedValue([v]);
     vi.mocked(setWatched).mockResolvedValue(true);
     render(<Library onOpenVideo={() => {}} search="" />);
+    // Use the All filter so the card stays put after being marked watched
+    // (under Unwatched it would correctly leave the grid).
+    fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
     await screen.findByText("A Test Video");
 
     fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
@@ -585,6 +654,9 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockResolvedValue([v]);
     vi.mocked(setWatched).mockRejectedValue(new Error("network down"));
     render(<Library onOpenVideo={() => {}} search="" />);
+    // All filter so the optimistic flip is observable in place rather than
+    // dropping the card out of the Unwatched grid.
+    fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
     await screen.findByText("A Test Video");
 
     fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
@@ -621,6 +693,9 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockResolvedValue([v]);
     vi.mocked(setWatched).mockResolvedValue(true);
     render(<Library onOpenVideo={() => {}} search="" />);
+    // A partially-watched card (resume > 0) is hidden under the default
+    // Unwatched filter; the All filter shows it so the resume bar is present.
+    fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
     await screen.findByText("A Test Video");
 
     expect(document.querySelector(".resume")).not.toBeNull();
@@ -657,6 +732,9 @@ describe("Library category chips", () => {
     );
 
     render(<Library onOpenVideo={() => {}} search="" />);
+    // An errored card is hidden under the default Unwatched filter (it is not
+    // play-eligible); the All filter surfaces it so it can be re-downloaded.
+    fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
     await screen.findByText("Download failed");
 
     fixed = true;

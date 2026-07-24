@@ -17,8 +17,9 @@ import { controlClass } from "../ui";
 // the grid; that turned out to be a second, more awkward route to a list a chip
 // gives directly.)
 const CHIPS: { id: VideoFilter; label: string }[] = [
-  { id: "all", label: "All" },
   { id: "unwatched", label: "Unwatched" },
+  { id: "all", label: "All" },
+  { id: "in_progress", label: "In progress" },
   { id: "favorites", label: "Favorites" },
   { id: "watched", label: "Watched" },
 ];
@@ -39,11 +40,18 @@ export const SORT_OPTIONS: { id: VideoSort; label: string }[] = [
 function matchesFilter(v: Video, filter: VideoFilter): boolean {
   switch (filter) {
     case "unwatched":
+      // "Unwatched" means never opened: play-eligible, not watched, and the
+      // resume position still at zero. A partially-watched row is "in_progress".
       return (
         (v.status === "downloaded" ||
           v.status === "queued" ||
           v.status === "downloading") &&
-        !v.watched
+        !v.watched &&
+        v.resume_position_seconds === 0
+      );
+    case "in_progress":
+      return (
+        v.status === "downloaded" && !v.watched && v.resume_position_seconds > 0
       );
     case "watched":
       return v.watched;
@@ -53,6 +61,26 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
       return v.status === "queued" || v.status === "downloading";
     default:
       return true;
+  }
+}
+
+// emptyMessage tells the truth about *why* the grid is empty. Since the default
+// filter is now "unwatched", a "No videos yet." on an empty grid would falsely
+// read as "your library is empty" when it really means "nothing unwatched" — so
+// each status filter names what it found nothing of. Only "all" being empty
+// means the library itself is empty.
+function emptyMessage(filter: VideoFilter): string {
+  switch (filter) {
+    case "unwatched":
+      return "Nothing unwatched.";
+    case "in_progress":
+      return "Nothing in progress.";
+    case "watched":
+      return "Nothing watched yet.";
+    case "favorites":
+      return "No favorites yet.";
+    default:
+      return "No videos yet.";
   }
 }
 
@@ -78,7 +106,7 @@ export function Library({
    */
   activeDownloads?: number;
 }) {
-  const [filter, setFilter] = useState<VideoFilter>("all");
+  const [filter, setFilter] = useState<VideoFilter>("unwatched");
   const [category, setCategory] = useState<string>("all");
   const [sort, setSort] = useState<VideoSort>("newest");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -307,7 +335,7 @@ export function Library({
       {error ? <div className="errline">{error}</div> : null}
       <div className="grid">{visible.map(renderCard)}</div>
       {visible.length === 0 && !error ? (
-        <p style={{ color: "var(--color-faint)" }}>No videos yet.</p>
+        <p style={{ color: "var(--color-faint)" }}>{emptyMessage(filter)}</p>
       ) : null}
     </>
   );

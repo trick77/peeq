@@ -267,6 +267,9 @@ describe("App deep links", () => {
     vi.mocked(listVideos).mockResolvedValue([mockVideo]);
     render(<App />);
 
+    // mockVideo is partially watched (resume > 0), so it sits under "In
+    // progress", not the default "Unwatched" filter — switch to All to list it.
+    fireEvent.click(await screen.findByRole("button", { name: /^All \d/ }));
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Open The Trillion Dollar Equation",
