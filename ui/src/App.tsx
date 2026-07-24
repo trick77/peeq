@@ -94,12 +94,22 @@ export function App() {
   // page still keeps its own in-page search — the top bar isn't detail-aware.
   const [librarySearch, setLibrarySearch] = useState("");
   const [channelSearch, setChannelSearch] = useState("");
-  // How many jobs are pending or running. It drives the queue poll below, and
-  // is handed to Library as the signal to refetch — a video enters the library
-  // exactly when its download leaves this count.
+  // How many jobs are pending or running. A plain count is what the queue poll
+  // and the rail's queue badge want.
   const activeDownloads = jobs.filter(
     (j) => j.state === "pending" || j.state === "running",
   ).length;
+  // The IDENTITY of those same jobs, as a stable string, is what Library needs
+  // as its refetch trigger. A count is lossy: with a queue of depth one, job A
+  // finishing while job B is enqueued in the same poll window leaves the count
+  // at 1, and a Library watching only the number would never learn A's video
+  // had arrived — a channel sweep holding the queue at a steady depth would
+  // keep the grid stale for the whole batch. Comparing ids catches the swap.
+  const queueSignal = jobs
+    .filter((j) => j.state === "pending" || j.state === "running")
+    .map((j) => j.job_id)
+    .sort((a, b) => a - b)
+    .join(",");
   // pendingSeek is the jump-to-moment target set by Search's onOpen (Task
   // 18): Player consumes it once on the loadedmetadata handler that already
   // applies the resume position, taking priority over resume. openVideo
@@ -447,7 +457,7 @@ export function App() {
             onQueued={refreshQueue}
             librarySearch={librarySearch}
             channelSearch={channelSearch}
-            activeDownloads={activeDownloads}
+            queueSignal={queueSignal}
             jobs={jobs}
             progressByJobId={progressByJobId}
             summaries={summaries}
@@ -539,7 +549,7 @@ function ViewSwitch({
   onQueued,
   librarySearch,
   channelSearch,
-  activeDownloads,
+  queueSignal,
   jobs,
   progressByJobId,
   summaries,
@@ -560,7 +570,7 @@ function ViewSwitch({
   onQueued: () => void;
   librarySearch: string;
   channelSearch: string;
-  activeDownloads: number;
+  queueSignal: string;
   jobs: Job[];
   progressByJobId: Record<
     number,
@@ -578,7 +588,8 @@ function ViewSwitch({
           onOpenVideo={onOpenVideo}
           onOpenChannel={onOpenChannel}
           search={librarySearch}
-          activeDownloads={activeDownloads}
+          queueSignal={queueSignal}
+          onQueued={onQueued}
         />
       );
     case "player":
@@ -589,6 +600,7 @@ function ViewSwitch({
           onSeekConsumed={onSeekConsumed}
           onDeleted={() => setView("library")}
           onOpenChannel={onOpenChannel}
+          onQueued={onQueued}
         />
       );
     case "search":

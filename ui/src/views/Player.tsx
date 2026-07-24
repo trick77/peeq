@@ -172,6 +172,7 @@ export function Player({
   onSeekConsumed,
   onDeleted,
   onOpenChannel,
+  onQueued,
 }: {
   videoId: string | null;
   // seekTo — the Task 18 jump-to-moment target (Search's onOpen, via App's
@@ -191,6 +192,10 @@ export function Player({
   // onOpenChannel — optional: wired by App (Task 11), rendered as a channel
   // name link in Task 15.
   onOpenChannel?: (id: string) => void;
+  // onQueued — tells App a re-download was queued, so the rail's Queue badge
+  // and poll reflect it at once. Same reason as Library's: the video has just
+  // left the ready-only library and the rail is the only thing that will say so.
+  onQueued?: () => void;
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -747,6 +752,7 @@ export function Player({
     setRedownloading(true);
     try {
       await redownload(video.id);
+      onQueued?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {

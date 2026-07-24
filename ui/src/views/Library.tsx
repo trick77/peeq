@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { VideoCard } from "../components/VideoCard";
 import { PillStrip } from "../components/PillStrip";
 import {
@@ -92,7 +92,8 @@ export function Library({
   onOpenVideo,
   onOpenChannel,
   search,
-  activeDownloads = 0,
+  queueSignal = "",
+  onQueued,
 }: {
   onOpenVideo: (id: string) => void;
   // onOpenChannel — optional: wired by App (Task 11), rendered as channel
@@ -100,11 +101,20 @@ export function Library({
   onOpenChannel?: (id: string) => void;
   search: string;
   /**
-   * How many downloads are pending or running, from App's queue state. Used
-   * only as a change signal: a video appears in the Library the moment its
-   * download finishes, and this is what tells the list to go and look.
+   * Identity of the jobs currently pending or running, from App's queue state.
+   * Used only as a change signal: a video appears in the Library the moment its
+   * download finishes, and a change here tells the list to go and look. It is
+   * an identity (an id list), not a count, so one job finishing as another
+   * starts still registers — see App's queueSignal.
    */
-  activeDownloads?: number;
+  queueSignal?: string;
+  /**
+   * Tells App a download was just queued from here (a re-download). Without it
+   * the re-download is silent: the card leaves the ready-only grid the instant
+   * its status flips to queued, and nothing else on screen — least of all the
+   * rail — would say where it went until the worker happens to emit progress.
+   */
+  onQueued?: () => void;
 }) {
   const [filter, setFilter] = useState<VideoFilter>("unwatched");
   const [category, setCategory] = useState<string>("all");
@@ -114,6 +124,14 @@ export function Library({
   const [videos, setVideos] = useState<Video[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Two effects fetch the filtered list — the one watching the chips and the
+  // one watching the queue — and only the chip effect cancels itself when the
+  // user changes a chip. Without a shared epoch, a queue-triggered request
+  // issued just before a chip click can resolve AFTER the chip's own request
+  // and repaint the grid with the previous filter's rows while the new chip
+  // stays highlighted. Every filtered fetch claims an epoch; a response that no
+  // longer holds the latest one is dropped.
+  const filteredEpoch = useRef(0);
 
   // Unfiltered list (for chip counts) + settings (for the "Expires in N
   // days" calc) are loaded once. The download queue used to be loaded here
@@ -147,12 +165,13 @@ export function Library({
   useEffect(() => {
     let active = true;
     setError(null);
+    const epoch = ++filteredEpoch.current;
     listVideos({ filter, category, q: debouncedQuery, sort })
       .then((v) => {
-        if (active) setVideos(v);
+        if (active && epoch === filteredEpoch.current) setVideos(v);
       })
       .catch((e: Error) => {
-        if (active) setError(e.message);
+        if (active && epoch === filteredEpoch.current) setError(e.message);
       });
     return () => {
       active = false;
@@ -176,11 +195,20 @@ export function Library({
   // A video only enters the Library once its download finishes, so the list
   // has to refresh when one does. App.tsx already owns the single SSE
   // subscription and the queue poll for the whole session, so rather than run
-  // a second copy of both here, it hands down how many downloads are in
-  // flight: when that number changes, something started or finished and both
-  // lists are refetched.
+  // a second copy of both here, it hands down which jobs are in flight: when
+  // that set changes, something started or finished and both lists are
+  // refetched.
+  const mounted = useRef(false);
   useEffect(() => {
+    // Skip the first run. queueSignal has not changed yet — this is mount, and
+    // the two effects above have already fetched both lists. Refetching here
+    // would double every page load.
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
     let active = true;
+    const epoch = ++filteredEpoch.current;
     listVideos({ filter: "all" })
       .then((v) => {
         if (active) setAllVideos(v);
@@ -188,7 +216,7 @@ export function Library({
       .catch(() => {});
     listVideos({ filter, category, q: debouncedQuery, sort })
       .then((v) => {
-        if (active) setVideos(v);
+        if (active && epoch === filteredEpoch.current) setVideos(v);
       })
       .catch(() => {});
     return () => {
@@ -196,9 +224,10 @@ export function Library({
     };
     // filter/category/query/sort are deliberately NOT dependencies: their own
     // effect above already refetches on a change, and repeating them here
-    // would double every request the user makes while a download runs.
+    // would double every request the user makes while a download runs. The
+    // epoch above is what keeps a late response from that effect out of the way.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDownloads]);
+  }, [queueSignal]);
 
   function applyLocalUpdate(id: string, patch: Partial<Video>) {
     setVideos((prev) =>
@@ -251,12 +280,17 @@ export function Library({
   async function handleRedownload(id: string) {
     try {
       await redownload(id);
-      const [all, current] = await Promise.all([
-        listVideos({ filter: "all" }),
-        listVideos({ filter, category, q: debouncedQuery, sort }),
-      ]);
-      setAllVideos(all);
-      setVideos(current);
+      // Only tell App — do NOT refetch here. The video is 'queued' now, which
+      // the ready-only list excludes, so its card must leave the grid; but the
+      // refetch belongs to the queue effect, not to this handler. onQueued
+      // updates App's jobs, which changes queueSignal, which fires that effect
+      // to refetch both lists against the CURRENT filter. Doing the refetch
+      // here instead would fetch with this handler's stale-closure filter: if
+      // the user changed the chip during the redownload request, this handler
+      // would resolve last, claim the newest epoch, and paint the grid with the
+      // old filter's rows under the new chip. Deferring to the queue effect
+      // reads the live filter and also drops the redundant second refetch.
+      onQueued?.();
     } catch (e) {
       setError((e as Error).message);
     }
