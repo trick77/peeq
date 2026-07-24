@@ -1358,6 +1358,122 @@ func TestChannelDetail_resolveSuccess_imageFetchFailures(t *testing.T) {
 	}
 }
 
+// TestChannelRefresh_reResolvesAStuckChannel is the #106 recovery path: a
+// channel whose earlier resolve failed (resolved_at stamped, resolve_ok=0,
+// blank metadata) is re-read on demand, bypassing the resolved_at gate that
+// otherwise treats a failure as final and — for an unsubscribed channel —
+// leaves no way back.
+func TestChannelRefresh_reResolvesAStuckChannel(t *testing.T) {
+	resolver := &testResolver{info: ytdlp.ChannelInfo{UCID: "UCstuck", Name: "Recovered Name"}}
+	deps := channelsTestDeps(t, resolver)
+	h := New(deps)
+	// A prior failed resolve: resolved_at set, resolve_ok still 0, no name.
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCstuck", ResolvedAt: "2026-01-01 00:00:00"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rec := postJSON(t, h, "/api/channels/UCstuck/refresh", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refresh status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if resolver.calls != 1 {
+		t.Fatalf("resolver.calls = %d, want 1", resolver.calls)
+	}
+	c, err := deps.Channels.Get("UCstuck")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c == nil || c.Name != "Recovered Name" || !c.ResolveOk {
+		t.Fatalf("channel not recovered by refresh: %+v", c)
+	}
+}
+
+// TestChannelRefresh_unknownID_404 asserts refreshing an id that names nothing
+// 404s rather than creating a phantom row (the failure path writes a bare row,
+// so an unguarded refresh of a made-up id would conjure one).
+func TestChannelRefresh_unknownID_404(t *testing.T) {
+	resolver := &testResolver{info: ytdlp.ChannelInfo{UCID: "UCnope", Name: "Nope"}}
+	h := New(channelsTestDeps(t, resolver))
+
+	rec := postJSON(t, h, "/api/channels/UCnope/refresh", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", rec.Code, rec.Body.String())
+	}
+	if resolver.calls != 0 {
+		t.Fatalf("resolver.calls = %d; a made-up id must not be resolved", resolver.calls)
+	}
+}
+
+// TestChannelRefresh_noCookie_409 maps the resolver's no-cookie error to 409 so
+// the UI can tell the user to refresh their YouTube cookie rather than surface a
+// raw gateway failure.
+func TestChannelRefresh_noCookie_409(t *testing.T) {
+	resolver := &testResolver{err: ytdlp.ErrNoCookie}
+	deps := channelsTestDeps(t, resolver)
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCnocookie", "Known From Videos")
+
+	rec := postJSON(t, h, "/api/channels/UCnocookie/refresh", nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelRefresh_unconfigured_503 asserts the endpoint 503s when the
+// metadata refresher is not wired (peeq run without yt-dlp).
+func TestChannelRefresh_unconfigured_503(t *testing.T) {
+	h := New(channelsTestDeps(t, nil))
+
+	rec := postJSON(t, h, "/api/channels/UCx/refresh", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelRefresh_getError_500 asserts a failure loading the channel row is
+// a 500 rather than a resolve against an unknown state.
+func TestChannelRefresh_getError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE channels`); err != nil {
+		t.Fatalf("drop channels table: %v", err)
+	}
+	h := New(deps)
+
+	rec := postJSON(t, h, "/api/channels/UCx/refresh", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelRefresh_nameFromVideosError_500 asserts a failure in the existence
+// check (reached when there is no cached channels row) is a 500.
+func TestChannelRefresh_nameFromVideosError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE videos`); err != nil {
+		t.Fatalf("drop videos table: %v", err)
+	}
+	h := New(deps)
+
+	rec := postJSON(t, h, "/api/channels/UCnorow/refresh", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelRefresh_resolveError_502 asserts a non-cookie resolve failure is
+// surfaced as a 502 with its reason, not a generic 500.
+func TestChannelRefresh_resolveError_502(t *testing.T) {
+	resolver := &testResolver{err: errors.New("network blip")}
+	deps := channelsTestDeps(t, resolver)
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCflaky", "Flaky Channel")
+
+	rec := postJSON(t, h, "/api/channels/UCflaky/refresh", nil)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestListVideos_channelParam_scopes asserts ?channel= narrows the library to
 // one channel, which is what the Archive tab loads.
 func TestListVideos_channelParam_scopes(t *testing.T) {

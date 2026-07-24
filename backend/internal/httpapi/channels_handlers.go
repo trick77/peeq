@@ -446,12 +446,83 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 			}
 		}()
 		// Detached from the request: the browser has its response already.
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		// Interactive lane: this fetch is triggered by a real page visit and
+		// carries a deadline, so it must skip the background reservation queue —
+		// starving behind it is what let the 2-minute timeout expire and strand
+		// the channel with resolve_ok=0 (the case #106 is about).
+		ctx, cancel := context.WithTimeout(ytdlp.WithInteractive(context.Background()), 2*time.Minute)
 		defer cancel()
 		if err := s.metadata.Resolve(ctx, channelID, cached); err != nil {
 			slog.Warn("channel resolve failed", "channel_id", channelID, "err", err)
 		}
 	}()
+}
+
+// handleChannelRefresh re-reads a channel's metadata from YouTube on demand,
+// ignoring the resolved_at gate that maybeResolveChannel obeys. That gate is
+// what makes this endpoint necessary: it treats a FAILED resolve as final, so
+// a channel whose one attempt failed (no cookie at the time, a network blip
+// during an import) keeps its blank avatar, banner and description forever with
+// no way back — and for an UNSUBSCRIBED tracked channel there is no weekly
+// rotation to retry it either. This is that way back, and it is deliberately
+// manual: nothing re-resolves a failed unsubscribed channel on its own (#106).
+//
+// It runs while the caller waits rather than in the background: the user
+// pressed a button and the answer is either new metadata to re-render or a
+// reason it did not work.
+func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil || s.metadata == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	id := r.PathValue("id")
+	c, err := s.channels.Get(id)
+	if err != nil {
+		serverError(w, r, err, "load channel failed")
+		return
+	}
+	// Same existence rule the detail endpoint applies, and for the same
+	// reason: an id that names nothing must not become something. Without
+	// this, refreshing a made-up id CREATES a row for it — on the failure
+	// path too, since that path writes a bare row to remember the failed
+	// attempt — and an id the detail endpoint 404s starts returning 200 with
+	// an empty channel behind it.
+	if c == nil {
+		_, found, nerr := s.channels.NameFromVideos(id)
+		if nerr != nil {
+			serverError(w, r, nerr, "load channel failed")
+			return
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "channel not found")
+			return
+		}
+	}
+
+	// WithInteractive so this user-initiated refresh skips the background pacer
+	// queue. WithoutCancel, not r.Context() straight through: a refresh takes
+	// tens of seconds (yt-dlp's throttle, then two image fetches), and
+	// cancelling it because the reader closed the tab would land in the FAILURE
+	// path, which stamps resolve_ok = 0. The channel would then claim "last
+	// refresh failed" — the one state peeq uses to mean "this needs your
+	// attention" — because someone navigated away. The work is worth finishing
+	// either way; only the response is lost.
+	ctx, cancel := context.WithTimeout(
+		ytdlp.WithInteractive(context.WithoutCancel(r.Context())), 2*time.Minute)
+	defer cancel()
+	if err := s.metadata.Resolve(ctx, id, c); err != nil {
+		if errors.Is(err, ytdlp.ErrNoCookie) {
+			writeJSONError(w, http.StatusConflict, "cookie required")
+			return
+		}
+		writeJSONError(w, http.StatusBadGateway, "refresh failed: "+err.Error())
+		return
+	}
+	// No onChannelResolved here: that hook exists so a test can await the
+	// BACKGROUND goroutine (see Deps.OnChannelResolved). This path is
+	// synchronous, so the response itself is the signal, and firing it would
+	// hand waiting tests a second, unrelated wakeup.
+	writeJSON(w, map[string]any{"status": "ok"})
 }
 
 // handleChannelsDismissDormant suppresses a channel's dormancy flag until it

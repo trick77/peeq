@@ -106,6 +106,25 @@ export async function scanChannel(id: string): Promise<ScanResult> {
   );
 }
 
+// refreshChannel forces an on-demand metadata re-read, the manual way out of a
+// failed resolve that peeq will not retry on its own. The handler's 409 is
+// mapped to the same CookieRequiredError addChannel raises, so the caller can
+// tell the user to refresh their cookie rather than showing a raw error.
+export async function refreshChannel(id: string): Promise<{ status: string }> {
+  try {
+    return await api.post<{ status: string }>(
+      `/api/channels/${encodeURIComponent(id)}/refresh`,
+      undefined,
+      "failed to refresh",
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      throw new CookieRequiredError();
+    }
+    throw err;
+  }
+}
+
 export function channelAvatarUrl(id: string): string {
   return `/api/channels/${encodeURIComponent(id)}/avatar`;
 }

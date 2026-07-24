@@ -8,7 +8,9 @@ import {
   subscribeChannel,
   unsubscribeChannel,
   addChannel,
+  refreshChannel,
 } from "../api/channels";
+import { CookieRequiredError } from "../api/downloads";
 import { gradientClassFor } from "../format";
 import type { ChannelDetail } from "../api/types";
 import { ArchiveTab } from "./channel/ArchiveTab";
@@ -92,13 +94,9 @@ export function formatAge(iso: string | undefined): string {
 //                     so it outranks the freshness of the metadata.
 //   refresh failed  — resolved_at is set but the attempt did not succeed.
 //                     This is the state behind a channel with no avatar, no
-//                     banner and no description, and what it says next depends
-//                     on whether anything will ever try again: a SUBSCRIBED
-//                     channel is re-read once a week, so the date is "as of
-//                     when this was last true". An unsubscribed one is not in
-//                     that rotation and has nothing else to fall back on now
-//                     that the manual Refresh button is gone, so it says what
-//                     to do about it instead of leaving a dead end on screen.
+//                     banner and no description: peeq tried once, failed, and
+//                     will not try again on its own. The header's Refresh
+//                     button is the way out of it.
 //   active          — resolved cleanly, with the date it last read the channel.
 //
 // A channel with no resolved_at at all has simply never been read, and says
@@ -134,12 +132,6 @@ export function ChannelState({ detail }: { detail: ChannelDetail }) {
           <span className="led unknown" />
           Last refresh failed {formatStamp(detail.resolved_at)}
         </span>
-        {detail.subscribed ? null : (
-          <>
-            <span className="sep">·</span>
-            <span>Subscribe to have peeq try again</span>
-          </>
-        )}
       </>
     );
   }
@@ -169,6 +161,10 @@ export function Channel({
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("archive");
   const [busy, setBusy] = useState(false);
+  // Refresh gets its own busy flag rather than sharing `busy`: it runs while
+  // the user waits (yt-dlp, then two image fetches) and must not leave the
+  // Subscribe button spinning alongside it.
+  const [refreshing, setRefreshing] = useState(false);
   // Whether the description is expanded past its 5-line clamp. Reset per
   // channel, so navigating to another one does not inherit "expanded".
   const [descOpen, setDescOpen] = useState(false);
@@ -186,6 +182,12 @@ export function Channel({
   // response painted over the newer one.
   const loadSeq = useRef(0);
 
+  // channelIdRef mirrors the channel currently on screen. An in-flight refresh
+  // cannot read channelId directly: handleRefresh closed over the value it
+  // started with, so comparing against that would always say "still here" no
+  // matter where the user has navigated since.
+  const channelIdRef = useRef(channelId);
+
   function reload() {
     if (!channelId) return;
     const seq = ++loadSeq.current;
@@ -202,6 +204,7 @@ export function Channel({
   }
 
   useEffect(() => {
+    channelIdRef.current = channelId;
     setDetail(null);
     setTab("archive");
     setDescOpen(false);
@@ -251,6 +254,37 @@ export function Channel({
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  // handleRefresh re-reads the channel from YouTube. It is the only way out of
+  // the state where an early failed resolve left the channel with no avatar,
+  // banner or description and peeq stopped retrying — so it is worth waiting
+  // for, and the error is worth showing rather than swallowing.
+  async function handleRefresh() {
+    if (!detail) return;
+    // A refresh runs for tens of seconds — long enough for the user to move to
+    // another channel before it lands. Everything after the await is gated on
+    // still being on the channel we asked about, the same guard reload()
+    // applies with loadSeq: otherwise THIS channel's failure surfaces under
+    // ANOTHER channel's header and reads as that one being broken.
+    const requested = detail.id;
+    const stillHere = () => requested === channelIdRef.current;
+    setRefreshing(true);
+    setError(null);
+    try {
+      await refreshChannel(requested);
+      if (!stillHere()) return;
+      reload();
+    } catch (e) {
+      if (!stillHere()) return;
+      setError(
+        e instanceof CookieRequiredError
+          ? "peeq needs a fresh YouTube cookie before it can read this channel."
+          : (e as Error).message,
+      );
+    } finally {
+      if (stillHere()) setRefreshing(false);
     }
   }
 
@@ -411,6 +445,17 @@ export function Channel({
                 Track this channel
               </Button>
             )}
+            {/* Refresh turns primary when it is the thing to press: a channel
+                peeq has never managed to read is sitting there with no artwork
+                and no description, and this is the only way out. */}
+            <Button
+              type="button"
+              variant={detail.resolve_ok ? "secondary" : "primary"}
+              busy={refreshing}
+              onClick={handleRefresh}
+            >
+              <Icon name="refresh" size="16px" /> Refresh
+            </Button>
           </div>
         </div>
       </header>
