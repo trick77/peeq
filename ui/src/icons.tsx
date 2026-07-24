@@ -26,6 +26,7 @@ import {
   RefreshCw,
   Copy,
   LoaderCircle,
+  EllipsisVertical,
   type LucideIcon,
 } from "lucide-react";
 
@@ -67,6 +68,7 @@ const COMPONENTS = {
   verified: BadgeCheck, // YouTube's channel checkmark, not a peeq state
   refresh: RefreshCw,
   copy: Copy,
+  moreVertical: EllipsisVertical, // the row's 3-dot actions trigger
   spinner: LoaderCircle, // spun by .ui-spin — every async wait spins
 } satisfies Record<string, LucideIcon>;
 

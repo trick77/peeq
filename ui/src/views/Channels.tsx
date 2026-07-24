@@ -4,18 +4,23 @@ import { Button } from "../ui";
 import {
   addChannel,
   listChannels,
-  updateChannel,
   subscribeChannel,
   unsubscribeChannel,
   deleteChannel,
   listAutoUnsubscribedChannels,
   dismissDormantChannel,
   resubscribeChannel,
+  channelAvatarUrl,
+  channelBannerUrl,
   type ChannelFilter,
 } from "../api/channels";
 import { CookieRequiredError } from "../api/downloads";
 import { isChannelURL } from "../youtube";
+import { gradientClassFor } from "../format";
 import type { AutoUnsubscribedChannel, Channel } from "../api/types";
+import { RowMenu } from "../components/RowMenu";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ChannelDeleteWarning } from "../components/ChannelDeleteWarning";
 import { ReviewBand } from "./ReviewBand";
 import { AutoUnsubscribedSection } from "./AutoUnsubscribedSection";
 
@@ -29,21 +34,30 @@ const CHIPS: { id: ChannelFilter; label: string }[] = [
 ];
 
 // Channels — tracked/subscribed channel management: an add-channel form,
-// filter chips, and per row a subscribe toggle, autodownload toggle,
-// format-override field, and a delete-with-confirm. Mirrors Library's chip
-// pattern and Settings' panel language (.sect / .ctrl / .btn) for visual
-// consistency — no new look.
+// filter chips, and a top-bar search box, with each row showing the channel's
+// banner-and-avatar art, its counts, and a single ⋮ actions menu (Subscribe,
+// Open, Delete). Auto-add and the format override live on the channel's own
+// Settings tab, not here. Mirrors Library's chip/search pattern for visual
+// consistency.
 export function Channels({
   onOpenChannel,
+  search = "",
 }: {
   // onOpenChannel — optional: wired by App (Task 11), rendered as channel
   // name links in Task 15.
   onOpenChannel?: (id: string) => void;
+  // search — the top bar's query for this page (the Channels list now shares
+  // Library's top-bar search box). Filters the list by name/handle, client-
+  // side, since the whole list is already in memory.
+  search?: string;
 } = {}) {
   const [filter, setFilter] = useState<ChannelFilter>("all");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [formatDrafts, setFormatDrafts] = useState<Record<string, string>>({});
+  // pendingDelete holds the channel the ⋮ menu's Delete opened the confirm
+  // dialog for; deleteBusy disables the dialog while the request is in flight.
+  const [pendingDelete, setPendingDelete] = useState<Channel | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [addUrl, setAddUrl] = useState("");
   const [addSubscribe, setAddSubscribe] = useState(false);
   const [addBusy, setAddBusy] = useState(false);
@@ -80,13 +94,6 @@ export function Channels({
       .then((cs) => {
         if (seq !== loadSeq.current) return; // a newer load superseded this one
         setChannels(cs);
-        setFormatDrafts((prev) => {
-          const next = { ...prev };
-          for (const c of cs) {
-            if (next[c.id] === undefined) next[c.id] = c.format_override ?? "";
-          }
-          return next;
-        });
       })
       .catch((e: Error) => {
         if (seq !== loadSeq.current) return;
@@ -189,47 +196,26 @@ export function Channels({
     }
   }
 
-  async function handleToggleAutodownload(c: Channel) {
-    const next = !c.autodownload;
-    applyLocalUpdate(c.id, { autodownload: next });
-    try {
-      await updateChannel(c.id, { autodownload: next });
-      // Refetch rather than trust the optimistic flip: under the Auto-add
-      // chip a channel switched off no longer belongs in the list.
-      load(filterRef.current);
-    } catch (err) {
-      applyLocalUpdate(c.id, { autodownload: c.autodownload });
-      setError((err as Error).message);
-    }
-  }
-
-  async function handleSaveFormatOverride(c: Channel) {
-    const draft = formatDrafts[c.id] ?? "";
-    if (draft === (c.format_override ?? "")) return;
-    try {
-      await updateChannel(c.id, { format_override: draft });
-      applyLocalUpdate(c.id, { format_override: draft });
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  async function handleDelete(c: Channel) {
-    // Same wording as the channel page's own delete (channel/SettingsTab):
-    // it is the same irreversible action, so it must not warn less here just
-    // because the button is smaller. Both name the video count, both say
-    // "kept forever" videos go too, and both say it cannot be undone.
-    if (
-      !window.confirm(
-        `Delete ${c.name} and its ${c.downloaded_count} videos? This removes the files from disk, including any you kept forever. This cannot be undone.`,
-      )
-    )
-      return;
+  // Delete is a two-step: the ⋮ menu's Delete opens the confirm dialog
+  // (setPendingDelete), and the dialog's Delete button runs it (confirmDelete).
+  // Auto-add and the format override are no longer on the row — they live on
+  // the channel's own Settings tab now.
+  async function confirmDelete() {
+    const c = pendingDelete;
+    if (!c) return;
+    setDeleteBusy(true);
     try {
       await deleteChannel(c.id);
       setChannels((prev) => prev.filter((x) => x.id !== c.id));
+      setPendingDelete(null);
     } catch (err) {
+      // Close the dialog on failure, the same as the detail Settings delete:
+      // the error line renders at the top of the page, and the fixed, dimmed
+      // modal scrim would otherwise hide it — leaving the click looking dead.
+      setPendingDelete(null);
       setError((err as Error).message);
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -271,6 +257,20 @@ export function Channels({
       setError((err as Error).message);
     }
   }
+
+  // The rendered list: never the dormant channels (they live in the review
+  // band), and — when the top-bar search box has a query — only those whose
+  // name or handle matches it. Filtering is client-side: the whole list is
+  // already loaded, so there is no request to make per keystroke.
+  const q = search.trim().toLowerCase();
+  const visibleChannels = channels.filter(
+    (c) =>
+      !c.dormant &&
+      (q === "" ||
+        c.name.toLowerCase().includes(q) ||
+        (c.handle ?? "").toLowerCase().includes(q)),
+  );
+  const hasNonDormant = channels.some((c) => !c.dormant);
 
   return (
     <>
@@ -342,19 +342,26 @@ export function Channels({
         onUnsubscribe={handleToggleSubscribe}
       />
       <div className="channel-list">
-        {channels
-          .filter((c) => !c.dormant)
-          .map((c) => (
-            <div key={c.id} className="channel-row sect">
-              <div className="channel-info">
-                <h3
-                  style={{
-                    margin: 0,
-                    fontFamily: "var(--font-serif)",
-                    fontSize: 17,
-                    fontWeight: 500,
-                  }}
-                >
+        {visibleChannels.map((c) => (
+          <div key={c.id} className="channel-row chan-artrow sect">
+            {c.has_banner ? (
+              <div
+                className="chan-banner"
+                style={{ backgroundImage: `url(${channelBannerUrl(c.id)})` }}
+                aria-hidden="true"
+              />
+            ) : null}
+            {c.has_avatar ? (
+              <img className="chan-av" src={channelAvatarUrl(c.id)} alt="" />
+            ) : (
+              <div
+                className={`chan-av ${gradientClassFor(c.id)}`}
+                aria-hidden="true"
+              />
+            )}
+            <div className="channel-info">
+              <div className="chan-nameline">
+                <h3>
                   {onOpenChannel ? (
                     <button
                       type="button"
@@ -367,70 +374,88 @@ export function Channels({
                     c.name
                   )}
                 </h3>
-                <div className="channel-by">
-                  {c.handle ? `${c.handle} · ` : ""}
-                  <b>{c.pending_count}</b> pending · <b>{c.downloaded_count}</b>{" "}
-                  downloaded
-                </div>
-              </div>
-              <div className="channel-actions">
-                <label className="ctrl channel-toggle">
-                  <input
-                    type="checkbox"
-                    checked={c.autodownload}
-                    onChange={() => handleToggleAutodownload(c)}
-                    aria-label="Auto-add"
-                  />
-                  Auto-add
-                </label>
-                <input
-                  type="text"
-                  className="channel-format-input"
-                  value={formatDrafts[c.id] ?? ""}
-                  onChange={(e) =>
-                    setFormatDrafts((prev) => ({
-                      ...prev,
-                      [c.id]: e.target.value,
-                    }))
-                  }
-                  onBlur={() => handleSaveFormatOverride(c)}
-                  placeholder="Format override (optional)"
-                  aria-label="Format override"
-                />
-                <Button
-                  type="button"
-                  variant={c.subscribed ? "gold" : "secondary"}
-                  onClick={() => handleToggleSubscribe(c)}
+                <span
+                  className={`chan-sub-star${c.subscribed ? "" : " off"}`}
+                  title={c.subscribed ? "Subscribed" : "Not subscribed"}
                 >
                   <Icon
                     name={c.subscribed ? "starFilled" : "star"}
-                    size="16px"
+                    size="15px"
+                    label={c.subscribed ? "Subscribed" : "Not subscribed"}
                   />
-                  {c.subscribed ? "Unsubscribe" : "Subscribe"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="dangerQuiet"
-                  onClick={() => handleDelete(c)}
-                  aria-label={`Delete ${c.name}`}
-                >
-                  <Icon name="trash" size="16px" /> Delete
-                </Button>
+                </span>
+              </div>
+              <div className="channel-by">
+                {c.handle ? `${c.handle} · ` : ""}
+                <b>{c.pending_count}</b> pending · <b>{c.downloaded_count}</b>{" "}
+                downloaded
               </div>
             </div>
-          ))}
+            <RowMenu
+              label={`Actions for ${c.name}`}
+              actions={[
+                {
+                  label: c.subscribed ? "Unsubscribe" : "Subscribe",
+                  icon: c.subscribed ? "starFilled" : "star",
+                  onClick: () => handleToggleSubscribe(c),
+                },
+                ...(onOpenChannel
+                  ? [
+                      {
+                        label: "Open channel",
+                        icon: "externalLink" as const,
+                        onClick: () => onOpenChannel(c.id),
+                      },
+                    ]
+                  : []),
+                {
+                  label: "Delete channel",
+                  icon: "trash",
+                  danger: true,
+                  onClick: () => setPendingDelete(c),
+                },
+              ]}
+            />
+          </div>
+        ))}
       </div>
-      {channels.length === 0 && !error ? (
+      {/* Only speak when the list is genuinely empty: no channels at all, or a
+          search that hid them. When the only channels are dormant they show in
+          the review band above, so "No channels yet." would contradict it —
+          stay silent then, as the pre-search code did. */}
+      {visibleChannels.length === 0 &&
+      !error &&
+      (channels.length === 0 || (q !== "" && hasNonDormant)) ? (
         <p style={{ color: "var(--color-faint)" }}>
-          {filter === "all"
-            ? "No channels yet."
-            : "No channels match this filter."}
+          {q !== "" && hasNonDormant
+            ? "No channels match your search."
+            : filter === "all"
+              ? "No channels yet."
+              : "No channels match this filter."}
         </p>
       ) : null}
       <AutoUnsubscribedSection
         channels={tombstones}
         onResubscribe={handleResubscribe}
       />
+      {/* Delete is confirmed in a modal, not window.confirm. Same wording as
+          the channel page's own delete (channel/SettingsTab): it is the same
+          irreversible action, so it must not warn less here. */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete channel?"
+        confirmLabel="Delete channel"
+        busy={deleteBusy}
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      >
+        {pendingDelete ? (
+          <ChannelDeleteWarning
+            name={pendingDelete.name}
+            count={pendingDelete.downloaded_count}
+          />
+        ) : null}
+      </ConfirmDialog>
     </>
   );
 }

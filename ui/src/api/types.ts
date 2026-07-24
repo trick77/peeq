@@ -206,6 +206,11 @@ export type Channel = {
   format_override?: string;
   pending_count: number;
   downloaded_count: number;
+  // has_avatar/has_banner tell a list row whether channel art exists, so it can
+  // point an <img> at /api/channels/{id}/avatar|banner or fall back to a
+  // gradient — same presence flags ChannelDetail carries, now on the list too.
+  has_avatar?: boolean;
+  has_banner?: boolean;
   dormant: boolean;
   last_video_at?: string;
 };

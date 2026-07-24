@@ -847,9 +847,8 @@ describe("Channel", () => {
     ).toBeInTheDocument();
   });
 
-  it("declining the delete confirmation leaves the channel intact", async () => {
+  it("cancelling the delete dialog leaves the channel intact", async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
     );
@@ -861,16 +860,18 @@ describe("Channel", () => {
         name: /delete channel and its 142 videos/i,
       }),
     );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /cancel/i }));
 
-    expect(confirmSpy).toHaveBeenCalled();
     expect(deleteChannel).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
   });
 
-  it("confirming delete calls deleteChannel and navigates back", async () => {
+  it("confirming delete in the dialog calls deleteChannel and navigates back", async () => {
     const user = userEvent.setup();
     const onBack = vi.fn();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<Channel channelId="UCa" onOpenVideo={() => {}} onBack={onBack} />);
     await screen.findByText("Uncanny Expeditions");
     await user.click(screen.getByRole("tab", { name: /settings/i }));
@@ -880,16 +881,18 @@ describe("Channel", () => {
         name: /delete channel and its 142 videos/i,
       }),
     );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /^delete channel$/i }),
+    );
 
     await waitFor(() => expect(deleteChannel).toHaveBeenCalledWith("UCa"));
     await waitFor(() => expect(onBack).toHaveBeenCalled());
-    vi.mocked(window.confirm).mockRestore();
   });
 
   it("a failed delete shows the error and does not navigate back", async () => {
     const user = userEvent.setup();
     const onBack = vi.fn();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.mocked(deleteChannel).mockRejectedValue(
       new Error("failed to delete channel"),
     );
@@ -902,12 +905,15 @@ describe("Channel", () => {
         name: /delete channel and its 142 videos/i,
       }),
     );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /^delete channel$/i }),
+    );
 
     expect(
       await screen.findByText("failed to delete channel"),
     ).toBeInTheDocument();
     expect(onBack).not.toHaveBeenCalled();
-    vi.mocked(window.confirm).mockRestore();
   });
 
   it("blurring the format override field saves it when the value changed", async () => {

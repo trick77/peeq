@@ -87,11 +87,13 @@ export function App() {
     youtube_paused: false,
     youtube_pause_reason: "",
   });
-  // Library search: lifted here (not owned by Library) because the search
-  // box itself now lives in the top bar, which Library doesn't render. The
-  // top bar is not channel-aware, so the channel page keeps its own,
-  // separately-owned in-page search box — this state is Library-only.
+  // Search boxes for the two list pages that have one. Both live in the top
+  // bar (which neither view renders itself), so their state is lifted here.
+  // They are kept apart on purpose: a video-title query must not carry over
+  // into a channel-name filter when you switch pages. The channel *detail*
+  // page still keeps its own in-page search — the top bar isn't detail-aware.
   const [librarySearch, setLibrarySearch] = useState("");
+  const [channelSearch, setChannelSearch] = useState("");
   // How many jobs are pending or running. It drives the queue poll below, and
   // is handed to Library as the signal to refetch — a video enters the library
   // exactly when its download leaves this count.
@@ -413,9 +415,14 @@ export function App() {
         <TopBar
           title={meta.title}
           subtitle={meta.subtitle}
-          showSearch={view === "library"}
-          search={librarySearch}
-          onSearchChange={setLibrarySearch}
+          showSearch={view === "library" || view === "channels"}
+          search={view === "channels" ? channelSearch : librarySearch}
+          onSearchChange={
+            view === "channels" ? setChannelSearch : setLibrarySearch
+          }
+          searchPlaceholder={
+            view === "channels" ? "Search channels" : "Search titles"
+          }
         />
         <section className="page">
           <DownloadStatusBanner
@@ -439,6 +446,7 @@ export function App() {
             setPendingCount={setPendingCount}
             onQueued={refreshQueue}
             librarySearch={librarySearch}
+            channelSearch={channelSearch}
             activeDownloads={activeDownloads}
             jobs={jobs}
             progressByJobId={progressByJobId}
@@ -530,6 +538,7 @@ function ViewSwitch({
   setPendingCount,
   onQueued,
   librarySearch,
+  channelSearch,
   activeDownloads,
   jobs,
   progressByJobId,
@@ -550,6 +559,7 @@ function ViewSwitch({
   setPendingCount: (n: number) => void;
   onQueued: () => void;
   librarySearch: string;
+  channelSearch: string;
   activeDownloads: number;
   jobs: Job[];
   progressByJobId: Record<
@@ -624,7 +634,7 @@ function ViewSwitch({
         />
       );
     case "channels":
-      return <Channels onOpenChannel={onOpenChannel} />;
+      return <Channels onOpenChannel={onOpenChannel} search={channelSearch} />;
     case "channel":
       return (
         <Channel
