@@ -1793,3 +1793,82 @@ func TestSetDownloaded_stampsSponsorblockRefresh(t *testing.T) {
 		t.Fatalf("claimed %+v, want a just-downloaded video not to be re-fetched", claimed)
 	}
 }
+
+// seedChannel inserts a channels metadata-cache row directly. The videos
+// package must not import channels (that would cycle), so tests write the row
+// via raw SQL against the shared db.
+func seedChannel(t *testing.T, s *Store, id, name string) {
+	t.Helper()
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO channels (id, name) VALUES (?, ?)`, id, name); err != nil {
+		t.Fatalf("seed channel %s: %v", id, err)
+	}
+}
+
+// TestChannelName_resolvesFromChannelsCache pins the fix for videos that
+// arrive through a channel scan/subscription: their own videos.channel_name
+// is never written, so both Get and List must fall back to the resolved name
+// in the channels metadata cache rather than surfacing the raw UCxxxx id.
+func TestChannelName_resolvesFromChannelsCache(t *testing.T) {
+	s := newTestStore(t)
+	seedChannel(t, s, "UC77UtoyivVHkpApL0wGfH5w", "Real Channel Name")
+	seedVideo(t, s, Video{
+		ID: "v", URL: "u", Title: "t",
+		ChannelID: "UC77UtoyivVHkpApL0wGfH5w", // ChannelName deliberately empty
+		Status:    "downloaded",
+	})
+
+	// Get (the Player detail path) resolves it.
+	got, err := s.Get("v")
+	if err != nil || got == nil {
+		t.Fatalf("get: %v (row=%v)", err, got)
+	}
+	if got.ChannelName != "Real Channel Name" {
+		t.Fatalf("Get ChannelName = %q, want resolved name", got.ChannelName)
+	}
+
+	// List (the Library grid path) resolves it too.
+	list, err := s.List(ListOptions{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].ChannelName != "Real Channel Name" {
+		t.Fatalf("List ChannelName = %+v, want resolved name", list)
+	}
+}
+
+// TestChannelName_fallbacks covers the two other COALESCE branches: the
+// video's own channel_name wins when present, and the bare id remains the last
+// resort when the channel is genuinely unresolved (no cache row / blank name).
+func TestChannelName_fallbacks(t *testing.T) {
+	s := newTestStore(t)
+
+	// Own channel_name present -> wins over the cache.
+	seedChannel(t, s, "UCcache", "Cache Name")
+	seedVideo(t, s, Video{ID: "own", URL: "u", ChannelID: "UCcache",
+		ChannelName: "Own Name", Status: "downloaded"})
+
+	// No cache row at all -> falls through to the id.
+	seedVideo(t, s, Video{ID: "bare", URL: "u", ChannelID: "UCunknown",
+		Status: "downloaded"})
+
+	// Cache row exists but its name is blank -> also falls through to the id.
+	seedChannel(t, s, "UCblank", "")
+	seedVideo(t, s, Video{ID: "blank", URL: "u", ChannelID: "UCblank",
+		Status: "downloaded"})
+
+	want := map[string]string{
+		"own":   "Own Name",
+		"bare":  "UCunknown",
+		"blank": "UCblank",
+	}
+	for id, exp := range want {
+		got, err := s.Get(id)
+		if err != nil || got == nil {
+			t.Fatalf("get %s: %v (row=%v)", id, err, got)
+		}
+		if got.ChannelName != exp {
+			t.Fatalf("Get(%s) ChannelName = %q, want %q", id, got.ChannelName, exp)
+		}
+	}
+}
