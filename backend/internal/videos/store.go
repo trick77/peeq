@@ -308,8 +308,14 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 	case "unwatched":
 		// Narrower than notInFlight on purpose: "unwatched" answers "what can I
 		// press play on", so a failed or swept row is excluded here even though
-		// it is still reachable through "all".
-		conds = append(conds, "v.status = 'downloaded' AND v.watched = 0")
+		// it is still reachable through "all". The resume_position_seconds = 0
+		// gate makes "unwatched" mean *never opened* — a partially-watched row
+		// lives under "in_progress" instead, so the two never overlap.
+		conds = append(conds, "v.status = 'downloaded' AND v.watched = 0 AND v.resume_position_seconds = 0")
+	case "in_progress":
+		// Started but not finished: the same play-eligible gate as "unwatched",
+		// split off by a non-zero resume position.
+		conds = append(conds, "v.status = 'downloaded' AND v.watched = 0 AND v.resume_position_seconds > 0")
 	case "watched":
 		conds = append(conds, "v.watched = 1")
 	case "favorites":

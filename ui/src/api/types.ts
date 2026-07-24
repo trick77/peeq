@@ -19,7 +19,7 @@ export type User = {
 
 // VideoFilter mirrors the ?filter= values videos.Store.List understands.
 export type VideoFilter =
-  "all" | "unwatched" | "watched" | "favorites" | "downloading";
+  "all" | "unwatched" | "in_progress" | "watched" | "favorites" | "downloading";
 
 // VideoSort mirrors the sort keys videos.Store.List accepts.
 export type VideoSort = "newest" | "oldest" | "longest" | "title";

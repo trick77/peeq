@@ -17,8 +17,9 @@ import { controlClass } from "../ui";
 // the grid; that turned out to be a second, more awkward route to a list a chip
 // gives directly.)
 const CHIPS: { id: VideoFilter; label: string }[] = [
-  { id: "all", label: "All" },
   { id: "unwatched", label: "Unwatched" },
+  { id: "all", label: "All" },
+  { id: "in_progress", label: "In progress" },
   { id: "favorites", label: "Favorites" },
   { id: "watched", label: "Watched" },
 ];
@@ -39,11 +40,20 @@ export const SORT_OPTIONS: { id: VideoSort; label: string }[] = [
 function matchesFilter(v: Video, filter: VideoFilter): boolean {
   switch (filter) {
     case "unwatched":
+      // "Unwatched" means never opened: play-eligible, not watched, and the
+      // resume position still at zero. A partially-watched row is "in_progress".
       return (
         (v.status === "downloaded" ||
           v.status === "queued" ||
           v.status === "downloading") &&
-        !v.watched
+        !v.watched &&
+        v.resume_position_seconds === 0
+      );
+    case "in_progress":
+      return (
+        v.status === "downloaded" &&
+        !v.watched &&
+        v.resume_position_seconds > 0
       );
     case "watched":
       return v.watched;
@@ -78,7 +88,7 @@ export function Library({
    */
   activeDownloads?: number;
 }) {
-  const [filter, setFilter] = useState<VideoFilter>("all");
+  const [filter, setFilter] = useState<VideoFilter>("unwatched");
   const [category, setCategory] = useState<string>("all");
   const [sort, setSort] = useState<VideoSort>("newest");
   const [debouncedQuery, setDebouncedQuery] = useState("");
