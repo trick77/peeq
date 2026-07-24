@@ -23,6 +23,12 @@ import (
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
+// metadataPreflightTimeout bounds the worker's pre-download metadata fetch so a
+// hung yt-dlp probe can't stall the single-threaded queue forever. Generous
+// enough for a slow-but-legit resolve; a real stall is killed well before it
+// starves the rest of the queue.
+const metadataPreflightTimeout = 2 * time.Minute
+
 // Runner is the subset of *ytdlp.Runner the worker needs. Declaring it here
 // (rather than importing the concrete type) keeps the worker testable with
 // a fake that never shells out to yt-dlp; the real *ytdlp.Runner satisfies
@@ -323,7 +329,13 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	// error: a missing/expired cookie pauses the job and an unavailable video
 	// fails it, surfacing on Activity instead of blocking the user at add time.
 	if video.Title == "" {
-		meta, merr := w.deps.Runner.Metadata(jobCtx, video.URL)
+		// Bound the probe: the Download path has --socket-timeout + the
+		// inactivity watchdog, but this one-shot metadata fetch has neither, and
+		// jobCtx carries no deadline — a hung yt-dlp probe would stall the
+		// single-threaded queue indefinitely. A straight wall-clock cap kills it.
+		metaCtx, metaCancel := context.WithTimeout(jobCtx, metadataPreflightTimeout)
+		meta, merr := w.deps.Runner.Metadata(metaCtx, video.URL)
+		metaCancel()
 		if w.wasCanceled() {
 			w.settleCanceled(job, video)
 			return
@@ -652,9 +664,15 @@ func (w *Worker) fail(job *jobs.Job, video *videos.Video, attempts int, msg stri
 		if err := w.deps.Videos.SetStatus(video.ID, "error", msg); err != nil {
 			w.deps.Logger.Error("download worker: set error status failed", "video_id", video.ID, "err", err)
 		}
+		// A preflight-failed video has no title yet, so fall back to its id
+		// rather than emitting a blank, unidentifiable Activity row.
+		subject := video.Title
+		if subject == "" {
+			subject = video.ID
+		}
 		w.recordActivity(activity.Event{
 			Kind: activity.KindDownload, Outcome: activity.OutcomeFail,
-			SubjectID: video.ID, Subject: video.Title, Summary: "download failed",
+			SubjectID: video.ID, Subject: subject, Summary: "download failed",
 			Detail: msg,
 		})
 	}
