@@ -659,10 +659,15 @@ button.srow:not(:disabled):hover {
   color: var(--color-ink-dim);
   border-color: var(--color-faint);
 }
-.chip.on {
-  background: var(--color-ink);
-  color: var(--color-bg);
-  border-color: var(--color-ink);
+/* The canonical active-pill style: a soft accent tint, shared by every filter
+   pill (status .chip and category .catchip alike). A solid inverted fill read
+   as too loud for the always-present "All" — this keeps the selected pill legible
+   without shouting. Add any new pill type's `.on` state to this selector. */
+.chip.on,
+.catchip.on {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-accent-strong);
+  border-color: var(--color-accent-dim);
 }
 .chip .n {
   font-family: var(--font-mono);
@@ -695,11 +700,6 @@ button.srow:not(:disabled):hover {
   color: var(--color-ink-dim);
   border-color: var(--color-faint);
 }
-.catchip.on {
-  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
-  color: var(--color-accent-strong);
-  border-color: var(--color-accent-dim);
-}
 .catchip .dotc {
   width: 7px;
   height: 7px;
@@ -713,6 +713,77 @@ button.srow:not(:disabled):hover {
   opacity: 0.65;
 }
 
+/* PillStrip — keeps the category row on a single line and scrolls it sideways
+   instead of wrapping. The wrapper carries the row's old outer margin; the
+   inner .catchips switches to nowrap. A `<`/`>` chevron button (plus an edge
+   fade) shows on each side only while there is more to scroll that way — the
+   .l / .r classes are toggled by the component from scroll position. */
+.pillstrip {
+  position: relative;
+  margin: -10px 0 22px;
+}
+.pillstrip-scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pillstrip-scroll::-webkit-scrollbar {
+  display: none;
+}
+.pillstrip .catchips {
+  flex-wrap: nowrap;
+  width: max-content;
+  margin: 0;
+}
+.pillstrip.l .catchips {
+  padding-left: 44px;
+}
+.pillstrip.r .catchips {
+  padding-right: 44px;
+}
+.pillstrip.l::before,
+.pillstrip.r::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 60px;
+  pointer-events: none;
+}
+.pillstrip.l::before {
+  left: 0;
+  background: linear-gradient(to left, transparent, var(--color-bg));
+}
+.pillstrip.r::after {
+  right: 0;
+  background: linear-gradient(to right, transparent, var(--color-bg));
+}
+.pillstrip-prev,
+.pillstrip-next {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-panel);
+  color: var(--color-ink-dim);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.pillstrip-prev:hover,
+.pillstrip-next:hover {
+  color: var(--color-ink);
+  border-color: var(--color-faint);
+}
+.pillstrip-prev {
+  left: 0;
+}
+.pillstrip-next {
+  right: 0;
+}
+
 /* listbar — the search + sort row shared by the Library and the channel
    page's Archive tab. Sits below the filter chips, above the grid. */
 .listbar {
@@ -723,10 +794,23 @@ button.srow:not(:disabled):hover {
   margin-bottom: 18px;
 }
 
+/* Up to three cards across, growing to fill the width rather than auto-filling
+   more fixed-width columns; steps down to 2 then 1 at the app's shared
+   breakpoints so cards never get cramped on narrow screens. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(258px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 22px 20px;
+}
+@media (max-width: 1040px) {
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 620px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* The "Already watched" drawer that closes the Library: watched videos are
@@ -1015,10 +1099,15 @@ button.srow:not(:disabled):hover {
 }
 .card h3 {
   margin: 0;
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: 16px;
   line-height: 1.26;
   font-weight: 500;
+  /* Reserve two lines even for a one-line title, so the channel line and the
+     lifecycle pills/buttons below start at the same height on every card in a
+     row — otherwise a short title collapses the heading and drags everything
+     under it up out of alignment with its neighbours. */
+  min-height: calc(2 * 1.26em);
 }
 /* The title is a button so it opens the video like the thumbnail does; it must
    look exactly like the plain heading text it replaced. The line clamp lives
@@ -1031,6 +1120,14 @@ button.srow:not(:disabled):hover {
   color: inherit;
   text-align: left;
   cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Pending renders a plain-text heading (no .title-btn), so it would not
+   otherwise clamp and a long title could overrun the reserved two lines. */
+.card h3:not(:has(.title-btn)) {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;

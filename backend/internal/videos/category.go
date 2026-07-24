@@ -1,7 +1,7 @@
 // Package videos: category.go defines the fixed video-category enum (the
-// authority; the TS side mirrors id + label + colour, never Hint) plus reply
-// normalization. AI is a first-class category, deliberately split from general
-// technology.
+// authority; the TS side mirrors id + order, carries its own short display
+// labels and colours, and never Hint) plus reply normalization. AI is a
+// first-class category, deliberately split from general technology.
 package videos
 
 import (
