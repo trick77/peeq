@@ -45,10 +45,14 @@ describe("Activity", () => {
     vi.mocked(listUpcoming).mockResolvedValue({ items: [], truncated: 0 });
   });
 
-  it("renders past events and the now marker", async () => {
+  it("renders past events under the Recent activity section", async () => {
     render(<Activity live={[]} {...noProps} />);
     expect(await screen.findByText("A clip")).toBeInTheDocument();
-    expect(screen.getByText("now")).toBeInTheDocument();
+    expect(screen.getByText("Recent activity")).toBeInTheDocument();
+    // The folded "now" marker is gone; nothing is running or queued here, so
+    // there is no "Up next" section either.
+    expect(screen.queryByText("Up next")).not.toBeInTheDocument();
+    expect(screen.queryByText("now")).not.toBeInTheDocument();
   });
 
   it("marks the row by outcome", async () => {
@@ -64,7 +68,7 @@ describe("Activity", () => {
     expect(row.classList.contains("fail")).toBe(true);
   });
 
-  it("renders upcoming items as planned, below the now marker", async () => {
+  it("renders upcoming items as planned, in the Up next section", async () => {
     const items: UpcomingItem[] = [
       // Far-future instant so the label is deterministically "in …" whatever the
       // wall clock is when the test runs — a scheduled task must never read "ago".
@@ -81,6 +85,7 @@ describe("Activity", () => {
     const row = (await screen.findByText("Veritasium")).closest(
       ".ag-row",
     ) as HTMLElement;
+    expect(screen.getByText("Up next")).toBeInTheDocument();
     expect(row.classList.contains("planned")).toBe(true);
     expect(row.textContent).toMatch(/in \d+d/);
     expect(row.textContent).not.toMatch(/ago/);
