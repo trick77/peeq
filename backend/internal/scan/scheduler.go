@@ -375,7 +375,15 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 			return err
 		}
 		if exists {
-			continue // dedup vs ledger
+			// Dedup vs ledger — but heal the row's date first. Rows written
+			// before migration 0008 have none, and a known video is never
+			// revisited anywhere else, so this is the only chance an item
+			// already sitting in the inbox has to gain one. Fills once, then
+			// no-ops; see Ledger.SetPublishedAt.
+			if err := s.d.Ledger.SetPublishedAt(e.ID, e.PublishedAt); err != nil {
+				return err
+			}
+			continue
 		}
 		if v, err := s.d.Videos.Get(e.ID); err != nil {
 			return err
@@ -385,6 +393,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		entry := channelvideos.Entry{
 			VideoID: e.ID, ChannelID: sub.ChannelID, Title: e.Title,
 			DurationSeconds: e.DurationSeconds, URL: e.URL, ThumbnailURL: e.ThumbnailURL,
+			PublishedAt: e.PublishedAt,
 		}
 		switch {
 		case baseline:
@@ -475,10 +484,16 @@ func passesFilters(e ytdlp.ChannelEntry, minDuration int) bool {
 
 // enqueueAuto seeds a videos row (carrying the per-channel format override on
 // this fresh insert), flips it to 'queued', and enqueues a download job at
-// autoPriority (below manual). Flat listings are metadata-poor — published_at/
+// autoPriority (below manual). Flat listings are metadata-poor —
 // description/availability are intentionally left sparse here (no per-video -J
 // call, to respect the throttle budget); thumbnail_path stays empty (a local
 // path), while the remote thumbnail lives on the ledger row.
+//
+// published_at is left unset on PURPOSE even though the listing now carries an
+// approximate date: videos.published_at is the exact upload_date the download's
+// own metadata call writes moments later, and seeding it with an approximation
+// would downgrade the date Library renders. The approximation stays on the
+// ledger row, where it only ever feeds the inbox card.
 func (s *Scheduler) enqueueAuto(e ytdlp.ChannelEntry, sub *channels.Subscription) error {
 	// Best-effort narrowing of the delete-vs-scan window: if the channel was
 	// deleted mid-scan, skip creating a download for it (videos has no FK to

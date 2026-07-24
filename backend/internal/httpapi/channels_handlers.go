@@ -820,6 +820,13 @@ type pendingItem struct {
 	DurationSeconds int    `json:"duration_seconds"`
 	URL             string `json:"url"`
 	ThumbnailURL    string `json:"thumbnail_url"`
+	// PublishedAt is YYYY-MM-DD, omitted when the scan never learned a date.
+	// It is yt-dlp's approximate tab date, not the exact upload_date a
+	// downloaded video carries. DiscoveredAt is when the scan first saw the
+	// upload; the client sorts on it as a fallback but must not render it as
+	// a publish date.
+	PublishedAt  string `json:"published_at,omitempty"`
+	DiscoveredAt string `json:"discovered_at"`
 }
 
 // handlePendingList returns every ledger entry in state 'pending'. Mirrors
@@ -852,6 +859,8 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 			DurationSeconds: e.DurationSeconds,
 			URL:             e.URL,
 			ThumbnailURL:    e.ThumbnailURL,
+			PublishedAt:     e.PublishedAt,
+			DiscoveredAt:    e.DiscoveredAt,
 		})
 	}
 	writeJSON(w, out)
