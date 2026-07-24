@@ -3,7 +3,7 @@ import { Button } from "../../ui";
 import { Icon } from "../../icons";
 import { listPending, downloadPending, ignorePending } from "../../api/pending";
 import { scanChannel } from "../../api/channels";
-import { formatDuration } from "../../format";
+import { formatAgo, formatDuration } from "../../format";
 import type { ChannelDetail, PendingItem } from "../../api/types";
 
 // scheduleLine renders the "last checked / next check" sentence shown in
@@ -147,8 +147,16 @@ export function NewTab({
                 />
                 <div className="chan-pt">
                   <div className="ti">{item.title}</div>
+                  {/* This tab is a dense row list, not the Inbox's card
+                      grid, so the date joins the duration on the sub line
+                      rather than a card eyebrow — but it is the same
+                      approximate publish date, worded the same way, and is
+                      dropped rather than faked when unknown. */}
                   <div className="sub">
                     {formatDuration(item.duration_seconds)}
+                    {item.published_at
+                      ? ` · ${formatAgo(item.published_at)}`
+                      : ""}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
