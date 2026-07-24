@@ -247,10 +247,14 @@ export function Activity({
   const showLive = filter !== "problems";
   // "Up next" renders only when something is running or queued.
   const hasUpNext = runningCount > 0 || shownUpcoming.length > 0;
+  // True queued total for the header — the full filtered projection plus the
+  // server's own cap, not the capped-to-10 slice (which would undercount and
+  // fail to reconcile with the "+N more scheduled" edge below).
+  const queuedCount = upcomingFiltered.length + truncated;
   // Header count, e.g. "2 running · 4 queued"; each side omitted when zero.
   const upNextCount = [
     runningCount > 0 ? `${runningCount} running` : "",
-    shownUpcoming.length > 0 ? `${shownUpcoming.length} queued` : "",
+    queuedCount > 0 ? `${queuedCount} queued` : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -295,7 +299,10 @@ export function Activity({
           {showLive && hasUpNext ? (
             <section className="ag-section">
               <div className="ag-sec-head">
-                <span className="ag-live" />
+                {/* The pulse marks live in-flight work; when only queued items
+                    are pending (nothing running) it would falsely read as
+                    active, so it shows only when something is actually running. */}
+                {runningCount > 0 ? <span className="ag-live" /> : null}
                 <h2 className="ag-sec-title">Up next</h2>
                 {upNextCount ? (
                   <span className="ag-sec-count">{upNextCount}</span>
