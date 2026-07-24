@@ -148,10 +148,9 @@ const reduceSystemPrompt = "Combine these section summaries of one video into a 
 // resumable worker's first step, persisted on its own so a later failure never
 // discards it.
 func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (string, error) {
+	// budget is always positive — New defaults it and WithSummaryChunkTokens
+	// ignores a non-positive override.
 	budget := s.summaryChunkTokens
-	if budget <= 0 {
-		budget = defaultSummaryChunkTokens
-	}
 	// Coarse chunking: rag.Chunk returns a single chunk when the transcript fits
 	// the budget, so the common path below is one call. The overlap is small
 	// relative to the section size and only matters on the rare fan-out.
