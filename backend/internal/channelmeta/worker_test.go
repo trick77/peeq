@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -572,5 +573,46 @@ func TestWorker_settleDoesNotOverwriteARealOutcome(t *testing.T) {
 	}
 	if !c.ResolveOk {
 		t.Fatal("settle clobbered a successful resolve's resolve_ok")
+	}
+}
+
+// fakeMetaRecorder captures activity events from the metadata worker.
+type fakeMetaRecorder struct {
+	mu     sync.Mutex
+	events []activity.Event
+}
+
+func (f *fakeMetaRecorder) Record(e activity.Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, e)
+}
+
+// TestWorker_failedRefreshRecordsActivity is the Activity-feed half of the
+// failed-refresh path: a failure records one channel_meta/warn row (a routine
+// success records nothing — only failures are surfaced). runUntilResolved's
+// <-done waits for the whole refresh (record included) to finish.
+func TestWorker_failedRefreshRecordsActivity(t *testing.T) {
+	s := newTestStore(t)
+	r := &fakeResolver{err: errors.New("channel unavailable")}
+	rec := &fakeMetaRecorder{}
+	w := newTestWorker(t, s, r, Deps{Activity: rec})
+	seedDue(t, s, "UCfail")
+
+	if !runUntilResolved(t, w, r) {
+		t.Fatal("resolver was never called")
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.events) != 1 {
+		t.Fatalf("recorded %d events, want 1", len(rec.events))
+	}
+	e := rec.events[0]
+	if e.Kind != activity.KindChannelMeta || e.Outcome != activity.OutcomeWarn {
+		t.Fatalf("event = %+v, want channel_meta/warn", e)
+	}
+	if e.Subject != "Old Name" {
+		t.Fatalf("subject = %q, want the cached channel name", e.Subject)
 	}
 }
