@@ -806,6 +806,51 @@ describe("Player", () => {
       await screen.findByRole("button", { name: /video actions/i });
       expect(document.querySelector(".kebab-dot")).toBeNull();
     });
+
+    // The dot must not promise a remedy the menu can't offer: an errored video
+    // with no subtitle has no Reprocess item, so no attention dot.
+    it("leaves the ⋮ unmarked for an errored video with no subtitle", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "error", has_subtitles: false }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("button", { name: /video actions/i });
+      expect(document.querySelector(".kebab-dot")).toBeNull();
+    });
+
+    it("flips the summary panel to pending on success", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          summary_status: "done",
+          summary: "Prose one.",
+          has_subtitles: true,
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await screen.findByText("Prose one.")).toBeInTheDocument();
+      await openMenu();
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: /Reprocess video/i }),
+      );
+      await waitFor(() => expect(reprocess).toHaveBeenCalledWith("v1"));
+      // Optimistic local update: the panel reflects the pending state the
+      // endpoint just wrote, without waiting for the summary SSE.
+      expect(await screen.findByText(/Summarizing/i)).toBeInTheDocument();
+      expect(screen.queryByText("Prose one.")).toBeNull();
+    });
+
+    it("surfaces an error when the reprocess request fails", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "error", has_subtitles: true }),
+      );
+      vi.mocked(reprocess).mockRejectedValueOnce(new Error("reprocess boom"));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: /Reprocess video/i }),
+      );
+      expect(await screen.findByText(/reprocess boom/i)).toBeInTheDocument();
+    });
   });
 
   it("clicking a chapter seeks the video to its timestamp", async () => {

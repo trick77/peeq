@@ -3281,28 +3281,6 @@ details.tomb-sect[open] > summary svg {
 .ui-iconact.is-on:hover {
   color: var(--color-accent-strong);
 }
-.ui-iconact--danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
-  color: var(--color-danger);
-}
-
-/* The armed half of the two-step delete: the bare trash icon expands into a
-   labelled red control, so the second click is unambiguous and the state is
-   impossible to miss. */
-.ui-iconact--armed {
-  width: auto;
-  gap: 7px;
-  padding: 0 14px;
-  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
-  color: var(--color-danger);
-  font-family: var(--font-sans);
-  font-size: var(--text-ui);
-  font-weight: 600;
-}
-.ui-iconact--armed:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-danger) 22%, transparent);
-  color: var(--color-danger);
-}
 
 /* Hairline between the state buttons and the bare icon cluster. */
 .playacts .acts-sep {

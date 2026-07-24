@@ -713,17 +713,45 @@ export function Player({
   }
 
   async function handleReprocess() {
-    if (!video) return;
+    // Guard on reprocessing as well as video: the menu closes on click, so a
+    // user who reopens it and clicks again before the request resolves would
+    // otherwise fire a second POST and enqueue a duplicate summary job (the
+    // backend Enqueue has no dedup).
+    if (!video || reprocessing) return;
+    const id = video.id;
     setReprocessing(true);
     try {
-      await reprocess(video.id);
+      await reprocess(id);
+      // The user may have switched videos during the await; only touch this
+      // Player's state if it is still the same video (mirrors the summary-SSE
+      // and toast guards elsewhere).
+      if (openVideoIdRef.current !== id) return;
+      // The endpoint just reset summary_status to pending and cleared the
+      // stored analysis. Mirror that locally so the summary panel reflects it
+      // immediately; the summary SSE drives the rest as the worker runs.
+      setVideo((prev) =>
+        prev && prev.id === id
+          ? {
+              ...prev,
+              summary_status: "pending",
+              summary: "",
+              chapters: [],
+              key_points: [],
+            }
+          : prev,
+      );
+      showToast("Reprocessing", "refresh", "info");
+    } catch (e) {
+      setError((e as Error).message);
     } finally {
       setReprocessing(false);
     }
   }
 
   async function handleRedownload() {
-    if (!video) return;
+    // Guard on redownloading too: like Reprocess, the menu closes on click, so
+    // a reopened-menu double click would otherwise queue a second re-download.
+    if (!video || redownloading) return;
     setRedownloading(true);
     try {
       await redownload(video.id);
@@ -755,7 +783,10 @@ export function Player({
       video.summary_status !== "running"
     ) {
       actions.push({
-        label: reprocessing ? "Reprocessing…" : "Reprocess video",
+        // No busy label: the menu closes on click, so a "Reprocessing…" label
+        // could never render. Feedback is a toast + the summary panel flipping
+        // to pending (see handleReprocess); the in-flight guard lives there.
+        label: "Reprocess video",
         icon: "refresh",
         onClick: handleReprocess,
         flag: video.summary_status === "error" ? "failed" : undefined,
@@ -765,7 +796,7 @@ export function Player({
     // current copy is broken or gone.
     if (video.status === "error" || video.status === "tombstoned") {
       actions.push({
-        label: redownloading ? "Queuing…" : "Re-download",
+        label: "Re-download",
         icon: "refresh",
         onClick: handleRedownload,
       });
@@ -913,13 +944,20 @@ export function Player({
                 Reprocess, Re-download, Download file, Watch on YouTube and
                 Delete. Only the stateful toggles above (Keep forever, Mark
                 watched) and the CC toggle stay visible. The ⋮ carries an
-                attention dot when a post-import step failed, so a failure reads
-                at a glance without opening the menu. */}
-            <RowMenu
-              label="Video actions"
-              attention={video.summary_status === "error"}
-              actions={buildMenuActions()}
-            />
+                attention dot only when the menu actually holds a flagged
+                remedy — a failed summary_status on a video that can't be
+                reprocessed (no subtitle) would otherwise promise a fix the
+                menu doesn't offer. */}
+            {(() => {
+              const menuActions = buildMenuActions();
+              return (
+                <RowMenu
+                  label="Video actions"
+                  attention={menuActions.some((a) => a.flag)}
+                  actions={menuActions}
+                />
+              );
+            })()}
           </div>
         </div>
 

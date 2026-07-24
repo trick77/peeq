@@ -121,19 +121,8 @@ export function buttonClass(
  * be the class list. Always pass aria-label AND title — there is no visible
  * text, and title is the only affordance a mouse user gets.
  */
-export function iconActionClass(opts?: {
-  on?: boolean;
-  danger?: boolean;
-  armed?: boolean;
-}): string {
-  return [
-    "ui-iconact",
-    opts?.on ? "is-on" : null,
-    opts?.danger ? "ui-iconact--danger" : null,
-    opts?.armed ? "ui-iconact--armed" : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
+export function iconActionClass(opts?: { on?: boolean }): string {
+  return ["ui-iconact", opts?.on ? "is-on" : null].filter(Boolean).join(" ");
 }
 
 /** Spinner — every async wait spins. Never an ellipsis in the label. */
