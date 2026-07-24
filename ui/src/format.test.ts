@@ -29,6 +29,13 @@ describe("formatAgo", () => {
     expect(formatAgo(daysAgo(150), NOW)).toBe("5 months ago");
   });
 
+  it("caps months at 11 so it never reads '12 months ago'", () => {
+    // ~345+ days rounds to 12 months without the cap; it must stay 11 until
+    // the 365-day year threshold takes over.
+    expect(formatAgo(daysAgo(355), NOW)).toBe("11 months ago");
+    expect(formatAgo(daysAgo(364), NOW)).toBe("11 months ago");
+  });
+
   it("rounds to years at a year and beyond", () => {
     expect(formatAgo(daysAgo(365), NOW)).toBe("1 year ago");
     expect(formatAgo(daysAgo(740), NOW)).toBe("2 years ago");

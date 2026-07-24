@@ -53,7 +53,9 @@ export function formatAgo(
   const unit = (n: number, word: string) =>
     `${n} ${word}${n === 1 ? "" : "s"} ago`;
   if (days < 30) return unit(days, "day");
-  if (days < 365) return unit(Math.round(days / 30), "month");
+  // Cap at 11 months: Math.round(days / 30) reaches 12 by ~345 days, which
+  // would read "12 months ago" right before the year bucket takes over.
+  if (days < 365) return unit(Math.min(11, Math.round(days / 30)), "month");
   return unit(Math.round(days / 365), "year");
 }
 

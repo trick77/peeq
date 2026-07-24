@@ -25,10 +25,10 @@ export function PillStrip({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Recompute on mount, whenever the pill set changes, and on resize — a wider
-  // viewport can absorb the overflow and retire the chevron entirely. The
-  // ResizeObserver also catches the strip's own width changing without a window
-  // resize (e.g. the surrounding layout reflowing).
+  // Observe size once. `update` is stable (useCallback []), so this sets up the
+  // ResizeObserver and window listener a single time and never tears them down
+  // on a parent re-render — the effect deliberately does NOT depend on
+  // `children`, whose reference changes every render.
   useEffect(() => {
     update();
     const el = ref.current;
@@ -40,6 +40,14 @@ export function PillStrip({ children }: { children: ReactNode }) {
       ro.disconnect();
       window.removeEventListener("resize", update);
     };
+  }, [update]);
+
+  // A changed pill set alters scrollWidth without changing the scroll
+  // container's own box size, so the ResizeObserver above may not fire for it —
+  // recompute the edges explicitly when the children change, without
+  // re-subscribing the observer.
+  useEffect(() => {
+    update();
   }, [update, children]);
 
   const nudge = (dir: number) => {

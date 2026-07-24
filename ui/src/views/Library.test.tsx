@@ -348,6 +348,33 @@ describe("Library category chips", () => {
     expect(document.querySelector(".grid .card")).not.toBeNull();
   });
 
+  it("drops a card from the Unwatched grid the moment it is marked watched", async () => {
+    const v = categoryVideo({
+      id: "v1",
+      title: "unwatched vid",
+      watched: false,
+    });
+    vi.mocked(listVideos).mockResolvedValue([v]);
+    vi.mocked(setWatched).mockResolvedValue(true);
+    render(<Library onOpenVideo={() => {}} search="" />);
+    await screen.findByText("unwatched vid");
+
+    fireEvent.click(screen.getByRole("button", { name: /Unwatched/ }));
+    await waitFor(() =>
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: "unwatched" }),
+      ),
+    );
+
+    // Optimistic mark-watched: the card no longer matches the Unwatched filter,
+    // so it must leave the grid at once (not linger until the next refetch).
+    fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
+    await waitFor(() => expect(setWatched).toHaveBeenCalledWith("v1", true));
+    await waitFor(() =>
+      expect(screen.queryByText("unwatched vid")).not.toBeInTheDocument(),
+    );
+  });
+
   it("selecting the Watched chip refetches with the watched filter", async () => {
     vi.mocked(listVideos).mockResolvedValue([
       categoryVideo({ id: "v1", watched: true }),

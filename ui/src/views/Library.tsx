@@ -222,6 +222,14 @@ export function Library({
 
   const retentionDays = settings?.retention_days ?? 14;
 
+  // The active chip's list comes from the server, but an optimistic watched /
+  // favorite toggle can push a card out of the current filter before any
+  // refetch — e.g. marking a card watched while the Unwatched chip is active.
+  // Re-apply the same predicate the server used so the card leaves the grid
+  // immediately. For "all" this keeps everything (matchesFilter → true), so
+  // watched videos still show inline there.
+  const visible = videos.filter((v) => matchesFilter(v, filter));
+
   function renderCard(video: Video) {
     return (
       <VideoCard
@@ -297,8 +305,8 @@ export function Library({
         </select>
       </div>
       {error ? <div className="errline">{error}</div> : null}
-      <div className="grid">{videos.map(renderCard)}</div>
-      {videos.length === 0 && !error ? (
+      <div className="grid">{visible.map(renderCard)}</div>
+      {visible.length === 0 && !error ? (
         <p style={{ color: "var(--color-faint)" }}>No videos yet.</p>
       ) : null}
     </>
