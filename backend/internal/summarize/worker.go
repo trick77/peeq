@@ -236,6 +236,10 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// actually protects a category the user picked on the Player while the
 	// summary was still running.
 	if video.Category == "" || video.Category == videos.UncategorizedCategory {
+		// Surface the classify step as a live phase (summarizing → classifying →
+		// embedding). It sits before the "done" emit below, so it is safe for the
+		// Player, which treats "done" as terminal.
+		w.emit(video.ID, "running", "classifying")
 		cctx, done := run.step("classify")
 		raw, cerr := w.d.Summarizer.Classify(cctx, video.Title, summary, videos.ClassifiableCategories())
 		switch {

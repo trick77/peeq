@@ -588,7 +588,10 @@ button.srow:not(:disabled):hover {
   place-items: center;
   position: relative;
   z-index: 1;
-  color: var(--color-faint);
+  /* Icons stay a neutral glyph — they name the kind by SHAPE only. Outcome is
+     carried by the detail text (problems tint red/amber) and by position
+     (future above, running at now, log below), not by tinting the icon. */
+  color: var(--color-muted);
 }
 .ag-node::before {
   /* punch a clean hole in the rail behind the icon */
@@ -599,17 +602,8 @@ button.srow:not(:disabled):hover {
   background: var(--color-bg);
   z-index: -1;
 }
-.ag-row.ok .ag-node {
-  color: var(--color-online);
-}
-.ag-row.warn .ag-node {
-  color: var(--color-kept);
-}
-.ag-row.fail .ag-node {
-  color: var(--color-danger);
-}
-.ag-row.running .ag-node {
-  color: var(--color-accent);
+.ag-row.planned .ag-node {
+  color: var(--color-faint);
 }
 
 .ag-body {

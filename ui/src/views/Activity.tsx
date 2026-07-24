@@ -8,6 +8,7 @@ import {
   type UpcomingItem,
 } from "../api";
 import { Icon, type IconName } from "../icons";
+import { summaryPhaseLabel } from "../format";
 import { Button } from "../ui";
 
 // Activity — one agenda through a *now* marker. Above the marker: what is
@@ -41,6 +42,17 @@ function relTime(date: Date, now: number): string {
         : `${Math.round(a / 86400)}d`;
   if (secs >= 0) return a < 60 ? "soon" : `in ${mag}`;
   return a < 45 ? "just now" : `${mag} ago`;
+}
+
+// plannedWhen labels a FUTURE (upcoming) row. It never says "ago": an item with
+// no instant is "up next", one still ahead is "in 40m", and one whose scheduled
+// instant has already passed — an overdue task the worker hasn't reached yet
+// (e.g. because YouTube is paused) — is "soon", not "1h ago". Only the past log
+// uses relTime's "ago" wording.
+function plannedWhen(atStr: string | undefined, now: number): string {
+  if (!atStr) return "up next";
+  const secs = Math.round((parseUTC(atStr).getTime() - now) / 1000);
+  return secs < 60 ? "soon" : relTime(parseUTC(atStr), now);
 }
 
 // leadCap uppercases a leading lowercase ASCII letter so every detail line's
@@ -268,9 +280,7 @@ export function Activity({
                       <div className="ag-detail">{leadCap(item.summary)}</div>
                     ) : null}
                   </div>
-                  <span className="ag-when">
-                    {item.at ? relTime(parseUTC(item.at), now) : "up next"}
-                  </span>
+                  <span className="ag-when">{plannedWhen(item.at, now)}</span>
                 </div>
               );
             })}
@@ -303,6 +313,7 @@ export function Activity({
                     ) : null}
                     <div className="ag-detail">
                       Downloading{p ? ` · ${Math.round(p.percent)}%` : ""}
+                      {p?.speed ? ` · ${p.speed}` : ""}
                       {p?.eta ? ` · ${p.eta} left` : ""}
                     </div>
                   </div>
@@ -318,9 +329,7 @@ export function Activity({
                 <div className="ag-body">
                   <div className="ag-subject">{s.title || s.video_id}</div>
                   <div className="ag-detail">
-                    {summaryPhaseByVideoId?.[s.video_id] === "embedding"
-                      ? "Embedding"
-                      : "Summarizing"}
+                    {summaryPhaseLabel(summaryPhaseByVideoId?.[s.video_id])}
                   </div>
                 </div>
                 <span className="ag-when">now</span>

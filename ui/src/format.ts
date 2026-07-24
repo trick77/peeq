@@ -23,6 +23,21 @@ export function formatDuration(totalSeconds: number | undefined): string {
   return `${minutes}:${pad(seconds)}`;
 }
 
+// summaryPhaseLabel turns a live summary phase (from the "summary" SSE event)
+// into the display word for the Queue and Activity "being summarized" rows. The
+// worker runs summarize → classify → embed, emitting a phase for each; anything
+// unrecognised (or absent, before the first event) reads as "Summarizing".
+export function summaryPhaseLabel(phase: string | undefined): string {
+  switch (phase) {
+    case "classifying":
+      return "Classifying";
+    case "embedding":
+      return "Embedding";
+    default:
+      return "Summarizing";
+  }
+}
+
 // daysBetween returns the whole number of days elapsed from `from` (an ISO
 // timestamp) to now. Negative/invalid input yields 0 rather than NaN, so a
 // caller doing retention arithmetic on it never produces "Expires in NaN

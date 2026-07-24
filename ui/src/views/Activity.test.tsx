@@ -86,6 +86,29 @@ describe("Activity", () => {
     expect(row.textContent).not.toMatch(/ago/);
   });
 
+  it("shows an overdue planned item as 'soon', never 'ago'", async () => {
+    // A scheduled instant already in the past (the worker hasn't reached it —
+    // e.g. YouTube is paused) is still future work; it must read "soon".
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          at: "2020-01-01 00:00:00",
+          kind: "scan",
+          approx: false,
+          subject: "Overdue scan",
+          summary: "channel scan",
+        },
+      ],
+      truncated: 0,
+    });
+    render(<Activity live={[]} {...noProps} />);
+    const row = (await screen.findByText("Overdue scan")).closest(
+      ".ag-row",
+    ) as HTMLElement;
+    expect(row.textContent).toContain("soon");
+    expect(row.textContent).not.toMatch(/ago/);
+  });
+
   it("labels an ordered (untimed) upcoming item 'up next', never 'ago'", async () => {
     vi.mocked(listUpcoming).mockResolvedValue({
       items: [{ kind: "download", approx: true, subject: "Tears of Steel" }],

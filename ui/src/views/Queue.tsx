@@ -1,4 +1,5 @@
 import { Button } from "../ui";
+import { summaryPhaseLabel } from "../format";
 import type { Job, SummaryJob } from "../api/types";
 
 // Queue — everything peeq is working on right now, in two lanes: downloads and
@@ -12,17 +13,12 @@ import type { Job, SummaryJob } from "../api/types";
 // short, unattended, and retried on its own, so there is no button for it.
 
 // phaseLabel turns a summary job's live phase (or its stored state) into a word
-// for the row. The phase comes from the "summary" SSE event and advances
-// summarizing → embedding without a reload.
+// for the row. A pending job that hasn't started reads "Waiting"; a running one
+// shows its live phase (summarizing → classifying → embedding) from the "summary"
+// SSE event, advancing without a reload.
 function phaseLabel(phase: string | undefined, state: string): string {
-  switch (phase) {
-    case "summarizing":
-      return "Summarizing";
-    case "embedding":
-      return "Embedding";
-    default:
-      return state === "running" ? "Summarizing" : "Waiting";
-  }
+  if (state !== "running" && !phase) return "Waiting";
+  return summaryPhaseLabel(phase);
 }
 
 export function Queue({
@@ -80,7 +76,7 @@ export function Queue({
                 <span className="qstate">
                   {running
                     ? p
-                      ? `${Math.round(p.percent)}%${p.eta ? ` · ${p.eta}` : ""}`
+                      ? `${Math.round(p.percent)}%${p.speed ? ` · ${p.speed}` : ""}${p.eta ? ` · ${p.eta} left` : ""}`
                       : "Downloading"
                     : "Queued"}
                 </span>

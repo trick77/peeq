@@ -407,11 +407,7 @@ export function App() {
         onNavigate={setView}
         pendingCount={pendingCount}
         queueCount={activeDownloads + summaries.length}
-        summarizingCount={summaries.length}
-        jobs={jobs}
-        progressByJobId={progressByJobId}
         cookieStatus={cookieStatus}
-        downloadStatus={downloadStatus}
       />
       <main className="main">
         <TopBar
