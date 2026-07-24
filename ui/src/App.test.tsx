@@ -83,7 +83,7 @@ vi.mock("./api/videos", () => ({
 
 vi.mock("./api/search", () => ({
   subtitlesUrl: (id: string) => `/api/videos/${id}/subtitles`,
-  resummarize: vi.fn(),
+  reprocess: vi.fn(),
   searchVideos: vi.fn().mockResolvedValue([]),
 }));
 

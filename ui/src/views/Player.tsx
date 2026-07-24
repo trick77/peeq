@@ -3,6 +3,8 @@ import { Icon, type IconName } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
 import { AUTO_SKIP, Scrubber, categoryLabel } from "../components/Scrubber";
 import { CategoryPicker } from "../components/CategoryPicker";
+import { RowMenu, type RowMenuAction } from "../components/RowMenu";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
   getVideo,
   setFavorite,
@@ -14,7 +16,7 @@ import {
   streamUrl,
   thumbnailUrl,
 } from "../api/videos";
-import { resummarize, subtitlesUrl } from "../api/search";
+import { reprocess, subtitlesUrl } from "../api/search";
 import { streamDownloads } from "../api/downloads";
 import { getSettings, updateSettings } from "../api/settings";
 import { getShareStatus, type ShareStatus } from "../api/share";
@@ -27,12 +29,6 @@ import { formatDuration, gradientClassFor } from "../format";
 // visibilitychange/pagehide bypass this throttle entirely (flushOnHide
 // below), so closing the tab never loses more than this much progress.
 const RESUME_THROTTLE_MS = 5000;
-
-// DELETE_ARM_MS is how long the two-step delete stays armed before it gives
-// up and returns to a plain trash icon. Long enough to read "Delete?" and
-// decide, short enough that an armed control never sits waiting on screen
-// for a later, unrelated click to land on it.
-const DELETE_ARM_MS = 4000;
 
 // fmt is the Task 17 alias for formatDuration used throughout the
 // intelligence panels below (chapters/highlights/transcript cues) — kept as
@@ -228,11 +224,11 @@ export function Player({
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [find, setFind] = useState("");
-  // deleteArmed is the second half of the two-step delete: false renders the
-  // bare trash icon, true renders the labelled "Delete?" that actually
-  // deletes. See the row for why a single click must not be enough.
-  const [deleteArmed, setDeleteArmed] = useState(false);
-  const [resummarizing, setResummarizing] = useState(false);
+  // confirmDelete drives the delete confirmation modal (ConfirmDialog),
+  // opened from the ⋮ menu; deleting is its in-flight busy flag.
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
   const [redownloading, setRedownloading] = useState(false);
   // Share state: whether this video currently has a live public link, driving
   // the "Shared" chip beside the title and the Share button's active look. It
@@ -273,7 +269,6 @@ export function Player({
   // immediately re-apply the default on top of the user's click.
   const ccAppliedForRef = useRef<string | null>(null);
   const toastTimerRef = useRef<number | undefined>(undefined);
-  const armTimerRef = useRef<number | undefined>(undefined);
   // openVideoIdRef is which video this Player currently has open, readable
   // from an async continuation that resumed after the answer changed — null
   // once the component unmounts. `videoId` itself can't do that job: a handler
@@ -296,7 +291,7 @@ export function Player({
     setCues([]);
     setTranscriptError(null);
     setFind("");
-    setDeleteArmed(false);
+    setConfirmDelete(false);
     setShareStatus({ shared: false });
     if (!videoId) return;
     let active = true;
@@ -349,9 +344,6 @@ export function Player({
     return () => {
       if (toastTimerRef.current !== undefined) {
         window.clearTimeout(toastTimerRef.current);
-      }
-      if (armTimerRef.current !== undefined) {
-        window.clearTimeout(armTimerRef.current);
       }
     };
   }, []);
@@ -697,35 +689,18 @@ export function Player({
     }
   }
 
-  // armDelete / disarmDelete drive the two-step delete. Arming starts a
-  // self-disarm timer so the confirm never lingers; disarming always clears
-  // it, so a second arm can't inherit the first one's countdown.
-  function armDelete() {
-    setDeleteArmed(true);
-    if (armTimerRef.current !== undefined)
-      window.clearTimeout(armTimerRef.current);
-    armTimerRef.current = window.setTimeout(
-      () => setDeleteArmed(false),
-      DELETE_ARM_MS,
-    );
-  }
-
-  function disarmDelete() {
-    if (armTimerRef.current !== undefined) {
-      window.clearTimeout(armTimerRef.current);
-      armTimerRef.current = undefined;
-    }
-    setDeleteArmed(false);
-  }
-
+  // handleDelete runs after the ConfirmDialog is confirmed. Deleting is
+  // irreversible, so the modal is the guard a single menu click no longer is.
   async function handleDelete() {
     if (!video) return;
-    disarmDelete();
+    setDeleting(true);
     try {
       await deleteVideo(video.id);
       onDeleted();
     } catch (e) {
       setError((e as Error).message);
+      setDeleting(false);
+      setConfirmDelete(false);
     }
   }
 
@@ -753,18 +728,46 @@ export function Player({
     updateSettings({ subtitles_default: next }).catch(() => {});
   }
 
-  async function handleResummarize() {
-    if (!video) return;
-    setResummarizing(true);
+  async function handleReprocess() {
+    // Guard on reprocessing as well as video: the menu closes on click, so a
+    // user who reopens it and clicks again before the request resolves would
+    // otherwise fire a second POST and enqueue a duplicate summary job (the
+    // backend Enqueue has no dedup).
+    if (!video || reprocessing) return;
+    const id = video.id;
+    setReprocessing(true);
     try {
-      await resummarize(video.id);
+      await reprocess(id);
+      // The user may have switched videos during the await; only touch this
+      // Player's state if it is still the same video (mirrors the summary-SSE
+      // and toast guards elsewhere).
+      if (openVideoIdRef.current !== id) return;
+      // The endpoint just reset summary_status to pending and cleared the
+      // stored analysis. Mirror that locally so the summary panel reflects it
+      // immediately; the summary SSE drives the rest as the worker runs.
+      setVideo((prev) =>
+        prev && prev.id === id
+          ? {
+              ...prev,
+              summary_status: "pending",
+              summary: "",
+              chapters: [],
+              key_points: [],
+            }
+          : prev,
+      );
+      showToast("Reprocessing", "refresh", "info");
+    } catch (e) {
+      setError((e as Error).message);
     } finally {
-      setResummarizing(false);
+      setReprocessing(false);
     }
   }
 
   async function handleRedownload() {
-    if (!video) return;
+    // Guard on redownloading too: like Reprocess, the menu closes on click, so
+    // a reopened-menu double click would otherwise queue a second re-download.
+    if (!video || redownloading) return;
     setRedownloading(true);
     try {
       await redownload(video.id);
@@ -774,6 +777,70 @@ export function Player({
     } finally {
       setRedownloading(false);
     }
+  }
+
+  // buildMenuActions assembles the ⋮ menu's entries for the current video. The
+  // stateful toggles (Keep forever, Mark watched) and the CC toggle stay out —
+  // they live as visible controls in the action row.
+  function buildMenuActions(): RowMenuAction[] {
+    if (!video) return [];
+    const actions: RowMenuAction[] = [];
+    // Reprocess re-runs the whole post-import pipeline (summarize → classify →
+    // embed, plus a SponsorBlock re-fetch). Offered only when the endpoint can
+    // act — media + a subtitle present and not tombstoned — since it 409s
+    // otherwise, and hidden while a summary is already pending/running so a
+    // second click can't enqueue a duplicate job. Flagged "failed" when the
+    // last analysis errored.
+    if (
+      video.has_media &&
+      video.has_subtitles &&
+      video.status !== "tombstoned" &&
+      video.summary_status !== "pending" &&
+      video.summary_status !== "running"
+    ) {
+      actions.push({
+        // No busy label: the menu closes on click, so a "Reprocessing…" label
+        // could never render. Feedback is a toast + the summary panel flipping
+        // to pending (see handleReprocess); the in-flight guard lives there.
+        label: "Reprocess video",
+        icon: "refresh",
+        onClick: handleReprocess,
+        flag: video.summary_status === "error" ? "failed" : undefined,
+      });
+    }
+    // Re-download re-fetches the media from YouTube — only meaningful when the
+    // current copy is broken or gone.
+    if (video.status === "error" || video.status === "tombstoned") {
+      actions.push({
+        label: "Re-download",
+        icon: "refresh",
+        onClick: handleRedownload,
+      });
+    }
+    // Download file saves the stored media locally. download=1 makes the stream
+    // endpoint attach a proper filename (title + the file's real extension); a
+    // bare download attribute can't, since the UI never learns the container,
+    // so this stays a plain link to the attachment-disposition URL.
+    if (video.has_media) {
+      actions.push({
+        label: "Download file",
+        icon: "download",
+        href: `${streamUrl(video.id)}?download=1`,
+      });
+    }
+    actions.push({
+      label: "Watch on YouTube",
+      icon: "externalLink",
+      href: video.url,
+      newTab: true,
+    });
+    actions.push({
+      label: "Delete…",
+      icon: "trash",
+      danger: true,
+      onClick: () => setConfirmDelete(true),
+    });
+    return actions;
   }
 
   const hitCount = find
@@ -901,72 +968,24 @@ export function Player({
                 <Icon name="captions" size="19px" />
               </button>
             )}
-            {video.has_media && (
-              // download=1 makes the stream endpoint attach a proper filename
-              // (title + the file's real extension). A bare `download`
-              // attribute here would not: the UI never learns whether the
-              // file is .mp4, .webm or .mkv, so only the server can name it.
-              <a
-                className={iconActionClass()}
-                href={`${streamUrl(video.id)}?download=1`}
-                aria-label="Download video file"
-                title="Download video file"
-              >
-                <Icon name="download" size="19px" />
-              </a>
-            )}
-            <a
-              className={iconActionClass()}
-              href={video.url}
-              target="_blank"
-              rel="noreferrer"
-              aria-label="Watch on YouTube"
-              title="Watch on YouTube"
-            >
-              <Icon name="externalLink" size="19px" />
-            </a>
-            {/* Two-step delete. The first click only arms it; the control
-                then expands into a labelled red "Delete?" that the second
-                click confirms. Deleting is irreversible and the icon sits in
-                a row of harmless ones, so a single click must never be
-                enough. It disarms itself after DELETE_ARM_MS, on Escape, and
-                on blur. */}
-            {deleteArmed ? (
-              <button
-                type="button"
-                className={iconActionClass({ danger: true, armed: true })}
-                onClick={handleDelete}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") disarmDelete();
-                }}
-                onBlur={disarmDelete}
-                autoFocus
-              >
-                <Icon name="trash" size="17px" /> Delete?
-              </button>
-            ) : (
-              <button
-                type="button"
-                className={iconActionClass({ danger: true })}
-                aria-label="Delete video"
-                title="Delete video"
-                onClick={armDelete}
-              >
-                <Icon name="trash" size="19px" />
-              </button>
-            )}
-            {(video.status === "error" || video.status === "tombstoned") && (
-              <Button
-                type="button"
-                variant="tinted"
-                small
-                busy={redownloading}
-                onClick={handleRedownload}
-              >
-                {!redownloading && <Icon name="refresh" size="15px" />}
-                {redownloading ? "Queuing" : "Re-download"}
-              </Button>
-            )}
+            {/* The remaining per-video actions collapse into one ⋮ menu:
+                Reprocess, Re-download, Download file, Watch on YouTube and
+                Delete. Only the stateful toggles above (Keep forever, Mark
+                watched) and the CC toggle stay visible. The ⋮ carries an
+                attention dot only when the menu actually holds a flagged
+                remedy — a failed summary_status on a video that can't be
+                reprocessed (no subtitle) would otherwise promise a fix the
+                menu doesn't offer. */}
+            {(() => {
+              const menuActions = buildMenuActions();
+              return (
+                <RowMenu
+                  label="Video actions"
+                  attention={menuActions.some((a) => a.flag)}
+                  actions={menuActions}
+                />
+              );
+            })()}
           </div>
         </div>
 
@@ -1154,25 +1173,6 @@ export function Player({
             {video.summary_status === "error" && (
               <p className="errline">Summarization failed.</p>
             )}
-            {/* Re-summarize is offered for every settled state, not just after
-                a failure: a summary can be wrong or unwanted without the job
-                having errored. Hidden while one is already queued or running,
-                and hidden without subtitles because the endpoint answers 409
-                for a video that has none — the button would be dead. */}
-            {video.has_subtitles &&
-              video.summary_status !== "pending" &&
-              video.summary_status !== "running" && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  small
-                  busy={resummarizing}
-                  onClick={handleResummarize}
-                >
-                  {!resummarizing && <Icon name="download" size="15px" />}
-                  {resummarizing ? "Queuing" : "Re-summarize"}
-                </Button>
-              )}
             {!DONE_STATUSES.has(video.summary_status) && (
               <p className="placeholder">No summary yet.</p>
             )}
@@ -1210,6 +1210,19 @@ export function Player({
           </div>
         </div>
       </aside>
+      {video ? (
+        <ConfirmDialog
+          open={confirmDelete}
+          title="Delete this video?"
+          confirmLabel="Delete"
+          busy={deleting}
+          onConfirm={handleDelete}
+          onCancel={() => setConfirmDelete(false)}
+        >
+          This removes the stored media and its analysis for “{video.title}”.
+          This can’t be undone.
+        </ConfirmDialog>
+      ) : null}
     </div>
   );
 }

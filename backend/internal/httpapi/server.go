@@ -102,8 +102,8 @@ type Deps struct {
 	// Embedder turns search query text into an embedding vector to match
 	// against Rag. Optional: when nil, /api/search returns 503.
 	Embedder SearchEmbedder
-	// SummaryJobs enqueues a (re)summarize job for a video. Optional: when
-	// nil, /api/videos/{id}/resummarize returns 503.
+	// SummaryJobs enqueues a summary job for a video. Optional: when nil,
+	// /api/videos/{id}/reprocess returns 503.
 	SummaryJobs SummaryEnqueuer
 	// SummaryList reads the in-flight summary queue backing GET /api/summaries
 	// (the Queue page's "being summarized" lane). Optional: when nil, that
@@ -308,7 +308,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/pending/{id}/download", s.requireAuth(http.HandlerFunc(s.handlePendingDownload)))
 	mux.Handle("POST /api/pending/{id}/ignore", s.requireAuth(http.HandlerFunc(s.handlePendingIgnore)))
 	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
-	mux.Handle("POST /api/videos/{id}/resummarize", s.requireAuth(http.HandlerFunc(s.handleResummarize)))
+	mux.Handle("POST /api/videos/{id}/reprocess", s.requireAuth(http.HandlerFunc(s.handleReprocess)))
 	if s.static != nil {
 		mux.Handle("/", s.static)
 	}

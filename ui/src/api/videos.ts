@@ -95,7 +95,7 @@ export async function setResume(id: string, position: number): Promise<number> {
 }
 
 // redownload re-queues a failed or tombstoned video. 202/empty, so it uses
-// postNoContent (like resummarize) — never .json() on an empty body.
+// postNoContent (like reprocess) — never .json() on an empty body.
 export async function redownload(id: string): Promise<void> {
   await api.postNoContent(
     `/api/videos/${encodeURIComponent(id)}/redownload`,

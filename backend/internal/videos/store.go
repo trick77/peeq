@@ -505,6 +505,20 @@ WHERE id = ?`, segmentsJSON, id)
 	return nil
 }
 
+// ResetSponsorblockRefresh clears sponsorblock_refreshed_at back to the
+// never-fetched sentinel (”), which sorts first in ClaimSponsorblockStale, so
+// the SponsorBlock worker re-fetches this video's segments on its next claim.
+// Used by the Player's Reprocess action to force a fresh fetch; the stored
+// segments are left in place until the re-fetch overwrites them.
+func (s *Store) ResetSponsorblockRefresh(id string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET sponsorblock_refreshed_at = '' WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("reset video %s sponsorblock refresh: %w", id, err)
+	}
+	return nil
+}
+
 // SetSubtitle records the downloaded subtitle relpath and resolved audio
 // language.
 func (s *Store) SetSubtitle(id, relPath, audioLang string) error {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { searchVideos, resummarize, subtitlesUrl } from "./search";
+import { searchVideos, reprocess, subtitlesUrl } from "./search";
 import { AuthExpiredError } from "./http";
 
 beforeEach(() => {
@@ -35,21 +35,21 @@ describe("search api", () => {
     expect(await searchVideos("nothing")).toEqual([]);
   });
 
-  it("resummarize POSTs to /api/videos/{id}/resummarize and resolves on an empty 202 body", async () => {
+  it("reprocess POSTs to /api/videos/{id}/reprocess and resolves on an empty 202 body", async () => {
     const f = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(null, { status: 202 }));
-    await expect(resummarize("v1")).resolves.toBeUndefined();
+    await expect(reprocess("v1")).resolves.toBeUndefined();
     const [url, init] = f.mock.calls[0];
-    expect(url).toBe("/api/videos/v1/resummarize");
+    expect(url).toBe("/api/videos/v1/reprocess");
     expect(init!.method).toBe("POST");
   });
 
-  it("resummarize throws AuthExpiredError on a 401", async () => {
+  it("reprocess throws AuthExpiredError on a 401", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 401 }),
     );
-    await expect(resummarize("v1")).rejects.toBeInstanceOf(AuthExpiredError);
+    await expect(reprocess("v1")).rejects.toBeInstanceOf(AuthExpiredError);
   });
 
   it("subtitlesUrl builds the subtitles endpoint", () => {

@@ -40,7 +40,7 @@ vi.mock("../api/videos", () => ({
 
 vi.mock("../api/search", () => ({
   subtitlesUrl: (id: string) => `/api/videos/${id}/subtitles`,
-  resummarize: vi.fn().mockResolvedValue(undefined),
+  reprocess: vi.fn().mockResolvedValue(undefined),
 }));
 
 // streamDownloads defaults to a never-resolving promise so it doesn't
@@ -75,7 +75,7 @@ import {
   deleteVideo,
   setCategory,
 } from "../api/videos";
-import { resummarize } from "../api/search";
+import { reprocess } from "../api/search";
 import { getSettings, updateSettings } from "../api/settings";
 import type { Settings } from "../api/types";
 import { gradientClassFor } from "../format";
@@ -91,11 +91,20 @@ function makeSettings(subtitlesDefault: boolean): Settings {
   return { subtitles_default: subtitlesDefault } as Settings;
 }
 
+// openMenu opens the Player's ⋮ actions menu so its items (Reprocess,
+// Re-download, Download file, Watch on YouTube, Delete…) become queryable —
+// they are not in the DOM until the menu is open.
+async function openMenu() {
+  fireEvent.click(
+    await screen.findByRole("button", { name: /video actions/i }),
+  );
+}
+
 describe("Player", () => {
   beforeEach(() => {
     vi.mocked(getVideo).mockReset();
     vi.mocked(setResume).mockClear();
-    vi.mocked(resummarize).mockClear();
+    vi.mocked(reprocess).mockClear();
     vi.mocked(redownload).mockClear();
     vi.mocked(deleteVideo).mockClear();
     // mockReset, not mockClear: these carry per-test queued outcomes
@@ -614,77 +623,70 @@ describe("Player", () => {
     });
   });
 
-  it('renders a "Watch on YouTube" link to the video url', async () => {
+  it('the ⋮ menu holds a "Watch on YouTube" link to the video url', async () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
-    const link = await screen.findByRole("link", { name: /Watch on YouTube/i });
+    await openMenu();
+    const link = await screen.findByRole("menuitem", {
+      name: /Watch on YouTube/i,
+    });
     expect(link).toHaveAttribute("href", "https://youtu.be/v1");
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noreferrer");
   });
 
-  it("renders a download link carrying the download=1 filename flag", async () => {
+  it("the ⋮ menu's download item carries the download=1 filename flag", async () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
-    const link = await screen.findByRole("link", { name: /download video/i });
+    await openMenu();
+    const link = await screen.findByRole("menuitem", {
+      name: /download file/i,
+    });
     // download=1 is what makes the server attach a Content-Disposition with
     // the real filename — a plain `download` attribute cannot, since the UI
     // never learns the file's extension.
     expect(link).toHaveAttribute("href", "/api/videos/v1/stream?download=1");
   });
 
-  it("hides the download link for a video with no media file", async () => {
+  it("omits the download item for a video with no media file", async () => {
     vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_media: false }));
     render(<Player videoId="v1" onDeleted={() => {}} />);
-    await screen.findByRole("link", { name: /watch on youtube/i });
-    expect(screen.queryByRole("link", { name: /download video/i })).toBeNull();
+    await openMenu();
+    await screen.findByRole("menuitem", { name: /watch on youtube/i });
+    expect(
+      screen.queryByRole("menuitem", { name: /download file/i }),
+    ).toBeNull();
   });
 
   describe("delete confirmation", () => {
-    it("does not delete on the first click — it only arms the confirm", async () => {
+    it("the ⋮ Delete… item opens a confirm dialog and does not delete yet", async () => {
       render(<Player videoId="v1" onDeleted={() => {}} />);
-      fireEvent.click(
-        await screen.findByRole("button", { name: /delete video/i }),
-      );
+      await openMenu();
+      fireEvent.click(await screen.findByRole("menuitem", { name: /delete/i }));
+      // The modal is up; nothing deleted until it is confirmed.
+      expect(await screen.findByText(/can’t be undone/i)).toBeInTheDocument();
       expect(deleteVideo).not.toHaveBeenCalled();
-      expect(screen.getByRole("button", { name: /delete\?/i })).toBeTruthy();
     });
 
-    it("deletes on the second click", async () => {
+    it("deletes when the confirm dialog is confirmed", async () => {
       const onDeleted = vi.fn();
       render(<Player videoId="v1" onDeleted={onDeleted} />);
-      fireEvent.click(
-        await screen.findByRole("button", { name: /delete video/i }),
-      );
-      fireEvent.click(screen.getByRole("button", { name: /delete\?/i }));
+      await openMenu();
+      fireEvent.click(await screen.findByRole("menuitem", { name: /delete/i }));
+      // The dialog's confirm button (its label is "Delete", not "Delete…").
+      const confirm = await screen.findByRole("button", { name: /^delete$/i });
+      fireEvent.click(confirm);
       await waitFor(() => expect(deleteVideo).toHaveBeenCalledWith("v1"));
       await waitFor(() => expect(onDeleted).toHaveBeenCalled());
     });
 
-    it("disarms on Escape without deleting", async () => {
+    it("cancelling the confirm dialog does not delete", async () => {
       render(<Player videoId="v1" onDeleted={() => {}} />);
-      fireEvent.click(
-        await screen.findByRole("button", { name: /delete video/i }),
+      await openMenu();
+      fireEvent.click(await screen.findByRole("menuitem", { name: /delete/i }));
+      fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+      await waitFor(() =>
+        expect(screen.queryByText(/can’t be undone/i)).toBeNull(),
       );
-      fireEvent.keyDown(screen.getByRole("button", { name: /delete\?/i }), {
-        key: "Escape",
-      });
-      await screen.findByRole("button", { name: /delete video/i });
       expect(deleteVideo).not.toHaveBeenCalled();
-    });
-
-    it("disarms itself after the timeout without deleting", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      try {
-        render(<Player videoId="v1" onDeleted={() => {}} />);
-        fireEvent.click(
-          await screen.findByRole("button", { name: /delete video/i }),
-        );
-        expect(screen.getByRole("button", { name: /delete\?/i })).toBeTruthy();
-        await vi.advanceTimersByTimeAsync(4100);
-        await screen.findByRole("button", { name: /delete video/i });
-        expect(deleteVideo).not.toHaveBeenCalled();
-      } finally {
-        vi.useRealTimers();
-      }
     });
   });
 
@@ -717,19 +719,22 @@ describe("Player", () => {
     ).toBeInTheDocument();
   });
 
-  describe("Re-summarize button", () => {
-    it("shows on error status and calls resummarize", async () => {
+  describe("Reprocess menu item", () => {
+    it("shows on error status and calls reprocess", async () => {
       vi.mocked(getVideo).mockResolvedValue(
         makeVideo({ summary_status: "error", has_subtitles: true }),
       );
       render(<Player videoId="v1" onDeleted={() => {}} />);
-      const btn = await screen.findByRole("button", { name: /Re-summarize/i });
-      fireEvent.click(btn);
-      await waitFor(() => expect(resummarize).toHaveBeenCalledWith("v1"));
+      await openMenu();
+      const item = await screen.findByRole("menuitem", {
+        name: /Reprocess video/i,
+      });
+      fireEvent.click(item);
+      await waitFor(() => expect(reprocess).toHaveBeenCalledWith("v1"));
     });
 
-    // The point of the change: a finished summary can still be wrong or simply
-    // unwanted, so the redo must not be gated on the job having failed.
+    // A finished summary can still be wrong or simply unwanted, so the redo
+    // must not be gated on the job having failed.
     it("shows on a done summary too", async () => {
       vi.mocked(getVideo).mockResolvedValue(
         makeVideo({
@@ -740,8 +745,9 @@ describe("Player", () => {
       );
       render(<Player videoId="v1" onDeleted={() => {}} />);
       expect(await screen.findByText("Prose one.")).toBeInTheDocument();
+      await openMenu();
       expect(
-        screen.getByRole("button", { name: /Re-summarize/i }),
+        await screen.findByRole("menuitem", { name: /Reprocess video/i }),
       ).toBeInTheDocument();
     });
 
@@ -750,24 +756,26 @@ describe("Player", () => {
         makeVideo({ summary_status: "no_transcript", has_subtitles: true }),
       );
       render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
       expect(
-        await screen.findByRole("button", { name: /Re-summarize/i }),
+        await screen.findByRole("menuitem", { name: /Reprocess video/i }),
       ).toBeInTheDocument();
     });
 
-    it("hides while a summary is already running", async () => {
+    it("is absent while a summary is already running", async () => {
       vi.mocked(getVideo).mockResolvedValue(
         makeVideo({ summary_status: "running", has_subtitles: true }),
       );
       render(<Player videoId="v1" onDeleted={() => {}} />);
       expect(await screen.findByText(/Summarizing/i)).toBeInTheDocument();
+      await openMenu();
       expect(
-        screen.queryByRole("button", { name: /Re-summarize/i }),
-      ).not.toBeInTheDocument();
+        screen.queryByRole("menuitem", { name: /Reprocess video/i }),
+      ).toBeNull();
     });
 
-    // The endpoint answers 409 without subtitles, so the button would be dead.
-    it("hides for a video with no subtitles", async () => {
+    // The endpoint answers 409 without subtitles, so the item would be dead.
+    it("is absent for a video with no subtitles", async () => {
       vi.mocked(getVideo).mockResolvedValue(
         makeVideo({ summary_status: "error", has_subtitles: false }),
       );
@@ -775,9 +783,80 @@ describe("Player", () => {
       expect(
         await screen.findByText(/Summarization failed/i),
       ).toBeInTheDocument();
+      await openMenu();
       expect(
-        screen.queryByRole("button", { name: /Re-summarize/i }),
-      ).not.toBeInTheDocument();
+        screen.queryByRole("menuitem", { name: /Reprocess video/i }),
+      ).toBeNull();
+    });
+
+    // A failed step marks the ⋮ trigger with an attention dot and flags the
+    // Reprocess item, so a failure reads at a glance.
+    it("marks the ⋮ trigger and flags the item when a step failed", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "error", has_subtitles: true }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("button", { name: /video actions/i });
+      expect(document.querySelector(".kebab-dot")).not.toBeNull();
+      await openMenu();
+      const item = await screen.findByRole("menuitem", {
+        name: /Reprocess video/i,
+      });
+      expect(item).toHaveTextContent(/failed/i);
+    });
+
+    it("leaves the ⋮ trigger unmarked when nothing failed", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "done", has_subtitles: true }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("button", { name: /video actions/i });
+      expect(document.querySelector(".kebab-dot")).toBeNull();
+    });
+
+    // The dot must not promise a remedy the menu can't offer: an errored video
+    // with no subtitle has no Reprocess item, so no attention dot.
+    it("leaves the ⋮ unmarked for an errored video with no subtitle", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "error", has_subtitles: false }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("button", { name: /video actions/i });
+      expect(document.querySelector(".kebab-dot")).toBeNull();
+    });
+
+    it("flips the summary panel to pending on success", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          summary_status: "done",
+          summary: "Prose one.",
+          has_subtitles: true,
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await screen.findByText("Prose one.")).toBeInTheDocument();
+      await openMenu();
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: /Reprocess video/i }),
+      );
+      await waitFor(() => expect(reprocess).toHaveBeenCalledWith("v1"));
+      // Optimistic local update: the panel reflects the pending state the
+      // endpoint just wrote, without waiting for the summary SSE.
+      expect(await screen.findByText(/Summarizing/i)).toBeInTheDocument();
+      expect(screen.queryByText("Prose one.")).toBeNull();
+    });
+
+    it("surfaces an error when the reprocess request fails", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "error", has_subtitles: true }),
+      );
+      vi.mocked(reprocess).mockRejectedValueOnce(new Error("reprocess boom"));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: /Reprocess video/i }),
+      );
+      expect(await screen.findByText(/reprocess boom/i)).toBeInTheDocument();
     });
   });
 
@@ -1039,24 +1118,25 @@ describe("Player", () => {
     expect(await screen.findByText(/mimo/i)).toBeInTheDocument();
   });
 
-  it("shows Re-download for an errored video and queues it", async () => {
+  it("shows Re-download in the ⋮ menu for an errored video and queues it", async () => {
     vi.mocked(getVideo).mockResolvedValue(
       makeVideo({ id: "v1", status: "error" }),
     );
     vi.mocked(redownload).mockResolvedValue(undefined);
     render(<Player videoId="v1" onDeleted={() => {}} />);
-    const btn = await screen.findByRole("button", { name: /re-download/i });
-    fireEvent.click(btn);
+    await openMenu();
+    const item = await screen.findByRole("menuitem", { name: /re-download/i });
+    fireEvent.click(item);
     await waitFor(() => expect(redownload).toHaveBeenCalledWith("v1"));
   });
 
-  it("hides Re-download for a downloaded video", async () => {
+  it("omits Re-download for a downloaded video", async () => {
     vi.mocked(getVideo).mockResolvedValue(
       makeVideo({ id: "v1", status: "downloaded" }),
     );
     render(<Player videoId="v1" onDeleted={() => {}} />);
-    await screen.findByRole("link", { name: /watch on youtube/i }); // wait for load
-    expect(screen.queryByRole("button", { name: /re-download/i })).toBeNull();
+    await openMenu(); // openMenu waits for the video to load
+    expect(screen.queryByRole("menuitem", { name: /re-download/i })).toBeNull();
   });
 
   it("renders the channel name as a clickable link when onOpenChannel is provided", async () => {
