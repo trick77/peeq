@@ -1,4 +1,5 @@
 import { Icon } from "../icons";
+import { Button } from "../ui";
 import type { AutoUnsubscribedChannel } from "../api/types";
 
 // reasonLabel maps the store's `reason` code to the sentence shown next to
@@ -58,13 +59,14 @@ export function AutoUnsubscribedSection({
                 Archived videos were kept — nothing was deleted.
               </div>
             </div>
-            <button
+            <Button
               type="button"
-              className="abtn primary"
+              variant="primary"
+              small
               onClick={() => onResubscribe(c)}
             >
               Re-subscribe
-            </button>
+            </Button>
           </div>
         ))}
       </div>

@@ -20,10 +20,7 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [queued, setQueued] = useState<{
-    title?: string;
-    channel_name?: string;
-  } | null>(null);
+  const [queued, setQueued] = useState(false);
   const [tracked, setTracked] = useState<{ name: string } | null>(null);
 
   async function handleSubmit(e: FormEvent) {
@@ -32,7 +29,7 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
     if (!trimmed || busy) return;
     setBusy(true);
     setError(null);
-    setQueued(null);
+    setQueued(false);
     setTracked(null);
     try {
       if (isChannelURL(trimmed)) {
@@ -41,7 +38,7 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
         setUrl("");
       } else {
         const job = await addDownload(trimmed);
-        setQueued({ title: job.title, channel_name: job.channel_name });
+        setQueued(true);
         onQueued(job.video_id);
         setUrl("");
       }
@@ -86,12 +83,11 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
             ? "Adding"
             : isChannelURL(url)
               ? "Track channel"
-              : "Download now"}
+              : "Add to queue"}
         </Button>
       </form>
 
       <div className="hint">
-        <span className="led" />
         Downloads queue immediately using the format preset from Settings —
         subtitles &amp; a summary are included automatically once later phases
         add them. A channel link tracks the channel instead, downloading nothing
@@ -106,13 +102,13 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
             <div className="pt g4" />
           </div>
           <div>
-            <h2>{queued.title || "Queued"}</h2>
+            <h2>Added to the queue</h2>
             <div className="by">
-              {queued.channel_name || "Added to the download queue"}
+              The title and channel fill in once it starts.
             </div>
             <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)" }}>
-              Watch progress in the download dock, or open the video from the
-              Library once it's done.
+              Watch progress in the download dock or on the Activity page, and
+              open the video from the Library once it's done.
             </p>
           </div>
         </div>

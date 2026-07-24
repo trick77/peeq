@@ -23,12 +23,22 @@ import (
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
+// metadataPreflightTimeout bounds the worker's pre-download metadata fetch so a
+// hung yt-dlp probe can't stall the single-threaded queue forever. Generous
+// enough for a slow-but-legit resolve; a real stall is killed well before it
+// starves the rest of the queue.
+const metadataPreflightTimeout = 2 * time.Minute
+
 // Runner is the subset of *ytdlp.Runner the worker needs. Declaring it here
 // (rather than importing the concrete type) keeps the worker testable with
 // a fake that never shells out to yt-dlp; the real *ytdlp.Runner satisfies
 // it.
 type Runner interface {
 	Download(ctx context.Context, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error)
+	// Metadata resolves a video's title/channel/etc. Used by the preflight
+	// step for videos added by URL, which are now enqueued without metadata
+	// (POST /api/downloads no longer blocks on this call).
+	Metadata(ctx context.Context, rawURL string) (*ytdlp.Meta, error)
 }
 
 // FailMonitor is the subset of *failmonitor.Monitor the worker uses to feed
@@ -310,6 +320,47 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		return
 	}
 
+	// Metadata preflight. A video added by URL is now enqueued instantly with
+	// no title/channel (POST /api/downloads stopped blocking on yt-dlp), so a
+	// row with an empty title has never been resolved — fetch it here, before
+	// the download, so the queue/Library/Activity show a real title while it
+	// runs. Videos discovered via a channel scan already have a title and skip
+	// this. Route any error through the same classify taxonomy as a download
+	// error: a missing/expired cookie pauses the job and an unavailable video
+	// fails it, surfacing on Activity instead of blocking the user at add time.
+	if video.Title == "" {
+		// Bound the probe: the Download path has --socket-timeout + the
+		// inactivity watchdog, but this one-shot metadata fetch has neither, and
+		// jobCtx carries no deadline — a hung yt-dlp probe would stall the
+		// single-threaded queue indefinitely. A straight wall-clock cap kills it.
+		metaCtx, metaCancel := context.WithTimeout(jobCtx, metadataPreflightTimeout)
+		meta, merr := w.deps.Runner.Metadata(metaCtx, video.URL)
+		metaCancel()
+		if w.wasCanceled() {
+			w.settleCanceled(job, video)
+			return
+		}
+		if merr != nil {
+			// countFail=false: a preflight blip for one URL must not nudge the
+			// global auto-pause breaker. Cookie/blocked still pause; unavailable
+			// still fails.
+			w.classify(ctx, job, video, merr, false)
+			return
+		}
+		video.Title = meta.Title
+		video.ChannelID = meta.ChannelID
+		video.ChannelName = meta.Channel
+		video.DurationSeconds = int64(meta.DurationSeconds)
+		video.PublishedAt = meta.PublishedAt
+		video.ThumbnailPath = meta.Thumbnail
+		video.Availability = videos.NormalizeAvailability(meta.Availability)
+		if err := w.deps.Videos.Upsert(*video); err != nil {
+			w.deps.Logger.Error("download worker: save metadata failed", "job_id", job.ID, "err", err)
+			w.fail(job, video, job.Attempts, "save metadata: "+err.Error())
+			return
+		}
+	}
+
 	_ = w.deps.Videos.SetStatus(video.ID, "downloading", "")
 
 	format := set.FormatPreset
@@ -386,7 +437,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		// the watchdog fired. Treat as a retryable timeout.
 		w.retry(ctx, job, video, "watchdog timeout: no progress")
 	default:
-		w.classify(ctx, job, video, dlErr)
+		w.classify(ctx, job, video, dlErr, true)
 	}
 }
 
@@ -427,8 +478,13 @@ func (w *Worker) settleCanceled(job *jobs.Job, video *videos.Video) {
 	}
 }
 
-// classify maps a real download error to an outcome.
-func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Video, err error) {
+// classify maps a real download error to an outcome. countFail gates whether an
+// unclassified/retryable error feeds the auto-pause FailMonitor: true for a real
+// download failure (the signal the breaker exists for), false for the metadata
+// preflight, where a single freshly-added URL's transient blip must not nudge
+// the global breaker. Cookie/blocked errors pause regardless (they never touch
+// the monitor); terminal errors fail regardless.
+func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Video, err error, countFail bool) {
 	var terminal *ytdlp.TerminalError
 	switch {
 	case errors.Is(err, ytdlp.ErrBlocked):
@@ -451,8 +507,10 @@ func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Vide
 		w.fail(job, video, job.Attempts, err.Error())
 	default:
 		// Count-worthy (unclassified exec/extractor + RetryableError) for
-		// auto-pause; per-video terminal errors above never reach here.
-		if w.deps.FailMonitor != nil {
+		// auto-pause; per-video terminal errors above never reach here. A
+		// preflight failure (countFail=false) still retries but does not feed
+		// the breaker.
+		if countFail && w.deps.FailMonitor != nil {
 			w.deps.FailMonitor.Fail(video.ID)
 		}
 		// RetryableError and any unexpected error (network, exec) get the
@@ -616,9 +674,15 @@ func (w *Worker) fail(job *jobs.Job, video *videos.Video, attempts int, msg stri
 		if err := w.deps.Videos.SetStatus(video.ID, "error", msg); err != nil {
 			w.deps.Logger.Error("download worker: set error status failed", "video_id", video.ID, "err", err)
 		}
+		// A preflight-failed video has no title yet, so fall back to its id
+		// rather than emitting a blank, unidentifiable Activity row.
+		subject := video.Title
+		if subject == "" {
+			subject = video.ID
+		}
 		w.recordActivity(activity.Event{
 			Kind: activity.KindDownload, Outcome: activity.OutcomeFail,
-			SubjectID: video.ID, Subject: video.Title, Summary: "download failed",
+			SubjectID: video.ID, Subject: subject, Summary: "download failed",
 			Detail: msg,
 		})
 	}

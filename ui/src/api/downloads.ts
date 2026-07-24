@@ -2,9 +2,11 @@ import { api, ApiError } from "./http";
 import { streamSSE, type SSEEvent } from "./stream";
 import type { Job } from "./types";
 
-// CookieRequiredError signals the 409 handleDownloadsPost returns when no
-// usable cookie is stored — the UI should prompt the user to paste one
-// rather than show a generic failure.
+// CookieRequiredError signals the 409 the channel add/refresh handlers return
+// when no usable cookie is stored — the UI should prompt the user to paste one
+// rather than show a generic failure. The downloads POST no longer blocks on a
+// cookie (it enqueues instantly); the worker surfaces a missing cookie as a
+// paused job instead, so addDownload never raises this.
 export class CookieRequiredError extends Error {
   constructor() {
     super("cookie required");
@@ -28,9 +30,8 @@ export async function addDownload(url: string): Promise<Job> {
     }>("/api/downloads", { url }, "failed to add download");
     return { ...created, attempts: 0 };
   } catch (err) {
-    if (err instanceof ApiError && err.status === 409) {
-      throw new CookieRequiredError();
-    }
+    // No 409 branch: the POST no longer blocks on a cookie, so a missing
+    // cookie can't fail the add — it surfaces later as a paused job.
     if (err instanceof ApiError && err.status === 400) {
       throw new InvalidUrlError(err.message);
     }

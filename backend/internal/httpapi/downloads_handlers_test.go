@@ -199,8 +199,10 @@ func TestDownloads_postCanonicalizesAndEnqueues(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST /api/downloads status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if runner.calls != 1 {
-		t.Fatalf("Metadata calls = %d, want 1", runner.calls)
+	// The POST must NOT fetch metadata — that is what used to make the user
+	// wait. Metadata is now resolved by the worker's preflight instead.
+	if runner.calls != 0 {
+		t.Fatalf("Metadata calls = %d, want 0 (POST must enqueue instantly, never fetch metadata)", runner.calls)
 	}
 
 	var got map[string]any
@@ -224,13 +226,11 @@ func TestDownloads_postCanonicalizesAndEnqueues(t *testing.T) {
 	if video.URL != "https://www.youtube.com/watch?v=dQw4w9WgXcQ" {
 		t.Fatalf("video url = %q, want the canonical watch url (no playlist param)", video.URL)
 	}
-	// Regression test: yt-dlp reports availability as "public" for a normal
-	// video, which is NOT a valid videos.availability value (the DB CHECK
-	// constraint only allows available/deleted/private/geo/unknown). The
-	// handler must normalize "public" to "available" before writing it, or
-	// the Upsert below would have already failed with a 500 above.
-	if video.Availability != "available" {
-		t.Fatalf("video availability = %q, want %q (normalized from yt-dlp's \"public\")", video.Availability, "available")
+	// A freshly added row carries no metadata yet — the worker's preflight
+	// fetches it (and normalizes yt-dlp's "public" → "available"). At POST time
+	// the row is minimal, so availability defaults to "unknown".
+	if video.Availability != "unknown" {
+		t.Fatalf("video availability = %q, want %q (minimal row; worker preflight fills metadata later)", video.Availability, "unknown")
 	}
 
 	allJobs, err := deps.Jobs.List()
@@ -252,24 +252,29 @@ func TestDownloads_postCanonicalizesAndEnqueues(t *testing.T) {
 	}
 }
 
-// TestDownloads_postNoCookie_409 asserts the cookie gate is surfaced to the
-// caller, not swallowed: a Metadata call that fails with ErrNoCookie must
-// produce a 409, never a silent failure or a 500.
-func TestDownloads_postNoCookie_409(t *testing.T) {
-	runner := &fakeDownloadsRunner{err: ytdlp.ErrNoCookie}
-	h := New(downloadsTestDeps(t, runner))
+// TestDownloads_postNoCookie_stillEnqueues asserts the POST no longer blocks on
+// a cookie: it does not fetch metadata, so a missing cookie can't fail the add.
+// The job is enqueued, and the cookie problem surfaces later in the worker
+// (which pauses the job) rather than as an inline 409.
+func TestDownloads_postNoCookie_stillEnqueues(t *testing.T) {
+	runner := &fakeDownloadsRunner{err: ytdlp.ErrNoCookie} // must never be called
+	deps := downloadsTestDeps(t, runner)
+	h := New(deps)
 	sessionCookie := loginAndGetCookie(t, h)
 
 	rec := postDownload(t, h, sessionCookie, "https://youtu.be/dQw4w9WgXcQ")
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("POST /api/downloads (no cookie) status = %d, want 409, body = %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/downloads (no cookie) status = %d, want 201, body = %s", rec.Code, rec.Body.String())
 	}
-	var got map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("unmarshal error body: %v", err)
+	if runner.calls != 0 {
+		t.Fatalf("Metadata calls = %d, want 0 (POST must not touch yt-dlp)", runner.calls)
 	}
-	if got["error"] != "cookie required" {
-		t.Fatalf("error = %q, want %q", got["error"], "cookie required")
+	allJobs, err := deps.Jobs.List()
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(allJobs) != 1 {
+		t.Fatalf("len(jobs) = %d, want 1 (job enqueued despite no cookie)", len(allJobs))
 	}
 }
 
@@ -434,11 +439,23 @@ func TestDownloadsStream_hubCloseReturnsPromptly(t *testing.T) {
 // enqueued job.
 func TestDownloads_listReturnsQueue(t *testing.T) {
 	runner := &fakeDownloadsRunner{meta: &ytdlp.Meta{ID: "dQw4w9WgXcQ", Title: "Some Title"}}
-	h := New(downloadsTestDeps(t, runner))
+	deps := downloadsTestDeps(t, runner)
+	h := New(deps)
 	sessionCookie := loginAndGetCookie(t, h)
 
 	if rec := postDownload(t, h, sessionCookie, "https://youtu.be/dQw4w9WgXcQ"); rec.Code != http.StatusCreated {
 		t.Fatalf("POST /api/downloads status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	// POST no longer resolves the title (it enqueues instantly); the worker's
+	// preflight does. Simulate that here so the list-join has a title to return.
+	v, err := deps.Videos.Get("dQw4w9WgXcQ")
+	if err != nil || v == nil {
+		t.Fatalf("get video after post: %v", err)
+	}
+	v.Title = "Some Title"
+	if err := deps.Videos.Upsert(*v); err != nil {
+		t.Fatalf("seed title: %v", err)
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/downloads", nil)
@@ -592,24 +609,10 @@ func TestDownloads_postLive_400(t *testing.T) {
 	}
 }
 
-// TestDownloads_postMetadataFetchFailed_502 asserts a Metadata failure that
-// is NOT ytdlp.ErrNoCookie surfaces as a 502, not a 500 or a silent failure.
-func TestDownloads_postMetadataFetchFailed_502(t *testing.T) {
-	runner := &fakeDownloadsRunner{err: context.DeadlineExceeded}
-	h := New(downloadsTestDeps(t, runner))
-	sessionCookie := loginAndGetCookie(t, h)
-
-	rec := postDownload(t, h, sessionCookie, "https://youtu.be/dQw4w9WgXcQ")
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("POST /api/downloads (metadata failure) status = %d, want 502, body = %s", rec.Code, rec.Body.String())
-	}
-}
-
-// TestDownloads_postMetaWithoutID_usesCanonicalID asserts that when the
-// runner's Meta comes back with an empty ID (yt-dlp didn't echo one), the
-// handler falls back to the id Canonicalize extracted from the url, rather
-// than writing an empty-string video id.
-func TestDownloads_postMetaWithoutID_usesCanonicalID(t *testing.T) {
+// TestDownloads_postUsesCanonicalID asserts the handler writes the video id
+// Canonicalize extracted from the url (it no longer fetches metadata, so the
+// canonical id from the url is the only id source).
+func TestDownloads_postUsesCanonicalID(t *testing.T) {
 	runner := &fakeDownloadsRunner{meta: &ytdlp.Meta{Title: "No ID In Metadata"}}
 	deps := downloadsTestDeps(t, runner)
 	h := New(deps)

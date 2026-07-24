@@ -7,7 +7,6 @@ import {
   pauseYoutube,
   resumeYoutube,
   streamDownloads,
-  CookieRequiredError,
   InvalidUrlError,
 } from "./downloads";
 import { ApiError } from "./http";
@@ -42,15 +41,6 @@ describe("downloads api", () => {
       priority: 0,
       attempts: 0,
     });
-  });
-
-  it("addDownload throws CookieRequiredError on a 409", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({}), { status: 409 }),
-    );
-    await expect(addDownload("https://youtu.be/v1")).rejects.toBeInstanceOf(
-      CookieRequiredError,
-    );
   });
 
   it("addDownload throws InvalidUrlError carrying the server's message on a 400", async () => {
