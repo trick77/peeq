@@ -25,8 +25,17 @@ type shareStatusResponse struct {
 // publicVideoDTO is the trimmed video shape served to an unauthenticated share
 // viewer. It deliberately omits everything owner-only — media_path (never
 // exposed anywhere), watched/favorite/category/status, the resume position — and
-// carries only what the public page renders: the video, its summary and
-// highlights, and when the link expires.
+// carries only what the public page renders: the video, its summary, chapters
+// and highlights, whether a thumbnail and captions exist, and when the link
+// expires.
+//
+// It also omits the video's ID and URL, and that omission is load-bearing rather
+// than incidental: peeq's video id IS the YouTube id, so shipping either one
+// would name the source video to a recipient who was handed a link to a single
+// video, and would hand the public page an identifier it could aim at the
+// session-gated /api/videos/{id}/... routes. The share token is the only public
+// identifier — share_links maps it to the video id server-side, and that mapping
+// never crosses the wire. TestShare_publicVideoNeverLeaksVideoID guards this.
 type publicVideoDTO struct {
 	Title           string          `json:"title"`
 	ChannelName     string          `json:"channel_name"`
@@ -217,7 +226,10 @@ func (s *server) handleShareVideo(w http.ResponseWriter, r *http.Request) {
 // handleShareStream streams the shared video's media file. It reuses the exact
 // safe-path + ServeContent path the authenticated stream endpoint uses (Range
 // requests for seeking, conditional requests), but never honors ?download=1 —
-// a share is watch-only, the file itself never leaves as a file.
+// the media file is watch-only, and it never leaves as a file. That restriction
+// is about the video specifically: the public page does let a recipient save the
+// captions (.txt/.vtt), which are text this same route family already serves
+// inline for the <track> element.
 func (s *server) handleShareStream(w http.ResponseWriter, r *http.Request) {
 	v := s.resolveShare(w, r)
 	if v == nil {
@@ -235,7 +247,11 @@ func (s *server) handleShareThumbnail(w http.ResponseWriter, r *http.Request) {
 	s.serveMediaFile(w, r, v.ThumbnailPath, "")
 }
 
-// handleShareSubtitles serves the shared video's VTT captions.
+// handleShareSubtitles serves the shared video's VTT captions. The public page
+// reads this route twice over: once as the <track> element's source, and once
+// via fetch to parse into the searchable transcript panel. Its ".vtt" download
+// is the browser saving this same response — no attachment disposition here, and
+// none needed.
 func (s *server) handleShareSubtitles(w http.ResponseWriter, r *http.Request) {
 	v := s.resolveShare(w, r)
 	if v == nil {
@@ -248,7 +264,12 @@ func (s *server) handleShareSubtitles(w http.ResponseWriter, r *http.Request) {
 // http.ServeContent, writing a 404 for a missing/unsafe/unopenable file. It is
 // the shared body behind the public share media routes; contentType, when
 // non-empty, is set before serving (captions need text/vtt). It deliberately
-// does not implement ?download — public shares are stream-only.
+// does not implement ?download and sets no Content-Disposition — the media file
+// is stream-only, and an attachment header here would also put the on-disk
+// filename on the wire, which for the subtitle track is "<videoID>.<lang>.vtt"
+// and so would leak the very id publicVideoDTO withholds. (The basename below
+// reaches http.ServeContent only for extension-based content sniffing; it is
+// never written to a header.)
 func (s *server) serveMediaFile(w http.ResponseWriter, r *http.Request, storedPath, contentType string) {
 	if storedPath == "" {
 		http.NotFound(w, r)

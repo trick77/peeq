@@ -133,11 +133,117 @@ func TestShare_publicVideoMetadata(t *testing.T) {
 	if !strings.Contains(body, "Threat Assessment") || !strings.Contains(body, "Lex Clips") {
 		t.Fatalf("public DTO missing title/channel: %s", body)
 	}
-	// Owner-only fields must never appear in the public payload.
-	for _, leak := range []string{"media_path", "\"watched\"", "\"favorite\"", "\"category\"", "\"url\"", "\"status\""} {
+	// Owner-only fields must never appear in the public payload. "id" and "url"
+	// are in here for a second reason on top of being owner-shaped: see
+	// TestShare_publicVideoNeverLeaksVideoID.
+	for _, leak := range []string{"media_path", "\"watched\"", "\"favorite\"", "\"category\"", "\"url\"", "\"status\"", "\"id\""} {
 		if strings.Contains(body, leak) {
 			t.Fatalf("public DTO leaked owner field %q: %s", leak, body)
 		}
+	}
+}
+
+// TestShare_publicVideoNeverLeaksVideoID is the guard behind publicVideoDTO's
+// omission of the id and url. peeq's video id IS the YouTube id, so leaking it
+// anywhere on a public route would name the source video to the recipient and
+// hand the chromeless page an identifier it could aim at the session-gated
+// /api/videos/{id}/... routes. The share token is the only public identifier.
+//
+// It checks the bodies AND the headers of every public route, because the way
+// this would realistically regress is someone adding a Content-Disposition to
+// serveMediaFile: the subtitle file on disk is "<videoID>.<lang>.vtt", so an
+// attachment filename would put the id straight on the wire.
+func TestShare_publicVideoNeverLeaksVideoID(t *testing.T) {
+	deps, mediaDir, db := shareTestDeps(t)
+	// A realistic 11-char YouTube id, so a substring check means something.
+	const id = "dQw4w9WgXcQ"
+
+	videoDir := filepath.Join(mediaDir, "chan1", id)
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mediaPath := filepath.Join(videoDir, id+".mp4")
+	if err := os.WriteFile(mediaPath, []byte("fake-media"), 0o644); err != nil {
+		t.Fatalf("write media: %v", err)
+	}
+	thumbPath := filepath.Join(videoDir, id+".jpg")
+	if err := os.WriteFile(thumbPath, []byte("fake-jpeg"), 0o644); err != nil {
+		t.Fatalf("write thumb: %v", err)
+	}
+	subPath := filepath.Join(videoDir, id+".en.vtt")
+	if err := os.WriteFile(subPath, []byte("WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nhello\n"), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{
+		ID:          id,
+		URL:         "https://www.youtube.com/watch?v=" + id,
+		Title:       "Never Gonna Explain It",
+		ChannelName: "Chan",
+	}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE videos SET media_path = ?, thumbnail_path = ? WHERE id = ?`, mediaPath, thumbPath, id); err != nil {
+		t.Fatalf("set paths: %v", err)
+	}
+	if err := deps.Videos.SetSubtitle(id, subPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, id, "never")
+
+	for _, path := range []string{
+		"/api/s/" + created.Token,
+		"/api/s/" + created.Token + "/stream",
+		"/api/s/" + created.Token + "/thumbnail",
+		"/api/s/" + created.Token + "/subtitles",
+	} {
+		rec := getPublic(t, h, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("public GET %s = %d, body = %s", path, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), id) {
+			t.Fatalf("public GET %s leaked the video id in its body: %s", path, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "youtube.com") {
+			t.Fatalf("public GET %s leaked the source URL in its body: %s", path, rec.Body.String())
+		}
+		for name, values := range rec.Header() {
+			for _, v := range values {
+				if strings.Contains(v, id) {
+					t.Fatalf("public GET %s leaked the video id in header %s: %s", path, name, v)
+				}
+			}
+		}
+	}
+}
+
+// TestShare_publicVideoCarriesChapters pins chapters INTO the public payload —
+// the share page renders them, and they were on the wire long before it did.
+func TestShare_publicVideoCarriesChapters(t *testing.T) {
+	deps, _, _ := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "Chaptered", ChannelName: "Chan"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	chapters := `[{"ts":0,"title":"Cold open","source":"yt-dlp"},{"ts":95,"title":"The argument","source":"mimo"}]`
+	if err := deps.Videos.SetSummary("v1", "A short summary.", chapters, "[]"); err != nil {
+		t.Fatalf("set summary: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "never")
+
+	rec := getPublic(t, h, "/api/s/"+created.Token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("public GET = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got publicVideoDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode public DTO: %v", err)
+	}
+	if string(got.Chapters) != chapters {
+		t.Fatalf("public chapters = %s, want %s", got.Chapters, chapters)
 	}
 }
 

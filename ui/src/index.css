@@ -4045,6 +4045,28 @@ details.tomb-sect[open] > summary svg {
   flex-direction: column;
   gap: 20px;
 }
+/* The collapsible Transcript card under the video. It reuses the Player's
+   global .tsearch/.transcript/.cue rules verbatim; only its placement in this
+   column is share-specific, so only that is scoped here. .sharepage-primary
+   spaces its children with margins (see .sharepage-meta), not a flex gap. */
+.sharepage-transcript {
+  margin-top: 20px;
+}
+/* The caption download row inside .tsearch. The Player writes the equivalent
+   inline; here it earns a class because the share page repeats it. */
+.sharepage-dl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.sharepage-dl .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
 /* Dead-end for an expired/revoked/unknown link. */
 .sharepage-dead {
   max-width: 460px;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
 import { AUTO_SKIP, Scrubber, categoryLabel } from "../components/Scrubber";
@@ -23,6 +23,16 @@ import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareChip, ShareControl } from "../components/ShareControl";
 import type { Video } from "../api/types";
 import { formatDuration, gradientClassFor } from "../format";
+// The VTT parser and transcript helpers live in ../vtt so the public share page
+// can render the same Transcript card without importing this view.
+import {
+  highlightCue,
+  matchesFind,
+  parseVtt,
+  transcriptFilenameBase,
+  transcriptToText,
+  type Cue,
+} from "../vtt";
 
 // RESUME_THROTTLE_MS bounds how often `timeupdate` (which fires ~4x/sec)
 // is allowed to actually POST the resume position — see handleTimeUpdate.
@@ -34,120 +44,6 @@ const RESUME_THROTTLE_MS = 5000;
 // intelligence panels below (chapters/highlights/transcript cues) — kept as
 // its own name to match the brief's `fmt(ts)` calls.
 const fmt = formatDuration;
-
-// Cue is one parsed WebVTT row: a start timestamp (whole seconds) plus its
-// (tag-stripped) text.
-type Cue = { ts: number; text: string };
-
-// parseVtt is a small, deliberately forgiving client-side WebVTT parser —
-// good enough for yt-dlp/whisper-generated subtitle tracks: it scans for
-// "HH:MM:SS.mmm --> HH:MM:SS.mmm" (or "MM:SS.mmm --> ...") timing lines and
-// collects every following non-blank line as that cue's text, stripping any
-// inline <...> markup tags. It intentionally does not implement the full
-// WebVTT spec (cue settings, NOTE blocks, styling) — peeq only needs the
-// timestamp + text pairs to render a searchable, click-to-seek transcript.
-// transcriptFilenameBase makes a filesystem-safe download name from the title,
-// falling back to the video id.
-function transcriptFilenameBase(title: string, id: string): string {
-  const base = (title || id).replace(/[^\w.-]+/g, "_").slice(0, 80);
-  return base || id;
-}
-
-// PAREN_SOUND_EVENTS / stripSoundEvents mirror the sound-event stripping in
-// backend/internal/subtitles/vtt.go — the backend copy feeds the summary and the
-// embeddings, this one draws the transcript panel, and a rule added to one has
-// to be added to the other or the two views disagree. Square brackets are
-// stripped outright (YouTube uses them only for sound events and speaker
-// labels); parentheses only when the inner text is in this closed list, because
-// real speech does use parentheses.
-const PAREN_SOUND_EVENTS = new Set([
-  "music",
-  "background music",
-  "musique",
-  "applause",
-  "applauses",
-  "cheering",
-  "cheers",
-  "laughter",
-  "laughs",
-  "laughing",
-  "singing",
-  "sings",
-  "silence",
-  "no audio",
-  "inaudible",
-  "foreign",
-]);
-
-function stripSoundEvents(s: string): string {
-  return s
-    .replace(/\[[^\]]*\]/g, " ")
-    .replace(/[♪♫♬♩]/g, " ")
-    .replace(/\([^)]*\)/g, (m) =>
-      PAREN_SOUND_EVENTS.has(m.slice(1, -1).trim().toLowerCase()) ? " " : m,
-    )
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-export function parseVtt(text: string): Cue[] {
-  const lines = text.split(/\r?\n/);
-  const timingRe =
-    /(\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}\s*-->\s*(\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}/;
-  const cues: Cue[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const match = lines[i].match(timingRe);
-    if (!match) {
-      i++;
-      continue;
-    }
-    const start = lines[i].split("-->")[0].trim().replace(",", ".");
-    const ts = parseVttTimestamp(start);
-    i++;
-    const textLines: string[] = [];
-    while (i < lines.length && lines[i].trim() !== "") {
-      textLines.push(lines[i].trim());
-      i++;
-    }
-    const cueText = stripSoundEvents(
-      textLines
-        .join(" ")
-        .replace(/<[^>]+>/g, "")
-        .trim(),
-    );
-    if (cueText) cues.push({ ts, text: cueText });
-  }
-  return cues;
-}
-
-function parseVttTimestamp(ts: string): number {
-  const parts = ts.split(":").map(Number);
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  return 0;
-}
-
-function matchesFind(text: string, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return false;
-  return text.toLowerCase().includes(q);
-}
-
-// highlightCue wraps every case-insensitive occurrence of `query` in
-// `text` with <mark>, matching the mockup's in-player transcript find.
-function highlightCue(text: string, query: string): ReactNode {
-  if (!matchesFind(text, query)) return text;
-  const q = query.trim();
-  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const splitRe = new RegExp(`(${escaped})`, "gi");
-  const isMatch = new RegExp(`^${escaped}$`, "i");
-  return text
-    .split(splitRe)
-    .map((part, i) =>
-      isMatch.test(part) ? <mark key={i}>{part}</mark> : part,
-    );
-}
 
 const DONE_STATUSES = new Set([
   "done",
@@ -578,12 +474,12 @@ export function Player({
   // a plain link to the subtitle endpoint.
   function downloadTranscriptTxt() {
     if (!video) return;
-    const text = cues.map((c) => c.text).join("\n");
+    const text = transcriptToText(cues);
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = transcriptFilenameBase(video.title, video.id) + ".txt";
+    a.download = transcriptFilenameBase(video.title) + ".txt";
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -1084,8 +980,7 @@ export function Player({
                           className="pill"
                           href={subtitlesUrl(video.id)}
                           download={
-                            transcriptFilenameBase(video.title, video.id) +
-                            ".vtt"
+                            transcriptFilenameBase(video.title) + ".vtt"
                           }
                           style={{
                             textDecoration: "none",
