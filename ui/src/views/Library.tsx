@@ -51,9 +51,7 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
       );
     case "in_progress":
       return (
-        v.status === "downloaded" &&
-        !v.watched &&
-        v.resume_position_seconds > 0
+        v.status === "downloaded" && !v.watched && v.resume_position_seconds > 0
       );
     case "watched":
       return v.watched;
