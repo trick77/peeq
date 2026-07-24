@@ -363,6 +363,31 @@ describe("Channels", () => {
     );
   });
 
+  // A failed delete must close the modal, or its error line (rendered at the
+  // top of the page) sits hidden behind the fixed scrim and the click looks
+  // dead — the same reason the detail Settings delete closes on error.
+  it("a failed delete closes the dialog and shows the error", async () => {
+    const user = userEvent.setup();
+    vi.mocked(deleteChannel).mockRejectedValue(new Error("nope, still busy"));
+    render(<Channels />);
+    await screen.findByText("Tracked Channel");
+    const row = screen
+      .getByText("Tracked Channel")
+      .closest(".channel-row") as HTMLElement;
+    await openRowMenu(user, row);
+    await user.click(
+      within(row).getByRole("menuitem", { name: /delete channel/i }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /delete channel/i }),
+    );
+    expect(await screen.findByText("nope, still busy")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
   describe("dormant review band", () => {
     const dormant = baseChannel({
       id: "c4",
@@ -387,6 +412,15 @@ describe("Channels", () => {
       render(<Channels />);
       await screen.findByText("Tracked Channel");
       expect(screen.queryByText(/needs? review/)).not.toBeInTheDocument();
+    });
+
+    // When every channel is dormant the main list is empty, but they show in
+    // the review band — so the page must NOT claim "No channels yet."
+    it("stays silent about emptiness when the only channels are dormant", async () => {
+      vi.mocked(listChannels).mockResolvedValue([dormant]);
+      render(<Channels />);
+      await screen.findByText("1 channel needs review");
+      expect(screen.queryByText(/no channels/i)).not.toBeInTheDocument();
     });
 
     it("dismissing a dormant channel removes it from the band", async () => {

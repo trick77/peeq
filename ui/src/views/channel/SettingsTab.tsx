@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, controlClass } from "../../ui";
 import { Icon } from "../../icons";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { ChannelDeleteWarning } from "../../components/ChannelDeleteWarning";
 import {
   updateChannel,
   scanChannel,
@@ -205,9 +206,10 @@ export function SettingsTab({
         onConfirm={handleDelete}
         onCancel={() => setConfirmDelete(false)}
       >
-        Delete <b>{detail.name}</b> and its {detail.archived_count} videos? This
-        removes the files from disk, including any you kept forever. This cannot
-        be undone.
+        <ChannelDeleteWarning
+          name={detail.name}
+          count={detail.archived_count}
+        />
       </ConfirmDialog>
     </>
   );

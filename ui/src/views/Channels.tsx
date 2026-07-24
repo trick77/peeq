@@ -20,6 +20,7 @@ import { gradientClassFor } from "../format";
 import type { AutoUnsubscribedChannel, Channel } from "../api/types";
 import { RowMenu } from "../components/RowMenu";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ChannelDeleteWarning } from "../components/ChannelDeleteWarning";
 import { ReviewBand } from "./ReviewBand";
 import { AutoUnsubscribedSection } from "./AutoUnsubscribedSection";
 
@@ -208,6 +209,10 @@ export function Channels({
       setChannels((prev) => prev.filter((x) => x.id !== c.id));
       setPendingDelete(null);
     } catch (err) {
+      // Close the dialog on failure, the same as the detail Settings delete:
+      // the error line renders at the top of the page, and the fixed, dimmed
+      // modal scrim would otherwise hide it — leaving the click looking dead.
+      setPendingDelete(null);
       setError((err as Error).message);
     } finally {
       setDeleteBusy(false);
@@ -414,7 +419,13 @@ export function Channels({
           </div>
         ))}
       </div>
-      {visibleChannels.length === 0 && !error ? (
+      {/* Only speak when the list is genuinely empty: no channels at all, or a
+          search that hid them. When the only channels are dormant they show in
+          the review band above, so "No channels yet." would contradict it —
+          stay silent then, as the pre-search code did. */}
+      {visibleChannels.length === 0 &&
+      !error &&
+      (channels.length === 0 || (q !== "" && hasNonDormant)) ? (
         <p style={{ color: "var(--color-faint)" }}>
           {q !== "" && hasNonDormant
             ? "No channels match your search."
@@ -439,11 +450,10 @@ export function Channels({
         onCancel={() => setPendingDelete(null)}
       >
         {pendingDelete ? (
-          <>
-            Delete <b>{pendingDelete.name}</b> and its{" "}
-            {pendingDelete.downloaded_count} videos? This removes the files from
-            disk, including any you kept forever. This cannot be undone.
-          </>
+          <ChannelDeleteWarning
+            name={pendingDelete.name}
+            count={pendingDelete.downloaded_count}
+          />
         ) : null}
       </ConfirmDialog>
     </>

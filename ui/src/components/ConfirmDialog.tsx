@@ -1,4 +1,4 @@
-import { useEffect, useId, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { Button } from "../ui";
 
 // ConfirmDialog — a modal confirmation, the loom ModalShell/DeleteArtifactModal
@@ -29,14 +29,20 @@ export function ConfirmDialog({
 }) {
   const titleId = useId();
 
+  // Keep the latest onCancel in a ref so the Escape listener subscribes once
+  // per open, not on every parent re-render (callers pass a fresh inline arrow
+  // each time — a new identity that would otherwise re-run this effect).
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape") onCancelRef.current();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
+  }, [open]);
 
   if (!open) return null;
 
