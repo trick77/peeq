@@ -2426,10 +2426,18 @@ textarea.cookiebox:focus {
   flex: none;
 }
 
+/* Two columns wide when there is room, collapsing to one at the app's narrow
+   breakpoint — banner rows carry more inline content than Library cards, so they
+   want more width before 2-up feels cramped. Mirrors the Library .grid pattern. */
 .channel-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 12px;
+}
+@media (max-width: 760px) {
+  .channel-list {
+    grid-template-columns: 1fr;
+  }
 }
 .channel-row {
   display: flex;
@@ -2857,6 +2865,9 @@ textarea.cookiebox:focus {
 .band .channel-list {
   margin-top: 6px;
   gap: 0;
+  /* The main list is a responsive 2-column grid; the review band's rows are a
+     flush single-column stack with hairline separators, so pin it back to 1col. */
+  grid-template-columns: 1fr;
 }
 .band .channel-row {
   background: transparent;
