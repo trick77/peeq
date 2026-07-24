@@ -19,7 +19,7 @@ describe("Rail", () => {
     // pass for "Add a video", so it could not pin the rename.
     expect(html).toContain(">Add<");
     expect(html).not.toContain("Add a video");
-    expect(html).toContain("Decide");
+    expect(html).toContain("Inbox");
     expect(html).toContain("Queue");
     expect(html).toContain("Activity");
     expect(html).toContain("Settings");

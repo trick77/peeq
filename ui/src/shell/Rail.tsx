@@ -13,7 +13,7 @@ export type ViewId =
   | "player"
   | "search"
   | "add"
-  | "decide"
+  | "inbox"
   | "queue"
   | "channels"
   | "channel"
@@ -42,7 +42,7 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     label: "Collect",
     items: [
       { id: "add", label: "Add", icon: "plus" },
-      { id: "decide", label: "Decide", icon: "clock", hot: true },
+      { id: "inbox", label: "Inbox", icon: "inbox", hot: true },
       { id: "queue", label: "Queue", icon: "download" },
       { id: "channels", label: "Channels", icon: "tv" },
       { id: "activity", label: "Activity", icon: "listTree" },
@@ -64,7 +64,7 @@ export function Rail({
 }: {
   active: ViewId;
   onNavigate: (view: ViewId) => void;
-  /** Badge count for "Decide" — uploads awaiting a keep/ignore decision. */
+  /** Badge count for "Inbox" — new uploads awaiting a keep/ignore decision. */
   pendingCount?: number;
   /** Badge count for "Queue" — downloads + summaries in flight. */
   queueCount?: number;
@@ -93,7 +93,7 @@ export function Rail({
             <div className="rail-nav-label">{section.label}</div>
             {section.items.map((item) => {
               const count =
-                item.id === "decide"
+                item.id === "inbox"
                   ? pendingCount
                   : item.id === "queue"
                     ? queueCount

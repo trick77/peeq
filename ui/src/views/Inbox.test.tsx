@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Decide } from "./Decide";
+import { Inbox } from "./Inbox";
 import type { PendingItem } from "../api/types";
 
 function baseItem(overrides: Partial<PendingItem> = {}): PendingItem {
@@ -34,7 +34,7 @@ vi.mock("../api/pending", () => ({
 
 import { listPending, downloadPending, ignorePending } from "../api/pending";
 
-describe("Decide", () => {
+describe("Inbox", () => {
   beforeEach(() => {
     vi.mocked(listPending).mockReset();
     vi.mocked(downloadPending).mockReset();
@@ -45,7 +45,7 @@ describe("Decide", () => {
   });
 
   it("lists pending items with title and remote thumbnail", async () => {
-    render(<Decide />);
+    render(<Inbox />);
     expect(await screen.findByText("First pending video")).toBeInTheDocument();
     expect(screen.getByText("Second pending video")).toBeInTheDocument();
     const imgs = document.querySelectorAll(
@@ -61,7 +61,7 @@ describe("Decide", () => {
   });
 
   it("renders the channel name, not the raw channel id", async () => {
-    render(<Decide />);
+    render(<Inbox />);
     await screen.findByText("First pending video");
     // Channel names appear both as a chip and as the card byline, so scope the
     // assertion to a card byline rather than expecting exactly one match.
@@ -74,7 +74,7 @@ describe("Decide", () => {
 
   it("falls back to channel_id when channel_name is empty", async () => {
     vi.mocked(listPending).mockResolvedValue([baseItem({ channel_name: "" })]);
-    render(<Decide />);
+    render(<Inbox />);
     // One channel → no chips row; the id shows on the card byline.
     const card = (await screen.findByText("First pending video")).closest(
       ".card",
@@ -84,7 +84,7 @@ describe("Decide", () => {
 
   it("calls onCountChange with the item count after initial load", async () => {
     const onCountChange = vi.fn();
-    render(<Decide onCountChange={onCountChange} />);
+    render(<Inbox onCountChange={onCountChange} />);
     await screen.findByText("First pending video");
     await waitFor(() => {
       expect(onCountChange).toHaveBeenCalledWith(2);
@@ -93,7 +93,7 @@ describe("Decide", () => {
 
   it("clicking Download now calls downloadPending and removes the row", async () => {
     const user = userEvent.setup();
-    render(<Decide />);
+    render(<Inbox />);
     await screen.findByText("First pending video");
     const row = screen
       .getByText("First pending video")
@@ -112,7 +112,7 @@ describe("Decide", () => {
 
   it("clicking Ignore calls ignorePending and removes the row", async () => {
     const user = userEvent.setup();
-    render(<Decide />);
+    render(<Inbox />);
     await screen.findByText("Second pending video");
     const row = screen
       .getByText("Second pending video")
@@ -132,7 +132,7 @@ describe("Decide", () => {
   it("calls onCountChange with the decremented count after Download now removes a row", async () => {
     const user = userEvent.setup();
     const onCountChange = vi.fn();
-    render(<Decide onCountChange={onCountChange} />);
+    render(<Inbox onCountChange={onCountChange} />);
     await screen.findByText("First pending video");
     onCountChange.mockClear();
     const row = screen
@@ -149,7 +149,7 @@ describe("Decide", () => {
   it("clicking a channel name opens its page", async () => {
     const user = userEvent.setup();
     const onOpenChannel = vi.fn();
-    render(<Decide onOpenChannel={onOpenChannel} />);
+    render(<Inbox onOpenChannel={onOpenChannel} />);
     await screen.findByText("First pending video");
 
     const cardA = screen
@@ -163,7 +163,7 @@ describe("Decide", () => {
   });
 
   it("renders the channel byline as plain text (not a button) when onOpenChannel is absent", async () => {
-    render(<Decide />);
+    render(<Inbox />);
     await screen.findByText("First pending video");
     const cardA = screen
       .getByText("First pending video")
@@ -175,7 +175,7 @@ describe("Decide", () => {
   it("calls onCountChange with the decremented count after Ignore removes a row", async () => {
     const user = userEvent.setup();
     const onCountChange = vi.fn();
-    render(<Decide onCountChange={onCountChange} />);
+    render(<Inbox onCountChange={onCountChange} />);
     await screen.findByText("Second pending video");
     onCountChange.mockClear();
     const row = screen
@@ -187,15 +187,15 @@ describe("Decide", () => {
     });
   });
 
-  it("shows an empty-state line when there is nothing to decide", async () => {
+  it("shows an empty-state line when the inbox is empty", async () => {
     vi.mocked(listPending).mockResolvedValue([]);
-    render(<Decide />);
-    expect(await screen.findByText("Nothing to decide.")).toBeInTheDocument();
+    render(<Inbox />);
+    expect(await screen.findByText("Your inbox is empty.")).toBeInTheDocument();
   });
 
   it("filters the grid to a single channel via its chip", async () => {
     const user = userEvent.setup();
-    render(<Decide />);
+    render(<Inbox />);
     await screen.findByText("First pending video");
 
     // Two channels → chips appear. Click Channel Two's chip.
@@ -207,7 +207,7 @@ describe("Decide", () => {
 
   it("Download all queues every visible item one at a time", async () => {
     const user = userEvent.setup();
-    render(<Decide />);
+    render(<Inbox />);
     await screen.findByText("First pending video");
 
     await user.click(screen.getByRole("button", { name: /^download all$/i }));
@@ -235,7 +235,7 @@ describe("Decide", () => {
       }),
     );
     vi.mocked(listPending).mockResolvedValue(many);
-    render(<Decide />);
+    render(<Inbox />);
     await screen.findByText("Bulk video 0");
 
     // First click only arms the confirm — nothing is downloaded yet.
@@ -253,7 +253,7 @@ describe("Decide", () => {
   it("fires onQueued after a Download now so the queue can seed", async () => {
     const user = userEvent.setup();
     const onQueued = vi.fn();
-    render(<Decide onQueued={onQueued} />);
+    render(<Inbox onQueued={onQueued} />);
     await screen.findByText("First pending video");
     const row = screen
       .getByText("First pending video")
@@ -267,7 +267,7 @@ describe("Decide", () => {
   it("fires onQueued once after a Download all batch", async () => {
     const user = userEvent.setup();
     const onQueued = vi.fn();
-    render(<Decide onQueued={onQueued} />);
+    render(<Inbox onQueued={onQueued} />);
     await screen.findByText("First pending video");
     await user.click(screen.getByRole("button", { name: /^download all$/i }));
     await waitFor(() => expect(downloadPending).toHaveBeenCalledTimes(2));
@@ -278,7 +278,7 @@ describe("Decide", () => {
     const user = userEvent.setup();
     const onQueued = vi.fn();
     vi.mocked(downloadPending).mockRejectedValue(new Error("cookie required"));
-    render(<Decide onQueued={onQueued} />);
+    render(<Inbox onQueued={onQueued} />);
     await screen.findByText("First pending video");
     await user.click(screen.getByRole("button", { name: /^download all$/i }));
     expect(await screen.findByText("cookie required")).toBeInTheDocument();
@@ -288,7 +288,7 @@ describe("Decide", () => {
   it("surfaces a failure from Download now and keeps the row", async () => {
     const user = userEvent.setup();
     vi.mocked(downloadPending).mockRejectedValue(new Error("disk is full"));
-    render(<Decide />);
+    render(<Inbox />);
     await screen.findByText("First pending video");
     const row = screen
       .getByText("First pending video")
@@ -307,7 +307,7 @@ describe("Decide", () => {
     vi.mocked(downloadPending)
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error("cookie required"));
-    render(<Decide />);
+    render(<Inbox />);
     await screen.findByText("First pending video");
 
     await user.click(screen.getByRole("button", { name: /^download all$/i }));

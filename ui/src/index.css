@@ -1254,7 +1254,7 @@ button.srow:not(:disabled):hover {
 }
 /* The kicker line — channel · date — sits above the title on the library/
    archive video card as a small eyebrow. Scoped to .video-card so the shared
-   .card/.by used by other pages (e.g. Decide) keeps its plain treatment.
+   .card/.by used by other pages (e.g. Inbox) keeps its plain treatment.
    Kept to a single line so a long channel name can't wrap and knock the titles
    below it out of row alignment. */
 .card.video-card .by {
@@ -2638,7 +2638,7 @@ textarea.cookiebox:focus {
    are a separate concern and keep their own affordance. */
 /* .chan-link — a channel name that navigates — is a link variant, so it folds
    into every rule here. That keeps its many call sites (video cards, the
-   player, the channels list, decide) styled without each having to spell out
+   player, the channels list, inbox) styled without each having to spell out
    the `link` class. The card kicker adds single-line truncation on top (see
    .card.video-card .by .chan-link). */
 .link,

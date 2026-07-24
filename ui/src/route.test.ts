@@ -42,17 +42,18 @@ describe("parsePath", () => {
   it("maps the plain views", () => {
     expect(parsePath("/search").view).toBe("search");
     expect(parsePath("/add").view).toBe("add");
-    expect(parsePath("/decide").view).toBe("decide");
+    expect(parsePath("/inbox").view).toBe("inbox");
     expect(parsePath("/queue").view).toBe("queue");
     expect(parsePath("/activity").view).toBe("activity");
     expect(parsePath("/settings").view).toBe("settings");
   });
 
-  it("keeps the old /pending path pointing at Decide (soft redirect)", () => {
-    // /pending was the page's path before the Decide/Queue split. It still
-    // parses to the decide view so a bookmark or open tab doesn't 404;
-    // useRoute's mount normalize then rewrites the bar to /decide.
-    expect(parsePath("/pending").view).toBe("decide");
+  it("keeps the old /pending and /decide paths pointing at Inbox (soft redirect)", () => {
+    // /pending, then /decide, were the page's paths before it settled on
+    // "Inbox". Both still parse to the inbox view so a bookmark or open tab
+    // doesn't 404; useRoute's mount normalize then rewrites the bar to /inbox.
+    expect(parsePath("/pending").view).toBe("inbox");
+    expect(parsePath("/decide").view).toBe("inbox");
   });
 
   it("falls back to the Library for an unknown path", () => {
@@ -62,7 +63,7 @@ describe("parsePath", () => {
 
   it("ignores a trailing slash and doubled slashes", () => {
     expect(parsePath("/settings/")).toEqual(parsePath("/settings"));
-    expect(parsePath("//decide//")).toEqual(parsePath("/decide"));
+    expect(parsePath("//inbox//")).toEqual(parsePath("/inbox"));
     expect(parsePath("/channel/UCabc123/")).toEqual(
       parsePath("/channel/UCabc123"),
     );
@@ -106,7 +107,7 @@ describe("toPath", () => {
     [{ view: "channels", videoId: null, channelId: null }, "/channels"],
     [{ view: "search", videoId: null, channelId: null }, "/search"],
     [{ view: "add", videoId: null, channelId: null }, "/add"],
-    [{ view: "decide", videoId: null, channelId: null }, "/decide"],
+    [{ view: "inbox", videoId: null, channelId: null }, "/inbox"],
     [{ view: "queue", videoId: null, channelId: null }, "/queue"],
     [{ view: "activity", videoId: null, channelId: null }, "/activity"],
     [{ view: "settings", videoId: null, channelId: null }, "/settings"],
@@ -138,7 +139,7 @@ describe("round-trip", () => {
     "/channels",
     "/search",
     "/add",
-    "/decide",
+    "/inbox",
     "/queue",
     "/activity",
     "/settings",

@@ -20,7 +20,7 @@ import { Player } from "./views/Player";
 import { Settings } from "./views/Settings";
 import { Channels } from "./views/Channels";
 import { Channel } from "./views/Channel";
-import { Decide } from "./views/Decide";
+import { Inbox } from "./views/Inbox";
 import { Queue } from "./views/Queue";
 import { Activity } from "./views/Activity";
 import { Search } from "./views/Search";
@@ -33,7 +33,7 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
   player: { title: "Now playing" },
   search: { title: "Search" },
   add: { title: "Add" },
-  decide: { title: "Decide" },
+  inbox: { title: "Inbox" },
   queue: { title: "Queue" },
   channels: { title: "Channels" },
   channel: { title: "Channel" },
@@ -610,7 +610,7 @@ function ViewSwitch({
       // card confirms the queue, it doesn't jump into Player before the
       // download has even started); onOpenVideo is Library's job.
       return <Add onQueued={onQueued} />;
-    case "decide":
+    case "inbox":
       // onCountChange keeps the rail badge in sync while the user acts on
       // items (Download now/Ignore) without leaving this view — the
       // nav-refetch effect above only covers count changes that happen
@@ -619,7 +619,7 @@ function ViewSwitch({
       // the worker is paused — which emits no progress SSE — still appears on
       // Queue immediately instead of only after the queue next drains.
       return (
-        <Decide
+        <Inbox
           onCountChange={setPendingCount}
           onOpenChannel={onOpenChannel}
           onQueued={onQueued}
