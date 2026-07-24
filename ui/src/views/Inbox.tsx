@@ -11,10 +11,12 @@ import { Button } from "../ui";
 // throughout — only the UI vocabulary has moved, so the channel_videos.state
 // enum and its handlers stay untouched.
 //
-// Reuses Library's `.grid`/`.card`/`.thumb`/`.dur` visual language, but the
-// thumbnail is the remote `thumbnail_url` (no local media exists yet — an item
-// here has never been downloaded), and the two actions are Download now /
-// Ignore rather than favorite/watched.
+// Cards are the library card (`.card.video-card`): same grid, same thumbnail,
+// same channel-eyebrow-above-clamped-title order, same `.card-foot` action
+// row. Two honest differences remain — the thumbnail is the remote
+// `thumbnail_url` (no local media exists yet, an item here has never been
+// downloaded) and the actions are Download now / Ignore rather than
+// favorite/watched.
 export function Inbox({
   onCountChange,
   onOpenChannel,
@@ -207,7 +209,7 @@ export function Inbox({
 
       <div className="grid">
         {visible.map((item) => (
-          <article key={item.video_id} className="card">
+          <article key={item.video_id} className="card video-card">
             <div className="thumb">
               <img
                 className="fill"
@@ -219,7 +221,10 @@ export function Inbox({
                 {formatDuration(item.duration_seconds)}
               </span>
             </div>
-            <h3>{item.title}</h3>
+            {/* Kicker line above the title, exactly like the library card —
+                but channel-only. The ledger knows when the scanner discovered
+                an upload, not when it was published, and those two must not
+                share the slot that reads as a publish date on Library. */}
             <div className="by">
               {onOpenChannel && item.channel_id ? (
                 <button
@@ -230,29 +235,31 @@ export function Inbox({
                   {item.channel_name || item.channel_id}
                 </button>
               ) : (
-                item.channel_name || item.channel_id
+                <span className="chan-name">
+                  {item.channel_name || item.channel_id}
+                </span>
               )}
             </div>
-            <div
-              className="acts-row"
-              style={{ display: "flex", gap: 8, marginTop: 8 }}
-            >
+            <h3>{item.title}</h3>
+            <div className="card-foot acts-row">
               <Button
                 type="button"
                 variant="secondary"
+                small
                 disabled={busyId === item.video_id || bulkBusy}
                 onClick={() => handleDownload(item)}
               >
-                <Icon name="download" size="16px" />
+                <Icon name="download" size="15px" />
                 Download now
               </Button>
               <Button
                 type="button"
                 variant="dangerQuiet"
+                small
                 disabled={busyId === item.video_id || bulkBusy}
                 onClick={() => handleIgnore(item)}
               >
-                <Icon name="trash" size="16px" />
+                <Icon name="trash" size="15px" />
                 Ignore
               </Button>
             </div>
