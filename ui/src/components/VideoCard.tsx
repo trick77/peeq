@@ -55,7 +55,7 @@ export function VideoCard({
     : 0;
 
   return (
-    <article className="card">
+    <article className="card video-card">
       <div className="thumb">
         <button
           type="button"
@@ -130,7 +130,7 @@ export function VideoCard({
         {onOpenChannel && video.channel_id ? (
           <button
             type="button"
-            className="link chan-link"
+            className="chan-link"
             onClick={() => onOpenChannel(video.channel_id)}
           >
             {video.channel_name || video.channel_id}
