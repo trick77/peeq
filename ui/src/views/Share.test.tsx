@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Share } from "./Share";
 import type { PublicVideo } from "../api/share";
 
@@ -178,9 +178,7 @@ describe("Share transcript panel", () => {
     // Collapsed: nothing fetched yet.
     fireEvent.click(await screen.findByRole("button", { name: /transcript/i }));
 
-    expect(
-      await screen.findByText(/confidence is a discipline/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/not a feeling/i)).toBeInTheDocument();
     // The share route, never the session-gated /api/videos/<id>/subtitles.
     expect(fetch).toHaveBeenCalledWith("/api/s/3xK9raPb/subtitles");
 
@@ -196,7 +194,7 @@ describe("Share transcript panel", () => {
   it("counts matches as you search the transcript", async () => {
     renderWithCaptions();
     fireEvent.click(await screen.findByRole("button", { name: /transcript/i }));
-    await screen.findByText(/confidence is a discipline/i);
+    await screen.findByText(/not a feeling/i);
 
     fireEvent.change(screen.getByPlaceholderText(/find in transcript/i), {
       target: { value: "discipline" },
@@ -207,7 +205,7 @@ describe("Share transcript panel", () => {
   it("offers caption downloads named from the title — never the id or the token", async () => {
     renderWithCaptions();
     fireEvent.click(await screen.findByRole("button", { name: /transcript/i }));
-    await screen.findByText(/confidence is a discipline/i);
+    await screen.findByText(/not a feeling/i);
 
     const vtt = screen.getByText(".vtt").closest("a");
     expect(vtt).toHaveAttribute("href", "/api/s/3xK9raPb/subtitles");
@@ -230,6 +228,19 @@ describe("Share transcript panel", () => {
     for (const a of document.querySelectorAll("a[href]")) {
       expect(a.getAttribute("href")).not.toMatch(/download=1/);
     }
+  });
+
+  it("drops a parsed transcript when the token changes", async () => {
+    const { rerender } = renderWithCaptions();
+    fireEvent.click(await screen.findByRole("button", { name: /transcript/i }));
+    await screen.findByText(/not a feeling/i);
+
+    // A different link must never show the previous video's cues, collapsed or
+    // not — the panel goes back to its closed, empty state.
+    rerender(<Share token="someOtherToken" />);
+    await waitFor(() =>
+      expect(screen.queryByText(/not a feeling/i)).not.toBeInTheDocument(),
+    );
   });
 
   it("shows an error line when the captions fail to load", async () => {

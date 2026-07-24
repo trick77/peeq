@@ -98,6 +98,19 @@ export function Share({ token }: { token: string | null }) {
     };
   }, [video]);
 
+  // Drop any parsed transcript when the token changes, the same way the Player
+  // resets its panel on a new video id. Today every token change is a fresh
+  // mount — /s/<token> is only ever reached by a full page load, never by an
+  // in-app navigation — so this is defensive: without it, a Share instance that
+  // ever did survive a token change would render the previous video's cues
+  // beside the new one's player.
+  useEffect(() => {
+    setTranscriptOpen(false);
+    setCues([]);
+    setTranscriptError(null);
+    setFind("");
+  }, [token]);
+
   // Fetch + client-side parse the VTT transcript the first time the Transcript
   // card is expanded — not on page load, and not for videos without subtitles.
   // The URL is the token-gated share route; this page never knows a video id to
