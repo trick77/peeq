@@ -109,7 +109,7 @@ profile that never browses.
 Once:
 
 1. Create a dedicated Chrome profile and sign it into a dedicated YouTube account (not your
-   personal one — this isolates any rate-limit or block).
+   personal one — this keeps peeq's activity separate from your own account).
 2. In that tab, navigate to `https://www.youtube.com/robots.txt`, then close the tab. This stops a
    YouTube app page from rotating the cookie underneath you.
 3. In peeq: Settings → Access token → create one and copy it.
@@ -137,10 +137,10 @@ Do not browse YouTube in that profile — that is what starts rotation.
 
 ### JavaScript runtime (deno)
 
-yt-dlp has to run YouTube's player JavaScript to solve the `sig` and `n` challenges that gate
-stream URLs. Without a runtime it falls back to a deprecated path where formats silently go
-missing and transfers are throttled, so the runtime image ships deno, copied from deno's
-official image and pinned by digest.
+yt-dlp obtains stream URLs by executing YouTube's player JavaScript (the `sig` and `n`
+functions), which requires a JS runtime on the host. Without one it falls back to a deprecated
+path where formats silently go missing and transfers are throttled, so the runtime image ships
+deno, copied from deno's official image and pinned by digest.
 
 deno is the only runtime yt-dlp enables by default, so it is picked up automatically from
 `PATH` — no `--js-runtimes` flag and no configuration. peeq logs which runtime it found at
@@ -160,8 +160,9 @@ documented.
 - **No YouTube call fires without a valid cookie.** Every yt-dlp invocation (self-update excepted)
   passes a cookie gate first. With no cookie configured, `POST /api/downloads` is refused with
   `409`. There is no way to bypass this from the UI or the API. There is one env-level escape
-  hatch, `BACKEND_ALLOW_ANONYMOUS_YOUTUBE`, which exists so local testing can work around YouTube
-  serving no usable formats to authenticated requests; it is a hard boot error unless
+  hatch, `BACKEND_ALLOW_ANONYMOUS_YOUTUBE`, which exists so local testing can bypass peeq's own
+  cookie gate, on accounts where authenticated yt-dlp requests are served no usable formats while
+  anonymous ones work; it is a hard boot error unless
   `BACKEND_AUTH_MODE=dev`, which is itself loopback-only. Never enable it in production.
 - **Every YouTube request is throttled.** A randomized delay — configurable floor, hard-clamped to
   a 20s minimum — precedes each yt-dlp call, and channel scans additionally wait at least 60s
@@ -200,9 +201,15 @@ In both cases:
 rm ./data/peeq.db*        # or /tmp/peeq-dev.db* for `make dev`
 ```
 
-## Legal note
+## Legal note and disclaimer
 
-Cookie-authenticated automated downloading violates YouTube's Terms of Service and ties every
-request to the Google account whose cookie you configured — use a throwaway account, not your main
-one. The built-in throttling reduces, but does not eliminate, the risk of that account or its
-source IP getting rate-limited or blocked.
+peeq is not affiliated with, endorsed by, or sponsored by YouTube or Google. "YouTube" is a
+trademark of Google LLC, used here only to identify the service peeq interoperates with.
+
+YouTube's Terms of Service restrict automated access and downloading. Every request peeq makes is
+tied to the Google account whose cookie you configured — review those terms and any applicable law
+in your jurisdiction before running it. Configure a dedicated account rather than your primary one,
+so peeq's activity stays separable from your personal account.
+
+The built-in throttling is there to keep peeq a well-behaved client; it does not make automated
+access permitted.
