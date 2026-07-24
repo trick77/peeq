@@ -46,8 +46,8 @@ export function Queue({
   if (downloading.length === 0 && summaries.length === 0) {
     return (
       <p className="queue-empty">
-        Nothing in the queue — approve something on Decide and it will show up
-        here.
+        Nothing in the queue — approve something in your Inbox and it will show
+        up here.
       </p>
     );
   }

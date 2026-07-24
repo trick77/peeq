@@ -5,7 +5,7 @@
 // linked, refreshed, and walked with the browser's back/forward buttons.
 //
 // Scope is the "big pages" only — `/`, `/video/<id>`, `/channel/<id>`,
-// `/channels`, `/decide`, `/queue`, `/search`, `/add`, `/settings`. Sub-page state
+// `/channels`, `/inbox`, `/queue`, `/search`, `/add`, `/settings`. Sub-page state
 // (library filters, in-transcript search text, the scrub position) stays in
 // its own component and is intentionally NOT reflected in the URL.
 //
@@ -73,14 +73,15 @@ export function parsePath(pathname: string): RouteState {
       return { view: "search", videoId: null, channelId: null };
     case "add":
       return { view: "add", videoId: null, channelId: null };
-    case "decide":
-      return { view: "decide", videoId: null, channelId: null };
-    // /pending is the page's old path (it was "Pending" before the
-    // Decide/Queue/Activity split). Keep parsing it to the same view so an open
-    // tab or a saved bookmark doesn't 404 — useRoute's mount normalize then
-    // rewrites the address bar to the canonical /decide.
+    case "inbox":
+      return { view: "inbox", videoId: null, channelId: null };
+    // /pending and /decide are the page's old paths (it was "Pending", then
+    // "Decide", before settling on "Inbox"). Keep parsing both to the same view
+    // so an open tab or a saved bookmark doesn't 404 — useRoute's mount
+    // normalize then rewrites the address bar to the canonical /inbox.
     case "pending":
-      return { view: "decide", videoId: null, channelId: null };
+    case "decide":
+      return { view: "inbox", videoId: null, channelId: null };
     case "queue":
       return { view: "queue", videoId: null, channelId: null };
     case "activity":
@@ -114,8 +115,8 @@ export function toPath(state: RouteState): string {
       return "/search";
     case "add":
       return "/add";
-    case "decide":
-      return "/decide";
+    case "inbox":
+      return "/inbox";
     case "queue":
       return "/queue";
     case "activity":

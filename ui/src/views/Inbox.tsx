@@ -5,17 +5,17 @@ import type { PendingItem } from "../api/types";
 import { formatDuration } from "../format";
 import { Button } from "../ui";
 
-// Decide — new uploads awaiting the user's keep/ignore call. This was the
-// "Pending" page; the name changed with the Decide/Queue/Activity split (a
-// decision to make, not a machine state), but the API is still /api/pending —
-// only the UI vocabulary moved, so the channel_videos.state enum and its
-// handlers stay untouched.
+// Inbox — new uploads awaiting the user's keep/ignore call: an inbox of things
+// your channels posted, a count of what is unread, cleared by acting on each.
+// This page was "Pending", then briefly "Decide"; the API is still /api/pending
+// throughout — only the UI vocabulary has moved, so the channel_videos.state
+// enum and its handlers stay untouched.
 //
 // Reuses Library's `.grid`/`.card`/`.thumb`/`.dur` visual language, but the
 // thumbnail is the remote `thumbnail_url` (no local media exists yet — an item
 // here has never been downloaded), and the two actions are Download now /
 // Ignore rather than favorite/watched.
-export function Decide({
+export function Inbox({
   onCountChange,
   onOpenChannel,
   onQueued,
@@ -260,7 +260,7 @@ export function Decide({
         ))}
       </div>
       {items.length === 0 && !error ? (
-        <p style={{ color: "var(--color-faint)" }}>Nothing to decide.</p>
+        <p style={{ color: "var(--color-faint)" }}>Your inbox is empty.</p>
       ) : null}
     </>
   );

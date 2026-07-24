@@ -324,20 +324,20 @@ describe("App deep links", () => {
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
 
-    fireEvent.click(screen.getByRole("button", { name: "Decide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Inbox" }));
 
-    expect(await screen.findByText("Nothing to decide.")).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/decide");
+    expect(await screen.findByText("Your inbox is empty.")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/inbox");
   });
 
   it("re-derives the view from the URL on back/forward (popstate)", async () => {
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
 
-    // Navigate into Decide — pushes /decide.
-    fireEvent.click(screen.getByRole("button", { name: "Decide" }));
-    await screen.findByText("Nothing to decide.");
-    expect(window.location.pathname).toBe("/decide");
+    // Navigate into Inbox — pushes /inbox.
+    fireEvent.click(screen.getByRole("button", { name: "Inbox" }));
+    await screen.findByText("Your inbox is empty.");
+    expect(window.location.pathname).toBe("/inbox");
 
     // Simulate the browser Back button: the URL returns to the previous entry
     // and a popstate fires. jsdom's real history.back() is async and quirky,
@@ -454,13 +454,13 @@ describe("App routing", () => {
     });
   });
 
-  it("the Decide nav item renders the Decide view", async () => {
+  it("the Inbox nav item renders the Inbox view", async () => {
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
 
-    fireEvent.click(screen.getByRole("button", { name: "Decide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Inbox" }));
 
-    expect(await screen.findByText("Nothing to decide.")).toBeInTheDocument();
+    expect(await screen.findByText("Your inbox is empty.")).toBeInTheDocument();
   });
 });
 
