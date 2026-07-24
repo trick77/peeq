@@ -16,3 +16,4 @@ export * from "./pending";
 export * from "./summaries";
 export * from "./activity";
 export * from "./search";
+export * from "./share";

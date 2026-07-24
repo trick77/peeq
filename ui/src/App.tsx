@@ -24,6 +24,7 @@ import { Inbox } from "./views/Inbox";
 import { Queue } from "./views/Queue";
 import { Activity } from "./views/Activity";
 import { Search } from "./views/Search";
+import { Share } from "./views/Share";
 import { useRoute } from "./route";
 import { Button } from "./ui";
 
@@ -39,6 +40,9 @@ const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
   channel: { title: "Channel" },
   activity: { title: "Activity" },
   settings: { title: "Settings" },
+  // share renders chromeless (no rail/top bar), so this title is never shown —
+  // it exists only to satisfy the Record<ViewId, …> exhaustiveness.
+  share: { title: "Shared video" },
 };
 
 // App — the shell (rail + topbar + routed main) plus the four Task 14
@@ -358,6 +362,13 @@ export function App() {
     }, controller.signal).catch(() => {});
     return () => controller.abort();
   }, [authChecked, user, refreshSummaries]);
+
+  // The public share page renders above everything else — no rail, no top bar,
+  // and crucially before the auth gate below, since its whole point is to work
+  // for a recipient who is not signed in.
+  if (view === "share") {
+    return <Share token={route.token} />;
+  }
 
   if (!authChecked) {
     return (
