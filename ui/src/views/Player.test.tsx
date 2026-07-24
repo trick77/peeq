@@ -59,6 +59,13 @@ vi.mock("../api/settings", () => ({
   updateSettings: vi.fn(),
 }));
 
+// The Player side-loads share status on mount; without this mock getShareStatus
+// would hit an unmocked fetch. It resolves "not shared" so the Share button and
+// chip render in their default state.
+vi.mock("../api/share", () => ({
+  getShareStatus: vi.fn().mockResolvedValue({ shared: false }),
+}));
+
 import {
   getVideo,
   setResume,

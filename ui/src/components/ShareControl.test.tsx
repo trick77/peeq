@@ -107,6 +107,49 @@ describe("ShareControl", () => {
     expect(await screen.findByText(/copied/i)).toBeInTheDocument();
   });
 
+  it("re-stamps the expiry from a chip on an already-shared link", async () => {
+    const status: ShareStatus = {
+      shared: true,
+      url: "https://x/s/t",
+      token: "t",
+      expires_at: expiryIn(7),
+    };
+    vi.mocked(createShare).mockResolvedValue({ ...status, expires_at: "" });
+    render(
+      <ShareControl videoId="v1" status={status} onStatusChange={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^shared$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /30 days/i }));
+    await waitFor(() => expect(createShare).toHaveBeenCalledWith("v1", "30d"));
+  });
+
+  it("shows 'No expiry' in the popover for a never-expiring link", () => {
+    render(
+      <ShareControl
+        videoId="v1"
+        status={{ shared: true, url: "https://x/s/t", token: "t" }}
+        onStatusChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^shared$/i }));
+    expect(screen.getByText(/no expiry/i)).toBeInTheDocument();
+  });
+
+  it("closes the popover on Escape", () => {
+    render(
+      <ShareControl
+        videoId="v1"
+        status={{ shared: false }}
+        onStatusChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("stops sharing only after a confirm step", async () => {
     vi.mocked(stopShare).mockResolvedValue({ shared: false });
     const onStatusChange = vi.fn();

@@ -52,6 +52,15 @@ describe("parsePath", () => {
     });
   });
 
+  it("maps a token-less /s to the share view with a null token", () => {
+    expect(parsePath("/s")).toEqual({
+      view: "share",
+      videoId: null,
+      channelId: null,
+      token: null,
+    });
+  });
+
   it("maps the plain views", () => {
     expect(parsePath("/search").view).toBe("search");
     expect(parsePath("/add").view).toBe("add");
