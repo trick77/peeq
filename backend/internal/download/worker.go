@@ -341,7 +341,10 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 			return
 		}
 		if merr != nil {
-			w.classify(ctx, job, video, merr)
+			// countFail=false: a preflight blip for one URL must not nudge the
+			// global auto-pause breaker. Cookie/blocked still pause; unavailable
+			// still fails.
+			w.classify(ctx, job, video, merr, false)
 			return
 		}
 		video.Title = meta.Title
@@ -434,7 +437,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		// the watchdog fired. Treat as a retryable timeout.
 		w.retry(ctx, job, video, "watchdog timeout: no progress")
 	default:
-		w.classify(ctx, job, video, dlErr)
+		w.classify(ctx, job, video, dlErr, true)
 	}
 }
 
@@ -475,8 +478,13 @@ func (w *Worker) settleCanceled(job *jobs.Job, video *videos.Video) {
 	}
 }
 
-// classify maps a real download error to an outcome.
-func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Video, err error) {
+// classify maps a real download error to an outcome. countFail gates whether an
+// unclassified/retryable error feeds the auto-pause FailMonitor: true for a real
+// download failure (the signal the breaker exists for), false for the metadata
+// preflight, where a single freshly-added URL's transient blip must not nudge
+// the global breaker. Cookie/blocked errors pause regardless (they never touch
+// the monitor); terminal errors fail regardless.
+func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Video, err error, countFail bool) {
 	var terminal *ytdlp.TerminalError
 	switch {
 	case errors.Is(err, ytdlp.ErrBlocked):
@@ -499,8 +507,10 @@ func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Vide
 		w.fail(job, video, job.Attempts, err.Error())
 	default:
 		// Count-worthy (unclassified exec/extractor + RetryableError) for
-		// auto-pause; per-video terminal errors above never reach here.
-		if w.deps.FailMonitor != nil {
+		// auto-pause; per-video terminal errors above never reach here. A
+		// preflight failure (countFail=false) still retries but does not feed
+		// the breaker.
+		if countFail && w.deps.FailMonitor != nil {
 			w.deps.FailMonitor.Fail(video.ID)
 		}
 		// RetryableError and any unexpected error (network, exec) get the
