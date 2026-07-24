@@ -583,16 +583,20 @@ func (w *Worker) recordActivity(e activity.Event) {
 	}
 }
 
-// humanSize renders a byte count as a compact MB/GB string for a download's
-// activity detail. Zero bytes (yt-dlp did not report a size) yields "".
+// humanSize renders a byte count as a compact KB/MB/GB string for a download's
+// activity detail. A sub-megabyte file must not read as "0 MB" (that looks like
+// an empty/failed download), so it falls through to KB. Zero bytes (yt-dlp did
+// not report a size) yields "".
 func humanSize(b int64) string {
 	switch {
 	case b <= 0:
 		return ""
 	case b >= 1<<30:
 		return fmt.Sprintf("%.1f GB", float64(b)/(1<<30))
-	default:
+	case b >= 1<<20:
 		return fmt.Sprintf("%.0f MB", float64(b)/(1<<20))
+	default:
+		return fmt.Sprintf("%.0f KB", float64(b)/(1<<10))
 	}
 }
 

@@ -18,6 +18,10 @@ type ActivityReader interface {
 const (
 	activityDefaultLimit = 40
 	activityMaxLimit     = 100
+	// upcomingCap bounds the future projection: how many items the agenda shows
+	// above the now marker, and the ceiling on the per-source queries so a large
+	// backlog can't turn one request into hundreds of title lookups.
+	upcomingCap = 20
 )
 
 type activityListResponse struct {
@@ -74,14 +78,14 @@ func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) 
 	var items []activity.UpcomingItem
 
 	if s.channels != nil {
-		if scans, err := s.channels.ScanDueSoon(20); err == nil {
+		if scans, err := s.channels.ScanDueSoon(upcomingCap); err == nil {
 			for _, c := range scans {
 				items = append(items, activity.UpcomingItem{
 					At: c.At, Kind: activity.KindScan, Subject: c.Name, Summary: "channel scan",
 				})
 			}
 		}
-		if metas, err := s.channels.MetaDueSoon(20); err == nil {
+		if metas, err := s.channels.MetaDueSoon(upcomingCap); err == nil {
 			for _, c := range metas {
 				items = append(items, activity.UpcomingItem{
 					At: c.At, Kind: activity.KindChannelMeta, Subject: c.Name, Summary: "metadata refresh",
@@ -89,16 +93,30 @@ func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
+	// The ordered (untimed) items — pending downloads then summaries — sort ahead
+	// of every timed one in Merge, so at most `upcomingCap` of them can survive.
+	// Resolve titles only up to that bound rather than doing a videos.Get for
+	// every job in a large backlog and throwing all but 20 away.
+	ordered := 0
+	addOrdered := func(kind, videoID, summary string) bool {
+		if ordered >= upcomingCap {
+			return false
+		}
+		items = append(items, activity.UpcomingItem{
+			Kind: kind, Approx: true, Subject: s.videoTitle(videoID), Summary: summary,
+		})
+		ordered++
+		return true
+	}
 	if s.jobs != nil {
 		if all, err := s.jobs.List(); err == nil {
 			for _, j := range all {
 				if j.State != "pending" {
 					continue
 				}
-				items = append(items, activity.UpcomingItem{
-					Kind: activity.KindDownload, Approx: true,
-					Subject: s.videoTitle(j.VideoID), Summary: "download",
-				})
+				if !addOrdered(activity.KindDownload, j.VideoID, "download") {
+					break
+				}
 			}
 		}
 	}
@@ -108,15 +126,14 @@ func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) 
 				if j.State != "pending" {
 					continue // running summaries render at *now* on the client, not here
 				}
-				items = append(items, activity.UpcomingItem{
-					Kind: activity.KindSummary, Approx: true,
-					Subject: s.videoTitle(j.VideoID), Summary: "summary",
-				})
+				if !addOrdered(activity.KindSummary, j.VideoID, "summary") {
+					break
+				}
 			}
 		}
 	}
 
-	merged, truncated := activity.Merge(items, 20)
+	merged, truncated := activity.Merge(items, upcomingCap)
 	if merged == nil {
 		merged = []activity.UpcomingItem{}
 	}

@@ -10,7 +10,6 @@ package activity
 import (
 	"database/sql"
 	"log/slog"
-	"time"
 )
 
 // maxRows caps the retained log. The past half of the agenda is bounded by row
@@ -25,7 +24,11 @@ const (
 	KindSummary     = "summary"
 	KindRetention   = "retention"
 	KindYtdlp       = "ytdlp"
-	KindAccess      = "access"
+	// KindAccess is RESERVED, not yet emitted. Cookie/access-transition rows are
+	// a deferred follow-up (recording them cleanly means detecting the change
+	// inside settings.SetCookie, old→new). The value is declared here and in the
+	// 0007 CHECK now so wiring it later needs no migration to widen the enum.
+	KindAccess = "access"
 
 	OutcomeOK   = "ok"
 	OutcomeWarn = "warn"
@@ -62,15 +65,21 @@ func New(db *sql.DB) *Store { return &Store{db: db} }
 // error here is logged at ERROR and swallowed. The caller passes no id/at — the
 // row's id is assigned by AUTOINCREMENT and its timestamp by the column default.
 func (s *Store) Record(e Event) {
-	res, err := s.db.Exec(
+	// RETURNING gives us the assigned id AND the column-default timestamp in one
+	// round trip, so the SSE-fanned event below carries exactly the `at` the row
+	// was persisted with — no time.Now() drift against datetime('now').
+	var id int64
+	var at string
+	err := s.db.QueryRow(
 		`INSERT INTO activity_events (kind, outcome, subject_id, subject, summary, detail)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		e.Kind, e.Outcome, e.SubjectID, e.Subject, e.Summary, e.Detail)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 RETURNING id, at`,
+		e.Kind, e.Outcome, e.SubjectID, e.Subject, e.Summary, e.Detail,
+	).Scan(&id, &at)
 	if err != nil {
 		slog.Error("activity record failed", "err", err, "kind", e.Kind)
 		return
 	}
-	id, _ := res.LastInsertId()
 
 	// Trim by EXACT row count via OFFSET, not `id <= max_id - maxRows`: id gaps
 	// (there are none today, but a future delete could make some) would let the
@@ -85,9 +94,7 @@ func (s *Store) Record(e Event) {
 
 	if s.OnRecord != nil {
 		e.ID = id
-		// datetime('now') is UTC to the second; match its format so the SSE-fanned
-		// event carries the same timestamp the row got, without a re-read.
-		e.At = time.Now().UTC().Format("2006-01-02 15:04:05")
+		e.At = at
 		s.OnRecord(e)
 	}
 }

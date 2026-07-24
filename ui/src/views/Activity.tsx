@@ -124,10 +124,13 @@ export function Activity({
   // marker; it does not tick, which is fine for a log.
   const now = Date.now();
 
+  // Load the past log once on mount. The future projection is owned entirely by
+  // the effect below (keyed on the live state), so it is NOT fetched here — that
+  // avoided a redundant second /api/activity/upcoming on every open.
   useEffect(() => {
     let active = true;
-    Promise.all([listActivity(), listUpcoming()])
-      .then(([page, up]) => {
+    listActivity()
+      .then((page) => {
         if (!active) return;
         // MERGE, not replace: a live "activity" event can arrive between the
         // server building this snapshot and the fetch resolving. The live effect
@@ -140,8 +143,6 @@ export function Activity({
           return [...liveOnly, ...page.events];
         });
         setHasMore(page.has_more);
-        setUpcoming(up.items);
-        setTruncated(up.truncated);
         setLoaded(true);
       })
       .catch((e: Error) => {
@@ -172,8 +173,9 @@ export function Activity({
   // so without a refresh the same item renders twice — and a scan whose time has
   // passed lingers above the line with a past label. Refetch whenever the live
   // state that could invalidate the snapshot changes (a new event, or the
-  // jobs/summaries sets shifting), so the halves never disagree. Gated on
-  // `loaded` so it doesn't double-fetch during the initial load above.
+  // jobs/summaries sets shifting), so the halves never disagree. Runs its first
+  // fetch when `loaded` flips true (the initial projection load) and is the only
+  // place upcoming is fetched, so there is no duplicate request.
   useEffect(() => {
     if (!loaded) return;
     let active = true;
@@ -227,6 +229,10 @@ export function Activity({
   const running = jobs.filter((j) => j.state === "running");
   const runningSummaries = summaries.filter((s) => s.state === "running");
   const nothingAtNow = running.length === 0 && runningSummaries.length === 0;
+  // "Problems only" is a view of the log's failures/warnings — the whole live
+  // half (future, the now marker, and running in-progress work) is hidden, since
+  // healthy in-progress work is not a problem.
+  const showLive = filter !== "problems";
 
   if (error) {
     return <div className="errline">{error}</div>;
@@ -236,7 +242,8 @@ export function Activity({
   }
 
   const empty =
-    shownPast.length === 0 && shownUpcoming.length === 0 && nothingAtNow;
+    shownPast.length === 0 &&
+    (!showLive || (shownUpcoming.length === 0 && nothingAtNow));
 
   return (
     <>
@@ -266,75 +273,87 @@ export function Activity({
           ) : null}
 
           <div className="agenda">
-            {/* FUTURE — dimmed, faint rail, soonest nearest the now line */}
-            {shownUpcoming.map((item, i) => {
-              const k = kindOf(item.kind);
-              return (
-                <div key={`up-${i}`} className="ag-row planned">
-                  <span className="ag-node">
-                    <Icon name={k.icon} size="16px" />
-                  </span>
-                  <div className="ag-body">
-                    <div className="ag-subject">{item.subject || k.label}</div>
-                    {item.summary ? (
-                      <div className="ag-detail">{leadCap(item.summary)}</div>
-                    ) : null}
-                  </div>
-                  <span className="ag-when">{plannedWhen(item.at, now)}</span>
-                </div>
-              );
-            })}
-
-            {/* NOW — a row like any other, so the rail runs straight through */}
-            <div className="ag-row now">
-              <span className="ag-node">
-                <span className="ag-pulse" />
-              </span>
-              <div className="ag-nowbar">
-                <span className="ag-nowlbl">now</span>
-                <span className="ag-rule" />
-              </div>
-            </div>
-
-            {/* RUNNING — on the now node, from App's live state */}
-            {running.map((j) => {
-              const p = progressByJobId?.[j.job_id];
-              return (
-                <div key={`run-${j.job_id}`} className="ag-row running">
-                  <span className="ag-node">
-                    <Icon name="download" size="16px" />
-                  </span>
-                  <div className="ag-body">
-                    <div className="ag-subject">{j.title || j.video_id}</div>
-                    {p ? (
-                      <div className="ag-progress">
-                        <i style={{ width: `${p.percent}%` }} />
+            {showLive ? (
+              <>
+                {/* FUTURE — dimmed, faint rail, soonest nearest the now line */}
+                {shownUpcoming.map((item, i) => {
+                  const k = kindOf(item.kind);
+                  return (
+                    <div key={`up-${i}`} className="ag-row planned">
+                      <span className="ag-node">
+                        <Icon name={k.icon} size="16px" />
+                      </span>
+                      <div className="ag-body">
+                        <div className="ag-subject">
+                          {item.subject || k.label}
+                        </div>
+                        {item.summary ? (
+                          <div className="ag-detail">
+                            {leadCap(item.summary)}
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                    <div className="ag-detail">
-                      Downloading{p ? ` · ${Math.round(p.percent)}%` : ""}
-                      {p?.speed ? ` · ${p.speed}` : ""}
-                      {p?.eta ? ` · ${p.eta} left` : ""}
+                      <span className="ag-when">
+                        {plannedWhen(item.at, now)}
+                      </span>
                     </div>
-                  </div>
-                  <span className="ag-when">now</span>
-                </div>
-              );
-            })}
-            {runningSummaries.map((s) => (
-              <div key={`runs-${s.id}`} className="ag-row running">
-                <span className="ag-node">
-                  <Icon name="alignLeft" size="16px" />
-                </span>
-                <div className="ag-body">
-                  <div className="ag-subject">{s.title || s.video_id}</div>
-                  <div className="ag-detail">
-                    {summaryPhaseLabel(summaryPhaseByVideoId?.[s.video_id])}
+                  );
+                })}
+
+                {/* NOW — a row like any other, so the rail runs straight through */}
+                <div className="ag-row now">
+                  <span className="ag-node">
+                    <span className="ag-pulse" />
+                  </span>
+                  <div className="ag-nowbar">
+                    <span className="ag-nowlbl">now</span>
+                    <span className="ag-rule" />
                   </div>
                 </div>
-                <span className="ag-when">now</span>
-              </div>
-            ))}
+
+                {/* RUNNING — on the now node, from App's live state */}
+                {running.map((j) => {
+                  const p = progressByJobId?.[j.job_id];
+                  return (
+                    <div key={`run-${j.job_id}`} className="ag-row running">
+                      <span className="ag-node">
+                        <Icon name="download" size="16px" />
+                      </span>
+                      <div className="ag-body">
+                        <div className="ag-subject">
+                          {j.title || j.video_id}
+                        </div>
+                        {p ? (
+                          <div className="ag-progress">
+                            <i style={{ width: `${p.percent}%` }} />
+                          </div>
+                        ) : null}
+                        <div className="ag-detail">
+                          Downloading{p ? ` · ${Math.round(p.percent)}%` : ""}
+                          {p?.speed ? ` · ${p.speed}` : ""}
+                          {p?.eta ? ` · ${p.eta} left` : ""}
+                        </div>
+                      </div>
+                      <span className="ag-when">now</span>
+                    </div>
+                  );
+                })}
+                {runningSummaries.map((s) => (
+                  <div key={`runs-${s.id}`} className="ag-row running">
+                    <span className="ag-node">
+                      <Icon name="alignLeft" size="16px" />
+                    </span>
+                    <div className="ag-body">
+                      <div className="ag-subject">{s.title || s.video_id}</div>
+                      <div className="ag-detail">
+                        {summaryPhaseLabel(summaryPhaseByVideoId?.[s.video_id])}
+                      </div>
+                    </div>
+                    <span className="ag-when">now</span>
+                  </div>
+                ))}
+              </>
+            ) : null}
 
             {/* PAST — solid rail, colour by outcome */}
             {shownPast.map((e) => {

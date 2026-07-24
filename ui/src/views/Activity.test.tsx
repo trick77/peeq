@@ -147,7 +147,7 @@ describe("Activity", () => {
     expect(row.textContent).toMatch(/40%/);
   });
 
-  it("problems-only hides ok events and the future half", async () => {
+  it("problems-only hides ok events, the future half, and running work", async () => {
     const user = userEvent.setup();
     vi.mocked(listActivity).mockResolvedValue({
       events: [
@@ -166,14 +166,33 @@ describe("Activity", () => {
       items: [{ kind: "scan", approx: false, subject: "Scheduled scan" }],
       truncated: 0,
     });
-    render(<Activity live={[]} {...noProps} />);
+    render(
+      <Activity
+        live={[]}
+        jobs={[
+          {
+            job_id: 8,
+            video_id: "v8",
+            title: "Healthy download",
+            state: "running",
+            priority: 10,
+            attempts: 0,
+          } as Job,
+        ]}
+        summaries={[]}
+      />,
+    );
     await screen.findByText("Broken clip");
+    // A healthy running download shows under "All"…
+    expect(screen.getByText("Healthy download")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /problems only/i }));
 
     expect(screen.getByText("Broken clip")).toBeInTheDocument();
     expect(screen.queryByText("Fine clip")).not.toBeInTheDocument();
     expect(screen.queryByText("Scheduled scan")).not.toBeInTheDocument();
+    // …but not under "Problems only" — in-progress work is not a problem.
+    expect(screen.queryByText("Healthy download")).not.toBeInTheDocument();
   });
 
   it("live-appends a new event by id without a reload", async () => {
