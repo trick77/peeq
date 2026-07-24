@@ -226,3 +226,41 @@ func TestDeleteVideo_cascadesShareLink(t *testing.T) {
 		t.Fatal("deleting the video must cascade-delete its share link")
 	}
 }
+
+func TestStore_surfacesDBErrors(t *testing.T) {
+	s, db := openTestStore(t)
+	ctx := context.Background()
+	// Dropping the table makes every query fail, exercising the error-wrapping
+	// branches without a real fault-injection harness.
+	if _, err := db.Exec(`DROP TABLE share_links`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	if _, err := s.Upsert(ctx, "vid1", time.Hour); err == nil {
+		t.Fatal("Upsert should error when the table is gone")
+	}
+	if _, _, err := s.Resolve(ctx, "sometoken"); err == nil {
+		t.Fatal("Resolve should error when the table is gone")
+	}
+	if _, err := s.GetByVideo(ctx, "vid1"); err == nil {
+		t.Fatal("GetByVideo should error when the table is gone")
+	}
+	if err := s.DeleteByVideo(ctx, "vid1"); err == nil {
+		t.Fatal("DeleteByVideo should error when the table is gone")
+	}
+}
+
+func TestGetByVideo_ignoresExpiredLink(t *testing.T) {
+	s, db := openTestStore(t)
+	ctx := context.Background()
+	link, err := s.Upsert(ctx, "vid1", time.Hour)
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE share_links SET expires_at = ? WHERE token = ?`,
+		time.Now().UTC().Add(-time.Minute).Format(sqliteTime), link.Token); err != nil {
+		t.Fatalf("expire: %v", err)
+	}
+	if l, err := s.GetByVideo(ctx, "vid1"); err != nil || l != nil {
+		t.Fatalf("GetByVideo on expired link = (%v, %v), want (nil, nil)", l, err)
+	}
+}

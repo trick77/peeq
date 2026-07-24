@@ -192,3 +192,171 @@ func TestShare_publicStreamIsWatchOnly(t *testing.T) {
 		t.Fatalf("public stream honored ?download (Content-Disposition = %q); shares are watch-only", cd)
 	}
 }
+
+func TestShare_statusNotShared(t *testing.T) {
+	deps, _, _ := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/share", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d", rec.Code)
+	}
+	var status shareStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if status.Shared || status.Token != "" {
+		t.Fatalf("unshared video status = %+v, want shared:false", status)
+	}
+}
+
+func TestShare_createWithEmptyBodyNeverExpires(t *testing.T) {
+	deps, _, _ := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// No ttl in the body → the default (never expires).
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/share", []byte(`{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST empty body = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp shareStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Shared || resp.ExpiresAt != "" {
+		t.Fatalf("empty-body share = %+v, want shared with no expiry", resp)
+	}
+}
+
+func TestShare_publicVideoCarriesExpiry(t *testing.T) {
+	deps, _, _ := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "T", ChannelName: "C"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "7d")
+
+	rec := getPublic(t, h, "/api/s/"+created.Token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("public GET = %d", rec.Code)
+	}
+	var dto publicVideoDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if dto.ExpiresAt == "" {
+		t.Fatal("public DTO should carry the link expiry for a time-limited share")
+	}
+}
+
+func TestShare_publicThumbnailAndSubtitles(t *testing.T) {
+	deps, mediaDir, db := shareTestDeps(t)
+	videoDir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	thumbPath := filepath.Join(videoDir, "v1.jpg")
+	if err := os.WriteFile(thumbPath, []byte("JPGDATA"), 0o644); err != nil {
+		t.Fatalf("write thumb: %v", err)
+	}
+	vttPath := filepath.Join(videoDir, "v1.en.vtt")
+	if err := os.WriteFile(vttPath, []byte("WEBVTT\n\n"), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE videos SET thumbnail_path = ? WHERE id = ?`, thumbPath, "v1"); err != nil {
+		t.Fatalf("set thumbnail: %v", err)
+	}
+	if err := deps.Videos.SetSubtitle("v1", vttPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "never")
+
+	if rec := getPublic(t, h, "/api/s/"+created.Token+"/thumbnail"); rec.Code != http.StatusOK || rec.Body.String() != "JPGDATA" {
+		t.Fatalf("public thumbnail = %d %q", rec.Code, rec.Body.String())
+	}
+	rec := getPublic(t, h, "/api/s/"+created.Token+"/subtitles")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("public subtitles = %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/vtt; charset=utf-8" {
+		t.Fatalf("subtitles Content-Type = %q, want text/vtt", ct)
+	}
+}
+
+func TestShare_publicMediaMissingIsNotFound(t *testing.T) {
+	deps, _, _ := shareTestDeps(t)
+	// Video with no media/thumbnail/subtitle paths at all.
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "never")
+
+	for _, suffix := range []string{"/stream", "/thumbnail", "/subtitles"} {
+		if rec := getPublic(t, h, "/api/s/"+created.Token+suffix); rec.Code != http.StatusNotFound {
+			t.Fatalf("public %s with no file = %d, want 404", suffix, rec.Code)
+		}
+	}
+}
+
+func TestShare_notConfigured(t *testing.T) {
+	// Deps without a ShareLinks store: owner endpoints 503, public routes 404.
+	deps, _, _ := videosTestDepsDB(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	if rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/share", []byte(`{"ttl":"7d"}`)); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("POST share (unconfigured) = %d, want 503", rec.Code)
+	}
+	if rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/share", nil); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET share (unconfigured) = %d, want 503", rec.Code)
+	}
+	if rec := doReq(t, h, cookie, http.MethodDelete, "/api/videos/v1/share", nil); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("DELETE share (unconfigured) = %d, want 503", rec.Code)
+	}
+	if rec := getPublic(t, h, "/api/s/anytoken"); rec.Code != http.StatusNotFound {
+		t.Fatalf("public GET (unconfigured) = %d, want 404", rec.Code)
+	}
+}
+
+func TestShare_storeErrorSurfaces(t *testing.T) {
+	deps, _, db := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "never")
+
+	// Break the store out from under the live handlers.
+	if _, err := db.Exec(`DROP TABLE share_links`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	if rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/share", nil); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("owner GET after store break = %d, want 500", rec.Code)
+	}
+	if rec := doReq(t, h, cookie, http.MethodDelete, "/api/videos/v1/share", nil); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("owner DELETE after store break = %d, want 500", rec.Code)
+	}
+	if rec := getPublic(t, h, "/api/s/"+created.Token); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("public GET after store break = %d, want 500", rec.Code)
+	}
+}
