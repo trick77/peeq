@@ -35,6 +35,7 @@ import (
 	"github.com/trick77/peeq/internal/retention"
 	"github.com/trick77/peeq/internal/scan"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/sharelink"
 	"github.com/trick77/peeq/internal/sponsorblock"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/store"
@@ -187,6 +188,7 @@ func run() error {
 	settingsStore := settings.New(db)
 	jobsStore := jobs.New(db)
 	videosStore := videos.New(db)
+	shareLinksStore := sharelink.New(db)
 	channelsStore := channels.New(db)
 	ledgerStore := channelvideos.New(db)
 	summaryJobsStore := summaryjobs.New(db)
@@ -415,6 +417,8 @@ func run() error {
 		DevAuthClaims:   devClaims,
 		Jobs:            jobsStore,
 		Videos:          videosStore,
+		ShareLinks:      shareLinksStore,
+		PublicURL:       cfg.PublicURL,
 		MediaDir:        cfg.MediaDir,
 		Runner:          runner,
 		Worker:          worker,

@@ -7,6 +7,7 @@ describe("parsePath", () => {
       view: "library",
       videoId: null,
       channelId: null,
+      token: null,
     });
   });
 
@@ -15,6 +16,7 @@ describe("parsePath", () => {
       view: "player",
       videoId: "dQw4w9WgXcQ",
       channelId: null,
+      token: null,
     });
   });
 
@@ -23,6 +25,7 @@ describe("parsePath", () => {
       view: "player",
       videoId: null,
       channelId: null,
+      token: null,
     });
   });
 
@@ -31,12 +34,22 @@ describe("parsePath", () => {
       view: "channel",
       videoId: null,
       channelId: "UCabc123",
+      token: null,
     });
   });
 
   it("distinguishes /channels (the list) from /channel/<id> (a detail page)", () => {
     expect(parsePath("/channels").view).toBe("channels");
     expect(parsePath("/channel/UCabc123").view).toBe("channel");
+  });
+
+  it("maps /s/<token> to the public share view with that token", () => {
+    expect(parsePath("/s/3xK9raPb")).toEqual({
+      view: "share",
+      videoId: null,
+      channelId: null,
+      token: "3xK9raPb",
+    });
   });
 
   it("maps the plain views", () => {
@@ -83,6 +96,7 @@ describe("parsePath", () => {
       view: "player",
       videoId: "100%",
       channelId: null,
+      token: null,
     });
     expect(() => parsePath("/channel/%FF")).not.toThrow();
     expect(parsePath("/channel/%FF").channelId).toBe("%FF");
@@ -93,24 +107,50 @@ describe("parsePath", () => {
       view: "player",
       videoId: "v1",
       channelId: null,
+      token: null,
     });
   });
 });
 
 describe("toPath", () => {
   const cases: [RouteState, string][] = [
-    [{ view: "library", videoId: null, channelId: null }, "/"],
-    [{ view: "player", videoId: "v1", channelId: null }, "/video/v1"],
-    [{ view: "player", videoId: null, channelId: null }, "/video"],
-    [{ view: "channel", videoId: null, channelId: "UCx" }, "/channel/UCx"],
-    [{ view: "channel", videoId: null, channelId: null }, "/channel"],
-    [{ view: "channels", videoId: null, channelId: null }, "/channels"],
-    [{ view: "search", videoId: null, channelId: null }, "/search"],
-    [{ view: "add", videoId: null, channelId: null }, "/add"],
-    [{ view: "inbox", videoId: null, channelId: null }, "/inbox"],
-    [{ view: "queue", videoId: null, channelId: null }, "/queue"],
-    [{ view: "activity", videoId: null, channelId: null }, "/activity"],
-    [{ view: "settings", videoId: null, channelId: null }, "/settings"],
+    [{ view: "library", videoId: null, channelId: null, token: null }, "/"],
+    [
+      { view: "player", videoId: "v1", channelId: null, token: null },
+      "/video/v1",
+    ],
+    [{ view: "player", videoId: null, channelId: null, token: null }, "/video"],
+    [
+      { view: "channel", videoId: null, channelId: "UCx", token: null },
+      "/channel/UCx",
+    ],
+    [
+      { view: "channel", videoId: null, channelId: null, token: null },
+      "/channel",
+    ],
+    [
+      { view: "channels", videoId: null, channelId: null, token: null },
+      "/channels",
+    ],
+    [
+      { view: "search", videoId: null, channelId: null, token: null },
+      "/search",
+    ],
+    [{ view: "add", videoId: null, channelId: null, token: null }, "/add"],
+    [{ view: "inbox", videoId: null, channelId: null, token: null }, "/inbox"],
+    [{ view: "queue", videoId: null, channelId: null, token: null }, "/queue"],
+    [
+      { view: "activity", videoId: null, channelId: null, token: null },
+      "/activity",
+    ],
+    [
+      { view: "settings", videoId: null, channelId: null, token: null },
+      "/settings",
+    ],
+    [
+      { view: "share", videoId: null, channelId: null, token: "abc123" },
+      "/s/abc123",
+    ],
   ];
 
   it.each(cases)("builds %o -> %s", (state, path) => {
@@ -121,9 +161,9 @@ describe("toPath", () => {
     // A video selected in memory but the active view is the Library: the URL
     // is "/", never "/video/<id>". The URL never carries state the page is
     // not showing.
-    expect(toPath({ view: "library", videoId: "v1", channelId: "UCx" })).toBe(
-      "/",
-    );
+    expect(
+      toPath({ view: "library", videoId: "v1", channelId: "UCx", token: null }),
+    ).toBe("/");
   });
 });
 
