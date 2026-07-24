@@ -103,6 +103,13 @@ async function openMenu() {
 
 describe("Player", () => {
   beforeEach(() => {
+    // A fresh clipboard per test, for the same reason the mocks below are
+    // reset: the copy tests install their own writeText, and the rejecting
+    // one must not leak into whatever runs after it.
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+    });
     vi.mocked(getVideo).mockReset();
     vi.mocked(setResume).mockClear();
     vi.mocked(reprocess).mockClear();
