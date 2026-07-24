@@ -285,46 +285,51 @@ export function Channels({
                 downloaded
               </div>
             </div>
-            {/* The star both shows and toggles subscription — gold/filled when
-                subscribed, faint/outline when not. It sits just left of the ⋮
-                menu, on the row's right edge. */}
-            <button
-              type="button"
-              className={`chan-sub-star${c.subscribed ? "" : " off"}`}
-              onClick={() => handleToggleSubscribe(c)}
-              aria-pressed={c.subscribed}
-              title={
-                c.subscribed
-                  ? "Subscribed — click to unsubscribe"
-                  : "Not subscribed — click to subscribe"
-              }
-            >
-              <Icon
-                name={c.subscribed ? "starFilled" : "star"}
-                size="18px"
-                label={c.subscribed ? "Unsubscribe" : "Subscribe"}
+            {/* The star and the ⋮ menu share one plate so they read as a single
+                control cluster on the row's right edge — where the banner scrim
+                is at its most transparent, a plate gives them a surface to sit
+                on instead of floating on the artwork. */}
+            <div className="chan-rowctl">
+              {/* The star both shows and toggles subscription — gold/filled when
+                  subscribed, faint/outline when not. */}
+              <button
+                type="button"
+                className={`chan-sub-star${c.subscribed ? "" : " off"}`}
+                onClick={() => handleToggleSubscribe(c)}
+                aria-pressed={c.subscribed}
+                title={
+                  c.subscribed
+                    ? "Subscribed — click to unsubscribe"
+                    : "Not subscribed — click to subscribe"
+                }
+              >
+                <Icon
+                  name={c.subscribed ? "starFilled" : "star"}
+                  size="18px"
+                  label={c.subscribed ? "Unsubscribe" : "Subscribe"}
+                />
+              </button>
+              <RowMenu
+                label={`Actions for ${c.name}`}
+                actions={[
+                  ...(onOpenChannel
+                    ? [
+                        {
+                          label: "Open channel",
+                          icon: "externalLink" as const,
+                          onClick: () => onOpenChannel(c.id),
+                        },
+                      ]
+                    : []),
+                  {
+                    label: "Delete channel",
+                    icon: "trash",
+                    danger: true,
+                    onClick: () => setPendingDelete(c),
+                  },
+                ]}
               />
-            </button>
-            <RowMenu
-              label={`Actions for ${c.name}`}
-              actions={[
-                ...(onOpenChannel
-                  ? [
-                      {
-                        label: "Open channel",
-                        icon: "externalLink" as const,
-                        onClick: () => onOpenChannel(c.id),
-                      },
-                    ]
-                  : []),
-                {
-                  label: "Delete channel",
-                  icon: "trash",
-                  danger: true,
-                  onClick: () => setPendingDelete(c),
-                },
-              ]}
-            />
+            </div>
           </div>
         ))}
       </div>

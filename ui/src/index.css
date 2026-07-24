@@ -2559,15 +2559,39 @@ textarea.cookiebox:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* ---- Right-edge control plate ----
+   The 90deg scrim fades to near-transparent at the row's right edge, which is
+   exactly where the star and the ⋮ sit — so both controls used to float on the
+   channel's artwork with no surface of their own, and at rest (⋮ hidden) the
+   star stood alone beside an empty slot. The plate gives the pair a body: a
+   translucent panel-tinted tile that reads as a control over any banner, and
+   holds the two glyphs tight together (gap: 0) instead of a row-gap apart. */
+.chan-rowctl {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: none;
+  padding: 2px;
+  border-radius: var(--radius-ui);
+  background: color-mix(in srgb, var(--color-panel) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  backdrop-filter: blur(7px);
+  /* On the plate the ⋮ is half-lit at rest rather than invisible, so the
+     cluster never shows an empty slot next to the star. Row hover still takes
+     it to full strength via the shared .channel-row:hover rule. */
+  --kebab-rest: 0.5;
+}
+.chan-rowctl .kebab {
+  width: 30px;
+  height: 30px;
+}
+
 /* Subscription star — a clickable toggle sitting just left of the ⋮ menu.
    State is read by shape/colour: gold when subscribed, faint when not. Sized
    and hover-lit like .kebab so the two right-edge controls read as a pair. */
 .chan-sub-star {
-  width: 32px;
-  height: 32px;
-  /* Pull the ⋮ in toward the star so the two right-edge controls read as one
-     cluster, rather than sitting a full row-gap (14px) apart. */
-  margin-right: -8px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
   flex: none;
   display: grid;
@@ -2613,7 +2637,9 @@ textarea.cookiebox:focus {
   background: transparent;
   border: 1px solid transparent;
   color: var(--color-muted);
-  opacity: 0;
+  /* Hidden at rest by default; a host can opt into a resting strength (see
+     .chan-rowctl). Every rule below still overrides this outright. */
+  opacity: var(--kebab-rest, 0);
   transition:
     opacity 0.12s ease,
     background 0.12s ease,
