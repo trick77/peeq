@@ -92,7 +92,16 @@ export function Activity({
     Promise.all([listActivity(), listUpcoming()])
       .then(([page, up]) => {
         if (!active) return;
-        setPast(page.events);
+        // MERGE, not replace: a live "activity" event can arrive between the
+        // server building this snapshot and the fetch resolving. The live effect
+        // prepends it to `past`; replacing here would clobber it (and its ref
+        // wouldn't change, so the live effect won't re-run). Keep any such
+        // live-only rows on top, deduped by id.
+        setPast((prev) => {
+          const ids = new Set(page.events.map((e) => e.id));
+          const liveOnly = prev.filter((e) => !ids.has(e.id));
+          return [...liveOnly, ...page.events];
+        });
         setHasMore(page.has_more);
         setUpcoming(up.items);
         setTruncated(up.truncated);
@@ -118,6 +127,30 @@ export function Activity({
       return [...fresh.reverse(), ...prev];
     });
   }, [live]);
+
+  // Keep the future projection in step with the live now-marker. The upcoming
+  // list is a server snapshot filtered to pending-only, but App's jobs/summaries
+  // keep moving under it: a pending download the projection shows above the line
+  // becomes "running" (rendered at the marker) and then terminal (logged below),
+  // so without a refresh the same item renders twice — and a scan whose time has
+  // passed lingers above the line with a past label. Refetch whenever the live
+  // state that could invalidate the snapshot changes (a new event, or the
+  // jobs/summaries sets shifting), so the halves never disagree. Gated on
+  // `loaded` so it doesn't double-fetch during the initial load above.
+  useEffect(() => {
+    if (!loaded) return;
+    let active = true;
+    listUpcoming()
+      .then((up) => {
+        if (!active) return;
+        setUpcoming(up.items);
+        setTruncated(up.truncated);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [loaded, jobs, summaries, live]);
 
   const loadOlder = useCallback(() => {
     if (past.length === 0) return;

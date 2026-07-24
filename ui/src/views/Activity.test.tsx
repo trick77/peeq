@@ -175,4 +175,44 @@ describe("Activity", () => {
     // The second call paged back from the last shown id.
     expect(listActivity).toHaveBeenLastCalledWith(10);
   });
+
+  it("refetches the projection when the running set changes, avoiding a double-render", async () => {
+    vi.mocked(listActivity).mockResolvedValue({
+      events: [],
+      has_more: false,
+      retained_max: 2000,
+    });
+    // Pending download in the projection → shows once above the now line.
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [{ kind: "download", approx: true, subject: "Tears of Steel" }],
+      truncated: 0,
+    });
+    const { rerender } = render(<Activity live={[]} {...noProps} />);
+    expect(await screen.findByText("Tears of Steel")).toBeInTheDocument();
+
+    // The worker claims it: the projection no longer lists it, and App now hands
+    // it down as a running job (rendered at the now marker). The refetch keyed on
+    // the changed `jobs` must clear the stale projected row so it isn't shown twice.
+    vi.mocked(listUpcoming).mockResolvedValue({ items: [], truncated: 0 });
+    rerender(
+      <Activity
+        live={[]}
+        jobs={[
+          {
+            job_id: 1,
+            video_id: "ts",
+            title: "Tears of Steel",
+            state: "running",
+            priority: 10,
+            attempts: 0,
+          } as Job,
+        ]}
+        summaries={[]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Tears of Steel")).toHaveLength(1);
+    });
+  });
 });
