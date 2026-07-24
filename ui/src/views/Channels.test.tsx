@@ -58,7 +58,6 @@ vi.mock("../api/channels", () => ({
 import {
   addChannel,
   listChannels,
-  updateChannel,
   subscribeChannel,
   unsubscribeChannel,
   deleteChannel,
@@ -66,6 +65,16 @@ import {
   dismissDormantChannel,
   resubscribeChannel,
 } from "../api/channels";
+
+// openRowMenu clicks a row's ⋮ trigger so its actions (Subscribe, Delete…)
+// become clickable: the per-row controls were folded into a single popover
+// menu, so nothing is inline anymore.
+async function openRowMenu(
+  user: ReturnType<typeof userEvent.setup>,
+  row: HTMLElement,
+) {
+  await user.click(within(row).getByRole("button", { name: /actions for/i }));
+}
 
 describe("Channels", () => {
   beforeEach(() => {
@@ -76,18 +85,12 @@ describe("Channels", () => {
       name: "New Channel",
       subscribed: false,
     });
-    vi.mocked(updateChannel).mockReset();
     vi.mocked(subscribeChannel).mockReset();
     vi.mocked(unsubscribeChannel).mockReset();
     vi.mocked(deleteChannel).mockReset();
     vi.mocked(listChannels).mockResolvedValue([tracked, subscribed]);
     vi.mocked(subscribeChannel).mockResolvedValue({ status: "subscribed" });
     vi.mocked(unsubscribeChannel).mockResolvedValue({ status: "unsubscribed" });
-    vi.mocked(updateChannel).mockResolvedValue({
-      id: "c1",
-      autodownload: true,
-      format_override: "",
-    });
     vi.mocked(deleteChannel).mockResolvedValue(undefined);
     vi.mocked(listAutoUnsubscribedChannels).mockReset();
     vi.mocked(listAutoUnsubscribedChannels).mockResolvedValue([]);
@@ -103,27 +106,33 @@ describe("Channels", () => {
     expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
   });
 
-  it("clicking the tracked channel's Subscribe button calls subscribeChannel", async () => {
+  it("the tracked channel's menu Subscribe calls subscribeChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
     await screen.findByText("Tracked Channel");
     const row = screen
       .getByText("Tracked Channel")
       .closest(".channel-row") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: /subscribe/i }));
+    await openRowMenu(user, row);
+    await user.click(
+      within(row).getByRole("menuitem", { name: /^subscribe$/i }),
+    );
     await waitFor(() => {
       expect(subscribeChannel).toHaveBeenCalledWith("c1");
     });
   });
 
-  it("clicking the subscribed channel's Unsubscribe button calls unsubscribeChannel", async () => {
+  it("the subscribed channel's menu Unsubscribe calls unsubscribeChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
     await screen.findByText("Subbed Channel");
     const row = screen
       .getByText("Subbed Channel")
       .closest(".channel-row") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: /unsubscribe/i }));
+    await openRowMenu(user, row);
+    await user.click(
+      within(row).getByRole("menuitem", { name: /unsubscribe/i }),
+    );
     await waitFor(() => {
       expect(unsubscribeChannel).toHaveBeenCalledWith("c2");
     });
@@ -278,67 +287,50 @@ describe("Channels", () => {
     ).toBeInTheDocument();
   });
 
-  it("toggling autodownload calls updateChannel", async () => {
-    const user = userEvent.setup();
-    render(<Channels />);
+  it("the search box filters the list by name or handle", async () => {
+    const { rerender } = render(<Channels search="" />);
     await screen.findByText("Tracked Channel");
-    const row = screen
-      .getByText("Tracked Channel")
-      .closest(".channel-row") as HTMLElement;
-    await user.click(within(row).getByLabelText("Auto-add"));
-    await waitFor(() => {
-      expect(updateChannel).toHaveBeenCalledWith("c1", { autodownload: true });
-    });
-    // Refetch, so a row that no longer matches the active filter disappears
-    // and a 0-row no-op on an unsubscribed channel can't leave a stale tick.
-    // 3, not 2: mount fires both the filtered load and the review band's own
-    // filter="all" dormant load (see Channels.tsx's loadDormant), then the
-    // toggle fires one more.
-    await waitFor(() => expect(listChannels).toHaveBeenCalledTimes(3));
+    expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
+
+    // "subbed" matches the Subbed Channel (name + @subbedguy handle) but not
+    // the Tracked Channel.
+    rerender(<Channels search="subbed" />);
+    expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
+    expect(screen.queryByText("Tracked Channel")).not.toBeInTheDocument();
+
+    // A query that matches nothing shows the search-specific empty state, not
+    // the "No channels yet." one (channels do exist — the query hid them).
+    rerender(<Channels search="zzzzz" />);
+    expect(
+      screen.getByText("No channels match your search."),
+    ).toBeInTheDocument();
   });
 
-  it("editing the format override field and blurring calls updateChannel", async () => {
+  it("delete opens a confirm dialog, then calls deleteChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
     await screen.findByText("Tracked Channel");
     const row = screen
       .getByText("Tracked Channel")
       .closest(".channel-row") as HTMLElement;
-    const input = within(row).getByLabelText(/format override/i);
-    await user.type(input, "bestvideo+bestaudio/best");
-    await user.tab();
-    await waitFor(() => {
-      expect(updateChannel).toHaveBeenCalledWith("c1", {
-        format_override: "bestvideo+bestaudio/best",
-      });
-    });
-  });
-
-  it("delete requires confirm, then calls deleteChannel", async () => {
-    const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<Channels />);
-    await screen.findByText("Tracked Channel");
-    const row = screen
-      .getByText("Tracked Channel")
-      .closest(".channel-row") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: /delete/i }));
-    // The warning must name the channel, its video count, the fact that
-    // "kept forever" videos go too, and that it cannot be undone — the same
-    // four things the channel page's own delete says.
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Delete Tracked Channel and its 0 videos?"),
+    await openRowMenu(user, row);
+    await user.click(
+      within(row).getByRole("menuitem", { name: /delete channel/i }),
     );
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining("including any you kept forever"),
-    );
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining("cannot be undone"),
+    // The dialog must name the channel, its video count, that "kept forever"
+    // videos go too, and that it cannot be undone — the same four things the
+    // channel page's own delete says.
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Tracked Channel");
+    expect(dialog).toHaveTextContent("0 videos");
+    expect(dialog).toHaveTextContent(/including any you kept forever/);
+    expect(dialog).toHaveTextContent(/cannot be undone/);
+    await user.click(
+      within(dialog).getByRole("button", { name: /delete channel/i }),
     );
     await waitFor(() => {
       expect(deleteChannel).toHaveBeenCalledWith("c1");
     });
-    confirmSpy.mockRestore();
   });
 
   it("clicking a channel's name opens its page", async () => {
@@ -352,17 +344,23 @@ describe("Channels", () => {
     expect(onOpenChannel).toHaveBeenCalledWith("c1");
   });
 
-  it("does not call deleteChannel when confirm is cancelled", async () => {
+  it("cancelling the delete dialog does not call deleteChannel", async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<Channels />);
     await screen.findByText("Tracked Channel");
     const row = screen
       .getByText("Tracked Channel")
       .closest(".channel-row") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: /delete/i }));
+    await openRowMenu(user, row);
+    await user.click(
+      within(row).getByRole("menuitem", { name: /delete channel/i }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /cancel/i }));
     expect(deleteChannel).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
   });
 
   describe("dormant review band", () => {

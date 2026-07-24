@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, controlClass } from "../../ui";
 import { Icon } from "../../icons";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
 import {
   updateChannel,
   scanChannel,
@@ -24,6 +25,7 @@ export function SettingsTab({
   const [format, setFormat] = useState(detail.format_override ?? "");
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -58,10 +60,6 @@ export function SettingsTab({
   }
 
   async function handleDelete() {
-    const ok = window.confirm(
-      `Delete ${detail.name} and its ${detail.archived_count} videos? This removes the files from disk, including any you kept forever. This cannot be undone.`,
-    );
-    if (!ok) return;
     setBusy(true);
     try {
       await deleteChannel(detail.id);
@@ -69,6 +67,7 @@ export function SettingsTab({
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
+      setConfirmDelete(false);
     }
   }
 
@@ -189,12 +188,27 @@ export function SettingsTab({
           type="button"
           variant="dangerQuiet"
           busy={busy}
-          onClick={handleDelete}
+          onClick={() => setConfirmDelete(true)}
         >
           <Icon name="trash" size="16px" /> Delete channel and its{" "}
           {detail.archived_count} videos
         </Button>
       </div>
+
+      {/* Same modal + wording as the Channels list delete: it is the same
+          irreversible action, so it must not warn differently. */}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete channel?"
+        confirmLabel="Delete channel"
+        busy={busy}
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmDelete(false)}
+      >
+        Delete <b>{detail.name}</b> and its {detail.archived_count} videos? This
+        removes the files from disk, including any you kept forever. This cannot
+        be undone.
+      </ConfirmDialog>
     </>
   );
 }

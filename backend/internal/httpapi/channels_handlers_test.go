@@ -2286,6 +2286,54 @@ func TestChannelsList_includesDormantFields(t *testing.T) {
 	}
 }
 
+// TestChannelsList_includesImageFlags asserts the list JSON carries
+// has_avatar/has_banner so a row can decide between an <img> and a gradient
+// fallback without firing a request that 404s. The flags come from whether the
+// stored avatar/banner paths are set — the paths themselves never leave the
+// server.
+func TestChannelsList_includesImageFlags(t *testing.T) {
+	h := newChannelsListTestServer(t, &testResolver{})
+	if err := h.channels.Upsert(channels.Channel{
+		ID:         "UCart",
+		Name:       "Has Art",
+		AvatarPath: ".channels/UCart/avatar.jpg",
+		BannerPath: ".channels/UCart/banner.jpg",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Track("UCart", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Upsert(channels.Channel{ID: "UCbare", Name: "No Art"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Track("UCbare", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	body := getJSON(t, h, "/api/channels")
+	var items []struct {
+		ID        string `json:"id"`
+		HasAvatar bool   `json:"has_avatar"`
+		HasBanner bool   `json:"has_banner"`
+	}
+	if err := json.Unmarshal([]byte(body), &items); err != nil {
+		t.Fatalf("decode: %v body=%s", err, body)
+	}
+	avatar := map[string]bool{}
+	banner := map[string]bool{}
+	for _, it := range items {
+		avatar[it.ID] = it.HasAvatar
+		banner[it.ID] = it.HasBanner
+	}
+	if !avatar["UCart"] || !banner["UCart"] {
+		t.Fatalf("UCart flags = avatar %v banner %v, want both true: %s", avatar["UCart"], banner["UCart"], body)
+	}
+	if avatar["UCbare"] || banner["UCbare"] {
+		t.Fatalf("UCbare flags = avatar %v banner %v, want both false: %s", avatar["UCbare"], banner["UCbare"], body)
+	}
+}
+
 // TestAutoUnsubscribedList_returnsRecordedChannels asserts GET
 // /api/channels/auto-unsubscribed returns a channel peeq auto-unsubscribed,
 // with its reason and timestamp.

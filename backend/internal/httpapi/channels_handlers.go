@@ -50,6 +50,13 @@ type channelItem struct {
 	FormatOverride  string `json:"format_override,omitempty"`
 	PendingCount    int    `json:"pending_count"`
 	DownloadedCount int    `json:"downloaded_count"`
+	// HasAvatar and HasBanner mirror the detail handler's presence flags: the
+	// stored path never reaches the browser, so these tell the list row whether
+	// to point an <img> at /api/channels/{id}/avatar|banner or fall back to a
+	// gradient. The paths are already loaded by channels.Store.List — this just
+	// stops dropping them before JSON.
+	HasAvatar bool `json:"has_avatar"`
+	HasBanner bool `json:"has_banner"`
 	// Dormant and LastVideoAt surface channels.Store.List's dormancy
 	// columns: Dormant is always present (false for a healthy or
 	// unsubscribed channel), LastVideoAt is omitted when the channel has
@@ -227,6 +234,8 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 			FormatOverride:  it.FormatOverride,
 			PendingCount:    it.PendingCount,
 			DownloadedCount: it.DownloadedCount,
+			HasAvatar:       it.AvatarPath != "",
+			HasBanner:       it.BannerPath != "",
 			Dormant:         it.Dormant,
 			LastVideoAt:     it.LastVideoAt,
 		})
