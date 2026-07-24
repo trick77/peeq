@@ -519,7 +519,7 @@ func runYtdlpSelfUpdateTicker(ctx context.Context, dir string, interval time.Dur
 				if rec != nil {
 					rec.Record(activity.Event{
 						Kind: activity.KindYtdlp, Outcome: activity.OutcomeOK,
-						Summary: "yt-dlp updated", Detail: v,
+						Summary: "Updated to " + v,
 					})
 				}
 				current = v

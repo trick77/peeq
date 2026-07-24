@@ -538,133 +538,178 @@ button.srow:not(:disabled):hover {
   font-size: 13px;
 }
 
-/* Activity — a single agenda through a "now" marker. Future rows sit above the
-   marker (muted, "planned"), the running items at it, the log below. Each row is
-   a left dot (colored by outcome), a body, and a right-aligned relative time. */
+/* Activity — one agenda through a "now" marker, on a left optical rail (loom's
+   trace-rail pattern). The kind icon IS the node: its shape says what the work
+   was, its colour says how it went (ok / warn / fail / running). Future rows sit
+   above the marker on a faint rail; the log sits below on a solid one. Type holds
+   to two steps only — 15px subject, 13px everything else — in the one inherited
+   family; the icon and its colour carry the rest so the text never has to. */
 .agenda {
   position: relative;
-  max-width: 760px;
+  max-width: 680px;
 }
 .agenda-empty {
   color: var(--color-faint);
   font-size: 13px;
+  max-width: 60ch;
 }
-.ag {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 9px 2px 9px 4px;
-  border-bottom: 1px solid var(--color-border-soft);
+.ag-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: start;
+  column-gap: 14px;
+  padding: 12px 2px;
 }
-.ag .dot {
-  width: 8px;
-  height: 8px;
+/* Per-row connector: from just below THIS node to the next one, anchored to the
+   row's own top/bottom edges so it spans the gap whatever the body height. The
+   edges live outside .agenda, so the last row is a true last-child and draws
+   none — no line dangles past the log. */
+.agenda > .ag-row:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 10.25px;
+  top: 33px;
+  bottom: -13px;
+  width: 1.5px;
+  background: var(--color-border);
+}
+.agenda > .ag-row.planned::before {
+  background: var(--color-border-soft);
+}
+
+.ag-node {
+  grid-column: 1;
+  justify-self: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  z-index: 1;
+  color: var(--color-faint);
+}
+.ag-node::before {
+  /* punch a clean hole in the rail behind the icon */
+  content: "";
+  position: absolute;
+  inset: -3px;
   border-radius: 50%;
-  flex: none;
-  margin-top: 5px;
-  background: var(--color-faint);
+  background: var(--color-bg);
+  z-index: -1;
 }
-.ag .dot.ok {
-  background: var(--color-online);
+.ag-row.ok .ag-node {
+  color: var(--color-online);
 }
-.ag .dot.warn {
-  background: var(--color-kept);
+.ag-row.warn .ag-node {
+  color: var(--color-kept);
 }
-.ag .dot.fail {
-  background: var(--color-danger);
+.ag-row.fail .ag-node {
+  color: var(--color-danger);
 }
-.ag .dot.running {
-  background: var(--color-accent);
-  box-shadow: 0 0 7px var(--glow-accent);
+.ag-row.running .ag-node {
+  color: var(--color-accent);
 }
-.ag .dot.planned {
-  background: transparent;
-  border: 1.5px solid var(--color-faint);
-}
+
 .ag-body {
+  grid-column: 2;
   min-width: 0;
-  flex: 1;
-}
-.ag-line {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.ag-kind {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-muted);
-  flex: none;
 }
 .ag-subject {
-  font-size: 13.5px;
+  font-size: 15px;
   color: var(--color-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ag-sub {
-  font-size: 12px;
+.ag-row.planned .ag-subject {
+  color: var(--color-ink-dim);
+}
+.ag-detail {
+  font-size: 13px;
   color: var(--color-muted);
   margin-top: 2px;
 }
-.ag.planned .ag-subject {
-  color: var(--color-ink-dim);
+.ag-row.fail .ag-detail {
+  color: #d98b80;
 }
-.ag.planned .ag-sub {
+.ag-row.warn .ag-detail {
+  color: #cda765;
+}
+.ag-row.planned .ag-detail {
   font-style: italic;
   color: var(--color-faint);
 }
 .ag-when {
-  font-family:
-    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
-    monospace;
-  font-size: 11px;
+  grid-column: 3;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
   color: var(--color-faint);
-  flex: none;
-  margin-top: 3px;
   white-space: nowrap;
+  margin-top: 3px;
 }
-/* The now marker: a full-width rule with a centered accent pill. */
-.nowline {
+.ag-row.running .ag-when {
+  color: var(--color-accent);
+}
+.ag-progress {
+  margin-top: 8px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--color-elevated);
+  overflow: hidden;
+  max-width: 240px;
+}
+.ag-progress > i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--color-accent-dim),
+    var(--color-accent)
+  );
+  box-shadow: 0 0 8px var(--glow-accent);
+}
+/* The NOW node is a row like any other, so the rail runs straight through it. */
+.ag-pulse {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow:
+    0 0 0 4px var(--color-bg),
+    0 0 11px var(--glow-accent);
+}
+.ag-nowbar {
+  grid-column: 2 / -1;
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 6px 0;
+  gap: 11px;
+  margin-top: 3px;
 }
-.nowline::before,
-.nowline::after {
-  content: "";
-  height: 1px;
+.ag-nowlbl {
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+.ag-rule {
   flex: 1;
-  background: linear-gradient(90deg, transparent, var(--color-accent-dim));
-}
-.nowline::after {
+  height: 1px;
   background: linear-gradient(90deg, var(--color-accent-dim), transparent);
 }
-.nowline .mark {
-  font-family:
-    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
-    monospace;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--color-accent);
-  padding: 2px 9px;
-  border: 1px solid var(--color-accent-dim);
-  border-radius: 999px;
-  flex: none;
-}
-/* Both ends of the agenda render a labelled edge (top: "N more scheduled";
-   bottom: "load older" / "oldest kept"). */
-.edge {
+/* Both ends render a labelled edge (top: "N more scheduled"; bottom: "load
+   older" / "oldest kept"). They sit OUTSIDE .agenda so they don't get a rail. */
+.ag-edge {
   display: flex;
   justify-content: center;
-  padding: 10px 0;
-  font-size: 11.5px;
+  padding: 14px 0 4px;
+  font-size: 13px;
   color: var(--color-faint);
+}
+.ag-edge.top {
+  padding: 4px 0 8px;
 }
 
 .cookie-status {

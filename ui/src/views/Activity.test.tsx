@@ -51,7 +51,7 @@ describe("Activity", () => {
     expect(screen.getByText("now")).toBeInTheDocument();
   });
 
-  it("colors the outcome dot by outcome", async () => {
+  it("marks the row by outcome", async () => {
     vi.mocked(listActivity).mockResolvedValue({
       events: [ev({ id: 2, outcome: "fail", summary: "download failed" })],
       has_more: false,
@@ -59,15 +59,17 @@ describe("Activity", () => {
     });
     render(<Activity live={[]} {...noProps} />);
     const row = (await screen.findByText("A clip")).closest(
-      ".ag",
+      ".ag-row",
     ) as HTMLElement;
-    expect(row.querySelector(".dot.fail")).not.toBeNull();
+    expect(row.classList.contains("fail")).toBe(true);
   });
 
   it("renders upcoming items as planned, above the now marker", async () => {
     const items: UpcomingItem[] = [
+      // Far-future instant so the label is deterministically "in …" whatever the
+      // wall clock is when the test runs — a scheduled task must never read "ago".
       {
-        at: "2026-07-24 09:00:00",
+        at: "2099-01-01 00:00:00",
         kind: "scan",
         approx: false,
         subject: "Veritasium",
@@ -77,9 +79,24 @@ describe("Activity", () => {
     vi.mocked(listUpcoming).mockResolvedValue({ items, truncated: 0 });
     render(<Activity live={[]} {...noProps} />);
     const row = (await screen.findByText("Veritasium")).closest(
-      ".ag",
+      ".ag-row",
     ) as HTMLElement;
     expect(row.classList.contains("planned")).toBe(true);
+    expect(row.textContent).toMatch(/in \d+d/);
+    expect(row.textContent).not.toMatch(/ago/);
+  });
+
+  it("labels an ordered (untimed) upcoming item 'up next', never 'ago'", async () => {
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [{ kind: "download", approx: true, subject: "Tears of Steel" }],
+      truncated: 0,
+    });
+    render(<Activity live={[]} {...noProps} />);
+    const row = (await screen.findByText("Tears of Steel")).closest(
+      ".ag-row",
+    ) as HTMLElement;
+    expect(row.textContent).toContain("up next");
+    expect(row.textContent).not.toMatch(/ago/);
   });
 
   it("shows a running download at the now marker", async () => {
@@ -101,9 +118,9 @@ describe("Activity", () => {
       />,
     );
     const row = (await screen.findByText("Downloading now")).closest(
-      ".ag",
+      ".ag-row",
     ) as HTMLElement;
-    expect(row.querySelector(".dot.running")).not.toBeNull();
+    expect(row.classList.contains("running")).toBe(true);
     expect(row.textContent).toMatch(/40%/);
   });
 

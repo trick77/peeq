@@ -7,6 +7,7 @@ import {
   type SummaryJob,
   type UpcomingItem,
 } from "../api";
+import { Icon, type IconName } from "../icons";
 import { Button } from "../ui";
 
 // Activity — one agenda through a *now* marker. Above the marker: what is
@@ -24,30 +25,54 @@ function parseUTC(at: string): Date {
   return new Date(at.replace(" ", "T") + "Z");
 }
 
-// relTime renders a compact "3m ago" / "in 2h" against now. Coarse on purpose —
-// the agenda is about sequence, not exact clock times.
+// relTime renders a compact relative label against now. Coarse on purpose — the
+// agenda is about sequence, not exact clock times. Future and past are worded
+// separately so a scheduled task never reads as "ago": a scan due in 40 minutes
+// is "in 40m", and one whose instant just passed but hasn't been claimed yet is
+// "soon", never "1m ago".
 function relTime(date: Date, now: number): string {
   const secs = Math.round((date.getTime() - now) / 1000);
-  const past = secs < 0;
   const a = Math.abs(secs);
-  let out: string;
-  if (a < 60) out = "just now";
-  else if (a < 3600) out = `${Math.round(a / 60)}m`;
-  else if (a < 86400) out = `${Math.round(a / 3600)}h`;
-  else out = `${Math.round(a / 86400)}d`;
-  if (out === "just now") return out;
-  return past ? `${out} ago` : `in ${out}`;
+  const mag =
+    a < 3600
+      ? `${Math.max(1, Math.round(a / 60))}m`
+      : a < 86400
+        ? `${Math.round(a / 3600)}h`
+        : `${Math.round(a / 86400)}d`;
+  if (secs >= 0) return a < 60 ? "soon" : `in ${mag}`;
+  return a < 45 ? "just now" : `${mag} ago`;
 }
 
-const KIND_LABEL: Record<string, string> = {
-  scan: "Scan",
-  channel_meta: "Metadata",
-  download: "Download",
-  summary: "Summary",
-  retention: "Cleanup",
-  ytdlp: "yt-dlp",
-  access: "Access",
+// leadCap uppercases a leading lowercase ASCII letter so every detail line's
+// first word reads as a capital, without mangling a number ("3 new") or a term
+// that is already cased ("512 MB").
+function leadCap(s: string): string {
+  const c = s.charCodeAt(0);
+  return c >= 97 && c <= 122 ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+// KIND maps an event/projection kind to its rail icon and display label. The
+// icon's shape carries the kind so the text never has to name it; the label is
+// the fallback subject for a kindless event (retention, yt-dlp).
+const KIND: Record<string, { icon: IconName; label: string }> = {
+  scan: { icon: "search", label: "Scan" },
+  channel_meta: { icon: "refresh", label: "Metadata" },
+  download: { icon: "download", label: "Download" },
+  summary: { icon: "alignLeft", label: "Summary" },
+  retention: { icon: "trash", label: "Cleanup" },
+  ytdlp: { icon: "settings", label: "yt-dlp" },
+  access: { icon: "warning", label: "Access" },
 };
+function kindOf(k: string): { icon: IconName; label: string } {
+  return KIND[k] ?? { icon: "clock", label: k };
+}
+
+// eventDetail joins an event's summary and detail into one lead-capitalized
+// line; the kind is shown by the icon, not repeated in words.
+function eventDetail(e: ActivityEvent): string {
+  const text = [e.summary, e.detail].filter(Boolean).join(" · ");
+  return text ? leadCap(text) : "";
+}
 
 const FILTERS: { id: string; label: string }[] = [
   { id: "all", label: "All" },
@@ -222,100 +247,110 @@ export function Activity({
           and tidies up.
         </p>
       ) : (
-        <div className="agenda">
-          {/* FUTURE (above now) */}
+        <>
+          {/* Top edge lives outside .agenda so it doesn't sit on the rail. */}
           {truncated > 0 && filter !== "problems" ? (
-            <div className="edge">+{truncated} more scheduled</div>
+            <div className="ag-edge top">+{truncated} more scheduled</div>
           ) : null}
-          {shownUpcoming.map((item, i) => (
-            <div key={`up-${i}`} className="ag planned">
-              <i className="dot planned" />
-              <div className="ag-body">
-                <div className="ag-line">
-                  <span className="ag-kind">
-                    {KIND_LABEL[item.kind] ?? item.kind}
-                  </span>
-                  {item.subject ? (
-                    <span className="ag-subject">{item.subject}</span>
-                  ) : null}
-                </div>
-                {item.summary ? (
-                  <div className="ag-sub">planned · {item.summary}</div>
-                ) : null}
-              </div>
-              <span className="ag-when">
-                {item.at ? relTime(parseUTC(item.at), now) : "next"}
-              </span>
-            </div>
-          ))}
 
-          {/* NOW */}
-          <div className="nowline">
-            <span className="mark">now</span>
-          </div>
-          {running.map((j) => {
-            const p = progressByJobId?.[j.job_id];
-            return (
-              <div key={`run-${j.job_id}`} className="ag running">
-                <i className="dot running" />
-                <div className="ag-body">
-                  <div className="ag-line">
-                    <span className="ag-kind">Download</span>
-                    <span className="ag-subject">{j.title || j.video_id}</span>
+          <div className="agenda">
+            {/* FUTURE — dimmed, faint rail, soonest nearest the now line */}
+            {shownUpcoming.map((item, i) => {
+              const k = kindOf(item.kind);
+              return (
+                <div key={`up-${i}`} className="ag-row planned">
+                  <span className="ag-node">
+                    <Icon name={k.icon} size="16px" />
+                  </span>
+                  <div className="ag-body">
+                    <div className="ag-subject">{item.subject || k.label}</div>
+                    {item.summary ? (
+                      <div className="ag-detail">{leadCap(item.summary)}</div>
+                    ) : null}
                   </div>
-                  <div className="ag-sub">
-                    downloading{p ? ` · ${Math.round(p.percent)}%` : ""}
-                    {p?.eta ? ` · ${p.eta}` : ""}
+                  <span className="ag-when">
+                    {item.at ? relTime(parseUTC(item.at), now) : "up next"}
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* NOW — a row like any other, so the rail runs straight through */}
+            <div className="ag-row now">
+              <span className="ag-node">
+                <span className="ag-pulse" />
+              </span>
+              <div className="ag-nowbar">
+                <span className="ag-nowlbl">now</span>
+                <span className="ag-rule" />
+              </div>
+            </div>
+
+            {/* RUNNING — on the now node, from App's live state */}
+            {running.map((j) => {
+              const p = progressByJobId?.[j.job_id];
+              return (
+                <div key={`run-${j.job_id}`} className="ag-row running">
+                  <span className="ag-node">
+                    <Icon name="download" size="16px" />
+                  </span>
+                  <div className="ag-body">
+                    <div className="ag-subject">{j.title || j.video_id}</div>
+                    {p ? (
+                      <div className="ag-progress">
+                        <i style={{ width: `${p.percent}%` }} />
+                      </div>
+                    ) : null}
+                    <div className="ag-detail">
+                      Downloading{p ? ` · ${Math.round(p.percent)}%` : ""}
+                      {p?.eta ? ` · ${p.eta} left` : ""}
+                    </div>
+                  </div>
+                  <span className="ag-when">now</span>
+                </div>
+              );
+            })}
+            {runningSummaries.map((s) => (
+              <div key={`runs-${s.id}`} className="ag-row running">
+                <span className="ag-node">
+                  <Icon name="alignLeft" size="16px" />
+                </span>
+                <div className="ag-body">
+                  <div className="ag-subject">{s.title || s.video_id}</div>
+                  <div className="ag-detail">
+                    {summaryPhaseByVideoId?.[s.video_id] === "embedding"
+                      ? "Embedding"
+                      : "Summarizing"}
                   </div>
                 </div>
                 <span className="ag-when">now</span>
               </div>
-            );
-          })}
-          {runningSummaries.map((s) => (
-            <div key={`runs-${s.id}`} className="ag running">
-              <i className="dot running" />
-              <div className="ag-body">
-                <div className="ag-line">
-                  <span className="ag-kind">Summary</span>
-                  <span className="ag-subject">{s.title || s.video_id}</span>
-                </div>
-                <div className="ag-sub">
-                  {summaryPhaseByVideoId?.[s.video_id] === "embedding"
-                    ? "embedding"
-                    : "summarizing"}
-                </div>
-              </div>
-              <span className="ag-when">now</span>
-            </div>
-          ))}
+            ))}
 
-          {/* PAST (below now) */}
-          {shownPast.map((e) => (
-            <div key={e.id} className="ag">
-              <i className={`dot ${e.outcome}`} />
-              <div className="ag-body">
-                <div className="ag-line">
-                  <span className="ag-kind">
-                    {KIND_LABEL[e.kind] ?? e.kind}
+            {/* PAST — solid rail, colour by outcome */}
+            {shownPast.map((e) => {
+              const k = kindOf(e.kind);
+              const detail = eventDetail(e);
+              return (
+                <div key={e.id} className={`ag-row ${e.outcome}`}>
+                  <span className="ag-node">
+                    <Icon name={k.icon} size="16px" />
                   </span>
-                  {e.subject ? (
-                    <span className="ag-subject">{e.subject}</span>
-                  ) : null}
+                  <div className="ag-body">
+                    <div className="ag-subject">{e.subject || k.label}</div>
+                    {detail ? <div className="ag-detail">{detail}</div> : null}
+                  </div>
+                  <span className="ag-when" title={e.at}>
+                    {relTime(parseUTC(e.at), now)}
+                  </span>
                 </div>
-                <div className="ag-sub">
-                  {e.summary}
-                  {e.detail ? ` · ${e.detail}` : ""}
-                </div>
-              </div>
-              <span className="ag-when" title={e.at}>
-                {relTime(parseUTC(e.at), now)}
-              </span>
-            </div>
-          ))}
+              );
+            })}
+          </div>
 
+          {/* Bottom edge — also outside .agenda. */}
           {hasMore ? (
-            <div className="edge">
+            <div className="ag-edge">
               <Button
                 type="button"
                 variant="secondary"
@@ -327,9 +362,9 @@ export function Activity({
               </Button>
             </div>
           ) : shownPast.length > 0 ? (
-            <div className="edge">— oldest kept —</div>
+            <div className="ag-edge">— oldest kept —</div>
           ) : null}
-        </div>
+        </>
       )}
     </>
   );
