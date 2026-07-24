@@ -81,14 +81,23 @@ func (s *Store) Finish(id int64, state, lastErr string) error {
 }
 
 // Fail requeues a job as pending after a retryable error, unless it has
-// exhausted max_attempts, in which case it is marked failed.
-func (s *Store) Fail(id int64, attempts int, lastErr string) error {
-	_, err := s.db.Exec(`
+// exhausted max_attempts, in which case it is marked failed. terminal reports
+// whether this call moved the job to 'failed' (as opposed to requeuing it), so
+// a caller can act only on the genuinely-terminal failure and not on every
+// retry. The truth comes from the row's own attempts/max_attempts via
+// RETURNING (like ClaimNext), not from the passed attempts, which is advisory.
+func (s *Store) Fail(id int64, attempts int, lastErr string) (terminal bool, err error) {
+	var state string
+	err = s.db.QueryRow(`
 		UPDATE summary_jobs
 		SET state = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'pending' END,
 		    last_error = ?
-		WHERE id = ?`, lastErr, id)
-	return err
+		WHERE id = ?
+		RETURNING state`, lastErr, id).Scan(&state)
+	if err != nil {
+		return false, err
+	}
+	return state == "failed", nil
 }
 
 // EnqueueMissing enqueues a job for every downloaded video that has no

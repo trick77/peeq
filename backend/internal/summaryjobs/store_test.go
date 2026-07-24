@@ -39,6 +39,45 @@ func TestEnqueueClaimFinishResetOrphans(t *testing.T) {
 	}
 }
 
+func TestFail_terminalVsRequeue(t *testing.T) {
+	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	defer db.Close()
+	store.Migrate(db)
+	db.Exec(`INSERT INTO videos (id, url) VALUES ('term','u'),('retry','u')`)
+	// 'term' has spent its last attempt (attempts >= max_attempts) → Fail marks
+	// it 'failed' and reports terminal=true. 'retry' still has attempts left →
+	// Fail requeues it to 'pending' and reports terminal=false.
+	db.Exec(`INSERT INTO summary_jobs (id, video_id, state, attempts, max_attempts) VALUES
+		(1,'term','running',3,3),
+		(2,'retry','running',1,3)`)
+	s := New(db)
+
+	terminal, err := s.Fail(1, 3, "boom")
+	if err != nil {
+		t.Fatalf("Fail(term): %v", err)
+	}
+	if !terminal {
+		t.Fatal("Fail on an exhausted job should report terminal=true")
+	}
+	var state string
+	db.QueryRow(`SELECT state FROM summary_jobs WHERE id=1`).Scan(&state)
+	if state != "failed" {
+		t.Fatalf("exhausted job state=%q, want failed", state)
+	}
+
+	terminal, err = s.Fail(2, 1, "boom")
+	if err != nil {
+		t.Fatalf("Fail(retry): %v", err)
+	}
+	if terminal {
+		t.Fatal("Fail on a job with attempts left should report terminal=false")
+	}
+	db.QueryRow(`SELECT state FROM summary_jobs WHERE id=2`).Scan(&state)
+	if state != "pending" {
+		t.Fatalf("retryable job state=%q, want pending", state)
+	}
+}
+
 func TestListActive(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()

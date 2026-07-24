@@ -139,7 +139,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		if r := recover(); r != nil {
 			w.d.Logger.Error("summarize worker: recovered", "job_id", job.ID, "panic", r)
 			run.finished("panic")
-			_ = w.d.Jobs.Fail(job.ID, job.Attempts, "panic")
+			_, _ = w.d.Jobs.Fail(job.ID, job.Attempts, "panic")
 			_ = w.d.Videos.SetSummaryStatus(job.VideoID, "error", "internal error")
 		}
 	}()
@@ -608,8 +608,19 @@ func (w *Worker) failJob(job *summaryjobs.Job, video *videos.Video, run *analysi
 	}
 	w.emit(videoID, "error", "")
 	run.finished("error")
-	if err := w.d.Jobs.Fail(job.ID, job.Attempts, msg); err != nil {
-		return fmt.Errorf("summarize job %d failed (%s); also fail-record error: %w", job.ID, msg, err)
+	terminal, ferr := w.d.Jobs.Fail(job.ID, job.Attempts, msg)
+	if ferr != nil {
+		return fmt.Errorf("summarize job %d failed (%s); also fail-record error: %w", job.ID, msg, ferr)
+	}
+	// Record an Activity row only when the job is genuinely terminal (moved to
+	// 'failed'). Most failJob calls requeue to 'pending' — a retry, not news; a
+	// row on every one would flood the feed.
+	if terminal {
+		w.recordActivity(activity.Event{
+			Kind: activity.KindSummary, Outcome: activity.OutcomeFail,
+			SubjectID: video.ID, Subject: video.Title, Summary: "summary failed",
+			Detail: msg,
+		})
 	}
 	return fmt.Errorf("summarize job %d failed: %s", job.ID, msg)
 }
@@ -627,7 +638,10 @@ func (w *Worker) requeueJob(job *summaryjobs.Job, video *videos.Video, run *anal
 			"will_retry", job.Attempts < job.MaxAttempts,
 			"step_duration_ms", run.stepElapsedMs(), "err", msg)...)
 	run.finished("keypoints_failed")
-	if err := w.d.Jobs.Fail(job.ID, job.Attempts, msg); err != nil {
+	// No Activity row even when this exhausts retries: a key-points failure keeps
+	// summary_status="done" and usable search, so it is not a summary failure the
+	// user needs to see in the feed (that is what failJob records).
+	if _, err := w.d.Jobs.Fail(job.ID, job.Attempts, msg); err != nil {
 		return fmt.Errorf("summarize job %d key-points failed (%s); also fail-record error: %w", job.ID, msg, err)
 	}
 	return fmt.Errorf("summarize job %d key-points failed: %s", job.ID, msg)
