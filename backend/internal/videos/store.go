@@ -842,10 +842,28 @@ ORDER BY v.watched_at ASC`, cutoffUTC,
 // the actual media/thumbnail/subtitle files first (it needs
 // config.MediaDir and path-safety checks the store doesn't have).
 func (s *Store) Tombstone(id string) error {
-	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET media_path = '', subtitle_path = '', status = 'tombstoned' WHERE id = ?`, id)
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("tombstone video %s: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE videos SET media_path = '', subtitle_path = '', status = 'tombstoned' WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("tombstone video %s: %w", id, err)
+	}
+	// A tombstoned video is gone from the library, so any public share link
+	// must die with it — otherwise the video's title/summary/highlights keep
+	// being served at /s/<token> after a "delete". Tombstone is the single
+	// chokepoint both the manual DELETE endpoint and the retention sweeper go
+	// through, so revoking here covers both. (A hard row delete — e.g. deleting
+	// a whole channel — instead relies on the share_links ON DELETE CASCADE.)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM share_links WHERE video_id = ?`, id); err != nil {
+		return fmt.Errorf("tombstone video %s: revoke share link: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("tombstone video %s: commit: %w", id, err)
 	}
 	return nil
 }

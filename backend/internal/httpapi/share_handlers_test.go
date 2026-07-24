@@ -360,3 +360,26 @@ func TestShare_storeErrorSurfaces(t *testing.T) {
 		t.Fatalf("public GET after store break = %d, want 500", rec.Code)
 	}
 }
+
+func TestDeleteVideo_revokesShareLink(t *testing.T) {
+	deps, _, _ := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "T"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "never")
+
+	// The public link works while the video exists.
+	if rec := getPublic(t, h, "/api/s/"+created.Token); rec.Code != http.StatusOK {
+		t.Fatalf("public GET before delete = %d, want 200", rec.Code)
+	}
+	// Deleting (tombstoning) the video must revoke the share — otherwise its
+	// title/summary/highlights keep being served after a "delete".
+	if rec := doReq(t, h, cookie, http.MethodDelete, "/api/videos/v1", nil); rec.Code != http.StatusOK {
+		t.Fatalf("DELETE video = %d, want 200", rec.Code)
+	}
+	if rec := getPublic(t, h, "/api/s/"+created.Token); rec.Code != http.StatusNotFound {
+		t.Fatalf("share link still resolves after the video was deleted = %d, want 404", rec.Code)
+	}
+}
