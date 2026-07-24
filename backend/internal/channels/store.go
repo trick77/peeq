@@ -411,16 +411,20 @@ WHERE c.tracked_at IS NOT NULL`
 // It is idempotent: if the channel is already subscribed, this is a no-op
 // that leaves the existing subscription's config and baseline untouched.
 //
-// The first metadata refresh is scheduled here too, one interval out, in SQL
-// rather than as a parameter: no caller has an opinion about it, and none of
-// them (nor the taimport writer interface) should have to grow an argument for
-// a schedule they don't care about. Unlike 0004's backfill this needs no
-// random spread — subscribe events already arrive spread across real time, so
-// they cannot converge into a batch the way a one-shot migration would.
+// The first metadata refresh is scheduled here too, in SQL rather than as a
+// parameter: no caller has an opinion about it, and none of them (nor the
+// taimport writer interface) should have to grow an argument for a schedule
+// they don't care about. It is jittered across the next 7 days with the SAME
+// expression migration 0005 uses to spread existing rows, and for the same
+// reason: a bulk import (taimport subscribes hundreds of channels in one loop)
+// would otherwise stamp them all with an identical due time and reconverge them
+// into the very weekly stampede 0005 exists to break up. 10080 = minutes in 7
+// days; (random() & 0x7fffffff) masks the sign bit rather than abs()'ing, since
+// abs(min-int64) overflows and errors in SQLite.
 func (s *Store) Subscribe(channelID, nextScanAt string) error {
 	_, err := s.db.ExecContext(context.Background(), `
 INSERT INTO subscriptions (channel_id, next_scan_at, next_meta_refresh_at)
-VALUES (?, ?, datetime('now', '+7 days'))
+VALUES (?, ?, datetime('now', '+' || ((random() & 0x7fffffff) % 10080) || ' minutes'))
 ON CONFLICT(channel_id) DO NOTHING`,
 		channelID, nextScanAt,
 	)

@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -239,6 +240,62 @@ func TestSubscribe_seedsTheMetadataSchedule(t *testing.T) {
 	// Roughly a week out: not due now, and not so far out it never comes.
 	if got, _ := s.ClaimDueMetadata(metaNow); got != nil {
 		t.Fatal("a freshly subscribed channel is immediately due for a metadata refresh")
+	}
+}
+
+// TestSubscribe_jittersTheMetadataSchedule is the anti-convoy guarantee: a bulk
+// import subscribes many channels in one tight loop, and their first metadata
+// refresh must be spread across the 7-day window rather than stamped with one
+// identical due time (which would reconverge them into the weekly stampede
+// migration 0005 exists to break up).
+func TestSubscribe_jittersTheMetadataSchedule(t *testing.T) {
+	s := newTestStore(t)
+	const n = 20
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("UC%02d", i)
+		if err := s.Upsert(Channel{ID: id}); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+		if err := s.Subscribe(id, "2026-07-22 12:00:00"); err != nil {
+			t.Fatalf("subscribe %s: %v", id, err)
+		}
+	}
+
+	rows, err := s.DB().Query(`SELECT next_meta_refresh_at FROM subscriptions`)
+	if err != nil {
+		t.Fatalf("read schedules: %v", err)
+	}
+	defer rows.Close()
+	seen := map[string]struct{}{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if v == "" {
+			t.Fatal("a subscribed channel has a NULL metadata schedule")
+		}
+		seen[v] = struct{}{}
+	}
+
+	// A fixed '+7 days' would collapse the whole batch onto one instant. With
+	// 10080 buckets and 20 draws, an all-identical spread is astronomically
+	// unlikely, so >1 distinct value is a reliable signal the jitter is live.
+	if len(seen) < 2 {
+		t.Fatalf("batch subscribe produced %d distinct due time(s); expected a jittered spread", len(seen))
+	}
+
+	// Every due time lands inside the 7-day window (± a slop for the seconds
+	// between each INSERT's own 'now' and this check's 'now').
+	var outOfWindow int
+	if err := s.DB().QueryRow(
+		`SELECT COUNT(*) FROM subscriptions
+		  WHERE next_meta_refresh_at < datetime('now', '-2 minutes')
+		     OR next_meta_refresh_at > datetime('now', '+7 days', '+2 minutes')`).Scan(&outOfWindow); err != nil {
+		t.Fatalf("window check: %v", err)
+	}
+	if outOfWindow != 0 {
+		t.Fatalf("%d channel(s) scheduled outside the 7-day window", outOfWindow)
 	}
 }
 
