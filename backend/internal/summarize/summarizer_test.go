@@ -23,7 +23,7 @@ type fakeCompleter struct {
 func (f *fakeCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
 		sys := m[0].Content
-		if strings.Contains(sys, "Combine these section summaries") {
+		if strings.Contains(sys, "cohesive summary") {
 			return f.replies[1], nil
 		}
 		if strings.Contains(sys, "JSON") {
@@ -164,54 +164,89 @@ func TestSummarizeText_emptyTranscriptErrors(t *testing.T) {
 	}
 }
 
-func TestSummarizeText_mapErrorPropagates(t *testing.T) {
+// A transcript that fits the budget is summarized in a SINGLE call — the whole
+// point of the redesign — and that call reasons, because it is the synthesis a
+// person actually reads.
+func TestSummarizeText_singlePassIsOneCallAndThinks(t *testing.T) {
+	var calls int
+	var thought []bool
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		calls++
+		thought = append(thought, llm.ThinkingFrom(ctx))
+		return "Overall prose summary.", nil
+	}))
+	got, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "Overall prose summary." {
+		t.Fatalf("summary = %q", got)
+	}
+	if calls != 1 {
+		t.Fatalf("single-pass made %d calls, want exactly 1", calls)
+	}
+	if len(thought) != 1 || !thought[0] {
+		t.Fatalf("single-pass thinking = %v, want one call that reasoned", thought)
+	}
+}
+
+func TestSummarizeText_singlePassErrorPropagates(t *testing.T) {
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		return "", errors.New("boom")
+	}))
+	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err == nil {
+		t.Error("want the single-pass error propagated")
+	}
+}
+
+// A transcript ABOVE the (here deliberately tiny) budget falls back to coarse
+// map-reduce: each big section is condensed thinking-OFF, then one reduce call
+// (thinking ON) writes the summary the reader sees.
+func TestSummarizeText_coarseFallbackThinksOnlyOnReduce(t *testing.T) {
+	var mapThought, reduceThought []bool
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		if strings.Contains(m[0].Content, "cohesive summary") {
+			reduceThought = append(reduceThought, llm.ThinkingFrom(ctx))
+			return "Overall prose summary.", nil
+		}
+		mapThought = append(mapThought, llm.ThinkingFrom(ctx))
+		return "section summary", nil
+	}), WithSummaryChunkTokens(300))
+
+	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err != nil {
+		t.Fatal(err)
+	}
+	if len(mapThought) < 2 {
+		t.Fatalf("coarse fallback made %d section calls, want >1 (else it wasn't the map path)", len(mapThought))
+	}
+	for i, thought := range mapThought {
+		if thought {
+			t.Errorf("section call %d reasoned; coarse condensing is meant to be cheap", i)
+		}
+	}
+	if len(reduceThought) != 1 || !reduceThought[0] {
+		t.Errorf("reduce thinking = %v, want exactly one call that reasoned", reduceThought)
+	}
+}
+
+func TestSummarizeText_coarseMapErrorPropagates(t *testing.T) {
 	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
 		return "", errors.New("map boom")
-	}))
+	}), WithSummaryChunkTokens(300))
 	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err == nil {
 		t.Error("want the map error propagated")
 	}
 }
 
-func TestSummarizeText_reduceErrorPropagates(t *testing.T) {
+func TestSummarizeText_coarseReduceErrorPropagates(t *testing.T) {
 	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
-		if strings.Contains(m[0].Content, "Combine these section summaries") {
+		if strings.Contains(m[0].Content, "cohesive summary") {
 			return "", errors.New("reduce boom")
 		}
-		return "chunk summary", nil
-	}))
+		return "section summary", nil
+	}), WithSummaryChunkTokens(300))
 	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err == nil {
 		t.Error("want the reduce error propagated")
-	}
-}
-
-// Thinking is spent per step on purpose: the steps whose answer is a rewrite or
-// a lookup turn it off, the ones that have to deduce something keep it. The map
-// step is the expensive one to get wrong — it runs once per chunk.
-func TestSummarizeText_thinksOnlyOnTheReduce(t *testing.T) {
-	var mapThought, reduceThought []bool
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
-		if strings.Contains(m[0].Content, "Combine these section summaries") {
-			reduceThought = append(reduceThought, llm.ThinkingFrom(ctx))
-			return "Overall prose summary.", nil
-		}
-		mapThought = append(mapThought, llm.ThinkingFrom(ctx))
-		return "chunk summary", nil
-	}))
-
-	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err != nil {
-		t.Fatal(err)
-	}
-	if len(mapThought) == 0 {
-		t.Fatal("no map calls were made, so the assertion below proves nothing")
-	}
-	for i, thought := range mapThought {
-		if thought {
-			t.Errorf("map call %d reasoned; the chunk summaries are meant to be cheap", i)
-		}
-	}
-	if len(reduceThought) != 1 || !reduceThought[0] {
-		t.Errorf("reduce thinking = %v, want exactly one call that reasoned", reduceThought)
 	}
 }
 
@@ -229,7 +264,11 @@ func TestClassify_doesNotThink(t *testing.T) {
 	}
 }
 
-func TestKeyPoints_thinks(t *testing.T) {
+// Key points now runs thinking-OFF: it is an extractive JSON step, and running
+// it with reasoning is what once let it spiral to tens of thousands of tokens
+// and return nothing. max_tokens counts reasoning too, so a cap alone would
+// still hand back empty — disabling thinking is what guarantees output.
+func TestKeyPoints_doesNotThink(t *testing.T) {
 	var thought bool
 	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
 		thought = llm.ThinkingFrom(ctx)
@@ -239,7 +278,7 @@ func TestKeyPoints_thinks(t *testing.T) {
 	if _, _, err := s.KeyPoints(context.Background(), "A summary.", cues, []Chapter{{TS: 0, Title: "Intro", Source: "yt-dlp"}}); err != nil {
 		t.Fatal(err)
 	}
-	if !thought {
-		t.Error("key points did not reason; grounding timestamps in the cue index is the fragile step")
+	if thought {
+		t.Error("key points reasoned; it is an extractive step that must not be allowed to spiral")
 	}
 }

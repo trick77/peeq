@@ -180,6 +180,7 @@ type chatRequest struct {
 	Messages        []Message      `json:"messages"`
 	ReasoningEffort string         `json:"reasoning_effort"`
 	Thinking        thinkingOption `json:"thinking"`
+	MaxTokens       int            `json:"max_tokens,omitempty"`
 	Stream          bool           `json:"stream"`
 	StreamOptions   *streamOptions `json:"stream_options,omitempty"`
 }
@@ -281,8 +282,8 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 		c.log.Debug("llm: paced", append(info.LogAttrs(), "waited_ms", pacedFor.Milliseconds())...)
 	}
 	body, err := json.Marshal(chatRequest{
-		Model: model, Messages: messages, ReasoningEffort: reasoningEffort,
-		Thinking: thinkingOptionFor(ctx), Stream: true,
+		Model: model, Messages: messages, ReasoningEffort: reasoningEffortFrom(ctx),
+		Thinking: thinkingOptionFor(ctx), MaxTokens: maxTokensFrom(ctx), Stream: true,
 		StreamOptions: &streamOptions{IncludeUsage: true},
 	})
 	if err != nil {
@@ -385,6 +386,15 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 	attrs := append(info.LogAttrs(), "status", resp.StatusCode,
 		"chunks", res.events, "finish_reason", res.finishReason)
 	c.log.Debug("llm: request done", append(attrs, usage.LogAttrs()...)...)
+	// Opt-in: a caller that must not persist a truncated answer (the single-pass
+	// summary) turns a refusal/filter early-end into an error so the job retries,
+	// rather than accepting the partial content. Accounting above still ran, so
+	// the tokens this call spent are recorded either way. "length" is tolerated
+	// (that cut is our own max_tokens; retrying would just re-truncate).
+	if failOnEarlyFinishFrom(ctx) && res.finishReason != "" &&
+		res.finishReason != "stop" && res.finishReason != "length" {
+		return "", fmt.Errorf("chat ended early: finish_reason=%s", res.finishReason)
+	}
 	return res.content, nil
 }
 

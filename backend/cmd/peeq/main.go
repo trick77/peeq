@@ -199,9 +199,9 @@ func run() error {
 	chatClient := llm.NewClient(llm.Config{
 		BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey,
 		RequestInterval: cfg.SummarizeRequestDelay, Logger: slog.Default(),
-		StreamIdleTimeout: cfg.ChatStreamIdleTimeout,
+		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.ChatCallTimeout,
 	}, nil)
-	summarizer := summarize.New(chatClient)
+	summarizer := summarize.New(chatClient, summarize.WithSummaryChunkTokens(cfg.SummaryChunkTokens))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

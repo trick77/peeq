@@ -46,13 +46,26 @@ type Config struct {
 	SummarizeRequestDelay time.Duration
 	SummarizeVideoDelay   time.Duration
 
+	// SummaryChunkTokens is the coarse chunk budget for the prose summary. The
+	// chat model has a ~1M-token context window, so a whole transcript fits in a
+	// single call for all but multi-hour videos; this sizes that budget (in
+	// estimated tokens) so the common case is one call and only a marathon fans
+	// out into a few coarse sections. 0 uses the summarizer's default.
+	SummaryChunkTokens int
+
 	// ChatStreamIdleTimeout is how long a started chat stream may go completely
 	// silent before the call is abandoned and retried. Tunable because it is the
 	// one bound whose right value depends on the endpoint: it must sit above the
 	// longest gap that endpoint leaves between events while thinking, and below
-	// the point where waiting is pointless. The other two bounds (headers, whole
-	// call) are fixed in internal/llm.
+	// the point where waiting is pointless. The header bound is fixed in
+	// internal/llm; the whole-call cap is ChatCallTimeout below.
 	ChatStreamIdleTimeout time.Duration
+
+	// ChatCallTimeout is the backstop on a single chat call's total duration.
+	// Tunable because single-pass summaries send a whole transcript in one call,
+	// so the ceiling that used to bound ~600-token map calls now has to cover a
+	// much larger request. 0 uses internal/llm's default (15m).
+	ChatCallTimeout time.Duration
 
 	// AllowAnonymousYoutube is a dev-only escape hatch: when true, the yt-dlp
 	// Runner is permitted to run WITHOUT a cookie (see internal/ytdlp
@@ -173,6 +186,19 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.ChatStreamIdleTimeout = idle
+	callTimeout, err := envDuration("BACKEND_CHAT_CALL_TIMEOUT", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ChatCallTimeout = callTimeout
+
+	if v := os.Getenv("BACKEND_SUMMARIZE_SUMMARY_TOKENS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return Config{}, fmt.Errorf("BACKEND_SUMMARIZE_SUMMARY_TOKENS must be a positive integer")
+		}
+		cfg.SummaryChunkTokens = n
+	}
 
 	if cfg.SessionSecret == "" {
 		return Config{}, fmt.Errorf("BACKEND_SESSION_SECRET is required")

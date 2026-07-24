@@ -42,7 +42,7 @@ type fakeWorkerCompleter struct{}
 func (fakeWorkerCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
 		sys := m[0].Content
-		if strings.Contains(sys, "Combine these section summaries") {
+		if strings.Contains(sys, "cohesive summary") {
 			return "Overall prose summary.", nil
 		}
 		if strings.Contains(sys, "category id") {
@@ -63,7 +63,7 @@ type classifyErrCompleter struct{}
 func (classifyErrCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
 	sys := m[0].Content
 	switch {
-	case strings.Contains(sys, "Combine these section summaries"):
+	case strings.Contains(sys, "cohesive summary"):
 		return "Overall prose summary.", nil
 	case strings.Contains(sys, "category id"):
 		return "", errors.New("classify boom")
@@ -664,7 +664,7 @@ type keyPointsFailOnceCompleter struct{ kpCalls int }
 func (c *keyPointsFailOnceCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
 	sys := m[0].Content
 	switch {
-	case strings.Contains(sys, "Combine these section summaries"):
+	case strings.Contains(sys, "cohesive summary"):
 		return "Overall prose summary.", nil
 	case strings.Contains(sys, "category id"):
 		return "ai", nil
@@ -1112,7 +1112,7 @@ func TestClassifyDoesNotOverwriteAPickMadeDuringTheJob(t *testing.T) {
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
 			sys := m[0].Content
-			if strings.Contains(sys, "Combine these section summaries") {
+			if strings.Contains(sys, "cohesive summary") {
 				// The user picks a category on the Player while the summary
 				// call is still in flight.
 				if err := h.videos.SetCategory("v8", "gaming"); err != nil {
