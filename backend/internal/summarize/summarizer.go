@@ -114,9 +114,11 @@ const (
 	summaryMaxTokens = 8000
 
 	// keypointsMaxTokens bounds the keypoints JSON. It runs with thinking OFF, so
-	// the whole budget is available for output; a rich video is a few thousand
-	// tokens of chapters + points, so this is ample.
-	keypointsMaxTokens = 4000
+	// the whole budget is output and there is no reasoning to bound — this is only
+	// a runaway backstop, set well clear of any real video's chapters + points
+	// (hundreds of them) so it never truncates legitimate JSON, which would parse
+	// as empty and silently drop every point.
+	keypointsMaxTokens = 16000
 )
 
 // wholeVideoSystemPrompt drives the single-pass summary: the full transcript in,
@@ -175,7 +177,7 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 		if err != nil {
 			return "", fmt.Errorf("summarize single-pass: %w", err)
 		}
-		return strings.TrimSpace(summary), nil
+		return finalizeSummary(summary, "single-pass")
 	}
 
 	// Rare fallback (multi-hour): coarse map (thinking off — condensing text
@@ -194,14 +196,32 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 		}
 		sections = append(sections, strings.TrimSpace(out))
 	}
-	summary, err := s.c.Complete(llm.WithMaxTokens(ctx, summaryMaxTokens), []llm.Message{
-		{Role: "system", Content: reduceSystemPrompt},
-		{Role: "user", Content: strings.Join(sections, "\n\n")},
-	})
+	// The reduce is the reader-facing summary too, so it carries the same guard
+	// as the single-pass call: FailOnEarlyFinish (don't persist a filtered/cut
+	// final summary) and the empty-result rejection below.
+	summary, err := s.c.Complete(
+		llm.WithMaxTokens(llm.FailOnEarlyFinish(ctx), summaryMaxTokens),
+		[]llm.Message{
+			{Role: "system", Content: reduceSystemPrompt},
+			{Role: "user", Content: strings.Join(sections, "\n\n")},
+		})
 	if err != nil {
 		return "", fmt.Errorf("summarize reduce: %w", err)
 	}
-	return strings.TrimSpace(summary), nil
+	return finalizeSummary(summary, "reduce")
+}
+
+// finalizeSummary trims the model's summary and rejects an empty result. An
+// empty-but-successful completion — a call that spent its whole token budget
+// reasoning and ended on "length", or a filtered answer — must never be
+// persisted as a blank "done" summary (the worker would then run classify and
+// key-points against empty input, and a resume would re-summarize anyway).
+// Returning an error instead lets the job retry.
+func finalizeSummary(raw, stage string) (string, error) {
+	if s := strings.TrimSpace(raw); s != "" {
+		return s, nil
+	}
+	return "", fmt.Errorf("summarize %s: model returned an empty summary", stage)
 }
 
 // KeyPoints extracts key points — and chapters, when yt-dlp did not supply them

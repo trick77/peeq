@@ -199,6 +199,30 @@ func TestSummarizeText_singlePassErrorPropagates(t *testing.T) {
 	}
 }
 
+// An empty-but-successful completion (e.g. a call that spent its whole budget
+// reasoning and ended on "length") must NOT be stored as a blank summary — it
+// errors so the job retries instead. Whitespace-only counts as empty.
+func TestSummarizeText_emptySinglePassErrors(t *testing.T) {
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		return "  \n ", nil
+	}))
+	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err == nil {
+		t.Error("want an error when the single-pass summary is empty")
+	}
+}
+
+func TestSummarizeText_emptyReduceErrors(t *testing.T) {
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		if strings.Contains(m[0].Content, "cohesive summary") {
+			return "", nil // reduce yields nothing
+		}
+		return "section summary", nil
+	}), WithSummaryChunkTokens(300))
+	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err == nil {
+		t.Error("want an error when the reduce summary is empty")
+	}
+}
+
 // A transcript ABOVE the (here deliberately tiny) budget falls back to coarse
 // map-reduce: each big section is condensed thinking-OFF, then one reduce call
 // (thinking ON) writes the summary the reader sees.
