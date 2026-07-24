@@ -103,7 +103,9 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
           </div>
           <div>
             <h2>Added to the queue</h2>
-            <div className="by">The title and channel fill in once it starts.</div>
+            <div className="by">
+              The title and channel fill in once it starts.
+            </div>
             <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)" }}>
               Watch progress in the download dock or on the Activity page, and
               open the video from the Library once it's done.
