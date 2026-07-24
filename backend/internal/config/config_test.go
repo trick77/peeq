@@ -233,3 +233,64 @@ func TestLoad_chatStreamIdleTimeout(t *testing.T) {
 		t.Error("want an error for an unparseable idle timeout")
 	}
 }
+
+// baseEnv sets the minimal environment for a successful Load, so a test can add
+// only the variable it is exercising.
+func baseEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("BACKEND_SESSION_SECRET", "x")
+	t.Setenv("BACKEND_AUTH_MODE", "dev")
+	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
+	t.Setenv("BACKEND_PUBLIC_URL", "")
+	t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
+	t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
+	t.Setenv("BACKEND_EMBED_MODEL", "e5")
+}
+
+func TestLoad_summaryTokensAndCallTimeout(t *testing.T) {
+	baseEnv(t)
+	t.Setenv("BACKEND_SUMMARIZE_SUMMARY_TOKENS", "12000")
+	t.Setenv("BACKEND_CHAT_CALL_TIMEOUT", "20m")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SummaryChunkTokens != 12000 {
+		t.Errorf("SummaryChunkTokens = %d, want 12000", cfg.SummaryChunkTokens)
+	}
+	if cfg.ChatCallTimeout != 20*time.Minute {
+		t.Errorf("ChatCallTimeout = %v, want 20m", cfg.ChatCallTimeout)
+	}
+}
+
+// Unset, the summary-token budget stays 0 (the summarizer applies its own
+// default) and the call timeout falls to its 15m default.
+func TestLoad_summaryTokensAndCallTimeoutDefaults(t *testing.T) {
+	baseEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SummaryChunkTokens != 0 {
+		t.Errorf("SummaryChunkTokens = %d, want 0 when unset", cfg.SummaryChunkTokens)
+	}
+	if cfg.ChatCallTimeout != 15*time.Minute {
+		t.Errorf("ChatCallTimeout = %v, want the 15m default", cfg.ChatCallTimeout)
+	}
+}
+
+func TestLoad_invalidSummaryTokensFails(t *testing.T) {
+	baseEnv(t)
+	t.Setenv("BACKEND_SUMMARIZE_SUMMARY_TOKENS", "notanumber")
+	if _, err := Load(); err == nil {
+		t.Fatal("want an error for a non-integer summary-token budget")
+	}
+}
+
+func TestLoad_invalidCallTimeoutFails(t *testing.T) {
+	baseEnv(t)
+	t.Setenv("BACKEND_CHAT_CALL_TIMEOUT", "notaduration")
+	if _, err := Load(); err == nil {
+		t.Fatal("want an error for an unparseable call timeout")
+	}
+}

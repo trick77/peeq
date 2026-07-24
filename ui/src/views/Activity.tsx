@@ -10,15 +10,17 @@ import {
 import { Icon, type IconName } from "../icons";
 import { summaryPhaseLabel } from "../format";
 
-// Activity — one agenda through a *now* marker. Below the marker: what is
-// scheduled or queued (the live projection from /api/activity/upcoming, plus
-// the running items App already holds). Above: what actually happened (the
-// durable log from /api/activity), newest first. It is a pure log — nothing
-// here is actionable — so it deliberately carries no buttons.
+// Activity — two sections, each with one consistent order (a single folded
+// timeline through a *now* marker reversed direction at the seam, which read as
+// broken). "Up next" (top): running items at the front, then queued/scheduled
+// work soonest-first (the live projection from /api/activity/upcoming plus the
+// running items App holds). "Recent activity" (bottom): what actually happened
+// (the durable log from /api/activity), newest first — a plain feed. It is a
+// pure log — nothing here is actionable — so it deliberately carries no buttons.
 //
 // Three disjoint states never render twice: TERMINAL work comes from the event
-// log (above now), RUNNING work from App's live jobs/summaries (at now), PENDING
-// work from the upcoming projection (below now).
+// log (Recent activity), RUNNING work from App's live jobs/summaries (top of Up
+// next), PENDING work from the upcoming projection (rest of Up next).
 
 // parseUTC reads the backend's "2006-01-02 15:04:05" UTC text into a Date.
 function parseUTC(at: string): Date {
@@ -234,14 +236,28 @@ export function Activity({
   const morePlanned =
     upcomingFiltered.length - shownUpcoming.length + truncated;
 
-  // Running items at the now marker, from App's live state (never the projection).
+  // Running items in "Up next", from App's live state (never the projection).
   const running = jobs.filter((j) => j.state === "running");
   const runningSummaries = summaries.filter((s) => s.state === "running");
-  const nothingAtNow = running.length === 0 && runningSummaries.length === 0;
+  const runningCount = running.length + runningSummaries.length;
+  const nothingAtNow = runningCount === 0;
   // "Problems only" is a view of the log's failures/warnings — the whole live
-  // half (future, the now marker, and running in-progress work) is hidden, since
-  // healthy in-progress work is not a problem.
+  // section ("Up next": queued work and running in-progress work) is hidden,
+  // since healthy in-progress work is not a problem.
   const showLive = filter !== "problems";
+  // "Up next" renders only when something is running or queued.
+  const hasUpNext = runningCount > 0 || shownUpcoming.length > 0;
+  // True queued total for the header — the full filtered projection plus the
+  // server's own cap, not the capped-to-10 slice (which would undercount and
+  // fail to reconcile with the "+N more scheduled" edge below).
+  const queuedCount = upcomingFiltered.length + truncated;
+  // Header count, e.g. "2 running · 4 queued"; each side omitted when zero.
+  const upNextCount = [
+    runningCount > 0 ? `${runningCount} running` : "",
+    queuedCount > 0 ? `${queuedCount} queued` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   if (error) {
     return <div className="errline">{error}</div>;
@@ -276,49 +292,25 @@ export function Activity({
         </p>
       ) : (
         <>
-          {/* Top edge lives outside .agenda so it doesn't sit on the rail —
-              how many earlier history rows the cap hides. */}
-          {shownPast.length > 0 && (moreHistory > 0 || hasMore) ? (
-            <div className="ag-edge top">
-              {moreHistory > 0 ? `+${moreHistory} earlier` : "earlier activity"}
-            </div>
-          ) : null}
+          {/* UP NEXT — running work first, then queued/scheduled soonest-first.
+              A projection, not a log, so it lives in its own section and never
+              claims "ago". Hidden entirely under "Problems only" (healthy
+              in-progress work is not a problem) and when nothing is live. */}
+          {showLive && hasUpNext ? (
+            <section className="ag-section">
+              <div className="ag-sec-head">
+                {/* The pulse marks live in-flight work; when only queued items
+                    are pending (nothing running) it would falsely read as
+                    active, so it shows only when something is actually running. */}
+                {runningCount > 0 ? <span className="ag-live" /> : null}
+                <h2 className="ag-sec-title">Up next</h2>
+                {upNextCount ? (
+                  <span className="ag-sec-count">{upNextCount}</span>
+                ) : null}
+              </div>
 
-          <div className="agenda">
-            {/* PAST — newest first, solid rail, colour by outcome */}
-            {shownPast.map((e) => {
-              const k = kindOf(e.kind);
-              const detail = eventDetail(e);
-              return (
-                <div key={e.id} className={`ag-row ${e.outcome}`}>
-                  <span className="ag-node">
-                    <Icon name={k.icon} size="16px" />
-                  </span>
-                  <div className="ag-body">
-                    <div className="ag-subject">{e.subject || k.label}</div>
-                    {detail ? <div className="ag-detail">{detail}</div> : null}
-                  </div>
-                  <span className="ag-when" title={e.at}>
-                    {relTime(parseUTC(e.at), now)}
-                  </span>
-                </div>
-              );
-            })}
-
-            {showLive ? (
-              <>
-                {/* NOW — a row like any other, so the rail runs straight through */}
-                <div className="ag-row now">
-                  <span className="ag-node">
-                    <span className="ag-pulse" />
-                  </span>
-                  <div className="ag-nowbar">
-                    <span className="ag-nowlbl">now</span>
-                    <span className="ag-rule" />
-                  </div>
-                </div>
-
-                {/* RUNNING — on the now node, from App's live state */}
+              <div className="agenda up">
+                {/* RUNNING — from App's live state, never the projection */}
                 {running.map((j) => {
                   const p = progressByJobId?.[j.job_id];
                   return (
@@ -360,7 +352,7 @@ export function Activity({
                   </div>
                 ))}
 
-                {/* FUTURE — dimmed, faint rail, soonest nearest the now marker */}
+                {/* QUEUED — dimmed, faint rail, soonest first */}
                 {shownUpcoming.map((item, i) => {
                   const k = kindOf(item.kind);
                   return (
@@ -384,14 +376,58 @@ export function Activity({
                     </div>
                   );
                 })}
-              </>
-            ) : null}
-          </div>
+              </div>
 
-          {/* Bottom edge — also outside .agenda. Further scheduled work beyond
-              the cap (our slice overflow plus the server's projection cap). */}
-          {showLive && morePlanned > 0 ? (
-            <div className="ag-edge">+{morePlanned} more scheduled</div>
+              {/* Further scheduled work beyond the cap (our slice overflow plus
+                  the server's projection cap). Outside .agenda so it has no rail. */}
+              {morePlanned > 0 ? (
+                <div className="ag-edge">+{morePlanned} more scheduled</div>
+              ) : null}
+            </section>
+          ) : null}
+
+          {/* RECENT ACTIVITY — the durable log, newest first. A plain feed:
+              scrolling down goes strictly further back in time. */}
+          {shownPast.length > 0 ? (
+            <section className="ag-section">
+              <div className="ag-sec-head">
+                <h2 className="ag-sec-title">Recent activity</h2>
+                <span className="ag-sec-note">newest first</span>
+              </div>
+
+              <div className="agenda">
+                {shownPast.map((e) => {
+                  const k = kindOf(e.kind);
+                  const detail = eventDetail(e);
+                  return (
+                    <div key={e.id} className={`ag-row ${e.outcome}`}>
+                      <span className="ag-node">
+                        <Icon name={k.icon} size="16px" />
+                      </span>
+                      <div className="ag-body">
+                        <div className="ag-subject">{e.subject || k.label}</div>
+                        {detail ? (
+                          <div className="ag-detail">{detail}</div>
+                        ) : null}
+                      </div>
+                      <span className="ag-when" title={e.at}>
+                        {relTime(parseUTC(e.at), now)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Older rows hidden by the cap sit at the BOTTOM — in a
+                  newest-first feed, the hidden ones are the older ones. */}
+              {moreHistory > 0 || hasMore ? (
+                <div className="ag-edge">
+                  {moreHistory > 0
+                    ? `+${moreHistory} earlier`
+                    : "earlier activity"}
+                </div>
+              ) : null}
+            </section>
           ) : null}
         </>
       )}

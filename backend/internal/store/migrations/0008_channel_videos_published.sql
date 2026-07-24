@@ -1,0 +1,11 @@
+-- The scan ledger records when peeq DISCOVERED an upload, which is not when
+-- YouTube published it: a channel scanned for the first time backfills weeks
+-- of uploads in one pass, all with the same discovered_at. Inbox cards are the
+-- library card, and the library card's eyebrow carries a publish date, so the
+-- ledger needs one too.
+--
+-- Nullable with no default on purpose: NULL means "not known yet", which is
+-- both the honest state for every pre-existing row and the signal the scanner
+-- uses to heal them (see Ledger.SetPublishedAt). A default would make unknown
+-- indistinguishable from known.
+ALTER TABLE channel_videos ADD COLUMN published_at TEXT;

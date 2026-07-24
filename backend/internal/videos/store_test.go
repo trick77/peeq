@@ -1929,3 +1929,45 @@ func TestChannelName_fallbacks(t *testing.T) {
 		}
 	}
 }
+
+func TestTombstone_revokesShareLink(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	if err := s.Upsert(Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	// A live share link for the video...
+	if _, err := db.Exec(`INSERT INTO share_links (token, video_id) VALUES (?, ?)`, "tok", "v1"); err != nil {
+		t.Fatalf("seed share link: %v", err)
+	}
+	if err := s.Tombstone("v1"); err != nil {
+		t.Fatalf("Tombstone: %v", err)
+	}
+	// ...must be gone once the video is tombstoned.
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM share_links WHERE video_id = ?`, "v1").Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("share link survived a tombstone (count=%d)", n)
+	}
+	// The video row itself stays, marked tombstoned.
+	v, err := s.Get("v1")
+	if err != nil || v == nil || v.Status != "tombstoned" {
+		t.Fatalf("Get after tombstone = (%+v, %v), want status tombstoned", v, err)
+	}
+}
+
+func TestTombstone_errorsWhenShareTableMissing(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	if err := s.Upsert(Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if _, err := db.Exec(`DROP TABLE share_links`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	if err := s.Tombstone("v1"); err == nil {
+		t.Fatal("Tombstone should surface the revoke-link failure")
+	}
+}

@@ -35,6 +35,7 @@ import (
 	"github.com/trick77/peeq/internal/retention"
 	"github.com/trick77/peeq/internal/scan"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/sharelink"
 	"github.com/trick77/peeq/internal/sponsorblock"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/store"
@@ -176,10 +177,13 @@ func run() error {
 	settingsStore := settings.New(db)
 	jobsStore := jobs.New(db)
 	videosStore := videos.New(db)
+	shareLinksStore := sharelink.New(db)
 	channelsStore := channels.New(db)
 	ledgerStore := channelvideos.New(db)
 	summaryJobsStore := summaryjobs.New(db)
 	activityStore := activity.New(db)
+	// Settings records cookie/access transitions to the same feed (post-construction, like OnRecord below).
+	settingsStore.Activity = activityStore
 	ragStore := rag.NewStore(db)
 	embedClient := rag.NewEmbedClient(rag.EmbedConfig{
 		BaseURL: cfg.EmbedBaseURL, APIKey: cfg.EmbedAPIKey, Model: cfg.EmbedModel,
@@ -188,9 +192,9 @@ func run() error {
 	chatClient := llm.NewClient(llm.Config{
 		BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey,
 		RequestInterval: cfg.SummarizeRequestDelay, Logger: slog.Default(),
-		StreamIdleTimeout: cfg.ChatStreamIdleTimeout,
+		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.ChatCallTimeout,
 	}, nil)
-	summarizer := summarize.New(chatClient)
+	summarizer := summarize.New(chatClient, summarize.WithSummaryChunkTokens(cfg.SummaryChunkTokens))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -404,6 +408,8 @@ func run() error {
 		DevAuthClaims:   devClaims,
 		Jobs:            jobsStore,
 		Videos:          videosStore,
+		ShareLinks:      shareLinksStore,
+		PublicURL:       cfg.PublicURL,
 		MediaDir:        cfg.MediaDir,
 		Runner:          runner,
 		Worker:          worker,

@@ -15,6 +15,7 @@ import (
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/sharelink"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
 )
@@ -44,6 +45,15 @@ type Deps struct {
 	Jobs *jobs.Store
 	// Videos is the video metadata store backing the downloads API.
 	Videos *videos.Store
+	// ShareLinks backs the share-video feature: the owner endpoints under
+	// /api/videos/{id}/share and the public, unauthenticated /api/s/{token}
+	// routes. Optional: when nil, the owner endpoints return 503 and the
+	// public routes 404 (revealing nothing).
+	ShareLinks *sharelink.Store
+	// PublicURL is the externally reachable base URL (config.PublicURL). Share
+	// links are built against it; when empty the API returns a relative
+	// /s/<token> path for the browser to resolve against its own origin.
+	PublicURL string
 	// MediaDir is the root directory downloaded media lives under. The
 	// videos API resolves every stored media_path against it (rejecting
 	// traversal/escape) before streaming or unlinking a file.
@@ -156,12 +166,14 @@ type server struct {
 	settings      *settings.Store
 	devAuthClaims auth.Claims
 
-	jobs     *jobs.Store
-	videos   *videos.Store
-	mediaDir string
-	runner   DownloadsRunner
-	worker   DownloadsWorker
-	sseHub   *sse.Hub
+	jobs       *jobs.Store
+	videos     *videos.Store
+	shareLinks *sharelink.Store
+	publicURL  string
+	mediaDir   string
+	runner     DownloadsRunner
+	worker     DownloadsWorker
+	sseHub     *sse.Hub
 
 	streamAccess StreamAccessRecorder
 	ytdlp        YTDLPVersioner
@@ -195,6 +207,8 @@ func New(d Deps) http.Handler {
 		devAuthClaims: d.DevAuthClaims,
 		jobs:          d.Jobs,
 		videos:        d.Videos,
+		shareLinks:    d.ShareLinks,
+		publicURL:     d.PublicURL,
 		mediaDir:      d.MediaDir,
 		runner:        d.Runner,
 		worker:        d.Worker,
@@ -243,6 +257,18 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/videos/{id}/stream", s.requireAuth(http.HandlerFunc(s.handleStreamVideo)))
 	mux.Handle("GET /api/videos/{id}/thumbnail", s.requireAuth(http.HandlerFunc(s.handleVideoThumbnail)))
 	mux.Handle("GET /api/videos/{id}/subtitles", s.requireAuth(http.HandlerFunc(s.handleVideoSubtitles)))
+	// Owner-facing share controls (create/status/stop) — session-gated.
+	mux.Handle("POST /api/videos/{id}/share", s.requireAuth(http.HandlerFunc(s.handleCreateShare)))
+	mux.Handle("GET /api/videos/{id}/share", s.requireAuth(http.HandlerFunc(s.handleGetShare)))
+	mux.Handle("DELETE /api/videos/{id}/share", s.requireAuth(http.HandlerFunc(s.handleDeleteShare)))
+	// Public share routes — the only *data* routes in peeq that bypass OIDC.
+	// Gated solely by the opaque token in the path (resolveShare); an unknown,
+	// expired, or revoked token is an indistinguishable 404. Stream is
+	// watch-only — no ?download.
+	mux.HandleFunc("GET /api/s/{token}", s.handleShareVideo)
+	mux.HandleFunc("GET /api/s/{token}/stream", s.handleShareStream)
+	mux.HandleFunc("GET /api/s/{token}/thumbnail", s.handleShareThumbnail)
+	mux.HandleFunc("GET /api/s/{token}/subtitles", s.handleShareSubtitles)
 	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleGetSettings)))
 	mux.Handle("PUT /api/settings", s.requireAuth(http.HandlerFunc(s.handlePutSettings)))
 	mux.Handle("PUT /api/settings/cookie", s.requireAuth(http.HandlerFunc(s.handlePutSettingsCookie)))

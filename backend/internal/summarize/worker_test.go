@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/store"
@@ -42,7 +43,7 @@ type fakeWorkerCompleter struct{}
 func (fakeWorkerCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
 		sys := m[0].Content
-		if strings.Contains(sys, "Combine these section summaries") {
+		if strings.Contains(sys, "cohesive summary") {
 			return "Overall prose summary.", nil
 		}
 		if strings.Contains(sys, "category id") {
@@ -63,7 +64,7 @@ type classifyErrCompleter struct{}
 func (classifyErrCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
 	sys := m[0].Content
 	switch {
-	case strings.Contains(sys, "Combine these section summaries"):
+	case strings.Contains(sys, "cohesive summary"):
 		return "Overall prose summary.", nil
 	case strings.Contains(sys, "category id"):
 		return "", errors.New("classify boom")
@@ -397,6 +398,88 @@ func TestProcessOneReturnsErrorOnEmbedFailure(t *testing.T) {
 	}
 }
 
+// fakeActivityRecorder captures the events failJob records. Satisfies the
+// summarize.ActivityRecorder interface.
+type fakeActivityRecorder struct{ events []activity.Event }
+
+func (f *fakeActivityRecorder) Record(e activity.Event) { f.events = append(f.events, e) }
+
+// seedFailingVideo enqueues a summarizable video whose embedding will fail, so
+// processOne drives it through failJob. maxAttempts controls whether that
+// failure is terminal (1) or a retry (>1). It returns the recorder wired onto
+// the worker so the test can inspect what was recorded.
+func seedFailingVideo(t *testing.T, id string, maxAttempts int) *fakeActivityRecorder {
+	t.Helper()
+	h := newWorkerHarness(t)
+
+	relPath := id + "/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n\n" +
+		"00:00:02.000 --> 00:00:04.000\nToday we will talk about testing Go workers.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	if err := h.videos.Upsert(videos.Video{ID: id, URL: "https://youtu.be/" + id, Title: "Test " + id}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle(id, relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue(id); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	// max_attempts=1 makes the single failing attempt terminal; the default (3)
+	// leaves attempts to spare, so the same failure requeues instead.
+	if _, err := h.db.Exec(`UPDATE summary_jobs SET max_attempts = ? WHERE video_id = ?`, maxAttempts, id); err != nil {
+		t.Fatalf("set max_attempts: %v", err)
+	}
+
+	rec := &fakeActivityRecorder{}
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(fakeWorkerCompleter{}),
+		Embedder:   failingEmbedder{},
+		MediaDir:   h.mediaDir,
+		EmbedModel: "test-model",
+		EmbedDim:   1536,
+		Activity:   rec,
+	})
+	if _, err := w.processOne(context.Background()); err == nil {
+		t.Fatal("processOne err = nil, want non-nil (the embed failure)")
+	}
+	return rec
+}
+
+// TestFailJobRecordsActivityOnlyWhenTerminal proves failJob writes exactly one
+// summary/fail Activity row when the job exhausts its attempts, and nothing when
+// the failure merely requeues the job for another try (the retry is not news).
+func TestFailJobRecordsActivityOnlyWhenTerminal(t *testing.T) {
+	t.Run("terminal failure records one row", func(t *testing.T) {
+		rec := seedFailingVideo(t, "term", 1)
+		if len(rec.events) != 1 {
+			t.Fatalf("recorded %d rows, want 1: %+v", len(rec.events), rec.events)
+		}
+		e := rec.events[0]
+		if e.Kind != activity.KindSummary || e.Outcome != activity.OutcomeFail {
+			t.Fatalf("event kind/outcome = %q/%q, want summary/fail", e.Kind, e.Outcome)
+		}
+		if e.SubjectID != "term" || e.Subject != "Test term" || e.Summary != "summary failed" {
+			t.Fatalf("event subject/summary = %+v, want subject term/'Test term' summary 'summary failed'", e)
+		}
+	})
+	t.Run("requeued failure records nothing", func(t *testing.T) {
+		rec := seedFailingVideo(t, "retry", 3)
+		if len(rec.events) != 0 {
+			t.Fatalf("recorded %d rows on a retry, want 0: %+v", len(rec.events), rec.events)
+		}
+	})
+}
+
 // TestProcessOneIndexesSummaryChunk asserts the video's overall summary is
 // indexed as one extra transcript_chunks row with kind='summary' and
 // start_seconds=0, so hybrid search also matches against summaries (spec §7).
@@ -664,7 +747,7 @@ type keyPointsFailOnceCompleter struct{ kpCalls int }
 func (c *keyPointsFailOnceCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
 	sys := m[0].Content
 	switch {
-	case strings.Contains(sys, "Combine these section summaries"):
+	case strings.Contains(sys, "cohesive summary"):
 		return "Overall prose summary.", nil
 	case strings.Contains(sys, "category id"):
 		return "ai", nil
@@ -1112,7 +1195,7 @@ func TestClassifyDoesNotOverwriteAPickMadeDuringTheJob(t *testing.T) {
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
 			sys := m[0].Content
-			if strings.Contains(sys, "Combine these section summaries") {
+			if strings.Contains(sys, "cohesive summary") {
 				// The user picks a category on the Player while the summary
 				// call is still in flight.
 				if err := h.videos.SetCategory("v8", "gaming"); err != nil {

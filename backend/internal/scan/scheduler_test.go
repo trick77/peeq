@@ -1116,3 +1116,76 @@ func TestScan_nonConsecutiveDeleted_resetsAndDoesNotUnsubscribe(t *testing.T) {
 		t.Fatalf("unexpected auto_unsubscribes row (reason %q)", reason)
 	}
 }
+
+// TestScan_backfillsPublishedDateOnKnownRows is the regression guard for the
+// bug that made this feature look broken: adding published_at alone fixes
+// nothing for videos ALREADY in the inbox, because the scan short-circuits on
+// a known id and never touches the row again. Every item a user is looking at
+// today is such a row.
+func TestScan_backfillsPublishedDateOnKnownRows(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	// A pending row written the old way: known to the ledger, no date.
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "oldrow", ChannelID: "UC1", State: "pending", DurationSeconds: 600,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "oldrow", DurationSeconds: 600, LiveStatus: "not_live", PublishedAt: "2026-07-11"},
+		{ID: "newrow", DurationSeconds: 600, LiveStatus: "not_live", PublishedAt: "2026-07-18"},
+	})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+
+	healed, err := h.ledger.Get("oldrow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if healed.PublishedAt != "2026-07-11" {
+		t.Fatalf("known row published = %q, want it healed to 2026-07-11", healed.PublishedAt)
+	}
+	// The row must still be pending: healing a date is not a decision, and
+	// must not disturb the state machine.
+	if healed.State != "pending" {
+		t.Fatalf("heal changed state to %q, want pending", healed.State)
+	}
+	fresh, err := h.ledger.Get("newrow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.PublishedAt != "2026-07-18" {
+		t.Fatalf("new row published = %q", fresh.PublishedAt)
+	}
+}
+
+// TestScan_autodownloadDoesNotSeedVideoPublishedAt guards the deliberate
+// asymmetry in enqueueAuto: the ledger's date is yt-dlp's APPROXIMATE tab
+// date, while videos.published_at is the exact upload_date the download's own
+// metadata call writes. Seeding the videos row from the listing would quietly
+// downgrade the date the Library renders.
+func TestScan_autodownloadDoesNotSeedVideoPublishedAt(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", true /*autodownload*/, "")
+	h.markBaselined("UC1", nil)
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "auto1", DurationSeconds: 600, LiveStatus: "not_live", PublishedAt: "2026-07-18"},
+	})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	v, err := h.videos.Get("auto1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v == nil {
+		t.Fatal("autodownload must seed a videos row")
+	}
+	if v.PublishedAt != "" {
+		t.Fatalf("videos.published_at = %q, want empty until real metadata arrives", v.PublishedAt)
+	}
+}

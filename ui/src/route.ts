@@ -25,9 +25,18 @@ export type RouteState = {
   view: ViewId;
   videoId: string | null;
   channelId: string | null;
+  // token is the share-link token for the public /s/<token> page. Null for
+  // every other view. It rides RouteState so a cold-loaded share link reaches
+  // the SPA and opens the chromeless Share view straight away.
+  token: string | null;
 };
 
-const LIBRARY: RouteState = { view: "library", videoId: null, channelId: null };
+const LIBRARY: RouteState = {
+  view: "library",
+  videoId: null,
+  channelId: null,
+  token: null,
+};
 
 // decodeSegment decodes a percent-encoded path segment, tolerating a malformed
 // escape (a lone or invalid `%` from a hand-typed or mangled external URL) by
@@ -60,34 +69,45 @@ export function parsePath(pathname: string): RouteState {
         view: "player",
         videoId: seg[1] ? decodeSegment(seg[1]) : null,
         channelId: null,
+        token: null,
       };
     case "channel":
       return {
         view: "channel",
         videoId: null,
         channelId: seg[1] ? decodeSegment(seg[1]) : null,
+        token: null,
+      };
+    // /s/<token> is the public share page. It carries a token, not an id, and
+    // is the one view rendered without the app shell or a login (see App.tsx).
+    case "s":
+      return {
+        view: "share",
+        videoId: null,
+        channelId: null,
+        token: seg[1] ? decodeSegment(seg[1]) : null,
       };
     case "channels":
-      return { view: "channels", videoId: null, channelId: null };
+      return { view: "channels", videoId: null, channelId: null, token: null };
     case "search":
-      return { view: "search", videoId: null, channelId: null };
+      return { view: "search", videoId: null, channelId: null, token: null };
     case "add":
-      return { view: "add", videoId: null, channelId: null };
+      return { view: "add", videoId: null, channelId: null, token: null };
     case "inbox":
-      return { view: "inbox", videoId: null, channelId: null };
+      return { view: "inbox", videoId: null, channelId: null, token: null };
     // /pending and /decide are the page's old paths (it was "Pending", then
     // "Decide", before settling on "Inbox"). Keep parsing both to the same view
     // so an open tab or a saved bookmark doesn't 404 — useRoute's mount
     // normalize then rewrites the address bar to the canonical /inbox.
     case "pending":
     case "decide":
-      return { view: "inbox", videoId: null, channelId: null };
+      return { view: "inbox", videoId: null, channelId: null, token: null };
     case "queue":
-      return { view: "queue", videoId: null, channelId: null };
+      return { view: "queue", videoId: null, channelId: null, token: null };
     case "activity":
-      return { view: "activity", videoId: null, channelId: null };
+      return { view: "activity", videoId: null, channelId: null, token: null };
     case "settings":
-      return { view: "settings", videoId: null, channelId: null };
+      return { view: "settings", videoId: null, channelId: null, token: null };
     default:
       return LIBRARY;
   }
@@ -109,6 +129,8 @@ export function toPath(state: RouteState): string {
       return state.channelId
         ? `/channel/${encodeURIComponent(state.channelId)}`
         : "/channel";
+    case "share":
+      return state.token ? `/s/${encodeURIComponent(state.token)}` : "/";
     case "channels":
       return "/channels";
     case "search":

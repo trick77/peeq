@@ -124,6 +124,12 @@ func TestActivity_upcomingProjectsPendingAndScheduled(t *testing.T) {
 	if err := ch.Subscribe("UCx", "2026-07-25 12:00:00"); err != nil {
 		t.Fatal(err)
 	}
+	// Subscribe seeds next_meta_refresh_at with a RANDOM jitter, which can land
+	// either side of the scan above and flip the order asserted below. Pin it
+	// past the scan so this test asserts the ordering rule, not the dice.
+	if err := ch.MarkMetaRefreshed("UCx", "2026-08-01 12:00:00"); err != nil {
+		t.Fatal(err)
+	}
 	if err := vids.Upsert(videos.Video{ID: "v1", URL: "u", Title: "Queued clip"}); err != nil {
 		t.Fatal(err)
 	}
@@ -140,8 +146,8 @@ func TestActivity_upcomingProjectsPendingAndScheduled(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Three items: the pending download (ordered, no time → sorts first), then
-	// the scheduled scan, then the metadata refresh (Subscribe seeds
-	// next_meta_refresh_at a week out). Ordered-before-timed, then by time.
+	// the scheduled scan, then the metadata refresh pinned after it above.
+	// Ordered-before-timed, then by time.
 	if len(resp.Items) != 3 {
 		t.Fatalf("items = %+v", resp.Items)
 	}

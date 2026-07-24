@@ -19,6 +19,8 @@ import {
 import { reprocess, subtitlesUrl } from "../api/search";
 import { streamDownloads } from "../api/downloads";
 import { getSettings, updateSettings } from "../api/settings";
+import { getShareStatus, type ShareStatus } from "../api/share";
+import { ShareChip, ShareControl } from "../components/ShareControl";
 import type { Video } from "../api/types";
 import { formatDuration, gradientClassFor } from "../format";
 
@@ -228,6 +230,12 @@ export function Player({
   const [deleting, setDeleting] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
   const [redownloading, setRedownloading] = useState(false);
+  // Share state: whether this video currently has a live public link, driving
+  // the "Shared" chip beside the title and the Share button's active look. It
+  // loads alongside the video and is updated in place by the share popover.
+  const [shareStatus, setShareStatus] = useState<ShareStatus>({
+    shared: false,
+  });
   // subtitlesReadyFor holds the video id whose metadata has loaded, gating
   // the <track> below. On iPadOS 27 (public beta 1) a <track> child present
   // while the video loads makes Safari fail resource selection outright —
@@ -284,6 +292,7 @@ export function Player({
     setTranscriptError(null);
     setFind("");
     setConfirmDelete(false);
+    setShareStatus({ shared: false });
     if (!videoId) return;
     let active = true;
     getVideo(videoId)
@@ -293,6 +302,13 @@ export function Player({
       .catch((e: Error) => {
         if (active) setError(e.message);
       });
+    // Share status is a best-effort side load: a failure just leaves the
+    // "not shared" default, never blocking the player.
+    getShareStatus(videoId)
+      .then((s) => {
+        if (active) setShareStatus(s);
+      })
+      .catch(() => {});
     return () => {
       active = false;
       // Cleared on unmount as well as on a video change; the next run of this
@@ -878,7 +894,10 @@ export function Player({
           />
         </div>
         <div className="playmeta">
-          <h1>{video.title}</h1>
+          <div className="playtitle">
+            <h1>{video.title}</h1>
+            <ShareChip status={shareStatus} />
+          </div>
           <div className="sub">
             {onOpenChannel && video.channel_id ? (
               <button
@@ -924,6 +943,15 @@ export function Player({
               <Icon name="check" size="17px" />{" "}
               {video.watched ? "Mark unwatched" : "Mark watched"}
             </Button>
+            {/* Share only makes sense once there is media to stream — the
+                public page is watch-only. */}
+            {video.has_media && (
+              <ShareControl
+                videoId={video.id}
+                status={shareStatus}
+                onStatusChange={setShareStatus}
+              />
+            )}
             <span className="acts-sep" aria-hidden="true" />
             {video.has_subtitles && (
               // On is terracotta, off is the same muted grey as the icons

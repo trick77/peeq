@@ -28,6 +28,7 @@ import {
   Copy,
   LoaderCircle,
   EllipsisVertical,
+  Share2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -70,6 +71,7 @@ const COMPONENTS = {
   verified: BadgeCheck, // YouTube's channel checkmark, not a peeq state
   refresh: RefreshCw,
   copy: Copy,
+  share: Share2, // share-link action (player action row + share popover)
   moreVertical: EllipsisVertical, // the row's 3-dot actions trigger
   spinner: LoaderCircle, // spun by .ui-spin — every async wait spins
 } satisfies Record<string, LucideIcon>;

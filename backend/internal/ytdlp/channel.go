@@ -4,12 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // ChannelEntry is one video from a flat channel listing. Flat entries are
-// metadata-poor by design (no description/published_at/availability): only
-// the fields below are reliably present, and ThumbnailURL is a REMOTE url,
-// never a local path.
+// metadata-poor by design (no description/availability): only the fields
+// below are reliably present, and ThumbnailURL is a REMOTE url, never a
+// local path.
+//
+// PublishedAt is YYYY-MM-DD and APPROXIMATE (see approximateDateArgs); it is
+// "" when the listing carried no timestamp. It must never be written to
+// videos.published_at, which holds the exact upload_date from a real
+// per-video metadata call made after download.
 type ChannelEntry struct {
 	ID              string
 	Title           string
@@ -17,6 +23,7 @@ type ChannelEntry struct {
 	DurationSeconds int
 	ThumbnailURL    string
 	LiveStatus      string
+	PublishedAt     string
 }
 
 // flatEntry mirrors one yt-dlp flat-playlist entry. duration is a float
@@ -28,9 +35,33 @@ type flatEntry struct {
 	URL        string  `json:"url"`
 	Duration   float64 `json:"duration"`
 	LiveStatus string  `json:"live_status"`
+	Timestamp  int64   `json:"timestamp"`
 	Thumbnails []struct {
 		URL string `json:"url"`
 	} `json:"thumbnails"`
+}
+
+// approximateDateArgs opts the channel-tab extractor into reporting an upload
+// date for flat entries. Without it, timestamp/upload_date/release_timestamp
+// are all null in a --flat-playlist listing (verified against the /videos tab
+// of a real channel); with it, timestamp is populated for ordinary uploads.
+//
+// It costs no extra request: the date is derived from the relative-time text
+// ("2 weeks ago") already present in the tab response, which is also why it is
+// APPROXIMATE — good to the day for recent uploads, coarser for old ones. That
+// precision matches what the inbox card renders ("3 days ago"), and the exact
+// date still arrives with the real metadata call once a video is downloaded.
+var approximateDateArgs = []string{"--extractor-args", "youtubetab:approximate_date"}
+
+// unixToDate converts yt-dlp's unix `timestamp` into the YYYY-MM-DD shape the
+// rest of peeq stores dates in (matching normalizeUploadDate's output). UTC,
+// so the same listing yields the same date regardless of host timezone.
+// Returns "" for a missing or non-positive timestamp.
+func unixToDate(ts int64) string {
+	if ts <= 0 {
+		return ""
+	}
+	return time.Unix(ts, 0).UTC().Format("2006-01-02")
 }
 
 type flatListing struct {
@@ -135,7 +166,9 @@ func (r *Runner) ChannelVideos(ctx context.Context, ucid string, n int) ([]Chann
 	}
 	items := fmt.Sprintf(":%d:1", n)
 	url := "https://www.youtube.com/channel/" + ucid + "/videos"
-	out, err := r.exec(ctx, cookieText, "-J", "--flat-playlist", "--skip-download", "--playlist-items", items, url)
+	args := []string{"-J", "--flat-playlist", "--skip-download", "--playlist-items", items}
+	args = append(args, approximateDateArgs...)
+	out, err := r.exec(ctx, cookieText, append(args, url)...)
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +192,7 @@ func (r *Runner) ChannelVideos(ctx context.Context, ucid string, n int) ([]Chann
 			DurationSeconds: int(e.Duration),
 			ThumbnailURL:    thumb,
 			LiveStatus:      e.LiveStatus,
+			PublishedAt:     unixToDate(e.Timestamp),
 		})
 	}
 	return entries, nil

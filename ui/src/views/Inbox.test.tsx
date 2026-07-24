@@ -13,6 +13,8 @@ function baseItem(overrides: Partial<PendingItem> = {}): PendingItem {
     duration_seconds: 125,
     url: "https://youtube.com/watch?v=v1",
     thumbnail_url: "https://img.example/v1.jpg",
+    published_at: "2026-07-20",
+    discovered_at: "2026-07-21 09:00:00",
     ...overrides,
   };
 }
@@ -318,5 +320,106 @@ describe("Inbox", () => {
       expect(screen.queryByText("First pending video")).not.toBeInTheDocument();
     });
     expect(screen.getByText("Second pending video")).toBeInTheDocument();
+  });
+
+  describe("card date", () => {
+    // formatAgo is relative to now, so the fixture dates are derived from the
+    // real clock rather than pinning it: fake timers deadlock testing-library's
+    // async polling, and a hard-coded date would rot into a different age.
+    function daysAgoISO(n: number): string {
+      return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+    }
+
+    it("renders the publish date in the byline, like the library card", async () => {
+      vi.mocked(listPending).mockResolvedValue([
+        baseItem({ published_at: daysAgoISO(4) }),
+      ]);
+      render(<Inbox />);
+      await screen.findByText("First pending video");
+      const cardA = screen
+        .getByText("First pending video")
+        .closest(".card") as HTMLElement;
+      const by = cardA.querySelector(".by") as HTMLElement;
+      expect(by.textContent).toContain("Channel One");
+      expect(by.textContent).toContain("4 days ago");
+      expect(by.querySelector(".dot")).toBeInTheDocument();
+    });
+
+    it("omits the date rather than showing discovered_at when unpublished", async () => {
+      vi.mocked(listPending).mockResolvedValue([
+        baseItem({ published_at: undefined, discovered_at: daysAgoISO(23) }),
+      ]);
+      render(<Inbox />);
+      await screen.findByText("First pending video");
+      const by = document.querySelector(".card .by") as HTMLElement;
+      expect(by.textContent).toContain("Channel One");
+      // The item was discovered 23 days ago, but a discovery date must NOT be
+      // rendered as a publish date — the whole reason the fields stay apart.
+      expect(by.textContent).not.toContain("ago");
+      expect(by.querySelector(".dot")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("sort", () => {
+    const older = baseItem({
+      video_id: "v3",
+      title: "Older video",
+      duration_seconds: 10,
+      published_at: "2026-07-01",
+    });
+    const newer = baseItem({
+      video_id: "v4",
+      title: "Anewer video",
+      duration_seconds: 9000,
+      published_at: "2026-07-23",
+    });
+
+    function titles(): string[] {
+      return Array.from(document.querySelectorAll(".card h3")).map(
+        (h) => h.textContent ?? "",
+      );
+    }
+
+    it("defaults to newest first", async () => {
+      vi.mocked(listPending).mockResolvedValue([older, newer]);
+      render(<Inbox />);
+      await screen.findByText("Older video");
+      expect(titles()).toEqual(["Anewer video", "Older video"]);
+    });
+
+    it("reorders the grid when a different order is picked", async () => {
+      const user = userEvent.setup();
+      vi.mocked(listPending).mockResolvedValue([older, newer]);
+      render(<Inbox />);
+      await screen.findByText("Older video");
+
+      await user.selectOptions(screen.getByLabelText("Sort"), "oldest");
+      expect(titles()).toEqual(["Older video", "Anewer video"]);
+
+      await user.selectOptions(screen.getByLabelText("Sort"), "longest");
+      expect(titles()).toEqual(["Anewer video", "Older video"]);
+
+      // Title order is independent of both date and duration, so it proves
+      // the select is really driving the comparator.
+      await user.selectOptions(screen.getByLabelText("Sort"), "title");
+      expect(titles()).toEqual(["Anewer video", "Older video"]);
+    });
+
+    it("orders a dateless item by its discovery day", async () => {
+      // A row the scanner has not healed yet must still land sensibly rather
+      // than sinking below everything.
+      vi.mocked(listPending).mockResolvedValue([
+        older,
+        baseItem({
+          video_id: "v5",
+          title: "Undated video",
+          published_at: undefined,
+          discovered_at: "2026-07-24 08:00:00",
+        }),
+      ]);
+      render(<Inbox />);
+      await screen.findByText("Undated video");
+      expect(titles()).toEqual(["Undated video", "Older video"]);
+    });
   });
 });

@@ -1,8 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
-import { Button } from "../ui";
 import {
-  addChannel,
   listChannels,
   subscribeChannel,
   unsubscribeChannel,
@@ -14,8 +12,6 @@ import {
   channelBannerUrl,
   type ChannelFilter,
 } from "../api/channels";
-import { CookieRequiredError } from "../api/downloads";
-import { isChannelURL } from "../youtube";
 import { gradientClassFor } from "../format";
 import type { AutoUnsubscribedChannel, Channel } from "../api/types";
 import { RowMenu } from "../components/RowMenu";
@@ -33,12 +29,12 @@ const CHIPS: { id: ChannelFilter; label: string }[] = [
   { id: "autodownload", label: "Auto-add" },
 ];
 
-// Channels — tracked/subscribed channel management: an add-channel form,
-// filter chips, and a top-bar search box, with each row showing the channel's
-// banner-and-avatar art, its counts, and a single ⋮ actions menu (Subscribe,
-// Open, Delete). Auto-add and the format override live on the channel's own
-// Settings tab, not here. Mirrors Library's chip/search pattern for visual
-// consistency.
+// Channels — tracked/subscribed channel management: filter chips and a top-bar
+// search box, with each row showing the channel's banner-and-avatar art, its
+// counts, a clickable subscription star, and a ⋮ actions menu (Open, Delete).
+// Adding a channel lives on the Add page; auto-add and the format override live
+// on the channel's own Settings tab, not here. Mirrors Library's chip/search
+// pattern for visual consistency.
 export function Channels({
   onOpenChannel,
   search = "",
@@ -58,14 +54,6 @@ export function Channels({
   // dialog for; deleteBusy disables the dialog while the request is in flight.
   const [pendingDelete, setPendingDelete] = useState<Channel | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [addUrl, setAddUrl] = useState("");
-  const [addSubscribe, setAddSubscribe] = useState(false);
-  const [addBusy, setAddBusy] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
-  const [added, setAdded] = useState<{
-    name: string;
-    subscribed: boolean;
-  } | null>(null);
   const [tombstones, setTombstones] = useState<AutoUnsubscribedChannel[]>([]);
   // dormant is deliberately its own list, fetched with filter "all" rather
   // than derived from `channels`. `channels` follows the active chip (e.g.
@@ -129,42 +117,6 @@ export function Channels({
     loadDormant();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // handleAdd tracks the pasted channel (subscribing too, if the box is
-  // ticked). It always shows a confirmation line rather than relying on the
-  // new row appearing: under a non-"all" chip the new channel often does not
-  // match the active filter, so the list would not visibly change and a
-  // successful add would read as a silent failure.
-  async function handleAdd(e: FormEvent) {
-    e.preventDefault();
-    const trimmed = addUrl.trim();
-    if (!trimmed || addBusy) return;
-    setAddError(null);
-    setAdded(null);
-    if (!isChannelURL(trimmed)) {
-      setAddError(
-        "Paste a channel link (a /channel/, /@handle, /c/, or /user/ URL).",
-      );
-      return;
-    }
-    setAddBusy(true);
-    try {
-      const channel = await addChannel(trimmed, addSubscribe);
-      setAdded({ name: channel.name, subscribed: channel.subscribed });
-      setAddUrl("");
-      load(filterRef.current);
-    } catch (err) {
-      if (err instanceof CookieRequiredError) {
-        setAddError(
-          "No YouTube cookie configured yet. Paste one on the Settings page before adding a channel.",
-        );
-      } else {
-        setAddError((err as Error).message ?? "Failed to add channel.");
-      }
-    } finally {
-      setAddBusy(false);
-    }
-  }
 
   function applyLocalUpdate(id: string, patch: Partial<Channel>) {
     setChannels((prev) =>
@@ -274,54 +226,6 @@ export function Channels({
 
   return (
     <>
-      <form className="sect channel-add" onSubmit={handleAdd}>
-        <div className="paste">
-          <label className="field">
-            <Icon
-              name="link"
-              size="18px"
-              style={{ color: "var(--color-faint)" }}
-            />
-            <input
-              value={addUrl}
-              onChange={(e) => setAddUrl(e.target.value)}
-              placeholder="https://www.youtube.com/@handle"
-              spellCheck={false}
-              aria-label="Channel URL"
-            />
-          </label>
-          {/* The label names the outcome rather than the mechanism, so the
-              Subscribe checkbox visibly changes what the button will do. */}
-          <Button type="submit" busy={addBusy} disabled={!addUrl.trim()}>
-            {!addBusy && <Icon name="plus" size="18px" />}
-            {addBusy
-              ? addSubscribe
-                ? "Subscribing"
-                : "Tracking"
-              : addSubscribe
-                ? "Subscribe"
-                : "Track"}
-          </Button>
-        </div>
-        <label className="ctrl channel-toggle" style={{ marginTop: 10 }}>
-          <input
-            type="checkbox"
-            checked={addSubscribe}
-            onChange={(e) => setAddSubscribe(e.target.checked)}
-            aria-label="Subscribe"
-          />
-          Subscribe
-        </label>
-        {addError ? <div className="errline">{addError}</div> : null}
-        {added ? (
-          <div className="hint" style={{ marginTop: 10 }}>
-            <span className="led" />
-            {added.subscribed
-              ? `Subscribed to ${added.name} — new uploads will be picked up on the next scan.`
-              : `Tracked ${added.name} — not subscribed, so new uploads won't be picked up yet.`}
-          </div>
-        ) : null}
-      </form>
       <div className="chips">
         {CHIPS.map((chip) => (
           <button
@@ -374,16 +278,6 @@ export function Channels({
                     c.name
                   )}
                 </h3>
-                <span
-                  className={`chan-sub-star${c.subscribed ? "" : " off"}`}
-                  title={c.subscribed ? "Subscribed" : "Not subscribed"}
-                >
-                  <Icon
-                    name={c.subscribed ? "starFilled" : "star"}
-                    size="15px"
-                    label={c.subscribed ? "Subscribed" : "Not subscribed"}
-                  />
-                </span>
               </div>
               <div className="channel-by">
                 {c.handle ? `${c.handle} · ` : ""}
@@ -391,31 +285,51 @@ export function Channels({
                 downloaded
               </div>
             </div>
-            <RowMenu
-              label={`Actions for ${c.name}`}
-              actions={[
-                {
-                  label: c.subscribed ? "Unsubscribe" : "Subscribe",
-                  icon: c.subscribed ? "starFilled" : "star",
-                  onClick: () => handleToggleSubscribe(c),
-                },
-                ...(onOpenChannel
-                  ? [
-                      {
-                        label: "Open channel",
-                        icon: "externalLink" as const,
-                        onClick: () => onOpenChannel(c.id),
-                      },
-                    ]
-                  : []),
-                {
-                  label: "Delete channel",
-                  icon: "trash",
-                  danger: true,
-                  onClick: () => setPendingDelete(c),
-                },
-              ]}
-            />
+            {/* The star and the ⋮ menu share one plate so they read as a single
+                control cluster on the row's right edge — where the banner scrim
+                is at its most transparent, a plate gives them a surface to sit
+                on instead of floating on the artwork. */}
+            <div className="chan-rowctl">
+              {/* The star both shows and toggles subscription — gold/filled when
+                  subscribed, faint/outline when not. */}
+              <button
+                type="button"
+                className={`chan-sub-star${c.subscribed ? "" : " off"}`}
+                onClick={() => handleToggleSubscribe(c)}
+                aria-pressed={c.subscribed}
+                title={
+                  c.subscribed
+                    ? "Subscribed — click to unsubscribe"
+                    : "Not subscribed — click to subscribe"
+                }
+              >
+                <Icon
+                  name={c.subscribed ? "starFilled" : "star"}
+                  size="18px"
+                  label={c.subscribed ? "Unsubscribe" : "Subscribe"}
+                />
+              </button>
+              <RowMenu
+                label={`Actions for ${c.name}`}
+                actions={[
+                  ...(onOpenChannel
+                    ? [
+                        {
+                          label: "Open channel",
+                          icon: "externalLink" as const,
+                          onClick: () => onOpenChannel(c.id),
+                        },
+                      ]
+                    : []),
+                  {
+                    label: "Delete channel",
+                    icon: "trash",
+                    danger: true,
+                    onClick: () => setPendingDelete(c),
+                  },
+                ]}
+              />
+            </div>
           </div>
         ))}
       </div>

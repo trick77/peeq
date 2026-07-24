@@ -18,7 +18,10 @@ export type ViewId =
   | "channels"
   | "channel"
   | "activity"
-  | "settings";
+  | "settings"
+  // share is the public /s/<token> page — reached only by a share link, never
+  // a rail item, and rendered chromeless (no rail/top bar) above the app shell.
+  | "share";
 
 type NavItem = {
   id: ViewId;
