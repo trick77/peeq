@@ -159,6 +159,20 @@ export function Library({
     };
   }, [filter, category, debouncedQuery, sort]);
 
+  // If the selected category vanishes when the top chip changes (e.g. no
+  // Music among Unwatched), fall back to All categories so the grid isn't
+  // stranded on an invisible filter.
+  useEffect(() => {
+    if (
+      category !== "all" &&
+      !allVideos.some(
+        (v) => matchesFilter(v, filter) && v.category === category,
+      )
+    ) {
+      setCategory("all");
+    }
+  }, [filter, allVideos]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // A video only enters the Library once its download finishes, so the list
   // has to refresh when one does. App.tsx already owns the single SSE
   // subscription and the queue poll for the whole session, so rather than run
@@ -258,6 +272,10 @@ export function Library({
   // watched videos still show inline there.
   const visible = videos.filter((v) => matchesFilter(v, filter));
 
+  // Category row scoped to the active watch-status chip, so it only offers
+  // categories that actually exist under the current top-level filter.
+  const catScope = allVideos.filter((v) => matchesFilter(v, filter));
+
   function renderCard(video: Video) {
     return (
       <VideoCard
@@ -297,10 +315,10 @@ export function Library({
             className={`catchip${category === "all" ? " on" : ""}`}
             onClick={() => setCategory("all")}
           >
-            All categories <span className="n">{allVideos.length}</span>
+            All categories <span className="n">{catScope.length}</span>
           </button>
           {CATEGORIES.filter((c) =>
-            allVideos.some((v) => v.category === c.id),
+            catScope.some((v) => v.category === c.id),
           ).map((c) => (
             <button
               key={c.id}
@@ -311,7 +329,7 @@ export function Library({
               <span className="dotc" style={{ background: c.color }} />
               {c.label}{" "}
               <span className="n">
-                {allVideos.filter((v) => v.category === c.id).length}
+                {catScope.filter((v) => v.category === c.id).length}
               </span>
             </button>
           ))}

@@ -538,6 +538,99 @@ describe("Library category chips", () => {
     expect(aiChip).toHaveClass("on");
   });
 
+  it("scopes the category row to the active status chip", async () => {
+    // allVideos (the unfiltered load) drives the category row: an unwatched AI
+    // video and a watched News video. Each status chip should only offer the
+    // categories present among videos matching it.
+    const aiUnwatched = categoryVideo({
+      id: "v1",
+      title: "ai vid",
+      category: "ai",
+      watched: false,
+    });
+    const newsWatched = categoryVideo({
+      id: "v2",
+      title: "news vid",
+      category: "news",
+      watched: true,
+    });
+    vi.mocked(listVideos).mockImplementation(async (opts) => {
+      if (opts?.filter === "all") return [aiUnwatched, newsWatched];
+      if (opts?.filter === "watched") return [newsWatched];
+      if (opts?.filter === "unwatched") return [aiUnwatched];
+      return [];
+    });
+
+    render(<Library onOpenVideo={() => {}} search="" />);
+    await screen.findByText("ai vid");
+
+    // Default Unwatched chip: only the AI video qualifies, so the row offers AI
+    // (not News) and "All categories" counts the subset (1), not the full 2.
+    await waitFor(() => {
+      const cats = Array.from(
+        document.querySelectorAll(".catchips .catchip"),
+      ).map((c) => c.textContent ?? "");
+      expect(cats.some((t) => /AI/.test(t))).toBe(true);
+      expect(cats.some((t) => /News/.test(t))).toBe(false);
+    });
+    expect(document.querySelector(".catchips .catchip")?.textContent).toMatch(
+      /All categories\s*1/,
+    );
+
+    // Switch to Watched: now only the News category is present.
+    fireEvent.click(screen.getByRole("button", { name: /Watched/ }));
+    await waitFor(() => {
+      const cats = Array.from(
+        document.querySelectorAll(".catchips .catchip"),
+      ).map((c) => c.textContent ?? "");
+      expect(cats.some((t) => /News/.test(t))).toBe(true);
+      expect(cats.some((t) => /AI/.test(t))).toBe(false);
+    });
+  });
+
+  it("falls back to All categories when the selected category vanishes under the new chip", async () => {
+    const aiUnwatched = categoryVideo({
+      id: "v1",
+      title: "ai vid",
+      category: "ai",
+      watched: false,
+    });
+    const newsWatched = categoryVideo({
+      id: "v2",
+      title: "news vid",
+      category: "news",
+      watched: true,
+    });
+    vi.mocked(listVideos).mockImplementation(async (opts) => {
+      if (opts?.filter === "all") return [aiUnwatched, newsWatched];
+      if (opts?.category === "news") return [newsWatched];
+      if (opts?.filter === "watched") return [newsWatched];
+      return [aiUnwatched];
+    });
+
+    render(<Library onOpenVideo={() => {}} search="" />);
+    // Under All, the News category chip is available; select it.
+    fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
+    const newsChip = await screen.findByRole("button", { name: /News/ });
+    fireEvent.click(newsChip);
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ category: "news" }),
+      );
+    });
+    vi.mocked(listVideos).mockClear();
+
+    // Switch to Unwatched: News has no unwatched video, so the stale category
+    // is dropped and the list refetches with "all" rather than stranding the
+    // grid on an invisible filter.
+    fireEvent.click(screen.getByRole("button", { name: /Unwatched/ }));
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: "unwatched", category: "all" }),
+      );
+    });
+  });
+
   it("keeps the selected category when a finishing download refreshes the list", async () => {
     // Given: a category filter is active. A video joins the library the moment
     // its download completes, and App signals that by handing down a changed
