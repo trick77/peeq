@@ -611,3 +611,49 @@ func TestReprocess_clearSummaryFailureIs500(t *testing.T) {
 		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestReprocess_sponsorblockResetFailureIs500 asserts the endpoint fails loudly
+// when it cannot clear the SponsorBlock refresh sentinel. A 202 there would be a
+// half-truth: the summary would be redone, but the video would keep whatever
+// segments it already had — the worker's stale-claim query only reconsiders a
+// video whose sentinel was cleared, so nothing would ever re-read it. Failing
+// closed keeps Reprocess meaning "redo all of it".
+func TestReprocess_sponsorblockResetFailureIs500(t *testing.T) {
+	deps, db := searchTestDepsWithDB(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath:       "/media/v1.mp4",
+		SubtitleRelPath: "v1.en.vtt",
+	}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
+	spy := &spySummaryJobs{}
+	deps.SummaryJobs = spy
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// Block exactly the sentinel column, leaving the summary_status, summary and
+	// category writes ahead of it working. The trigger has to go in after the
+	// seed: SetDownloaded stamps sponsorblock_refreshed_at itself, so an earlier
+	// trigger would abort the seed instead of the call under test.
+	if _, err := db.Exec(`CREATE TRIGGER no_sponsorblock BEFORE UPDATE OF sponsorblock_refreshed_at ON videos
+		BEGIN SELECT RAISE(ABORT, 'sponsorblock refresh writes blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+	// The reset runs before the enqueue, so a failure must not leave a job
+	// queued — that job would burn an LLM call and report success.
+	if spy.lastID != "" {
+		t.Fatalf("enqueued %q, want no job after the reset failed", spy.lastID)
+	}
+}
