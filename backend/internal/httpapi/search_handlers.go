@@ -116,10 +116,13 @@ func snippet(s string) string {
 	return s[:160] + "…"
 }
 
-// handleResummarize answers POST /api/videos/{id}/resummarize: resets the
-// video's summary_status to pending and hands it to SummaryJobs for
-// (re)processing, returning 202 once the job is enqueued.
-func (s *server) handleResummarize(w http.ResponseWriter, r *http.Request) {
+// handleReprocess answers POST /api/videos/{id}/reprocess: re-runs the whole
+// post-import pipeline for one video. It resets the summary_status to pending
+// and re-queues the analysis (summarize → classify → embed), and clears the
+// SponsorBlock refresh sentinel so segments re-fetch too. Returns 202 once the
+// summary job is enqueued. This is the Player's manual recovery action when a
+// step went wrong (e.g. a summarize that failed).
+func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	if s.videos == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "videos are not configured")
 		return
@@ -138,7 +141,7 @@ func (s *server) handleResummarize(w http.ResponseWriter, r *http.Request) {
 	// re-enqueuing would only flip a valid summary to no_transcript. Point the
 	// caller at re-download (Phase 3.1b) instead of corrupting the summary.
 	if v.Status == "tombstoned" || v.MediaPath == "" || v.SubtitlePath == "" {
-		writeJSONError(w, http.StatusConflict, "media not present; re-download to restore before resummarizing")
+		writeJSONError(w, http.StatusConflict, "media not present; re-download to restore before reprocessing")
 		return
 	}
 	if s.summaryJobs == nil {
@@ -152,7 +155,7 @@ func (s *server) handleResummarize(w http.ResponseWriter, r *http.Request) {
 	// Wipe the stored analysis, or this whole endpoint is a no-op. The summarize
 	// pipeline is resumable: it skips the summary step whenever summary <> '', so
 	// that a retry of the fragile key-points step does not pay for the summary a
-	// second time. Re-summarize is precisely the case where the existing text is
+	// second time. Reprocess is precisely the case where the existing text is
 	// the thing to throw away.
 	if err := s.videos.ClearSummary(id); err != nil {
 		serverError(w, r, err, "clear summary failed")
@@ -161,9 +164,16 @@ func (s *server) handleResummarize(w http.ResponseWriter, r *http.Request) {
 	// Clear the category too, so the worker re-classifies. Classification is
 	// skipped for a video that already has one (otherwise every resumed job
 	// would pay for a redundant call), which would make a wrong category
-	// permanent — Re-summarize is the only way a user can correct one.
+	// permanent — Reprocess is the only way a user can correct one.
 	if err := s.videos.SetCategory(id, videos.UncategorizedCategory); err != nil {
 		serverError(w, r, err, "reset category failed")
+		return
+	}
+	// Force a fresh SponsorBlock fetch: clearing the refresh sentinel makes the
+	// video sort first in the worker's stale-claim query, so its segments are
+	// re-read on the next pass. Independent of the summary job above.
+	if err := s.videos.ResetSponsorblockRefresh(id); err != nil {
+		serverError(w, r, err, "reset sponsorblock refresh failed")
 		return
 	}
 	if _, err := s.summaryJobs.Enqueue(id); err != nil {

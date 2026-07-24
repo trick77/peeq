@@ -4,7 +4,18 @@ import { Icon, type IconName } from "../icons";
 export type RowMenuAction = {
   label: string;
   icon: IconName;
-  onClick: () => void;
+  // onClick fires for button items (callbacks). Omit it for href items.
+  onClick?: () => void;
+  // href renders the item as a link instead of a button — for actions that are
+  // navigations rather than callbacks (open a page, save a file). newTab opens
+  // it in a new tab (external links); download hints the browser to save the
+  // target rather than navigate to it.
+  href?: string;
+  newTab?: boolean;
+  download?: boolean;
+  // flag is a short trailing tag (e.g. "failed") marking an item that needs
+  // attention; it pairs with RowMenu's `attention` dot on the trigger.
+  flag?: string;
   // danger renders the item in the destructive style (muted red, solid-red
   // hover) — for the one irreversible entry, Delete.
   danger?: boolean;
@@ -19,12 +30,16 @@ export type RowMenuAction = {
 // The trigger's visibility (quiet-until-hover on desktop, always shown on
 // touch) is a concern of the row's CSS, not this component — it only sets
 // aria-expanded, which that CSS keys off to keep an open menu's dots visible.
+// `attention` renders a small dot on the trigger, so a menu holding an item
+// that needs action (a failed step) reads at a glance without being opened.
 export function RowMenu({
   actions,
   label = "Actions",
+  attention = false,
 }: {
   actions: RowMenuAction[];
   label?: string;
+  attention?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLSpanElement | null>(null);
@@ -34,7 +49,7 @@ export function RowMenu({
   // Focus the first item when the menu opens, so the keyboard lands inside it.
   useEffect(() => {
     if (!open) return;
-    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
   }, [open]);
 
   // Close on an outside click or Escape. Escape returns focus to the trigger;
@@ -63,10 +78,10 @@ export function RowMenu({
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
     const items = Array.from(
-      menuRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
     );
     if (items.length === 0) return;
-    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    const i = items.indexOf(document.activeElement as HTMLElement);
     const next =
       e.key === "ArrowDown"
         ? items[(i + 1) % items.length]
@@ -77,7 +92,7 @@ export function RowMenu({
   function pick(action: RowMenuAction) {
     setOpen(false);
     triggerRef.current?.focus();
-    action.onClick();
+    action.onClick?.();
   }
 
   return (
@@ -92,6 +107,7 @@ export function RowMenu({
         onClick={() => setOpen((v) => !v)}
       >
         <Icon name="moreVertical" size="18px" />
+        {attention ? <span className="kebab-dot" aria-hidden="true" /> : null}
       </button>
       {open ? (
         <div
@@ -100,18 +116,36 @@ export function RowMenu({
           ref={menuRef}
           onKeyDown={onMenuKeyDown}
         >
-          {actions.map((a) => (
-            <button
-              key={a.label}
-              type="button"
-              role="menuitem"
-              className={a.danger ? "danger" : undefined}
-              onClick={() => pick(a)}
-            >
-              <Icon name={a.icon} size="16px" />
-              {a.label}
-            </button>
-          ))}
+          {actions.map((a) =>
+            a.href ? (
+              <a
+                key={a.label}
+                role="menuitem"
+                className={a.danger ? "danger" : undefined}
+                href={a.href}
+                target={a.newTab ? "_blank" : undefined}
+                rel={a.newTab ? "noreferrer" : undefined}
+                download={a.download ? "" : undefined}
+                onClick={() => pick(a)}
+              >
+                <Icon name={a.icon} size="16px" />
+                {a.label}
+                {a.flag ? <span className="mi-flag">{a.flag}</span> : null}
+              </a>
+            ) : (
+              <button
+                key={a.label}
+                type="button"
+                role="menuitem"
+                className={a.danger ? "danger" : undefined}
+                onClick={() => pick(a)}
+              >
+                <Icon name={a.icon} size="16px" />
+                {a.label}
+                {a.flag ? <span className="mi-flag">{a.flag}</span> : null}
+              </button>
+            ),
+          )}
         </div>
       ) : null}
     </span>

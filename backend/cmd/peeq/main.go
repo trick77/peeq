@@ -54,17 +54,6 @@ func main() {
 	logLevel := parseLogLevel(envDefault("BACKEND_LOG_LEVEL", "info"))
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
-	// One-shot CLI subcommands (e.g. the TubeArchivist migration) run instead
-	// of the server. With no arguments — which is how the container starts —
-	// this is a no-op and the server boots exactly as before.
-	if handled, err := dispatchSubcommand(os.Args); handled {
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", os.Args[1], err)
-			os.Exit(1)
-		}
-		return
-	}
-
 	slog.Info("starting peeq", "version", version.Version)
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)

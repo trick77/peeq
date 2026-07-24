@@ -16,7 +16,7 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 )
 
-// searchTestDeps builds Deps wired for the search/resummarize API: dev auth
+// searchTestDeps builds Deps wired for the search/reprocess API: dev auth
 // plus videos + rag stores sharing one test database.
 func searchTestDeps(t *testing.T) Deps {
 	t.Helper()
@@ -285,14 +285,14 @@ func TestSearchUnavailable_returns503(t *testing.T) {
 	}
 }
 
-// TestResummarizeEnqueues asserts POST .../resummarize resets summary_status
+// TestReprocessEnqueues asserts POST .../reprocess resets summary_status
 // to pending and hands the video id to SummaryJobs, returning 202.
-func TestResummarizeEnqueues(t *testing.T) {
+func TestReprocessEnqueues(t *testing.T) {
 	deps := searchTestDeps(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
-	// The resummarize guard requires media + a subtitle to be present, so
+	// The reprocess guard requires media + a subtitle to be present, so
 	// seed a normal downloaded-with-subtitle video (the positive path).
 	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
 		MediaPath:       "/media/v1.mp4",
@@ -307,12 +307,25 @@ func TestResummarizeEnqueues(t *testing.T) {
 	if err := deps.Videos.SetCategory("v1", "gaming"); err != nil {
 		t.Fatalf("seed category: %v", err)
 	}
+	// Stamp sponsorblock_refreshed_at to now (via a segment write), so the video
+	// is NOT a stale-claim candidate going in. Reprocess must reset it back to
+	// the never-fetched sentinel and make it claimable again.
+	if err := deps.Videos.SetSponsorblockSegments("v1", `[{"category":"sponsor","start":1,"end":2}]`); err != nil {
+		t.Fatalf("seed sponsorblock segments: %v", err)
+	}
+	before, err := deps.Videos.ClaimSponsorblockStale(10)
+	if err != nil {
+		t.Fatalf("claim sponsorblock stale (before): %v", err)
+	}
+	if containsCandidate(before, "v1") {
+		t.Fatalf("v1 should not be a stale sponsorblock candidate before reprocess")
+	}
 	spy := &spySummaryJobs{}
 	deps.SummaryJobs = spy
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -331,7 +344,7 @@ func TestResummarizeEnqueues(t *testing.T) {
 		t.Fatalf("summary_status = %q, want pending", got.SummaryStatus)
 	}
 	// The worker skips classification for a video that already has a category,
-	// so the reset here is what keeps Re-summarize a working way to correct a
+	// so the reset here is what keeps Reprocess a working way to correct a
 	// wrong one.
 	if got.Category != videos.UncategorizedCategory {
 		t.Fatalf("category = %q, want it cleared so the worker re-classifies", got.Category)
@@ -343,17 +356,36 @@ func TestResummarizeEnqueues(t *testing.T) {
 		t.Fatalf("expected the stored analysis cleared, got summary=%q chapters=%q key_points=%q",
 			got.Summary, got.Chapters, got.KeyPoints)
 	}
+	// Reprocess also forces a fresh SponsorBlock read: clearing the refresh
+	// sentinel makes the (recently-stamped) video a stale-claim candidate again.
+	after, err := deps.Videos.ClaimSponsorblockStale(10)
+	if err != nil {
+		t.Fatalf("claim sponsorblock stale (after): %v", err)
+	}
+	if !containsCandidate(after, "v1") {
+		t.Fatalf("v1 should be a stale sponsorblock candidate after reprocess (refresh sentinel not reset)")
+	}
 }
 
-// TestResummarize_missingVideo404 asserts unknown ids 404 rather than
+// containsCandidate reports whether id is among the sponsorblock candidates.
+func containsCandidate(cands []videos.SponsorblockCandidate, id string) bool {
+	for _, c := range cands {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// TestReprocess_missingVideo404 asserts unknown ids 404 rather than
 // silently enqueueing.
-func TestResummarize_missingVideo404(t *testing.T) {
+func TestReprocess_missingVideo404(t *testing.T) {
 	deps := searchTestDeps(t)
 	deps.SummaryJobs = &spySummaryJobs{}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/videos/missing/resummarize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/missing/reprocess", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -363,14 +395,14 @@ func TestResummarize_missingVideo404(t *testing.T) {
 	}
 }
 
-// TestResummarize_noJobsConfigured503 asserts the endpoint fails closed when
+// TestReprocess_noJobsConfigured503 asserts the endpoint fails closed when
 // SummaryJobs isn't wired.
-func TestResummarize_noJobsConfigured503(t *testing.T) {
+func TestReprocess_noJobsConfigured503(t *testing.T) {
 	deps := searchTestDeps(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
-	// Media + subtitle present so the new resummarize guard doesn't shadow
+	// Media + subtitle present so the new reprocess guard doesn't shadow
 	// the 503-on-unconfigured-SummaryJobs path this test exercises.
 	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
 		MediaPath:       "/media/v1.mp4",
@@ -381,7 +413,7 @@ func TestResummarize_noJobsConfigured503(t *testing.T) {
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -391,11 +423,11 @@ func TestResummarize_noJobsConfigured503(t *testing.T) {
 	}
 }
 
-// TestResummarize_tombstonedReturns409 asserts a tombstoned video (no media,
+// TestReprocess_tombstonedReturns409 asserts a tombstoned video (no media,
 // no subtitle on disk) is rejected rather than enqueued: re-enqueuing would
 // only flip its valid, kept summary to no_transcript for lack of a
 // transcript to summarize.
-func TestResummarize_tombstonedReturns409(t *testing.T) {
+func TestReprocess_tombstonedReturns409(t *testing.T) {
 	deps := searchTestDeps(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
@@ -411,7 +443,7 @@ func TestResummarize_tombstonedReturns409(t *testing.T) {
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -431,10 +463,10 @@ func TestResummarize_tombstonedReturns409(t *testing.T) {
 	}
 }
 
-// TestResummarize_missingSubtitleReturns409 asserts a video that still has
+// TestReprocess_missingSubtitleReturns409 asserts a video that still has
 // its media file but lost its subtitle (e.g. partial cleanup) is also
 // rejected: there is no transcript to (re)summarize either way.
-func TestResummarize_missingSubtitleReturns409(t *testing.T) {
+func TestReprocess_missingSubtitleReturns409(t *testing.T) {
 	deps := searchTestDeps(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
@@ -451,7 +483,7 @@ func TestResummarize_missingSubtitleReturns409(t *testing.T) {
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -461,10 +493,10 @@ func TestResummarize_missingSubtitleReturns409(t *testing.T) {
 	}
 }
 
-// TestResummarize_downloadedWithSubtitleReturns202 is the positive
+// TestReprocess_downloadedWithSubtitleReturns202 is the positive
 // companion: a normal downloaded video with a subtitle present must still
 // be enqueued for (re)summarization.
-func TestResummarize_downloadedWithSubtitleReturns202(t *testing.T) {
+func TestReprocess_downloadedWithSubtitleReturns202(t *testing.T) {
 	deps := searchTestDeps(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
@@ -483,7 +515,7 @@ func TestResummarize_downloadedWithSubtitleReturns202(t *testing.T) {
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -496,12 +528,12 @@ func TestResummarize_downloadedWithSubtitleReturns202(t *testing.T) {
 	}
 }
 
-// TestResummarize_categoryResetFailure500 asserts the endpoint fails loudly
+// TestReprocess_categoryResetFailure500 asserts the endpoint fails loudly
 // when it cannot clear the category. Swallowing that error would return 202
 // while leaving the old category pinned — the worker skips classification for
 // a video that already has one, so the user's correction would be silently
 // dropped.
-func TestResummarize_categoryResetFailure500(t *testing.T) {
+func TestReprocess_categoryResetFailure500(t *testing.T) {
 	db := openTestDB(t)
 	sessions := auth.NewSessionStore(db, false)
 	users := auth.NewUserStore(db)
@@ -531,7 +563,7 @@ func TestResummarize_categoryResetFailure500(t *testing.T) {
 
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
-	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -541,11 +573,11 @@ func TestResummarize_categoryResetFailure500(t *testing.T) {
 	}
 }
 
-// TestResummarize_clearSummaryFailureIs500 asserts the endpoint fails loudly
+// TestReprocess_clearSummaryFailureIs500 asserts the endpoint fails loudly
 // when it cannot wipe the stored analysis. Reporting 202 there would be a lie:
 // the summarize pipeline skips the summary step whenever summary <> ”, so the
 // job would run and hand back the exact text the user asked to be redone.
-func TestResummarize_clearSummaryFailureIs500(t *testing.T) {
+func TestReprocess_clearSummaryFailureIs500(t *testing.T) {
 	deps, db := searchTestDepsWithDB(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
@@ -570,7 +602,7 @@ func TestResummarize_clearSummaryFailureIs500(t *testing.T) {
 		t.Fatalf("create trigger: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/resummarize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

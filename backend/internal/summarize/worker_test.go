@@ -1224,7 +1224,7 @@ func TestWorkerMusicOnlyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 		[][]float32{make([]float32, 1536)}); err != nil {
 		t.Fatalf("seed chunks: %v", err)
 	}
-	// Reproduce what handleResummarize actually does before enqueuing: it wipes
+	// Reproduce what handleReprocess actually does before enqueuing: it wipes
 	// the summary row and leaves the chunks for the worker. Seeding the summary
 	// and enqueuing directly would test a state the UI can never produce, and
 	// would hide a worker that skips the chunk delete on a blank row.
@@ -1355,7 +1355,7 @@ func TestDiscardStaleAnalysisSurvivesWriteFailures(t *testing.T) {
 // TestDiscardStaleAnalysisSkipsTheRowWriteWhenNothingIsStored asserts the row
 // write is skipped for an already-blank row — but the chunk delete still runs,
 // because a blank summary column does not imply there are no chunks (see the
-// handleResummarize note on discardStaleAnalysis).
+// handleReprocess note on discardStaleAnalysis).
 func TestDiscardStaleAnalysisSkipsTheRowWriteWhenNothingIsStored(t *testing.T) {
 	h := newWorkerHarness(t)
 	if err := h.videos.Upsert(videos.Video{ID: "v12", URL: "https://youtu.be/v12"}); err != nil {

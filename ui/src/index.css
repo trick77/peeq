@@ -2603,7 +2603,8 @@ textarea.cookiebox:focus {
   flex-direction: column;
   gap: 1px;
 }
-.rowmenu button {
+.rowmenu button,
+.rowmenu a {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -2616,9 +2617,11 @@ textarea.cookiebox:focus {
   font: inherit;
   font-size: 13px;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
 }
-.rowmenu button:hover {
+.rowmenu button:hover,
+.rowmenu a:hover {
   background: var(--color-elevated-hover);
   color: var(--color-ink);
 }
@@ -2629,6 +2632,40 @@ textarea.cookiebox:focus {
 .rowmenu button.danger:hover {
   background: var(--color-danger);
   color: #fff;
+}
+/* A trailing "needs attention" tag on an item (e.g. Reprocess when the last
+   analysis failed). Pushed to the right edge; muted red. */
+.rowmenu .mi-flag {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #e79393;
+}
+/* The attention dot on the ⋮ trigger — mirrors an item flagged inside. */
+.kebab {
+  position: relative;
+}
+.kebab .kebab-dot {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  box-shadow: 0 0 0 2px var(--color-bg);
+}
+/* In the Player action row the ⋮ sits among always-visible controls, so it
+   must be shown at rest (the row has no hover-reveal like the channel list). */
+.playacts .kebab {
+  opacity: 1;
+  border-color: var(--color-border);
+  background: var(--color-panel);
+}
+.playacts .kebab:hover {
+  background: var(--color-active);
 }
 
 /* ---- Confirm dialog (ConfirmDialog) ----

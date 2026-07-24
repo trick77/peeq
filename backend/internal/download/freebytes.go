@@ -18,7 +18,3 @@ func freeBytes(dir string) (uint64, error) {
 	}
 	return stat.Bavail * uint64(stat.Bsize), nil
 }
-
-// FreeBytes is the exported entry point to freeBytes for callers outside this
-// package, e.g. the TubeArchivist import's free-space preflight.
-func FreeBytes(dir string) (uint64, error) { return freeBytes(dir) }

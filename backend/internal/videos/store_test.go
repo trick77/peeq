@@ -438,7 +438,7 @@ func TestTombstone_clearsMediaPathSetsStatusKeepsRow(t *testing.T) {
 // TestTombstoneClearsSubtitlePathKeepsSummary guards against a stale
 // subtitle_path (and its .vtt) surviving a tombstone: the DTO derives
 // has_subtitles from subtitle_path, so a leftover value would lie about
-// transcript availability, and a subsequent resummarize must not flip a
+// transcript availability, and a subsequent reprocess must not flip a
 // valid, kept summary to no_transcript.
 func TestTombstoneClearsSubtitlePathKeepsSummary(t *testing.T) {
 	s := New(openTestDB(t))
