@@ -93,6 +93,14 @@ export function ShareControl({ videoId, status, onStatusChange }: Props) {
   const wrapRef = useRef<HTMLSpanElement | null>(null);
   const copyTimer = useRef<number | undefined>(undefined);
 
+  // Re-seed the selected chip when the status changes. status often arrives
+  // asynchronously (the Player mounts this with {shared:false} and fills it in
+  // after getShareStatus resolves), so a mount-only seed would leave the popover
+  // showing "7 days" for a link that is actually, say, a 30-day one.
+  useEffect(() => {
+    setTtl(bucketTtl(status));
+  }, [status]);
+
   // Close on an outside click or Escape.
   useEffect(() => {
     if (!open) return;

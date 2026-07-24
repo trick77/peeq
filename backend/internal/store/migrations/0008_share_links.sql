@@ -14,11 +14,13 @@
 -- design — a leaked token grants read to exactly the videos already chosen for
 -- sharing, and only until it expires or is revoked.
 --
--- UNIQUE(video_id) enforces one live link per video: re-sharing REPLACES the
--- previous token (see Store.Create's upsert), so an old link stops working the
--- moment a new one is minted. expires_at NULL means "never expires"; a non-null
--- value is a UTC 'YYYY-MM-DD HH:MM:SS' datetime compared against datetime('now')
--- on resolve, mirroring the sessions table.
+-- UNIQUE(video_id) enforces one live link per video. Re-sharing a video that
+-- still has a LIVE link keeps that token and only re-stamps its expiry (see
+-- Store.Upsert); a new token is minted only once the previous one has expired or
+-- been revoked. Deleting the row (Stop sharing) is what kills a link
+-- immediately. expires_at NULL means "never expires"; a non-null value is a UTC
+-- 'YYYY-MM-DD HH:MM:SS' datetime compared against datetime('now') on resolve,
+-- mirroring the sessions table.
 --
 -- ON DELETE CASCADE ties the link's life to the video's: deleting the video
 -- drops its share link too. This SHOULD cascade (unlike activity_events, which

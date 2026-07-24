@@ -11,15 +11,9 @@ import {
 import { formatDuration } from "../format";
 import { daysUntil } from "../components/ShareControl";
 
-// fmt renders a highlight timestamp as m:ss / h:mm:ss for the seek rows.
-function fmt(totalSeconds: number): string {
-  const s = Math.max(0, Math.floor(totalSeconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
-  return `${h > 0 ? `${h}:` : ""}${mm}:${String(sec).padStart(2, "0")}`;
-}
+// Highlight timestamps use the same m:ss / h:mm:ss formatter as the rest of the
+// app (Player aliases it the same way).
+const fmt = formatDuration;
 
 // expiryLabel is the footer's "link expires …" note.
 function expiryLabel(video: PublicVideo): string {

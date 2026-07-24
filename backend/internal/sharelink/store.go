@@ -3,10 +3,12 @@
 //
 // A share link is a capability URL: an opaque, high-entropy token that grants
 // read access to exactly one video, optionally until an expiry, and is revocable
-// at any time. There is one live link per video — re-sharing replaces the old
-// token — which is what Create's upsert against the UNIQUE(video_id) index
-// enforces. See migration 0008_share_links.sql for why the raw token (not just a
-// hash) is stored here, unlike sessions and the machine api token.
+// at any time. There is one live link per video (the UNIQUE(video_id) index):
+// re-sharing a still-live link keeps its token and only re-stamps the expiry,
+// minting a new token only once the previous one has expired or been revoked;
+// DeleteByVideo (Stop sharing) is what kills a link immediately. See migration
+// 0008_share_links.sql for why the raw token (not just a hash) is stored here,
+// unlike sessions and the machine api token.
 package sharelink
 
 import (

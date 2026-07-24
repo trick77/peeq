@@ -64,9 +64,12 @@ func (s *server) shareURL(token string) string {
 	return strings.TrimRight(s.publicURL, "/") + path
 }
 
-// handleCreateShare mints (or replaces) the share link for a video. The body is
-// {"ttl": "24h"|"7d"|"30d"|"never"|""}; re-sharing an already-shared video
-// rotates the token, so the previous link stops working immediately.
+// handleCreateShare creates or updates the share link for a video. The body is
+// {"ttl": "24h"|"7d"|"30d"|"never"|""}. Re-sharing a video that already has a
+// LIVE link keeps that link's token and only re-stamps its expiry — so an owner
+// adjusting the lifetime doesn't invalidate a link already handed out — and a
+// new token is minted only when there is no live link. To kill a link
+// immediately (e.g. after a leak) use DELETE / Stop sharing, not a re-share.
 func (s *server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	if s.shareLinks == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "sharing is not configured")
@@ -162,8 +165,9 @@ func (s *server) resolveShare(w http.ResponseWriter, r *http.Request) *videos.Vi
 	token := r.PathValue("token")
 	videoID, ok, err := s.shareLinks.Resolve(r.Context(), token)
 	if err != nil {
-		// A DB error is ours, not the caller's — log it, but still answer 404
-		// so the response is identical to the not-found case.
+		// A DB fault is ours, not the caller's: answer 500. That is not an
+		// existence signal (a healthy server never 500s here), so it still
+		// doesn't leak whether the token is valid — unlike a 200/404 split.
 		serverError(w, r, err, "resolve share link failed")
 		return nil
 	}
