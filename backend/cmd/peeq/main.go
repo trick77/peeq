@@ -191,6 +191,8 @@ func run() error {
 	ledgerStore := channelvideos.New(db)
 	summaryJobsStore := summaryjobs.New(db)
 	activityStore := activity.New(db)
+	// Settings records cookie/access transitions to the same feed (post-construction, like OnRecord below).
+	settingsStore.Activity = activityStore
 	ragStore := rag.NewStore(db)
 	embedClient := rag.NewEmbedClient(rag.EmbedConfig{
 		BaseURL: cfg.EmbedBaseURL, APIKey: cfg.EmbedAPIKey, Model: cfg.EmbedModel,
