@@ -1419,6 +1419,61 @@ func TestChannelRefresh_noCookie_409(t *testing.T) {
 	}
 }
 
+// TestChannelRefresh_unconfigured_503 asserts the endpoint 503s when the
+// metadata refresher is not wired (peeq run without yt-dlp).
+func TestChannelRefresh_unconfigured_503(t *testing.T) {
+	h := New(channelsTestDeps(t, nil))
+
+	rec := postJSON(t, h, "/api/channels/UCx/refresh", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelRefresh_getError_500 asserts a failure loading the channel row is
+// a 500 rather than a resolve against an unknown state.
+func TestChannelRefresh_getError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE channels`); err != nil {
+		t.Fatalf("drop channels table: %v", err)
+	}
+	h := New(deps)
+
+	rec := postJSON(t, h, "/api/channels/UCx/refresh", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelRefresh_nameFromVideosError_500 asserts a failure in the existence
+// check (reached when there is no cached channels row) is a 500.
+func TestChannelRefresh_nameFromVideosError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE videos`); err != nil {
+		t.Fatalf("drop videos table: %v", err)
+	}
+	h := New(deps)
+
+	rec := postJSON(t, h, "/api/channels/UCnorow/refresh", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChannelRefresh_resolveError_502 asserts a non-cookie resolve failure is
+// surfaced as a 502 with its reason, not a generic 500.
+func TestChannelRefresh_resolveError_502(t *testing.T) {
+	resolver := &testResolver{err: errors.New("network blip")}
+	deps := channelsTestDeps(t, resolver)
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCflaky", "Flaky Channel")
+
+	rec := postJSON(t, h, "/api/channels/UCflaky/refresh", nil)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestListVideos_channelParam_scopes asserts ?channel= narrows the library to
 // one channel, which is what the Archive tab loads.
 func TestListVideos_channelParam_scopes(t *testing.T) {
