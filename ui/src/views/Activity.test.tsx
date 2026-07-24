@@ -64,7 +64,7 @@ describe("Activity", () => {
     expect(row.classList.contains("fail")).toBe(true);
   });
 
-  it("renders upcoming items as planned, above the now marker", async () => {
+  it("renders upcoming items as planned, below the now marker", async () => {
     const items: UpcomingItem[] = [
       // Far-future instant so the label is deterministically "in …" whatever the
       // wall clock is when the test runs — a scheduled task must never read "ago".
@@ -211,28 +211,47 @@ describe("Activity", () => {
     expect(await screen.findByText("Fresh scan")).toBeInTheDocument();
   });
 
-  it("loads an older page on demand", async () => {
-    const user = userEvent.setup();
-    vi.mocked(listActivity).mockResolvedValueOnce({
-      events: [ev({ id: 10, subject: "Newest" })],
-      has_more: true,
-      retained_max: 2000,
-    });
-    render(<Activity live={[]} {...noProps} />);
-    await screen.findByText("Newest");
-
-    vi.mocked(listActivity).mockResolvedValueOnce({
-      events: [ev({ id: 9, subject: "Older" })],
+  it("caps history at the newest 10 and hints at the earlier rows", async () => {
+    // Server returns newest-first; the agenda keeps only the newest 10.
+    const events = Array.from({ length: 12 }, (_, i) =>
+      ev({ id: 100 - i, subject: `Clip ${i}` }),
+    );
+    vi.mocked(listActivity).mockResolvedValue({
+      events,
       has_more: false,
       retained_max: 2000,
     });
-    await user.click(screen.getByRole("button", { name: /load older/i }));
+    render(<Activity live={[]} {...noProps} />);
+    await screen.findByText("Clip 0");
+    // Newest 10 shown (Clip 0–9); the oldest two are hidden behind a "+N" edge.
+    expect(screen.getByText("Clip 9")).toBeInTheDocument();
+    expect(screen.queryByText("Clip 10")).not.toBeInTheDocument();
+    expect(screen.getByText("+2 earlier")).toBeInTheDocument();
+  });
 
-    await waitFor(() => {
-      expect(screen.getByText("Older")).toBeInTheDocument();
+  it("caps planned at the nearest 10 and hints at the rest", async () => {
+    const items: UpcomingItem[] = Array.from({ length: 12 }, (_, i) => ({
+      kind: "scan",
+      approx: true,
+      subject: `Scan ${i}`,
+    }));
+    vi.mocked(listUpcoming).mockResolvedValue({ items, truncated: 0 });
+    render(<Activity live={[]} {...noProps} />);
+    await screen.findByText("Scan 0");
+    // Soonest 10 shown (Scan 0–9); the rest fold into the "+N more scheduled" edge.
+    expect(screen.getByText("Scan 9")).toBeInTheDocument();
+    expect(screen.queryByText("Scan 10")).not.toBeInTheDocument();
+    expect(screen.getByText("+2 more scheduled")).toBeInTheDocument();
+  });
+
+  it("folds the server's own projection cap into the scheduled hint", async () => {
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [{ kind: "scan", approx: true, subject: "Only scan" }],
+      truncated: 5,
     });
-    // The second call paged back from the last shown id.
-    expect(listActivity).toHaveBeenLastCalledWith(10);
+    render(<Activity live={[]} {...noProps} />);
+    await screen.findByText("Only scan");
+    expect(screen.getByText("+5 more scheduled")).toBeInTheDocument();
   });
 
   it("refetches the projection when the running set changes, avoiding a double-render", async () => {

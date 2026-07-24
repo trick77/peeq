@@ -590,7 +590,7 @@ button.srow:not(:disabled):hover {
   z-index: 1;
   /* Icons stay a neutral glyph — they name the kind by SHAPE only. Outcome is
      carried by the detail text (problems tint red/amber) and by position
-     (future above, running at now, log below), not by tinting the icon. */
+     (log above, running at now, future below), not by tinting the icon. */
   color: var(--color-muted);
 }
 .ag-node::before {
