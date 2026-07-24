@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -67,11 +66,13 @@ type downloadItem struct {
 }
 
 // handleDownloadsPost is the only entry point that adds a video to the
-// download queue. Flow: canonicalize the pasted url (rejecting playlists
-// and live/premiere content up front, before any network call) → fetch
-// metadata (surfacing a missing/invalid cookie as 409, never a silent
-// failure) → upsert the video row as 'queued' → enqueue a download job at
-// the standard priority.
+// download queue. It schedules instantly and never waits on a network call:
+// canonicalize the pasted url (rejecting playlists and live/premiere content
+// up front, all network-free) → upsert a minimal video row (id + url only) if
+// the video is new → mark it 'queued' → enqueue a download job at the standard
+// priority. The worker fetches metadata (title/channel) in a preflight step
+// and surfaces any missing/invalid cookie or unavailable video as a
+// paused/failed job on the Activity page, so the user is never blocked here.
 func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	if s.jobs == nil || s.videos == nil || s.runner == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "downloads are not configured")
@@ -100,41 +101,27 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "That's a channel link — add it under Channels, not here")
 		return
 	}
-	// Interactive: the user pasted this url and is waiting on the answer, so it
-	// skips the pacer's background queue (see ytdlp.WithInteractive).
-	meta, err := s.runner.Metadata(ytdlp.WithInteractive(r.Context()), watchURL)
+	// No metadata fetch here — that is what used to make the user wait. Insert a
+	// minimal row (id + url) for a genuinely new video so the worker has
+	// something to load; the worker's preflight fills in title/channel. Guard
+	// with a Get: Upsert overwrites title/channel/thumbnail with the empty
+	// values we have now, so a blind Upsert would wipe metadata when a known
+	// video is re-added. An existing row keeps its metadata untouched.
+	existing, err := s.videos.Get(id)
 	if err != nil {
-		if errors.Is(err, ytdlp.ErrNoCookie) {
-			writeJSONError(w, http.StatusConflict, "cookie required")
+		serverError(w, r, err, "load video failed")
+		return
+	}
+	if existing == nil {
+		if err := s.videos.Upsert(videos.Video{ID: id, URL: watchURL}); err != nil {
+			serverError(w, r, err, "save video failed")
 			return
 		}
-		writeJSONError(w, http.StatusBadGateway, "fetch metadata failed: "+err.Error())
-		return
-	}
-
-	videoID := meta.ID
-	if videoID == "" {
-		videoID = id
-	}
-
-	if err := s.videos.Upsert(videos.Video{
-		ID:              videoID,
-		URL:             watchURL,
-		Title:           meta.Title,
-		ChannelID:       meta.ChannelID,
-		ChannelName:     meta.Channel,
-		DurationSeconds: int64(meta.DurationSeconds),
-		PublishedAt:     meta.PublishedAt,
-		ThumbnailPath:   meta.Thumbnail,
-		Availability:    videos.NormalizeAvailability(meta.Availability),
-	}); err != nil {
-		serverError(w, r, err, "save video failed")
-		return
 	}
 	// Upsert deliberately never touches status (so re-running metadata on an
 	// already-downloaded video can't wipe its state); a fresh add must be
 	// marked 'queued' explicitly.
-	if err := s.videos.SetStatus(videoID, "queued", ""); err != nil {
+	if err := s.videos.SetStatus(id, "queued", ""); err != nil {
 		serverError(w, r, err, "save video failed")
 		return
 	}
@@ -143,22 +130,24 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	// URL is a one-off; it must not silently populate the Channels view with
 	// every channel the user has ever grabbed a single video from. Tracking
 	// (and subscribing) stays an explicit action on the Channels page. The
-	// video keeps meta.ChannelID on its own row — videos has no foreign key
-	// to channels, so an untracked channel_id is a normal, supported state.
+	// video keeps its channel_id on its own row (once the worker resolves it) —
+	// videos has no foreign key to channels, so an untracked channel_id is a
+	// normal, supported state.
 
-	jobID, err := s.jobs.Enqueue(videoID, downloadPriority)
+	jobID, err := s.jobs.Enqueue(id, downloadPriority)
 	if err != nil {
 		serverError(w, r, err, "enqueue job failed")
 		return
 	}
 
+	// Title/channel are intentionally absent: they are not known until the
+	// worker's metadata preflight runs. The UI shows a generic "added to the
+	// queue" confirmation and the title fills in once the job starts.
 	writeJSONStatus(w, http.StatusCreated, downloadItem{
-		JobID:       jobID,
-		VideoID:     videoID,
-		Title:       meta.Title,
-		ChannelName: meta.Channel,
-		State:       "pending",
-		Priority:    downloadPriority,
+		JobID:    jobID,
+		VideoID:  id,
+		State:    "pending",
+		Priority: downloadPriority,
 	})
 }
 

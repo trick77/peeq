@@ -23,6 +23,11 @@ type fakeRunner struct {
 	mu sync.Mutex
 	n  int
 	fn func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error)
+	// metaFn scripts the worker's metadata preflight. Nil returns an empty meta
+	// (a no-op: the video row already had no title, so nothing changes) so
+	// tests that only care about the download path are unaffected.
+	metaN  int
+	metaFn func(ctx context.Context, rawURL string) (*ytdlp.Meta, error)
 }
 
 func (f *fakeRunner) Download(ctx context.Context, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
@@ -33,10 +38,27 @@ func (f *fakeRunner) Download(ctx context.Context, req ytdlp.DownloadReq, onProg
 	return f.fn(ctx, call, req, onProgress)
 }
 
+func (f *fakeRunner) Metadata(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+	f.mu.Lock()
+	f.metaN++
+	fn := f.metaFn
+	f.mu.Unlock()
+	if fn == nil {
+		return &ytdlp.Meta{}, nil
+	}
+	return fn(ctx, rawURL)
+}
+
 func (f *fakeRunner) calls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.n
+}
+
+func (f *fakeRunner) metaCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.metaN
 }
 
 type harness struct {
@@ -343,6 +365,77 @@ func TestWorker_blockPausesAndStopsClaiming(t *testing.T) {
 	h.worker.Resume()
 	waitFor(t, "job1 done", func() bool { return h.jobState(t, job1).State == "done" })
 	waitFor(t, "job2 done", func() bool { return h.jobState(t, job2).State == "done" })
+}
+
+// --- Metadata preflight (instant scheduling) --------------------------------
+
+// TestWorker_metadataPreflightPopulatesTitle proves the preflight added for
+// instant scheduling: a video enqueued by URL has no title (POST no longer
+// fetches metadata), so the worker resolves it before downloading and the row
+// ends up with a real title/channel — normalizing yt-dlp's "public" too.
+func TestWorker_metadataPreflightPopulatesTitle(t *testing.T) {
+	runner := &fakeRunner{
+		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+			return &ytdlp.Meta{Title: "Resolved Title", ChannelID: "UC123", Channel: "Some Channel", Availability: "public"}, nil
+		},
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h := newHarness(t, runner, nil)
+	job := h.enqueue(t, "vid1", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job done", func() bool { return h.jobState(t, job).State == "done" })
+
+	v, err := h.videos.Get("vid1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.Title != "Resolved Title" {
+		t.Fatalf("video title = %q, want %q (preflight must populate it)", v.Title, "Resolved Title")
+	}
+	if v.ChannelName != "Some Channel" {
+		t.Fatalf("video channel = %q, want %q", v.ChannelName, "Some Channel")
+	}
+	if v.Availability != "available" {
+		t.Fatalf("availability = %q, want normalized %q", v.Availability, "available")
+	}
+	if n := runner.metaCalls(); n != 1 {
+		t.Fatalf("metadata calls = %d, want 1", n)
+	}
+}
+
+// TestWorker_metadataPreflightPausesOnNoCookie proves the preflight routes a
+// cookie failure through the same taxonomy as a download error: a missing
+// cookie pauses the worker and requeues the job WITHOUT ever downloading, so
+// the problem surfaces on Activity instead of blocking the user at add time.
+func TestWorker_metadataPreflightPausesOnNoCookie(t *testing.T) {
+	runner := &fakeRunner{
+		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+			return nil, ytdlp.ErrNoCookie
+		},
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			t.Errorf("Download called, but the preflight should have paused before downloading")
+			return &ytdlp.Result{MediaPath: "/m.mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h := newHarness(t, runner, nil)
+	job := h.enqueue(t, "vid1", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "worker paused", func() bool { return h.worker.Paused() })
+
+	j := h.jobState(t, job)
+	if j.State != "pending" {
+		t.Fatalf("job state = %q, want pending (requeued, not failed)", j.State)
+	}
+	if j.Attempts != 0 {
+		t.Fatalf("job attempts = %d, want 0 (cookie pause must not burn an attempt)", j.Attempts)
+	}
+	if c := runner.calls(); c != 0 {
+		t.Fatalf("Download called %d times, want 0 (preflight paused first)", c)
+	}
 }
 
 // TestWorker_resumeAfterCookieRepasteUnwedgesQueue is the integration proof

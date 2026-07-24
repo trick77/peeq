@@ -2730,16 +2730,6 @@ textarea.cookiebox:focus {
   color: var(--color-danger);
   border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
 }
-.abtn.primary {
-  background: var(--color-accent-fill, var(--color-accent));
-  color: #fff;
-  border-color: var(--color-accent-fill, var(--color-accent));
-}
-.abtn.primary:hover {
-  background: var(--color-accent-strong);
-  color: #fff;
-}
-
 .band {
   border: 1px solid var(--color-border);
   border-left: 3px solid var(--color-kept);
@@ -3077,14 +3067,19 @@ details.tomb-sect[open] > summary svg {
   flex: none;
 }
 
+/* Quiet tinted: a translucent accent wash with accent-strong text, rather than
+   a solid orange fill. Shares the look of .ui-btn--tinted below (both are the
+   accent, understated) — deliberately, so every primary action reads the same
+   editorial way. Hover deepens the wash and lifts the border for affordance. */
 .ui-btn--primary {
-  background: var(--color-accent);
-  color: var(--color-bg);
+  background: color-mix(in srgb, var(--color-accent-strong) 12%, transparent);
+  color: var(--color-accent-strong);
   font-weight: 600;
-  box-shadow: 0 8px 24px -10px var(--glow-accent);
+  border-color: var(--color-accent-dim);
 }
 .ui-btn--primary:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: color-mix(in srgb, var(--color-accent-strong) 20%, transparent);
+  border-color: var(--color-accent-strong);
 }
 
 /* was .abtn and .btn.ghost — the same control under two names. */

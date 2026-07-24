@@ -29,6 +29,10 @@ import (
 // it.
 type Runner interface {
 	Download(ctx context.Context, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error)
+	// Metadata resolves a video's title/channel/etc. Used by the preflight
+	// step for videos added by URL, which are now enqueued without metadata
+	// (POST /api/downloads no longer blocks on this call).
+	Metadata(ctx context.Context, rawURL string) (*ytdlp.Meta, error)
 }
 
 // FailMonitor is the subset of *failmonitor.Monitor the worker uses to feed
@@ -308,6 +312,38 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 			w.deps.Logger.Error("download worker: requeue after settings error failed", "job_id", job.ID, "err", err)
 		}
 		return
+	}
+
+	// Metadata preflight. A video added by URL is now enqueued instantly with
+	// no title/channel (POST /api/downloads stopped blocking on yt-dlp), so a
+	// row with an empty title has never been resolved — fetch it here, before
+	// the download, so the queue/Library/Activity show a real title while it
+	// runs. Videos discovered via a channel scan already have a title and skip
+	// this. Route any error through the same classify taxonomy as a download
+	// error: a missing/expired cookie pauses the job and an unavailable video
+	// fails it, surfacing on Activity instead of blocking the user at add time.
+	if video.Title == "" {
+		meta, merr := w.deps.Runner.Metadata(jobCtx, video.URL)
+		if w.wasCanceled() {
+			w.settleCanceled(job, video)
+			return
+		}
+		if merr != nil {
+			w.classify(ctx, job, video, merr)
+			return
+		}
+		video.Title = meta.Title
+		video.ChannelID = meta.ChannelID
+		video.ChannelName = meta.Channel
+		video.DurationSeconds = int64(meta.DurationSeconds)
+		video.PublishedAt = meta.PublishedAt
+		video.ThumbnailPath = meta.Thumbnail
+		video.Availability = videos.NormalizeAvailability(meta.Availability)
+		if err := w.deps.Videos.Upsert(*video); err != nil {
+			w.deps.Logger.Error("download worker: save metadata failed", "job_id", job.ID, "err", err)
+			w.fail(job, video, job.Attempts, "save metadata: "+err.Error())
+			return
+		}
 	}
 
 	_ = w.deps.Videos.SetStatus(video.ID, "downloading", "")

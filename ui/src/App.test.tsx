@@ -199,7 +199,7 @@ describe("App dock bootstrap", () => {
     fireEvent.change(screen.getByLabelText("Video or channel URL"), {
       target: { value: "https://www.youtube.com/watch?v=vynCRZwkWhE&t=68s" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Download now/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Add to queue/ }));
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /Queue/ })).toHaveTextContent(
