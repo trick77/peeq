@@ -503,6 +503,64 @@ LIMIT 1`, now)
 	return &sub, nil
 }
 
+// DueChannel is one upcoming scheduled channel task for the Activity page's
+// future projection: a channel id + display name (frozen for display) + the
+// instant it is due.
+type DueChannel struct {
+	ChannelID string
+	Name      string
+	At        string
+}
+
+// ScanDueSoon returns up to limit subscriptions ordered by next_scan_at ascending
+// (soonest first), joined with the channel name, for the Activity agenda's future
+// half. Unlike ClaimDue this is "what is next", not "what is claimable": there is
+// deliberately no `<= now` cutoff (an item due in an hour still belongs on the
+// agenda) and no scan-quiet predicate — that gates the metadata worker, not what
+// the user is shown.
+func (s *Store) ScanDueSoon(limit int) ([]DueChannel, error) {
+	rows, err := s.db.QueryContext(context.Background(), `
+SELECT s.channel_id, COALESCE(c.name, ''), s.next_scan_at
+FROM subscriptions s
+JOIN channels c ON c.id = s.channel_id
+ORDER BY s.next_scan_at ASC
+LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("scan due soon: %w", err)
+	}
+	return scanDueChannels(rows)
+}
+
+// MetaDueSoon is ScanDueSoon for the weekly metadata refresh. next_meta_refresh_at
+// is nullable (a subscription predating 0005, or one never scheduled), so NULLs
+// are excluded rather than sorted as the earliest.
+func (s *Store) MetaDueSoon(limit int) ([]DueChannel, error) {
+	rows, err := s.db.QueryContext(context.Background(), `
+SELECT s.channel_id, COALESCE(c.name, ''), s.next_meta_refresh_at
+FROM subscriptions s
+JOIN channels c ON c.id = s.channel_id
+WHERE s.next_meta_refresh_at IS NOT NULL
+ORDER BY s.next_meta_refresh_at ASC
+LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("meta due soon: %w", err)
+	}
+	return scanDueChannels(rows)
+}
+
+func scanDueChannels(rows *sql.Rows) ([]DueChannel, error) {
+	defer rows.Close()
+	var out []DueChannel
+	for rows.Next() {
+		var d DueChannel
+		if err := rows.Scan(&d.ChannelID, &d.Name, &d.At); err != nil {
+			return nil, fmt.Errorf("scan due channel: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // GetSubscription returns the subscription row for channelID, or (nil, nil)
 // when the channel is not subscribed. ClaimDue is due-based and cannot answer
 // "what is this one channel's schedule", which the channel page needs.

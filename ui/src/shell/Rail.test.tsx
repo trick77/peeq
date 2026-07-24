@@ -21,6 +21,7 @@ describe("Rail", () => {
     expect(html).not.toContain("Add a video");
     expect(html).toContain("Decide");
     expect(html).toContain("Queue");
+    expect(html).toContain("Activity");
     expect(html).toContain("Settings");
   });
 

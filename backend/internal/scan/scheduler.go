@@ -13,8 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/sched"
@@ -58,6 +60,14 @@ type FailMonitor interface {
 	Reset()
 }
 
+// ActivityRecorder records a background-work event for the Activity feed.
+// Narrow and nil-safe (like FailMonitor): tests leave it nil, main.go wires the
+// one shared *activity.Store. The scheduler declares its own so it does not have
+// to import a concrete recorder.
+type ActivityRecorder interface {
+	Record(activity.Event)
+}
+
 // Deps are the scheduler's collaborators and tunables. The stores, Lister,
 // and CookieStatus are required; the rest have safe defaults applied in New.
 type Deps struct {
@@ -79,7 +89,9 @@ type Deps struct {
 	YoutubePaused func(ctx context.Context) bool
 	// FailMonitor feeds the auto-pause heuristic: Fail(channelID) on a
 	// count-worthy scan failure, Reset() on a clean pass.
-	FailMonitor  FailMonitor
+	FailMonitor FailMonitor
+	// Activity records scan outcomes for the Activity feed. Optional (nil = off).
+	Activity     ActivityRecorder
 	Now          func() time.Time // injectable clock (defaults to time.Now)
 	PollInterval time.Duration    // idle re-check (default 30s)
 	Logger       *slog.Logger
@@ -192,10 +204,12 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 			if serr := s.d.Settings.SetCookie(ctx, "", "blocked"); serr != nil {
 				s.d.Logger.Error("scan: set cookie status failed", "status", "blocked", "err", serr)
 			}
+			s.recordScanFail(sub.ChannelID, "YouTube blocked the request")
 		case errors.Is(err, ytdlp.ErrCookieExpired):
 			if serr := s.d.Settings.SetCookie(ctx, "", "stale"); serr != nil {
 				s.d.Logger.Error("scan: set cookie status failed", "status", "stale", "err", serr)
 			}
+			s.recordScanFail(sub.ChannelID, "cookie expired")
 		case errors.Is(err, ytdlp.ErrPaused):
 			// Kill-switch tripped mid-scan: not a real failure, so don't
 			// feed FailMonitor. The YoutubePaused gate in Run parks the
@@ -220,6 +234,7 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 			if s.d.FailMonitor != nil {
 				s.d.FailMonitor.Fail(sub.ChannelID)
 			}
+			s.recordScanFail(sub.ChannelID, "scan failed")
 		}
 		s.d.Logger.Warn("scan failed; backing off", "channel", sub.ChannelID, "err", err)
 		s.backoff(sub.ChannelID)
@@ -287,6 +302,41 @@ func (s *Scheduler) staleUnsubscribe(ctx context.Context, channelID, reason stri
 		return
 	}
 	s.d.Logger.Info("scan: auto-unsubscribed dead channel", "channel", channelID, "reason", channels.ReasonDeleted, "dead_scans", n)
+	s.recordActivity(activity.Event{
+		Kind: activity.KindScan, Outcome: activity.OutcomeWarn,
+		SubjectID: channelID, Subject: s.channelName(channelID),
+		Summary: "auto-unsubscribed", Detail: fmt.Sprintf("gone on %d scans in a row", n),
+	})
+}
+
+// recordActivity records a scan event for the Activity feed, nil-safe.
+func (s *Scheduler) recordActivity(e activity.Event) {
+	if s.d.Activity != nil {
+		s.d.Activity.Record(e)
+	}
+}
+
+// recordScanFail records a scan failure with its classified reason. The
+// kill-switch pause and the terminal (stale-unsubscribe) case deliberately do
+// NOT come here — a pause is not a failure, and staleUnsubscribe records its own
+// warn — so a failure row always means "this channel's scan actually broke".
+func (s *Scheduler) recordScanFail(channelID, reason string) {
+	s.recordActivity(activity.Event{
+		Kind: activity.KindScan, Outcome: activity.OutcomeFail,
+		SubjectID: channelID, Subject: s.channelName(channelID),
+		Summary: "scan failed", Detail: reason,
+	})
+}
+
+// channelName resolves a channel's display name for an activity record, falling
+// back to the id. Best-effort: a lookup failure must never affect a scan.
+func (s *Scheduler) channelName(channelID string) string {
+	if s.d.Channels != nil {
+		if c, err := s.d.Channels.Get(channelID); err == nil && c != nil && c.Name != "" {
+			return c.Name
+		}
+	}
+	return channelID
 }
 
 // backoff pushes a subscription's next_scan_at out by scanBackoff, leaving
@@ -315,6 +365,10 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		return fmt.Errorf("scan: list %s: %w", sub.ChannelID, err)
 	}
 	baseline := sub.BaselinedAt == ""
+	// Tally for the Activity record: how many genuinely-new uploads were queued
+	// automatically vs left for a manual decision, and (on the first pass) how
+	// many the baseline snapshot recorded.
+	var queuedCount, pendingCount, baselineCount int
 	for _, e := range entries {
 		exists, err := s.d.Ledger.Exists(e.ID)
 		if err != nil {
@@ -335,12 +389,15 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		switch {
 		case baseline:
 			entry.State = "seen"
+			baselineCount++
 		case !passesFilters(e, set.MinVideoDurationSeconds):
 			entry.State = "seen"
 		case sub.Autodownload:
 			entry.State = "queued"
+			queuedCount++
 		default:
 			entry.State = "pending"
+			pendingCount++
 		}
 		// Autodownload: enqueue FIRST, then record the ledger row LAST. If
 		// enqueueAuto fails part-way, the ledger row is never written, so the
@@ -371,6 +428,33 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	}
 	if s.d.FailMonitor != nil {
 		s.d.FailMonitor.Reset()
+	}
+
+	// Activity record. The silence rule applies: a scan that surfaced nothing new
+	// (the common case) writes nothing, so the agenda is not a wall of "0 new".
+	// The first-run baseline is worth one row — it explains why a freshly
+	// subscribed channel queued nothing.
+	newCount := queuedCount + pendingCount
+	switch {
+	case baseline:
+		s.recordActivity(activity.Event{
+			Kind: activity.KindScan, Outcome: activity.OutcomeOK,
+			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
+			Summary: fmt.Sprintf("baselined %d videos", baselineCount),
+		})
+	case newCount > 0:
+		var parts []string
+		if queuedCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d queued", queuedCount))
+		}
+		if pendingCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d to decide", pendingCount))
+		}
+		s.recordActivity(activity.Event{
+			Kind: activity.KindScan, Outcome: activity.OutcomeOK,
+			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
+			Summary: fmt.Sprintf("%d new", newCount), Detail: strings.Join(parts, ", "),
+		})
 	}
 	return nil
 }

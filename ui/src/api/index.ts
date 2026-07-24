@@ -14,4 +14,5 @@ export * from "./ytdlp";
 export * from "./channels";
 export * from "./pending";
 export * from "./summaries";
+export * from "./activity";
 export * from "./search";

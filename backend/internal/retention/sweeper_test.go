@@ -7,10 +7,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
 )
+
+// fakeRecorder captures activity events so a test can assert the silence rule.
+type fakeRecorder struct{ events []activity.Event }
+
+func (f *fakeRecorder) Record(e activity.Event) { f.events = append(f.events, e) }
 
 // fakeGuard is a NowPlayingGuard whose active set is controlled directly by
 // the test, so the "currently playing" exclusion can be exercised without
@@ -31,6 +37,7 @@ type harness struct {
 	vs       *videos.Store
 	db       *sql.DB
 	guard    *fakeGuard
+	rec      *fakeRecorder
 	mediaDir string
 }
 
@@ -55,15 +62,17 @@ func newHarness(t *testing.T, retentionDays int) *harness {
 	guard := &fakeGuard{active: map[string]bool{}}
 	fixedNow := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	mediaDir := t.TempDir()
+	rec := &fakeRecorder{}
 
 	sw := New(Deps{
 		Videos:   vs,
 		Settings: ss,
 		MediaDir: mediaDir,
 		Guard:    guard,
+		Activity: rec,
 		Now:      func() time.Time { return fixedNow },
 	})
-	return &harness{sw: sw, vs: vs, db: db, guard: guard, mediaDir: mediaDir}
+	return &harness{sw: sw, vs: vs, db: db, guard: guard, rec: rec, mediaDir: mediaDir}
 }
 
 // backdateWatchedAt directly overwrites watched_at, bypassing the store's
@@ -218,5 +227,55 @@ func TestSweepOnce_recentlyWatchedIsKept(t *testing.T) {
 	}
 	if v.Status != "downloaded" {
 		t.Fatalf("status = %q, want downloaded (kept)", v.Status)
+	}
+}
+
+// TestSweepOnce_silenceRuleRecordsNothingWhenIdle is the silence rule: an hourly
+// sweep that reclaims nothing must write no activity row, or the Activity feed
+// fills with "reclaimed 0" and the 2000-row budget burns for no signal.
+func TestSweepOnce_silenceRuleRecordsNothingWhenIdle(t *testing.T) {
+	h := newHarness(t, 30)
+	// A single fresh, never-watched video: nothing is eligible.
+	if err := h.vs.Upsert(videos.Video{ID: "keep", URL: "https://youtu.be/keep"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := h.vs.SetDownloaded("keep", videos.DownloadedResult{MediaPath: "keep.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := h.sw.SweepOnce(); err != nil {
+		t.Fatalf("sweep once: %v", err)
+	}
+	if len(h.rec.events) != 0 {
+		t.Fatalf("idle sweep recorded %d events, want 0 (silence rule)", len(h.rec.events))
+	}
+}
+
+// TestSweepOnce_recordsWhenItReclaims is the other half: a sweep that actually
+// tombstones something records exactly one retention/ok row naming the count.
+func TestSweepOnce_recordsWhenItReclaims(t *testing.T) {
+	h := newHarness(t, 30)
+	if err := h.vs.Upsert(videos.Video{ID: "old", URL: "https://youtu.be/old"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := h.vs.SetDownloaded("old", videos.DownloadedResult{MediaPath: "old.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := h.vs.SetWatched("old", true); err != nil {
+		t.Fatalf("set watched: %v", err)
+	}
+	h.backdateWatchedAt(t, "old", "2026-01-01 00:00:00") // well past the 30-day cutoff
+
+	if err := h.sw.SweepOnce(); err != nil {
+		t.Fatalf("sweep once: %v", err)
+	}
+	if len(h.rec.events) != 1 {
+		t.Fatalf("recorded %d events, want 1", len(h.rec.events))
+	}
+	e := h.rec.events[0]
+	if e.Kind != activity.KindRetention || e.Outcome != activity.OutcomeOK {
+		t.Fatalf("event = %+v, want retention/ok", e)
+	}
+	if e.Summary != "reclaimed 1 video" {
+		t.Fatalf("summary = %q", e.Summary)
 	}
 }

@@ -83,6 +83,8 @@ export function parsePath(pathname: string): RouteState {
       return { view: "decide", videoId: null, channelId: null };
     case "queue":
       return { view: "queue", videoId: null, channelId: null };
+    case "activity":
+      return { view: "activity", videoId: null, channelId: null };
     case "settings":
       return { view: "settings", videoId: null, channelId: null };
     default:
@@ -116,6 +118,8 @@ export function toPath(state: RouteState): string {
       return "/decide";
     case "queue":
       return "/queue";
+    case "activity":
+      return "/activity";
     case "settings":
       return "/settings";
   }

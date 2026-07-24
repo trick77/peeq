@@ -7,13 +7,20 @@ package retention
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
 )
+
+// ActivityRecorder records a retention outcome for the Activity feed. Nil-safe.
+type ActivityRecorder interface {
+	Record(activity.Event)
+}
 
 // NowPlayingGuard reports whether a video is currently being streamed, so
 // the sweeper can skip it even if it otherwise qualifies for deletion.
@@ -59,6 +66,10 @@ type Deps struct {
 	Now func() time.Time
 	// Interval is how often Run ticks; defaults to 1 hour.
 	Interval time.Duration
+	// Activity, when set, records a sweep for the Activity feed — but only when
+	// it actually reclaimed something (the silence rule: an hourly no-op sweep
+	// writes nothing).
+	Activity ActivityRecorder
 	// Logger is used for sweep errors and per-video deletion logging.
 	Logger *slog.Logger
 }
@@ -143,6 +154,7 @@ func (s *Sweeper) SweepOnce() error {
 		return err
 	}
 
+	tombstoned := 0
 	for _, v := range candidates {
 		if s.deps.Guard.IsActive(v.ID) {
 			s.deps.Logger.Info("retention sweep: skipping currently-playing video", "video_id", v.ID)
@@ -154,6 +166,20 @@ func (s *Sweeper) SweepOnce() error {
 			continue
 		}
 		s.deps.Logger.Info("retention sweep: tombstoned video", "video_id", v.ID, "watched_at", v.WatchedAt)
+		tombstoned++
+	}
+	// Silence rule: only a sweep that actually reclaimed at least one video is
+	// worth a row. The sweeper ticks hourly and is a no-op almost every time.
+	if tombstoned > 0 && s.deps.Activity != nil {
+		noun := "videos"
+		if tombstoned == 1 {
+			noun = "video"
+		}
+		s.deps.Activity.Record(activity.Event{
+			Kind: activity.KindRetention, Outcome: activity.OutcomeOK,
+			Summary: fmt.Sprintf("reclaimed %d %s", tombstoned, noun),
+			Detail:  fmt.Sprintf("older than %d days", cfg.RetentionDays),
+		})
 	}
 	return nil
 }

@@ -538,6 +538,174 @@ button.srow:not(:disabled):hover {
   font-size: 13px;
 }
 
+/* Activity — one agenda through a "now" marker, on a left optical rail (loom's
+   trace-rail pattern). The kind icon IS the node: its shape says what the work
+   was, its colour says how it went (ok / warn / fail / running). Future rows sit
+   above the marker on a faint rail; the log sits below on a solid one. Type holds
+   to two steps only — 15px subject, 13px everything else — in the one inherited
+   family; the icon and its colour carry the rest so the text never has to. */
+.agenda {
+  position: relative;
+  max-width: 680px;
+}
+.agenda-empty {
+  color: var(--color-faint);
+  font-size: 13px;
+  max-width: 60ch;
+}
+.ag-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: start;
+  column-gap: 14px;
+  padding: 12px 2px;
+}
+/* Per-row connector: from just below THIS node to the next one, anchored to the
+   row's own top/bottom edges so it spans the gap whatever the body height. The
+   edges live outside .agenda, so the last row is a true last-child and draws
+   none — no line dangles past the log. */
+.agenda > .ag-row:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 10.25px;
+  top: 33px;
+  bottom: -13px;
+  width: 1.5px;
+  background: var(--color-border);
+}
+.agenda > .ag-row.planned::before {
+  background: var(--color-border-soft);
+}
+
+.ag-node {
+  grid-column: 1;
+  justify-self: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  z-index: 1;
+  /* Icons stay a neutral glyph — they name the kind by SHAPE only. Outcome is
+     carried by the detail text (problems tint red/amber) and by position
+     (future above, running at now, log below), not by tinting the icon. */
+  color: var(--color-muted);
+}
+.ag-node::before {
+  /* punch a clean hole in the rail behind the icon */
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: var(--color-bg);
+  z-index: -1;
+}
+.ag-row.planned .ag-node {
+  color: var(--color-faint);
+}
+
+.ag-body {
+  grid-column: 2;
+  min-width: 0;
+}
+.ag-subject {
+  font-size: 15px;
+  color: var(--color-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ag-row.planned .ag-subject {
+  color: var(--color-ink-dim);
+}
+.ag-detail {
+  font-size: 13px;
+  color: var(--color-muted);
+  margin-top: 2px;
+}
+.ag-row.fail .ag-detail {
+  color: #d98b80;
+}
+.ag-row.warn .ag-detail {
+  color: #cda765;
+}
+.ag-row.planned .ag-detail {
+  font-style: italic;
+  color: var(--color-faint);
+}
+.ag-when {
+  grid-column: 3;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-faint);
+  white-space: nowrap;
+  margin-top: 3px;
+}
+.ag-row.running .ag-when {
+  color: var(--color-accent);
+}
+.ag-progress {
+  margin-top: 8px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--color-elevated);
+  overflow: hidden;
+  max-width: 240px;
+}
+.ag-progress > i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--color-accent-dim),
+    var(--color-accent)
+  );
+  box-shadow: 0 0 8px var(--glow-accent);
+}
+/* The NOW node is a row like any other, so the rail runs straight through it. */
+.ag-pulse {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow:
+    0 0 0 4px var(--color-bg),
+    0 0 11px var(--glow-accent);
+}
+.ag-nowbar {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: 3px;
+}
+.ag-nowlbl {
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+.ag-rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--color-accent-dim), transparent);
+}
+/* Both ends render a labelled edge (top: "N more scheduled"; bottom: "load
+   older" / "oldest kept"). They sit OUTSIDE .agenda so they don't get a rail. */
+.ag-edge {
+  display: flex;
+  justify-content: center;
+  padding: 14px 0 4px;
+  font-size: 13px;
+  color: var(--color-faint);
+}
+.ag-edge.top {
+  padding: 4px 0 8px;
+}
+
 .cookie-status {
   display: flex;
   align-items: center;

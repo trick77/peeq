@@ -1,8 +1,5 @@
 import { Icon, type IconName } from "../icons";
-import { StatusPanel } from "./StatusPanel";
 import { CookieStatus } from "./CookieStatus";
-import type { Job } from "../api/types";
-import type { DownloadsStatus } from "../api/downloads";
 
 // ViewId enumerates the destinations App routes to. App.tsx owns the actual
 // view-state (manual, no router lib — see App.tsx); Rail is purely
@@ -20,6 +17,7 @@ export type ViewId =
   | "queue"
   | "channels"
   | "channel"
+  | "activity"
   | "settings";
 
 type NavItem = {
@@ -51,7 +49,10 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
   },
   {
     label: "Setup",
-    items: [{ id: "settings", label: "Settings", icon: "settings" }],
+    items: [
+      { id: "activity", label: "Activity", icon: "listTree" },
+      { id: "settings", label: "Settings", icon: "settings" },
+    ],
   },
 ];
 
@@ -60,12 +61,8 @@ export function Rail({
   onNavigate,
   pendingCount = 0,
   queueCount = 0,
-  summarizingCount = 0,
-  jobs = [],
-  progressByJobId,
   cookieStatus,
   cookieUpdatedAtLabel,
-  downloadStatus,
 }: {
   active: ViewId;
   onNavigate: (view: ViewId) => void;
@@ -73,18 +70,8 @@ export function Rail({
   pendingCount?: number;
   /** Badge count for "Queue" — downloads + summaries in flight. */
   queueCount?: number;
-  /** How many summaries are in flight; feeds the status panel's own row. */
-  summarizingCount?: number;
-  jobs?: Job[];
-  /** Live per-job percent/speed/eta from the download SSE feed. */
-  progressByJobId?: Record<
-    number,
-    { percent: number; speed: string; eta: string }
-  >;
   cookieStatus?: string;
   cookieUpdatedAtLabel?: string;
-  /** Why the queue may be stalled; shown as the panel's state word. */
-  downloadStatus?: DownloadsStatus;
 }) {
   return (
     <aside className="rail">
@@ -140,15 +127,6 @@ export function Rail({
       </nav>
 
       <div className="rail-foot">
-        <StatusPanel
-          jobs={jobs}
-          progressByJobId={progressByJobId}
-          pendingCount={pendingCount}
-          summarizingCount={summarizingCount}
-          status={downloadStatus}
-          onOpenPending={() => onNavigate("decide")}
-          onOpenQueue={() => onNavigate("queue")}
-        />
         {cookieStatus !== undefined ? (
           <CookieStatus
             status={cookieStatus}

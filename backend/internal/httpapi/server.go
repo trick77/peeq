@@ -100,6 +100,10 @@ type Deps struct {
 	// endpoint reports an empty queue. Production wires the same
 	// *summaryjobs.Store as SummaryJobs.
 	SummaryList SummaryLister
+	// Activity reads the background-work log backing GET /api/activity. Optional:
+	// when nil, that endpoint returns 503. The /api/activity/upcoming projection
+	// is built from Channels/Jobs/SummaryList and needs no separate dependency.
+	Activity ActivityReader
 
 	// OnResumeYoutube is invoked after POST /api/youtube/resume clears the
 	// kill-switch, so the shared failure monitor gets reset and the user gets
@@ -172,6 +176,7 @@ type server struct {
 	embedder    SearchEmbedder
 	summaryJobs SummaryEnqueuer
 	summaryList SummaryLister
+	activity    ActivityReader
 
 	onResumeYoutube func()
 
@@ -207,6 +212,7 @@ func New(d Deps) http.Handler {
 		embedder:    d.Embedder,
 		summaryJobs: d.SummaryJobs,
 		summaryList: d.SummaryList,
+		activity:    d.Activity,
 
 		onResumeYoutube: d.OnResumeYoutube,
 
@@ -249,6 +255,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsPost)))
 	mux.Handle("GET /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsList)))
 	mux.Handle("GET /api/summaries", s.requireAuth(http.HandlerFunc(s.handleSummariesList)))
+	mux.Handle("GET /api/activity", s.requireAuth(http.HandlerFunc(s.handleActivityList)))
+	mux.Handle("GET /api/activity/upcoming", s.requireAuth(http.HandlerFunc(s.handleActivityUpcoming)))
 	mux.Handle("GET /api/downloads/status", s.requireAuth(http.HandlerFunc(s.handleDownloadsStatus)))
 	mux.Handle("POST /api/downloads/{id}/cancel", s.requireAuth(http.HandlerFunc(s.handleDownloadsCancel)))
 	mux.Handle("GET /api/downloads/stream", s.requireAuth(http.HandlerFunc(s.handleDownloadsStream)))

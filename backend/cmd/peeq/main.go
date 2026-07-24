@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channelmeta"
 	"github.com/trick77/peeq/internal/channels"
@@ -189,6 +190,7 @@ func run() error {
 	channelsStore := channels.New(db)
 	ledgerStore := channelvideos.New(db)
 	summaryJobsStore := summaryjobs.New(db)
+	activityStore := activity.New(db)
 	ragStore := rag.NewStore(db)
 	embedClient := rag.NewEmbedClient(rag.EmbedConfig{
 		BaseURL: cfg.EmbedBaseURL, APIKey: cfg.EmbedAPIKey, Model: cfg.EmbedModel,
@@ -252,6 +254,16 @@ func run() error {
 	})
 
 	sseHub := sse.NewHub()
+	// Fan every recorded activity event out over the same SSE hub the download
+	// progress and summary phases already ride (the frontend filters by event
+	// name), so the Activity page's live row appears without a reload.
+	activityStore.OnRecord = func(e activity.Event) {
+		data, err := json.Marshal(e)
+		if err != nil {
+			return
+		}
+		sseHub.Publish("activity", string(data))
+	}
 	worker := download.New(download.Deps{
 		Jobs:           jobsStore,
 		Videos:         videosStore,
@@ -262,6 +274,7 @@ func run() error {
 		DefaultSubLang: cfg.DefaultSubLang,
 		YoutubePaused:  func() bool { p, _ := settingsStore.YoutubePaused(context.Background()); return p },
 		FailMonitor:    failMonitor,
+		Activity:       activityStore,
 		OnProgress: func(jobID int64, p ytdlp.Progress) {
 			data, err := json.Marshal(map[string]any{
 				"job_id":  jobID,
@@ -284,6 +297,7 @@ func run() error {
 		Settings: settingsStore,
 		MediaDir: cfg.MediaDir,
 		Guard:    streamTracker,
+		Activity: activityStore,
 	})
 
 	scheduler := scan.New(scan.Deps{
@@ -297,6 +311,7 @@ func run() error {
 		AllowAnonymous: cfg.AllowAnonymousYoutube,
 		YoutubePaused:  func(ctx context.Context) bool { p, _ := settingsStore.YoutubePaused(ctx); return p },
 		FailMonitor:    failMonitor,
+		Activity:       activityStore,
 	})
 
 	summarizeWorker := summarize.NewWorker(summarize.WorkerDeps{
@@ -304,6 +319,7 @@ func run() error {
 		Summarizer: summarizer, Embedder: embedClient, MediaDir: cfg.MediaDir,
 		EmbedModel: cfg.EmbedModel, EmbedDim: cfg.EmbedDim,
 		VideoDelay: cfg.SummarizeVideoDelay,
+		Activity:   activityStore,
 		OnPhase: func(videoID, status, phase string) {
 			data, err := json.Marshal(map[string]any{
 				"video_id": videoID,
@@ -330,6 +346,7 @@ func run() error {
 		CookieStatus:   func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
 		AllowAnonymous: cfg.AllowAnonymousYoutube,
 		YoutubePaused:  func(ctx context.Context) bool { p, _ := settingsStore.YoutubePaused(ctx); return p },
+		Activity:       activityStore,
 	})
 
 	// sponsorblockWorker backfills and refreshes the segments the player skips
@@ -363,7 +380,7 @@ func run() error {
 	}()
 	go func() {
 		defer workerWG.Done()
-		runYtdlpSelfUpdateTicker(ctx, cfg.YtdlpDir, ytdlpSelfUpdateInterval)
+		runYtdlpSelfUpdateTicker(ctx, cfg.YtdlpDir, ytdlpSelfUpdateInterval, activityStore)
 	}()
 	go func() {
 		defer workerWG.Done()
@@ -415,6 +432,7 @@ func run() error {
 		Embedder:    embedClient,
 		SummaryJobs: summaryJobsStore,
 		SummaryList: summaryJobsStore,
+		Activity:    activityStore,
 	}
 	handler := httpapi.New(deps)
 
@@ -471,10 +489,15 @@ const ytdlpSelfUpdateInterval = 24 * time.Hour
 // network, GitHub rate limit) is logged and retried on the next tick rather
 // than treated as fatal, since the existing binary keeps working in the
 // meantime.
-func runYtdlpSelfUpdateTicker(ctx context.Context, dir string, interval time.Duration) {
+func runYtdlpSelfUpdateTicker(ctx context.Context, dir string, interval time.Duration, rec *activity.Store) {
+	// Track the running version so the Activity record fires only on a real
+	// change (the silence rule): the daily update is a no-op almost every day,
+	// and a "yt-dlp updated" row every 24h with no version change is noise.
+	var current string
 	if v, err := ytdlp.Version(ctx, resolveYtdlpBin(dir)); err != nil {
 		slog.Warn("yt-dlp not available at boot; downloads will fail until self-update succeeds", "err", err)
 	} else {
+		current = v
 		slog.Info("yt-dlp self-update ticker started", "version", v, "interval", interval)
 	}
 	logJSRuntime(ctx, jsRuntimeBin)
@@ -492,6 +515,15 @@ func runYtdlpSelfUpdateTicker(ctx context.Context, dir string, interval time.Dur
 				continue
 			}
 			slog.Info("yt-dlp self-update succeeded", "version", v)
+			if v != "" && v != current {
+				if rec != nil {
+					rec.Record(activity.Event{
+						Kind: activity.KindYtdlp, Outcome: activity.OutcomeOK,
+						Summary: "Updated to " + v,
+					})
+				}
+				current = v
+			}
 		}
 	}
 }

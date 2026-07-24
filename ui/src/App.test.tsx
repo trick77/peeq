@@ -174,13 +174,18 @@ describe("App dock bootstrap", () => {
     // race its 1s default timeout against an unrendered nav. The waits must
     // stay comfortably under this test's own timeout (last arg to it()),
     // or vitest aborts the test before the query can report what it saw.
-    await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
+    const queueNav = await screen.findByRole(
+      "button",
+      { name: /Queue/ },
+      { timeout: 8000 },
+    );
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
-    // Starts empty — this is the state that used to be terminal.
-    expect(await screen.findByText("Nothing waiting")).toBeTruthy();
+    // Starts empty — the rail's Queue entry carries no count badge.
+    expect(queueNav).not.toHaveTextContent("1");
 
-    // Once queued, the dock must reflect it without a reload.
+    // Once queued, the rail's Queue badge must reflect it without a reload —
+    // this is the state that used to be terminal (the add seeds the poll).
     vi.mocked(listDownloads).mockResolvedValue([
       {
         job_id: 7,
@@ -196,10 +201,11 @@ describe("App dock bootstrap", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Download now/ }));
 
-    // The panel names the stage rather than reporting a bare "N queued", so
-    // the assertion is on the Queued row's own count.
-    const queuedRow = await screen.findByText("Queued");
-    expect(queuedRow.closest(".srow")).toHaveTextContent("1");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Queue/ })).toHaveTextContent(
+        "1",
+      );
+    });
   }, 20000);
 });
 
@@ -504,8 +510,13 @@ describe("App queue and summaries", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
 
-    // The rail's status panel names the stage once the re-list settles.
-    expect(await screen.findByText("Summarizing")).toBeInTheDocument();
+    // The rail's Queue badge picks up the in-flight summary once the re-list
+    // settles (queueCount = downloads + summaries).
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Queue/ })).toHaveTextContent(
+        "1",
+      );
+    });
 
     // The Queue page shows the job with its live phase.
     fireEvent.click(screen.getByRole("button", { name: /Queue/ }));
