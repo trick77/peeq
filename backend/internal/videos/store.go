@@ -141,14 +141,37 @@ ON CONFLICT(id) DO UPDATE SET
 	return nil
 }
 
-// videoColumns is the column list shared by Get and List, in the order
-// scanRow expects.
-const videoColumns = `id, url, title, channel_id, channel_name, duration_seconds, published_at,
-	description, thumbnail_path, media_path, filesize_bytes, format_used, requested_format,
-	availability, status, error_message, sponsorblock_segments,
-	watched, watched_at, resume_position_seconds, favorite, favorited_at,
-	created_at, downloaded_at,
-	audio_language, subtitle_path, summary, chapters, key_points, summary_status, summary_error, embed_model, embed_dim, category`
+// videoColumns is the column list shared by every whole-Video reader (Get,
+// List, NextUnclassified, SweepCandidates), in the order scanVideo expects.
+// Columns are qualified "v." because these queries LEFT JOIN the channels
+// table (aliased "ch") to resolve the display channel name — see below.
+//
+// channel_name is coalesced, not read raw: a video discovered through a
+// channel scan or subscription never gets its own videos.channel_name written
+// (only manual-URL paste and TA-import do), so the raw column is empty for
+// those rows and the UI would fall back to showing the bare UCxxxx id. The
+// LEFT JOIN pulls the resolved name from the channels metadata cache instead,
+// falling through to the id only when the channel itself is genuinely
+// unresolved (resolve_ok = 0, name still blank). NULLIF guards both an empty
+// videos.channel_name and an empty channels.name so neither shadows the next
+// fallback. This is a read-side fix: it repairs existing rows with no
+// migration. The write-side gap (populating videos.channel_name at scan/
+// pending upsert) is a separate follow-up for consumers that read the column
+// directly, e.g. search/export.
+const videoColumns = `v.id, v.url, v.title, v.channel_id,
+	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name,
+	v.duration_seconds, v.published_at,
+	v.description, v.thumbnail_path, v.media_path, v.filesize_bytes, v.format_used, v.requested_format,
+	v.availability, v.status, v.error_message, v.sponsorblock_segments,
+	v.watched, v.watched_at, v.resume_position_seconds, v.favorite, v.favorited_at,
+	v.created_at, v.downloaded_at,
+	v.audio_language, v.subtitle_path, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.category`
+
+// videoFrom is the FROM clause every whole-Video read shares: videos aliased
+// "v", LEFT JOINed to the channels metadata cache so videoColumns can resolve
+// the display channel name. LEFT (not INNER) so a video whose channel row was
+// never created still returns — it simply falls through to the id.
+const videoFrom = `FROM videos v LEFT JOIN channels ch ON ch.id = v.channel_id`
 
 // rowScanner is satisfied by both *sql.Row and *sql.Rows.
 type rowScanner interface {
@@ -187,7 +210,7 @@ func scanVideo(rs rowScanner) (Video, error) {
 // Get returns the video row for id, or (nil, nil) if there is none.
 func (s *Store) Get(id string) (*Video, error) {
 	row := s.db.QueryRowContext(context.Background(),
-		"SELECT "+videoColumns+" FROM videos WHERE id = ?", id,
+		"SELECT "+videoColumns+" "+videoFrom+" WHERE v.id = ?", id,
 	)
 	v, err := scanVideo(row)
 	if err == sql.ErrNoRows {
@@ -231,10 +254,10 @@ type ListOptions struct {
 // while created_at is 'YYYY-MM-DD HH:MM:SS', and comparing the two shapes
 // lexically would sort a same-day date-only value before the datetime one.
 var sortClauses = map[string]string{
-	"newest":  "COALESCE(published_at, date(created_at)) DESC, created_at DESC, id DESC",
-	"oldest":  "COALESCE(published_at, date(created_at)) ASC, created_at ASC, id ASC",
-	"longest": "COALESCE(duration_seconds, 0) DESC, id DESC",
-	"title":   "title COLLATE NOCASE ASC, id ASC",
+	"newest":  "COALESCE(v.published_at, date(v.created_at)) DESC, v.created_at DESC, v.id DESC",
+	"oldest":  "COALESCE(v.published_at, date(v.created_at)) ASC, v.created_at ASC, v.id ASC",
+	"longest": "COALESCE(v.duration_seconds, 0) DESC, v.id DESC",
+	"title":   "v.title COLLATE NOCASE ASC, v.id ASC",
 }
 
 // escapeLike escapes the three characters LIKE treats specially so a user
@@ -256,7 +279,7 @@ func escapeLike(s string) string {
 // kept) both stay: the Library grid is the only place either can be recovered
 // from, since VideoCard's re-download button is rendered nowhere else. The rule
 // is "not in the pipeline", not "playable".
-const notInFlight = "status NOT IN ('new', 'queued', 'downloading')"
+const notInFlight = "v.status NOT IN ('new', 'queued', 'downloading')"
 
 // List returns videos matching opts, ordered by opts.Sort. The status,
 // category, search, and channel dimensions are orthogonal: all that are set
@@ -286,26 +309,26 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 		// Narrower than notInFlight on purpose: "unwatched" answers "what can I
 		// press play on", so a failed or swept row is excluded here even though
 		// it is still reachable through "all".
-		conds = append(conds, "status = 'downloaded' AND watched = 0")
+		conds = append(conds, "v.status = 'downloaded' AND v.watched = 0")
 	case "watched":
-		conds = append(conds, "watched = 1")
+		conds = append(conds, "v.watched = 1")
 	case "favorites":
-		conds = append(conds, "favorite = 1")
+		conds = append(conds, "v.favorite = 1")
 	}
 	if opts.Category != "" && opts.Category != "all" && ValidCategory(opts.Category) {
-		conds = append(conds, "category = ?")
+		conds = append(conds, "v.category = ?")
 		args = append(args, opts.Category)
 	}
 	if q := strings.TrimSpace(opts.Query); q != "" {
-		conds = append(conds, `title LIKE ? ESCAPE '\'`)
+		conds = append(conds, `v.title LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(q)+"%")
 	}
 	if opts.ChannelID != "" {
 		if opts.ChannelName != "" {
-			conds = append(conds, "(channel_id = ? OR (channel_id = '' AND channel_name = ?))")
+			conds = append(conds, "(v.channel_id = ? OR (v.channel_id = '' AND v.channel_name = ?))")
 			args = append(args, opts.ChannelID, opts.ChannelName)
 		} else {
-			conds = append(conds, "channel_id = ?")
+			conds = append(conds, "v.channel_id = ?")
 			args = append(args, opts.ChannelID)
 		}
 	}
@@ -319,7 +342,7 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 	}
 
 	rows, err := s.db.QueryContext(context.Background(),
-		"SELECT "+videoColumns+" FROM videos "+where+" ORDER BY "+order,
+		"SELECT "+videoColumns+" "+videoFrom+" "+where+" ORDER BY "+order,
 		args...,
 	)
 	if err != nil {
@@ -627,16 +650,16 @@ func (s *Store) SetCategoryIfUnset(id, category string) (bool, error) {
 // excluded so one persistently failing video cannot starve the rest of the
 // backlog.
 func (s *Store) NextUnclassified(skip []string) (*Video, error) {
-	q := "SELECT " + videoColumns + ` FROM videos
-		WHERE category = ? AND summary <> '' AND category_manual = 0`
+	q := "SELECT " + videoColumns + " " + videoFrom + `
+		WHERE v.category = ? AND v.summary <> '' AND v.category_manual = 0`
 	args := []any{UncategorizedCategory}
 	if len(skip) > 0 {
-		q += " AND id NOT IN (?" + strings.Repeat(",?", len(skip)-1) + ")"
+		q += " AND v.id NOT IN (?" + strings.Repeat(",?", len(skip)-1) + ")"
 		for _, id := range skip {
 			args = append(args, id)
 		}
 	}
-	q += " ORDER BY created_at DESC, id DESC LIMIT 1"
+	q += " ORDER BY v.created_at DESC, v.id DESC LIMIT 1"
 
 	v, err := scanVideo(s.db.QueryRowContext(context.Background(), q, args...))
 	if err == sql.ErrNoRows {
@@ -783,9 +806,9 @@ func (s *Store) SetResumeRaw(id string, position float64) error {
 // order reads chronologically.
 func (s *Store) SweepCandidates(cutoffUTC string) ([]Video, error) {
 	rows, err := s.db.QueryContext(context.Background(),
-		"SELECT "+videoColumns+` FROM videos
-WHERE watched = 1 AND favorite = 0 AND status != 'tombstoned' AND watched_at < ?
-ORDER BY watched_at ASC`, cutoffUTC,
+		"SELECT "+videoColumns+" "+videoFrom+`
+WHERE v.watched = 1 AND v.favorite = 0 AND v.status != 'tombstoned' AND v.watched_at < ?
+ORDER BY v.watched_at ASC`, cutoffUTC,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("sweep candidates: %w", err)
