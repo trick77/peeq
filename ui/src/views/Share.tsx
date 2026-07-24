@@ -18,6 +18,7 @@ import {
   parseVtt,
   transcriptFilenameBase,
   transcriptToText,
+  useCopyTranscript,
   type Cue,
 } from "../vtt";
 
@@ -66,6 +67,12 @@ export function Share({ token }: { token: string | null }) {
   const [cues, setCues] = useState<Cue[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  // "Copy text" state, same hook the Player's Transcript card uses.
+  const {
+    copied: transcriptCopied,
+    error: copyError,
+    copy: copyTranscript,
+  } = useCopyTranscript();
   const [find, setFind] = useState("");
 
   useEffect(() => {
@@ -310,7 +317,23 @@ export function Share({ token }: { token: string | null }) {
                         >
                           <Icon name="download" size="14px" /> .vtt
                         </a>
+                        <button
+                          type="button"
+                          className="pill transcript-copy"
+                          onClick={() => copyTranscript(cues)}
+                        >
+                          <Icon
+                            name={transcriptCopied ? "check" : "copy"}
+                            size="14px"
+                          />{" "}
+                          {transcriptCopied ? "Copied" : "Copy text"}
+                        </button>
                       </div>
+                    )}
+                    {copyError && (
+                      <p className="errline" style={{ marginTop: 8 }}>
+                        {copyError}
+                      </p>
                     )}
                   </div>
                   <div className="tabbody transcript-body">

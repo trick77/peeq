@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 // The WebVTT parsing and transcript-rendering helpers, shared by the Player's
@@ -58,6 +59,11 @@ function stripSoundEvents(s: string): string {
     .trim();
 }
 
+// sameLines reports whether two line slices hold the same strings in order.
+function sameLines(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((s, i) => s === b[i]);
+}
+
 // parseVtt is a small, deliberately forgiving client-side WebVTT parser —
 // good enough for yt-dlp/whisper-generated subtitle tracks: it scans for
 // "HH:MM:SS.mmm --> HH:MM:SS.mmm" (or "MM:SS.mmm --> ...") timing lines and
@@ -65,11 +71,23 @@ function stripSoundEvents(s: string): string {
 // inline <...> markup tags. It intentionally does not implement the full
 // WebVTT spec (cue settings, NOTE blocks, styling) — peeq only needs the
 // timestamp + text pairs to render a searchable, click-to-seek transcript.
+//
+// It also collapses YouTube's rolling-window auto-captions, where each cue
+// re-emits the tail of the previous one (so a naive parse shows every line two
+// or three times, in the panel and in the ".txt" download alike). The rules
+// below mirror ParseVTT's flush() in backend/internal/subtitles/vtt.go — the
+// backend copy feeds the summary and the embeddings, this one draws the panel,
+// and the two must agree on what the transcript actually says.
 export function parseVtt(text: string): Cue[] {
   const lines = text.split(/\r?\n/);
   const timingRe =
     /(\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}\s*-->\s*(\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}/;
   const cues: Cue[] = [];
+  // last / lastLines describe the cue emitted (or merged into) most recently:
+  // its joined text and its individual lines, which is what the two collapses
+  // below compare against.
+  let last = "";
+  let lastLines: string[] = [];
   let i = 0;
   while (i < lines.length) {
     const match = lines[i].match(timingRe);
@@ -80,18 +98,49 @@ export function parseVtt(text: string): Cue[] {
     const start = lines[i].split("-->")[0].trim().replace(",", ".");
     const ts = parseVttTimestamp(start);
     i++;
-    const textLines: string[] = [];
+    // Strip tags and sound events per line, before the collapse sees them:
+    // YouTube re-emits "[Music] I play" then "[Music] I play games", so only
+    // the words that survive stripping can be compared.
+    let cueLines: string[] = [];
     while (i < lines.length && lines[i].trim() !== "") {
-      textLines.push(lines[i].trim());
+      const clean = stripSoundEvents(lines[i].replace(/<[^>]+>/g, "").trim());
+      if (clean) cueLines.push(clean);
       i++;
     }
-    const cueText = stripSoundEvents(
-      textLines
-        .join(" ")
-        .replace(/<[^>]+>/g, "")
-        .trim(),
-    );
-    if (cueText) cues.push({ ts, text: cueText });
+    if (cueLines.length === 0) continue;
+
+    // Sliding-window collapse: drop the longest run of leading lines that
+    // exactly repeats the trailing lines of the previous cue.
+    if (lastLines.length > 0) {
+      const maxK = Math.min(cueLines.length, lastLines.length);
+      for (let k = maxK; k >= 1; k--) {
+        if (
+          sameLines(cueLines.slice(0, k), lastLines.slice(lastLines.length - k))
+        ) {
+          cueLines = cueLines.slice(k);
+          break;
+        }
+      }
+    }
+    // Every line was a repeat — this cue carries nothing new.
+    if (cueLines.length === 0) continue;
+
+    const cueText = cueLines.join(" ").trim();
+    if (!cueText) continue;
+
+    // Whole-cue collapse, for a caption that re-grows one line word by word:
+    // keep only the longest form, dropping the partial repeats around it.
+    if (last !== "" && cueText.startsWith(last)) {
+      if (cues.length > 0) cues[cues.length - 1].text = cueText;
+      last = cueText;
+      lastLines = cueLines;
+      continue;
+    }
+    if (last !== "" && last.startsWith(cueText)) continue;
+
+    cues.push({ ts, text: cueText });
+    last = cueText;
+    lastLines = cueLines;
   }
   return cues;
 }
@@ -128,4 +177,48 @@ export function highlightCue(text: string, query: string): ReactNode {
 // download saves — one cue per line, timestamps dropped.
 export function transcriptToText(cues: Cue[]): string {
   return cues.map((c) => c.text).join("\n");
+}
+
+// COPY_CONFIRM_MS is how long the copy button reads "Copied" before flipping
+// back, matching the share-link copy button in components/ShareControl.tsx.
+const COPY_CONFIRM_MS = 2000;
+
+// useCopyTranscript backs the transcript "Copy text" button in both the Player
+// and the share page. It puts exactly what the ".txt" download contains on the
+// clipboard (transcriptToText, so the two can never drift), then confirms by
+// flipping `copied` for two seconds — the transcript card sits far below the
+// Player's stage toast, and the share page has no toast at all, so the
+// confirmation has to live on the button itself.
+export function useCopyTranscript(): {
+  copied: boolean;
+  error: string;
+  copy: (cues: Cue[]) => Promise<void>;
+} {
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+  const timer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    return () => window.clearTimeout(timer.current);
+  }, []);
+
+  const copy = useCallback(async (cues: Cue[]) => {
+    try {
+      await navigator.clipboard.writeText(transcriptToText(cues));
+      setError("");
+      setCopied(true);
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(
+        () => setCopied(false),
+        COPY_CONFIRM_MS,
+      );
+    } catch {
+      // Clipboard writes fail on an insecure origin or a denied permission;
+      // the .txt download next to the button is the way out either way.
+      setCopied(false);
+      setError("Copy failed — download the .txt instead.");
+    }
+  }, []);
+
+  return { copied, error, copy };
 }
