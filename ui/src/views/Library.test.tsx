@@ -245,6 +245,19 @@ describe("VideoCard lifecycle line", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("falls back to the channel id when the name is missing", () => {
+    render(
+      <VideoCard
+        video={baseVideo({ channel_id: "UC_chan1", channel_name: "" })}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+    expect(screen.getByText("UC_chan1")).toBeInTheDocument();
+  });
+
   it("opens the video when the title is clicked", () => {
     const onOpen = vi.fn();
     render(

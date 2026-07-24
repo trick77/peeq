@@ -55,7 +55,7 @@ export function VideoCard({
     : 0;
 
   return (
-    <article className="card">
+    <article className="card video-card">
       <div className="thumb">
         <button
           type="button"
@@ -126,15 +126,6 @@ export function VideoCard({
         </div>
       </div>
 
-      <h3>
-        <button
-          type="button"
-          className="title-btn"
-          onClick={() => onOpen(video.id)}
-        >
-          {video.title}
-        </button>
-      </h3>
       <div className="by">
         {onOpenChannel && video.channel_id ? (
           <button
@@ -145,7 +136,9 @@ export function VideoCard({
             {video.channel_name || video.channel_id}
           </button>
         ) : (
-          video.channel_name || video.channel_id
+          <span className="chan-name">
+            {video.channel_name || video.channel_id}
+          </span>
         )}
         {video.published_at ? (
           <>
@@ -154,6 +147,15 @@ export function VideoCard({
           </>
         ) : null}
       </div>
+      <h3>
+        <button
+          type="button"
+          className="title-btn"
+          onClick={() => onOpen(video.id)}
+        >
+          {video.title}
+        </button>
+      </h3>
       <Lifecycle
         video={video}
         retentionDays={retentionDays}
