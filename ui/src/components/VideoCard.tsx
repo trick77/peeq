@@ -79,7 +79,7 @@ export function VideoCard({
           ) : (
             <div className={`fill ${gradientClassFor(video.id)}`} />
           )}
-          {isNew ? <span className="tag new">NEW</span> : null}
+          {isNew ? <span className="tag new">Unwatched</span> : null}
           <span className="dur">{formatDuration(video.duration_seconds)}</span>
           {resuming ? (
             <div className="resume">
