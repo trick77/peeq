@@ -63,4 +63,46 @@ describe("NewTab", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /check now/i })).toBeNull();
   });
+
+  it("shows the publish date beside the duration, and omits it when unknown", async () => {
+    // The row list carries the same date as the Inbox card, just on the sub
+    // line; an undated row must degrade to duration alone, never to a
+    // stand-in built from discovered_at.
+    const daysAgoISO = (n: number) =>
+      new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+    vi.mocked(listPending).mockResolvedValue([
+      {
+        video_id: "p1",
+        channel_id: "UCa",
+        channel_name: "Chan",
+        title: "Dated upload",
+        duration_seconds: 125,
+        url: "https://youtu.be/p1",
+        thumbnail_url: "https://img.example/p1.jpg",
+        published_at: daysAgoISO(3),
+        discovered_at: "2026-07-24 08:00:00",
+      },
+      {
+        video_id: "p2",
+        channel_id: "UCa",
+        channel_name: "Chan",
+        title: "Undated upload",
+        duration_seconds: 60,
+        url: "https://youtu.be/p2",
+        thumbnail_url: "https://img.example/p2.jpg",
+        discovered_at: "2026-07-24 08:00:00",
+      },
+    ]);
+    render(<NewTab detail={makeDetail()} onChanged={() => {}} />);
+    await screen.findByText("Dated upload");
+
+    const rowFor = (title: string) =>
+      screen.getByText(title).closest(".chan-prow") as HTMLElement;
+    expect(rowFor("Dated upload").querySelector(".sub")?.textContent).toBe(
+      "2:05 · 3 days ago",
+    );
+    expect(rowFor("Undated upload").querySelector(".sub")?.textContent).toBe(
+      "1:00",
+    );
+  });
 });

@@ -240,6 +240,14 @@ export type PendingItem = {
   duration_seconds: number;
   url: string;
   thumbnail_url: string;
+  // published_at is YYYY-MM-DD, absent when the scan never learned a date (an
+  // older ledger row, healed on that channel's next scan). It is yt-dlp's
+  // approximate tab date — a day coarser than the exact upload_date a
+  // downloaded video carries.
+  published_at?: string;
+  // discovered_at is when the scan first saw the upload: a sort fallback
+  // only, never rendered as a publish date.
+  discovered_at: string;
 };
 
 // CookieHealth mirrors httpapi.cookieHealthResponse — distinct from

@@ -340,3 +340,64 @@ func TestPickBanner_fallsBackToUncropped(t *testing.T) {
 		t.Fatalf("pickBanner with nothing = %q, want empty", got)
 	}
 }
+
+func TestChannelVideos_timestampBecomesPublishedDate(t *testing.T) {
+	// 1784757600 is 2026-07-22T22:00:00Z — late enough in the UTC day that a
+	// host on any of Europe's summer offsets would roll it to the 23rd, which
+	// is what pins the conversion to UTC instead of local time.
+	const listing = `{"id":"UCabc","entries":[
+	  {"id":"vid00000001","title":"A","timestamp":1784757600},
+	  {"id":"vid00000002","title":"B"},
+	  {"id":"vid00000003","title":"C","timestamp":0}
+	]}`
+	r := New(RunnerConfig{
+		Bin:            fakeBinPrinting(t, listing),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	got, err := r.ChannelVideos(context.Background(), "UCabc", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].PublishedAt != "2026-07-22" {
+		t.Fatalf("entry 0 published = %q, want 2026-07-22", got[0].PublishedAt)
+	}
+	// A missing or zero timestamp must stay empty, never become the epoch:
+	// "1970-01-01" would render as a 56-year-old upload on the inbox card.
+	if got[1].PublishedAt != "" || got[2].PublishedAt != "" {
+		t.Fatalf("dateless entries = %q, %q; want both empty",
+			got[1].PublishedAt, got[2].PublishedAt)
+	}
+}
+
+func TestChannelVideos_requestsApproximateDates(t *testing.T) {
+	// Without this extractor-arg yt-dlp reports no date at all for a flat
+	// listing, so the whole feature hinges on the flag reaching the binary.
+	argsFile := filepath.Join(t.TempDir(), "args")
+	script := filepath.Join(t.TempDir(), "fake-ytdlp-args.sh")
+	content := "#!/bin/sh\necho \"$@\" > " + argsFile + "\necho '{\"entries\":[]}'\nexit 0\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("write fake bin: %v", err)
+	}
+	r := New(RunnerConfig{
+		Bin:            script,
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	if _, err := r.ChannelVideos(context.Background(), "UCabc", 50); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(raw)
+	if !strings.Contains(args, "youtubetab:approximate_date") {
+		t.Fatalf("args missing approximate_date: %s", args)
+	}
+	// The url must still come last — appending the flag after it would make
+	// yt-dlp read the url as the flag's value.
+	if !strings.HasSuffix(strings.TrimSpace(args), "/videos") {
+		t.Fatalf("url is not the final arg: %s", args)
+	}
+}

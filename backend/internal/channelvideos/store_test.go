@@ -129,3 +129,104 @@ func TestListPendingForChannel_errorsOnClosedDB(t *testing.T) {
 		t.Fatal("expected an error listing pending for channel against a closed db")
 	}
 }
+
+// TestLedger_setPublishedAtFillsOnlyWhileNull covers the heal path for rows
+// that predate the published_at column: the scanner calls SetPublishedAt on
+// every already-known video it re-lists, so the guard is what keeps that from
+// rewriting a date on each pass.
+func TestLedger_setPublishedAtFillsOnlyWhileNull(t *testing.T) {
+	st := newTestStore(t)
+	seedChannel(t, st, "UCa")
+	// A row inserted with no date — exactly the shape of everything already
+	// sitting in a user's inbox when this shipped.
+	if err := st.Insert(Entry{VideoID: "v1", ChannelID: "UCa", State: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PublishedAt != "" {
+		t.Fatalf("fresh row published = %q, want empty", got.PublishedAt)
+	}
+
+	if err := st.SetPublishedAt("v1", "2026-07-20"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = st.Get("v1"); err != nil {
+		t.Fatal(err)
+	} else if got.PublishedAt != "2026-07-20" {
+		t.Fatalf("after heal = %q, want 2026-07-20", got.PublishedAt)
+	}
+
+	// Second pass: a later, coarser approximation must not overwrite the
+	// date already stored.
+	if err := st.SetPublishedAt("v1", "2026-07-01"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = st.Get("v1"); err != nil {
+		t.Fatal(err)
+	} else if got.PublishedAt != "2026-07-20" {
+		t.Fatalf("re-heal changed date to %q, want 2026-07-20 kept", got.PublishedAt)
+	}
+
+	// An empty date is a no-op, leaving the row eligible for a later pass.
+	if err := st.SetPublishedAt("v1", ""); err != nil {
+		t.Fatalf("empty date must not error: %v", err)
+	}
+}
+
+// TestLedger_insertStoresPublishedAt proves a date supplied at insert time
+// survives the round-trip through both read paths (Get and ListPending scan
+// separate column lists, and only one of them carries channel_name).
+func TestLedger_insertStoresPublishedAt(t *testing.T) {
+	st := newTestStore(t)
+	seedChannel(t, st, "UCa")
+	if err := st.Insert(Entry{
+		VideoID: "v1", ChannelID: "UCa", State: "pending", PublishedAt: "2026-07-19",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PublishedAt != "2026-07-19" {
+		t.Fatalf("Get published = %q", got.PublishedAt)
+	}
+	pending, err := st.ListPending()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].PublishedAt != "2026-07-19" {
+		t.Fatalf("ListPending = %+v", pending)
+	}
+}
+
+// TestLedger_listPendingOrdersByPublishedDate proves the inbox's default
+// order is publish date, not discovery: a channel's first scan backfills a
+// batch of uploads with one shared discovered_at, so ordering on discovery
+// alone would leave that batch in an arbitrary order.
+func TestLedger_listPendingOrdersByPublishedDate(t *testing.T) {
+	st := newTestStore(t)
+	seedChannel(t, st, "UCa")
+	for _, e := range []Entry{
+		{VideoID: "vOld", ChannelID: "UCa", State: "pending", PublishedAt: "2026-07-01"},
+		{VideoID: "vNew", ChannelID: "UCa", State: "pending", PublishedAt: "2026-07-23"},
+		{VideoID: "vMid", ChannelID: "UCa", State: "pending", PublishedAt: "2026-07-10"},
+	} {
+		if err := st.Insert(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := st.ListPending()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"vNew", "vMid", "vOld"}
+	for i, id := range want {
+		if got[i].VideoID != id {
+			t.Fatalf("position %d = %s, want %s", i, got[i].VideoID, id)
+		}
+	}
+}
