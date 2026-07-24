@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { Player, parseVtt } from "./Player";
+import { Player } from "./Player";
+import { parseVtt } from "../vtt";
 import type { Video } from "../api/types";
 
 const mockVideo: Video = {
