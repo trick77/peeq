@@ -272,15 +272,18 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		run.skipped("embedding", "already embedded")
 	}
 
-	// Summary + search are usable now — mark done so the UI shows them even if
-	// the key-points step below is still pending on a slow endpoint.
+	// Summary + search are usable now — persist "done" so the Library shows them
+	// even if the key-points step below is still pending on a slow endpoint. The
+	// live phase deliberately stays on the pipeline (keypoints below): the queue
+	// row lives until the job is Finish()ed at the end, so it should read the
+	// stage it's actually on, not "done".
 	if video.SummaryStatus != "done" {
 		_ = w.d.Videos.SetSummaryStatus(video.ID, "done", "")
-		w.emit(video.ID, "done", "")
 	}
 
 	// Step 4 — key points (and chapters when yt-dlp didn't supply them). The
 	// fragile call, run last so a failure retries only this and costs nothing.
+	w.emit(video.ID, "running", "keypoints")
 	ytChapters := decodeChapters(video.Chapters)
 	kctx, done := run.step("keypoints")
 	chapters, keyPoints, err := w.d.Summarizer.KeyPoints(kctx, summary, parsed.Cues, ytChapters)

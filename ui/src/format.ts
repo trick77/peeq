@@ -23,19 +23,36 @@ export function formatDuration(totalSeconds: number | undefined): string {
   return `${minutes}:${pad(seconds)}`;
 }
 
-// summaryPhaseLabel turns a live summary phase (from the "summary" SSE event)
-// into the display word for the Queue and Activity "being summarized" rows. The
-// worker runs summarize → classify → embed, emitting a phase for each; anything
-// unrecognised (or absent, before the first event) reads as "Summarizing".
+// The summarize worker runs four stages in order (summarize → classify → embed
+// → key points), emitting a live phase for each on the "summary" SSE event.
+// SUMMARY_PHASES is the single source of truth mapping each phase string to its
+// display label and 1-based step, so the Queue can render "Key points 4/4" with
+// a matching progress meter. Anything unrecognised (or absent, before the first
+// event) reads as the first stage, "Summarizing".
+const SUMMARY_PHASES = [
+  { phase: "summarizing", label: "Summarizing" },
+  { phase: "classifying", label: "Classifying" },
+  { phase: "embedding", label: "Embedding" },
+  { phase: "keypoints", label: "Key points" },
+] as const;
+
+// SUMMARY_PHASE_COUNT — the "/4" denominator and the number of progress dots.
+export const SUMMARY_PHASE_COUNT = SUMMARY_PHASES.length;
+
+// summaryPhaseInfo resolves a live phase to its label and 1-based step.
+export function summaryPhaseInfo(phase: string | undefined): {
+  label: string;
+  step: number;
+} {
+  const i = SUMMARY_PHASES.findIndex((p) => p.phase === phase);
+  const idx = i === -1 ? 0 : i;
+  return { label: SUMMARY_PHASES[idx].label, step: idx + 1 };
+}
+
+// summaryPhaseLabel is the word-only view of the above, kept for the Activity
+// row (which shows the phase without a step meter).
 export function summaryPhaseLabel(phase: string | undefined): string {
-  switch (phase) {
-    case "classifying":
-      return "Classifying";
-    case "embedding":
-      return "Embedding";
-    default:
-      return "Summarizing";
-  }
+  return summaryPhaseInfo(phase).label;
 }
 
 // daysBetween returns the whole number of days elapsed from `from` (an ISO

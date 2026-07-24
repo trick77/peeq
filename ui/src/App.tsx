@@ -621,6 +621,7 @@ function ViewSwitch({
           summaries={summaries}
           summaryPhaseByVideoId={summaryPhaseByVideoId}
           onCancel={onCancelDownload}
+          onOpenChannel={onOpenChannel}
         />
       );
     case "activity":

@@ -1,5 +1,5 @@
 import { Button } from "../ui";
-import { summaryPhaseLabel } from "../format";
+import { summaryPhaseInfo, SUMMARY_PHASE_COUNT } from "../format";
 import type { Job, SummaryJob } from "../api/types";
 
 // Queue — everything peeq is working on right now, in two lanes: downloads and
@@ -12,13 +12,45 @@ import type { Job, SummaryJob } from "../api/types";
 // A download can be cancelled (queued or mid-flight); a summary cannot — it is
 // short, unattended, and retried on its own, so there is no button for it.
 
-// phaseLabel turns a summary job's live phase (or its stored state) into a word
-// for the row. A pending job that hasn't started reads "Waiting"; a running one
-// shows its live phase (summarizing → classifying → embedding) from the "summary"
-// SSE event, advancing without a reload.
-function phaseLabel(phase: string | undefined, state: string): string {
-  if (state !== "running" && !phase) return "Waiting";
-  return summaryPhaseLabel(phase);
+// phaseState turns a summary job's live phase (or its stored state) into the
+// label + 1-based step the row's meter shows. A pending job that hasn't started
+// reads "Waiting" (step 0, no meter); a running one shows its live phase —
+// summarizing → classifying → embedding → keypoints — from the "summary" SSE
+// event, advancing without a reload.
+function phaseState(
+  phase: string | undefined,
+  state: string,
+): { label: string; step: number } {
+  if (state !== "running" && !phase) return { label: "Waiting", step: 0 };
+  return summaryPhaseInfo(phase);
+}
+
+// ChannelSub renders the row's channel line — a link to the channel when we
+// know its id (and have a handler), plain text otherwise. Mirrors the
+// chan-link/chan-name convention VideoCard and Player use; a video added
+// individually may carry no channel id, in which case it stays plain text.
+function ChannelSub({
+  name,
+  id,
+  onOpen,
+}: {
+  name?: string;
+  id?: string;
+  onOpen?: (channelId: string) => void;
+}) {
+  const text = name || id;
+  if (!text) return null;
+  return (
+    <div className="qsub">
+      {onOpen && id ? (
+        <button type="button" className="chan-link" onClick={() => onOpen(id)}>
+          {text}
+        </button>
+      ) : (
+        text
+      )}
+    </div>
+  );
 }
 
 export function Queue({
@@ -27,6 +59,7 @@ export function Queue({
   summaries,
   summaryPhaseByVideoId,
   onCancel,
+  onOpenChannel,
 }: {
   jobs: Job[];
   progressByJobId?: Record<
@@ -36,6 +69,7 @@ export function Queue({
   summaries: SummaryJob[];
   summaryPhaseByVideoId?: Record<string, string>;
   onCancel: (jobId: number) => void;
+  onOpenChannel?: (channelId: string) => void;
 }) {
   // In-flight downloads only. A terminal job (done/error) is not queue work:
   // errors are retried from the Library card, done ones are in the Library.
@@ -64,9 +98,11 @@ export function Queue({
               <div key={j.job_id} className="qrow">
                 <div className="qmeta">
                   <div className="qtitle">{j.title || j.video_id}</div>
-                  {j.channel_name ? (
-                    <div className="qsub">{j.channel_name}</div>
-                  ) : null}
+                  <ChannelSub
+                    name={j.channel_name}
+                    id={j.channel_id}
+                    onOpen={onOpenChannel}
+                  />
                 </div>
                 {running && p ? (
                   <div className="qbar">
@@ -97,19 +133,44 @@ export function Queue({
       {summaries.length > 0 ? (
         <section className="queue-lane">
           <h2>Being summarized</h2>
-          {summaries.map((s) => (
-            <div key={s.id} className="qrow">
-              <div className="qmeta">
-                <div className="qtitle">{s.title || s.video_id}</div>
-                {s.channel_name ? (
-                  <div className="qsub">{s.channel_name}</div>
-                ) : null}
+          {summaries.map((s) => {
+            const ps = phaseState(summaryPhaseByVideoId?.[s.video_id], s.state);
+            const live = ps.step > 0;
+            return (
+              <div key={s.id} className="qrow">
+                <div className="qmeta">
+                  <div className="qtitle">{s.title || s.video_id}</div>
+                  <ChannelSub
+                    name={s.channel_name}
+                    id={s.channel_id}
+                    onOpen={onOpenChannel}
+                  />
+                </div>
+                <div className="qphase">
+                  <span className="qphase-word">
+                    {ps.label}
+                    {live ? (
+                      <span className="qphase-frac">
+                        {ps.step}/{SUMMARY_PHASE_COUNT}
+                      </span>
+                    ) : null}
+                  </span>
+                  <div className="qphase-dots" aria-hidden="true">
+                    {Array.from({ length: SUMMARY_PHASE_COUNT }, (_, i) => {
+                      const n = i + 1;
+                      const cls =
+                        n < ps.step
+                          ? "qdot done"
+                          : n === ps.step
+                            ? "qdot active"
+                            : "qdot";
+                      return <i key={n} className={cls} />;
+                    })}
+                  </div>
+                </div>
               </div>
-              <span className="qstate">
-                {phaseLabel(summaryPhaseByVideoId?.[s.video_id], s.state)}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </section>
       ) : null}
     </>

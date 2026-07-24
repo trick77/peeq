@@ -533,6 +533,63 @@ button.srow:not(:disabled):hover {
   );
   border-radius: 4px;
 }
+/* Summary phase indicator — a live progression through the four summarize
+   stages (summarize → classify → embed → key points), replacing the old
+   monospace status word. The word names the current stage in the UI sans face;
+   the fraction and the row of four dots show position in the pipeline (done ·
+   running · ahead), the running dot pulsing so the row reads as live. Downloads
+   keep .qstate (percent · speed · ETA) — that stays monospace tabular data. */
+.qrow .qphase {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+.qrow .qphase-word {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-ink-dim);
+}
+.qrow .qphase-frac {
+  margin-left: 5px;
+  font-weight: 500;
+  color: var(--color-faint);
+  font-variant-numeric: tabular-nums;
+}
+.qrow .qphase-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.qrow .qdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-border);
+}
+.qrow .qdot.done {
+  background: var(--color-kept);
+}
+.qrow .qdot.active {
+  background: var(--color-accent);
+  animation: qphase-pulse 1.6s ease-out infinite;
+}
+@keyframes qphase-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--glow-accent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(217, 119, 87, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(217, 119, 87, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qrow .qdot.active {
+    animation: none;
+  }
+}
 .queue-empty {
   color: var(--color-faint);
   font-size: 13px;
@@ -3266,8 +3323,8 @@ details.tomb-sect[open] > summary svg {
     linear-gradient(
       90deg,
       var(--color-panel) 0%,
-      color-mix(in srgb, var(--color-panel) 82%, transparent) 42%,
-      color-mix(in srgb, var(--color-panel) 30%, transparent) 100%
+      color-mix(in srgb, var(--color-panel) 85%, transparent) 48%,
+      color-mix(in srgb, var(--color-panel) 10%, transparent) 100%
     ),
     linear-gradient(
       180deg,
@@ -3361,7 +3418,10 @@ details.tomb-sect[open] > summary svg {
   margin: 8px 0 0;
   font-size: var(--text-body);
   color: var(--color-muted);
-  max-width: 60ch;
+  /* A comfortable measure, not a hard narrow cap: the parent (.chan-id, flex:1)
+     already clamps this on small screens, so the wider ceiling only bites when
+     the header actually has the horizontal room to spend. */
+  max-width: 74ch;
 }
 .chan-desc.clamped {
   display: -webkit-box;
