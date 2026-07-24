@@ -126,6 +126,27 @@ export function VideoCard({
         </div>
       </div>
 
+      <div className="by">
+        {onOpenChannel && video.channel_id ? (
+          <button
+            type="button"
+            className="link chan-link"
+            onClick={() => onOpenChannel(video.channel_id)}
+          >
+            {video.channel_name || video.channel_id}
+          </button>
+        ) : (
+          <span className="chan-name">
+            {video.channel_name || video.channel_id}
+          </span>
+        )}
+        {video.published_at ? (
+          <>
+            <span className="dot">·</span>
+            {formatAgo(video.published_at)}
+          </>
+        ) : null}
+      </div>
       <h3>
         <button
           type="button"
@@ -135,25 +156,6 @@ export function VideoCard({
           {video.title}
         </button>
       </h3>
-      <div className="by">
-        {onOpenChannel && video.channel_id ? (
-          <button
-            type="button"
-            className="chan-link"
-            onClick={() => onOpenChannel(video.channel_id)}
-          >
-            {video.channel_name || video.channel_id}
-          </button>
-        ) : (
-          video.channel_name || video.channel_id
-        )}
-        {video.published_at ? (
-          <>
-            <span className="dot">·</span>
-            {formatAgo(video.published_at)}
-          </>
-        ) : null}
-      </div>
       <Lifecycle
         video={video}
         retentionDays={retentionDays}

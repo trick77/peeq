@@ -353,7 +353,7 @@ export function Channel({
               {detail.handle ? (
                 <>
                   <a
-                    className="chan-yt"
+                    className="link chan-yt"
                     href={`https://www.youtube.com/${detail.handle}`}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -384,7 +384,7 @@ export function Channel({
                 {descOverflows || descOpen ? (
                   <button
                     type="button"
-                    className="chan-more"
+                    className="link chan-more"
                     aria-expanded={descOpen}
                     onClick={() => setDescOpen((v) => !v)}
                   >
