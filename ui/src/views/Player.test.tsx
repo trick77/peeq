@@ -1109,13 +1109,11 @@ describe("Player", () => {
       name: /Category: Gaming/,
     });
     fireEvent.click(pill);
-    fireEvent.click(
-      screen.getByRole("menuitemradio", { name: /^Artificial Intelligence$/ }),
-    );
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /^AI$/ }));
 
     expect(setCategory).toHaveBeenCalledWith("v1", "ai");
     await screen.findByRole("button", {
-      name: /Category: Artificial Intelligence/,
+      name: /Category: AI/,
     });
   });
 
@@ -1129,9 +1127,7 @@ describe("Player", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /Category: Gaming/ }),
     );
-    fireEvent.click(
-      screen.getByRole("menuitemradio", { name: /^Artificial Intelligence$/ }),
-    );
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /^AI$/ }));
 
     await screen.findByRole("button", { name: /Category: Gaming/ });
   });

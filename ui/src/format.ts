@@ -38,6 +38,27 @@ export function daysSince(
   return Math.max(0, Math.floor(diffMs / (24 * 60 * 60 * 1000)));
 }
 
+// formatAgo renders an ISO timestamp as a full-word relative age ("3 days
+// ago", "5 months ago") for the video-card date line. Coarse by design — the
+// same day/month/year thresholds the channel page's abbreviated formatAge
+// uses, just spelled out, since the card has the room. Built on daysSince, so
+// it shares the invalid/future -> "today" guard and is testable via `now`.
+export function formatAgo(
+  iso: string | undefined,
+  now: Date = new Date(),
+): string {
+  if (!iso) return "";
+  const days = daysSince(iso, now);
+  if (days <= 0) return "today";
+  const unit = (n: number, word: string) =>
+    `${n} ${word}${n === 1 ? "" : "s"} ago`;
+  if (days < 30) return unit(days, "day");
+  // Cap at 11 months: Math.round(days / 30) reaches 12 by ~345 days, which
+  // would read "12 months ago" right before the year bucket takes over.
+  if (days < 365) return unit(Math.min(11, Math.round(days / 30)), "month");
+  return unit(Math.round(days / 365), "year");
+}
+
 // GRADIENT_CLASSES mirrors the mockup's six thumbnail gradient fallbacks
 // (g1..g6, defined in index.css). gradientClassFor picks a stable one per
 // video id (a simple string hash) so a given card keeps the same color

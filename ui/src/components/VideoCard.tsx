@@ -2,7 +2,12 @@ import { Icon } from "../icons";
 import { Button } from "../ui";
 import { thumbnailUrl } from "../api/videos";
 import type { Video } from "../api/types";
-import { daysSince, formatDuration, gradientClassFor } from "../format";
+import {
+  daysSince,
+  formatAgo,
+  formatDuration,
+  gradientClassFor,
+} from "../format";
 import { CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
 
 // VideoCard — one grid tile, per the mockup's `.card`/`.thumb`/`.life`
@@ -145,7 +150,7 @@ export function VideoCard({
         {video.published_at ? (
           <>
             <span className="dot">·</span>
-            {new Date(video.published_at).toLocaleDateString()}
+            {formatAgo(video.published_at)}
           </>
         ) : null}
       </div>

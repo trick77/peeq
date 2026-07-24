@@ -8,7 +8,7 @@ describe("CategoryPicker", () => {
     render(<CategoryPicker category="ai" onPick={vi.fn()} />);
 
     const trigger = screen.getByRole("button", {
-      name: /Category: Artificial Intelligence/,
+      name: /Category: AI/,
     });
     fireEvent.click(trigger);
 
@@ -19,9 +19,7 @@ describe("CategoryPicker", () => {
       items.some((i) => i.textContent?.toLowerCase().includes("uncategorized")),
     ).toBe(false);
     expect(
-      items
-        .find((i) => i.textContent === "Artificial Intelligence")
-        ?.getAttribute("aria-checked"),
+      items.find((i) => i.textContent === "AI")?.getAttribute("aria-checked"),
     ).toBe("true");
   });
 
@@ -29,9 +27,7 @@ describe("CategoryPicker", () => {
     const onPick = vi.fn();
     render(<CategoryPicker category="ai" onPick={onPick} />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /Category: Artificial Intelligence/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /Category: AI/ }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: /Gaming/ }));
 
     expect(onPick).toHaveBeenCalledWith("gaming");
@@ -66,9 +62,7 @@ describe("CategoryPicker", () => {
     const onPick = vi.fn();
     render(<CategoryPicker category="ai" onPick={onPick} />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /Category: Artificial Intelligence/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /Category: AI/ }));
     expect(screen.getByRole("menu")).toBeTruthy();
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -85,9 +79,7 @@ describe("CategoryPicker", () => {
       </div>,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /Category: Artificial Intelligence/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /Category: AI/ }));
     fireEvent.mouseDown(screen.getByRole("button", { name: "elsewhere" }));
 
     expect(screen.queryByRole("menu")).toBeNull();
@@ -95,9 +87,7 @@ describe("CategoryPicker", () => {
 
   it("moves through the menu with the arrow keys", () => {
     render(<CategoryPicker category="ai" onPick={vi.fn()} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: /Category: Artificial Intelligence/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /Category: AI/ }));
 
     // The checked row takes focus on open, so ArrowDown lands on the next one.
     const items = screen.getAllByRole("menuitemradio");

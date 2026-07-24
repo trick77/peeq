@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { VideoCard } from "../components/VideoCard";
+import { PillStrip } from "../components/PillStrip";
 import {
   listVideos,
   getSettings,
@@ -11,16 +12,15 @@ import type { Video, VideoFilter, VideoSort, Settings } from "../api/types";
 import { CATEGORIES } from "../categories";
 import { controlClass } from "../ui";
 
-// No "Watched" chip: the "Already watched" drawer at the foot of every view
-// is where watched videos live now, so a chip for them would be a second,
-// worse route to the same list — one that also swaps the whole page out
-// instead of unfolding in place. The filter itself still exists (the type
-// mirrors what videos.Store.List accepts, and matchesFilter still covers it),
-// it simply has no button.
+// "Watched" is a filter chip like any other: selecting it lists watched videos
+// in the main grid. (It used to be split into an "Already watched" drawer below
+// the grid; that turned out to be a second, more awkward route to a list a chip
+// gives directly.)
 const CHIPS: { id: VideoFilter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "unwatched", label: "Unwatched" },
   { id: "favorites", label: "Favorites" },
+  { id: "watched", label: "Watched" },
 ];
 
 // SORT_OPTIONS is shared with the channel page's Archive tab so the two
@@ -56,29 +56,6 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
   }
 }
 
-// WATCHED_OPEN_KEY holds whether the "Already watched" drawer is unfolded.
-// localStorage, not sessionStorage: this is a lasting preference (someone who
-// wants their history in view wants it in view tomorrow too), unlike the
-// per-tab markers this app has used elsewhere. Both accessors are guarded —
-// a disabled or full store (private mode, SSR) must never break the Library.
-const WATCHED_OPEN_KEY = "peeq.library.watchedOpen";
-
-function readWatchedOpen(): boolean {
-  try {
-    return localStorage.getItem(WATCHED_OPEN_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeWatchedOpen(open: boolean) {
-  try {
-    localStorage.setItem(WATCHED_OPEN_KEY, open ? "1" : "0");
-  } catch {
-    // Ignore: the drawer still works for this session, it just won't persist.
-  }
-}
-
 // Library — the default view: filter chips + a grid of VideoCards, per the
 // mockup's `.chips`/`.grid` blocks. The search query itself lives in App
 // (it's the top bar's search box, wired there since the top bar is
@@ -102,7 +79,6 @@ export function Library({
   activeDownloads?: number;
 }) {
   const [filter, setFilter] = useState<VideoFilter>("all");
-  const [watchedOpen, setWatchedOpen] = useState<boolean>(readWatchedOpen);
   const [category, setCategory] = useState<string>("all");
   const [sort, setSort] = useState<VideoSort>("newest");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -246,15 +222,13 @@ export function Library({
 
   const retentionDays = settings?.retention_days ?? 14;
 
-  // The Library leads with what is still to watch: already-watched videos are
-  // split out of the main grid and folded into a drawer below it. The
-  // "watched" filter is the one case where the split would leave an empty
-  // grid, so there everything stays where it is. No chip selects it any more,
-  // but the guard stays: the filter is still a valid state, and a view that
-  // renders nothing but a drawer would be a nasty way to find that out.
-  const splitWatched = filter !== "watched";
-  const queue = splitWatched ? videos.filter((v) => !v.watched) : videos;
-  const watchedVideos = splitWatched ? videos.filter((v) => v.watched) : [];
+  // The active chip's list comes from the server, but an optimistic watched /
+  // favorite toggle can push a card out of the current filter before any
+  // refetch — e.g. marking a card watched while the Unwatched chip is active.
+  // Re-apply the same predicate the server used so the card leaves the grid
+  // immediately. For "all" this keeps everything (matchesFilter → true), so
+  // watched videos still show inline there.
+  const visible = videos.filter((v) => matchesFilter(v, filter));
 
   function renderCard(video: Video) {
     return (
@@ -288,31 +262,33 @@ export function Library({
           </button>
         ))}
       </div>
-      <div className="catchips">
-        <button
-          type="button"
-          className={`catchip${category === "all" ? " on" : ""}`}
-          onClick={() => setCategory("all")}
-        >
-          All categories <span className="n">{allVideos.length}</span>
-        </button>
-        {CATEGORIES.filter((c) =>
-          allVideos.some((v) => v.category === c.id),
-        ).map((c) => (
+      <PillStrip>
+        <div className="catchips">
           <button
-            key={c.id}
             type="button"
-            className={`catchip${category === c.id ? " on" : ""}`}
-            onClick={() => setCategory(c.id)}
+            className={`catchip${category === "all" ? " on" : ""}`}
+            onClick={() => setCategory("all")}
           >
-            <span className="dotc" style={{ background: c.color }} />
-            {c.label}{" "}
-            <span className="n">
-              {allVideos.filter((v) => v.category === c.id).length}
-            </span>
+            All categories <span className="n">{allVideos.length}</span>
           </button>
-        ))}
-      </div>
+          {CATEGORIES.filter((c) =>
+            allVideos.some((v) => v.category === c.id),
+          ).map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={`catchip${category === c.id ? " on" : ""}`}
+              onClick={() => setCategory(c.id)}
+            >
+              <span className="dotc" style={{ background: c.color }} />
+              {c.label}{" "}
+              <span className="n">
+                {allVideos.filter((v) => v.category === c.id).length}
+              </span>
+            </button>
+          ))}
+        </div>
+      </PillStrip>
       <div className="listbar">
         <select
           className={controlClass}
@@ -329,39 +305,9 @@ export function Library({
         </select>
       </div>
       {error ? <div className="errline">{error}</div> : null}
-      <div className="grid">{queue.map(renderCard)}</div>
-      {queue.length === 0 && !error ? (
-        <p style={{ color: "var(--color-faint)" }}>
-          {watchedVideos.length > 0
-            ? "Nothing left to watch."
-            : "No videos yet."}
-        </p>
-      ) : null}
-      {watchedVideos.length > 0 ? (
-        <details
-          className="drawer"
-          open={watchedOpen}
-          onToggle={(e) => {
-            const open = (e.currentTarget as HTMLDetailsElement).open;
-            setWatchedOpen(open);
-            writeWatchedOpen(open);
-          }}
-        >
-          <summary className="drawer-head">
-            <span className="drawer-title">
-              Already watched <span className="n">{watchedVideos.length}</span>
-            </span>
-            <span className="drawer-btn">
-              <span className="caret" aria-hidden="true">
-                ▾
-              </span>
-              {watchedOpen ? "Hide" : "Show"}
-            </span>
-          </summary>
-          <div className="drawer-body">
-            <div className="grid">{watchedVideos.map(renderCard)}</div>
-          </div>
-        </details>
+      <div className="grid">{visible.map(renderCard)}</div>
+      {visible.length === 0 && !error ? (
+        <p style={{ color: "var(--color-faint)" }}>No videos yet.</p>
       ) : null}
     </>
   );
