@@ -31,9 +31,35 @@ type Completer interface {
 	Complete(ctx context.Context, messages []llm.Message) (string, error)
 }
 
-type Summarizer struct{ c Completer }
+type Summarizer struct {
+	c Completer
+	// summaryChunkTokens is the coarse chunk budget for the prose summary (in
+	// estimated tokens). A transcript that fits produces a single chunk, so the
+	// summary is one call; only a marathon fans out into a few coarse sections.
+	summaryChunkTokens int
+}
 
-func New(c Completer) *Summarizer { return &Summarizer{c: c} }
+// Option configures a Summarizer. Variadic so existing New(c) callers (and every
+// test) keep compiling.
+type Option func(*Summarizer)
+
+// WithSummaryChunkTokens sets the coarse summary chunk budget. A non-positive n
+// is ignored, leaving the default.
+func WithSummaryChunkTokens(n int) Option {
+	return func(s *Summarizer) {
+		if n > 0 {
+			s.summaryChunkTokens = n
+		}
+	}
+}
+
+func New(c Completer, opts ...Option) *Summarizer {
+	s := &Summarizer{c: c, summaryChunkTokens: defaultSummaryChunkTokens}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
 
 // Classify asks the model to pick exactly one category id from allowed,
 // given the video title and its generated summary. It returns the model's
@@ -73,60 +99,128 @@ func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowe
 	})
 }
 
-// mapSystemPrompt is the system turn sent unchanged on every map call. Because
-// it is byte-identical across all of a video's chunks (only the chunk text, the
-// user turn, varies), it doubles as the long shared prefix the endpoint's
-// prompt cache can reuse — the first chunk warms it, later chunks read it from
-// cache (see the caching note in llm/client.go). It is kept deliberately
-// concrete and stable for that reason: lengthening it with real guidance both
-// steadies the map output and enlarges the cacheable prefix. Do not interpolate
-// per-video data into it, or the prefix stops matching and cache_tokens fall
-// back to 0.
-const mapSystemPrompt = "You summarize one section of a video transcript into 1-2 concrete sentences. " +
-	"Capture the section's main claim, finding, or moment, plus any specific names, numbers, products, or " +
-	"places it turns on. Write plainly in the third person, present tense. Use only what the section states — " +
-	"add nothing, and do not editorialize or speculate. Do not open with filler such as \"In this section\" or " +
-	"\"The speaker\"; start with the substance. Output only the summary sentences, with no preamble or labels."
+const (
+	// defaultSummaryChunkTokens sizes the coarse summary chunk to ~3.5h of
+	// transcript. The chat model's context window is ~1M tokens, so the whole
+	// transcript is a single chunk (hence a single call) for all but multi-hour
+	// videos; keeping each call's input near this size also holds time-to-first-
+	// byte under the client's header timeout instead of prefilling for minutes.
+	defaultSummaryChunkTokens = 48000
 
-// SummarizeText produces the prose summary by map-reducing the transcript: one
-// summary per chunk, then a single reduce. It is the resumable worker's first
-// step, persisted on its own so a later failure never discards it.
+	// summaryMaxTokens bounds the summary call. It runs with thinking ON (this is
+	// the summary a person reads), so the cap must fit reasoning plus a ~190-word
+	// answer — generous, but far below a runaway (a keypoints call once spent
+	// 44k). It is a spiral backstop, not a length target.
+	summaryMaxTokens = 8000
+
+	// keypointsMaxTokens bounds the keypoints JSON. It runs with thinking OFF, so
+	// the whole budget is output and there is no reasoning to bound — this is only
+	// a runaway backstop, set well clear of any real video's chapters + points
+	// (hundreds of them) so it never truncates legitimate JSON, which would parse
+	// as empty and silently drop every point.
+	keypointsMaxTokens = 16000
+)
+
+// wholeVideoSystemPrompt drives the single-pass summary: the full transcript in,
+// one cohesive summary out. It is the synthesis the reader sees, so its call
+// keeps thinking on (unlike the coarse-section pass below).
+const wholeVideoSystemPrompt = "You are given the full transcript of one video. Write a single cohesive summary of at most 2 paragraphs and at most 190 words total. " +
+	"Lead with what the video is about, then its main claims or moments. Be concrete and drop tangents; do not list every topic mentioned. " +
+	"Output only the summary prose, with no preamble, headings, or labels."
+
+// coarseSectionSystemPrompt summarizes one large section of a long transcript in
+// the rare multi-chunk fallback. Unlike a 600-token map (which asked for 1-2
+// sentences), it produces a short paragraph or two scaled to a ~48k-token
+// section, so the reduce has real material to synthesize from.
+const coarseSectionSystemPrompt = "You are given one section of a longer video transcript. Summarize it in 1-2 short paragraphs (at most ~120 words): its main claims, findings, or moments and the specifics they turn on. " +
+	"Write plainly in the third person, present tense; use only what the section states. Output only the summary prose, with no preamble or labels."
+
+// reduceSystemPrompt combines coarse-section summaries into the final summary
+// (multi-chunk fallback only).
+const reduceSystemPrompt = "Combine these section summaries of one video into a single cohesive summary of at most 2 paragraphs and at most 190 words total. " +
+	"Lead with what the video is about, then its main claims or moments. " +
+	"Be concrete and drop tangents; do not list every topic mentioned."
+
+// SummarizeText produces the prose summary. Because the chat model has a ~1M-
+// token context window, the whole transcript fits in a SINGLE call for all but
+// multi-hour videos — so this is single-pass in the common case and only falls
+// back to a coarse (few big sections) map-reduce for a marathon. It is the
+// resumable worker's first step, persisted on its own so a later failure never
+// discards it.
 func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (string, error) {
-	chunks := rag.Chunk(transcript, rag.DefaultChunkOptions())
+	// budget is always positive — New defaults it and WithSummaryChunkTokens
+	// ignores a non-positive override.
+	budget := s.summaryChunkTokens
+	// Coarse chunking: rag.Chunk returns a single chunk when the transcript fits
+	// the budget, so the common path below is one call. The overlap is small
+	// relative to the section size and only matters on the rare fan-out.
+	chunks := rag.Chunk(transcript, rag.ChunkOptions{
+		TargetTokens: budget, MaxTokens: budget + budget/8, OverlapTokens: 500,
+	})
 	if len(chunks) == 0 {
 		return "", fmt.Errorf("summarize: empty transcript")
 	}
 
-	// MAP: summarize each chunk. No thinking — condensing one section into two
-	// sentences is a rewrite of text already in front of the model, and this is
-	// the step that runs once per chunk, so it is where reasoning costs most.
-	// The REDUCE below keeps it: that one call produces the summary a person
-	// actually reads.
+	// Single-pass: synthesize the whole video in one call. Thinking stays on
+	// (default), bounded by summaryMaxTokens so it can reason without spiralling.
+	// FailOnEarlyFinish makes a content_filter/refusal cut retry the job rather
+	// than persist half a summary of the whole video (a "length" cut is our own
+	// cap and is tolerated).
+	if len(chunks) == 1 {
+		summary, err := s.c.Complete(
+			llm.WithMaxTokens(llm.FailOnEarlyFinish(ctx), summaryMaxTokens),
+			[]llm.Message{
+				{Role: "system", Content: wholeVideoSystemPrompt},
+				{Role: "user", Content: chunks[0].Text},
+			})
+		if err != nil {
+			return "", fmt.Errorf("summarize single-pass: %w", err)
+		}
+		return finalizeSummary(summary, "single-pass")
+	}
+
+	// Rare fallback (multi-hour): coarse map (thinking off — condensing text
+	// already in front of the model) then reduce (thinking on — the reader's
+	// summary). Sequential: it is a handful of sections, and pace() serializes
+	// call starts regardless of goroutines, so concurrency would buy nothing.
 	mapCtx := llm.WithoutThinking(ctx)
-	var chunkSummaries []string
+	sections := make([]string, 0, len(chunks))
 	for _, ch := range chunks {
 		out, err := s.c.Complete(mapCtx, []llm.Message{
-			{Role: "system", Content: mapSystemPrompt},
+			{Role: "system", Content: coarseSectionSystemPrompt},
 			{Role: "user", Content: ch.Text},
 		})
 		if err != nil {
 			return "", fmt.Errorf("summarize map: %w", err)
 		}
-		chunkSummaries = append(chunkSummaries, strings.TrimSpace(out))
+		sections = append(sections, strings.TrimSpace(out))
 	}
-	joined := strings.Join(chunkSummaries, "\n\n")
-
-	// REDUCE: cohesive prose summary.
-	summary, err := s.c.Complete(ctx, []llm.Message{
-		{Role: "system", Content: "Combine these section summaries of one video into a single cohesive summary of at most 2 paragraphs and at most 190 words total. " +
-			"Lead with what the video is about, then its main claims or moments. " +
-			"Be concrete and drop tangents; do not list every topic mentioned."},
-		{Role: "user", Content: joined},
-	})
+	// The reduce is the reader-facing summary too, so it carries the same guard
+	// as the single-pass call: FailOnEarlyFinish (don't persist a filtered/cut
+	// final summary) and the empty-result rejection below.
+	summary, err := s.c.Complete(
+		llm.WithMaxTokens(llm.FailOnEarlyFinish(ctx), summaryMaxTokens),
+		[]llm.Message{
+			{Role: "system", Content: reduceSystemPrompt},
+			{Role: "user", Content: strings.Join(sections, "\n\n")},
+		})
 	if err != nil {
 		return "", fmt.Errorf("summarize reduce: %w", err)
 	}
-	return strings.TrimSpace(summary), nil
+	return finalizeSummary(summary, "reduce")
+}
+
+// finalizeSummary trims the model's summary and rejects an empty result. An
+// empty-but-successful completion — a call that spent its whole token budget
+// reasoning and ended on "length", or a filtered answer — must never be
+// persisted as a blank "done" summary (the worker would then run classify and
+// key-points against empty input, and a resume would re-summarize anyway).
+// Returning an error instead lets the job retry.
+func finalizeSummary(raw, stage string) (string, error) {
+	if s := strings.TrimSpace(raw); s != "" {
+		return s, nil
+	}
+	return "", fmt.Errorf("summarize %s: model returned an empty summary", stage)
 }
 
 // KeyPoints extracts key points — and chapters, when yt-dlp did not supply them
@@ -142,7 +236,13 @@ func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subti
 		kpPrompt = "From the video, produce a timestamped chapter list AND key points as JSON " +
 			`{"chapters":[{"ts":<seconds>,"title":"..."}],"key_points":[{"ts":<seconds>,"text":"..."}]}`
 	}
-	raw, err := s.c.Complete(ctx, []llm.Message{
+	// Thinking OFF, and a max-tokens backstop: this is an extractive JSON step,
+	// and it is the call that once spiralled to 44k reasoning tokens and returned
+	// nothing (max_tokens counts reasoning, so a thinking-on cap would still hand
+	// back empty — disabling reasoning is what guarantees output). If extraction
+	// quality drops, WithReasoningEffort(ctx, "low") is the middle ground.
+	kpCtx := llm.WithMaxTokens(llm.WithoutThinking(ctx), keypointsMaxTokens)
+	raw, err := s.c.Complete(kpCtx, []llm.Message{
 		{Role: "system", Content: kpPrompt + " Use only timestamps that appear in the cue index. Output JSON only."},
 		{Role: "user", Content: "SUMMARY:\n" + summary + "\n\nCUE INDEX (seconds: text):\n" + cueIndex},
 	})

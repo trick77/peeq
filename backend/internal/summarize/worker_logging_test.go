@@ -116,7 +116,7 @@ func (u *usageCompleter) Complete(ctx context.Context, m []llm.Message) (string,
 
 	sys := m[0].Content
 	switch {
-	case strings.Contains(sys, "Combine these section summaries"):
+	case strings.Contains(sys, "cohesive summary"):
 		return "Overall prose summary.", nil
 	case strings.Contains(sys, "category id"):
 		return "ai", nil
@@ -144,7 +144,7 @@ type keypointsErrCompleter struct{}
 func (keypointsErrCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
 	sys := m[0].Content
 	switch {
-	case strings.Contains(sys, "Combine these section summaries"):
+	case strings.Contains(sys, "cohesive summary"):
 		return "Overall prose summary.", nil
 	case strings.Contains(sys, "category id"):
 		return "ai", nil

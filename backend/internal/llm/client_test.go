@@ -127,3 +127,86 @@ func TestComplete_zeroIntervalDoesNotPace(t *testing.T) {
 		t.Fatalf("complete: %v", err)
 	}
 }
+
+// sseFinish streams one content delta and a custom finish_reason, for the
+// early-finish guard tests. Reasons are bare words, so inlining them needs no
+// quoting helper.
+func sseFinish(content, reason string) string {
+	return sseEvent(`{"choices":[{"delta":{"content":"`+content+`","role":"assistant"},"finish_reason":null,"index":0}]}`) +
+		sseEvent(`{"choices":[{"delta":{"content":null},"finish_reason":"`+reason+`","index":0}],"usage":null}`) +
+		sseEvent(doneMarker)
+}
+
+func TestComplete_maxTokensAndReasoningEffortFromContext(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		io.WriteString(w, sseStream("ok", ""))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	ctx := WithMaxTokens(WithReasoningEffort(context.Background(), "low"), 4000)
+	if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["reasoning_effort"] != "low" {
+		t.Fatalf("reasoning_effort = %v, want low (context override)", gotBody["reasoning_effort"])
+	}
+	if got, ok := gotBody["max_tokens"].(float64); !ok || int(got) != 4000 {
+		t.Fatalf("max_tokens = %v, want 4000", gotBody["max_tokens"])
+	}
+}
+
+// Absent an override, max_tokens is omitted entirely (leaving the endpoint's own
+// limit) and reasoning_effort stays at the package default.
+func TestComplete_maxTokensOmittedByDefault(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		io.WriteString(w, sseStream("ok", ""))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := gotBody["max_tokens"]; present {
+		t.Fatalf("max_tokens present by default: %v", gotBody["max_tokens"])
+	}
+	if gotBody["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %v, want the default high", gotBody["reasoning_effort"])
+	}
+}
+
+func TestComplete_failOnEarlyFinish(t *testing.T) {
+	// content_filter under the flag → error, so a truncated answer is not
+	// persisted (the summary call retries instead).
+	cf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, sseFinish("partial", "content_filter"))
+	}))
+	defer cf.Close()
+	c := NewClient(Config{BaseURL: cf.URL}, cf.Client())
+	if _, err := c.Complete(FailOnEarlyFinish(context.Background()), []Message{{Role: "user", Content: "hi"}}); err == nil {
+		t.Error("want an error when content_filter ends the answer under FailOnEarlyFinish")
+	}
+	// The same stream WITHOUT the flag returns the partial content as success —
+	// the behavior every other caller relies on.
+	if out, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil || out != "partial" {
+		t.Fatalf("without the flag: out=%q err=%v, want partial/nil", out, err)
+	}
+
+	// length is tolerated even under the flag: that cut is our own max_tokens,
+	// and retrying would just re-truncate.
+	ln := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, sseFinish("partial", "length"))
+	}))
+	defer ln.Close()
+	lc := NewClient(Config{BaseURL: ln.URL}, ln.Client())
+	if out, err := lc.Complete(FailOnEarlyFinish(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil || out != "partial" {
+		t.Fatalf("length under flag: out=%q err=%v, want partial/nil", out, err)
+	}
+}
