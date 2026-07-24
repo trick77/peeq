@@ -383,3 +383,84 @@ func TestDeleteVideo_revokesShareLink(t *testing.T) {
 		t.Fatalf("share link still resolves after the video was deleted = %d, want 404", rec.Code)
 	}
 }
+
+func TestShare_relativeURLWithoutPublicURL(t *testing.T) {
+	deps, _, db := videosTestDepsDB(t)
+	deps.ShareLinks = sharelink.New(db)
+	deps.PublicURL = "" // no external base configured (dev default)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "never")
+	if !strings.HasPrefix(created.URL, "/s/") {
+		t.Fatalf("URL without PublicURL = %q, want a relative /s/ path", created.URL)
+	}
+}
+
+func TestShare_createStoreErrorIs500(t *testing.T) {
+	deps, _, db := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if _, err := db.Exec(`DROP TABLE share_links`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/share", []byte(`{"ttl":"7d"}`))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("POST create with broken store = %d, want 500", rec.Code)
+	}
+}
+
+func TestShare_publicStreamPathSafety(t *testing.T) {
+	deps, mediaDir, db := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	// A media_path that escapes mediaDir must be rejected by SafeMediaPath.
+	outside := filepath.Join(t.TempDir(), "secret.mp4")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("write outside: %v", err)
+	}
+	traversal := filepath.Join(mediaDir, "..", filepath.Base(filepath.Dir(outside)), "secret.mp4")
+	if _, err := db.Exec(`UPDATE videos SET media_path = ? WHERE id = ?`, traversal, "v1"); err != nil {
+		t.Fatalf("set media_path: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "never")
+
+	rec := getPublic(t, h, "/api/s/"+created.Token+"/stream")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("public stream via traversal = %d, want 404", rec.Code)
+	}
+	if rec.Body.String() == "secret" {
+		t.Fatal("public stream served an out-of-tree file")
+	}
+}
+
+func TestShare_publicStreamMissingFile(t *testing.T) {
+	deps, mediaDir, db := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	// A path that is safe (under mediaDir) but points at a file that isn't
+	// there: SafeMediaPath passes, os.Open fails.
+	if err := os.MkdirAll(filepath.Join(mediaDir, "chan1"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	missing := filepath.Join(mediaDir, "chan1", "gone.mp4")
+	if _, err := db.Exec(`UPDATE videos SET media_path = ? WHERE id = ?`, missing, "v1"); err != nil {
+		t.Fatalf("set media_path: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "never")
+
+	if rec := getPublic(t, h, "/api/s/"+created.Token+"/stream"); rec.Code != http.StatusNotFound {
+		t.Fatalf("public stream of a missing file = %d, want 404", rec.Code)
+	}
+}
