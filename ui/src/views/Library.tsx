@@ -66,6 +66,26 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
   }
 }
 
+// emptyMessage tells the truth about *why* the grid is empty. Since the default
+// filter is now "unwatched", a "No videos yet." on an empty grid would falsely
+// read as "your library is empty" when it really means "nothing unwatched" — so
+// each status filter names what it found nothing of. Only "all" being empty
+// means the library itself is empty.
+function emptyMessage(filter: VideoFilter): string {
+  switch (filter) {
+    case "unwatched":
+      return "Nothing unwatched.";
+    case "in_progress":
+      return "Nothing in progress.";
+    case "watched":
+      return "Nothing watched yet.";
+    case "favorites":
+      return "No favorites yet.";
+    default:
+      return "No videos yet.";
+  }
+}
+
 // Library — the default view: filter chips + a grid of VideoCards, per the
 // mockup's `.chips`/`.grid` blocks. The search query itself lives in App
 // (it's the top bar's search box, wired there since the top bar is
@@ -317,7 +337,7 @@ export function Library({
       {error ? <div className="errline">{error}</div> : null}
       <div className="grid">{visible.map(renderCard)}</div>
       {visible.length === 0 && !error ? (
-        <p style={{ color: "var(--color-faint)" }}>No videos yet.</p>
+        <p style={{ color: "var(--color-faint)" }}>{emptyMessage(filter)}</p>
       ) : null}
     </>
   );

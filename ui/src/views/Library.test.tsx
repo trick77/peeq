@@ -399,6 +399,19 @@ describe("Library category chips", () => {
     );
   });
 
+  it("names the active filter in the empty state instead of claiming the library is empty", async () => {
+    // A library whose only videos are watched shows nothing under the default
+    // Unwatched filter — the message must say "Nothing unwatched", not falsely
+    // report an empty library.
+    vi.mocked(listVideos).mockResolvedValue([
+      categoryVideo({ id: "v1", watched: true }),
+    ]);
+    render(<Library onOpenVideo={() => {}} search="" />);
+
+    expect(await screen.findByText("Nothing unwatched.")).toBeInTheDocument();
+    expect(screen.queryByText("No videos yet.")).not.toBeInTheDocument();
+  });
+
   it("drops a card from the Unwatched grid the moment it is marked watched", async () => {
     const v = categoryVideo({
       id: "v1",
