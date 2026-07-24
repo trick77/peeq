@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/store"
 )
 
@@ -297,5 +298,82 @@ func TestGet_neverCarriesTheAPIToken(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(string(blob)), "api_token") {
 		t.Fatalf("Settings JSON has an api_token field: %s", blob)
+	}
+}
+
+// fakeRecorder captures the access rows SetCookie emits, for the transition
+// tests below. Satisfies the settings.ActivityRecorder interface.
+type fakeRecorder struct{ events []activity.Event }
+
+func (f *fakeRecorder) Record(e activity.Event) { f.events = append(f.events, e) }
+
+// TestSetCookie_recordsAccessTransitions proves the "silence rule": an access
+// row is written only when cookie_status actually changes (old != new), with the
+// right kind/outcome/summary per transition, and a no-op write emits nothing.
+func TestSetCookie_recordsAccessTransitions(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	rec := &fakeRecorder{}
+	s.Activity = rec
+
+	// absent -> valid: first accepted cookie reads as access restored.
+	if err := s.SetCookie(ctx, validYouTubeCookie, "valid"); err != nil {
+		t.Fatalf("SetCookie valid: %v", err)
+	}
+	// valid -> blocked: a worker detected YouTube blocking the request.
+	if err := s.SetCookie(ctx, "", "blocked"); err != nil {
+		t.Fatalf("SetCookie blocked: %v", err)
+	}
+	// blocked -> blocked: the same dead cookie re-detected on the next pass must
+	// NOT emit a duplicate row.
+	if err := s.SetCookie(ctx, "", "blocked"); err != nil {
+		t.Fatalf("SetCookie blocked (repeat): %v", err)
+	}
+	// blocked -> stale: cookie now reads as expired.
+	if err := s.SetCookie(ctx, "", "stale"); err != nil {
+		t.Fatalf("SetCookie stale: %v", err)
+	}
+	// stale -> valid: user re-pastes a good cookie; access restored again.
+	if err := s.SetCookie(ctx, validYouTubeCookie, "valid"); err != nil {
+		t.Fatalf("SetCookie valid (again): %v", err)
+	}
+	// valid -> valid: re-pasting the same good cookie changes nothing, so it
+	// records nothing.
+	if err := s.SetCookie(ctx, validYouTubeCookie, "valid"); err != nil {
+		t.Fatalf("SetCookie valid (no-op): %v", err)
+	}
+	// valid -> absent: a status change that is not an access-worthy transition
+	// records nothing (only valid/blocked/stale map to a row).
+	if err := s.SetCookie(ctx, "", "absent"); err != nil {
+		t.Fatalf("SetCookie absent: %v", err)
+	}
+
+	want := []activity.Event{
+		{Kind: activity.KindAccess, Outcome: activity.OutcomeOK, Summary: "YouTube access restored"},
+		{Kind: activity.KindAccess, Outcome: activity.OutcomeWarn, Summary: "YouTube blocked the request"},
+		{Kind: activity.KindAccess, Outcome: activity.OutcomeWarn, Summary: "cookie expired"},
+		{Kind: activity.KindAccess, Outcome: activity.OutcomeOK, Summary: "YouTube access restored"},
+	}
+	if len(rec.events) != len(want) {
+		t.Fatalf("recorded %d access rows, want %d: %+v", len(rec.events), len(want), rec.events)
+	}
+	for i, w := range want {
+		got := rec.events[i]
+		if got.Kind != w.Kind || got.Outcome != w.Outcome || got.Summary != w.Summary {
+			t.Fatalf("event %d = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
+// TestSetCookie_nilRecorderNeverPanics proves the recorder is optional: a store
+// with no Activity set records nothing and still succeeds.
+func TestSetCookie_nilRecorderNeverPanics(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t) // Activity left nil
+	if err := s.SetCookie(ctx, "", "blocked"); err != nil {
+		t.Fatalf("SetCookie with nil recorder: %v", err)
+	}
+	if got := s.CookieStatus(ctx); got != "blocked" {
+		t.Fatalf("CookieStatus = %q, want blocked", got)
 	}
 }

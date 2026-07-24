@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/cookie"
 )
 
@@ -16,6 +17,13 @@ import (
 type DBTX interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// ActivityRecorder records a cookie/access transition for the Activity feed.
+// Narrow and nil-safe like the download/scan/summarize workers' own recorders;
+// nil in tests, the shared *activity.Store in prod.
+type ActivityRecorder interface {
+	Record(activity.Event)
 }
 
 // Settings is the non-secret view of the settings singleton row.
@@ -58,6 +66,10 @@ type Patch struct {
 // Store persists the settings singleton row.
 type Store struct {
 	db DBTX
+	// Activity, when set, records cookie/access state transitions for the
+	// Activity feed. Set post-construction in main.go (like activity.Store's own
+	// OnRecord); nil disables recording, so every caller and test is safe.
+	Activity ActivityRecorder
 }
 
 // New returns a settings store backed by db.
@@ -132,6 +144,9 @@ func (s *Store) SetCookie(ctx context.Context, text string, status string) error
 		if err := cookie.Validate(text); err != nil {
 			return err
 		}
+		// Read the status this write is about to replace, so the access row below
+		// records a genuine state change and not the mere fact of a re-paste.
+		old := s.CookieStatus(ctx)
 		status = "valid"
 		_, err := s.db.ExecContext(ctx, `
 UPDATE settings
@@ -142,11 +157,13 @@ WHERE id = 1`,
 		if err != nil {
 			return fmt.Errorf("set cookie: %w", err)
 		}
+		s.recordAccessTransition(old, status)
 		return nil
 	}
 
 	// Empty text: status-only update, cookie body and previous timestamp are
 	// left untouched.
+	old := s.CookieStatus(ctx)
 	_, err := s.db.ExecContext(ctx, `
 UPDATE settings
 SET cookie_status = ?
@@ -156,7 +173,38 @@ WHERE id = 1`,
 	if err != nil {
 		return fmt.Errorf("set cookie status: %w", err)
 	}
+	s.recordAccessTransition(old, status)
 	return nil
+}
+
+// recordAccessTransition records an Activity row for a genuine cookie-status
+// change (old != new). It is the "silence rule" chokepoint: the callers that
+// flip a dead cookie to "blocked"/"stale" (scan scheduler, download worker) do
+// so with an UNCONDITIONAL write on every failed pass, so without the old != new
+// guard a persistently-blocked cookie would emit an identical warn row every
+// poll. A no-op re-paste of a valid cookie (valid -> valid) likewise records
+// nothing. Best-effort and nil-safe: it never fails, and thus never fails the
+// SetCookie caller.
+func (s *Store) recordAccessTransition(old, newStatus string) {
+	if s.Activity == nil || old == newStatus {
+		return
+	}
+	var e activity.Event
+	switch newStatus {
+	case "valid":
+		e = activity.Event{Kind: activity.KindAccess, Outcome: activity.OutcomeOK,
+			Summary: "YouTube access restored"}
+	case "blocked":
+		e = activity.Event{Kind: activity.KindAccess, Outcome: activity.OutcomeWarn,
+			Summary: "YouTube blocked the request"}
+	case "stale":
+		e = activity.Event{Kind: activity.KindAccess, Outcome: activity.OutcomeWarn,
+			Summary: "cookie expired"}
+	default:
+		// Other transitions (e.g. -> "absent") are not access events worth a row.
+		return
+	}
+	s.Activity.Record(e)
 }
 
 // CookieCredentials returns the raw cookie text and status, for wiring the
