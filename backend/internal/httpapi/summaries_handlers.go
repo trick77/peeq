@@ -23,6 +23,7 @@ type summaryItem struct {
 	VideoID     string `json:"video_id"`
 	Title       string `json:"title,omitempty"`
 	ChannelName string `json:"channel_name,omitempty"`
+	ChannelID   string `json:"channel_id,omitempty"`
 	State       string `json:"state"`
 	LastError   string `json:"last_error,omitempty"`
 }
@@ -54,6 +55,7 @@ func (s *server) handleSummariesList(w http.ResponseWriter, r *http.Request) {
 			if v, err := s.videos.Get(j.VideoID); err == nil && v != nil {
 				item.Title = v.Title
 				item.ChannelName = v.ChannelName
+				item.ChannelID = v.ChannelID
 			}
 		}
 		items = append(items, item)

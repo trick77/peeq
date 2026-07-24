@@ -272,12 +272,19 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		run.skipped("embedding", "already embedded")
 	}
 
-	// Summary + search are usable now — mark done so the UI shows them even if
-	// the key-points step below is still pending on a slow endpoint.
+	// Summary + search are usable now. Persist "done" so the Library shows them,
+	// and emit "done" so the live Player fetches them immediately — it refetches
+	// on the "done" event — even though key-points still has to run, and even if
+	// that fragile step later fails and requeues (the emit is unconditional so a
+	// resumed attempt re-signals the open Player). The event's phase rides as
+	// "keypoints", not "": that keeps the Queue meter on the final stage instead
+	// of reading the job as finished (the row lives until the job is Finish()ed),
+	// while status "done" — not "running" — is what the Player keys on, so the
+	// two consumers stay correct off one event.
 	if video.SummaryStatus != "done" {
 		_ = w.d.Videos.SetSummaryStatus(video.ID, "done", "")
-		w.emit(video.ID, "done", "")
 	}
+	w.emit(video.ID, "done", "keypoints")
 
 	// Step 4 — key points (and chapters when yt-dlp didn't supply them). The
 	// fragile call, run last so a failure retries only this and costs nothing.

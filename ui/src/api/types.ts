@@ -124,6 +124,7 @@ export type Job = {
   video_id: string;
   title?: string;
   channel_name?: string;
+  channel_id?: string;
   state: string;
   priority: number;
   attempts: number;
@@ -139,6 +140,7 @@ export type SummaryJob = {
   video_id: string;
   title?: string;
   channel_name?: string;
+  channel_id?: string;
   state: string;
   last_error?: string;
 };

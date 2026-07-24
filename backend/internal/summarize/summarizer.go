@@ -73,6 +73,21 @@ func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowe
 	})
 }
 
+// mapSystemPrompt is the system turn sent unchanged on every map call. Because
+// it is byte-identical across all of a video's chunks (only the chunk text, the
+// user turn, varies), it doubles as the long shared prefix the endpoint's
+// prompt cache can reuse — the first chunk warms it, later chunks read it from
+// cache (see the caching note in llm/client.go). It is kept deliberately
+// concrete and stable for that reason: lengthening it with real guidance both
+// steadies the map output and enlarges the cacheable prefix. Do not interpolate
+// per-video data into it, or the prefix stops matching and cache_tokens fall
+// back to 0.
+const mapSystemPrompt = "You summarize one section of a video transcript into 1-2 concrete sentences. " +
+	"Capture the section's main claim, finding, or moment, plus any specific names, numbers, products, or " +
+	"places it turns on. Write plainly in the third person, present tense. Use only what the section states — " +
+	"add nothing, and do not editorialize or speculate. Do not open with filler such as \"In this section\" or " +
+	"\"The speaker\"; start with the substance. Output only the summary sentences, with no preamble or labels."
+
 // SummarizeText produces the prose summary by map-reducing the transcript: one
 // summary per chunk, then a single reduce. It is the resumable worker's first
 // step, persisted on its own so a later failure never discards it.
@@ -91,7 +106,7 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 	var chunkSummaries []string
 	for _, ch := range chunks {
 		out, err := s.c.Complete(mapCtx, []llm.Message{
-			{Role: "system", Content: "You summarize one section of a video transcript in 1-2 sentences. Be concrete."},
+			{Role: "system", Content: mapSystemPrompt},
 			{Role: "user", Content: ch.Text},
 		})
 		if err != nil {

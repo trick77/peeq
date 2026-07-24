@@ -528,6 +528,12 @@ func TestProcessOneEmitsPhaseEvents(t *testing.T) {
 	if !contains(events, "v1:done:") {
 		t.Errorf("no done event for v1: %v", events)
 	}
+	// The key-points stage is signalled as done/keypoints: status "done" lets the
+	// live Player fetch the ready summary before the fragile step finishes, while
+	// phase "keypoints" advances the Queue meter to the final stage.
+	if !contains(events, "v1:done:keypoints") {
+		t.Errorf("no done/keypoints event for v1: %v", events)
+	}
 }
 
 // vttCue renders one WebVTT cue block starting at startSeconds (2s long) with
