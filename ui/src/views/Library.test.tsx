@@ -873,7 +873,11 @@ describe("Library category chips", () => {
     await screen.findByText("second video");
   });
 
-  it("refetches both lists after a successful re-download", async () => {
+  it("refreshes the card once the queue reports the re-download", async () => {
+    // handleRedownload no longer refetches itself — it tells App, App reports a
+    // new job, queueSignal changes, and the queue effect refetches. This test
+    // walks that real path: redownload, then a queueSignal change standing in
+    // for the job App would now report.
     const errored = categoryVideo({ id: "v1", status: "error" });
     // Categorized so the recovered card has a visible fresh-state lifecycle
     // row (the category pill) to assert on.
@@ -889,7 +893,9 @@ describe("Library category chips", () => {
       fixed ? [refreshed] : [errored],
     );
 
-    render(<Library onOpenVideo={() => {}} search="" />);
+    const { rerender } = render(
+      <Library onOpenVideo={() => {}} search="" queueSignal="" />,
+    );
     // An errored card is hidden under the default Unwatched filter (it is not
     // play-eligible); the All filter surfaces it so it can be re-downloaded.
     fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
@@ -897,8 +903,11 @@ describe("Library category chips", () => {
 
     fixed = true;
     fireEvent.click(screen.getByRole("button", { name: /re-download/i }));
-
     await waitFor(() => expect(redownload).toHaveBeenCalledWith("v1"));
+
+    // App now reports the new download job: queueSignal changes, firing the
+    // queue effect that refetches against the live All filter.
+    rerender(<Library onOpenVideo={() => {}} search="" queueSignal="j1" />);
     await waitFor(() => {
       expect(listVideos).toHaveBeenCalledWith(
         expect.objectContaining({ filter: "all" }),

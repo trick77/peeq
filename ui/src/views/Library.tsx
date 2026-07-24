@@ -280,19 +280,17 @@ export function Library({
   async function handleRedownload(id: string) {
     try {
       await redownload(id);
-      // Signal App first: the video is 'queued' now, which the ready-only list
-      // excludes, so this card is about to leave the grid. The rail's Queue
-      // badge/poll has to be showing it by the time it does, or the click looks
-      // like it deleted the video. This also arms App's queue poll when the
-      // queue was previously idle, which is the case where nothing else would.
+      // Only tell App — do NOT refetch here. The video is 'queued' now, which
+      // the ready-only list excludes, so its card must leave the grid; but the
+      // refetch belongs to the queue effect, not to this handler. onQueued
+      // updates App's jobs, which changes queueSignal, which fires that effect
+      // to refetch both lists against the CURRENT filter. Doing the refetch
+      // here instead would fetch with this handler's stale-closure filter: if
+      // the user changed the chip during the redownload request, this handler
+      // would resolve last, claim the newest epoch, and paint the grid with the
+      // old filter's rows under the new chip. Deferring to the queue effect
+      // reads the live filter and also drops the redundant second refetch.
       onQueued?.();
-      const epoch = ++filteredEpoch.current;
-      const [all, current] = await Promise.all([
-        listVideos({ filter: "all" }),
-        listVideos({ filter, category, q: debouncedQuery, sort }),
-      ]);
-      setAllVideos(all);
-      if (epoch === filteredEpoch.current) setVideos(current);
     } catch (e) {
       setError((e as Error).message);
     }
