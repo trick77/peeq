@@ -2865,6 +2865,9 @@ textarea.cookiebox:focus {
 .band .channel-list {
   margin-top: 6px;
   gap: 0;
+  /* The main list is a responsive 2-column grid; the review band's rows are a
+     flush single-column stack with hairline separators, so pin it back to 1col. */
+  grid-template-columns: 1fr;
 }
 .band .channel-row {
   background: transparent;
