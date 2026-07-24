@@ -2426,28 +2426,6 @@ textarea.cookiebox:focus {
   flex: none;
 }
 
-/* The add-channel form reuses Add's .paste/.field layout, but nested inside
-   a .sect panel. Two overrides keep it from reading as a panel-on-panel
-   card: the input sinks to --color-bg (matching .channel-format-input, the
-   other input that lives inside a panel), and .hint/.paste shed the bottom
-   margins they carry as standalone blocks in the Add view. */
-.channel-add {
-  margin-bottom: 18px;
-}
-.channel-add .paste {
-  margin-bottom: 0;
-}
-.channel-add .field {
-  background: var(--color-bg);
-  padding: 12px 15px;
-}
-.channel-add .hint {
-  margin-bottom: 0;
-}
-.channel-add .errline {
-  margin-top: 10px;
-}
-
 .channel-list {
   display: flex;
   flex-direction: column;
@@ -2551,14 +2529,39 @@ textarea.cookiebox:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Subscribed star — a state read by shape, gold when on, faint when off. */
+/* Subscription star — a clickable toggle sitting just left of the ⋮ menu.
+   State is read by shape/colour: gold when subscribed, faint when not. Sized
+   and hover-lit like .kebab so the two right-edge controls read as a pair. */
 .chan-sub-star {
-  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  /* Pull the ⋮ in toward the star so the two right-edge controls read as one
+     cluster, rather than sitting a full row-gap (14px) apart. */
+  margin-right: -8px;
+  border-radius: 8px;
   flex: none;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--color-kept);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 .chan-sub-star.off {
   color: var(--color-faint);
+}
+.chan-sub-star:hover {
+  background: var(--color-active);
+  border-color: var(--color-border);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chan-sub-star {
+    transition: none;
+  }
 }
 
 /* ---- ⋮ actions trigger + popover (RowMenu) ----

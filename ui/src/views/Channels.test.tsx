@@ -19,15 +19,6 @@ function baseChannel(overrides: Partial<Channel> = {}): Channel {
   };
 }
 
-// addFormButton scopes to the add form's submit button: its label is
-// "Track"/"Subscribe" depending on the checkbox, and "Subscribe" would
-// otherwise collide with the per-row subscribe buttons.
-function addFormButton(): HTMLElement {
-  return document.querySelector(
-    ".channel-add button[type=submit]",
-  ) as HTMLElement;
-}
-
 const tracked = baseChannel();
 const subscribed = baseChannel({
   id: "c2",
@@ -41,7 +32,6 @@ const subscribed = baseChannel({
 
 vi.mock("../api/channels", () => ({
   listChannels: vi.fn(),
-  addChannel: vi.fn(),
   updateChannel: vi.fn(),
   subscribeChannel: vi.fn(),
   unsubscribeChannel: vi.fn(),
@@ -56,7 +46,6 @@ vi.mock("../api/channels", () => ({
 }));
 
 import {
-  addChannel,
   listChannels,
   subscribeChannel,
   unsubscribeChannel,
@@ -66,9 +55,9 @@ import {
   resubscribeChannel,
 } from "../api/channels";
 
-// openRowMenu clicks a row's ⋮ trigger so its actions (Subscribe, Delete…)
-// become clickable: the per-row controls were folded into a single popover
-// menu, so nothing is inline anymore.
+// openRowMenu clicks a row's ⋮ trigger so its actions (Open, Delete) become
+// clickable: subscribe/unsubscribe now lives on the inline star, but the rest
+// of the per-row actions are folded into a single popover menu.
 async function openRowMenu(
   user: ReturnType<typeof userEvent.setup>,
   row: HTMLElement,
@@ -79,12 +68,6 @@ async function openRowMenu(
 describe("Channels", () => {
   beforeEach(() => {
     vi.mocked(listChannels).mockReset();
-    vi.mocked(addChannel).mockReset();
-    vi.mocked(addChannel).mockResolvedValue({
-      id: "c3",
-      name: "New Channel",
-      subscribed: false,
-    });
     vi.mocked(subscribeChannel).mockReset();
     vi.mocked(unsubscribeChannel).mockReset();
     vi.mocked(deleteChannel).mockReset();
@@ -106,33 +89,27 @@ describe("Channels", () => {
     expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
   });
 
-  it("the tracked channel's menu Subscribe calls subscribeChannel", async () => {
+  it("clicking a tracked channel's star calls subscribeChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
     await screen.findByText("Tracked Channel");
     const row = screen
       .getByText("Tracked Channel")
       .closest(".channel-row") as HTMLElement;
-    await openRowMenu(user, row);
-    await user.click(
-      within(row).getByRole("menuitem", { name: /^subscribe$/i }),
-    );
+    await user.click(within(row).getByRole("button", { name: /^subscribe$/i }));
     await waitFor(() => {
       expect(subscribeChannel).toHaveBeenCalledWith("c1");
     });
   });
 
-  it("the subscribed channel's menu Unsubscribe calls unsubscribeChannel", async () => {
+  it("clicking a subscribed channel's star calls unsubscribeChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
     await screen.findByText("Subbed Channel");
     const row = screen
       .getByText("Subbed Channel")
       .closest(".channel-row") as HTMLElement;
-    await openRowMenu(user, row);
-    await user.click(
-      within(row).getByRole("menuitem", { name: /unsubscribe/i }),
-    );
+    await user.click(within(row).getByRole("button", { name: /unsubscribe/i }));
     await waitFor(() => {
       expect(unsubscribeChannel).toHaveBeenCalledWith("c2");
     });
@@ -189,90 +166,6 @@ describe("Channels", () => {
     releaseAll?.();
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("tracked"));
     expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
-  });
-
-  it("the add form tracks without subscribing by default", async () => {
-    const user = userEvent.setup();
-    render(<Channels />);
-    await screen.findByText("Tracked Channel");
-
-    await user.type(
-      screen.getByLabelText("Channel URL"),
-      "https://www.youtube.com/@new",
-    );
-    await user.click(addFormButton());
-
-    await waitFor(() => {
-      expect(addChannel).toHaveBeenCalledWith(
-        "https://www.youtube.com/@new",
-        false,
-      );
-    });
-  });
-
-  it("ticking Subscribe adds the channel subscribed", async () => {
-    const user = userEvent.setup();
-    vi.mocked(addChannel).mockResolvedValue({
-      id: "c3",
-      name: "New Channel",
-      subscribed: true,
-    });
-    render(<Channels />);
-    await screen.findByText("Tracked Channel");
-
-    await user.type(
-      screen.getByLabelText("Channel URL"),
-      "https://www.youtube.com/@new",
-    );
-    await user.click(screen.getByLabelText("Subscribe"));
-    expect(addFormButton()).toHaveTextContent("Subscribe");
-    await user.click(addFormButton());
-
-    await waitFor(() => {
-      expect(addChannel).toHaveBeenCalledWith(
-        "https://www.youtube.com/@new",
-        true,
-      );
-    });
-    expect(
-      await screen.findByText(/Subscribed to New Channel/),
-    ).toBeInTheDocument();
-  });
-
-  // The confirmation must not depend on the new row showing up: under a
-  // non-"all" chip a freshly tracked channel usually does not match the
-  // active filter, so the list does not visibly change and a silent success
-  // would read as a failure.
-  it("confirms the add even when the active filter excludes the new channel", async () => {
-    const user = userEvent.setup();
-    render(<Channels />);
-    await screen.findByText("Tracked Channel");
-
-    await user.click(screen.getByRole("button", { name: "Subscribed" }));
-    vi.mocked(listChannels).mockResolvedValue([]);
-
-    await user.type(
-      screen.getByLabelText("Channel URL"),
-      "https://www.youtube.com/@new",
-    );
-    await user.click(addFormButton());
-
-    expect(await screen.findByText(/Tracked New Channel/)).toBeInTheDocument();
-  });
-
-  it("rejects a non-channel URL before calling the API", async () => {
-    const user = userEvent.setup();
-    render(<Channels />);
-    await screen.findByText("Tracked Channel");
-
-    await user.type(
-      screen.getByLabelText("Channel URL"),
-      "https://www.youtube.com/watch?v=abc12345678",
-    );
-    await user.click(addFormButton());
-
-    expect(await screen.findByText(/Paste a channel link/)).toBeInTheDocument();
-    expect(addChannel).not.toHaveBeenCalled();
   });
 
   it("shows the filter-aware empty state", async () => {
