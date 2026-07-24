@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VideoCard } from "../components/VideoCard";
 import type { Video } from "../api/types";
@@ -634,7 +640,7 @@ describe("Library category chips", () => {
   it("keeps the selected category when a finishing download refreshes the list", async () => {
     // Given: a category filter is active. A video joins the library the moment
     // its download completes, and App signals that by handing down a changed
-    // activeDownloads count — Library no longer runs its own queue poll.
+    // queueSignal — Library no longer runs its own queue poll.
     const aiVideo = categoryVideo({
       id: "v1",
       title: "ai video title",
@@ -643,7 +649,7 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockResolvedValue([aiVideo]);
 
     const { rerender } = render(
-      <Library onOpenVideo={() => {}} search="" activeDownloads={1} />,
+      <Library onOpenVideo={() => {}} search="" queueSignal="7" />,
     );
     const aiChip = await screen.findByRole("button", {
       name: /AI/,
@@ -657,7 +663,7 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockClear();
 
     // When: the last download finishes.
-    rerender(<Library onOpenVideo={() => {}} search="" activeDownloads={0} />);
+    rerender(<Library onOpenVideo={() => {}} search="" queueSignal="" />);
 
     // Then: the refresh still carries the category, not just the status — the
     // bug this pins is a refresh that silently resets the user's filter. The
@@ -819,6 +825,52 @@ describe("Library category chips", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mark unwatched" }));
     await waitFor(() => expect(setWatched).toHaveBeenCalledWith("v1", false));
     expect(document.querySelector(".resume")).toBeNull();
+  });
+
+  // The regression this guards is silent and total on an idle queue. Re-download
+  // flips the video to 'queued', which the ready-only list excludes, so the card
+  // leaves the grid the instant it is clicked. If App is not told, the rail keeps
+  // saying the queue is empty and the click reads as "I deleted my video".
+  it("tells App the queue changed on re-download, before the card disappears", async () => {
+    const errored = categoryVideo({ id: "v1", status: "error" });
+    const { redownload } = await import("../api");
+    vi.mocked(redownload).mockResolvedValue(undefined);
+    vi.mocked(listVideos).mockResolvedValue([errored]);
+    const onQueued = vi.fn();
+
+    render(<Library onOpenVideo={() => {}} search="" onQueued={onQueued} />);
+    fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
+    await screen.findByText("Download failed");
+    fireEvent.click(screen.getByRole("button", { name: /re-download/i }));
+
+    await waitFor(() => expect(onQueued).toHaveBeenCalled());
+  });
+
+  // Fix #3: the completion signal is the identity of the in-flight jobs, not a
+  // count. This is what a count would miss — one job finishing as another is
+  // enqueued keeps the count at 1, but the id set changes, and the finished
+  // video must still appear. A count-based Library would not refetch here.
+  it("refetches when the in-flight job set changes even if its size does not", async () => {
+    const before = categoryVideo({ id: "a", title: "first video" });
+    const after = categoryVideo({ id: "b", title: "second video" });
+    let phase = 0;
+    vi.mocked(listVideos).mockImplementation(async () =>
+      phase === 0 ? [before] : [after],
+    );
+
+    const { rerender } = render(
+      // One job in flight (id 5).
+      <Library onOpenVideo={() => {}} search="" queueSignal="5" />,
+    );
+    await screen.findByText("first video");
+
+    // Job 5 finished and job 6 started in the same window: the COUNT is still
+    // 1, but the identity changed. A count-based signal would not fire; the
+    // id-based one does, and the newly-arrived video shows.
+    phase = 1;
+    rerender(<Library onOpenVideo={() => {}} search="" queueSignal="6" />);
+
+    await screen.findByText("second video");
   });
 
   it("refetches both lists after a successful re-download", async () => {
