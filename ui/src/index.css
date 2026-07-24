@@ -4067,6 +4067,11 @@ details.tomb-sect[open] > summary svg {
   cursor: pointer;
   text-decoration: none;
 }
+/* The transcript "Copy text" pill sits after the two download pills in the
+   same row; the extra gap keeps it from reading as a third file format. */
+.transcript-copy {
+  margin-left: 8px;
+}
 /* Dead-end for an expired/revoked/unknown link. */
 .sharepage-dead {
   max-width: 460px;

@@ -29,6 +29,79 @@ describe("parseVtt timestamps", () => {
   });
 });
 
+// These mirror the dedup cases in backend/internal/subtitles/vtt_test.go — the
+// two parsers have to agree on what the transcript says, so a case added to one
+// belongs on the other.
+describe("parseVtt rolling-window dedup", () => {
+  const texts = (vtt: string) => parseVtt(vtt).map((c) => c.text);
+
+  it("drops leading lines that repeat the previous cue's trailing lines", () => {
+    const vtt =
+      "WEBVTT\n\n" +
+      "00:00:01.000 --> 00:00:03.000\nthe titanium frame is\nlighter this year\n\n" +
+      "00:00:03.000 --> 00:00:05.000\nlighter this year\nby twelve grams\n\n" +
+      "00:00:05.000 --> 00:00:07.000\nby twelve grams\nover the last model\n";
+    expect(texts(vtt)).toEqual([
+      "the titanium frame is lighter this year",
+      "by twelve grams",
+      "over the last model",
+    ]);
+  });
+
+  it("keeps only the longest form of a cue that grows word by word", () => {
+    // The shape in the reported transcript: one line re-emitted with more
+    // appended each time.
+    const vtt =
+      "WEBVTT\n\n" +
+      "00:00:01.000 --> 00:00:03.000\nWe're on Alpe d'Huez, the most\n\n" +
+      "00:00:03.000 --> 00:00:05.000\nWe're on Alpe d'Huez, the most famous climb\n\n" +
+      "00:00:05.000 --> 00:00:07.000\nWe're on Alpe d'Huez, the most famous climb in cycling\n";
+    expect(texts(vtt)).toEqual([
+      "We're on Alpe d'Huez, the most famous climb in cycling",
+    ]);
+  });
+
+  it("drops a cue that is wholly a repeat of the previous one", () => {
+    const vtt =
+      "WEBVTT\n\n" +
+      "00:00:01.000 --> 00:00:03.000\nsame line twice\n\n" +
+      "00:00:03.000 --> 00:00:05.000\nsame line twice\n\n" +
+      "00:00:05.000 --> 00:00:07.000\nsomething new\n";
+    expect(texts(vtt)).toEqual(["same line twice", "something new"]);
+  });
+
+  it("keeps a repeat that comes back later, e.g. a chorus", () => {
+    const vtt =
+      "WEBVTT\n\n" +
+      "00:00:01.000 --> 00:00:03.000\nthe chorus repeats here\n\n" +
+      "00:00:03.000 --> 00:00:05.000\nsome unrelated verse line\n\n" +
+      "00:00:05.000 --> 00:00:07.000\nthe chorus repeats here\n";
+    expect(texts(vtt)).toEqual([
+      "the chorus repeats here",
+      "some unrelated verse line",
+      "the chorus repeats here",
+    ]);
+  });
+
+  it("compares the words left after tags and sound events are stripped", () => {
+    // "[Music] I play" then "[Music] I play games" is one growing line once the
+    // markers are gone — the collapse only works if stripping happens first.
+    const vtt =
+      "WEBVTT\n\n" +
+      "00:00:01.000 --> 00:00:03.000\n[Music] Hello and <c>welcome</c>\n\n" +
+      "00:00:03.000 --> 00:00:05.000\n[Music] Hello and welcome to the show\n";
+    expect(texts(vtt)).toEqual(["Hello and welcome to the show"]);
+  });
+
+  it("keeps the start time of the cue the text was first seen in", () => {
+    const vtt =
+      "WEBVTT\n\n" +
+      "00:00:10.000 --> 00:00:12.000\nfirst half\n\n" +
+      "00:00:12.000 --> 00:00:14.000\nfirst half and second\n";
+    expect(parseVtt(vtt)).toEqual([{ ts: 10, text: "first half and second" }]);
+  });
+});
+
 describe("transcriptFilenameBase", () => {
   it("makes a filesystem-safe name from the title", () => {
     expect(transcriptFilenameBase("How the CIA writes: a threat!")).toBe(

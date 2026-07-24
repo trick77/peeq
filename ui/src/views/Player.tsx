@@ -31,6 +31,7 @@ import {
   parseVtt,
   transcriptFilenameBase,
   transcriptToText,
+  useCopyTranscript,
   type Cue,
 } from "../vtt";
 
@@ -119,6 +120,13 @@ export function Player({
   const [cues, setCues] = useState<Cue[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  // The transcript "Copy text" button's own state — kept apart from
+  // transcriptError so a failed copy never looks like a failed load.
+  const {
+    copied: transcriptCopied,
+    error: copyError,
+    copy: copyTranscript,
+  } = useCopyTranscript();
   const [find, setFind] = useState("");
   // confirmDelete drives the delete confirmation modal (ConfirmDialog),
   // opened from the ⋮ menu; deleting is its in-flight busy flag.
@@ -991,7 +999,29 @@ export function Player({
                         >
                           <Icon name="download" size="14px" /> .vtt
                         </a>
+                        <button
+                          type="button"
+                          className="pill transcript-copy"
+                          onClick={() => copyTranscript(cues)}
+                          style={{
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                          }}
+                        >
+                          <Icon
+                            name={transcriptCopied ? "check" : "copy"}
+                            size="14px"
+                          />{" "}
+                          {transcriptCopied ? "Copied" : "Copy text"}
+                        </button>
                       </div>
+                    )}
+                    {copyError && (
+                      <p className="errline" style={{ marginTop: 8 }}>
+                        {copyError}
+                      </p>
                     )}
                   </div>
                   <div className="tabbody transcript-body">

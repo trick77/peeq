@@ -1189,6 +1189,56 @@ describe("Player", () => {
     expect(createURL).toHaveBeenCalledTimes(1);
     expect(revokeURL).toHaveBeenCalledTimes(1);
   });
+
+  it("copies the transcript text and confirms on the button", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    const vtt =
+      "WEBVTT\n\n00:00:05.000 --> 00:00:08.000\nHello there\n\n" +
+      "00:00:08.000 --> 00:00:11.000\ngeneral Kenobi\n";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(vtt) }),
+    );
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Transcript/i }));
+    await screen.findByText(/Hello there/i);
+    fireEvent.click(screen.getByRole("button", { name: /Copy text/i }));
+
+    // The clipboard gets exactly what the .txt download writes.
+    expect(writeText).toHaveBeenCalledWith("Hello there\ngeneral Kenobi");
+    await screen.findByRole("button", { name: /Copied/i });
+  });
+
+  it("says so when the clipboard write is refused", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    const vtt = "WEBVTT\n\n00:00:05.000 --> 00:00:08.000\nHello there\n";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(vtt) }),
+    );
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Transcript/i }));
+    await screen.findByText(/Hello there/i);
+    fireEvent.click(screen.getByRole("button", { name: /Copy text/i }));
+
+    await screen.findByText(/Copy failed/i);
+    // The button keeps offering the copy rather than claiming it worked.
+    expect(
+      screen.getByRole("button", { name: /Copy text/i }),
+    ).toBeInTheDocument();
+  });
+
   it("writes a picked category and shows it at once", async () => {
     vi.mocked(getVideo).mockResolvedValue(makeVideo({ category: "gaming" }));
     render(<Player videoId="v1" onDeleted={() => {}} />);

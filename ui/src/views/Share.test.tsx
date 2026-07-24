@@ -230,6 +230,24 @@ describe("Share transcript panel", () => {
     }
   });
 
+  it("copies the transcript text for the recipient too", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    renderWithCaptions();
+    fireEvent.click(await screen.findByRole("button", { name: /transcript/i }));
+    await screen.findByText(/not a feeling/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /copy text/i }));
+    // Same payload as the .txt download, one cue per line.
+    expect(writeText).toHaveBeenCalledWith(
+      "Confidence is a discipline, not a feeling.\nSourcing is what separates the two.",
+    );
+    await screen.findByRole("button", { name: /copied/i });
+  });
+
   it("drops a parsed transcript when the token changes", async () => {
     const { rerender } = renderWithCaptions();
     fireEvent.click(await screen.findByRole("button", { name: /transcript/i }));
