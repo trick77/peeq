@@ -13,6 +13,7 @@ vi.mock("../api/channels", () => ({
   deleteChannel: vi.fn(),
   getChannel: vi.fn(),
   scanChannel: vi.fn(),
+  refreshChannel: vi.fn(),
   channelAvatarUrl: (id: string) => `/api/channels/${id}/avatar`,
   channelBannerUrl: (id: string) => `/api/channels/${id}/banner`,
 }));
@@ -39,6 +40,7 @@ import {
   scanChannel,
   updateChannel,
   deleteChannel,
+  refreshChannel,
 } from "../api/channels";
 import { listVideos, setFavorite, setWatched } from "../api/videos";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
@@ -1092,12 +1094,11 @@ describe("Channel YouTube metadata", () => {
     expect(screen.getByText("—")).toBeInTheDocument();
   });
 
-  // With the manual Refresh button gone, a failed resolve is only ever retried
-  // by the weekly rotation — and that rotation is subscribed-only. An
-  // unsubscribed channel would otherwise sit on a permanent "Last refresh
-  // failed" with no artwork and nothing the user could do about it, so the
-  // header names the way out instead of being a dead end.
-  it("tells an unsubscribed channel how to get another attempt", async () => {
+  // A failed resolve on an unsubscribed channel used to be a dead end (the
+  // weekly rotation is subscribed-only). The manual Refresh button is the way
+  // out now, so the header offers it instead of the old "subscribe to retry"
+  // hint.
+  it("offers Refresh as the recovery for an unsubscribed failed resolve", async () => {
     vi.mocked(getChannel).mockResolvedValue(
       detail({ resolve_ok: false, subscribed: false }),
     );
@@ -1107,8 +1108,11 @@ describe("Channel YouTube metadata", () => {
 
     await screen.findByText("Uncanny Expeditions");
     expect(
-      screen.getByText("Subscribe to have peeq try again"),
+      screen.getByRole("button", { name: /refresh/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Subscribe to have peeq try again"),
+    ).not.toBeInTheDocument();
   });
 
   // A subscribed channel already has the weekly rotation, so the hint would be
@@ -1154,21 +1158,26 @@ describe("Channel YouTube metadata", () => {
     expect(screen.getByText("Never read from YouTube")).toBeInTheDocument();
   });
 
-  // The manual Refresh button is gone: metadata is re-read automatically
-  // once a week (channelmeta.Worker), so a button whose whole purpose was to
-  // escape the "tried once, failed, never again" dead end has nothing left to
-  // rescue. Asserted rather than merely deleted, so re-adding it is a
-  // deliberate act and not an accident.
-  it("offers no manual refresh button", async () => {
+  // The manual Refresh button re-reads metadata on demand — the only way out
+  // of the "tried once, failed, never again" dead end for an unsubscribed
+  // channel, which the weekly auto-refresh never covers (#106).
+  it("re-reads metadata when the Refresh button is clicked", async () => {
     vi.mocked(getChannel).mockResolvedValue(detail({ resolve_ok: false }));
+    vi.mocked(refreshChannel).mockResolvedValue({ status: "ok" });
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
     );
 
     await screen.findByText("Uncanny Expeditions");
-    expect(
-      screen.queryByRole("button", { name: /refresh/i }),
-    ).not.toBeInTheDocument();
+    const before = vi.mocked(getChannel).mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: /refresh/i }));
+
+    await waitFor(() => expect(refreshChannel).toHaveBeenCalledWith("UCa"));
+    // Success triggers a reload — getChannel is called again to repaint.
+    await waitFor(() =>
+      expect(vi.mocked(getChannel).mock.calls.length).toBeGreaterThan(before),
+    );
   });
 
   // jsdom does no layout, so scrollHeight/clientHeight are both 0 and nothing

@@ -8,9 +8,11 @@ import {
   deleteChannel,
   getChannel,
   scanChannel,
+  refreshChannel,
   channelAvatarUrl,
   channelBannerUrl,
 } from "./channels";
+import { CookieRequiredError } from "./downloads";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -124,6 +126,30 @@ describe("channels api", () => {
     expect(url).toBe("/api/channels/UC1/scan");
     expect(init!.method).toBe("POST");
     expect(res).toEqual({ status: "scheduled" });
+  });
+
+  it("refreshChannel POSTs to /api/channels/{id}/refresh", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
+      );
+    const res = await refreshChannel("UC1");
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/channels/UC1/refresh");
+    expect(init!.method).toBe("POST");
+    expect(res).toEqual({ status: "ok" });
+  });
+
+  it("refreshChannel maps a 409 to CookieRequiredError", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "cookie required" }), {
+        status: 409,
+      }),
+    );
+    await expect(refreshChannel("UC1")).rejects.toBeInstanceOf(
+      CookieRequiredError,
+    );
   });
 
   it("channelAvatarUrl and channelBannerUrl build encoded per-channel URLs", () => {
