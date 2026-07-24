@@ -18,6 +18,7 @@ import { SORT_OPTIONS } from "./Library";
 // `thumbnail_url` (no local media exists yet, an item here has never been
 // downloaded) and the actions are Download now / Ignore rather than
 // favorite/watched.
+
 // sortKey is the date an item orders by: its publish date when known, else
 // the day the scan discovered it. This mirrors the Library's
 // COALESCE(published_at, date(created_at)) ORDER BY, so a dateless row (one
@@ -32,7 +33,9 @@ function sortKey(i: PendingItem): string {
 // backend's sortClauses (videos/store.go) so the two lists order alike.
 // video_id is the final tiebreak everywhere, which is what keeps the grid
 // from reshuffling between renders when the primary keys tie.
-function compareBy(sort: VideoSort): (a: PendingItem, b: PendingItem) => number {
+function compareBy(
+  sort: VideoSort,
+): (a: PendingItem, b: PendingItem) => number {
   const byID = (a: PendingItem, b: PendingItem) =>
     a.video_id.localeCompare(b.video_id);
   switch (sort) {
