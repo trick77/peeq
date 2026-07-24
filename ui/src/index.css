@@ -1544,6 +1544,17 @@ button.catpick.unset:hover {
   justify-content: space-between;
   gap: 8px;
 }
+/* Inbox's footer holds two peer actions (Download now / Ignore) rather than
+   Library's status-text-plus-button pair, so they group at the start instead
+   of being pushed to opposite edges. */
+.card-foot.acts-row {
+  justify-content: flex-start;
+  /* The rule above only insets `.card > h3/.by/.life`, and this footer is a
+     `.card-foot`, so it would sit 4px proud of the title on every inbox card.
+     Match the inset here rather than widening that selector, which would also
+     move Library's (rare) download-failed footer. */
+  padding-inline: 4px;
+}
 
 /* ── Add (Task 14): paste box + preview. ─────────────────────────────────── */
 
