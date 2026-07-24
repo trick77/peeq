@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   listActivity,
   listUpcoming,
@@ -9,17 +9,16 @@ import {
 } from "../api";
 import { Icon, type IconName } from "../icons";
 import { summaryPhaseLabel } from "../format";
-import { Button } from "../ui";
 
-// Activity — one agenda through a *now* marker. Above the marker: what is
+// Activity — one agenda through a *now* marker. Below the marker: what is
 // scheduled or queued (the live projection from /api/activity/upcoming, plus
-// the running items App already holds). Below: what actually happened (the
-// durable log from /api/activity). It is a pure log — nothing here is
-// actionable — so it deliberately carries no buttons except "load older".
+// the running items App already holds). Above: what actually happened (the
+// durable log from /api/activity), newest first. It is a pure log — nothing
+// here is actionable — so it deliberately carries no buttons.
 //
-// Three disjoint states never render twice: PENDING work comes from the
-// upcoming projection (above now), RUNNING work from App's live jobs/summaries
-// (at now), TERMINAL work from the event log (below now).
+// Three disjoint states never render twice: TERMINAL work comes from the event
+// log (above now), RUNNING work from App's live jobs/summaries (at now), PENDING
+// work from the upcoming projection (below now).
 
 // parseUTC reads the backend's "2006-01-02 15:04:05" UTC text into a Date.
 function parseUTC(at: string): Date {
@@ -86,6 +85,12 @@ function eventDetail(e: ActivityEvent): string {
   return text ? leadCap(text) : "";
 }
 
+// The agenda is a fixed window: the newest HISTORY_LIMIT log rows and the
+// nearest PLANNED_LIMIT scheduled rows (max 20 total). Beyond these, a "+N" edge
+// hints at what's hidden rather than paging.
+const HISTORY_LIMIT = 10;
+const PLANNED_LIMIT = 10;
+
 const FILTERS: { id: string; label: string }[] = [
   { id: "all", label: "All" },
   { id: "scan", label: "Scans" },
@@ -117,7 +122,6 @@ export function Activity({
   const [truncated, setTruncated] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   // now is captured once per render pass for the relative-time labels and the
@@ -191,20 +195,8 @@ export function Activity({
     };
   }, [loaded, jobs, summaries, live]);
 
-  const loadOlder = useCallback(() => {
-    if (past.length === 0) return;
-    setLoadingMore(true);
-    listActivity(past[past.length - 1].id)
-      .then((page) => {
-        setPast((prev) => [...prev, ...page.events]);
-        setHasMore(page.has_more);
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoadingMore(false));
-  }, [past]);
-
-  const matches = useCallback(
-    (kind: string, outcome?: string) => {
+  const matches = useMemo(
+    () => (kind: string, outcome?: string) => {
       if (filter === "all") return true;
       if (filter === "problems")
         return outcome === "fail" || outcome === "warn";
@@ -213,17 +205,34 @@ export function Activity({
     [filter],
   );
 
-  const shownPast = useMemo(
+  // History (top): newest first, capped to the newest HISTORY_LIMIT.
+  // pastFiltered keeps the full filtered length so we can hint how many earlier
+  // rows the cap hides.
+  const pastFiltered = useMemo(
     () => past.filter((e) => matches(e.kind, e.outcome)),
     [past, matches],
   );
-  // Future block: soonest nearest the now line (bottom), so reverse the
-  // ascending projection. "Problems only" hides the whole future half (nothing
-  // scheduled has failed yet).
-  const shownUpcoming = useMemo(() => {
+  const shownPast = useMemo(
+    () => pastFiltered.slice(0, HISTORY_LIMIT),
+    [pastFiltered],
+  );
+  // Planned (bottom, below the now marker): soonest first — the projection is
+  // already ascending — capped to the nearest PLANNED_LIMIT. "Problems only"
+  // hides the whole future half (nothing scheduled has failed yet).
+  const upcomingFiltered = useMemo(() => {
     if (filter === "problems") return [];
-    return [...upcoming].filter((i) => matches(i.kind)).reverse();
+    return upcoming.filter((i) => matches(i.kind));
   }, [upcoming, matches, filter]);
+  const shownUpcoming = useMemo(
+    () => upcomingFiltered.slice(0, PLANNED_LIMIT),
+    [upcomingFiltered],
+  );
+  // Overflow hints (the timeline is a fixed 10+10 window). Earlier history beyond
+  // the cap, and further-out scheduled work (our slice overflow plus the
+  // server's own projection cap), each get a "+N" edge instead of a pager.
+  const moreHistory = pastFiltered.length - shownPast.length;
+  const morePlanned =
+    upcomingFiltered.length - shownUpcoming.length + truncated;
 
   // Running items at the now marker, from App's live state (never the projection).
   const running = jobs.filter((j) => j.state === "running");
@@ -267,39 +276,37 @@ export function Activity({
         </p>
       ) : (
         <>
-          {/* Top edge lives outside .agenda so it doesn't sit on the rail. */}
-          {truncated > 0 && filter !== "problems" ? (
-            <div className="ag-edge top">+{truncated} more scheduled</div>
+          {/* Top edge lives outside .agenda so it doesn't sit on the rail —
+              how many earlier history rows the cap hides. */}
+          {shownPast.length > 0 && (moreHistory > 0 || hasMore) ? (
+            <div className="ag-edge top">
+              {moreHistory > 0 ? `+${moreHistory} earlier` : "earlier activity"}
+            </div>
           ) : null}
 
           <div className="agenda">
+            {/* PAST — newest first, solid rail, colour by outcome */}
+            {shownPast.map((e) => {
+              const k = kindOf(e.kind);
+              const detail = eventDetail(e);
+              return (
+                <div key={e.id} className={`ag-row ${e.outcome}`}>
+                  <span className="ag-node">
+                    <Icon name={k.icon} size="16px" />
+                  </span>
+                  <div className="ag-body">
+                    <div className="ag-subject">{e.subject || k.label}</div>
+                    {detail ? <div className="ag-detail">{detail}</div> : null}
+                  </div>
+                  <span className="ag-when" title={e.at}>
+                    {relTime(parseUTC(e.at), now)}
+                  </span>
+                </div>
+              );
+            })}
+
             {showLive ? (
               <>
-                {/* FUTURE — dimmed, faint rail, soonest nearest the now line */}
-                {shownUpcoming.map((item, i) => {
-                  const k = kindOf(item.kind);
-                  return (
-                    <div key={`up-${i}`} className="ag-row planned">
-                      <span className="ag-node">
-                        <Icon name={k.icon} size="16px" />
-                      </span>
-                      <div className="ag-body">
-                        <div className="ag-subject">
-                          {item.subject || k.label}
-                        </div>
-                        {item.summary ? (
-                          <div className="ag-detail">
-                            {leadCap(item.summary)}
-                          </div>
-                        ) : null}
-                      </div>
-                      <span className="ag-when">
-                        {plannedWhen(item.at, now)}
-                      </span>
-                    </div>
-                  );
-                })}
-
                 {/* NOW — a row like any other, so the rail runs straight through */}
                 <div className="ag-row now">
                   <span className="ag-node">
@@ -352,45 +359,39 @@ export function Activity({
                     <span className="ag-when">now</span>
                   </div>
                 ))}
+
+                {/* FUTURE — dimmed, faint rail, soonest nearest the now marker */}
+                {shownUpcoming.map((item, i) => {
+                  const k = kindOf(item.kind);
+                  return (
+                    <div key={`up-${i}`} className="ag-row planned">
+                      <span className="ag-node">
+                        <Icon name={k.icon} size="16px" />
+                      </span>
+                      <div className="ag-body">
+                        <div className="ag-subject">
+                          {item.subject || k.label}
+                        </div>
+                        {item.summary ? (
+                          <div className="ag-detail">
+                            {leadCap(item.summary)}
+                          </div>
+                        ) : null}
+                      </div>
+                      <span className="ag-when">
+                        {plannedWhen(item.at, now)}
+                      </span>
+                    </div>
+                  );
+                })}
               </>
             ) : null}
-
-            {/* PAST — solid rail, colour by outcome */}
-            {shownPast.map((e) => {
-              const k = kindOf(e.kind);
-              const detail = eventDetail(e);
-              return (
-                <div key={e.id} className={`ag-row ${e.outcome}`}>
-                  <span className="ag-node">
-                    <Icon name={k.icon} size="16px" />
-                  </span>
-                  <div className="ag-body">
-                    <div className="ag-subject">{e.subject || k.label}</div>
-                    {detail ? <div className="ag-detail">{detail}</div> : null}
-                  </div>
-                  <span className="ag-when" title={e.at}>
-                    {relTime(parseUTC(e.at), now)}
-                  </span>
-                </div>
-              );
-            })}
           </div>
 
-          {/* Bottom edge — also outside .agenda. */}
-          {hasMore ? (
-            <div className="ag-edge">
-              <Button
-                type="button"
-                variant="secondary"
-                small
-                busy={loadingMore}
-                onClick={loadOlder}
-              >
-                Load older
-              </Button>
-            </div>
-          ) : shownPast.length > 0 ? (
-            <div className="ag-edge">— oldest kept —</div>
+          {/* Bottom edge — also outside .agenda. Further scheduled work beyond
+              the cap (our slice overflow plus the server's projection cap). */}
+          {showLive && morePlanned > 0 ? (
+            <div className="ag-edge">+{morePlanned} more scheduled</div>
           ) : null}
         </>
       )}

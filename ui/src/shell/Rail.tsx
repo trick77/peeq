@@ -45,14 +45,12 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
       { id: "decide", label: "Decide", icon: "clock", hot: true },
       { id: "queue", label: "Queue", icon: "download" },
       { id: "channels", label: "Channels", icon: "tv" },
+      { id: "activity", label: "Activity", icon: "listTree" },
     ],
   },
   {
     label: "Setup",
-    items: [
-      { id: "activity", label: "Activity", icon: "listTree" },
-      { id: "settings", label: "Settings", icon: "settings" },
-    ],
+    items: [{ id: "settings", label: "Settings", icon: "settings" }],
   },
 ];
 
