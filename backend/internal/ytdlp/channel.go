@@ -152,10 +152,31 @@ func pickBanner(thumbs []channelThumb, uncropped string) string {
 }
 
 // ChannelVideos returns up to n most-recent uploads from a channel's /videos
-// tab via a single flat-playlist call. Querying only the /videos tab means
-// shorts and livestreams (separate tabs) are excluded by construction. The
-// call goes through the cookie gate + throttle like every other Runner call.
+// tab via a single flat-playlist call. The /videos tab carries ordinary uploads
+// only — shorts and livestreams have their own tabs — so shorts stay excluded
+// by construction, and stream VODs come from ChannelStreams instead.
 func (r *Runner) ChannelVideos(ctx context.Context, ucid string, n int) ([]ChannelEntry, error) {
+	return r.channelTab(ctx, ucid, "videos", n)
+}
+
+// ChannelStreams returns up to n most-recent entries from a channel's /streams
+// tab — the livestream counterpart of ChannelVideos, same call shape, same flat
+// listing. The tab mixes finished VODs with currently-live and scheduled items;
+// LiveStatus is what tells them apart, and deciding which are worth recording
+// is the caller's job (see scan.recordable).
+//
+// A channel that has never streamed has NO /streams tab, and yt-dlp fails the
+// call outright. Callers must treat such a failure as "no streams", not as a
+// broken scan.
+func (r *Runner) ChannelStreams(ctx context.Context, ucid string, n int) ([]ChannelEntry, error) {
+	return r.channelTab(ctx, ucid, "streams", n)
+}
+
+// channelTab is the shared body behind ChannelVideos/ChannelStreams: one flat
+// listing of the newest n entries of a channel tab. It goes through the cookie
+// gate + throttle like every other Runner call, so each tab costs its own
+// throttle slot.
+func (r *Runner) channelTab(ctx context.Context, ucid, tab string, n int) ([]ChannelEntry, error) {
 	if err := r.pauseGate(); err != nil {
 		return nil, err
 	}
@@ -165,7 +186,7 @@ func (r *Runner) ChannelVideos(ctx context.Context, ucid string, n int) ([]Chann
 		return nil, err
 	}
 	items := fmt.Sprintf(":%d:1", n)
-	url := "https://www.youtube.com/channel/" + ucid + "/videos"
+	url := "https://www.youtube.com/channel/" + ucid + "/" + tab
 	args := []string{"-J", "--flat-playlist", "--skip-download", "--playlist-items", items}
 	args = append(args, approximateDateArgs...)
 	out, err := r.exec(ctx, cookieText, append(args, url)...)
