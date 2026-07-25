@@ -1,4 +1,4 @@
-import { Icon, type IconName } from "../icons";
+import { type IconName } from "../icons";
 
 // agenda — the vocabulary Up next and History share. Both pages describe the
 // same work, one before it happens and one after, so the wording, the icons and
@@ -87,15 +87,5 @@ export function subjectNode(
     <button type="button" className="ag-link" onClick={() => onOpenChannel(id)}>
       {text}
     </button>
-  );
-}
-
-// AgendaNode is the icon that marks a row on both pages — a timeline node on
-// History, a lane marker on Up next.
-export function AgendaNode({ kind }: { kind: string }) {
-  return (
-    <span className="ag-node">
-      <Icon name={kindOf(kind).icon} size="16px" />
-    </span>
   );
 }
