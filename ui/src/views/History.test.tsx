@@ -23,6 +23,9 @@ function ev(overrides: Partial<ActivityEvent> = {}): ActivityEvent {
   };
 }
 
+// Anchored so it cannot match the "Downloads" filter chip, which contains "load".
+const LOAD_MORE = /^Load \d+ more$/;
+
 describe("History", () => {
   beforeEach(() => {
     vi.mocked(listActivity).mockReset();
@@ -33,7 +36,7 @@ describe("History", () => {
     });
   });
 
-  it("renders the log as one flat feed", async () => {
+  it("renders the log without the old two-section scaffolding", async () => {
     render(<History live={[]} />);
     expect(await screen.findByText("A clip")).toBeInTheDocument();
     // The projection moved to Up next, so neither the old section headings nor
@@ -85,17 +88,127 @@ describe("History", () => {
     await waitFor(() => expect(screen.getAllByText("A clip")).toHaveLength(1));
   });
 
-  it("caps the log at the newest 10 and hints at the earlier rows", async () => {
+  it("offers no way back when the server says there is nothing older", async () => {
+    render(<History live={[]} />);
+    await screen.findByText("A clip");
+    // Matched exactly: the "Downloads" filter chip contains the word "load".
+    expect(screen.queryByRole("button", { name: LOAD_MORE })).toBeNull();
+  });
+
+  // Keyset, not offset: paging back from the oldest id on screen means a live
+  // event arriving mid-read can't shift the window and duplicate a row.
+  it("pages back from the oldest row it holds", async () => {
+    vi.mocked(listActivity).mockResolvedValueOnce({
+      events: [ev({ id: 9, subject: "Newest" })],
+      has_more: true,
+      retained_max: 2000,
+    });
+    vi.mocked(listActivity).mockResolvedValueOnce({
+      events: [ev({ id: 4, subject: "Older" })],
+      has_more: false,
+      retained_max: 2000,
+    });
+    const user = userEvent.setup();
+    render(<History live={[]} />);
+    await screen.findByText("Newest");
+    await user.click(screen.getByRole("button", { name: LOAD_MORE }));
+    expect(await screen.findByText("Older")).toBeInTheDocument();
+    // Paged from the oldest id held, not from an offset.
+    expect(vi.mocked(listActivity).mock.calls[1][0]).toBe(9);
+    // Nothing older left, so the control retires rather than fetching nothing.
+    expect(screen.queryByRole("button", { name: LOAD_MORE })).toBeNull();
+    // The first page is still on screen — pages append, never replace.
+    expect(screen.getByText("Newest")).toBeInTheDocument();
+  });
+
+  it("groups rows under a day separator, with a clock in the gutter", async () => {
     vi.mocked(listActivity).mockResolvedValue({
-      events: Array.from({ length: 14 }, (_, i) =>
-        ev({ id: i + 1, subject: `Clip ${i + 1}` }),
-      ),
+      events: [
+        ev({ id: 1, at: "2026-07-23 12:00:00", subject: "Older day" }),
+        ev({ id: 2, at: "2026-07-22 09:30:00", subject: "Earlier day" }),
+      ],
       has_more: false,
       retained_max: 2000,
     });
     render(<History live={[]} />);
-    expect(await screen.findByText("+4 earlier")).toBeInTheDocument();
-    expect(screen.queryByText("Clip 11")).not.toBeInTheDocument();
+    await screen.findByText("Older day");
+    // Two distinct days → two separators, each naming its date.
+    const seps = Array.from(document.querySelectorAll(".ag-daysep span")).map(
+      (s) => s.textContent,
+    );
+    expect(seps).toHaveLength(2);
+    expect(seps[0]).toContain("23 Jul");
+    expect(seps[1]).toContain("22 Jul");
+    // The gutter carries a wall clock, not a relative time — the row's own
+    // "ago" label lives on the right.
+    const row = screen.getByText("Older day").closest(".ag-row") as HTMLElement;
+    expect(row.querySelector(".ag-clock")?.textContent).toMatch(
+      /^\d{2}:\d{2}$/,
+    );
+  });
+
+  // Colour on the ring is what makes a failure findable without reading every
+  // line; the row class is what carries it.
+  it("marks the node with the outcome", async () => {
+    vi.mocked(listActivity).mockResolvedValue({
+      events: [
+        ev({ id: 1, outcome: "fail", subject: "Broken" }),
+        ev({ id: 2, outcome: "ok", subject: "Fine" }),
+      ],
+      has_more: false,
+      retained_max: 2000,
+    });
+    render(<History live={[]} />);
+    await screen.findByText("Broken");
+    const bad = screen.getByText("Broken").closest(".ag-row") as HTMLElement;
+    const good = screen.getByText("Fine").closest(".ag-row") as HTMLElement;
+    expect(bad).toHaveClass("fail");
+    expect(good).toHaveClass("ok");
+    expect(bad.querySelector(".ag-node")).toBeTruthy();
+  });
+
+  // The workers already write the past-tense verb, so it leads the line as-is
+  // rather than being duplicated by a second vocabulary in the frontend.
+  it("leads the detail line with the worker's own past-tense word", async () => {
+    vi.mocked(listActivity).mockResolvedValue({
+      events: [
+        ev({ id: 1, summary: "download failed", detail: "sign-in required" }),
+      ],
+      has_more: false,
+      retained_max: 2000,
+    });
+    render(<History live={[]} />);
+    await screen.findByText("A clip");
+    expect(document.querySelector(".ag-kind")?.textContent).toBe(
+      "Download failed",
+    );
+    expect(document.querySelector(".ag-detail")?.textContent).toBe(
+      `Download failed${DOT}sign-in required`,
+    );
+  });
+
+  // A count is not a verb. When the worker's summary opens with a number the
+  // kind supplies the word, and the count moves into the rest of the line.
+  it("supplies the kind's verb when the summary starts with a count", async () => {
+    vi.mocked(listActivity).mockResolvedValue({
+      events: [
+        ev({
+          id: 1,
+          kind: "scan",
+          subject: "Veritasium",
+          summary: "3 new",
+          detail: "streams tab missing",
+        }),
+      ],
+      has_more: false,
+      retained_max: 2000,
+    });
+    render(<History live={[]} />);
+    await screen.findByText("Veritasium");
+    expect(document.querySelector(".ag-kind")?.textContent).toBe("Scanned");
+    expect(document.querySelector(".ag-detail")?.textContent).toBe(
+      `Scanned${DOT}3 new${DOT}streams tab missing`,
+    );
   });
 
   it("problems-only keeps failures and warnings, drops the healthy rows", async () => {

@@ -667,70 +667,121 @@ button.srow:not(:disabled):hover {
   max-width: 60ch;
 }
 
-/* History — the log on a left optical rail (loom's trace-rail pattern). The kind
-   icon IS the node: its shape says what the work was, and the detail text carries
-   how it went. One flat newest-first feed now that the projection has moved to Up
-   next, so there is no "now" marker and no second section to order against. Type
-   holds to two steps only — 15px subject, 13px everything else — in the one
-   inherited family; the icon carries the rest so the text never has to. */
+/* History — a grouped timeline on a left optical rail (loom's trace-rail
+   pattern). Four columns: a clock gutter, the node, the body, and how long ago.
+   The kind icon IS the node — its shape says what the work was — while the ring
+   around it carries the outcome, so a failure is findable by scanning the rail
+   instead of by reading every line. Day separators place each row in its day,
+   which is what a log is read for; the relative time stays on the right for the
+   newest rows. Type holds to two steps only — 15px subject, 13px everything
+   else — in the one inherited family, plus mono for the clock, whose numerals
+   are a column that has to align. */
 .agenda {
   position: relative;
-  max-width: 680px;
+  max-width: 760px;
 }
 .agenda-empty {
   color: var(--color-faint);
   font-size: 13px;
   max-width: 60ch;
 }
+/* A labelled rule between days. First one sits flush — the chip row above is
+   already the page's top edge. */
+.ag-daysep {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 6px;
+}
+.ag-day:first-child .ag-daysep {
+  margin-top: 0;
+}
+.ag-daysep span {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+.ag-daysep i {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-soft);
+}
 .ag-row {
   position: relative;
   display: grid;
-  grid-template-columns: 22px 1fr auto;
+  grid-template-columns: 46px 22px 1fr auto;
   align-items: start;
   column-gap: 14px;
-  padding: 12px 2px;
+  padding: 11px 2px;
 }
 /* Per-row connector: from just below THIS node to the next one, anchored to the
-   row's own top/bottom edges so it spans the gap whatever the body height. The
-   edges live outside .agenda, so the last row is a true last-child and draws
-   none — no line dangles past the log. */
-.agenda > .ag-row:not(:last-child)::before {
+   row's own top/bottom edges so it spans the gap whatever the body height. It
+   stops at each day's last row — the separator below is the break, and a line
+   crossing it would deny the grouping the separator just made. */
+.ag-day > .ag-row:not(:last-child)::before {
   content: "";
   position: absolute;
-  left: 10.25px;
+  /* centre of the node column: 46px gutter + 14px gap + half of 22px, less
+     half the rule's own width. */
+  left: 70.25px;
   top: 33px;
-  bottom: -13px;
+  bottom: -11px;
   width: 1.5px;
   background: var(--color-border);
 }
 
-.ag-node {
+/* The clock gutter. Mono and tabular so the colon lands in the same place on
+   every row; right-aligned so the hours column reads down the page. It carries
+   no date — the separator above the group already did. */
+.ag-clock {
   grid-column: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--color-faint);
+  padding-top: 4px;
+}
+
+.ag-node {
+  grid-column: 2;
   justify-self: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   margin-top: 1px;
   display: grid;
   place-items: center;
   position: relative;
   z-index: 1;
-  /* Icons stay a neutral glyph — they name the kind by SHAPE only. Outcome is
-     carried by the detail text (problems tint red/amber) and by position
-     (log above, running at now, future below), not by tinting the icon. */
+  border-radius: 50%;
+  /* The ring, not the glyph, is the outcome. The icon still names the kind by
+     SHAPE alone, so colour is never the only thing distinguishing two kinds —
+     it only ever separates fine from went-wrong, which is a distinction the
+     text repeats anyway. */
+  background: var(--color-elevated);
+  border: 1px solid var(--color-border);
   color: var(--color-muted);
 }
-.ag-node::before {
-  /* punch a clean hole in the rail behind the icon */
-  content: "";
-  position: absolute;
-  inset: -3px;
-  border-radius: 50%;
-  background: var(--color-bg);
-  z-index: -1;
+.ag-row.ok .ag-node {
+  color: var(--color-online);
+}
+.ag-row.warn .ag-node {
+  color: var(--color-kept);
+  border-color: #4c3b22;
+}
+.ag-row.fail .ag-node {
+  color: #d98b80;
+  border-color: #5a2f2a;
+  background: color-mix(
+    in srgb,
+    var(--color-danger) 18%,
+    var(--color-elevated)
+  );
 }
 
 .ag-body {
-  grid-column: 2;
+  grid-column: 3;
   min-width: 0;
 }
 .ag-subject {
@@ -779,16 +830,28 @@ button.srow:not(:disabled):hover {
 .ag-row.warn .ag-detail {
   color: #cda765;
 }
+/* The kind, leading the detail line as a past-tense word. Weight rather than
+   colour separates it from the rest of the line, so it stays legible in the
+   tinted fail/warn rows where a second colour would fight the outcome. */
+.ag-kind {
+  font-weight: 600;
+  color: var(--color-ink-dim);
+}
+.ag-row.fail .ag-kind,
+.ag-row.warn .ag-kind {
+  color: inherit;
+}
 .ag-when {
-  grid-column: 3;
-  font-size: 13px;
+  grid-column: 4;
+  font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   color: var(--color-faint);
   white-space: nowrap;
-  margin-top: 3px;
+  padding-top: 4px;
 }
-/* A labelled edge closes the log — "+N earlier". It sits OUTSIDE .agenda so it
-   gets no rail. (Up next's own edge is .un-edge, which has no rail to avoid.) */
+/* The edge that closes the log — the "load older" control. It sits OUTSIDE
+   .agenda so it gets no rail. (Up next's own edge is .un-edge, which has no
+   rail to avoid.) */
 .ag-edge {
   display: flex;
   justify-content: center;
