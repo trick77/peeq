@@ -19,6 +19,7 @@ import {
 import { reprocess, subtitlesUrl } from "../api/search";
 import { streamDownloads } from "../api/downloads";
 import { getSettings, updateSettings } from "../api/settings";
+import { setPlaybackState } from "../api/playback";
 import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareChip, ShareControl } from "../components/ShareControl";
 import type { Video } from "../api/types";
@@ -245,6 +246,23 @@ export function Player({
       // leaves it null.
       openVideoIdRef.current = null;
     };
+  }, [videoId]);
+
+  // Record this video as "now playing" server-side, so the rail opens it on
+  // every device instead of only in the tab that started it. Its own effect
+  // rather than a line in the reset effect above: that one is about clearing
+  // this component's state, and entangling a network write with it would put a
+  // write inside the same early-return dance.
+  //
+  // One write per video opened — deliberately not folded into the resume ping,
+  // where it would be hundreds of identical writes an hour for a value that
+  // does not change between them. Best-effort: a failure must never touch
+  // playback, and the worst case is a rail that behaves as it did before this
+  // existed. Nothing clears the pointer on unmount either — navigating to the
+  // Library does not mean you stopped watching.
+  useEffect(() => {
+    if (!videoId) return;
+    setPlaybackState(videoId).catch(() => {});
   }, [videoId]);
 
   // Flush the resume position immediately on tab-hide/unload, so the
@@ -958,9 +976,17 @@ export function Player({
               <Icon name={video.favorite ? "starFilled" : "star"} size="17px" />
               <span>{video.favorite ? "Kept forever" : "Keep forever"}</span>
             </Button>
+            {/* Tinted when watched, so the state reads at a glance and not only
+                from the label — the favourite beside it has always flipped, and
+                the Library card tints its own watched toggle, so a flat grey
+                button here was the odd one out. Deliberately NOT gold: that is
+                "Kept forever", one button over, and reusing it would make the
+                two states indistinguishable. aria-pressed carries the same
+                state without colour, as the captions toggle below does. */}
             <Button
               type="button"
-              variant="secondary"
+              variant={video.watched ? "tinted" : "secondary"}
+              aria-pressed={video.watched}
               onClick={handleToggleWatched}
             >
               <Icon name="check" size="17px" />{" "}

@@ -73,3 +73,33 @@ Run after any change to the channel page, the `channels` table, or the scan sche
    smaller than the name, with only the numerals lifted — readable, but not competing with the name.
 9. Narrow the window to phone width. The header wraps, the buttons drop below the stats, and the
    page body does not scroll sideways.
+
+## Now playing across two clients
+
+Run after any change to the resume/watched write path, `videos.state_version`, or the
+`playback_state` pointer. Needs two clients on the same peeq — two browsers, or one plus a
+private window, both signed in.
+
+1. **The pointer follows you.** In client A open a video from the Library and let it play a
+   minute. Confirm `sqlite3 data/peeq.db "select * from playback_state"` shows that id.
+2. In client B load `/`. It must land on the **Library**, not in a player — the pointer is the
+   rail's fallback, not a redirect.
+3. In client B click **Now playing** in the rail. The same video opens, at A's position, and the
+   address bar reads `/video/<id>` — not `/video`.
+4. **The watched button reads as watched.** In the player, confirm the button is plain grey while
+   unwatched and turns terracotta-tinted the instant you click it, with the label flipping to
+   "Mark unwatched". It must stay clearly distinct from the gold **Kept forever** button beside
+   it.
+5. Confirm marking it watched clears the pointer: client B's rail click (or a reload) now shows
+   "Nothing playing", and the table's `video_id` is NULL.
+6. **Issue #97.** Open the *same* video in both clients and leave both playing. In A, mark it
+   watched. Within five seconds, B's Network panel shows `POST /api/videos/<id>/resume` answered
+   **409**, followed by a `GET /api/videos/<id>`; B then pauses, rewinds to 0:00, and shows
+   "Marked watched on another device." Then confirm the row agrees with itself:
+   `select watched, resume_position_seconds from videos where id='<id>'` must be `1|0.0`, never
+   `1` with a non-zero position.
+7. Confirm the guard never fires against a single client: in one tab, seek past 90% and let two
+   resume pings go by. Both must be 200, with no toast — auto-watch bumps the version and the
+   response hands the new one straight back.
+8. Delete the video and confirm `GET /api/playback` reports an empty `video_id`, even though the
+   row survives as `status='tombstoned'`.

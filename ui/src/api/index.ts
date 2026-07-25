@@ -10,6 +10,7 @@ export * from "./auth";
 export * from "./videos";
 export * from "./downloads";
 export * from "./settings";
+export * from "./playback";
 export * from "./ytdlp";
 export * from "./channels";
 export * from "./pending";

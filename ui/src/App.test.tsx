@@ -13,6 +13,7 @@ import {
   cookieHealth,
   streamDownloads,
   listVideos,
+  getPlaybackState,
 } from "./api";
 import { addDownload } from "./api/downloads";
 import { searchVideos } from "./api/search";
@@ -25,9 +26,10 @@ describe("App (static)", () => {
   });
 });
 
-// Reload-restore integration: the nowPlaying marker drives App's initial view.
-// The barrel mock also covers the Library view's imports so the library path
-// renders without crashing.
+// The barrel mock covers everything App loads on mount, plus the Library view's
+// own imports so the library path renders without crashing. getPlaybackState is
+// the server-side "now playing" pointer App uses as the rail's fallback; it
+// defaults to empty here, which is the "nothing playing" case.
 vi.mock("./api", () => ({
   getMe: vi.fn().mockResolvedValue({ id: "u1", email: "a@b.c" }),
   listDownloads: vi.fn().mockResolvedValue([]),
@@ -44,6 +46,7 @@ vi.mock("./api", () => ({
   getSettings: vi.fn().mockResolvedValue({}),
   setFavorite: vi.fn(),
   setWatched: vi.fn(),
+  getPlaybackState: vi.fn().mockResolvedValue({ video_id: "" }),
 }));
 
 const mockVideo = vi.hoisted<Video>(() => ({
@@ -136,7 +139,6 @@ describe("App dock bootstrap", () => {
     // default, which cuts off the rail's lower nav groups and makes a
     // CI-only failure here impossible to diagnose from the log.
     process.env.DEBUG_PRINT_LIMIT = "100000";
-    sessionStorage.clear();
     vi.clearAllMocks();
     // Restate every mock this test depends on rather than inheriting
     // whatever an earlier describe left behind — the paused-banner tests
@@ -211,16 +213,19 @@ describe("App dock bootstrap", () => {
 });
 
 // Deep links: the URL is the source of truth for which page is open (route.ts),
-// replacing the old nowPlaying sessionStorage reload-restore. A cold-loaded
-// /video/<id> reopens the Player; a rail click pushes the matching URL; a
-// back/forward re-derives the view from the URL via popstate.
+// which is what retired the old nowPlaying sessionStorage reload-restore. A
+// cold-loaded /video/<id> reopens the Player; a rail click pushes the matching
+// URL; a back/forward re-derives the view from the URL via popstate.
+//
+// The server-side pointer (getPlaybackState) does not change that rule: it only
+// answers what "Now playing" means when the URL carries no video id, and a cold
+// "/" still lands on the Library. The last tests in here pin exactly that.
 describe("App deep links", () => {
   beforeEach(() => {
     // testing-library truncates its failure DOM dump at 7000 chars, which
     // cuts off the rail's lower nav groups and makes a CI-only failure here
     // impossible to diagnose from the log.
     process.env.DEBUG_PRINT_LIMIT = "100000";
-    sessionStorage.clear();
     vi.clearAllMocks();
     // Restate every mock this describe depends on rather than inheriting
     // whatever an earlier describe left behind — the paused-banner tests
@@ -244,6 +249,7 @@ describe("App deep links", () => {
     // not leak its fixture into the next (clearAllMocks keeps implementations).
     vi.mocked(listVideos).mockResolvedValue([]);
     vi.mocked(searchVideos).mockResolvedValue([]);
+    vi.mocked(getPlaybackState).mockResolvedValue({ video_id: "" });
   });
 
   // Only the Player view renders a <video>; the SearchBar's "Search titles"
@@ -331,6 +337,47 @@ describe("App deep links", () => {
     expect(window.location.pathname).toBe("/inbox");
   });
 
+  it("a cold / stays on the Library even when a video is persisted as now playing", async () => {
+    // The anti-hijack rule. The pointer is the rail's fallback, not a redirect:
+    // opening peeq must not drop you into a video you happen to be part-way
+    // through. This test is what protects that decision.
+    vi.mocked(getPlaybackState).mockResolvedValue({ video_id: "v1" });
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+    expect(document.querySelector("video")).toBeNull();
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("the rail's Now playing opens the persisted video and pushes /video/<id>", async () => {
+    vi.mocked(getPlaybackState).mockResolvedValue({ video_id: "v1" });
+    vi.mocked(listVideos).mockResolvedValue([mockVideo]);
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+    // Wait for the pointer to land before clicking: a passive effect having
+    // been scheduled is not the same as it having run (React 19 defers them to
+    // a macrotask), and clicking too early would test the empty-pointer path.
+    await waitFor(() => expect(getPlaybackState).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Now playing" }));
+
+    await waitFor(() => expect(document.querySelector("video")).not.toBeNull());
+    // The URL has to name the video, or a refresh would lose what is on screen.
+    expect(window.location.pathname).toBe("/video/v1");
+  });
+
+  it("leaves Now playing empty when the pointer can't be loaded", async () => {
+    // A convenience that fails must degrade to the behaviour peeq had before
+    // it existed, not to an error.
+    vi.mocked(getPlaybackState).mockRejectedValue(new Error("boom"));
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+    await waitFor(() => expect(getPlaybackState).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Now playing" }));
+
+    expect(await screen.findByText(/Nothing playing/i)).toBeInTheDocument();
+  });
+
   it("re-derives the view from the URL on back/forward (popstate)", async () => {
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
@@ -357,10 +404,6 @@ describe("App deep links", () => {
 // over the healthy default and offers a one-click Resume that calls the
 // kill-switch endpoint and refetches status.
 describe("App youtube-paused banner", () => {
-  beforeEach(() => {
-    sessionStorage.clear();
-  });
-
   it("shows the YouTube-paused banner with a Resume action", async () => {
     vi.mocked(downloadsStatus).mockResolvedValue({
       paused: false,
@@ -470,7 +513,6 @@ describe("App routing", () => {
 // Queue page cancels a download through App's shared handler.
 describe("App queue and summaries", () => {
   beforeEach(() => {
-    sessionStorage.clear();
     vi.clearAllMocks();
     vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
     vi.mocked(downloadsStatus).mockResolvedValue({

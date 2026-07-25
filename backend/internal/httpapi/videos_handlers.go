@@ -224,6 +224,10 @@ func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "delete video failed")
 		return
 	}
+	// A deleted video must not stay "now playing" — the rail would keep offering
+	// to reopen it. Belt and braces with playback.Store.Get's own status filter,
+	// which the tombstone (row kept, status flipped) is why we need at all.
+	s.clearPlaybackIfPointing(r, v.ID)
 	writeJSON(w, map[string]string{"status": "tombstoned"})
 }
 
@@ -328,6 +332,12 @@ func (s *server) handleWatchedVideo(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		serverError(w, r, err, "set watched failed")
 		return
+	}
+	if *req.Watched {
+		// Marking watched already zeroes the resume position, so leaving the
+		// "now playing" pointer here would have the rail reopen a finished video
+		// at 0:00. Un-watching means "I want this back", so it keeps the pointer.
+		s.clearPlaybackIfPointing(r, v.ID)
 	}
 	writeJSON(w, watchedResponse{Watched: *req.Watched, StateVersion: version})
 }

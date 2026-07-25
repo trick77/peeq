@@ -6,6 +6,7 @@ import {
   listDownloads,
   cookieHealth,
   downloadsStatus,
+  getPlaybackState,
   streamDownloads,
   listPending,
   listSummaries,
@@ -43,14 +44,43 @@ export function App() {
   // cold-loaded /video/<id> therefore reopens the Player straight away (paused
   // at the server-side resume position via Player's handleLoadedMetadata seek),
   // which is what retired the old nowPlaying sessionStorage reload-restore.
+  //
+  // persistedVideoId (below) does not change that. It answers the one question
+  // the URL genuinely can't — what "Now playing" means when the address bar
+  // carries no video id — and nothing else: a cold load of "/" still lands on
+  // the Library, not in a player.
   const { route, navigate } = useRoute();
   const view = route.view;
   const selectedVideoId = route.videoId;
   const selectedChannelId = route.channelId;
+  // The server-side "now playing" pointer (GET /api/playback), so the video you
+  // are part-way through is the same on every device instead of dying with the
+  // tab that opened it. null until the first load lands, and stays null when
+  // that load fails — the rail then behaves exactly as it did before this
+  // existed.
+  const [persistedVideoId, setPersistedVideoId] = useState<string | null>(null);
+  // Which video "Now playing" means: the one in the URL, else the persisted
+  // pointer. This is the whole read side of the feature.
+  const nowPlayingId = selectedVideoId ?? persistedVideoId;
   // setView keeps every existing call site (the rail, the banner's "fix
   // cookie", ViewSwitch's back/deleted handlers) unchanged — it just pushes a
   // new URL. navigate is stable, so this is too.
-  const setView = useCallback((v: ViewId) => navigate({ view: v }), [navigate]);
+  //
+  // "Now playing" is the one destination that carries an id, so it is special-
+  // cased to push /video/<id> rather than the bare /video. Without that the
+  // address bar would read "/video" while a video plays, and a refresh or a
+  // copied link would lose it — which would fight route.ts's URL-as-truth rule
+  // rather than respect it.
+  const setView = useCallback(
+    (v: ViewId) => {
+      if (v === "player" && !route.videoId && persistedVideoId) {
+        navigate({ view: "player", videoId: persistedVideoId });
+        return;
+      }
+      navigate({ view: v });
+    },
+    [navigate, route.videoId, persistedVideoId],
+  );
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState(false);
@@ -172,6 +202,15 @@ export function App() {
     cookieHealth()
       .then((h) => {
         if (active) setCookieStatus(h.status);
+      })
+      .catch(() => {});
+    // Best-effort, like the two beside it: a rail that can't load the pointer
+    // falls back to its old in-memory behaviour rather than showing an error for
+    // a convenience. An empty video_id means nothing is playing — which also
+    // covers a pointer whose video has since been deleted.
+    getPlaybackState()
+      .then((p) => {
+        if (active) setPersistedVideoId(p.video_id || null);
       })
       .catch(() => {});
     downloadsStatus()
@@ -484,7 +523,7 @@ export function App() {
           />
           <ViewSwitch
             view={view}
-            selectedVideoId={selectedVideoId}
+            selectedVideoId={nowPlayingId}
             selectedChannelId={selectedChannelId}
             pendingSeek={pendingSeek}
             onOpenVideo={openVideo}
