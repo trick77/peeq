@@ -169,6 +169,11 @@ export function Channels({
   // reporting the same backend outcome must not describe it differently.
   async function handleScan(c: Channel) {
     setError(null);
+    // Drop the previous row's answer before awaiting: the banner never names a
+    // channel, so a stale "Checking soon" left up while this request is in
+    // flight reads as though it were about the row just clicked. Both sibling
+    // surfaces (the New and Settings tabs) clear their notice the same way.
+    setNotice(null);
     try {
       const res = await scanChannel(c.id);
       setNotice(
@@ -193,6 +198,9 @@ export function Channels({
     try {
       await deleteChannel(c.id);
       setChannels((prev) => prev.filter((x) => x.id !== c.id));
+      // A "Check now" notice may be reporting on the row that just vanished;
+      // leaving it up promises a check for a channel that no longer exists.
+      setNotice(null);
       setPendingDelete(null);
     } catch (err) {
       // Close the dialog on failure, the same as the detail Settings delete:

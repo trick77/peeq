@@ -273,6 +273,90 @@ describe("Channels", () => {
       ).toBeInTheDocument();
     });
 
+    // The banner never names a channel, so one row's answer must not still be
+    // up while the next row's request is in flight — it would read as that
+    // row's answer.
+    it("drops the previous row's answer while the next check is in flight", async () => {
+      const user = userEvent.setup();
+      const secondSubbed = baseChannel({
+        id: "c3",
+        handle: "@alsosubbed",
+        name: "Also Subbed",
+        subscribed: true,
+      });
+      vi.mocked(listChannels).mockResolvedValue([
+        tracked,
+        subscribed,
+        secondSubbed,
+      ]);
+
+      let releaseSecond: (() => void) | undefined;
+      vi.mocked(scanChannel).mockImplementation((id) =>
+        id === "c3"
+          ? new Promise((resolve) => {
+              releaseSecond = () => resolve({ status: "scheduled" });
+            })
+          : Promise.resolve({ status: "scheduled" }),
+      );
+
+      render(<Channels />);
+      await screen.findByText("Also Subbed");
+
+      const first = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+      await openRowMenu(user, first);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      const scheduled =
+        "Checking soon — peeq will look for new videos on its next pass.";
+      await screen.findByText(scheduled);
+
+      const second = screen
+        .getByText("Also Subbed")
+        .closest(".channel-row") as HTMLElement;
+      await openRowMenu(user, second);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+
+      // c3's request has not resolved yet — the banner must be blank, not
+      // still showing the first row's answer.
+      await waitFor(() =>
+        expect(screen.queryByText(scheduled)).not.toBeInTheDocument(),
+      );
+      releaseSecond?.();
+      expect(await screen.findByText(scheduled)).toBeInTheDocument();
+    });
+
+    // Deleting the channel a notice is about leaves it promising a check for a
+    // row that no longer exists.
+    it("clears the notice when the checked channel is deleted", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      const scheduled =
+        "Checking soon — peeq will look for new videos on its next pass.";
+      await screen.findByText(scheduled);
+
+      await openRowMenu(user, row);
+      await user.click(
+        screen.getByRole("menuitem", { name: /delete channel/i }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      await user.click(
+        within(dialog).getByRole("button", { name: /delete channel/i }),
+      );
+
+      await waitFor(() => expect(deleteChannel).toHaveBeenCalledWith("c2"));
+      await waitFor(() =>
+        expect(screen.queryByText(scheduled)).not.toBeInTheDocument(),
+      );
+    });
+
     // A blocked answer with no reason still has to say something: the backend
     // omits `reason` for some blocks, and a silent menu click reads as dead.
     it("falls back to generic wording when a block carries no reason", async () => {
