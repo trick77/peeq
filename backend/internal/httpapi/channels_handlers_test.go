@@ -961,6 +961,42 @@ func TestChannelsSubscribe_cacheOnlyRow_404(t *testing.T) {
 	}
 }
 
+// TestChannelsSubscribe_hasDownloadsError_500 and its delete twin below cover
+// the read that decides whether a never-added channel is one of the visible
+// "From downloads" rows. Dropping the videos table makes exactly that read
+// fail while the channels row stays perfectly readable, which is the only way
+// to separate "no downloads" from "could not tell".
+//
+// A swallowed error there would answer 404 "channel not added" about a row the
+// user is looking at — which reads as data loss rather than a database blip.
+func TestChannelsSubscribe_hasDownloadsError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}})
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCdl", Name: "From A Download"}); err != nil {
+		t.Fatalf("seed cache row: %v", err)
+	}
+	mustExecDB(t, deps.Channels.DB(), `DROP TABLE videos`)
+
+	rec := postJSON(t, h, "/api/channels/UCdl/subscribe", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChannelsDelete_hasDownloadsError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}})
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCdl", Name: "From A Download"}); err != nil {
+		t.Fatalf("seed cache row: %v", err)
+	}
+	mustExecDB(t, deps.Channels.DB(), `DROP TABLE videos`)
+
+	rec := doDelete(t, h, "/api/channels/UCdl")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestChannelsSubscribe_downloadOnlyRow_addsFirst asserts the star on a "From
 // downloads" row works in one click: the channel was never added, but it is
 // visible and holds a downloaded video, so subscribing adds it and then

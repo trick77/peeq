@@ -523,9 +523,9 @@ func TestUpsert_blankFieldsDoNotEraseCachedMetadata(t *testing.T) {
 	}
 }
 
-// TestMarkAdded_errorsOnClosedDB asserts a failed UPDATE (here forced by closing
-// the handle) is reported to the caller rather than swallowed, so a
-// adding request that silently didn't happen isn't mistaken for success.
+// TestMarkAdded_errorsOnClosedDB asserts a failed UPDATE (here forced by
+// closing the handle) is reported to the caller rather than swallowed, so an
+// add request that silently didn't happen isn't mistaken for success.
 func TestMarkAdded_errorsOnClosedDB(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.DB().Close(); err != nil {
@@ -534,6 +534,21 @@ func TestMarkAdded_errorsOnClosedDB(t *testing.T) {
 
 	if err := s.MarkAdded("UCx", "2026-07-20 10:00:00"); err == nil {
 		t.Fatal("expected an error adding against a closed db")
+	}
+}
+
+// TestHasDownloads_errorsOnClosedDB asserts a failed read is reported rather
+// than flattened to false. Both callers read false as "this channel is not
+// really in the list", so a swallowed error would turn a transient database
+// problem into a 404 on a row the user can plainly see.
+func TestHasDownloads_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := s.HasDownloads("UCx"); err == nil {
+		t.Fatal("expected an error reading against a closed db")
 	}
 }
 
