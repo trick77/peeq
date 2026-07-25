@@ -220,20 +220,29 @@ func (r *Runner) pauseGate() error {
 // throttle.
 //
 // So the wait is a reservation against a shared clock rather than a private
-// sleep. Each caller claims a slot at least one gap from now and at or after
-// the last slot claimed, pushes the queue tail past it, and sleeps outside the
-// lock until its slot arrives — one sleep, computed once. Consecutive starts
-// are therefore at least one gap apart across the whole process. A single
-// caller on an idle Runner waits exactly its own gap, as it always did.
+// sleep. Each caller claims a slot at or after the last slot claimed, pushes
+// the queue tail past it, and sleeps outside the lock until its slot arrives —
+// one sleep, computed once. Consecutive starts are therefore at least one gap
+// apart across the whole process.
+//
+// The gap is TRAILING, not leading: it is enforced between one call and the
+// next, never in front of a call that has nothing to be spaced from. On an idle
+// Runner — nothing has touched YouTube for longer than a gap — a caller goes
+// immediately. This used to be `slot := now.Add(gap)`, which made every call
+// wait its full gap however idle the Runner was, so a click after hours of
+// quiet still sat for 20-35s, and a pasted URL paid it twice (metadata preflight
+// then download) for 40-70s of doing nothing. That leading gap protected
+// nothing: nextSlot already holds lastClaim+gap, so taking the later of now and
+// nextSlot keeps callers exactly as far apart as before. It only added latency.
 //
 // Interactive callers skip the queue. A call a person is waiting on (ctx
 // carries WithInteractive: the add-download and add-channel handlers) claims
-// its slot from the last ADMITTED call rather than from the queue tail, so it
-// waits one gap instead of inheriting however many background reservations
-// happen to be outstanding. Without this a button press could sit behind the
-// download worker, the scan scheduler and the metadata refresher and take
-// minutes to answer — on the request's own context, so a proxy timeout turns a
-// merely-queued call into a visible failure.
+// its slot from the last ADMITTED call rather than from the queue tail, so on a
+// busy Runner it waits one gap instead of inheriting however many background
+// reservations happen to be outstanding — and on an idle one, nothing. Without
+// this a button press could sit behind the download worker, the scan scheduler
+// and the metadata refresher and take minutes to answer — on the request's own
+// context, so a proxy timeout turns a merely-queued call into a visible failure.
 //
 // The cost, stated plainly: a background reservation already made for a time
 // inside the interactive call's gap is NOT pushed back — it is asleep and
@@ -258,21 +267,29 @@ func (r *Runner) throttle(ctx context.Context) error {
 
 	now := r.now()
 	r.mu.Lock()
-	// Every call waits at least its own gap, however idle the Runner is. For an
-	// interactive call that is the whole rule: one gap from now, never sooner
-	// (so it cannot land on top of a call that already fired — anything already
-	// started did so at or before now) and never later (so it does not inherit
-	// the queue). Background calls additionally queue behind the tail.
-	slot := now.Add(gap)
-	if isInteractive(ctx) {
-		// Skips the background queue, but NOT other interactive calls: two
-		// clicks in the same second must not fire together, so the priority
-		// lane keeps a tail of its own.
-		if slot.Before(r.nextInteractiveSlot) {
-			slot = r.nextInteractiveSlot
+	// nextSlot is lastClaim+gap for calls of every kind, so now >= nextSlot is
+	// exactly "nothing has been claimed within a gap of now" — an idle Runner.
+	// Then there is nothing to be spaced from and the caller goes at once.
+	slot := now
+	if slot.Before(r.nextSlot) {
+		// Busy: a call is outstanding, or one started less than a gap ago.
+		if isInteractive(ctx) {
+			// A person is waiting, so skip the background queue — but not the
+			// throttle. now.Add(gap) is required rather than nextInteractiveSlot
+			// alone: nextInteractiveSlot tracks only the priority lane, so a
+			// background call that just started (at or before now, invisible to
+			// it) would otherwise get an interactive call fired on top of it.
+			// Anything already admitted did so at or before now, so a full gap
+			// from now clears it.
+			slot = now.Add(gap)
+			// ...and not other interactive calls either: two clicks in the same
+			// second must not fire together, so the priority lane keeps a tail.
+			if slot.Before(r.nextInteractiveSlot) {
+				slot = r.nextInteractiveSlot
+			}
+		} else {
+			slot = r.nextSlot
 		}
-	} else if slot.Before(r.nextSlot) {
-		slot = r.nextSlot
 	}
 	tail := slot.Add(gap)
 	// The background tail always moves, so work queued after an interactive
@@ -318,6 +335,17 @@ func (r *Runner) now() time.Time {
 // ctx is cancelled first, in which case it returns ctx.Err() immediately
 // instead of blocking for the full duration.
 func defaultSleep(ctx context.Context, d time.Duration) error {
+	// A zero or negative wait is now reachable: on an idle Runner throttle
+	// grants the current instant. Check ctx first and return without arming a
+	// timer, because select over an already-fired timer AND an already-cancelled
+	// ctx picks a ready case at random — a cancelled caller would proceed half
+	// the time.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if d <= 0 {
+		return nil
+	}
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
