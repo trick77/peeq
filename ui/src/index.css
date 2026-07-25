@@ -320,11 +320,15 @@ button {
 }
 /* Inbox/Queue with nothing in them. Faded rather than disabled — the item is
    still clickable and the page shows its own empty state — so hover restores
-   full strength to keep the affordance honest. */
+   full strength to keep the affordance honest. :focus-visible restores it too,
+   and not only for symmetry: opacity fades the global accent focus ring along
+   with the item, so a keyboard user tabbing onto a dimmed item would otherwise
+   get a 42% focus indicator. */
 .rail-nav-item.idle {
   opacity: 0.42;
 }
-.rail-nav-item.idle:hover {
+.rail-nav-item.idle:hover,
+.rail-nav-item.idle:focus-visible {
   opacity: 1;
 }
 .rail-nav-item .rail-nav-count {

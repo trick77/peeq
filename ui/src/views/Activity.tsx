@@ -17,8 +17,8 @@ import { summaryPhaseLabel } from "../format";
 // "what has peeq been up to" is the question this view is opened to answer.
 // "Up next" (bottom): running items at the front, then queued/scheduled work
 // soonest-first (the live projection from /api/activity/upcoming plus the
-// running items App holds). It is a pure log — nothing here is actionable —
-// so it deliberately carries no buttons.
+// running items App holds). The whole view is read-only — nothing in either
+// section is actionable — so it deliberately carries no buttons.
 //
 // Three disjoint states never render twice: TERMINAL work comes from the event
 // log (Recent activity), RUNNING work from App's live jobs/summaries (top of Up
