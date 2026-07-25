@@ -55,6 +55,24 @@ export function summaryPhaseLabel(phase: string | undefined): string {
   return summaryPhaseInfo(phase).label;
 }
 
+// parseStamp turns any timestamp the backend sends into a Date.
+//
+// Two shapes arrive. Date-only ('2026-03-01', from published_at) and true ISO
+// ('...Z') both parse as UTC, which is right. But SQLite's datetime('now')
+// yields '2026-03-01 09:00:00' — UTC with no zone marker — and JS parses that
+// space-separated form as LOCAL time, silently shifting the age by the
+// viewer's UTC offset and flipping "today" to "1 day ago" near a boundary.
+// Elsewhere the fix is spelled out at each call site (`new Date(x + "Z")` in
+// Channel.tsx, `x.replace(" ", "T") + "Z"` in Activity.tsx); doing it here
+// means daysSince and both formatters get it for free, whatever they are
+// handed.
+function parseStamp(iso: string): number {
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(iso)
+    ? iso.replace(" ", "T") + "Z"
+    : iso;
+  return new Date(normalized).getTime();
+}
+
 // daysBetween returns the whole number of days elapsed from `from` (an ISO
 // timestamp) to now. Negative/invalid input yields 0 rather than NaN, so a
 // caller doing retention arithmetic on it never produces "Expires in NaN
@@ -64,7 +82,7 @@ export function daysSince(
   now: Date = new Date(),
 ): number {
   if (!iso) return 0;
-  const then = new Date(iso).getTime();
+  const then = parseStamp(iso);
   if (Number.isNaN(then)) return 0;
   const diffMs = now.getTime() - then;
   return Math.max(0, Math.floor(diffMs / (24 * 60 * 60 * 1000)));
@@ -105,7 +123,7 @@ export function formatAge(
   now: Date = new Date(),
 ): string {
   if (!iso) return "—";
-  const then = new Date(iso).getTime();
+  const then = parseStamp(iso);
   if (Number.isNaN(then)) return "—";
   const days = Math.floor((now.getTime() - then) / 86400000);
   if (days <= 0) return "today";
