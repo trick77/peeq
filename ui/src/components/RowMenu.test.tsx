@@ -83,6 +83,34 @@ describe("RowMenu", () => {
     expect(screen.queryByRole("separator")).not.toBeInTheDocument();
   });
 
+  it("renders an href action as a link, and closes when it is followed", async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn();
+    setup({
+      actions: [
+        {
+          label: "Download file",
+          icon: "download",
+          href: "#file.mp4",
+          download: true,
+          flag: "failed",
+          onClick: onPick,
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Actions for X" }));
+    const item = screen.getByRole("menuitem", { name: /Download file/ });
+    expect(item.tagName).toBe("A");
+    expect(item).toHaveAttribute("href", "#file.mp4");
+    expect(item).toHaveAttribute("download");
+    expect(item).toHaveTextContent("failed");
+    await user.click(item);
+    expect(onPick).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.queryByRole("menuitem")).not.toBeInTheDocument(),
+    );
+  });
+
   it("Escape closes the menu and returns focus to the trigger", async () => {
     const user = userEvent.setup();
     setup();
