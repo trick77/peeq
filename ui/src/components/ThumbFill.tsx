@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { thumbnailUrl } from "../api/videos";
 import { gradientClassFor } from "../format";
 
@@ -14,7 +14,11 @@ import { gradientClassFor } from "../format";
 // never-had-a-thumbnail video gets.
 //
 // The failure flag is keyed on the id: these cards are recycled across list
-// re-renders, and a stale `true` would hide a perfectly good poster.
+// re-renders, and a stale `true` would hide a perfectly good poster. It stores
+// the id that failed rather than a boolean reset by an effect, so the retry for
+// a new id happens in the same render the id changes in — an effect-based reset
+// would paint the placeholder for one commit first, and would make the retry
+// depend on passive-effect flush timing.
 export function ThumbFill({
   id,
   hasThumbnail,
@@ -22,13 +26,9 @@ export function ThumbFill({
   id: string;
   hasThumbnail: boolean;
 }) {
-  const [failed, setFailed] = useState(false);
+  const [failedId, setFailedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    setFailed(false);
-  }, [id]);
-
-  if (!hasThumbnail || failed) {
+  if (!hasThumbnail || failedId === id) {
     return <div className={`fill ${gradientClassFor(id)}`} />;
   }
   return (
@@ -37,7 +37,7 @@ export function ThumbFill({
       src={thumbnailUrl(id)}
       alt=""
       loading="lazy"
-      onError={() => setFailed(true)}
+      onError={() => setFailedId(id)}
     />
   );
 }
