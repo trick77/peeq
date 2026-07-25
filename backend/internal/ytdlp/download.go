@@ -71,9 +71,17 @@ type Result struct {
 	// `[{"ts":int,"title":string,"source":"yt-dlp"}]`, or "" if the video
 	// had none.
 	ChaptersJSON string
-	// PublishedAt is the release date normalized to YYYY-MM-DD (same shape
-	// Metadata produces), or "" if yt-dlp reported no upload_date.
+	// PublishedAt is the AIR date normalized to YYYY-MM-DD (same shape
+	// Metadata produces), or "" if yt-dlp reported none of the four date
+	// fields airDate looks at.
 	PublishedAt string
+	// Description is the video's own description, or "" if it had none.
+	Description string
+	// MediaType/LiveStatus/Tags/Categories: see the matching fields on Meta.
+	MediaType  string
+	LiveStatus string
+	Tags       []string
+	Categories []string
 }
 
 // Progress is one parsed --newline progress update.
@@ -119,11 +127,23 @@ type downloadInfoJSON struct {
 	// segment that ends within a second of the end of the video. Absent for
 	// some live streams, in which case that snap is skipped.
 	Duration float64 `json:"duration"`
-	// UploadDate is yt-dlp's raw YYYYMMDD release date. Read here so that
-	// channel-driven downloads carry a release date too: they never go through
-	// Runner.Metadata (no per-video -J call, to respect the throttle budget),
-	// and release date is what the library sorts on.
-	UploadDate string `json:"upload_date"`
+	// The four date fields airDate resolves the AIR date from. Read here so
+	// that channel-driven downloads carry one too: they never go through
+	// Runner.Metadata (no per-video -J call, to respect the throttle budget).
+	// --write-info-json writes the complete info dict, so these cost nothing.
+	UploadDate       string `json:"upload_date"`
+	ReleaseDate      string `json:"release_date"`
+	ReleaseTimestamp int64  `json:"release_timestamp"`
+	Timestamp        int64  `json:"timestamp"`
+	// Description is the video's own description — never fetched before this,
+	// which is why videos.description sat empty since 0001 despite the column
+	// and the API field both existing.
+	Description string `json:"description"`
+	// MediaType/LiveStatus/Tags/Categories: see the matching fields on Meta.
+	MediaType  string   `json:"media_type"`
+	LiveStatus string   `json:"live_status"`
+	Tags       []string `json:"tags"`
+	Categories []string `json:"categories"`
 	Chapters   []struct {
 		StartTime float64 `json:"start_time"`
 		EndTime   float64 `json:"end_time"`
@@ -366,7 +386,17 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 		SubtitleRelPath:      subtitleRelPath,
 		AudioLanguage:        info.Language,
 		ChaptersJSON:         chaptersJSON,
-		PublishedAt:          normalizeUploadDate(info.UploadDate),
+		PublishedAt: airDate(rawDates{
+			ReleaseTimestamp: info.ReleaseTimestamp,
+			Timestamp:        info.Timestamp,
+			ReleaseDate:      info.ReleaseDate,
+			UploadDate:       info.UploadDate,
+		}),
+		Description: info.Description,
+		MediaType:   info.MediaType,
+		LiveStatus:  info.LiveStatus,
+		Tags:        info.Tags,
+		Categories:  info.Categories,
 	}, nil
 }
 

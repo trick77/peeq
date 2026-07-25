@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "../icons";
 
 export type RowMenuAction = {
@@ -32,6 +32,11 @@ export type RowMenuAction = {
 // aria-expanded, which that CSS keys off to keep an open menu's dots visible.
 // `attention` renders a small dot on the trigger, so a menu holding an item
 // that needs action (a failed step) reads at a glance without being opened.
+//
+// A destructive item is always fenced off by a hairline separator, so Delete
+// can never be hit by a slip of the pointer aimed at the item above it. The
+// rule lives here rather than in each caller's action list: callers just mark
+// the item `danger` and the divider follows automatically.
 export function RowMenu({
   actions,
   label = "Actions",
@@ -89,6 +94,10 @@ export function RowMenu({
     next.focus();
   }
 
+  // Index of the first destructive item — the separator goes right above it.
+  // -1 (no danger item) and 0 (the menu opens with it) both mean no divider.
+  const firstDanger = actions.findIndex((a) => a.danger);
+
   function pick(action: RowMenuAction) {
     setOpen(false);
     triggerRef.current?.focus();
@@ -116,36 +125,39 @@ export function RowMenu({
           ref={menuRef}
           onKeyDown={onMenuKeyDown}
         >
-          {actions.map((a) =>
-            a.href ? (
-              <a
-                key={a.label}
-                role="menuitem"
-                className={a.danger ? "danger" : undefined}
-                href={a.href}
-                target={a.newTab ? "_blank" : undefined}
-                rel={a.newTab ? "noreferrer" : undefined}
-                download={a.download ? "" : undefined}
-                onClick={() => pick(a)}
-              >
-                <Icon name={a.icon} size="16px" />
-                {a.label}
-                {a.flag ? <span className="mi-flag">{a.flag}</span> : null}
-              </a>
-            ) : (
-              <button
-                key={a.label}
-                type="button"
-                role="menuitem"
-                className={a.danger ? "danger" : undefined}
-                onClick={() => pick(a)}
-              >
-                <Icon name={a.icon} size="16px" />
-                {a.label}
-                {a.flag ? <span className="mi-flag">{a.flag}</span> : null}
-              </button>
-            ),
-          )}
+          {actions.map((a, i) => (
+            <Fragment key={a.label}>
+              {i === firstDanger && i > 0 ? (
+                <div className="rowmenu-sep" role="separator" />
+              ) : null}
+              {a.href ? (
+                <a
+                  role="menuitem"
+                  className={a.danger ? "danger" : undefined}
+                  href={a.href}
+                  target={a.newTab ? "_blank" : undefined}
+                  rel={a.newTab ? "noreferrer" : undefined}
+                  download={a.download ? "" : undefined}
+                  onClick={() => pick(a)}
+                >
+                  <Icon name={a.icon} size="16px" />
+                  {a.label}
+                  {a.flag ? <span className="mi-flag">{a.flag}</span> : null}
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={a.danger ? "danger" : undefined}
+                  onClick={() => pick(a)}
+                >
+                  <Icon name={a.icon} size="16px" />
+                  {a.label}
+                  {a.flag ? <span className="mi-flag">{a.flag}</span> : null}
+                </button>
+              )}
+            </Fragment>
+          ))}
         </div>
       ) : null}
     </span>

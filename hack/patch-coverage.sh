@@ -103,6 +103,29 @@ assert_matched() {
     fi
   done <<<"$changed"
 
+  # Nothing changed is in the report. That is the broken-mapping symptom, but
+  # it is ALSO what a whole-module type-only change looks like: a .ts file
+  # holding only `export type` emits no runtime code, so it is absent from the
+  # report entirely rather than present with zero hits. The loop above cannot
+  # tell them apart, and only got away with it while such a file happened to be
+  # accompanied by an instrumented one — any one match short-circuits it.
+  #
+  # So prove the mapping independently of the diff: if the report's OWN paths
+  # resolve to files that exist here, the mapping is fine and this diff simply
+  # touched nothing instrumented. A genuinely broken mapping still fails,
+  # because then none of its paths would resolve.
+  local reported
+  reported="$(sed -nE 's/^SF:(.*)$/\1/p; s/.*filename="([^"]*)".*/\1/p' "$coverage" | head -100)"
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    if [[ -e "${strip}${file}" ]]; then
+      echo "patch-coverage: $label diff touched no instrumented lines; n/a."
+      echo "  (report paths resolve, so the mapping is sound — the change is" \
+        "type-only or otherwise not executable.)"
+      return 0
+    fi
+  done <<<"$reported"
+
   echo "patch-coverage: FAIL — $label sources changed but are absent from the" >&2
   echo "  coverage report. This usually means the report's paths do not" >&2
   echo "  match git's paths." >&2

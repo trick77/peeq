@@ -74,6 +74,14 @@ type Video struct {
 	// ProbedAt is when the probe was last ATTEMPTED, success or failure.
 	// Empty means never attempted, which is what the backfill sweep selects.
 	ProbedAt string
+	// MediaType/LiveStatus/YTTags/YTCategories come straight from yt-dlp (see
+	// ytdlp.Meta). YTTags/YTCategories are JSON arrays stored as TEXT, like
+	// Chapters and KeyPoints, and are YouTube's own labels — not Category,
+	// which is peeq's classification enum.
+	MediaType    string
+	LiveStatus   string
+	YTTags       string
+	YTCategories string
 }
 
 // watchedThreshold is the fraction of a video's duration that, once
@@ -102,6 +110,15 @@ type DownloadedResult struct {
 	// leaves whatever is already stored, so a date the richer Metadata path
 	// wrote is never clobbered.
 	PublishedAt string
+	// Description and the four YouTube-supplied fields below arrive the same
+	// way and follow the same never-clobber-with-empty rule. They come from
+	// the download's own info.json, which is the richest view peeq ever gets
+	// of a video — for a channel-driven download it is the ONLY view.
+	Description  string
+	MediaType    string
+	LiveStatus   string
+	YTTags       string
+	YTCategories string
 }
 
 // Store persists video rows.
@@ -124,6 +141,13 @@ func New(db *sql.DB) *Store {
 // column list, so a fresh row still carries the value the caller passed
 // (e.g. an initial channel scan seeding both metadata and the override in
 // one Upsert); it is simply excluded from the ON CONFLICT UPDATE SET.
+//
+// published_at and description are refreshed but never CLEARED: several
+// callers legitimately have no date or description to offer (scan's
+// enqueueAuto seeds from a metadata-poor flat listing; the approve-from-inbox
+// path passes id/url/title/duration only), and a plain
+// `= excluded.published_at` let any of them blank out a good air date on a
+// re-seen id. Filling a hole is fine; punching one is not.
 func (s *Store) Upsert(v Video) error {
 	availability := v.Availability
 	if availability == "" {
@@ -139,8 +163,8 @@ ON CONFLICT(id) DO UPDATE SET
 	channel_id      = excluded.channel_id,
 	channel_name    = excluded.channel_name,
 	duration_seconds = excluded.duration_seconds,
-	published_at    = excluded.published_at,
-	description     = excluded.description,
+	published_at    = COALESCE(excluded.published_at, videos.published_at),
+	description     = COALESCE(NULLIF(excluded.description, ''), videos.description),
 	thumbnail_path  = excluded.thumbnail_path,
 	availability    = excluded.availability`,
 		v.ID, v.URL, v.Title, v.ChannelID, v.ChannelName, nullInt(v.DurationSeconds),
@@ -177,7 +201,8 @@ const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	v.watched, v.watched_at, v.resume_position_seconds, v.favorite, v.favorited_at,
 	v.created_at, v.downloaded_at,
 	v.audio_language, v.subtitle_path, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.category,
-	v.media_container, v.video_codec, v.video_height, v.audio_codec, v.probed_at`
+	v.media_container, v.video_codec, v.video_height, v.audio_codec, v.probed_at,
+	v.media_type, v.live_status, v.yt_tags, v.yt_categories`
 
 // videoFrom is the FROM clause every whole-Video read shares: videos aliased
 // "v", LEFT JOINed to the channels metadata cache so videoColumns can resolve
@@ -205,6 +230,7 @@ func scanVideo(rs rowScanner) (Video, error) {
 		&v.AudioLanguage, &v.SubtitlePath, &v.Summary, &v.Chapters, &v.KeyPoints,
 		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim, &v.Category,
 		&v.MediaContainer, &v.VideoCodec, &v.VideoHeight, &v.AudioCodec, &probedAt,
+		&v.MediaType, &v.LiveStatus, &v.YTTags, &v.YTCategories,
 	)
 	if err != nil {
 		return Video{}, err
@@ -259,31 +285,34 @@ type ListOptions struct {
 // interpolated into SQL, so it must only ever come from this map — never
 // from the caller's string.
 //
-// Two date dimensions, kept apart on purpose. newest/oldest rank by ADDED
-// date (downloaded_at) — the default ordering, because the Library's job is
-// to answer "what's here now that wasn't yesterday", and a 2019 talk fetched
-// this morning is new to this library whatever YouTube says. air_newest/
-// air_oldest rank by RELEASE date (published_at) for when the question is
-// about the video rather than the collection.
+// newest/oldest are the DEFAULT ordering and are restored here byte-for-byte
+// to what they were before #139. That change repointed them at downloaded_at;
+// the resulting grid was wrong in use, so the known-good clause is the one that
+// stands. Do not "fix" it back without watching a real library under it first —
+// this has now been changed twice on reasoning and reverted once on evidence.
 //
-// downloaded_at is NULL for rows that never finished downloading — an 'error'
-// row, which the Library still lists (see notInFlight) so it can be retried —
-// so the added-date clauses fall back to created_at. Both columns are
-// 'YYYY-MM-DD HH:MM:SS', so that fallback needs no normalization.
+// What it does: rank by release date, falling back to the row's own insertion
+// date when yt-dlp reported none (some live streams and premieres), so a
+// dateless row stays interleaved instead of sinking to one end forever. date()
+// normalizes that fallback — published_at is 'YYYY-MM-DD' while created_at is
+// 'YYYY-MM-DD HH:MM:SS', and comparing the shapes lexically would sort a
+// same-day date-only value before the datetime one. The created_at tiebreak
+// then orders same-day videos by when peeq recorded them, newest first.
 //
-// The air-date clauses do need it. published_at is NULL when yt-dlp reports no
-// upload_date (some live streams and premieres); those rows fall back to
-// created_at and stay interleaved rather than sinking to one end forever, and
-// date() normalizes the fallback — published_at is 'YYYY-MM-DD' while
-// created_at is 'YYYY-MM-DD HH:MM:SS', and comparing the two shapes lexically
-// would sort a same-day date-only value before the datetime one.
+// added_newest/added_oldest rank by downloaded_at — when peeq actually fetched
+// the file — and are offered in the dropdown rather than as the default. NULL
+// until a download succeeds, so an 'error' row (which the Library still lists,
+// see notInFlight, so it can be retried) has no added date. `x IS NULL`
+// evaluates to 0/1, so putting it first ASCENDING keeps dated rows ahead in
+// BOTH directions; a plain `col DESC` would float SQLite's NULLs to the top.
+// A re-download restamps downloaded_at, so "added" means last fetched.
 var sortClauses = map[string]string{
-	"newest":     "COALESCE(v.downloaded_at, v.created_at) DESC, v.id DESC",
-	"oldest":     "COALESCE(v.downloaded_at, v.created_at) ASC, v.id ASC",
-	"air_newest": "COALESCE(v.published_at, date(v.created_at)) DESC, v.created_at DESC, v.id DESC",
-	"air_oldest": "COALESCE(v.published_at, date(v.created_at)) ASC, v.created_at ASC, v.id ASC",
-	"longest":    "COALESCE(v.duration_seconds, 0) DESC, v.id DESC",
-	"title":      "v.title COLLATE NOCASE ASC, v.id ASC",
+	"newest":       "COALESCE(v.published_at, date(v.created_at)) DESC, v.created_at DESC, v.id DESC",
+	"oldest":       "COALESCE(v.published_at, date(v.created_at)) ASC, v.created_at ASC, v.id ASC",
+	"added_newest": "v.downloaded_at IS NULL, v.downloaded_at DESC, v.id DESC",
+	"added_oldest": "v.downloaded_at IS NULL, v.downloaded_at ASC, v.id ASC",
+	"longest":      "COALESCE(v.duration_seconds, 0) DESC, v.id DESC",
+	"title":        "v.title COLLATE NOCASE ASC, v.id ASC",
 }
 
 // escapeLike escapes the three characters LIKE treats specially so a user
@@ -321,10 +350,12 @@ const notInFlight = "v.status NOT IN ('new', 'queued', 'downloading')"
 // where it returns the same thing "all" does.
 //   - Category: empty/"all"/unknown ⇒ no category constraint
 //   - Query: case-insensitive substring match against title
-//   - Sort: newest|oldest|air_newest|air_oldest|longest|title; anything else
-//     falls back to newest. newest/oldest order by added date (downloaded_at),
-//     air_newest/air_oldest by release date (published_at); both fall back to
-//     created_at for rows missing their date. See sortClauses.
+//   - Sort: newest|oldest|added_newest|added_oldest|longest|title; anything
+//     else falls back to newest. newest/oldest are the default and order by
+//     release date (published_at), falling back to created_at for rows with no
+//     known release date. added_newest/added_oldest order by when peeq fetched
+//     the file (downloaded_at), with never-downloaded rows last. See
+//     sortClauses.
 //   - ChannelID/ChannelName: scopes to one channel, matching channel_id or,
 //     for rows written before channel ids were recorded, an exact
 //     channel_name match on rows with an empty channel_id
@@ -444,6 +475,11 @@ SET media_path = ?, thumbnail_path = COALESCE(NULLIF(?, ''), thumbnail_path),
 	subtitle_path = ?, audio_language = ?,
 	chapters = CASE WHEN ? != '' THEN ? ELSE chapters END,
 	published_at = COALESCE(NULLIF(?, ''), published_at),
+	description = COALESCE(NULLIF(?, ''), description),
+	media_type = COALESCE(NULLIF(?, ''), media_type),
+	live_status = COALESCE(NULLIF(?, ''), live_status),
+	yt_tags = COALESCE(NULLIF(?, ''), yt_tags),
+	yt_categories = COALESCE(NULLIF(?, ''), yt_categories),
 	sponsorblock_refreshed_at = datetime('now'),
 	status = 'downloaded', error_message = '', downloaded_at = datetime('now')
 WHERE id = ?`,
@@ -451,6 +487,8 @@ WHERE id = ?`,
 		res.SubtitleRelPath, res.AudioLanguage,
 		res.ChaptersJSON, res.ChaptersJSON,
 		res.PublishedAt,
+		res.Description,
+		res.MediaType, res.LiveStatus, res.YTTags, res.YTCategories,
 		id,
 	)
 	if err != nil {

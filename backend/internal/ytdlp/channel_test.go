@@ -95,6 +95,127 @@ func TestChannelVideos_parsesEntries(t *testing.T) {
 	}
 }
 
+func TestChannelStreams_noCookie_doesNotCallBinary(t *testing.T) {
+	called := filepath.Join(t.TempDir(), "called")
+	r := New(RunnerConfig{
+		Bin:            fakeBinTouching(called),
+		CookieProvider: func() (string, string) { return "", "absent" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	if _, err := r.ChannelStreams(context.Background(), "UCabcdefghijklmnopqrstuv", 50); !errors.Is(err, ErrNoCookie) {
+		t.Fatalf("want ErrNoCookie, got %v", err)
+	}
+	if _, e := os.Stat(called); e == nil {
+		t.Fatal("binary must not run without a cookie")
+	}
+}
+
+// TestChannelStreams_queriesStreamsTab is the whole difference between the two
+// listing methods: same flags, different tab. A stream VOD is only reachable
+// under /streams, so a url that still ended in /videos would list uploads twice
+// and never surface a livestream.
+func TestChannelStreams_queriesStreamsTab(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args")
+	script := filepath.Join(t.TempDir(), "fake-ytdlp-args.sh")
+	content := "#!/bin/sh\necho \"$@\" > " + argsFile + "\necho '{\"entries\":[]}'\nexit 0\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("write fake bin: %v", err)
+	}
+	r := New(RunnerConfig{
+		Bin:            script,
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	if _, err := r.ChannelStreams(context.Background(), "UCabc", 50); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.TrimSpace(string(raw))
+	if !strings.HasSuffix(args, "/streams") {
+		t.Fatalf("streams url is not the final arg: %s", args)
+	}
+	// The approximate-date flag matters just as much here — an undated stream
+	// VOD reaches the inbox with no date to sort or render.
+	if !strings.Contains(args, "youtubetab:approximate_date") {
+		t.Fatalf("args missing approximate_date: %s", args)
+	}
+}
+
+// TestChannelStreams_parsesLiveStatus proves the field the scan branches on
+// survives the round trip: was_live (a finished VOD) must be distinguishable
+// from is_live (still airing).
+func TestChannelStreams_parsesLiveStatus(t *testing.T) {
+	const listing = `{"id":"UCabc","channel":"Chan","entries":[
+	  {"id":"vod00000001","title":"Finished stream","duration":7200,"live_status":"was_live"},
+	  {"id":"vod00000002","title":"Airing now","live_status":"is_live"}
+	]}`
+	r := New(RunnerConfig{
+		Bin:            fakeBinPrinting(t, listing),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	got, err := r.ChannelStreams(context.Background(), "UCabc", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].LiveStatus != "was_live" || got[0].DurationSeconds != 7200 {
+		t.Fatalf("entry 0 = %+v", got[0])
+	}
+	if got[1].LiveStatus != "is_live" {
+		t.Fatalf("entry 1 live_status = %q, want is_live", got[1].LiveStatus)
+	}
+	if got[0].URL != "https://www.youtube.com/watch?v=vod00000001" {
+		t.Fatalf("entry 0 url = %q", got[0].URL)
+	}
+}
+
+// TestChannelStreams_missingTabIsRecognisable: a channel that has never gone
+// live has no /streams tab, and yt-dlp fails outright. The error must stay
+// recognisable so the scheduler can keep that (very common) case quiet.
+func TestChannelStreams_missingTabIsRecognisable(t *testing.T) {
+	r := New(RunnerConfig{
+		Bin:            fakeBinFailing(t, "ERROR: [youtube:tab] UCabc: This channel does not have a streams tab"),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	_, err := r.ChannelStreams(context.Background(), "UCabc", 50)
+	if err == nil {
+		t.Fatal("want an error for a missing streams tab")
+	}
+	if !IsMissingTab(err) {
+		t.Fatalf("IsMissingTab(%v) = false, want true", err)
+	}
+}
+
+// TestIsMissingTab_onlyMatchesTheTabError guards the demotion-to-debug: a real
+// failure (a bot block, an extractor break) must never be mistaken for the
+// boring "this channel never streamed" case and logged away quietly.
+func TestIsMissingTab_onlyMatchesTheTabError(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"missing tab", &ExecError{Err: errors.New("exit status 1"), Stderr: "ERROR: [youtube:tab] UCabc: This channel does not have a streams tab"}, true},
+		{"other exec failure", &ExecError{Err: errors.New("exit status 1"), Stderr: "ERROR: unable to extract yt initial data"}, false},
+		{"blocked sentinel", ErrBlocked, false},
+		{"terminal", &TerminalError{Reason: "deleted"}, false},
+		{"nil", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsMissingTab(tc.err); got != tc.want {
+				t.Fatalf("IsMissingTab(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveChannel_parsesUcidAndName(t *testing.T) {
 	const j = `{"id":"UCxyz","channel_id":"UCxyz","channel":"My Channel","entries":[]}`
 	r := New(RunnerConfig{

@@ -26,28 +26,53 @@ import (
 var fixedNow = time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
 
 // fakeLister is a canned ChannelLister: it records how many times it was
-// called and returns pre-seeded entries per ucid. When panicMsg is set it
-// panics instead (exercising the scan panic guard). It is safe for concurrent
-// use so the goroutine-driven no-cookie test stays race-clean.
+// called and returns pre-seeded entries per ucid, per tab. When panicMsg is set
+// it panics instead (exercising the scan panic guard). It is safe for
+// concurrent use so the goroutine-driven no-cookie test stays race-clean.
+//
+// The /streams tab defaults to failing the way yt-dlp fails for a channel that
+// has never gone live, so every test that seeds only uploads exercises the
+// common real-world shape rather than an artificial empty streams tab.
 type fakeLister struct {
-	mu       sync.Mutex
-	entries  map[string][]ytdlp.ChannelEntry
-	calls    int
-	panicMsg string
+	mu          sync.Mutex
+	entries     map[string][]ytdlp.ChannelEntry
+	streams     map[string][]ytdlp.ChannelEntry
+	calls       int
+	streamCalls int
+	panicMsg    string
 	// err, when set, is returned instead of entries — a plain (unclassified)
 	// listing failure, which is what the default branch of scanChannel's error
 	// classification handles.
 	err error
+	// streamErr is the same seam for the /streams tab, and defaults to yt-dlp's
+	// missing-tab failure rather than nil (see newFakeLister).
+	streamErr error
 }
 
 func newFakeLister() *fakeLister {
-	return &fakeLister{entries: map[string][]ytdlp.ChannelEntry{}}
+	return &fakeLister{
+		entries: map[string][]ytdlp.ChannelEntry{},
+		streams: map[string][]ytdlp.ChannelEntry{},
+		streamErr: &ytdlp.ExecError{
+			Err:    errors.New("exit status 1"),
+			Stderr: "ERROR: [youtube:tab] UC1: This channel does not have a streams tab",
+		},
+	}
 }
 
 func (f *fakeLister) set(ucid string, e []ytdlp.ChannelEntry) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.entries[ucid] = e
+}
+
+// setStreams seeds the /streams tab for a ucid and clears the default
+// missing-tab error — i.e. makes this a channel that does stream.
+func (f *fakeLister) setStreams(ucid string, e []ytdlp.ChannelEntry) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.streams[ucid] = e
+	f.streamErr = nil
 }
 
 func (f *fakeLister) ChannelVideos(_ context.Context, ucid string, _ int) ([]ytdlp.ChannelEntry, error) {
@@ -61,6 +86,19 @@ func (f *fakeLister) ChannelVideos(_ context.Context, ucid string, _ int) ([]ytd
 		return nil, f.err
 	}
 	return f.entries[ucid], nil
+}
+
+func (f *fakeLister) ChannelStreams(_ context.Context, ucid string, _ int) ([]ytdlp.ChannelEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.streamCalls++
+	if f.panicMsg != "" {
+		panic(f.panicMsg)
+	}
+	if f.streamErr != nil {
+		return nil, f.streamErr
+	}
+	return f.streams[ucid], nil
 }
 
 // fakeRecorder captures the activity rows a scan pass writes, so a test can
@@ -218,6 +256,20 @@ func (h *scanHarness) markBaselined(ucid string, seenIDs []string) {
 	}
 }
 
+// forceDue pushes next_scan_at back into the past and re-claims the
+// subscription, so a test can run a second scanOnce over the same channel.
+func (h *scanHarness) forceDue() *channels.Subscription {
+	h.t.Helper()
+	if err := h.channels.Backoff("UC1", "2000-01-01 00:00:00"); err != nil {
+		h.t.Fatalf("force due: %v", err)
+	}
+	sub, err := h.channels.ClaimDue(h.nowStr())
+	if err != nil || sub == nil {
+		h.t.Fatalf("claim due again: sub=%+v err=%v", sub, err)
+	}
+	return sub
+}
+
 // ledgerState returns the ledger state for videoID (fails the test if absent).
 func (h *scanHarness) ledgerState(videoID string) string {
 	h.t.Helper()
@@ -309,6 +361,281 @@ func TestScan_subsequentNewVideo_pendingVsAutodownload(t *testing.T) {
 	}
 	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
 		t.Fatalf("non-autodownload must not enqueue; got %d jobs", len(jobsList))
+	}
+}
+
+// TestScan_tabsOverlappingOnAnIdCountItOnce: nothing guarantees YouTube keeps
+// the two tabs disjoint forever, and an id listed twice would be offered twice.
+func TestScan_tabsOverlappingOnAnIdCountItOnce(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	both := ytdlp.ChannelEntry{ID: "vod00001", Title: "On both tabs", DurationSeconds: 7200, LiveStatus: "was_live"}
+	h.lister.set("UC1", []ytdlp.ChannelEntry{both})
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{both})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := h.ledger.ListPending()
+	if len(p) != 1 || p[0].VideoID != "vod00001" {
+		t.Fatalf("pending = %+v, want the id exactly once", p)
+	}
+}
+
+// TestScan_completedLivestreamIsOffered proves the point of listing /streams at
+// all: a finished stream VOD reaches the inbox exactly like an upload, even
+// though it never appears on the /videos tab.
+func TestScan_completedLivestreamIsOffered(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "upload01", DurationSeconds: 600, LiveStatus: "not_live"},
+	})
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
+		{ID: "vod00001", Title: "Sunday stream", DurationSeconds: 7200, LiveStatus: "was_live"},
+	})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.ledgerState("vod00001"); st != "pending" {
+		t.Fatalf("completed stream state = %q, want pending", st)
+	}
+	if st := h.ledgerState("upload01"); st != "pending" {
+		t.Fatalf("upload state = %q, want pending", st)
+	}
+}
+
+// TestScan_unfinishedStreamDeferredThenOffered is the whole reason live entries
+// get no ledger row: the same id is skipped while it is airing and picked up on
+// the next scan, once it has become a VOD. A 'seen' row on the first pass would
+// have masked it forever.
+func TestScan_unfinishedStreamDeferredThenOffered(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
+		{ID: "vod00001", Title: "Live now", DurationSeconds: 0, LiveStatus: "is_live"},
+	})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.ledgerStateOrAbsent("vod00001"); st != "" {
+		t.Fatalf("airing stream state = %q, want no row", st)
+	}
+	if p, _ := h.ledger.ListPending(); len(p) != 0 {
+		t.Fatalf("airing stream must not be offered; got %+v", p)
+	}
+
+	// Same id, now finished.
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
+		{ID: "vod00001", Title: "Live now", DurationSeconds: 5400, LiveStatus: "was_live"},
+	})
+	sub2 := h.forceDue()
+	if err := h.sched.scanOnce(context.Background(), sub2); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.ledgerState("vod00001"); st != "pending" {
+		t.Fatalf("finished stream state = %q, want pending", st)
+	}
+}
+
+// TestScan_postLiveStreamDeferred covers the window where a stream has ended but
+// YouTube has not finished cutting the VOD: not recordable yet, and — like the
+// airing case — left without a row so a later scan can offer the finished cut.
+func TestScan_postLiveStreamDeferred(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", true /*autodownload*/, "")
+	h.markBaselined("UC1", nil)
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
+		{ID: "vod00001", DurationSeconds: 3600, LiveStatus: "post_live"},
+		{ID: "vod00002", DurationSeconds: 3600, LiveStatus: "some_future_status"},
+	})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"vod00001", "vod00002"} {
+		if st := h.ledgerStateOrAbsent(id); st != "" {
+			t.Fatalf("%s state = %q, want no row", id, st)
+		}
+	}
+	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
+		t.Fatalf("unsettled streams must not be downloaded; got %d jobs", len(jobsList))
+	}
+}
+
+// TestScan_baselineCoversStreamsTab proves the baseline snapshot spans both
+// tabs. Without this, subscribing to a channel that streams would treat its
+// whole back catalogue of VODs as new on the second scan.
+func TestScan_baselineCoversStreamsTab(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "upload01", DurationSeconds: 600, LiveStatus: "not_live"}})
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{{ID: "vod00001", DurationSeconds: 7200, LiveStatus: "was_live"}})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.ledgerState("vod00001"); st != "seen" {
+		t.Fatalf("baselined stream state = %q, want seen", st)
+	}
+	if p, _ := h.ledger.ListPending(); len(p) != 0 {
+		t.Fatalf("baseline must queue nothing; got %+v", p)
+	}
+}
+
+// TestScan_baseline_streamsFailure_doesNotBaselineHalfAChannel: a baseline is
+// the ONE listing that must be complete — every id it fails to see counts as
+// new on the next pass. Swallowing a transient /streams failure here would
+// stamp baselined_at from an uploads-only snapshot and then dump the channel's
+// whole back catalogue of VODs into the inbox on the following scan.
+func TestScan_baseline_streamsFailure_doesNotBaselineHalfAChannel(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "upload01", DurationSeconds: 600, LiveStatus: "not_live"}})
+	h.lister.setStreams("UC1", nil)
+	h.lister.streamErr = errors.New("some transient yt-dlp hiccup")
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err == nil {
+		t.Fatal("a baseline pass must fail rather than snapshot half a channel")
+	}
+	if st := h.ledgerStateOrAbsent("upload01"); st != "" {
+		t.Fatalf("failed baseline must record nothing; upload01 = %q", st)
+	}
+	// Still unbaselined, so a later pass gets to take the full snapshot.
+	sub2, _ := h.channels.ClaimDue("2999-01-01 00:00:00")
+	if sub2 != nil && sub2.BaselinedAt != "" {
+		t.Fatalf("baselined_at = %q, want unset after a failed baseline", sub2.BaselinedAt)
+	}
+}
+
+// TestScan_baseline_missingStreamsTab_stillBaselines: the strictness above is
+// about UNCERTAINTY, not about the streams call failing. A channel that has
+// never gone live has no tab to list and nothing to miss, so the common case
+// must still baseline on the first pass.
+func TestScan_baseline_missingStreamsTab_stillBaselines(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	// The harness lister already errors on /streams the way yt-dlp does.
+	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "upload01", DurationSeconds: 600, LiveStatus: "not_live"}})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatalf("a missing streams tab must not fail the baseline: %v", err)
+	}
+	if st := h.ledgerState("upload01"); st != "seen" {
+		t.Fatalf("upload01 state = %q, want seen", st)
+	}
+	sub2, _ := h.channels.ClaimDue("2999-01-01 00:00:00")
+	if sub2 != nil && sub2.BaselinedAt == "" {
+		t.Fatal("baselined_at must be set after the first scan")
+	}
+}
+
+// TestScan_missingVideosTab_streamOnlyChannelStillScans is the case this whole
+// feature exists for, taken to its limit: a channel that publishes ONLY
+// livestreams has no /videos tab at all, and yt-dlp refuses that call exactly
+// the way it refuses /streams elsewhere. Treating it as fatal would return
+// before the streams call and leave such a channel permanently unscannable.
+func TestScan_missingVideosTab_streamOnlyChannelStillScans(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.err = &ytdlp.ExecError{
+		Err:    errors.New("exit status 1"),
+		Stderr: "ERROR: [youtube:tab] UC1: This channel does not have a videos tab",
+	}
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
+		{ID: "vod00001", Title: "Sunday stream", DurationSeconds: 7200, LiveStatus: "was_live"},
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatalf("a missing videos tab must not fail the scan: %v", err)
+	}
+	if h.lister.streamCalls != 1 {
+		t.Fatalf("streams calls = %d, want 1 — the streams tab must still be listed", h.lister.streamCalls)
+	}
+	if st := h.ledgerState("vod00001"); st != "pending" {
+		t.Fatalf("stream state = %q, want pending", st)
+	}
+}
+
+// TestScan_missingStreamsTab_scanStillSucceeds covers the majority of channels:
+// they have never gone live, so yt-dlp fails the /streams call outright. That
+// must not fail the scan or cost the channel its uploads.
+func TestScan_missingStreamsTab_scanStillSucceeds(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	// The harness lister already errors on /streams the way yt-dlp does.
+	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "newp", DurationSeconds: 600, LiveStatus: "not_live"}})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatalf("a missing streams tab must not fail the scan: %v", err)
+	}
+	if st := h.ledgerState("newp"); st != "pending" {
+		t.Fatalf("newp state = %q, want pending", st)
+	}
+}
+
+// TestScan_streamsTabError_toleratedExceptSentinels: an unrecognised /streams
+// failure is tolerated (uploads still land), but a bot-block or dead cookie is
+// account-wide news and must fail the scan so the cookie status gets flipped.
+func TestScan_streamsTabError_toleratedExceptSentinels(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		err     error
+		wantErr bool
+	}{
+		{"unrecognised", errors.New("some transient yt-dlp hiccup"), false},
+		{"blocked", ytdlp.ErrBlocked, true},
+		{"cookie expired", ytdlp.ErrCookieExpired, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newScanHarness(t)
+			h.trackAndSubscribe("UC1", false, "")
+			h.markBaselined("UC1", nil)
+			h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "newp", DurationSeconds: 600, LiveStatus: "not_live"}})
+			h.lister.setStreams("UC1", nil)
+			h.lister.streamErr = tc.err
+
+			sub, _ := h.channels.ClaimDue(h.nowStr())
+			err := h.sched.scanOnce(context.Background(), sub)
+			if tc.wantErr {
+				if !errors.Is(err, tc.err) {
+					t.Fatalf("scanOnce err = %v, want %v", err, tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("streams failure must not fail the scan: %v", err)
+			}
+			if st := h.ledgerState("newp"); st != "pending" {
+				t.Fatalf("newp state = %q, want pending", st)
+			}
+		})
+	}
+}
+
+// TestScan_uploadsFailure_skipsStreamsCall keeps the throttle budget honest: a
+// channel whose first call already failed must not spend a second one.
+func TestScan_uploadsFailure_skipsStreamsCall(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.err = errors.New("listing failed")
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err == nil {
+		t.Fatal("want error when the uploads listing fails")
+	}
+	if h.lister.streamCalls != 0 {
+		t.Fatalf("streams calls = %d, want 0", h.lister.streamCalls)
 	}
 }
 
@@ -452,6 +779,10 @@ func TestScan_panicDuringScan_backsOff(t *testing.T) {
 type errLister struct{ err error }
 
 func (l errLister) ChannelVideos(context.Context, string, int) ([]ytdlp.ChannelEntry, error) {
+	return nil, l.err
+}
+
+func (l errLister) ChannelStreams(context.Context, string, int) ([]ytdlp.ChannelEntry, error) {
 	return nil, l.err
 }
 
@@ -1487,16 +1818,21 @@ func TestPassesFilters(t *testing.T) {
 	}
 }
 
-func TestIsLiveOrUpcoming(t *testing.T) {
+// TestIsUnfinishedStream pins the allowlist: only the three settled statuses
+// are recorded, and anything else — including a status yt-dlp has not shipped
+// yet — is deferred rather than treated as a finished video.
+func TestIsUnfinishedStream(t *testing.T) {
 	for status, want := range map[string]bool{
-		"is_live":     true,
-		"is_upcoming": true,
-		"was_live":    false,
-		"not_live":    false,
-		"":            false,
+		"is_live":            true,
+		"is_upcoming":        true,
+		"post_live":          true,
+		"some_future_status": true,
+		"was_live":           false,
+		"not_live":           false,
+		"":                   false,
 	} {
-		if got := isLiveOrUpcoming(ytdlp.ChannelEntry{LiveStatus: status}); got != want {
-			t.Fatalf("isLiveOrUpcoming(%q) = %v, want %v", status, got, want)
+		if got := isUnfinishedStream(ytdlp.ChannelEntry{LiveStatus: status}); got != want {
+			t.Fatalf("isUnfinishedStream(%q) = %v, want %v", status, got, want)
 		}
 	}
 }

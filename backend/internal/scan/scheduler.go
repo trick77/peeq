@@ -36,11 +36,17 @@ const (
 )
 
 // ChannelLister is the subset of *ytdlp.Runner the scheduler needs: a flat
-// listing of a channel's recent uploads. Declaring it here (rather than
-// importing the concrete Runner) keeps the scheduler testable with a fake
-// that never shells out to yt-dlp; the real *ytdlp.Runner satisfies it.
+// listing of a channel's recent uploads, plus one of its recent livestreams.
+// Declaring it here (rather than importing the concrete Runner) keeps the
+// scheduler testable with a fake that never shells out to yt-dlp; the real
+// *ytdlp.Runner satisfies it.
+//
+// The tabs are two calls because YouTube keeps them apart: ordinary uploads
+// never show under /streams and stream VODs never show under /videos, so
+// listing both is the only way to see a channel whole.
 type ChannelLister interface {
 	ChannelVideos(ctx context.Context, ucid string, n int) ([]ytdlp.ChannelEntry, error)
+	ChannelStreams(ctx context.Context, ucid string, n int) ([]ytdlp.ChannelEntry, error)
 }
 
 // JobEnqueuer is the subset of *jobs.Store scanOnce needs. Narrowed to an
@@ -407,11 +413,13 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	if err != nil {
 		return fmt.Errorf("scan: settings: %w", err)
 	}
-	entries, err := s.d.Lister.ChannelVideos(ctx, sub.ChannelID, s.d.listSize)
-	if err != nil {
-		return fmt.Errorf("scan: list %s: %w", sub.ChannelID, err)
-	}
+	// Read the baseline flag BEFORE listing: a first pass needs a complete
+	// snapshot, so listChannel is stricter about a half-listed channel there.
 	baseline := sub.BaselinedAt == ""
+	entries, streamCount, err := s.listChannel(ctx, sub.ChannelID, baseline)
+	if err != nil {
+		return err
+	}
 	// Tally for the Activity record: how many genuinely-new uploads were queued
 	// automatically vs left for a manual decision, and (on the first pass) how
 	// many the baseline snapshot recorded.
@@ -446,8 +454,8 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		case baseline:
 			entry.State = "seen"
 			baselineCount++
-		case isLiveOrUpcoming(e):
-			// Record NOTHING for a stream that is live or still upcoming. 'seen'
+		case isUnfinishedStream(e):
+			// Record NOTHING for a stream that has not finished. 'seen'
 			// is terminal — Ledger.Exists matches on video_id with no state
 			// predicate, and nothing anywhere revisits a seen row — so writing
 			// one here would lose the stream permanently, including after it
@@ -510,8 +518,13 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	// One INFO line per channel per day is cheap and makes the container log the
 	// first place to look.
 	newCount := queuedCount + pendingCount
+	// streams is broken out because it is the one number that answers "does this
+	// channel publish through livestreams?" — the reason the second tab is
+	// listed at all — without opening the database. It is the raw /streams tab
+	// count, not the post-dedup one, so it stays honest for a channel whose
+	// streams also surface elsewhere.
 	s.d.Logger.Info("scan complete", "channel", sub.ChannelID,
-		"listed", len(entries), "new", newCount)
+		"listed", len(entries), "streams", streamCount, "new", newCount)
 
 	// Activity record. The silence rule applies: a scan that surfaced nothing new
 	// (the common case) writes nothing, so the agenda is not a wall of "0 new".
@@ -555,30 +568,124 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	return nil
 }
 
-// isLiveOrUpcoming reports whether an entry is a stream that has not finished:
-// still scheduled ("is_upcoming") or broadcasting right now ("is_live"). Its
-// caller records no ledger row for those, so the entry stays recoverable on a
-// later pass — see the comment at that branch for why that matters.
+// listChannel lists a channel's recent uploads AND its recent livestreams,
+// returning them as one list (uploads first, deduped by id in case an item ever
+// surfaces on both tabs).
+//
+// The two calls are not equals. A real /videos failure fails the scan, as it
+// always has. /streams failing does NOT: the tab is absent entirely for any
+// channel that has never gone live, which is most of them, so a failure there
+// means "no streams" and the uploads still stand. The exceptions are the two
+// account-wide sentinels — a bot block or a dead cookie is not a fact about this
+// tab, and swallowing it would leave the cookie status un-flipped and the next
+// channel walking into the same wall.
+//
+// A MISSING TAB is tolerated on either side, symmetrically. A channel whose
+// output is entirely livestreams has no /videos tab at all, and yt-dlp refuses
+// it exactly the way it refuses /streams on a channel that never streamed.
+// Failing the scan there would make the very channels this two-tab listing
+// exists for unscannable forever, so an absent /videos tab means "no uploads"
+// and the /streams call still runs. A deleted channel is unaffected: Classify
+// maps it to a TerminalError, which IsMissingTab never matches, so
+// auto-unsubscribe still sees it.
+//
+// baseline tightens the streams rule for a first pass only. The baseline
+// snapshot is the one listing that must be COMPLETE: everything it fails to see
+// counts as new on the next pass, so swallowing a transient /streams failure
+// there would dump a channel's whole back catalogue of VODs into the inbox (and,
+// with autodownload on, into the download queue). A genuinely absent tab is
+// still quiet — that case is IsMissingTab, and there is nothing to miss.
+//
+// The returned count is how many entries the /streams tab listed, which is what
+// answers "does this channel publish through livestreams?" — deliberately not
+// the post-dedup number, which would read 0 for a channel whose streams happen
+// to also surface on /videos.
+func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool) ([]ytdlp.ChannelEntry, int, error) {
+	uploads, err := s.d.Lister.ChannelVideos(ctx, ucid, s.d.listSize)
+	switch {
+	case err == nil:
+	case ytdlp.IsMissingTab(err):
+		s.d.Logger.Debug("scan: channel has no videos tab", "channel", ucid)
+		uploads = nil
+	default:
+		// Return before spending a second throttled call on a channel whose
+		// first call already failed.
+		return nil, 0, fmt.Errorf("scan: list %s: %w", ucid, err)
+	}
+	streams, serr := s.d.Lister.ChannelStreams(ctx, ucid, s.d.listSize)
+	switch {
+	case serr == nil:
+	case errors.Is(serr, ytdlp.ErrBlocked), errors.Is(serr, ytdlp.ErrCookieExpired):
+		return nil, 0, fmt.Errorf("scan: list streams %s: %w", ucid, serr)
+	case ytdlp.IsMissingTab(serr):
+		s.d.Logger.Debug("scan: channel has no streams tab", "channel", ucid)
+	case baseline:
+		return nil, 0, fmt.Errorf("scan: baseline list streams %s: %w", ucid, serr)
+	default:
+		s.d.Logger.Warn("scan: listing streams failed, using uploads only",
+			"channel", ucid, "err", serr)
+	}
+	if len(streams) == 0 {
+		return uploads, 0, nil
+	}
+	// Built fresh rather than appended onto uploads: the slice came from the
+	// lister and is not ours to grow into.
+	merged := make([]ytdlp.ChannelEntry, 0, len(uploads)+len(streams))
+	merged = append(merged, uploads...)
+	seen := make(map[string]struct{}, len(uploads))
+	for _, e := range uploads {
+		seen[e.ID] = struct{}{}
+	}
+	for _, e := range streams {
+		if _, dup := seen[e.ID]; dup {
+			continue
+		}
+		seen[e.ID] = struct{}{}
+		merged = append(merged, e)
+	}
+	return merged, len(streams), nil
+}
+
+// isUnfinishedStream reports whether an entry is a stream that has not settled
+// into a finished video yet. Its caller records no ledger row for those, so the
+// entry stays recoverable on a later pass — see the comment at that branch for
+// why that matters.
+//
+// It is written as an ALLOWLIST of the settled states — an ordinary upload
+// ("not_live", or "" when a flat listing omits the field) and a completed
+// stream ("was_live") — so that anything else is deferred. That covers the
+// known unsettled states ("is_upcoming", "is_live", and "post_live", the window
+// where a broadcast has ended but YouTube has not finished cutting the VOD) and
+// also any status yt-dlp grows later. Deferring an unfamiliar status costs a
+// day; treating it as finished risks downloading half a broadcast.
 //
 // It overlaps passesFilters below by design. This is the predicate that decides
 // whether an entry is recorded AT ALL, and that is a different question from
-// whether an entry qualifies for the inbox; keeping the live check in both means
+// whether an entry qualifies for the inbox; keeping the two separate means
 // neither can be broken by editing the other.
-func isLiveOrUpcoming(e ytdlp.ChannelEntry) bool {
-	return e.LiveStatus == "is_upcoming" || e.LiveStatus == "is_live"
+func isUnfinishedStream(e ytdlp.ChannelEntry) bool {
+	switch e.LiveStatus {
+	case "", "not_live", "was_live":
+		return false
+	default:
+		return true
+	}
 }
 
-// passesFilters drops sub-min-duration and upcoming/live entries.
+// passesFilters drops sub-min-duration entries and, redundantly, any unfinished
+// stream. Shorts are excluded by construction — they have their own tab, which
+// peeq never lists.
 //
-// The /videos tab is assumed to exclude Shorts and finished livestreams, but
-// that is an assumption about YouTube's tab semantics, not something peeq
-// verifies — the live-status check here (and isLiveOrUpcoming above) exists
-// precisely because live content does reach this code in practice.
+// The unfinished-stream check cannot be reached today (the caller matches
+// isUnfinishedStream first and skips the entry). It is kept anyway, delegating
+// to the same helper so the two can never disagree: this is the predicate that
+// decides whether an entry belongs in the inbox, and an airing stream does not,
+// whatever the calling code around it comes to look like.
 //
 // A zero duration (yt-dlp omitted it in flat mode) FAILS OPEN — the video is
 // kept, since we'd rather offer a maybe-short video than silently drop uploads.
 func passesFilters(e ytdlp.ChannelEntry, minDuration int) bool {
-	if e.LiveStatus == "is_upcoming" || e.LiveStatus == "is_live" {
+	if isUnfinishedStream(e) {
 		return false
 	}
 	if e.DurationSeconds > 0 && e.DurationSeconds < minDuration {

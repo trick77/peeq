@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1023,12 +1024,12 @@ func TestList_sort_ordersRows(t *testing.T) {
 		sort string
 		want []string
 	}{
-		{"newest", []string{"a2", "c1", "b3"}},     // downloaded_at DESC
-		{"oldest", []string{"b3", "c1", "a2"}},     // downloaded_at ASC
-		{"air_newest", []string{"c1", "a2", "b3"}}, // published_at DESC
-		{"air_oldest", []string{"b3", "a2", "c1"}}, // published_at ASC
-		{"longest", []string{"c1", "b3", "a2"}},    // duration DESC
-		{"title", []string{"a2", "b3", "c1"}},      // title NOCASE ASC
+		{"newest", []string{"c1", "a2", "b3"}},       // published_at DESC
+		{"oldest", []string{"b3", "a2", "c1"}},       // published_at ASC
+		{"added_newest", []string{"a2", "c1", "b3"}}, // downloaded_at DESC
+		{"added_oldest", []string{"b3", "c1", "a2"}}, // downloaded_at ASC
+		{"longest", []string{"c1", "b3", "a2"}},      // duration DESC
+		{"title", []string{"a2", "b3", "c1"}},        // title NOCASE ASC
 	}
 	for _, tc := range cases {
 		got, err := s.List(ListOptions{Sort: tc.sort})
@@ -1098,102 +1099,189 @@ func TestSetDownloaded_emptyPublishedAt_keepsExisting(t *testing.T) {
 	}
 }
 
-// TestList_sort_missingPublishedAt_fallsBackToCreatedAt asserts a row with no
-// known release date (yt-dlp reports no upload_date for some live streams and
-// premieres) takes the position its download date implies, interleaved with
-// the dated rows rather than sinking to one end of the list.
-func TestList_sort_missingPublishedAt_fallsBackToCreatedAt(t *testing.T) {
-	// Given: two dated rows around one undated row whose created_at sits
-	// between their release dates.
+// ids is the ordered id list of a result, for comparing against a want slice.
+func ids(vs []Video) []string {
+	out := make([]string, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, v.ID)
+	}
+	return out
+}
+
+// TestList_newest_ranksByReleaseDate pins the DEFAULT ordering: release date,
+// newest first, with created_at as the fallback for a row yt-dlp gave no date
+// for.
+//
+// This is the guard against changing it a third time. It was repointed at
+// downloaded_at once (#139) on the argument that "new to this library" is what
+// the grid should answer; run against a real library that ordering was wrong,
+// and it was reverted. Reasoning lost to evidence — leave it alone.
+func TestList_newest_ranksByReleaseDate(t *testing.T) {
+	// Given: an old talk fetched recently, and a fresh upload fetched long ago.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "oldtalk", PublishedAt: "2019-05-01", CreatedAt: "2026-03-01 00:00:00", DownloadedAt: "2026-03-01 09:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "freshupload", PublishedAt: "2026-02-20", CreatedAt: "2026-02-20 00:00:00", DownloadedAt: "2026-02-20 09:00:00", Status: "downloaded"})
+
+	// When/Then: the default ranks by when it AIRED, so the fresh upload wins
+	// even though the old talk arrived more recently.
+	got, err := s.List(ListOptions{Sort: "newest"})
+	if err != nil {
+		t.Fatalf("list newest: %v", err)
+	}
+	if want := []string{"freshupload", "oldtalk"}; !slices.Equal(ids(got), want) {
+		t.Fatalf("newest order = %v, want %v", ids(got), want)
+	}
+
+	// ...and the opt-in added-date sort is where "what arrived last" lives.
+	got, err = s.List(ListOptions{Sort: "added_newest"})
+	if err != nil {
+		t.Fatalf("list added_newest: %v", err)
+	}
+	if want := []string{"oldtalk", "freshupload"}; !slices.Equal(ids(got), want) {
+		t.Fatalf("added_newest order = %v, want %v", ids(got), want)
+	}
+}
+
+// TestList_newest_missingReleaseDate_fallsBackToCreatedAt asserts a row with no
+// known release date (yt-dlp reports none for some live streams and premieres)
+// takes the position its insertion date implies, interleaved with the dated
+// rows rather than sinking to one end of the grid. The fixture puts `nodate`'s
+// created_at deliberately BETWEEN the two real air dates.
+func TestList_newest_missingReleaseDate_fallsBackToCreatedAt(t *testing.T) {
 	s := newTestStore(t)
 	seedVideo(t, s, Video{ID: "recent", PublishedAt: "2026-03-01", CreatedAt: "2026-03-02 00:00:00", Status: "downloaded"})
 	seedVideo(t, s, Video{ID: "nodate", CreatedAt: "2026-02-01 12:00:00", Status: "downloaded"})
 	seedVideo(t, s, Video{ID: "older", PublishedAt: "2026-01-01", CreatedAt: "2026-01-02 00:00:00", Status: "downloaded"})
 
-	// When: the list is sorted by release date, newest first.
-	got, err := s.List(ListOptions{Sort: "air_newest"})
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-
-	// Then: the undated row lands in the middle, not first or last.
-	want := []string{"recent", "nodate", "older"}
-	if len(got) != len(want) {
-		t.Fatalf("got %d rows %+v, want %v", len(got), got, want)
-	}
-	for i := range want {
-		if got[i].ID != want[i] {
-			t.Fatalf("air_newest order = %+v, want %v", got, want)
-		}
-	}
-
-	// And: the same fallback applies in the other direction.
-	got, err = s.List(ListOptions{Sort: "air_oldest"})
-	if err != nil {
-		t.Fatalf("list air_oldest: %v", err)
-	}
-	if len(got) != 3 || got[1].ID != "nodate" {
-		t.Fatalf("air_oldest order = %+v, want nodate in the middle", got)
-	}
-}
-
-// TestList_newest_ranksByAddedDateNotRelease is the regression guard for the
-// behaviour this sort exists to provide: a video published years ago but
-// fetched this morning is new to THIS library and belongs at the top, which is
-// the opposite of what the release-date clause does with it.
-func TestList_newest_ranksByAddedDateNotRelease(t *testing.T) {
-	// Given: an old talk downloaded recently, and a fresh upload downloaded
-	// long ago.
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "oldtalk", PublishedAt: "2019-05-01", CreatedAt: "2026-03-01 00:00:00", DownloadedAt: "2026-03-01 09:00:00", Status: "downloaded"})
-	seedVideo(t, s, Video{ID: "freshupload", PublishedAt: "2026-02-20", CreatedAt: "2026-02-20 00:00:00", DownloadedAt: "2026-02-20 09:00:00", Status: "downloaded"})
-
-	// When/Then: newest puts the recently-added old talk first...
 	got, err := s.List(ListOptions{Sort: "newest"})
 	if err != nil {
 		t.Fatalf("list newest: %v", err)
 	}
-	if len(got) != 2 || got[0].ID != "oldtalk" {
-		t.Fatalf("newest order = %+v, want oldtalk first", got)
+	if want := []string{"recent", "nodate", "older"}; !slices.Equal(ids(got), want) {
+		t.Fatalf("newest order = %v, want %v", ids(got), want)
 	}
 
-	// ...while the release-date sort still ranks it last.
-	got, err = s.List(ListOptions{Sort: "air_newest"})
+	// And the same fallback applies in the other direction.
+	got, err = s.List(ListOptions{Sort: "oldest"})
 	if err != nil {
-		t.Fatalf("list air_newest: %v", err)
+		t.Fatalf("list oldest: %v", err)
 	}
-	if len(got) != 2 || got[0].ID != "freshupload" {
-		t.Fatalf("air_newest order = %+v, want freshupload first", got)
+	if want := []string{"older", "nodate", "recent"}; !slices.Equal(ids(got), want) {
+		t.Fatalf("oldest order = %v, want %v", ids(got), want)
 	}
 }
 
-// TestList_newest_missingDownloadedAt_fallsBackToCreatedAt asserts a row that
-// never finished downloading — an 'error' row, which the Library still lists so
-// it can be retried — keeps its place by created_at instead of vanishing to one
-// end of the grid.
-func TestList_newest_missingDownloadedAt_fallsBackToCreatedAt(t *testing.T) {
-	// Given: two downloaded rows around one failed row whose created_at sits
-	// between their download times.
+// TestList_addedSort_undatedRowsSortLast covers the opt-in added-date pair. An
+// 'error' row never downloaded, so it has no added date — and the Library still
+// lists it (see notInFlight) so it can be retried. Its created_at sits between
+// the two real download times, so a row landing in the middle would mean the
+// clause had fallen back to created_at rather than ranking undated rows last.
+func TestList_addedSort_undatedRowsSortLast(t *testing.T) {
+	// Given: two downloaded rows and one failed row that never downloaded.
 	s := newTestStore(t)
 	seedVideo(t, s, Video{ID: "recent", CreatedAt: "2026-03-01 00:00:00", DownloadedAt: "2026-03-02 00:00:00", Status: "downloaded"})
 	seedVideo(t, s, Video{ID: "failed", CreatedAt: "2026-02-01 12:00:00", Status: "error"})
 	seedVideo(t, s, Video{ID: "older", CreatedAt: "2026-01-01 00:00:00", DownloadedAt: "2026-01-02 00:00:00", Status: "downloaded"})
 
-	// When: the list is sorted newest-first.
-	got, err := s.List(ListOptions{Sort: "newest"})
+	// When/Then: last in both directions, never in the middle.
+	got, err := s.List(ListOptions{Sort: "added_newest"})
 	if err != nil {
-		t.Fatalf("list: %v", err)
+		t.Fatalf("list added_newest: %v", err)
+	}
+	if want := []string{"recent", "older", "failed"}; !slices.Equal(ids(got), want) {
+		t.Fatalf("added_newest order = %v, want %v", ids(got), want)
 	}
 
-	// Then: the never-downloaded row lands in the middle.
-	want := []string{"recent", "failed", "older"}
-	if len(got) != len(want) {
-		t.Fatalf("got %d rows %+v, want %v", len(got), got, want)
+	got, err = s.List(ListOptions{Sort: "added_oldest"})
+	if err != nil {
+		t.Fatalf("list added_oldest: %v", err)
 	}
-	for i := range want {
-		if got[i].ID != want[i] {
-			t.Fatalf("newest order = %+v, want %v", got, want)
-		}
+	if want := []string{"older", "recent", "failed"}; !slices.Equal(ids(got), want) {
+		t.Fatalf("added_oldest order = %v, want %v", ids(got), want)
+	}
+}
+
+// TestUpsert_neverClearsPublishedAtOrDescription guards the write side of the
+// same promise. Several callers legitimately have no date to offer — scan's
+// enqueueAuto seeds from a flat listing, the approve-from-inbox path passes
+// id/url/title/duration only — and the ON CONFLICT clause used to assign
+// excluded.published_at straight through, so any of them silently blanked a
+// good air date on a re-seen id. Fixing the sort would mean nothing if a scan
+// could still erase the value it sorts on.
+func TestUpsert_neverClearsPublishedAtOrDescription(t *testing.T) {
+	// Given: a row that knows its air date and description.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", URL: "u", Title: "T", PublishedAt: "2019-05-01", Description: "the real description"})
+
+	// When: a metadata-poor caller upserts the same id with neither.
+	if err := s.Upsert(Video{ID: "v1", URL: "u", Title: "T"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Then: both survive.
+	got, err := s.Get("v1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.PublishedAt != "2019-05-01" {
+		t.Fatalf("published_at = %q, want it preserved", got.PublishedAt)
+	}
+	if got.Description != "the real description" {
+		t.Fatalf("description = %q, want it preserved", got.Description)
+	}
+
+	// And: a caller that DOES have them still updates them — never clearing
+	// must not become never writing.
+	if err := s.Upsert(Video{ID: "v1", URL: "u", Title: "T", PublishedAt: "2020-01-02", Description: "better"}); err != nil {
+		t.Fatalf("upsert with values: %v", err)
+	}
+	got, err = s.Get("v1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.PublishedAt != "2020-01-02" || got.Description != "better" {
+		t.Fatalf("published_at/description = %q/%q, want the new values", got.PublishedAt, got.Description)
+	}
+}
+
+// TestSetDownloaded_storesYouTubeMetadata covers the columns migration 0009
+// added: they arrive from the download's own info.json, and an empty value
+// leaves what is stored rather than wiping it (a re-download whose extractor
+// omitted tags must not erase the ones already there).
+func TestSetDownloaded_storesYouTubeMetadata(t *testing.T) {
+	// Given: a fresh row.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", URL: "u"})
+
+	// When: a download reports the full set.
+	if err := s.SetDownloaded("v1", DownloadedResult{
+		MediaPath: "/m/v1.mp4", Description: "desc", MediaType: "short",
+		LiveStatus: "not_live", YTTags: `["physics","education"]`,
+		YTCategories: `["Science & Technology"]`,
+	}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	got, err := s.Get("v1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Description != "desc" || got.MediaType != "short" || got.LiveStatus != "not_live" {
+		t.Fatalf("got %q/%q/%q, want desc/short/not_live", got.Description, got.MediaType, got.LiveStatus)
+	}
+	if got.YTTags != `["physics","education"]` || got.YTCategories != `["Science & Technology"]` {
+		t.Fatalf("tags/categories = %q/%q", got.YTTags, got.YTCategories)
+	}
+
+	// Then: a later download reporting none of them keeps the stored values.
+	if err := s.SetDownloaded("v1", DownloadedResult{MediaPath: "/m/v1.mp4"}); err != nil {
+		t.Fatalf("re-download: %v", err)
+	}
+	got, err = s.Get("v1")
+	if err != nil {
+		t.Fatalf("get after re-download: %v", err)
+	}
+	if got.YTTags != `["physics","education"]` || got.Description != "desc" || got.MediaType != "short" {
+		t.Fatalf("re-download wiped metadata: %+v", got)
 	}
 }
 

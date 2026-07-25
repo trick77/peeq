@@ -380,11 +380,16 @@ describe("Inbox", () => {
       );
     }
 
+    // Nothing in the inbox has been downloaded, so the ONLY date these items
+    // have is when they aired. The default must be air date, newest first.
     it("defaults to newest air date first", async () => {
       vi.mocked(listPending).mockResolvedValue([older, newer]);
       render(<Inbox />);
       await screen.findByText("Older video");
       expect(titles()).toEqual(["Anewer video", "Older video"]);
+      expect((screen.getByLabelText("Sort") as HTMLSelectElement).value).toBe(
+        "newest",
+      );
     });
 
     // The Library's added-date orderings are meaningless here: an inbox item
@@ -397,8 +402,7 @@ describe("Inbox", () => {
 
       const select = screen.getByLabelText("Sort") as HTMLSelectElement;
       const values = Array.from(select.options).map((o) => o.value);
-      expect(values).toEqual(["air_newest", "air_oldest", "longest", "title"]);
-      expect(select.value).toBe("air_newest");
+      expect(values).toEqual(["newest", "oldest", "longest", "title"]);
     });
 
     it("reorders the grid when a different order is picked", async () => {
@@ -407,7 +411,7 @@ describe("Inbox", () => {
       render(<Inbox />);
       await screen.findByText("Older video");
 
-      await user.selectOptions(screen.getByLabelText("Sort"), "air_oldest");
+      await user.selectOptions(screen.getByLabelText("Sort"), "oldest");
       expect(titles()).toEqual(["Older video", "Anewer video"]);
 
       await user.selectOptions(screen.getByLabelText("Sort"), "longest");

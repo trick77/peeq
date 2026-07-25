@@ -1117,3 +1117,29 @@ func TestWorker_nilProberSkipsTheProbe(t *testing.T) {
 		t.Fatalf("probed_at stamped with no prober: %+v", v)
 	}
 }
+
+// TestMarshalStrings_emptyMeansLeaveAlone pins a contract that looks like a
+// bug to anyone reading it cold: marshalStrings returns "" for an empty list,
+// NOT the "[]" its name suggests.
+//
+// That is what makes SetDownloaded's `COALESCE(NULLIF(?, ”), yt_tags)` mean
+// "leave what is stored". "[]" is a value, so returning it would make every
+// re-download whose extractor happened to omit tags silently erase the tags
+// already on the row. Tidying this to "[]" must fail here rather than in
+// someone's library six months later.
+func TestMarshalStrings_emptyMeansLeaveAlone(t *testing.T) {
+	if got := marshalStrings(nil); got != "" {
+		t.Fatalf("marshalStrings(nil) = %q, want \"\" so SetDownloaded keeps the stored value", got)
+	}
+	if got := marshalStrings([]string{}); got != "" {
+		t.Fatalf("marshalStrings([]) = %q, want \"\"", got)
+	}
+	if got := marshalStrings([]string{"physics", "education"}); got != `["physics","education"]` {
+		t.Fatalf("marshalStrings = %q, want a JSON array", got)
+	}
+	// Values yt-dlp really emits: quotes and non-ASCII must survive as valid
+	// JSON, since this string goes into the column verbatim.
+	if got := marshalStrings([]string{`say "hi"`, "café"}); got != `["say \"hi\"","café"]` {
+		t.Fatalf("marshalStrings = %q, want escaped JSON", got)
+	}
+}

@@ -22,9 +22,10 @@ export type VideoFilter =
   "all" | "unwatched" | "in_progress" | "watched" | "favorites" | "downloading";
 
 // VideoSort mirrors the sort keys videos.Store.List accepts. newest/oldest are
-// the ADDED date (downloaded_at); the air_* pair is the release date.
+// the default release-date ordering; the added_* pair ranks by when peeq
+// fetched the file.
 export type VideoSort =
-  "newest" | "oldest" | "air_newest" | "air_oldest" | "longest" | "title";
+  "newest" | "oldest" | "added_newest" | "added_oldest" | "longest" | "title";
 
 // Video mirrors httpapi.videoDTO exactly. media_path is deliberately never
 // exposed (server-local filesystem path); has_media + the /stream endpoint
@@ -87,6 +88,14 @@ export type Video = {
   // "uncategorized" is the fallback (see categories.ts, the TS mirror of
   // backend/internal/videos/category.go).
   category: string;
+  // YouTube's own facts about the video, straight from yt-dlp. All optional:
+  // they arrive only with downloads made after migration 0009, and nothing
+  // backfills older rows. Note `category` above (peeq's classification) and
+  // `yt_categories` here (YouTube's labels) are different things.
+  media_type?: string;
+  live_status?: string;
+  yt_tags?: string[];
+  yt_categories?: string[];
 };
 
 // Chapter mirrors httpapi's per-video chapter DTO — source distinguishes
