@@ -17,9 +17,14 @@ type UpcomingItem struct {
 	// Approx marks an ordered or estimated item, so the copy can say "planned",
 	// never "will": ordering is a projection, not a promise (the scan loop claims
 	// whichever channel is oldest-due, gated on cookie status and the kill-switch).
-	Approx  bool   `json:"approx"`
-	Subject string `json:"subject,omitempty"`
-	Summary string `json:"summary,omitempty"`
+	Approx bool `json:"approx"`
+	// SubjectID identifies what the row is about so the client can link to it:
+	// the channel id on a scan or metadata row, empty on a download/summary row
+	// (those name a video, and the agenda links channels only). Mirrors
+	// Event.SubjectID, so both halves of the agenda carry the same handle.
+	SubjectID string `json:"subject_id,omitempty"`
+	Subject   string `json:"subject,omitempty"`
+	Summary   string `json:"summary,omitempty"`
 }
 
 // Merge orders the projected items ascending by time and caps them to max,

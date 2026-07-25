@@ -428,6 +428,8 @@ func run() error {
 		SummaryJobs: summaryJobsStore,
 		SummaryList: summaryJobsStore,
 		Activity:    activityStore,
+
+		AllowAnonymous: cfg.AllowAnonymousYoutube,
 	}
 	handler := httpapi.New(deps)
 

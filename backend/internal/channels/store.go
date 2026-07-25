@@ -51,6 +51,11 @@ type Subscription struct {
 	LastScannedAt  string
 	NextScanAt     string
 	CreatedAt      string
+	// ScanRequestedAt is set while a user-pressed "Check now" is still waiting
+	// for the scan loop to reach this channel, and "" for an ordinary automatic
+	// scan. The scanner reads it to decide whether the pass owes the user a
+	// receipt even when it found nothing new — see migration 0009.
+	ScanRequestedAt string
 }
 
 // ListItem is a channel joined with its (optional) subscription state, plus
@@ -484,17 +489,17 @@ RETURNING autodownload, format_override`,
 // plain SELECT is sufficient — no atomic claim (state flip) is needed.
 func (s *Store) ClaimDue(now string) (*Subscription, error) {
 	row := s.db.QueryRowContext(context.Background(), `
-SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at
+SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at, scan_requested_at
 FROM subscriptions
 WHERE next_scan_at <= ?
 ORDER BY next_scan_at ASC
 LIMIT 1`, now)
 
 	var sub Subscription
-	var baselinedAt, lastScannedAt sql.NullString
+	var baselinedAt, lastScannedAt, scanRequestedAt sql.NullString
 	err := row.Scan(
 		&sub.ChannelID, &sub.Autodownload, &sub.FormatOverride,
-		&baselinedAt, &lastScannedAt, &sub.NextScanAt, &sub.CreatedAt,
+		&baselinedAt, &lastScannedAt, &sub.NextScanAt, &sub.CreatedAt, &scanRequestedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -504,6 +509,7 @@ LIMIT 1`, now)
 	}
 	sub.BaselinedAt = baselinedAt.String
 	sub.LastScannedAt = lastScannedAt.String
+	sub.ScanRequestedAt = scanRequestedAt.String
 	return &sub, nil
 }
 
@@ -570,13 +576,13 @@ func scanDueChannels(rows *sql.Rows) ([]DueChannel, error) {
 // "what is this one channel's schedule", which the channel page needs.
 func (s *Store) GetSubscription(channelID string) (*Subscription, error) {
 	row := s.db.QueryRowContext(context.Background(), `
-SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at
+SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at, scan_requested_at
 FROM subscriptions WHERE channel_id = ?`, channelID)
 
 	var sub Subscription
-	var baselinedAt, lastScannedAt sql.NullString
+	var baselinedAt, lastScannedAt, scanRequestedAt sql.NullString
 	err := row.Scan(&sub.ChannelID, &sub.Autodownload, &sub.FormatOverride,
-		&baselinedAt, &lastScannedAt, &sub.NextScanAt, &sub.CreatedAt)
+		&baselinedAt, &lastScannedAt, &sub.NextScanAt, &sub.CreatedAt, &scanRequestedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -585,6 +591,7 @@ FROM subscriptions WHERE channel_id = ?`, channelID)
 	}
 	sub.BaselinedAt = baselinedAt.String
 	sub.LastScannedAt = lastScannedAt.String
+	sub.ScanRequestedAt = scanRequestedAt.String
 	return &sub, nil
 }
 
@@ -645,18 +652,26 @@ func (s *Store) NameFromVideos(channelID string) (name string, found bool, err e
 // also pass baseline=true, e.g. on baseline retries) leave the original
 // value untouched. When baseline is false, baselined_at is left alone
 // entirely (this scan does not represent a completed baseline).
+// scan_requested_at is cleared unconditionally: any completed pass has actually
+// looked at the channel, so it satisfies whatever "Check now" was waiting on.
+// The scanner reads the marker off the subscription it claimed (before this
+// write) to decide whether that pass owed the user a receipt, so clearing here
+// cannot race its own decision.
 func (s *Store) MarkScanned(channelID string, baseline bool, lastScannedAt, nextScanAt string) error {
 	var err error
 	if baseline {
 		_, err = s.db.ExecContext(context.Background(), `
 UPDATE subscriptions
-SET last_scanned_at = ?, next_scan_at = ?, baselined_at = COALESCE(baselined_at, ?)
+SET last_scanned_at = ?, next_scan_at = ?, baselined_at = COALESCE(baselined_at, ?),
+    scan_requested_at = NULL
 WHERE channel_id = ?`,
 			lastScannedAt, nextScanAt, lastScannedAt, channelID,
 		)
 	} else {
 		_, err = s.db.ExecContext(context.Background(), `
-UPDATE subscriptions SET last_scanned_at = ?, next_scan_at = ? WHERE channel_id = ?`,
+UPDATE subscriptions
+SET last_scanned_at = ?, next_scan_at = ?, scan_requested_at = NULL
+WHERE channel_id = ?`,
 			lastScannedAt, nextScanAt, channelID,
 		)
 	}
@@ -675,6 +690,43 @@ func (s *Store) Backoff(channelID, nextScanAt string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("backoff %s: %w", channelID, err)
+	}
+	return nil
+}
+
+// RequestScan is "Check now": it pulls next_scan_at into the past so the scan
+// loop claims this channel on its next poll, and marks the channel as having
+// someone waiting on the result. It is deliberately not Backoff — that name (and
+// its "push the schedule out" contract) says the opposite of what this does, even
+// though both write the same column.
+//
+// scan_requested_at keeps the FIRST request's instant via COALESCE: pressing the
+// button twice before the loop arrives is one wait, not two, and the earlier
+// instant is the one the user has actually been waiting since.
+func (s *Store) RequestScan(channelID, now string) error {
+	_, err := s.db.ExecContext(context.Background(), `
+UPDATE subscriptions
+SET next_scan_at = ?, scan_requested_at = COALESCE(scan_requested_at, ?)
+WHERE channel_id = ?`,
+		now, now, channelID,
+	)
+	if err != nil {
+		return fmt.Errorf("request scan %s: %w", channelID, err)
+	}
+	return nil
+}
+
+// ClearScanRequest drops the "someone is waiting" marker without touching the
+// schedule. The failure path needs this: a scan that errored never reaches
+// MarkScanned, and leaving the marker set would make some later automatic pass
+// report itself as the answer to a request the user already saw fail.
+func (s *Store) ClearScanRequest(channelID string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE subscriptions SET scan_requested_at = NULL WHERE channel_id = ?`,
+		channelID,
+	)
+	if err != nil {
+		return fmt.Errorf("clear scan request %s: %w", channelID, err)
 	}
 	return nil
 }

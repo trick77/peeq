@@ -10,6 +10,7 @@ import {
   subscribeChannel,
   unsubscribeChannel,
 } from "../../api/channels";
+import { isCheckQueued, scanNotice, scheduleLine } from "./schedule";
 import type { ChannelDetail } from "../../api/types";
 
 export function SettingsTab({
@@ -47,11 +48,7 @@ export function SettingsTab({
     setError(null);
     try {
       const res = await scanChannel(detail.id);
-      setNotice(
-        res.status === "blocked"
-          ? (res.reason ?? "peeq cannot check this channel right now.")
-          : "Checking soon — peeq will look for new videos on its next pass.",
-      );
+      setNotice(scanNotice(res));
       onChanged();
     } catch (e) {
       setError((e as Error).message);
@@ -162,22 +159,16 @@ export function SettingsTab({
             <div className="chan-srow">
               <div>
                 <div className="lab">Checking for new videos</div>
-                <div className="hint">
-                  {detail.last_scanned_at
-                    ? `Last checked ${new Date(detail.last_scanned_at + "Z").toLocaleString()}`
-                    : "Never checked"}
-                  {detail.next_scan_at
-                    ? ` · next check ${new Date(detail.next_scan_at + "Z").toLocaleString()}`
-                    : ""}
-                </div>
+                <div className="hint">{scheduleLine(detail, "Last checked")}</div>
               </div>
               <Button
                 type="button"
                 variant="secondary"
                 busy={scanning}
+                disabled={isCheckQueued(detail)}
                 onClick={handleScan}
               >
-                Check now
+                {isCheckQueued(detail) ? "Queued" : "Check now"}
               </Button>
             </div>
           </>

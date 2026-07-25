@@ -184,9 +184,30 @@ func (s *Scheduler) Run(ctx context.Context) {
 // bounded to roughly one attempt per hour rather than being re-claimed every
 // betweenChannels forever.
 func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription) {
+	// requested = a user pressed "Check now" and is owed an answer for THIS pass.
+	// Read once, up front: the row is rewritten below (MarkScanned clears the
+	// marker), so consulting it again later would report the wrong thing.
+	requested := sub.ScanRequestedAt != ""
+	// Registered first so it runs LAST: whatever happens below — clean pass,
+	// classified failure, panic — the marker is spent. Leaving it set would let
+	// some later AUTOMATIC pass announce itself as the answer to a request the
+	// user has already been told about. MarkScanned also clears it on the success
+	// path; clearing twice is idempotent and costs one write per manual check.
+	defer func() {
+		if !requested {
+			return
+		}
+		if err := s.d.Channels.ClearScanRequest(sub.ChannelID); err != nil {
+			s.d.Logger.Error("scan: clear scan request failed", "channel", sub.ChannelID, "err", err)
+		}
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			s.d.Logger.Error("scan: recovered from panic", "channel", sub.ChannelID, "panic", r)
+			// A panic records nothing today, which is right for an automatic pass
+			// (the operator has the ERROR above) but not for a requested one: the
+			// user is watching a "Queued" button and would otherwise wait forever.
+			s.recordRequestedFail(requested, sub.ChannelID, "internal error")
 			s.backoff(sub.ChannelID)
 		}
 	}()
@@ -204,28 +225,34 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 			if serr := s.d.Settings.SetCookie(ctx, "", "blocked"); serr != nil {
 				s.d.Logger.Error("scan: set cookie status failed", "status", "blocked", "err", serr)
 			}
-			s.recordScanFail(sub.ChannelID, "YouTube blocked the request")
+			s.recordScanFail(sub.ChannelID, requested, "YouTube blocked the request")
 		case errors.Is(err, ytdlp.ErrCookieExpired):
 			if serr := s.d.Settings.SetCookie(ctx, "", "stale"); serr != nil {
 				s.d.Logger.Error("scan: set cookie status failed", "status", "stale", "err", serr)
 			}
-			s.recordScanFail(sub.ChannelID, "cookie expired")
+			s.recordScanFail(sub.ChannelID, requested, "cookie expired")
 		case errors.Is(err, ytdlp.ErrPaused):
 			// Kill-switch tripped mid-scan: not a real failure, so don't
 			// feed FailMonitor. The YoutubePaused gate in Run parks the
 			// loop next iteration; the plain backoff below still applies
 			// (harmless, since scanning is gated off anyway).
+			s.recordRequestedFail(requested, sub.ChannelID, "YouTube access is paused")
 		case errors.Is(err, ytdlp.ErrNoCookie):
 			// No cookie at all: race-only and self-limiting — the scheduler's
 			// own cookie gate stops scanning next pass — so it must not count
 			// toward the shared auto-pause heuristic, mirroring the download
 			// worker's classify. Leave cookie_status ('absent') as-is.
+			s.recordRequestedFail(requested, sub.ChannelID, "no YouTube cookie")
 		case errors.As(err, &terminal):
 			// Terminal ytdlp error (members-only/deleted/private/age/geo
 			// channel): permanent and per-channel-expected, mirroring the
 			// download worker's classify — don't count it toward the
 			// shared auto-pause heuristic.
 			s.staleUnsubscribe(ctx, sub.ChannelID, terminal.Reason)
+			// staleUnsubscribe stays silent until the dead-scan threshold, which
+			// is right for a background pass but leaves a requested check with no
+			// answer for the first N attempts.
+			s.recordRequestedFail(requested, sub.ChannelID, terminal.Reason)
 		default:
 			// Everything else (transient/unclassified failures) is
 			// count-worthy for the shared auto-pause heuristic; the two
@@ -234,7 +261,7 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 			if s.d.FailMonitor != nil {
 				s.d.FailMonitor.Fail(sub.ChannelID)
 			}
-			s.recordScanFail(sub.ChannelID, "scan failed")
+			s.recordScanFail(sub.ChannelID, requested, "scan failed")
 		}
 		s.d.Logger.Warn("scan failed; backing off", "channel", sub.ChannelID, "err", err)
 		s.backoff(sub.ChannelID)
@@ -320,12 +347,32 @@ func (s *Scheduler) recordActivity(e activity.Event) {
 // kill-switch pause and the terminal (stale-unsubscribe) case deliberately do
 // NOT come here — a pause is not a failure, and staleUnsubscribe records its own
 // warn — so a failure row always means "this channel's scan actually broke".
-func (s *Scheduler) recordScanFail(channelID, reason string) {
+//
+// requested only changes the wording: a user who pressed "Check now" is reading
+// the answer to their click, so the row says "check failed" rather than naming a
+// background scan they never asked about.
+func (s *Scheduler) recordScanFail(channelID string, requested bool, reason string) {
+	summary := "scan failed"
+	if requested {
+		summary = "check failed"
+	}
 	s.recordActivity(activity.Event{
 		Kind: activity.KindScan, Outcome: activity.OutcomeFail,
 		SubjectID: channelID, Subject: s.channelName(channelID),
-		Summary: "scan failed", Detail: reason,
+		Summary: summary, Detail: reason,
 	})
+}
+
+// recordRequestedFail is recordScanFail for the branches that deliberately stay
+// silent on an automatic pass: a kill-switch pause, a missing cookie, a terminal
+// per-channel verdict, a panic. None of those is a failure worth logging when
+// nobody asked — but when someone did, silence is the bug being fixed here, so
+// they get a row. A no-op unless requested.
+func (s *Scheduler) recordRequestedFail(requested bool, channelID, reason string) {
+	if !requested {
+		return
+	}
+	s.recordScanFail(channelID, true, reason)
 }
 
 // channelName resolves a channel's display name for an activity record, falling
@@ -399,7 +446,26 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		case baseline:
 			entry.State = "seen"
 			baselineCount++
+		case isLiveOrUpcoming(e):
+			// Record NOTHING for a stream that is live or still upcoming. 'seen'
+			// is terminal — Ledger.Exists matches on video_id with no state
+			// predicate, and nothing anywhere revisits a seen row — so writing
+			// one here would lose the stream permanently, including after it
+			// ends and becomes an ordinary video. That is silent data loss on a
+			// channel whose uploads are mostly livestreams: every launch stream
+			// caught mid-broadcast disappears for good.
+			//
+			// Leaving the id unknown is what makes it recoverable: the next pass
+			// re-encounters it and classifies it normally once yt-dlp stops
+			// reporting it as live. Baseline is matched first on purpose — a
+			// first pass is a deliberate snapshot of "everything that already
+			// existed", and that includes a stream running at the time.
+			continue
 		case !passesFilters(e, set.MinVideoDurationSeconds):
+			// Reached only for the duration floor now (the live case above is
+			// matched first). Terminal 'seen' is right here: a video too short
+			// today will not grow longer tomorrow, so re-listing it every pass
+			// forever would buy nothing.
 			entry.State = "seen"
 		case sub.Autodownload:
 			entry.State = "queued"
@@ -439,11 +505,21 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		s.d.FailMonitor.Reset()
 	}
 
+	// A completed pass was invisible until now: nothing logged it at any level,
+	// so "did my scan actually run?" could only be answered from the database.
+	// One INFO line per channel per day is cheap and makes the container log the
+	// first place to look.
+	newCount := queuedCount + pendingCount
+	s.d.Logger.Info("scan complete", "channel", sub.ChannelID,
+		"listed", len(entries), "new", newCount)
+
 	// Activity record. The silence rule applies: a scan that surfaced nothing new
 	// (the common case) writes nothing, so the agenda is not a wall of "0 new".
 	// The first-run baseline is worth one row — it explains why a freshly
-	// subscribed channel queued nothing.
-	newCount := queuedCount + pendingCount
+	// subscribed channel queued nothing. A REQUESTED scan is the deliberate
+	// exception: the user pressed a button and is owed an answer, so it reports
+	// even a nothing-new result rather than leaving them with no evidence the
+	// check ran at all.
 	switch {
 	case baseline:
 		s.recordActivity(activity.Event{
@@ -464,12 +540,41 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
 			Summary: fmt.Sprintf("%d new", newCount), Detail: strings.Join(parts, ", "),
 		})
+	case sub.ScanRequestedAt != "":
+		// Requested, and it found nothing. The two cases above already answer a
+		// requested scan when there IS something to report, so this is only the
+		// nothing-new receipt — the row that turns "the button did nothing" into
+		// "peeq looked, and there was nothing there". Read from the in-memory
+		// subscription: MarkScanned above has already cleared the column.
+		s.recordActivity(activity.Event{
+			Kind: activity.KindScan, Outcome: activity.OutcomeOK,
+			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
+			Summary: "checked on request", Detail: "nothing new",
+		})
 	}
 	return nil
 }
 
-// passesFilters drops sub-min-duration and upcoming/live entries. Shorts and
-// finished livestreams are already excluded by querying only the /videos tab.
+// isLiveOrUpcoming reports whether an entry is a stream that has not finished:
+// still scheduled ("is_upcoming") or broadcasting right now ("is_live"). Its
+// caller records no ledger row for those, so the entry stays recoverable on a
+// later pass — see the comment at that branch for why that matters.
+//
+// It overlaps passesFilters below by design. This is the predicate that decides
+// whether an entry is recorded AT ALL, and that is a different question from
+// whether an entry qualifies for the inbox; keeping the live check in both means
+// neither can be broken by editing the other.
+func isLiveOrUpcoming(e ytdlp.ChannelEntry) bool {
+	return e.LiveStatus == "is_upcoming" || e.LiveStatus == "is_live"
+}
+
+// passesFilters drops sub-min-duration and upcoming/live entries.
+//
+// The /videos tab is assumed to exclude Shorts and finished livestreams, but
+// that is an assumption about YouTube's tab semantics, not something peeq
+// verifies — the live-status check here (and isLiveOrUpcoming above) exists
+// precisely because live content does reach this code in practice.
+//
 // A zero duration (yt-dlp omitted it in flat mode) FAILS OPEN — the video is
 // kept, since we'd rather offer a maybe-short video than silently drop uploads.
 func passesFilters(e ytdlp.ChannelEntry, minDuration int) bool {

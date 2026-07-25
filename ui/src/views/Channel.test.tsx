@@ -99,6 +99,17 @@ function archiveVideo(overrides: Partial<Video> = {}): Video {
   };
 }
 
+// sqlUTC formats an instant the way the backend stores one ("2026-07-25
+// 06:11:14", UTC, no zone suffix). next_scan_at has to be RELATIVE to now: the
+// UI derives "check queued" from whether that instant has passed, so a hardcoded
+// date would silently flip the default state the moment it went stale.
+function sqlUTC(offsetMs: number): string {
+  return new Date(Date.now() + offsetMs)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+}
+
 function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
   return {
     id: "UCa",
@@ -122,7 +133,7 @@ function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     autodownload: true,
     format_override: "",
     last_scanned_at: "2026-07-20 08:00:00",
-    next_scan_at: "2026-07-20 14:00:00",
+    next_scan_at: sqlUTC(6 * 3600 * 1000), // due in 6h → not queued
     pending_count: 7,
     ...overrides,
   };
@@ -1011,6 +1022,139 @@ describe("Channel", () => {
     expect(
       await screen.findByText("failed to update channel"),
     ).toBeInTheDocument();
+  });
+
+  it("the New tab parks the button at Queued once a check is waiting", async () => {
+    // Queued is derived from the server's schedule, not from having just
+    // clicked — so a reload (or a second tab) shows the same thing.
+    const user = userEvent.setup();
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({ next_scan_at: sqlUTC(-60 * 1000) }), // due a minute ago
+    );
+    vi.mocked(listPending).mockResolvedValue([]);
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+
+    await user.click(screen.getByRole("tab", { name: /new/i }));
+
+    expect(await screen.findByText(/check queued/i)).toBeInTheDocument();
+    const btn = screen.getByRole("button", { name: /queued/i });
+    expect(btn).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /check now/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("pressing Check now says the check was queued, never that it ran", async () => {
+    const user = userEvent.setup();
+    vi.mocked(scanChannel).mockResolvedValue({ status: "scheduled" });
+    vi.mocked(listPending).mockResolvedValue([]);
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /new/i }));
+
+    await user.click(await screen.findByRole("button", { name: /check now/i }));
+
+    expect(
+      await screen.findByText(/added to the check queue/i),
+    ).toBeInTheDocument();
+  });
+
+  it("the Settings tab reports a queued check the same way the New tab does", async () => {
+    // These two lines are rendered by one shared helper; before it existed
+    // Settings printed a raw next_scan_at and so announced a next check that
+    // had already happened.
+    const user = userEvent.setup();
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({ next_scan_at: sqlUTC(-60 * 1000) }),
+    );
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+
+    await user.click(screen.getByRole("tab", { name: /settings/i }));
+
+    expect(await screen.findByText(/check queued/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /queued/i })).toBeDisabled();
+  });
+
+  it("refetches the channel when a scan for it lands over SSE", async () => {
+    // "Check now" is asynchronous: without this the button would sit at Queued
+    // until the user reloaded by hand.
+    const { rerender } = render(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        live={[]}
+      />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    const before = vi.mocked(getChannel).mock.calls.length;
+
+    rerender(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        live={[
+          {
+            id: 1,
+            at: "2026-07-25 06:12:00",
+            kind: "scan",
+            outcome: "ok",
+            subject_id: "UCa",
+            subject: "Uncanny Expeditions",
+            summary: "checked on request",
+            detail: "nothing new",
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(getChannel).mock.calls.length).toBeGreaterThan(before);
+    });
+  });
+
+  it("ignores a scan for a different channel", async () => {
+    const { rerender } = render(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        live={[]}
+      />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    const before = vi.mocked(getChannel).mock.calls.length;
+
+    rerender(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        live={[
+          {
+            id: 2,
+            at: "2026-07-25 06:12:00",
+            kind: "scan",
+            outcome: "ok",
+            subject_id: "UCother",
+            subject: "Someone else",
+          },
+        ]}
+      />,
+    );
+
+    // Give the effect a chance to run before asserting it did nothing.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(vi.mocked(getChannel).mock.calls.length).toBe(before);
   });
 });
 

@@ -661,3 +661,86 @@ func TestUpsert_leavesResolveStateAlone(t *testing.T) {
 		t.Fatalf("Name = %q, want the upserted one", got.Name)
 	}
 }
+
+// newSubTestStore returns a store with UC1 tracked and subscribed, the common
+// starting point for the scan-scheduling tests below.
+func newSubTestStore(t *testing.T) (*Store, string) {
+	t.Helper()
+	st := newTestStore(t)
+	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	return st, "UC1"
+}
+
+func TestRequestScan_pullsScheduleForwardAndMarksTheWait(t *testing.T) {
+	s, _ := newSubTestStore(t)
+	if err := s.Backoff("UC1", "2099-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequestScan("UC1", "2026-07-25 06:11:14"); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := s.GetSubscription("UC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub.NextScanAt != "2026-07-25 06:11:14" {
+		t.Fatalf("next_scan_at = %q, want pulled into the past", sub.NextScanAt)
+	}
+	if sub.ScanRequestedAt != "2026-07-25 06:11:14" {
+		t.Fatalf("scan_requested_at = %q, want the request instant", sub.ScanRequestedAt)
+	}
+
+	// Pressing again before the loop arrives is ONE wait, not two: the earlier
+	// instant is the one the user has actually been waiting since.
+	if err := s.RequestScan("UC1", "2026-07-25 06:12:00"); err != nil {
+		t.Fatal(err)
+	}
+	sub, _ = s.GetSubscription("UC1")
+	if sub.ScanRequestedAt != "2026-07-25 06:11:14" {
+		t.Fatalf("scan_requested_at = %q, want the FIRST request kept", sub.ScanRequestedAt)
+	}
+	if sub.NextScanAt != "2026-07-25 06:12:00" {
+		t.Fatalf("next_scan_at = %q, want re-pulled forward", sub.NextScanAt)
+	}
+}
+
+func TestMarkScanned_clearsTheScanRequestMarker(t *testing.T) {
+	// Any completed pass has actually looked at the channel, so it satisfies
+	// whatever "Check now" was waiting on.
+	s, _ := newSubTestStore(t)
+	if err := s.RequestScan("UC1", "2026-07-25 06:11:14"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkScanned("UC1", false, "2026-07-25 06:12:00", "2026-07-26 06:12:00"); err != nil {
+		t.Fatal(err)
+	}
+	sub, _ := s.GetSubscription("UC1")
+	if sub.ScanRequestedAt != "" {
+		t.Fatalf("scan_requested_at = %q, want cleared by a completed scan", sub.ScanRequestedAt)
+	}
+}
+
+func TestClearScanRequest_leavesTheScheduleAlone(t *testing.T) {
+	s, _ := newSubTestStore(t)
+	if err := s.RequestScan("UC1", "2026-07-25 06:11:14"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClearScanRequest("UC1"); err != nil {
+		t.Fatal(err)
+	}
+	sub, _ := s.GetSubscription("UC1")
+	if sub.ScanRequestedAt != "" {
+		t.Fatalf("scan_requested_at = %q, want cleared", sub.ScanRequestedAt)
+	}
+	if sub.NextScanAt != "2026-07-25 06:11:14" {
+		t.Fatalf("next_scan_at = %q, want untouched by clearing the marker", sub.NextScanAt)
+	}
+}

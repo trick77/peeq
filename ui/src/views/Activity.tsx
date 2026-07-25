@@ -82,6 +82,30 @@ function kindOf(k: string): { icon: IconName; label: string } {
   return KIND[k] ?? { icon: "clock", label: k };
 }
 
+// CHANNEL_KINDS are the agenda rows whose subject is a channel, and so the only
+// ones whose name links anywhere. A download or summary row names a video, which
+// the agenda does not link — it is a log of work, not a video browser.
+const CHANNEL_KINDS = new Set(["scan", "channel_meta"]);
+
+// subjectNode renders a row's subject, as a link to the channel page when the
+// row is about a channel and we know its id. Both halves of the agenda use it:
+// a linked name above the "now" marker and dead text below it would be exactly
+// the kind of inconsistency the agenda is supposed to avoid.
+function subjectNode(
+  kind: string,
+  subjectID: string | undefined,
+  text: string,
+  onOpenChannel?: (id: string) => void,
+) {
+  if (!subjectID || !onOpenChannel || !CHANNEL_KINDS.has(kind)) return text;
+  const id = subjectID;
+  return (
+    <button type="button" className="ag-link" onClick={() => onOpenChannel(id)}>
+      {text}
+    </button>
+  );
+}
+
 // eventDetail joins an event's summary and detail into one lead-capitalized
 // line; the kind is shown by the icon, not repeated in words.
 function eventDetail(e: ActivityEvent): string {
@@ -110,6 +134,7 @@ export function Activity({
   progressByJobId,
   summaries,
   summaryPhaseByVideoId,
+  onOpenChannel,
 }: {
   /** Newest activity events pushed over SSE, appended by App. */
   live: ActivityEvent[];
@@ -120,6 +145,8 @@ export function Activity({
   >;
   summaries: SummaryJob[];
   summaryPhaseByVideoId?: Record<string, string>;
+  /** Opens a channel's page. Optional so a test can render without navigation. */
+  onOpenChannel?: (id: string) => void;
 }) {
   const [past, setPast] = useState<ActivityEvent[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
@@ -315,7 +342,14 @@ export function Activity({
                         <Icon name={k.icon} size="16px" />
                       </span>
                       <div className="ag-body">
-                        <div className="ag-subject">{e.subject || k.label}</div>
+                        <div className="ag-subject">
+                          {subjectNode(
+                            e.kind,
+                            e.subject_id,
+                            e.subject || k.label,
+                            onOpenChannel,
+                          )}
+                        </div>
                         {detail ? (
                           <div className="ag-detail">{detail}</div>
                         ) : null}
@@ -412,7 +446,12 @@ export function Activity({
                       </span>
                       <div className="ag-body">
                         <div className="ag-subject">
-                          {item.subject || k.label}
+                          {subjectNode(
+                            item.kind,
+                            item.subject_id,
+                            item.subject || k.label,
+                            onOpenChannel,
+                          )}
                         </div>
                         {item.summary ? (
                           <div className="ag-detail">

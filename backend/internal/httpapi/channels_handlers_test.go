@@ -1546,6 +1546,36 @@ func TestChannelScan_setsNextScanAt(t *testing.T) {
 	if claimed == nil || claimed.ChannelID != "UCs" {
 		t.Fatalf("ClaimDue(%q) = %+v, want the UCs subscription due now", now, claimed)
 	}
+	// The marker is what earns this pass an activity row even when it finds
+	// nothing — without it the click stays invisible, which is the whole bug.
+	if claimed.ScanRequestedAt == "" {
+		t.Fatal("scan_requested_at not set; the scan would run without owing the user a receipt")
+	}
+}
+
+// TestChannelScan_allowAnonymous_notBlockedByMissingCookie pins the gate to the
+// scheduler's own: with the dev-only anonymous flag on, the loop scans happily
+// without a cookie, so reporting the click as blocked would be a lie.
+func TestChannelScan_allowAnonymous_notBlockedByMissingCookie(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCan", Name: "A"}})
+	deps.AllowAnonymous = true
+	h := New(deps)
+	if rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@a", "subscribe": true}); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", rec.Code, rec.Body.String())
+	}
+	// Left at the fresh-DB default of 'absent' on purpose: that is exactly the
+	// state the scheduler tolerates when AllowAnonymous is set.
+	rec := postJSON(t, h, "/api/channels/UCan/scan", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["status"] != "scheduled" {
+		t.Fatalf("status = %q (reason %q), want scheduled", body["status"], body["reason"])
+	}
 }
 
 // TestChannelScan_notSubscribed_400 asserts there is nothing to schedule for

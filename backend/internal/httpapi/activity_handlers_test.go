@@ -160,6 +160,17 @@ func TestActivity_upcomingProjectsPendingAndScheduled(t *testing.T) {
 	if resp.Items[2].Kind != activity.KindChannelMeta {
 		t.Fatalf("third item = %+v, want the metadata refresh", resp.Items[2])
 	}
+	// Channel rows carry the id so the agenda can link them to the channel page;
+	// a video row does not (the agenda links channels only).
+	if resp.Items[1].SubjectID != "UCx" {
+		t.Fatalf("scan subject_id = %q, want UCx", resp.Items[1].SubjectID)
+	}
+	if resp.Items[2].SubjectID != "UCx" {
+		t.Fatalf("metadata subject_id = %q, want UCx", resp.Items[2].SubjectID)
+	}
+	if resp.Items[0].SubjectID != "" {
+		t.Fatalf("download subject_id = %q, want empty", resp.Items[0].SubjectID)
+	}
 }
 
 func TestActivity_listHonoursBeforeAndLimit(t *testing.T) {
