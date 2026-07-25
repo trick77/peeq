@@ -352,6 +352,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		video.ChannelName = meta.Channel
 		video.DurationSeconds = int64(meta.DurationSeconds)
 		video.PublishedAt = meta.PublishedAt
+		video.Description = meta.Description
 		video.ThumbnailPath = meta.Thumbnail
 		video.Availability = videos.NormalizeAvailability(meta.Availability)
 		if err := w.deps.Videos.Upsert(*video); err != nil {
@@ -607,6 +608,11 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 		AudioLanguage:        res.AudioLanguage,
 		ChaptersJSON:         res.ChaptersJSON,
 		PublishedAt:          res.PublishedAt,
+		Description:          res.Description,
+		MediaType:            res.MediaType,
+		LiveStatus:           res.LiveStatus,
+		YTTags:               marshalStrings(res.Tags),
+		YTCategories:         marshalStrings(res.Categories),
 	}); err != nil {
 		w.deps.Logger.Error("download worker: set downloaded failed", "video_id", video.ID, "err", err)
 		// Do not enqueue a summary job: the video row was not updated with
@@ -707,6 +713,25 @@ func marshalSegments(segs []ytdlp.Segment) string {
 	b, err := json.Marshal(out)
 	if err != nil {
 		return "[]"
+	}
+	return string(b)
+}
+
+// marshalStrings renders yt-dlp's tags/categories as the JSON array text
+// stored in videos.yt_tags / videos.yt_categories, matching how
+// marshalSegments stores segments.
+//
+// It returns "" — not "[]" — for an empty list, because SetDownloaded treats
+// empty as "leave what is there". "[]" would be a value, and a re-download of
+// a video whose extractor happened to omit tags would wipe the ones already
+// stored.
+func marshalStrings(vals []string) string {
+	if len(vals) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(vals)
+	if err != nil {
+		return ""
 	}
 	return string(b)
 }

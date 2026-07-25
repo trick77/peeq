@@ -46,6 +46,14 @@ type videoDTO struct {
 	Category              string                   `json:"category"`
 	AudioLanguage         string                   `json:"audio_language"`
 	HasSubtitles          bool                     `json:"has_subtitles"`
+	// MediaType/LiveStatus/YTTags/YTCategories are YouTube's own facts about
+	// the video, straight from yt-dlp. Note Category (peeq's classification
+	// enum) and YTCategories (YouTube's labels) are different things that
+	// happen to share a word.
+	MediaType    string          `json:"media_type,omitempty"`
+	LiveStatus   string          `json:"live_status,omitempty"`
+	YTTags       json.RawMessage `json:"yt_tags,omitempty"`
+	YTCategories json.RawMessage `json:"yt_categories,omitempty"`
 }
 
 // sponsorblockSegmentDTO is one entry of the parsed sponsorblock_segments
@@ -119,6 +127,10 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		Category:              v.Category,
 		AudioLanguage:         v.AudioLanguage,
 		HasSubtitles:          v.SubtitlePath != "",
+		MediaType:             v.MediaType,
+		LiveStatus:            v.LiveStatus,
+		YTTags:                rawJSONOrNil(v.YTTags),
+		YTCategories:          rawJSONOrNil(v.YTCategories),
 	}
 }
 
@@ -131,7 +143,8 @@ func toVideoDTO(v *videos.Video) videoDTO {
 // title substring search, and
 // ?sort=newest|oldest|air_newest|air_oldest|longest|title controls ordering
 // (unrecognized/empty falls back to newest). newest/oldest mean when peeq
-// added the video; the air_* pair means its release date.
+// added the video; the air_* pair means its release date. A video missing the
+// date it is being sorted by comes last, in either direction.
 func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 	if s.videos == nil {
 		writeJSON(w, []videoDTO{})

@@ -77,6 +77,14 @@ export type Video = {
   // "uncategorized" is the fallback (see categories.ts, the TS mirror of
   // backend/internal/videos/category.go).
   category: string;
+  // YouTube's own facts about the video, straight from yt-dlp. All optional:
+  // they arrive only with downloads made after migration 0009, and nothing
+  // backfills older rows. Note `category` above (peeq's classification) and
+  // `yt_categories` here (YouTube's labels) are different things.
+  media_type?: string;
+  live_status?: string;
+  yt_tags?: string[];
+  yt_categories?: string[];
 };
 
 // Chapter mirrors httpapi's per-video chapter DTO — source distinguishes
