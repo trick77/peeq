@@ -6,8 +6,8 @@
 // notes) and can report that a track carries no real speech at all.
 //
 // The UI has its own forgiving WebVTT parser for the transcript panel
-// (ui/src/views/Player.tsx parseVtt); the sound-event rules below are mirrored
-// there and the two must stay in lockstep.
+// (ui/src/vtt.tsx parseVtt); the sound-event and entity rules below are
+// mirrored there and the two must stay in lockstep.
 package subtitles
 
 import (
@@ -49,9 +49,50 @@ var (
 	// noteRe matches the musical-note characters used by Whisper and by manual
 	// caption tracks to bracket lyrics.
 	noteRe = regexp.MustCompile(`[\x{266A}\x{266B}\x{266C}\x{2669}]`)
-	// spaceRe collapses the whitespace a stripped span leaves behind.
-	spaceRe = regexp.MustCompile(`\s+`)
+	// spaceRe collapses the whitespace a stripped span leaves behind. Go's \s is
+	// ASCII-only, so a literal no-break space in the caption file has to be
+	// named explicitly — the JS mirror's \s already covers it, and a difference
+	// here would feed the two rolling-duplicate collapses different strings.
+	spaceRe = regexp.MustCompile(`[\s\x{00A0}]+`)
+
+	// entityRe matches the HTML entities YouTube escapes caption text with. A
+	// single pass, so "&amp;lt;" decodes to "&lt;" and not to "<".
+	entityRe = regexp.MustCompile(`&(?:amp|lt|gt|quot|apos|nbsp|#39|#[xX]27);`)
 )
+
+// entities is the decode table for entityRe. Kept as an explicit closed list
+// rather than html.UnescapeString so the TypeScript mirror in ui/src/vtt.tsx
+// can decode exactly the same set — a wider Go decoder would quietly leave the
+// transcript panel and the summary disagreeing about the text.
+var entities = map[string]string{
+	"&amp;":  "&",
+	"&lt;":   "<",
+	"&gt;":   ">",
+	"&quot;": `"`,
+	"&apos;": "'",
+	"&nbsp;": " ",
+	"&#39;":  "'",
+	"&#x27;": "'",
+}
+
+// unescapeEntities decodes the entities above. &nbsp; becomes a plain space
+// rather than U+00A0 so downstream word splitting and dedup see ordinary
+// whitespace.
+func unescapeEntities(s string) string {
+	if !strings.Contains(s, "&") {
+		return s
+	}
+	return entityRe.ReplaceAllStringFunc(s, func(m string) string {
+		// ToLower folds the &#X27; spelling onto the &#x27; key; every other
+		// form entityRe can match is already lower-case. A name added to
+		// entityRe but not to the table leaves the text alone rather than
+		// deleting it — the same fallback the TypeScript mirror takes.
+		if v, ok := entities[strings.ToLower(m)]; ok {
+			return v
+		}
+		return m
+	})
+}
 
 // parenSoundEvents is the closed list of parenthesised annotations treated as
 // non-speech. Anything else in parentheses is kept verbatim.
@@ -231,7 +272,10 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 		if curStart < 0 {
 			continue // header / NOTE / cue-id lines before the first timing
 		}
-		clean := strings.TrimSpace(tagRe.ReplaceAllString(line, ""))
+		// Tags first, then entities: decoding first would turn an escaped
+		// "&lt;c&gt;" spoken on screen into a real tag and tagRe would eat it.
+		clean := unescapeEntities(tagRe.ReplaceAllString(line, ""))
+		clean = strings.TrimSpace(clean)
 		// Strip non-speech markers before the rolling-duplicate collapse below
 		// sees the line: YouTube re-emits "[Music] I play" then "[Music] I play
 		// games", and the collapse only works on the words that remain.

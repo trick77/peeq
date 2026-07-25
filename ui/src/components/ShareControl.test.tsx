@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import {
@@ -59,6 +60,35 @@ describe("ShareChip", () => {
   });
 });
 
+// ShareControl renders no trigger of its own — the Player passes its ⋮ menu as
+// children and owns the open flag. Harness plays that role: a trigger inside
+// the wrapper, flipping a controlled boolean.
+function Harness({
+  status,
+  onStatusChange = vi.fn(),
+}: {
+  status: ShareStatus;
+  onStatusChange?: (s: ShareStatus) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <ShareControl
+      videoId="v1"
+      status={status}
+      onStatusChange={onStatusChange}
+      open={open}
+      onOpenChange={setOpen}
+    >
+      <button type="button" onClick={() => setOpen((v) => !v)}>
+        Video actions
+      </button>
+    </ShareControl>
+  );
+}
+
+const openPopover = () =>
+  fireEvent.click(screen.getByRole("button", { name: /video actions/i }));
+
 describe("ShareControl", () => {
   it("creates a link from the unshared state with the default 7-day ttl", async () => {
     const created: ShareStatus = {
@@ -71,14 +101,10 @@ describe("ShareControl", () => {
     const onStatusChange = vi.fn();
 
     render(
-      <ShareControl
-        videoId="v1"
-        status={{ shared: false }}
-        onStatusChange={onStatusChange}
-      />,
+      <Harness status={{ shared: false }} onStatusChange={onStatusChange} />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
+    openPopover();
     fireEvent.click(screen.getByRole("button", { name: /create link/i }));
 
     await waitFor(() => expect(createShare).toHaveBeenCalledWith("v1", "7d"));
@@ -92,11 +118,9 @@ describe("ShareControl", () => {
       token: "tok123",
       expires_at: expiryIn(7),
     };
-    render(
-      <ShareControl videoId="v1" status={status} onStatusChange={vi.fn()} />,
-    );
+    render(<Harness status={status} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /^shared$/i }));
+    openPopover();
     fireEvent.click(screen.getByRole("button", { name: /^copy$/i }));
 
     await waitFor(() =>
@@ -115,38 +139,38 @@ describe("ShareControl", () => {
       expires_at: expiryIn(7),
     };
     vi.mocked(createShare).mockResolvedValue({ ...status, expires_at: "" });
-    render(
-      <ShareControl videoId="v1" status={status} onStatusChange={vi.fn()} />,
-    );
+    render(<Harness status={status} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /^shared$/i }));
+    openPopover();
     fireEvent.click(screen.getByRole("button", { name: /30 days/i }));
     await waitFor(() => expect(createShare).toHaveBeenCalledWith("v1", "30d"));
   });
 
   it("shows 'No expiry' in the popover for a never-expiring link", () => {
     render(
-      <ShareControl
-        videoId="v1"
-        status={{ shared: true, url: "https://x/s/t", token: "t" }}
-        onStatusChange={vi.fn()}
-      />,
+      <Harness status={{ shared: true, url: "https://x/s/t", token: "t" }} />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /^shared$/i }));
+    openPopover();
     expect(screen.getByText(/no expiry/i)).toBeInTheDocument();
   });
 
   it("closes the popover on Escape", () => {
-    render(
-      <ShareControl
-        videoId="v1"
-        status={{ shared: false }}
-        onStatusChange={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
+    render(<Harness status={{ shared: false }} />);
+    openPopover();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("survives a mousedown on the trigger that opened it", () => {
+    // The trigger lives inside the wrapper precisely so the click that opens
+    // the popover doesn't read as an outside click and close it again.
+    render(<Harness status={{ shared: false }} />);
+    openPopover();
+    fireEvent.mouseDown(screen.getByRole("button", { name: /video actions/i }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    // A mousedown anywhere else still closes it.
+    fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -154,14 +178,13 @@ describe("ShareControl", () => {
     vi.mocked(stopShare).mockResolvedValue({ shared: false });
     const onStatusChange = vi.fn();
     render(
-      <ShareControl
-        videoId="v1"
+      <Harness
         status={{ shared: true, url: "https://x/s/t", token: "t" }}
         onStatusChange={onStatusChange}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /^shared$/i }));
+    openPopover();
     // First click only arms the confirm — nothing sent yet.
     fireEvent.click(screen.getByRole("button", { name: /stop sharing/i }));
     expect(stopShare).not.toHaveBeenCalled();

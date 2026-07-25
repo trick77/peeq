@@ -700,6 +700,29 @@ describe("Player", () => {
     ).toBeNull();
   });
 
+  describe("Share menu item", () => {
+    it("opens the share popover, which survives the click that opened it", async () => {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      // A real pointer press fires mousedown before click; the popover's
+      // outside-click handler must not read the ⋮ it hangs off as "outside".
+      const item = await screen.findByRole("menuitem", { name: /share/i });
+      fireEvent.mouseDown(item);
+      fireEvent.click(item);
+      expect(
+        await screen.findByRole("dialog", { name: /share this video/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("is absent for a video with no media file", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_media: false }));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      await screen.findByRole("menuitem", { name: /watch on youtube/i });
+      expect(screen.queryByRole("menuitem", { name: /share/i })).toBeNull();
+    });
+  });
+
   describe("delete confirmation", () => {
     it("the ⋮ Delete… item opens a confirm dialog and does not delete yet", async () => {
       render(<Player videoId="v1" onDeleted={() => {}} />);

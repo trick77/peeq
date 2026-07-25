@@ -29,6 +29,34 @@ describe("parseVtt timestamps", () => {
   });
 });
 
+describe("parseVtt entity decoding", () => {
+  // entitySample / entityWant are shared verbatim with
+  // TestParseVTTDecodesEntities in backend/internal/subtitles/vtt_test.go. The
+  // panel reads from this parser and the summary from that one, so a difference
+  // here is a difference the user sees.
+  const entitySample =
+    "WEBVTT\n\n" +
+    "00:00:01.000 --> 00:00:03.000\n" +
+    "Tom &amp; Jerry &gt; everything else\n\n" +
+    "00:00:03.000 --> 00:00:05.000\n" +
+    "He said &quot;don&#39;t&quot; &amp;lt;not a tag&amp;gt;\n\n" +
+    "00:00:05.000 --> 00:00:07.000\n" +
+    "spaced&nbsp;out words\n";
+  const entityWant =
+    'Tom & Jerry > everything else He said "don\'t" ' +
+    "&lt;not a tag&gt; spaced out words";
+
+  it("decodes the HTML entities YouTube escapes caption text with", () => {
+    // Joined with a space to match how the Go side builds Parsed.Transcript;
+    // transcriptToText's own newline format is covered further down.
+    expect(
+      parseVtt(entitySample)
+        .map((c) => c.text)
+        .join(" "),
+    ).toBe(entityWant);
+  });
+});
+
 // These mirror the dedup cases in backend/internal/subtitles/vtt_test.go — the
 // two parsers have to agree on what the transcript says, so a case added to one
 // belongs on the other.

@@ -1515,6 +1515,18 @@ button.catpick.unset:hover {
 .life .metapill {
   margin-left: auto;
 }
+/* On a Library card the category pill is the last thing before the card's
+   bottom edge and the only child of its row, so it reads cramped against both
+   the channel line above and the edge below. Scoped to .video-card: the same
+   .metapill on the Player and the Channels rows sits in a populated row and
+   needs no extra room. */
+.card.video-card .life.fresh {
+  margin-top: 5px;
+  margin-bottom: 2px;
+}
+.card.video-card .life.fresh .metapill {
+  padding: 3px 9px;
+}
 .life .sz {
   margin-left: auto;
   font-family: var(--font-mono);
@@ -1890,6 +1902,13 @@ button.catpick.unset:hover {
 }
 .playacts {
   display: flex;
+  /* Positioning context for the share popover on narrow screens — see the
+     media query beside .sharepop. */
+  position: relative;
+  /* Centred, not stretched: the hairline (22px) and the kebab (32px) carry a
+     definite height, so the default `stretch` parks them at the top of the
+     40px line instead of on the buttons' centreline. */
+  align-items: center;
   gap: 10px;
   margin-top: 18px;
   flex-wrap: wrap;
@@ -2012,12 +2031,14 @@ button.catpick.unset:hover {
 .toc {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 .toc.toc-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 2px 14px;
+  /* The shorthand re-declares the row gap, so it has to track .toc above —
+     the Player's chapters are toc-grid, the share page's are plain .toc. */
+  gap: 1px 14px;
 }
 @media (max-width: 620px) {
   .toc.toc-grid {
@@ -2027,7 +2048,7 @@ button.catpick.unset:hover {
 .toc .row {
   display: flex;
   gap: 12px;
-  padding: 9px 10px;
+  padding: 5px 10px;
   border-radius: 8px;
   border: 1px solid transparent;
   text-align: left;
@@ -2050,6 +2071,7 @@ button.catpick.unset:hover {
 .toc .ttl {
   font-size: 13.5px;
   color: var(--color-ink);
+  line-height: 1.35;
 }
 .toc .src {
   margin-left: auto;
@@ -2136,12 +2158,12 @@ button.catpick.unset:hover {
 .transcript {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
 }
 .transcript .cue {
   display: flex;
   gap: 12px;
-  padding: 8px 10px;
+  padding: 4px 10px;
   border-radius: 7px;
   text-align: left;
   background: none;
@@ -2166,7 +2188,7 @@ button.catpick.unset:hover {
 .transcript .line {
   font-size: 13px;
   color: var(--color-ink-dim);
-  line-height: 1.5;
+  line-height: 1.4;
 }
 .transcript mark {
   background: color-mix(in srgb, var(--color-accent-strong) 32%, transparent);
@@ -3740,10 +3762,10 @@ details.tomb-sect[open] > summary svg {
 }
 
 /* ── Share control (Player action row) ───────────────────────────────────
-   The Share button plus its anchored popover. Scoped under .share-ctl /
-   .sharepop so the shared .pill / .card / button primitives don't bleed in.
-   Chosen over a modal: sharing is a fast, casual action, so no dimmed
-   backdrop — the popover hangs off the button and closes on outside-click. */
+   The popover that hangs off the ⋮ menu, which .share-ctl wraps. Scoped under
+   .share-ctl / .sharepop so the shared .pill / .card / button primitives don't
+   bleed in. Chosen over a modal: sharing is a fast, casual action, so no dimmed
+   backdrop — the panel hangs off the trigger and closes on outside-click. */
 .share-ctl {
   position: relative;
   display: inline-flex;
@@ -3751,7 +3773,9 @@ details.tomb-sect[open] > summary svg {
 .sharepop {
   position: absolute;
   bottom: calc(100% + 10px);
-  left: 0;
+  /* Right-anchored: the ⋮ sits at the end of the action row, so a 320px panel
+     hung off its left edge would run off the viewport. */
+  right: 0;
   z-index: 30;
   width: 320px;
   background: var(--color-elevated);
@@ -3760,18 +3784,35 @@ details.tomb-sect[open] > summary svg {
   box-shadow: var(--shadow-panel);
   padding: 16px;
 }
-/* little pointer down to the button */
+/* little pointer down to the ⋮ trigger (centred on its 32px box) */
 .sharepop::after {
   content: "";
   position: absolute;
   bottom: -7px;
-  left: 26px;
+  right: 10px;
   width: 12px;
   height: 12px;
   background: var(--color-elevated);
   border-right: 1px solid var(--color-elevated-border);
   border-bottom: 1px solid var(--color-elevated-border);
   transform: rotate(45deg);
+}
+/* Phones: .playacts wraps, so the ⋮ can sit anywhere along the row and a fixed
+   320px panel hung off it would run off-screen. Dropping .share-ctl's
+   positioning context hands the popover to .playacts, so it spans the row
+   instead of pointing at a trigger it can no longer reach cleanly. */
+@media (max-width: 620px) {
+  .share-ctl {
+    position: static;
+  }
+  .sharepop {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+  .sharepop::after {
+    display: none;
+  }
 }
 .sharepop .ph {
   display: flex;

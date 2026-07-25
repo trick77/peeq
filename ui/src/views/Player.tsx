@@ -135,11 +135,14 @@ export function Player({
   const [reprocessing, setReprocessing] = useState(false);
   const [redownloading, setRedownloading] = useState(false);
   // Share state: whether this video currently has a live public link, driving
-  // the "Shared" chip beside the title and the Share button's active look. It
-  // loads alongside the video and is updated in place by the share popover.
+  // the "Shared" chip beside the title. It loads alongside the video and is
+  // updated in place by the share popover.
   const [shareStatus, setShareStatus] = useState<ShareStatus>({
     shared: false,
   });
+  // The share popover lives in ShareControl but is opened from the ⋮ menu, so
+  // the Player owns the flag that connects them.
+  const [shareOpen, setShareOpen] = useState(false);
   // subtitlesReadyFor holds the video id whose metadata has loaded, gating
   // the <track> below. On iPadOS 27 (public beta 1) a <track> child present
   // while the video loads makes Safari fail resource selection outright —
@@ -689,6 +692,15 @@ export function Player({
   function buildMenuActions(): RowMenuAction[] {
     if (!video) return [];
     const actions: RowMenuAction[] = [];
+    // Share only makes sense once there is media to stream — the public page
+    // is watch-only. The popover it opens is anchored to the ⋮ itself.
+    if (video.has_media) {
+      actions.push({
+        label: "Share…",
+        icon: "share",
+        onClick: () => setShareOpen(true),
+      });
+    }
     // Reprocess re-runs the whole post-import pipeline (summarize → classify →
     // embed, plus a SponsorBlock re-fetch). Offered only when the endpoint can
     // act — media + a subtitle present and not tombstoned — since it 409s
@@ -864,15 +876,6 @@ export function Player({
               <Icon name="check" size="17px" />{" "}
               {video.watched ? "Mark unwatched" : "Mark watched"}
             </Button>
-            {/* Share only makes sense once there is media to stream — the
-                public page is watch-only. */}
-            {video.has_media && (
-              <ShareControl
-                videoId={video.id}
-                status={shareStatus}
-                onStatusChange={setShareStatus}
-              />
-            )}
             <span className="acts-sep" aria-hidden="true" />
             {video.has_subtitles && (
               // On is terracotta, off is the same muted grey as the icons
@@ -890,21 +893,34 @@ export function Player({
               </button>
             )}
             {/* The remaining per-video actions collapse into one ⋮ menu:
-                Reprocess, Re-download, Download file, Watch on YouTube and
-                Delete. Only the stateful toggles above (Keep forever, Mark
+                Share, Reprocess, Re-download, Download file, Watch on YouTube
+                and Delete. Only the stateful toggles above (Keep forever, Mark
                 watched) and the CC toggle stay visible. The ⋮ carries an
                 attention dot only when the menu actually holds a flagged
                 remedy — a failed summary_status on a video that can't be
                 reprocessed (no subtitle) would otherwise promise a fix the
-                menu doesn't offer. */}
+                menu doesn't offer.
+
+                ShareControl wraps the menu rather than sitting beside it: its
+                popover anchors to the ⋮ that opened it, and the trigger has to
+                live inside ShareControl's wrapper or its outside-click handler
+                would close the popover on the same click that opened it. */}
             {(() => {
               const menuActions = buildMenuActions();
               return (
-                <RowMenu
-                  label="Video actions"
-                  attention={menuActions.some((a) => a.flag)}
-                  actions={menuActions}
-                />
+                <ShareControl
+                  videoId={video.id}
+                  status={shareStatus}
+                  onStatusChange={setShareStatus}
+                  open={shareOpen}
+                  onOpenChange={setShareOpen}
+                >
+                  <RowMenu
+                    label="Video actions"
+                    attention={menuActions.some((a) => a.flag)}
+                    actions={menuActions}
+                  />
+                </ShareControl>
               );
             })()}
           </div>

@@ -105,6 +105,35 @@ func TestParseVTTKeepsDistantRepeat(t *testing.T) {
 	}
 }
 
+// entitySample is shared verbatim with the TypeScript mirror's
+// "decodes the HTML entities YouTube escapes caption text with" case in
+// ui/src/vtt.test.tsx. Both parsers must turn it into entityWant below — the
+// panel reads from one and the summary from the other, so a difference here is
+// a difference the user sees.
+const entitySample = `WEBVTT
+
+00:00:01.000 --> 00:00:03.000
+Tom &amp; Jerry &gt; everything else
+
+00:00:03.000 --> 00:00:05.000
+He said &quot;don&#39;t&quot; &amp;lt;not a tag&amp;gt;
+
+00:00:05.000 --> 00:00:07.000
+spaced&nbsp;out words
+`
+
+const entityWant = `Tom & Jerry > everything else He said "don't" &lt;not a tag&gt; spaced out words`
+
+func TestParseVTTDecodesEntities(t *testing.T) {
+	p, err := ParseVTT(strings.NewReader(entitySample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Transcript != entityWant {
+		t.Fatalf("transcript mismatch:\n got: %s\nwant: %s", p.Transcript, entityWant)
+	}
+}
+
 func TestParseVTTEmpty(t *testing.T) {
 	p, err := ParseVTT(strings.NewReader("WEBVTT\n"))
 	if err != nil {
