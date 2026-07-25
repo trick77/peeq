@@ -804,5 +804,54 @@ describe("Channels", () => {
       expect(elsewhere).toHaveFocus();
       expect(elsewhere).toHaveValue("/");
     });
+
+    it("leaves / alone while a row menu is open", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Alpha");
+      const row = screen
+        .getByText("Alpha")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      // RowMenu focuses its first menuitem — a BUTTON, which the shortcut's
+      // "already typing somewhere?" tag check waves through.
+      const firstItem = within(row).getAllByRole("menuitem")[0];
+      expect(firstItem).toHaveFocus();
+
+      await user.keyboard("/");
+
+      expect(firstItem).toHaveFocus();
+      expect(
+        screen.getByRole("searchbox", { name: "Search channels" }),
+      ).not.toHaveFocus();
+    });
+
+    it("leaves / alone while the delete confirmation is open", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Alpha");
+      const row = screen
+        .getByText("Alpha")
+        .closest(".channel-row") as HTMLElement;
+      await openRowMenu(user, row);
+      await user.click(
+        within(row).getByRole("menuitem", { name: /delete channel/i }),
+      );
+      await screen.findByRole("dialog");
+      // The dialog puts focus on its Cancel BUTTON, which the shortcut's
+      // "is the user already typing somewhere?" check waves through — so
+      // without a modal guard the slash would pull focus to a search box
+      // hidden behind the scrim and leave the open dialog unfocused.
+      const cancel = screen.getByRole("button", { name: "Cancel" });
+      expect(cancel).toHaveFocus();
+
+      await user.keyboard("/");
+
+      expect(cancel).toHaveFocus();
+      expect(
+        screen.getByRole("searchbox", { name: "Search channels" }),
+      ).not.toHaveFocus();
+    });
   });
 });
