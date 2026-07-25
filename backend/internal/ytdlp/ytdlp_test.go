@@ -628,6 +628,23 @@ func TestPausedRunnerMakesNoCall_allEntryPoints(t *testing.T) {
 		}
 	})
 
+	t.Run("ChannelStreams", func(t *testing.T) {
+		called := filepath.Join(t.TempDir(), "called")
+		r := New(RunnerConfig{
+			PauseProvider:  func() (bool, string) { return true, "paused" },
+			Bin:            fakeBinTouching(called),
+			CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+			Sleep:          fatalSleep(t),
+		})
+		_, err := r.ChannelStreams(context.Background(), "UCuAXFkgsw1L7xaCfnd5JJOw", 10)
+		if !errors.Is(err, ErrPaused) {
+			t.Fatalf("err = %v, want ErrPaused", err)
+		}
+		if _, e := os.Stat(called); e == nil {
+			t.Fatal("binary must not run while youtube_paused is set — a yt-dlp process would have spawned")
+		}
+	})
+
 	t.Run("ResolveChannel", func(t *testing.T) {
 		called := filepath.Join(t.TempDir(), "called")
 		r := New(RunnerConfig{

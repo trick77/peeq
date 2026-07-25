@@ -77,6 +77,27 @@ func (e *ExecError) Error() string {
 
 func (e *ExecError) Unwrap() error { return e.Err }
 
+// IsMissingTab reports whether err is yt-dlp refusing a channel tab that does
+// not exist ("ERROR: [youtube:tab] UC…: This channel does not have a streams
+// tab"). A channel that has never gone live has no /streams tab at all, so this
+// is the expected, boring outcome for most channels rather than a fault —
+// callers use it to keep an ordinary scan quiet.
+//
+// On the STREAMS side it is a logging distinction only: the caller treats any
+// streams-tab failure as "no streams", so a reworded yt-dlp message costs log
+// noise and nothing else. On the UPLOADS side it is correctness-bearing — it is
+// what stops a channel with no /videos tab (one that publishes only
+// livestreams) from failing every scan — so a reworded message there costs that
+// channel its scannability. The string match is deliberately loose on the tab
+// name to keep that as unlikely as possible; widen it, never narrow it.
+func IsMissingTab(err error) bool {
+	var ee *ExecError
+	if !errors.As(err, &ee) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(ee.Stderr), "does not have a")
+}
+
 // maxStderrTail bounds what an error carries, in bytes: enough for the
 // real reason, not so much that a verbose run pushes a wall of text into
 // an API response body or a log line.
