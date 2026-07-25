@@ -101,13 +101,18 @@ func (r *Runner) Metadata(ctx context.Context, rawURL string) (*Meta, error) {
 		DurationSeconds: int(raw.Duration),
 		Thumbnail:       raw.Thumbnail,
 		Description:     raw.Description,
-		PublishedAt:     airDate(raw.ReleaseTimestamp, raw.Timestamp, raw.ReleaseDate, raw.UploadDate),
-		Availability:    raw.Availability,
-		Language:        raw.Language,
-		MediaType:       raw.MediaType,
-		LiveStatus:      raw.LiveStatus,
-		Tags:            raw.Tags,
-		Categories:      raw.Categories,
+		PublishedAt: airDate(rawDates{
+			ReleaseTimestamp: raw.ReleaseTimestamp,
+			Timestamp:        raw.Timestamp,
+			ReleaseDate:      raw.ReleaseDate,
+			UploadDate:       raw.UploadDate,
+		}),
+		Availability: raw.Availability,
+		Language:     raw.Language,
+		MediaType:    raw.MediaType,
+		LiveStatus:   raw.LiveStatus,
+		Tags:         raw.Tags,
+		Categories:   raw.Categories,
 	}, nil
 }
 
@@ -123,9 +128,24 @@ func normalizeUploadDate(raw string) string {
 	return t.Format("2006-01-02")
 }
 
-// airDate resolves when a video actually AIRED from the four date fields
-// yt-dlp reports, in descending order of trustworthiness. Returns "" only when
-// all four are absent.
+// rawDates carries the four date fields yt-dlp reports, so airDate is called
+// with NAMED fields rather than a positional argument list.
+//
+// That is deliberate. The precedence below is release_timestamp, release_date,
+// timestamp, upload_date — which is neither the order a positional signature
+// would group them in (the two int64s adjacent) nor an order anyone recalls
+// from memory. Swapping two same-typed arguments would still compile and would
+// go wrong only for premieres: the one case this whole mechanism exists to get
+// right, and the one least likely to be noticed.
+type rawDates struct {
+	ReleaseTimestamp int64
+	Timestamp        int64
+	ReleaseDate      string
+	UploadDate       string
+}
+
+// airDate resolves when a video actually AIRED, in descending order of
+// trustworthiness. Returns "" only when all four fields are absent.
 //
 // Release beats upload: for a premiere or a scheduled livestream, upload_date
 // is when the file was staged — often days earlier, occasionally years — while
@@ -137,15 +157,15 @@ func normalizeUploadDate(raw string) string {
 // to YYYY-MM-DD: published_at is compared as TEXT, and a column mixing
 // '2026-03-01' with '2026-03-01 09:00:00' sorts the date-only value first on a
 // same-day tie. One shape, or ordering quietly breaks.
-func airDate(releaseTimestamp, timestamp int64, releaseDate, uploadDate string) string {
-	if d := unixToDate(releaseTimestamp); d != "" {
-		return d
+func airDate(d rawDates) string {
+	if s := unixToDate(d.ReleaseTimestamp); s != "" {
+		return s
 	}
-	if d := normalizeUploadDate(releaseDate); d != "" {
-		return d
+	if s := normalizeUploadDate(d.ReleaseDate); s != "" {
+		return s
 	}
-	if d := unixToDate(timestamp); d != "" {
-		return d
+	if s := unixToDate(d.Timestamp); s != "" {
+		return s
 	}
-	return normalizeUploadDate(uploadDate)
+	return normalizeUploadDate(d.UploadDate)
 }

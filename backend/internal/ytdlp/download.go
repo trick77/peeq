@@ -386,12 +386,17 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 		SubtitleRelPath:      subtitleRelPath,
 		AudioLanguage:        info.Language,
 		ChaptersJSON:         chaptersJSON,
-		PublishedAt:          airDate(info.ReleaseTimestamp, info.Timestamp, info.ReleaseDate, info.UploadDate),
-		Description:          info.Description,
-		MediaType:            info.MediaType,
-		LiveStatus:           info.LiveStatus,
-		Tags:                 info.Tags,
-		Categories:           info.Categories,
+		PublishedAt: airDate(rawDates{
+			ReleaseTimestamp: info.ReleaseTimestamp,
+			Timestamp:        info.Timestamp,
+			ReleaseDate:      info.ReleaseDate,
+			UploadDate:       info.UploadDate,
+		}),
+		Description: info.Description,
+		MediaType:   info.MediaType,
+		LiveStatus:  info.LiveStatus,
+		Tags:        info.Tags,
+		Categories:  info.Categories,
 	}, nil
 }
 

@@ -10,69 +10,65 @@ func TestAirDate_precedence(t *testing.T) {
 	const uploadTS int64 = 1546398245
 
 	cases := []struct {
-		name             string
-		releaseTimestamp int64
-		timestamp        int64
-		releaseDate      string
-		uploadDate       string
-		want             string
+		name string
+		in   rawDates
+		want string
 	}{
 		{
 			// The case that motivated all of this. A premiere is uploaded days
 			// or years before it airs; upload_date is when the file was staged,
 			// release_timestamp is when viewers could watch it. Sorting by the
 			// former files it under the wrong year.
-			name:             "premiere prefers release_timestamp over upload_date",
-			releaseTimestamp: releaseTS,
-			timestamp:        uploadTS,
-			releaseDate:      "20210615",
-			uploadDate:       "20190102",
-			want:             "2021-06-15",
+			name: "premiere prefers release_timestamp over upload_date",
+			in: rawDates{
+				ReleaseTimestamp: releaseTS,
+				Timestamp:        uploadTS,
+				ReleaseDate:      "20210615",
+				UploadDate:       "20190102",
+			},
+			want: "2021-06-15",
 		},
 		{
-			name:        "release_date wins when only the string form is present",
-			releaseDate: "20210615",
-			uploadDate:  "20190102",
-			want:        "2021-06-15",
+			name: "release_date wins when only the string form is present",
+			in:   rawDates{ReleaseDate: "20210615", UploadDate: "20190102"},
+			want: "2021-06-15",
 		},
 		{
 			// timestamp is upload time to the second; upload_date is the same
 			// instant truncated. Identical result here, but timestamp is the
 			// more precise source, so it is consulted first.
-			name:       "timestamp beats upload_date",
-			timestamp:  uploadTS,
-			uploadDate: "20190102",
-			want:       "2019-01-02",
+			name: "timestamp beats upload_date",
+			in:   rawDates{Timestamp: uploadTS, UploadDate: "20190102"},
+			want: "2019-01-02",
 		},
 		{
-			name:       "plain upload falls all the way through",
-			uploadDate: "20190102",
-			want:       "2019-01-02",
+			name: "plain upload falls all the way through",
+			in:   rawDates{UploadDate: "20190102"},
+			want: "2019-01-02",
 		},
 		{
 			name: "nothing reported yields empty, never a guess",
+			in:   rawDates{},
 			want: "",
 		},
 		{
 			// A live stream that never aired: yt-dlp reports the scheduled
 			// release as 0 rather than omitting the key.
-			name:       "zero timestamps are ignored, not treated as 1970",
-			timestamp:  0,
-			uploadDate: "20190102",
-			want:       "2019-01-02",
+			name: "zero timestamps are ignored, not treated as 1970",
+			in:   rawDates{Timestamp: 0, UploadDate: "20190102"},
+			want: "2019-01-02",
 		},
 		{
 			// Garbage in one field must not shadow a good value further down.
-			name:        "an unparseable release_date falls through",
-			releaseDate: "notadate",
-			uploadDate:  "20190102",
-			want:        "2019-01-02",
+			name: "an unparseable release_date falls through",
+			in:   rawDates{ReleaseDate: "notadate", UploadDate: "20190102"},
+			want: "2019-01-02",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := airDate(tc.releaseTimestamp, tc.timestamp, tc.releaseDate, tc.uploadDate)
+			got := airDate(tc.in)
 			if got != tc.want {
 				t.Fatalf("airDate = %q, want %q", got, tc.want)
 			}
