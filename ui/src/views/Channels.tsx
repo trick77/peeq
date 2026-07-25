@@ -102,8 +102,8 @@ export function Channels({
   }
 
   useEffect(() => {
-    // Drop any "Check now" notice: it names a channel that may not even be in
-    // the list the new chip is about to show.
+    // Drop any "Check now" notice: it reports on one row the user clicked, and
+    // that row may not even be in the list the new chip is about to show.
     setNotice(null);
     load(filter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -402,16 +402,16 @@ export function Channels({
         <p style={{ color: "var(--color-faint)" }}>
           {/* A filtered view can be empty while channels sit one chip away, so
               every branch but "all" points at All rather than implying there is
-              nothing here. */}
+              nothing here. Each line must also hold true when there are no
+              channels at all — "every channel you added is subscribed" would
+              not. */}
           {q !== "" && hasNonDormant
             ? "No channels match your search."
             : filter === "all"
               ? "No channels yet."
               : filter === "subscribed"
                 ? "No subscribed channels — see All."
-                : filter === "tracked"
-                  ? "Every channel here is subscribed — see All."
-                  : "No channels match this filter."}
+                : "No channels match this filter — see All."}
         </p>
       ) : null}
       <AutoUnsubscribedSection

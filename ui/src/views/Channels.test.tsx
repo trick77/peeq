@@ -198,14 +198,9 @@ describe("Channels", () => {
     await user.click(screen.getByRole("button", { name: "All" }));
     expect(await screen.findByText("No channels yet.")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Not subscribed" }));
-    expect(
-      await screen.findByText("Every channel here is subscribed — see All."),
-    ).toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "Auto-add" }));
     expect(
-      await screen.findByText("No channels match this filter."),
+      await screen.findByText("No channels match this filter — see All."),
     ).toBeInTheDocument();
   });
 
@@ -276,6 +271,70 @@ describe("Channels", () => {
       expect(
         await screen.findByText("YouTube access is paused."),
       ).toBeInTheDocument();
+    });
+
+    // A blocked answer with no reason still has to say something: the backend
+    // omits `reason` for some blocks, and a silent menu click reads as dead.
+    it("falls back to generic wording when a block carries no reason", async () => {
+      const user = userEvent.setup();
+      vi.mocked(scanChannel).mockResolvedValue({ status: "blocked" });
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+
+      expect(
+        await screen.findByText("peeq cannot check this channel right now."),
+      ).toBeInTheDocument();
+    });
+
+    it("shows an error line when the request fails", async () => {
+      const user = userEvent.setup();
+      vi.mocked(scanChannel).mockRejectedValue(
+        new Error("failed to schedule a check"),
+      );
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+
+      expect(
+        await screen.findByText("failed to schedule a check"),
+      ).toBeInTheDocument();
+    });
+
+    // A notice reports on the row that was clicked, so it must not survive a
+    // chip click that may not even show that row.
+    it("clears the notice when the filter changes", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      await screen.findByText(
+        "Checking soon — peeq will look for new videos on its next pass.",
+      );
+
+      await user.click(screen.getByRole("button", { name: "All" }));
+      await waitFor(() =>
+        expect(
+          screen.queryByText(
+            "Checking soon — peeq will look for new videos on its next pass.",
+          ),
+        ).not.toBeInTheDocument(),
+      );
     });
 
     // The endpoint answers 400 "channel is not subscribed", so the entry must
