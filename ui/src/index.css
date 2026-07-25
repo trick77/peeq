@@ -2783,11 +2783,15 @@ textarea.cookiebox:focus {
   margin: 4px 9px;
   background: var(--color-elevated-border);
 }
-/* The one destructive entry: muted red at rest, solid-red on hover. */
-.rowmenu button.danger {
+/* The one destructive entry: muted red at rest, solid-red on hover. Links get
+   it too — RowMenu's divider keys off the `danger` flag rather than the tag, so
+   an href item marked danger would otherwise be fenced off but not coloured. */
+.rowmenu button.danger,
+.rowmenu a.danger {
   color: #e79393;
 }
-.rowmenu button.danger:hover {
+.rowmenu button.danger:hover,
+.rowmenu a.danger:hover {
   background: var(--color-danger);
   color: #fff;
 }
