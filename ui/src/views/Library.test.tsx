@@ -400,7 +400,9 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockResolvedValue([
       categoryVideo({ id: "v1", title: "watched video", watched: true }),
     ]);
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     // The default chip is Unwatched, so select Watched to see watched videos.
     fireEvent.click(screen.getByRole("button", { name: /Watched/ }));
     await screen.findByText("watched video");
@@ -428,7 +430,9 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockResolvedValue([
       categoryVideo({ id: "v1", title: "fresh video", watched: false }),
     ]);
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     await screen.findByText("fresh video");
 
     // Unwatched leads and is active on first paint — no click needed.
@@ -450,7 +454,9 @@ describe("Library category chips", () => {
         resume_position_seconds: 40,
       }),
     ]);
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     // The default Unwatched filter hides a partially-watched card (resume > 0),
     // so switch to In progress first, then the card appears.
     fireEvent.click(screen.getByRole("button", { name: /In progress/ }));
@@ -473,7 +479,9 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockResolvedValue([
       categoryVideo({ id: "v1", watched: true }),
     ]);
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
 
     expect(await screen.findByText("Nothing unwatched.")).toBeInTheDocument();
     expect(screen.queryByText("No videos yet.")).not.toBeInTheDocument();
@@ -490,7 +498,9 @@ describe("Library category chips", () => {
       watched: true,
       state_version: 2,
     });
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     await screen.findByText("unwatched vid");
 
     fireEvent.click(screen.getByRole("button", { name: /Unwatched/ }));
@@ -513,7 +523,9 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockResolvedValue([
       categoryVideo({ id: "v1", watched: true }),
     ]);
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     // The chip row renders immediately; the watched card is hidden under the
     // default Unwatched filter until this chip is selected.
     fireEvent.click(screen.getByRole("button", { name: /Watched/ }));
@@ -544,7 +556,9 @@ describe("Library category chips", () => {
       return [aiVideo, newsVideo];
     });
 
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
 
     expect(await screen.findByText("news video title")).toBeInTheDocument();
 
@@ -576,7 +590,9 @@ describe("Library category chips", () => {
       return [aiVideo, newsVideo];
     });
 
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     await screen.findByText("news video title");
 
     fireEvent.click(screen.getByRole("button", { name: /Unwatched/ }));
@@ -618,7 +634,9 @@ describe("Library category chips", () => {
       return [];
     });
 
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     await screen.findByText("ai vid");
 
     // Default Unwatched chip: only the AI video qualifies, so the row offers AI
@@ -665,7 +683,9 @@ describe("Library category chips", () => {
       return [aiUnwatched];
     });
 
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     // Under All, the News category chip is available; select it.
     fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
     const newsChip = await screen.findByRole("button", { name: /News/ });
@@ -700,7 +720,12 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockResolvedValue([aiVideo]);
 
     const { rerender } = render(
-      <Library onOpenVideo={() => {}} search="" queueSignal="7" />,
+      <Library
+        onOpenVideo={() => {}}
+        search=""
+        onSearchChange={() => {}}
+        queueSignal="7"
+      />,
     );
     const aiChip = await screen.findByRole("button", {
       name: /AI/,
@@ -714,7 +739,14 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockClear();
 
     // When: the last download finishes.
-    rerender(<Library onOpenVideo={() => {}} search="" queueSignal="" />);
+    rerender(
+      <Library
+        onOpenVideo={() => {}}
+        search=""
+        onSearchChange={() => {}}
+        queueSignal=""
+      />,
+    );
 
     // Then: the refresh still carries the category, not just the status — the
     // bug this pins is a refresh that silently resets the user's filter. The
@@ -730,10 +762,18 @@ describe("Library category chips", () => {
     // The search box itself now lives in the top bar (App owns the state);
     // Library just receives the query as a prop and debounces its own fetch.
     vi.mocked(listVideos).mockResolvedValue([]);
-    const { rerender } = render(<Library onOpenVideo={() => {}} search="" />);
+    const { rerender } = render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     await screen.findByLabelText(/sort/i);
 
-    rerender(<Library onOpenVideo={() => {}} search="abyss" />);
+    rerender(
+      <Library
+        onOpenVideo={() => {}}
+        search="abyss"
+        onSearchChange={() => {}}
+      />,
+    );
 
     await waitFor(() => {
       expect(listVideos).toHaveBeenCalledWith(
@@ -745,7 +785,9 @@ describe("Library category chips", () => {
   it("choosing a sort option refetches with that sort", async () => {
     vi.mocked(listVideos).mockResolvedValue([]);
     const user = userEvent.setup();
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     await screen.findByLabelText(/sort/i);
 
     await user.selectOptions(screen.getByLabelText(/sort/i), "longest");
@@ -761,7 +803,9 @@ describe("Library category chips", () => {
     const v = categoryVideo({ id: "v1", favorite: false });
     vi.mocked(listVideos).mockResolvedValue([v]);
     vi.mocked(setFavorite).mockResolvedValue(true);
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     await screen.findByText("A Test Video");
 
     fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }));
@@ -776,7 +820,9 @@ describe("Library category chips", () => {
     const v = categoryVideo({ id: "v1", favorite: false });
     vi.mocked(listVideos).mockResolvedValue([v]);
     vi.mocked(setFavorite).mockRejectedValue(new Error("network down"));
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     await screen.findByText("A Test Video");
 
     fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }));
@@ -801,7 +847,9 @@ describe("Library category chips", () => {
       watched: true,
       state_version: 2,
     });
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     // Use the All filter so the card stays put after being marked watched
     // (under Unwatched it would correctly leave the grid).
     fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
@@ -819,7 +867,9 @@ describe("Library category chips", () => {
     const v = categoryVideo({ id: "v1", watched: false });
     vi.mocked(listVideos).mockResolvedValue([v]);
     vi.mocked(setWatched).mockRejectedValue(new Error("network down"));
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     // All filter so the optimistic flip is observable in place rather than
     // dropping the card out of the Unwatched grid.
     fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
@@ -862,7 +912,9 @@ describe("Library category chips", () => {
       watched: true,
       state_version: 2,
     });
-    render(<Library onOpenVideo={() => {}} search="" />);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
     // A partially-watched card (resume > 0) is hidden under the default
     // Unwatched filter; the All filter shows it so the resume bar is present.
     fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
@@ -899,7 +951,14 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockResolvedValue([errored]);
     const onQueued = vi.fn();
 
-    render(<Library onOpenVideo={() => {}} search="" onQueued={onQueued} />);
+    render(
+      <Library
+        onOpenVideo={() => {}}
+        search=""
+        onSearchChange={() => {}}
+        onQueued={onQueued}
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { name: /^All \d/ }));
     await screen.findByText("Download failed");
     fireEvent.click(screen.getByRole("button", { name: /re-download/i }));
@@ -921,7 +980,12 @@ describe("Library category chips", () => {
 
     const { rerender } = render(
       // One job in flight (id 5).
-      <Library onOpenVideo={() => {}} search="" queueSignal="5" />,
+      <Library
+        onOpenVideo={() => {}}
+        search=""
+        onSearchChange={() => {}}
+        queueSignal="5"
+      />,
     );
     await screen.findByText("first video");
 
@@ -929,7 +993,14 @@ describe("Library category chips", () => {
     // 1, but the identity changed. A count-based signal would not fire; the
     // id-based one does, and the newly-arrived video shows.
     phase = 1;
-    rerender(<Library onOpenVideo={() => {}} search="" queueSignal="6" />);
+    rerender(
+      <Library
+        onOpenVideo={() => {}}
+        search=""
+        onSearchChange={() => {}}
+        queueSignal="6"
+      />,
+    );
 
     await screen.findByText("second video");
   });
@@ -955,7 +1026,12 @@ describe("Library category chips", () => {
     );
 
     const { rerender } = render(
-      <Library onOpenVideo={() => {}} search="" queueSignal="" />,
+      <Library
+        onOpenVideo={() => {}}
+        search=""
+        onSearchChange={() => {}}
+        queueSignal=""
+      />,
     );
     // An errored card is hidden under the default Unwatched filter (it is not
     // play-eligible); the All filter surfaces it so it can be re-downloaded.
@@ -968,7 +1044,14 @@ describe("Library category chips", () => {
 
     // App now reports the new download job: queueSignal changes, firing the
     // queue effect that refetches against the live All filter.
-    rerender(<Library onOpenVideo={() => {}} search="" queueSignal="j1" />);
+    rerender(
+      <Library
+        onOpenVideo={() => {}}
+        search=""
+        onSearchChange={() => {}}
+        queueSignal="j1"
+      />,
+    );
     await waitFor(() => {
       expect(listVideos).toHaveBeenCalledWith(
         expect.objectContaining({ filter: "all" }),
@@ -983,5 +1066,47 @@ describe("Library category chips", () => {
       );
     });
     expect(screen.queryByText("Download failed")).not.toBeInTheDocument();
+  });
+  describe("the search box", () => {
+    // The outer beforeEach only resets listVideos; these tests never assert on
+    // the grid, so an empty resolved list is all they need from it.
+    beforeEach(() => {
+      vi.mocked(listVideos).mockResolvedValue([]);
+    });
+
+    it("reports typing to its owner", async () => {
+      const user = userEvent.setup();
+      const onSearchChange = vi.fn();
+      render(
+        <Library
+          onOpenVideo={() => {}}
+          search=""
+          onSearchChange={onSearchChange}
+        />,
+      );
+      await screen.findByRole("searchbox", { name: "Search titles" });
+
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search titles" }),
+        "v",
+      );
+
+      expect(onSearchChange).toHaveBeenCalledWith("v");
+    });
+
+    it("is focused by /", async () => {
+      const user = userEvent.setup();
+      render(
+        <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+      );
+      const box = await screen.findByRole("searchbox", {
+        name: "Search titles",
+      });
+      expect(box).not.toHaveFocus();
+
+      await user.keyboard("/");
+
+      expect(box).toHaveFocus();
+    });
   });
 });

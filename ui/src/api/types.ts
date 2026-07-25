@@ -245,6 +245,10 @@ export type Channel = {
   has_banner?: boolean;
   dormant: boolean;
   last_video_at?: string;
+  // added_at is when the channel was first added — what the list's "Recently
+  // added" ordering sorts on. omitempty on the wire, so the sort treats a
+  // missing value as "" and lets it fall through to the name tiebreak.
+  added_at?: string;
 };
 
 // AutoUnsubscribedChannel mirrors httpapi's GET

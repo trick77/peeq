@@ -123,9 +123,26 @@ html {
     border-color 0.15s,
     box-shadow 0.15s;
 }
+/* Focus is neutral, not accented. The ring used to be the full accent colour at
+   45%, which on a wide search box read as a validation error rather than "your
+   cursor is here" — clay is this app's colour for an ACTIVE CHOICE (a lit chip,
+   a primary button), and a focused empty field has not chosen anything yet.
+
+   It is deliberately still a VISIBLE ring, not nothing: this is the only thing
+   telling a keyboard user where Tab has landed. A brightened border plus a
+   faint light halo is unmistakable against the panel without shouting.
+   Applies to every .ui-control, so fields stay consistent across the app. */
 .ui-control:focus {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent);
+  border-color: var(--color-muted);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-ink) 9%, transparent);
+}
+/* Suppress the global :focus-visible accent outline on form controls ONLY. A
+   field already draws the ring above, so the global rule was stacking a second,
+   clay-coloured frame 2px outside it — the doubled edge is what read as loud.
+   Buttons, links and rail items keep the accent outline: they have no ring of
+   their own, and it is their entire keyboard-focus indicator. */
+.ui-control:focus-visible {
+  outline: none;
 }
 textarea.ui-control {
   padding: 10px 12px;
@@ -863,50 +880,14 @@ button.srow:not(:disabled):hover {
 .main {
   min-width: 0;
 }
-/* The sticky bar above the page. It once held a serif page title as well; that
-   was dropped (it only restated the rail's active item), so the bar now exists
-   only where there is a search box to sticky — the Library and Channels lists.
-   Vertical padding is down from 20px to suit a bar holding one 34px control. */
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 34px;
-  border-bottom: 1px solid var(--color-border-soft);
-  background: color-mix(in srgb, var(--color-bg) 82%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-.topbar-search {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  background: var(--color-panel);
-  border: 1px solid var(--color-border);
-  border-radius: 20px;
-  padding: 8px 14px;
-  width: 260px;
-  color: var(--color-muted);
-}
-.topbar-search input {
-  background: none;
-  border: none;
-  outline: none;
-  color: var(--color-ink);
-  font-family: inherit;
-  font-size: 14px;
-  width: 100%;
-}
-.topbar-search input::placeholder {
-  color: var(--color-faint);
-}
+/* The .topbar/.topbar-search sticky strip that used to live here is gone. It
+   held one 260px pill pushed to the far right of an otherwise empty bar — the
+   furthest point on the page from the chips and results it filtered — and it
+   rendered on only two of eleven views. Search now sits in each list's own
+   .listbar (see .searchfield below), beside the sort control it works with.
 
-/* 32px on top, not 24: most views no longer sit under a top bar at all, and
-   24px read as cramped against the window edge once the header went away. */
+   32px on top, not 24: no view sits under a top bar any more, and 24px read as
+   cramped against the window edge once the header went away. */
 .page {
   padding: 32px 34px 90px;
 }
@@ -1063,14 +1044,82 @@ button.srow:not(:disabled):hover {
   right: 0;
 }
 
-/* listbar — the search + sort row shared by the Library and the channel
-   page's Archive tab. Sits below the filter chips, above the grid. */
+/* listbar — the search + sort row shared by the Library, the Channels list and
+   the channel page's Archive tab. On the two list pages it leads the page,
+   above the filter chips: search and sort act on the whole list, a chip only
+   narrows what they selected. On the Archive tab it sits under the channel
+   tabs, which are the page's own header. */
 .listbar {
   display: flex;
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
   margin-bottom: 18px;
+}
+
+/* searchfield — the search box in a .listbar: a .ui-control input with a
+   leading magnifier and a trailing "/" hint (the key really does focus it).
+   The wrapper is what flexes; the input fills it. It gets flex-basis rather
+   than a fixed width so a narrow window shrinks the field instead of wrapping
+   the sort control onto a line of its own. */
+.searchfield {
+  position: relative;
+  flex: 1 1 240px;
+  min-width: 160px;
+  max-width: var(--searchfield-max, 300px);
+}
+.searchfield input {
+  /* Room for the two overlaid affordances. Overrides .ui-control's 0 12px. */
+  padding-left: 35px;
+  padding-right: 32px;
+}
+.searchfield > svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-muted);
+  /* The icon is decoration over the input — clicks belong to the field. */
+  pointer-events: none;
+}
+.searchfield kbd {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  line-height: 1;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-ui-sm);
+  background: var(--color-bg);
+  color: var(--color-faint);
+  pointer-events: none;
+}
+/* The hint has done its job once you are in the field, and it must not sit
+   under the browser's own clear button once there is text to clear. */
+.searchfield:focus-within kbd,
+.searchfield input:not(:placeholder-shown) ~ kbd {
+  display: none;
+}
+
+/* push-end holds the sort control against the right edge — but only while it
+   shares a line with the search box. Once the row wraps, a right-aligned
+   dropdown floating alone under a left-aligned field reads as a stray control,
+   so the narrow layout gives the field the full width and lets the sort sit
+   under it. There is no touch keyboard on a page this cramped that benefits
+   from a 300px cap. */
+.listbar .push-end {
+  margin-left: auto;
+}
+@media (max-width: 620px) {
+  .searchfield {
+    max-width: none;
+  }
+  .listbar .push-end {
+    margin-left: 0;
+  }
 }
 
 /* Up to three cards across, growing to fill the width rather than auto-filling

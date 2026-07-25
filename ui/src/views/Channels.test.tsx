@@ -669,4 +669,140 @@ describe("Channels", () => {
       expect(revivedRow.className).toContain("sect");
     });
   });
+
+  describe("the toolbar", () => {
+    // rowNames reads the rendered order of the channel list. Ordering is the
+    // whole point of these tests, so they assert on the sequence, never on
+    // mere presence.
+    function rowNames(): string[] {
+      // The name is the <h3>, not the .chan-link inside it — that button only
+      // exists when onOpenChannel is wired, which these renders do not do.
+      return Array.from(document.querySelectorAll(".channel-row h3"))
+        .map((el) => el.textContent?.trim() ?? "")
+        .filter(Boolean);
+    }
+
+    const alpha = baseChannel({
+      id: "a",
+      name: "Alpha",
+      handle: "@alpha",
+      subscribed: true,
+      downloaded_count: 5,
+      pending_count: 1,
+      last_video_at: "2026-07-01 00:00:00",
+      added_at: "2026-01-01 00:00:00",
+    });
+    const mid = baseChannel({
+      id: "m",
+      name: "Mango",
+      handle: "@mango",
+      subscribed: true,
+      downloaded_count: 40,
+      pending_count: 9,
+      last_video_at: "2026-07-20 00:00:00",
+      added_at: "2026-06-01 00:00:00",
+    });
+    // Zulu, not "Zeta": the search test filters on "a", and this row has to be
+    // the one that does not match.
+    const zulu = baseChannel({
+      id: "z",
+      name: "Zulu",
+      handle: "@zulu",
+      subscribed: true,
+      downloaded_count: 1,
+      pending_count: 0,
+      last_video_at: "2026-07-10 00:00:00",
+      added_at: "2026-03-01 00:00:00",
+    });
+
+    beforeEach(() => {
+      // Deliberately not already in name order: a passing A–Z assertion has to
+      // come from the component's own sort, not from the fixture's order.
+      vi.mocked(listChannels).mockResolvedValue([mid, zulu, alpha]);
+    });
+
+    it("defaults to name A–Z, matching the order the API has always returned", async () => {
+      render(<Channels />);
+      await screen.findByText("Alpha");
+      expect(rowNames()).toEqual(["Alpha", "Mango", "Zulu"]);
+    });
+
+    it.each([
+      ["Newest video", ["Mango", "Zulu", "Alpha"]],
+      ["Name Z–A", ["Zulu", "Mango", "Alpha"]],
+      ["Most videos", ["Mango", "Alpha", "Zulu"]],
+      ["Recently added", ["Mango", "Zulu", "Alpha"]],
+      ["Most pending", ["Mango", "Alpha", "Zulu"]],
+    ])("reorders the list for %s", async (label, expected) => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Alpha");
+
+      await user.selectOptions(
+        screen.getByRole("combobox", { name: "Sort" }),
+        label,
+      );
+
+      expect(rowNames()).toEqual(expected);
+    });
+
+    it("sorts what the search box left, not the whole list", async () => {
+      const user = userEvent.setup();
+      // "a" matches Alpha and Mango (by name) but not Zulu.
+      render(<Channels search="a" />);
+      await screen.findByText("Alpha");
+
+      await user.selectOptions(
+        screen.getByRole("combobox", { name: "Sort" }),
+        "Most videos",
+      );
+
+      expect(rowNames()).toEqual(["Mango", "Alpha"]);
+    });
+
+    it("reports typing in the search box to its owner", async () => {
+      const user = userEvent.setup();
+      const onSearchChange = vi.fn();
+      render(<Channels onSearchChange={onSearchChange} />);
+      await screen.findByText("Alpha");
+
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search channels" }),
+        "z",
+      );
+
+      expect(onSearchChange).toHaveBeenCalledWith("z");
+    });
+
+    it("focuses the search box when / is pressed", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Alpha");
+      const box = screen.getByRole("searchbox", { name: "Search channels" });
+      expect(box).not.toHaveFocus();
+
+      await user.keyboard("/");
+
+      expect(box).toHaveFocus();
+    });
+
+    it("leaves / alone while another field has focus", async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <input aria-label="Elsewhere" />
+          <Channels />
+        </>,
+      );
+      await screen.findByText("Alpha");
+      const elsewhere = screen.getByRole("textbox", { name: "Elsewhere" });
+      await user.click(elsewhere);
+
+      await user.keyboard("/");
+
+      // The slash is typed where the user was, and focus never moves.
+      expect(elsewhere).toHaveFocus();
+      expect(elsewhere).toHaveValue("/");
+    });
+  });
 });

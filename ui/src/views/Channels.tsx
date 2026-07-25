@@ -21,6 +21,8 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ChannelDeleteWarning } from "../components/ChannelDeleteWarning";
 import { ReviewBand } from "./ReviewBand";
 import { AutoUnsubscribedSection } from "./AutoUnsubscribedSection";
+import { SearchField } from "../components/SearchField";
+import { controlClass } from "../ui";
 
 // Subscribed leads and is the default: the page is about the channels you
 // follow, and opening on "All" put channels you never subscribed to first.
@@ -37,26 +39,87 @@ const CHIPS: { id: ChannelFilter; label: string }[] = [
   { id: "autodownload", label: "Auto-add" },
 ];
 
-// Channels — added/subscribed channel management: filter chips and a top-bar
-// search box, with each row showing the channel's banner-and-avatar art, its
-// counts, an auto-add marker when autodownload is on, a clickable subscription
-// star, and a ⋮ actions menu (Open, Check now, Delete).
+// CHANNEL_SORTS — the orderings the Channels list offers. All six run
+// client-side: the whole list is already in memory, so sorting it costs a
+// comparison rather than a request, and the API keeps its single ORDER BY.
+//
+// Name A–Z leads and is the default, because it is what the list has always
+// been ordered by (channels.Store.List ends `ORDER BY c.name COLLATE NOCASE`)
+// and because a management list you scan for a known name should not reshuffle
+// itself as channels publish. "Newest video" is the opt-in for "who has been
+// active lately".
+//
+// "Most pending" counts items waiting for a keep/ignore decision in the Inbox
+// — deliberately not labelled "unwatched", which is a different thing the
+// channel list does not carry.
+export type ChannelSort =
+  | "name"
+  | "name_desc"
+  | "newest_video"
+  | "most_videos"
+  | "recently_added"
+  | "most_pending";
+
+export const CHANNEL_SORTS: { id: ChannelSort; label: string }[] = [
+  { id: "name", label: "Name A–Z" },
+  { id: "name_desc", label: "Name Z–A" },
+  { id: "newest_video", label: "Newest video" },
+  { id: "most_videos", label: "Most videos" },
+  { id: "recently_added", label: "Recently added" },
+  { id: "most_pending", label: "Most pending" },
+];
+
+// compareChannels orders two rows for the given sort. Every ordering falls
+// back to name so the list is stable when the primary key ties — without it,
+// the fifty channels that share a zero video count would shuffle on each
+// render.
+function compareChannels(a: Channel, b: Channel, sort: ChannelSort): number {
+  const byName = a.name.localeCompare(b.name, undefined, {
+    sensitivity: "base",
+  });
+  switch (sort) {
+    case "name":
+      return byName;
+    case "name_desc":
+      return -byName;
+    case "newest_video":
+      // A channel with no discovered video sorts last rather than first: an
+      // empty string would otherwise win a descending string compare.
+      return (
+        (b.last_video_at ?? "").localeCompare(a.last_video_at ?? "") || byName
+      );
+    case "most_videos":
+      return b.downloaded_count - a.downloaded_count || byName;
+    case "recently_added":
+      return (b.added_at ?? "").localeCompare(a.added_at ?? "") || byName;
+    case "most_pending":
+      return b.pending_count - a.pending_count || byName;
+  }
+}
+
+// Channels — added/subscribed channel management: a search + sort bar, filter
+// chips, and one row per channel showing its banner-and-avatar art, its counts,
+// an auto-add marker when autodownload is on, a clickable subscription star,
+// and a ⋮ actions menu (Open, Check now, Delete).
 // Adding a channel lives on the Add page; auto-add and the format override live
-// on the channel's own Settings tab, not here. Mirrors Library's chip/search
+// on the channel's own Settings tab, not here. Mirrors Library's toolbar/chip
 // pattern for visual consistency.
 export function Channels({
   onOpenChannel,
   search = "",
+  onSearchChange,
 }: {
   // onOpenChannel — optional: wired by App (Task 11), rendered as channel
   // name links in Task 15.
   onOpenChannel?: (id: string) => void;
-  // search — the top bar's query for this page (the Channels list now shares
-  // Library's top-bar search box). Filters the list by name/handle, client-
-  // side, since the whole list is already in memory.
+  // search/onSearchChange — the page's query, owned by App so that it survives
+  // navigating to a channel and back. Filters by name/handle, client-side,
+  // since the whole list is already in memory.
   search?: string;
+  onSearchChange?: (value: string) => void;
 } = {}) {
   const [filter, setFilter] = useState<ChannelFilter>("subscribed");
+  const [sort, setSort] = useState<ChannelSort>("name");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [error, setError] = useState<string | null>(null);
   // notice carries the outcome of the ⋮ menu's "Check now" — an inline banner
@@ -253,21 +316,47 @@ export function Channels({
   }
 
   // The rendered list: never the dormant channels (they live in the review
-  // band), and — when the top-bar search box has a query — only those whose
-  // name or handle matches it. Filtering is client-side: the whole list is
-  // already loaded, so there is no request to make per keystroke.
+  // band), and — when the search box has a query — only those whose name or
+  // handle matches it, in the chosen order. All of it is client-side: the whole
+  // list is already loaded, so there is no request to make per keystroke.
+  // .filter() already returns a fresh array, so sorting it in place does not
+  // touch the `channels` state.
   const q = search.trim().toLowerCase();
-  const visibleChannels = channels.filter(
-    (c) =>
-      !c.dormant &&
-      (q === "" ||
-        c.name.toLowerCase().includes(q) ||
-        (c.handle ?? "").toLowerCase().includes(q)),
-  );
+  const visibleChannels = channels
+    .filter(
+      (c) =>
+        !c.dormant &&
+        (q === "" ||
+          c.name.toLowerCase().includes(q) ||
+          (c.handle ?? "").toLowerCase().includes(q)),
+    )
+    .sort((a, b) => compareChannels(a, b, sort));
   const hasNonDormant = channels.some((c) => !c.dormant);
 
   return (
     <>
+      {/* Same toolbar as the Library: search left, sort right, chips beneath. */}
+      <div className="listbar">
+        <SearchField
+          value={search}
+          onChange={(v) => onSearchChange?.(v)}
+          placeholder="Search channels"
+          label="Search channels"
+        />
+        <select
+          className={`${controlClass} push-end`}
+          style={{ maxWidth: 190 }}
+          value={sort}
+          onChange={(e) => setSort(e.target.value as ChannelSort)}
+          aria-label="Sort"
+        >
+          {CHANNEL_SORTS.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="chips">
         {CHIPS.map((chip) => (
           <button
