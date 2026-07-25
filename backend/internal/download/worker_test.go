@@ -262,6 +262,10 @@ func TestWorker_success(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	// The worker writes the job terminal state BEFORE the video row (see
+	// waitForVideoStatus), so the job reading "done" does not mean the
+	// download's own writes have landed yet.
+	waitForVideoStatus(t, h, "vid", "downloaded")
 	waitForVideoStatus(t, h, "vid", "downloaded")
 
 	v, err := h.videos.Get("vid")
@@ -395,6 +399,10 @@ func TestWorker_metadataPreflightPopulatesTitle(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "job done", func() bool { return h.jobState(t, job).State == "done" })
+	// The worker writes the job terminal state BEFORE the video row (see
+	// waitForVideoStatus), so the job reading "done" does not mean the
+	// download's own writes have landed yet.
+	waitForVideoStatus(t, h, "vid1", "downloaded")
 
 	v, err := h.videos.Get("vid1")
 	if err != nil {
@@ -435,6 +443,10 @@ func TestWorker_metadataPreflightCachesChannel(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "job done", func() bool { return h.jobState(t, job).State == "done" })
+	// The worker writes the job terminal state BEFORE the video row (see
+	// waitForVideoStatus), so the job reading "done" does not mean the
+	// download's own writes have landed yet.
+	waitForVideoStatus(t, h, "vid1", "downloaded")
 
 	c, err := h.channels.Get("UC123")
 	if err != nil {
@@ -477,6 +489,10 @@ func TestWorker_metadataPreflightWithoutChannelStore(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "job done", func() bool { return h.jobState(t, job).State == "done" })
+	// The worker writes the job terminal state BEFORE the video row (see
+	// waitForVideoStatus), so the job reading "done" does not mean the
+	// download's own writes have landed yet.
+	waitForVideoStatus(t, h, "vid1", "downloaded")
 	c, err := h.channels.Get("UC123")
 	if err != nil {
 		t.Fatalf("get channel: %v", err)
@@ -1096,6 +1112,10 @@ func TestWorker_probesTheFinishedFile(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	// The worker writes the job terminal state BEFORE the video row (see
+	// waitForVideoStatus), so the job reading "done" does not mean the
+	// download's own writes have landed yet.
+	waitForVideoStatus(t, h, "vid", "downloaded")
 	waitForVideoStatus(t, h, "vid", "downloaded")
 	waitFor(t, "probe persisted", func() bool {
 		v, err := h.videos.Get("vid")
@@ -1126,6 +1146,10 @@ func TestWorker_probeFailureIsNotFatal(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	// The worker writes the job terminal state BEFORE the video row (see
+	// waitForVideoStatus), so the job reading "done" does not mean the
+	// download's own writes have landed yet.
+	waitForVideoStatus(t, h, "vid", "downloaded")
 	waitForVideoStatus(t, h, "vid", "downloaded")
 	waitFor(t, "summary enqueued", func() bool { return len(spy.enqueued()) == 1 })
 
@@ -1165,6 +1189,10 @@ func TestWorker_probeFailureKeepsTheValuesFromAnEarlierProbe(t *testing.T) {
 
 	runWorker(t, h.worker)
 	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	// The worker writes the job terminal state BEFORE the video row (see
+	// waitForVideoStatus), so the job reading "done" does not mean the
+	// download's own writes have landed yet.
+	waitForVideoStatus(t, h, "vid", "downloaded")
 	waitForVideoStatus(t, h, "vid", "downloaded")
 
 	v, err := h.videos.Get("vid")
@@ -1185,6 +1213,10 @@ func TestWorker_nilProberSkipsTheProbe(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	// The worker writes the job terminal state BEFORE the video row (see
+	// waitForVideoStatus), so the job reading "done" does not mean the
+	// download's own writes have landed yet.
+	waitForVideoStatus(t, h, "vid", "downloaded")
 	waitForVideoStatus(t, h, "vid", "downloaded")
 
 	v, err := h.videos.Get("vid")
