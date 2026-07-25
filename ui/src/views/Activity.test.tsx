@@ -91,6 +91,29 @@ describe("Activity", () => {
     expect(row.textContent).not.toMatch(/ago/);
   });
 
+  it("puts Recent activity above Up next when both render", async () => {
+    // The log leads the page; the projection follows. Asserted on DOM order
+    // rather than presence, since both sections render either way.
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          at: "2099-01-01 00:00:00",
+          kind: "scan",
+          approx: false,
+          subject: "Veritasium",
+          summary: "channel scan",
+        },
+      ],
+      truncated: 0,
+    });
+    render(<Activity live={[]} {...noProps} />);
+    await screen.findByText("Up next");
+    const titles = Array.from(document.querySelectorAll(".ag-sec-title")).map(
+      (n) => n.textContent,
+    );
+    expect(titles).toEqual(["Recent activity", "Up next"]);
+  });
+
   it("shows an overdue planned item as 'soon', never 'ago'", async () => {
     // A scheduled instant already in the past (the worker hasn't reached it —
     // e.g. YouTube is paused) is still future work; it must read "soon".

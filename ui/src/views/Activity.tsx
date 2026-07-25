@@ -12,11 +12,13 @@ import { summaryPhaseLabel } from "../format";
 
 // Activity — two sections, each with one consistent order (a single folded
 // timeline through a *now* marker reversed direction at the seam, which read as
-// broken). "Up next" (top): running items at the front, then queued/scheduled
-// work soonest-first (the live projection from /api/activity/upcoming plus the
-// running items App holds). "Recent activity" (bottom): what actually happened
-// (the durable log from /api/activity), newest first — a plain feed. It is a
-// pure log — nothing here is actionable — so it deliberately carries no buttons.
+// broken). "Recent activity" (top): what actually happened (the durable log
+// from /api/activity), newest first — a plain feed, and the page's lead, since
+// "what has peeq been up to" is the question this view is opened to answer.
+// "Up next" (bottom): running items at the front, then queued/scheduled work
+// soonest-first (the live projection from /api/activity/upcoming plus the
+// running items App holds). The whole view is read-only — nothing in either
+// section is actionable — so it deliberately carries no buttons.
 //
 // Three disjoint states never render twice: TERMINAL work comes from the event
 // log (Recent activity), RUNNING work from App's live jobs/summaries (top of Up
@@ -292,10 +294,58 @@ export function Activity({
         </p>
       ) : (
         <>
+          {/* RECENT ACTIVITY — the durable log, newest first. A plain feed:
+              scrolling down goes strictly further back in time. It leads the
+              page: what already happened is the answer to "what has peeq been
+              doing", and the projection below is the secondary question. */}
+          {shownPast.length > 0 ? (
+            <section className="ag-section">
+              <div className="ag-sec-head">
+                <h2 className="ag-sec-title">Recent activity</h2>
+                <span className="ag-sec-note">newest first</span>
+              </div>
+
+              <div className="agenda">
+                {shownPast.map((e) => {
+                  const k = kindOf(e.kind);
+                  const detail = eventDetail(e);
+                  return (
+                    <div key={e.id} className={`ag-row ${e.outcome}`}>
+                      <span className="ag-node">
+                        <Icon name={k.icon} size="16px" />
+                      </span>
+                      <div className="ag-body">
+                        <div className="ag-subject">{e.subject || k.label}</div>
+                        {detail ? (
+                          <div className="ag-detail">{detail}</div>
+                        ) : null}
+                      </div>
+                      <span className="ag-when" title={e.at}>
+                        {relTime(parseUTC(e.at), now)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Older rows hidden by the cap sit at the BOTTOM — in a
+                  newest-first feed, the hidden ones are the older ones. */}
+              {moreHistory > 0 || hasMore ? (
+                <div className="ag-edge">
+                  {moreHistory > 0
+                    ? `+${moreHistory} earlier`
+                    : "earlier activity"}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
           {/* UP NEXT — running work first, then queued/scheduled soonest-first.
               A projection, not a log, so it lives in its own section and never
               claims "ago". Hidden entirely under "Problems only" (healthy
-              in-progress work is not a problem) and when nothing is live. */}
+              in-progress work is not a problem) and when nothing is live.
+              Sits below the log; `.ag-section + .ag-section` spaces whichever
+              of the two renders second, so either one alone is still flush. */}
           {showLive && hasUpNext ? (
             <section className="ag-section">
               <div className="ag-sec-head">
@@ -382,50 +432,6 @@ export function Activity({
                   the server's projection cap). Outside .agenda so it has no rail. */}
               {morePlanned > 0 ? (
                 <div className="ag-edge">+{morePlanned} more scheduled</div>
-              ) : null}
-            </section>
-          ) : null}
-
-          {/* RECENT ACTIVITY — the durable log, newest first. A plain feed:
-              scrolling down goes strictly further back in time. */}
-          {shownPast.length > 0 ? (
-            <section className="ag-section">
-              <div className="ag-sec-head">
-                <h2 className="ag-sec-title">Recent activity</h2>
-                <span className="ag-sec-note">newest first</span>
-              </div>
-
-              <div className="agenda">
-                {shownPast.map((e) => {
-                  const k = kindOf(e.kind);
-                  const detail = eventDetail(e);
-                  return (
-                    <div key={e.id} className={`ag-row ${e.outcome}`}>
-                      <span className="ag-node">
-                        <Icon name={k.icon} size="16px" />
-                      </span>
-                      <div className="ag-body">
-                        <div className="ag-subject">{e.subject || k.label}</div>
-                        {detail ? (
-                          <div className="ag-detail">{detail}</div>
-                        ) : null}
-                      </div>
-                      <span className="ag-when" title={e.at}>
-                        {relTime(parseUTC(e.at), now)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Older rows hidden by the cap sit at the BOTTOM — in a
-                  newest-first feed, the hidden ones are the older ones. */}
-              {moreHistory > 0 || hasMore ? (
-                <div className="ag-edge">
-                  {moreHistory > 0
-                    ? `+${moreHistory} earlier`
-                    : "earlier activity"}
-                </div>
               ) : null}
             </section>
           ) : null}

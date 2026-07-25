@@ -318,6 +318,19 @@ button {
   background: var(--color-accent);
   box-shadow: 0 0 10px var(--glow-accent);
 }
+/* Inbox/Queue with nothing in them. Faded rather than disabled — the item is
+   still clickable and the page shows its own empty state — so hover restores
+   full strength to keep the affordance honest. :focus-visible restores it too,
+   and not only for symmetry: opacity fades the global accent focus ring along
+   with the item, so a keyboard user tabbing onto a dimmed item would otherwise
+   get a 42% focus indicator. */
+.rail-nav-item.idle {
+  opacity: 0.42;
+}
+.rail-nav-item.idle:hover,
+.rail-nav-item.idle:focus-visible {
+  opacity: 1;
+}
 .rail-nav-item .rail-nav-count {
   margin-left: auto;
   font-family:
@@ -822,6 +835,10 @@ button.srow:not(:disabled):hover {
 .main {
   min-width: 0;
 }
+/* The sticky bar above the page. It once held a serif page title as well; that
+   was dropped (it only restated the rail's active item), so the bar now exists
+   only where there is a search box to sticky — the Library and Channels lists.
+   Vertical padding is down from 20px to suit a bar holding one 34px control. */
 .topbar {
   position: sticky;
   top: 0;
@@ -829,28 +846,11 @@ button.srow:not(:disabled):hover {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 20px 34px;
+  padding: 14px 34px;
   border-bottom: 1px solid var(--color-border-soft);
   background: color-mix(in srgb, var(--color-bg) 82%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-}
-.topbar h1 {
-  margin: 0;
-  font-family: var(--font-serif);
-  font-size: 26px;
-  letter-spacing: -0.01em;
-  font-weight: 500;
-}
-.topbar h1 em {
-  font-style: normal;
-  color: var(--color-faint);
-  font-weight: 500;
-  font-size: 15px;
-  margin-left: 10px;
-  font-family:
-    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
-    monospace;
 }
 .topbar-search {
   margin-left: auto;
@@ -877,8 +877,10 @@ button.srow:not(:disabled):hover {
   color: var(--color-faint);
 }
 
+/* 32px on top, not 24: most views no longer sit under a top bar at all, and
+   24px read as cramped against the window edge once the header went away. */
 .page {
-  padding: 24px 34px 90px;
+  padding: 32px 34px 90px;
 }
 
 /* ── Library (Task 14): filter chips + video grid. ──────────────────────── */

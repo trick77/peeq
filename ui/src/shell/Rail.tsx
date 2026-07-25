@@ -37,6 +37,9 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     label: "Watch",
     items: [
       { id: "library", label: "Library", icon: "library" },
+      // Channels sits directly under Library: it is the other way you browse
+      // what you already have, not part of collecting more.
+      { id: "channels", label: "Channels", icon: "tv" },
       { id: "player", label: "Now playing", icon: "circlePlay" },
       { id: "search", label: "Search", icon: "search" },
     ],
@@ -46,8 +49,7 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     items: [
       { id: "add", label: "Add", icon: "plus" },
       { id: "inbox", label: "Inbox", icon: "inbox", hot: true },
-      { id: "queue", label: "Queue", icon: "download" },
-      { id: "channels", label: "Channels", icon: "tv" },
+      { id: "queue", label: "Queue", icon: "download", hot: true },
       { id: "activity", label: "Activity", icon: "listTree" },
     ],
   },
@@ -60,16 +62,21 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
 export function Rail({
   active,
   onNavigate,
-  pendingCount = 0,
-  queueCount = 0,
+  pendingCount,
+  queueCount,
   cookieStatus,
   cookieUpdatedAtLabel,
 }: {
   active: ViewId;
   onNavigate: (view: ViewId) => void;
-  /** Badge count for "Inbox" — new uploads awaiting a keep/ignore decision. */
+  /**
+   * Badge count for "Inbox" — new uploads awaiting a keep/ignore decision.
+   * Deliberately not defaulted to 0: `undefined` means "not loaded yet", and
+   * only a real 0 dims the item (see `idle` below). A default would grey the
+   * rail on every cold paint until the first fetch lands.
+   */
   pendingCount?: number;
-  /** Badge count for "Queue" — downloads + summaries in flight. */
+  /** Badge count for "Queue" — downloads + summaries in flight. Same rule. */
   queueCount?: number;
   cookieStatus?: string;
   cookieUpdatedAtLabel?: string;
@@ -101,11 +108,20 @@ export function Rail({
                   : item.id === "queue"
                     ? queueCount
                     : item.count;
+              // Inbox and Queue fade out when there is genuinely nothing in
+              // them, so the rail reads as a to-do list at a glance. They stay
+              // clickable — the page shows its own empty state, and nothing is
+              // ever unreachable. The view you are standing on never dims, so
+              // an empty Queue you navigated to keeps its active marker legible.
+              const idle =
+                (item.id === "inbox" || item.id === "queue") &&
+                count === 0 &&
+                item.id !== active;
               return (
                 <button
                   key={item.id}
                   type="button"
-                  className={`rail-nav-item${item.id === active ? " active" : ""}`}
+                  className={`rail-nav-item${item.id === active ? " active" : ""}${idle ? " idle" : ""}`}
                   onClick={() => onNavigate(item.id)}
                   aria-current={item.id === active ? "page" : undefined}
                 >
