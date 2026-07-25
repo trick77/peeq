@@ -271,38 +271,34 @@ type ListOptions struct {
 // interpolated into SQL, so it must only ever come from this map — never
 // from the caller's string.
 //
-// Two date dimensions, kept apart on purpose. newest/oldest rank by ADDED
-// date (downloaded_at) — the default ordering, because the Library's job is
-// to answer "what's here now that wasn't yesterday", and a 2019 talk fetched
-// this morning is new to this library whatever YouTube says. air_newest/
-// air_oldest rank by RELEASE date (published_at) for when the question is
-// about the video rather than the collection.
+// newest/oldest are the DEFAULT ordering and are restored here byte-for-byte
+// to what they were before #139. That change repointed them at downloaded_at;
+// the resulting grid was wrong in use, so the known-good clause is the one that
+// stands. Do not "fix" it back without watching a real library under it first —
+// this has now been changed twice on reasoning and reverted once on evidence.
 //
-// A sort named for a date ranks by THAT DATE ONLY. These clauses used to
-// COALESCE to created_at when their own date was NULL, which quietly made
-// "air date, newest" order a dateless row by when peeq inserted the row —
-// neither an air date nor an added date, and a value the API does not even
-// expose, so the grid's order disagreed with every label on the card. A row
-// with no air date is not the oldest video in the library; it is a row with no
-// air date, and it sorts last.
+// What it does: rank by release date, falling back to the row's own insertion
+// date when yt-dlp reported none (some live streams and premieres), so a
+// dateless row stays interleaved instead of sinking to one end forever. date()
+// normalizes that fallback — published_at is 'YYYY-MM-DD' while created_at is
+// 'YYYY-MM-DD HH:MM:SS', and comparing the shapes lexically would sort a
+// same-day date-only value before the datetime one. The created_at tiebreak
+// then orders same-day videos by when peeq recorded them, newest first.
 //
-// `x IS NULL` evaluates to 0/1, so putting it first ASCENDING keeps the dated
-// rows ahead of the dateless ones in BOTH directions — a plain `col DESC`
-// would float SQLite's NULLs to the top of the descending sort.
-//
-// downloaded_at is NULL until a download succeeds, so an 'error' row (which
-// the Library still lists — see notInFlight — so it can be retried) has no
-// added date and lands at the end. A re-download restamps downloaded_at
-// (SetDownloaded), so "added" means last fetched, not first acquired: a
-// re-downloaded video is newly on disk and returns to the top. That is the
-// intended reading, not an oversight.
+// added_newest/added_oldest rank by downloaded_at — when peeq actually fetched
+// the file — and are offered in the dropdown rather than as the default. NULL
+// until a download succeeds, so an 'error' row (which the Library still lists,
+// see notInFlight, so it can be retried) has no added date. `x IS NULL`
+// evaluates to 0/1, so putting it first ASCENDING keeps dated rows ahead in
+// BOTH directions; a plain `col DESC` would float SQLite's NULLs to the top.
+// A re-download restamps downloaded_at, so "added" means last fetched.
 var sortClauses = map[string]string{
-	"newest":     "v.downloaded_at IS NULL, v.downloaded_at DESC, v.id DESC",
-	"oldest":     "v.downloaded_at IS NULL, v.downloaded_at ASC, v.id ASC",
-	"air_newest": "v.published_at IS NULL, v.published_at DESC, v.id DESC",
-	"air_oldest": "v.published_at IS NULL, v.published_at ASC, v.id ASC",
-	"longest":    "COALESCE(v.duration_seconds, 0) DESC, v.id DESC",
-	"title":      "v.title COLLATE NOCASE ASC, v.id ASC",
+	"newest":       "COALESCE(v.published_at, date(v.created_at)) DESC, v.created_at DESC, v.id DESC",
+	"oldest":       "COALESCE(v.published_at, date(v.created_at)) ASC, v.created_at ASC, v.id ASC",
+	"added_newest": "v.downloaded_at IS NULL, v.downloaded_at DESC, v.id DESC",
+	"added_oldest": "v.downloaded_at IS NULL, v.downloaded_at ASC, v.id ASC",
+	"longest":      "COALESCE(v.duration_seconds, 0) DESC, v.id DESC",
+	"title":        "v.title COLLATE NOCASE ASC, v.id ASC",
 }
 
 // escapeLike escapes the three characters LIKE treats specially so a user
@@ -340,11 +336,12 @@ const notInFlight = "v.status NOT IN ('new', 'queued', 'downloading')"
 // where it returns the same thing "all" does.
 //   - Category: empty/"all"/unknown ⇒ no category constraint
 //   - Query: case-insensitive substring match against title
-//   - Sort: newest|oldest|air_newest|air_oldest|longest|title; anything else
-//     falls back to newest. newest/oldest order by added date (downloaded_at),
-//     air_newest/air_oldest by release date (published_at). Each ranks by its
-//     own date only; a row missing that date sorts LAST in either direction
-//     rather than borrowing another date. See sortClauses.
+//   - Sort: newest|oldest|added_newest|added_oldest|longest|title; anything
+//     else falls back to newest. newest/oldest are the default and order by
+//     release date (published_at), falling back to created_at for rows with no
+//     known release date. added_newest/added_oldest order by when peeq fetched
+//     the file (downloaded_at), with never-downloaded rows last. See
+//     sortClauses.
 //   - ChannelID/ChannelName: scopes to one channel, matching channel_id or,
 //     for rows written before channel ids were recorded, an exact
 //     channel_name match on rows with an empty channel_id

@@ -34,16 +34,17 @@ function sortKey(i: PendingItem): string {
 // video_id is the final tiebreak everywhere, which is what keeps the grid
 // from reshuffling between renders when the primary keys tie.
 //
-// The added-date ids ("newest"/"oldest") get no arm: INBOX_SORT_OPTIONS never
-// offers them here, since an inbox item has no added date. They would land in
-// default: and order by air date, which is the only honest answer anyway.
+// The added-date ids get no arm: INBOX_SORT_OPTIONS never offers them here,
+// since an inbox item has never been downloaded and so has no added date. They
+// would land in default: and order by publish date, which is the only honest
+// answer anyway.
 function compareBy(
   sort: VideoSort,
 ): (a: PendingItem, b: PendingItem) => number {
   const byID = (a: PendingItem, b: PendingItem) =>
     a.video_id.localeCompare(b.video_id);
   switch (sort) {
-    case "air_oldest":
+    case "oldest":
       return (a, b) => sortKey(a).localeCompare(sortKey(b)) || byID(a, b);
     case "longest":
       return (a, b) =>
@@ -76,11 +77,11 @@ export function Inbox({
   // Download-all action) to one channel.
   const [channel, setChannel] = useState<string>("all");
   // The Library's orderings minus the added-date pair (see
-  // INBOX_SORT_OPTIONS), which is why the default is air_newest rather than
-  // the Library's newest. Applied client-side (unlike Library's `sort` query
-  // param) because /api/pending returns the whole inbox in one unpaged
-  // response — there is nothing for a server-side ORDER BY to win here.
-  const [sort, setSort] = useState<VideoSort>("air_newest");
+  // INBOX_SORT_OPTIONS); "newest" means the same thing here as there. Applied
+  // client-side (unlike Library's `sort` query param) because /api/pending
+  // returns the whole inbox in one unpaged response — there is nothing for a
+  // server-side ORDER BY to win here.
+  const [sort, setSort] = useState<VideoSort>("newest");
   // Bulk state: bulkBusy while the Download-all loop runs; confirmBulk is the
   // inline two-step guard for large batches (a 40-video download is not a
   // click to fire by accident).
