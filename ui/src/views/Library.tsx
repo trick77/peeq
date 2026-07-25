@@ -25,15 +25,16 @@ const CHIPS: { id: VideoFilter; label: string }[] = [
 ];
 
 // SORT_OPTIONS is shared with the channel page's Archive tab so the two
-// lists can never drift apart in wording or in accepted values. Newest/Oldest
-// carry no qualifier because they are the default reading of "new here" — the
-// added date; the air-date pair names its date precisely because it is the
-// exception.
+// lists can never drift apart in wording or in accepted values.
+//
+// Newest/Oldest are the default and carry no qualifier — they are the
+// long-standing ordering the grid is expected to have. The added-date pair is
+// the opt-in, so it names its date.
 export const SORT_OPTIONS: { id: VideoSort; label: string }[] = [
   { id: "newest", label: "Newest first" },
   { id: "oldest", label: "Oldest first" },
-  { id: "air_newest", label: "Air date, newest" },
-  { id: "air_oldest", label: "Air date, oldest" },
+  { id: "added_newest", label: "Recently added" },
+  { id: "added_oldest", label: "Added, oldest first" },
   { id: "longest", label: "Longest first" },
   { id: "title", label: "Title A–Z" },
 ];
@@ -44,7 +45,7 @@ export const SORT_OPTIONS: { id: VideoSort; label: string }[] = [
 // lives beside SORT_OPTIONS rather than in Inbox.tsx so the two lists stay
 // adjacent and cannot drift.
 export const INBOX_SORT_OPTIONS = SORT_OPTIONS.filter(
-  (o) => o.id !== "newest" && o.id !== "oldest",
+  (o) => o.id !== "added_newest" && o.id !== "added_oldest",
 );
 
 // matchesFilter mirrors videos.Store.List's SQL WHERE clauses exactly (see

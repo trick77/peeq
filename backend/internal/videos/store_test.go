@@ -1024,12 +1024,12 @@ func TestList_sort_ordersRows(t *testing.T) {
 		sort string
 		want []string
 	}{
-		{"newest", []string{"a2", "c1", "b3"}},     // downloaded_at DESC
-		{"oldest", []string{"b3", "c1", "a2"}},     // downloaded_at ASC
-		{"air_newest", []string{"c1", "a2", "b3"}}, // published_at DESC
-		{"air_oldest", []string{"b3", "a2", "c1"}}, // published_at ASC
-		{"longest", []string{"c1", "b3", "a2"}},    // duration DESC
-		{"title", []string{"a2", "b3", "c1"}},      // title NOCASE ASC
+		{"newest", []string{"c1", "a2", "b3"}},       // published_at DESC
+		{"oldest", []string{"b3", "a2", "c1"}},       // published_at ASC
+		{"added_newest", []string{"a2", "c1", "b3"}}, // downloaded_at DESC
+		{"added_oldest", []string{"b3", "c1", "a2"}}, // downloaded_at ASC
+		{"longest", []string{"c1", "b3", "a2"}},      // duration DESC
+		{"title", []string{"a2", "b3", "c1"}},        // title NOCASE ASC
 	}
 	for _, tc := range cases {
 		got, err := s.List(ListOptions{Sort: tc.sort})
@@ -1108,77 +1108,74 @@ func ids(vs []Video) []string {
 	return out
 }
 
-// TestList_airSort_undatedRowsSortLast pins the rule these sorts exist to
-// obey: a sort named for a date ranks by THAT DATE ONLY.
+// TestList_newest_ranksByReleaseDate pins the DEFAULT ordering: release date,
+// newest first, with created_at as the fallback for a row yt-dlp gave no date
+// for.
 //
-// These clauses used to COALESCE to created_at, which ranked an undated row by
-// when peeq inserted it — a value the API does not expose, so the row's
-// position in the grid agreed with nothing on its card. The fixture makes that
-// concrete: `nodate`'s created_at sits deliberately BETWEEN the two real air
-// dates, so the old behaviour put it in the middle. It belongs at the end.
-func TestList_airSort_undatedRowsSortLast(t *testing.T) {
-	// Given: two rows with air dates, and one with none whose created_at would
-	// have placed it between them under the old fallback.
+// This is the guard against changing it a third time. It was repointed at
+// downloaded_at once (#139) on the argument that "new to this library" is what
+// the grid should answer; run against a real library that ordering was wrong,
+// and it was reverted. Reasoning lost to evidence — leave it alone.
+func TestList_newest_ranksByReleaseDate(t *testing.T) {
+	// Given: an old talk fetched recently, and a fresh upload fetched long ago.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "oldtalk", PublishedAt: "2019-05-01", CreatedAt: "2026-03-01 00:00:00", DownloadedAt: "2026-03-01 09:00:00", Status: "downloaded"})
+	seedVideo(t, s, Video{ID: "freshupload", PublishedAt: "2026-02-20", CreatedAt: "2026-02-20 00:00:00", DownloadedAt: "2026-02-20 09:00:00", Status: "downloaded"})
+
+	// When/Then: the default ranks by when it AIRED, so the fresh upload wins
+	// even though the old talk arrived more recently.
+	got, err := s.List(ListOptions{Sort: "newest"})
+	if err != nil {
+		t.Fatalf("list newest: %v", err)
+	}
+	if want := []string{"freshupload", "oldtalk"}; !slices.Equal(ids(got), want) {
+		t.Fatalf("newest order = %v, want %v", ids(got), want)
+	}
+
+	// ...and the opt-in added-date sort is where "what arrived last" lives.
+	got, err = s.List(ListOptions{Sort: "added_newest"})
+	if err != nil {
+		t.Fatalf("list added_newest: %v", err)
+	}
+	if want := []string{"oldtalk", "freshupload"}; !slices.Equal(ids(got), want) {
+		t.Fatalf("added_newest order = %v, want %v", ids(got), want)
+	}
+}
+
+// TestList_newest_missingReleaseDate_fallsBackToCreatedAt asserts a row with no
+// known release date (yt-dlp reports none for some live streams and premieres)
+// takes the position its insertion date implies, interleaved with the dated
+// rows rather than sinking to one end of the grid. The fixture puts `nodate`'s
+// created_at deliberately BETWEEN the two real air dates.
+func TestList_newest_missingReleaseDate_fallsBackToCreatedAt(t *testing.T) {
 	s := newTestStore(t)
 	seedVideo(t, s, Video{ID: "recent", PublishedAt: "2026-03-01", CreatedAt: "2026-03-02 00:00:00", Status: "downloaded"})
 	seedVideo(t, s, Video{ID: "nodate", CreatedAt: "2026-02-01 12:00:00", Status: "downloaded"})
 	seedVideo(t, s, Video{ID: "older", PublishedAt: "2026-01-01", CreatedAt: "2026-01-02 00:00:00", Status: "downloaded"})
 
-	// When/Then: newest-aired first, and the undated row is last...
-	got, err := s.List(ListOptions{Sort: "air_newest"})
-	if err != nil {
-		t.Fatalf("list air_newest: %v", err)
-	}
-	if want := []string{"recent", "older", "nodate"}; !slices.Equal(ids(got), want) {
-		t.Fatalf("air_newest order = %v, want %v", ids(got), want)
-	}
-
-	// ...and it is STILL last when the direction flips. A row with no air date
-	// is not the oldest video in the library; it is a row with no air date.
-	got, err = s.List(ListOptions{Sort: "air_oldest"})
-	if err != nil {
-		t.Fatalf("list air_oldest: %v", err)
-	}
-	if want := []string{"older", "recent", "nodate"}; !slices.Equal(ids(got), want) {
-		t.Fatalf("air_oldest order = %v, want %v", ids(got), want)
-	}
-}
-
-// TestList_newest_ranksByAddedDateNotRelease is the regression guard for the
-// behaviour this sort exists to provide: a video published years ago but
-// fetched this morning is new to THIS library and belongs at the top, which is
-// the opposite of what the release-date clause does with it.
-func TestList_newest_ranksByAddedDateNotRelease(t *testing.T) {
-	// Given: an old talk downloaded recently, and a fresh upload downloaded
-	// long ago.
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "oldtalk", PublishedAt: "2019-05-01", CreatedAt: "2026-03-01 00:00:00", DownloadedAt: "2026-03-01 09:00:00", Status: "downloaded"})
-	seedVideo(t, s, Video{ID: "freshupload", PublishedAt: "2026-02-20", CreatedAt: "2026-02-20 00:00:00", DownloadedAt: "2026-02-20 09:00:00", Status: "downloaded"})
-
-	// When/Then: newest puts the recently-added old talk first...
 	got, err := s.List(ListOptions{Sort: "newest"})
 	if err != nil {
 		t.Fatalf("list newest: %v", err)
 	}
-	if len(got) != 2 || got[0].ID != "oldtalk" {
-		t.Fatalf("newest order = %+v, want oldtalk first", got)
+	if want := []string{"recent", "nodate", "older"}; !slices.Equal(ids(got), want) {
+		t.Fatalf("newest order = %v, want %v", ids(got), want)
 	}
 
-	// ...while the release-date sort still ranks it last.
-	got, err = s.List(ListOptions{Sort: "air_newest"})
+	// And the same fallback applies in the other direction.
+	got, err = s.List(ListOptions{Sort: "oldest"})
 	if err != nil {
-		t.Fatalf("list air_newest: %v", err)
+		t.Fatalf("list oldest: %v", err)
 	}
-	if len(got) != 2 || got[0].ID != "freshupload" {
-		t.Fatalf("air_newest order = %+v, want freshupload first", got)
+	if want := []string{"older", "nodate", "recent"}; !slices.Equal(ids(got), want) {
+		t.Fatalf("oldest order = %v, want %v", ids(got), want)
 	}
 }
 
-// TestList_addedSort_undatedRowsSortLast is the added-date half of the same
-// rule. An 'error' row never downloaded, so it has no added date — and the
-// Library still lists it (see notInFlight) so it can be retried. Its created_at
-// is again placed between the two real download times to prove the fallback is
-// gone.
+// TestList_addedSort_undatedRowsSortLast covers the opt-in added-date pair. An
+// 'error' row never downloaded, so it has no added date — and the Library still
+// lists it (see notInFlight) so it can be retried. Its created_at sits between
+// the two real download times, so a row landing in the middle would mean the
+// clause had fallen back to created_at rather than ranking undated rows last.
 func TestList_addedSort_undatedRowsSortLast(t *testing.T) {
 	// Given: two downloaded rows and one failed row that never downloaded.
 	s := newTestStore(t)
@@ -1187,20 +1184,20 @@ func TestList_addedSort_undatedRowsSortLast(t *testing.T) {
 	seedVideo(t, s, Video{ID: "older", CreatedAt: "2026-01-01 00:00:00", DownloadedAt: "2026-01-02 00:00:00", Status: "downloaded"})
 
 	// When/Then: last in both directions, never in the middle.
-	got, err := s.List(ListOptions{Sort: "newest"})
+	got, err := s.List(ListOptions{Sort: "added_newest"})
 	if err != nil {
-		t.Fatalf("list newest: %v", err)
+		t.Fatalf("list added_newest: %v", err)
 	}
 	if want := []string{"recent", "older", "failed"}; !slices.Equal(ids(got), want) {
-		t.Fatalf("newest order = %v, want %v", ids(got), want)
+		t.Fatalf("added_newest order = %v, want %v", ids(got), want)
 	}
 
-	got, err = s.List(ListOptions{Sort: "oldest"})
+	got, err = s.List(ListOptions{Sort: "added_oldest"})
 	if err != nil {
-		t.Fatalf("list oldest: %v", err)
+		t.Fatalf("list added_oldest: %v", err)
 	}
 	if want := []string{"older", "recent", "failed"}; !slices.Equal(ids(got), want) {
-		t.Fatalf("oldest order = %v, want %v", ids(got), want)
+		t.Fatalf("added_oldest order = %v, want %v", ids(got), want)
 	}
 }
 
