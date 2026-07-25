@@ -115,9 +115,11 @@ export function formatAgo(
 // until the library card started showing two dates at once and needed both
 // forms in one line.
 //
-// Two deliberate differences from formatAgo, both depended on by callers:
-// unknown input reads "—" rather than "" (it fills a stat cell, which must not
-// collapse), and the month bucket is uncapped.
+// Two differences from formatAgo. Unknown input reads "—" rather than "" — a
+// caller depends on that (Channel.tsx's stat cell must not collapse). The
+// uncapped month bucket is not intentional, just inherited: past ~345 days it
+// reads "12 mo ago" where formatAgo caps at 11. Preserved on the move so this
+// stayed a relocation; worth aligning separately.
 export function formatAge(
   iso: string | undefined,
   now: Date = new Date(),
