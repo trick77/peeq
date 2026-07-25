@@ -1050,15 +1050,53 @@ func TestWorker_probeFailureIsNotFatal(t *testing.T) {
 	waitForVideoStatus(t, h, "vid", "downloaded")
 	waitFor(t, "summary enqueued", func() bool { return len(spy.enqueued()) == 1 })
 
-	// The attempt is still recorded, or the backfill sweep would retry this
-	// file on every boot forever.
-	waitFor(t, "attempt recorded", func() bool {
-		v, err := h.videos.Get("vid")
-		return err == nil && v != nil && v.ProbedAt != ""
-	})
-	v, _ := h.videos.Get("vid")
+	// Nothing is written, so probed_at stays NULL and the backfill sweep picks
+	// the video up. The sweep IS the retry; stamping here would suppress it.
+	v, err := h.videos.Get("vid")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.ProbedAt != "" {
+		t.Fatalf("failed probe stamped probed_at; the sweep will never retry it: %+v", v)
+	}
 	if v.MediaContainer != "" || v.VideoCodec != "" {
 		t.Fatalf("failed probe wrote values: %+v", v)
+	}
+}
+
+// A re-download re-probes a row that may ALREADY hold good facts. A transient
+// ffprobe failure must not blank them — and must not stamp probed_at either,
+// or the sweep could never repair what it wiped.
+func TestWorker_probeFailureKeepsTheValuesFromAnEarlierProbe(t *testing.T) {
+	h := newHarness(t, probeRunner(), func(d *Deps) {
+		d.Prober = &stubProber{err: errors.New("ffprobe: temporarily unavailable")}
+	})
+	id := h.enqueue(t, "vid", 0)
+
+	// Stand in for a successful probe on the first download.
+	if err := h.videos.SetProbed("vid", videos.ProbeResult{
+		Container: "mp4", VideoCodec: "h264", VideoHeight: 1080, AudioCodec: "aac",
+	}); err != nil {
+		t.Fatalf("seed earlier probe: %v", err)
+	}
+	before, err := h.videos.Get("vid")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+
+	runWorker(t, h.worker)
+	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	waitForVideoStatus(t, h, "vid", "downloaded")
+
+	v, err := h.videos.Get("vid")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.MediaContainer != "mp4" || v.VideoCodec != "h264" || v.VideoHeight != 1080 || v.AudioCodec != "aac" {
+		t.Fatalf("a failed re-probe wiped good values: %+v", v)
+	}
+	if v.ProbedAt != before.ProbedAt {
+		t.Errorf("probed_at moved on a failed probe: %q -> %q", before.ProbedAt, v.ProbedAt)
 	}
 }
 

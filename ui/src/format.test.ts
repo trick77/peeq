@@ -196,9 +196,16 @@ describe("resolutionLabel", () => {
     expect(resolutionLabel(1440)).toBe("1440p");
   });
 
-  it("calls 2160 and above 4K, the name people actually use", () => {
+  it("uses the names people say for the two heights that have one", () => {
     expect(resolutionLabel(2160)).toBe("4K");
-    expect(resolutionLabel(4320)).toBe("4K");
+    expect(resolutionLabel(4320)).toBe("8K");
+  });
+
+  // Matched exactly, not by threshold: a `>= 2160` test labels an 8K file
+  // "4K" — the same class of lie the strip replaced format_used to avoid.
+  it("does not sweep taller heights into the 4K label", () => {
+    expect(resolutionLabel(2880)).toBe("2880p");
+    expect(resolutionLabel(4320)).not.toBe("4K");
   });
 
   // Odd heights are reported as they are rather than rounded into a lie.

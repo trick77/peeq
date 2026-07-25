@@ -655,15 +655,28 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 	})
 }
 
-// probeProbeTimeout bounds the inline probe of a just-finished download. The
-// file is local and already written, so this only ever fires if ffprobe is
-// wedged; the download itself is long since done by then.
-const probeProbeTimeout = 30 * time.Second
+// probeProbeTimeout bounds the inline probe of a just-finished download.
+// Deliberately short: this call sits inside the single-concurrency download
+// loop, before the job is settled, so the timeout is also the worst case for
+// how long a wedged ffprobe can stop the queue claiming work. The file is
+// local and already written, so a healthy probe takes milliseconds; anything
+// slower than this is left to the backfill sweep, which blocks nothing.
+const probeProbeTimeout = 5 * time.Second
 
-// probeDownloaded reads the finished file's media facts and records the
-// attempt. Nothing here is fatal: a failure stores a zero result, which still
-// stamps probed_at so the backfill loop does not re-probe a file that just
-// told us it cannot be read.
+// probeDownloaded reads the finished file's media facts and stores them.
+// Nothing here is fatal.
+//
+// A failure writes NOTHING — unlike the backfill sweep, which stores a zero
+// result to stamp probed_at and stop retrying. The two differ because their
+// starting points differ: the sweep only ever sees rows with no values, so a
+// zero write loses nothing, while this runs after re-downloads too, where the
+// row may already hold good facts from an earlier probe. Overwriting those
+// with blanks on a transient ffprobe failure would also stamp probed_at,
+// which is exactly what stops the sweep from ever repairing the row.
+//
+// Writing nothing leaves probed_at NULL on a first download, so the sweep
+// picks the video up and retries — and leaves the previous values intact on a
+// re-download. Both are the recoverable outcome.
 func (w *Worker) probeDownloaded(videoID, mediaPath string) {
 	if w.deps.Prober == nil || mediaPath == "" {
 		return
@@ -673,8 +686,9 @@ func (w *Worker) probeDownloaded(videoID, mediaPath string) {
 
 	info, err := w.deps.Prober.Probe(ctx, mediaPath)
 	if err != nil {
-		w.deps.Logger.Warn("download worker: probe failed", "video_id", videoID, "err", err)
-		info = mediaprobe.Info{}
+		w.deps.Logger.Warn("download worker: probe failed; leaving it to the backfill sweep",
+			"video_id", videoID, "err", err)
+		return
 	}
 	if err := w.deps.Videos.SetProbed(videoID, mediaprobe.StoreResult(info)); err != nil {
 		w.deps.Logger.Error("download worker: store probe failed", "video_id", videoID, "err", err)

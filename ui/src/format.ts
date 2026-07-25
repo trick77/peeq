@@ -190,14 +190,19 @@ export function codecLabel(raw: string | undefined): string {
   return CODEC_LABELS[raw.toLowerCase()] ?? raw.toUpperCase();
 }
 
-// resolutionLabel names a pixel height the way people say it. 2160 is the one
-// height with a common name of its own; everything else takes the "p" form,
-// including odd ones (a 1082px-tall re-encode reads "1082p", which is strange
-// but true, and better than rounding it into a lie).
+// NAMED_HEIGHTS are the two heights people call by a name rather than a
+// number. Matched exactly, not by threshold: a >= 2160 test labels a 4320p
+// file "4K", which is precisely the "the strip says something the file isn't"
+// problem this strip exists to fix.
+const NAMED_HEIGHTS: Record<number, string> = { 2160: "4K", 4320: "8K" };
+
+// resolutionLabel names a pixel height the way people say it. Everything
+// outside the two named heights takes the "p" form, including odd ones (a
+// 1082px-tall re-encode reads "1082p", which is strange but true, and better
+// than rounding it into a lie).
 export function resolutionLabel(height: number | undefined): string {
   if (!height || height <= 0) return "";
-  if (height >= 2160) return "4K";
-  return `${height}p`;
+  return NAMED_HEIGHTS[height] ?? `${height}p`;
 }
 
 // formatSize renders a byte count: one decimal for GB, whole units below. A
