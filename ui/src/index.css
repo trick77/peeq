@@ -2775,6 +2775,14 @@ textarea.cookiebox:focus {
   background: var(--color-elevated-hover);
   color: var(--color-ink);
 }
+/* Hairline fencing the destructive entry off from the ordinary ones. Inset
+   from the popover's edges so it reads as a rule between items, not a border
+   across the whole surface. */
+.rowmenu-sep {
+  height: 1px;
+  margin: 4px 9px;
+  background: var(--color-elevated-border);
+}
 /* The one destructive entry: muted red at rest, solid-red on hover. */
 .rowmenu button.danger {
   color: #e79393;

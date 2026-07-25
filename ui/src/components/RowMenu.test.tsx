@@ -50,6 +50,39 @@ describe("RowMenu", () => {
     );
   });
 
+  it("fences the danger action off with a separator above it", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole("button", { name: "Actions for X" }));
+    const menu = screen.getByRole("menu");
+    expect(
+      Array.from(menu.children).map((el) => el.getAttribute("role")),
+    ).toEqual(["menuitem", "separator", "menuitem"]);
+  });
+
+  it("omits the separator when there is no danger action", async () => {
+    const user = userEvent.setup();
+    setup({
+      actions: [
+        { label: "Subscribe", icon: "star", onClick: vi.fn() },
+        { label: "Open", icon: "link", onClick: vi.fn() },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Actions for X" }));
+    expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+  });
+
+  it("omits the separator when the danger action leads the menu", async () => {
+    const user = userEvent.setup();
+    setup({
+      actions: [
+        { label: "Delete", icon: "trash", danger: true, onClick: vi.fn() },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Actions for X" }));
+    expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+  });
+
   it("Escape closes the menu and returns focus to the trigger", async () => {
     const user = userEvent.setup();
     setup();
