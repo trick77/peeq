@@ -236,13 +236,15 @@ func (r *Runner) pauseGate() error {
 // nextSlot keeps callers exactly as far apart as before. It only added latency.
 //
 // Interactive callers skip the queue. A call a person is waiting on (ctx
-// carries WithInteractive: the add-download and add-channel handlers) claims
-// its slot from the last ADMITTED call rather than from the queue tail, so on a
-// busy Runner it waits one gap instead of inheriting however many background
-// reservations happen to be outstanding — and on an idle one, nothing. Without
-// this a button press could sit behind the download worker, the scan scheduler
-// and the metadata refresher and take minutes to answer — on the request's own
-// context, so a proxy timeout turns a merely-queued call into a visible failure.
+// carries WithInteractive: the add-download and add-channel handlers, and the
+// download worker when the job it is running was asked for by a person — see
+// WithInteractive) claims its slot from the last ADMITTED call rather than from
+// the queue tail, so on a busy Runner it waits one gap instead of inheriting
+// however many background reservations happen to be outstanding — and on an
+// idle one, nothing. Without this a button press could sit behind the download
+// worker, the scan scheduler and the metadata refresher and take minutes to
+// answer — and for the handlers that is on the request's own context, so a
+// proxy timeout turns a merely-queued call into a visible failure.
 //
 // The cost, stated plainly: a background reservation already made for a time
 // inside the interactive call's gap is NOT pushed back — it is asleep and
@@ -324,10 +326,18 @@ type interactiveKey struct{}
 // and every other self-scheduled call stay on the background lane — which is
 // what the old wording was actually protecting.
 //
-// The trade-off, stated plainly: the interactive lane keeps its own tail, so
-// approving ten videos at once puts ten jobs in it, and a click arriving right
-// after them waits behind all ten. That shape is rare enough to watch rather
-// than pre-solve; the fix, if it bites, is a third tier.
+// The trade-off, stated plainly: the lane keeps its own tail, and an approved
+// download now pushes it. On a busy Runner that call takes slot now+gap and
+// leaves nextInteractiveSlot at now+2gap, so a click landing inside that window
+// is bumped to it and waits up to one gap longer than it used to — and a job
+// whose title is still unknown makes two such calls (metadata preflight, then
+// the download), pushing the tail again. On an idle Runner it costs nothing.
+//
+// That is the price of not having a person's download queue behind a robot's,
+// and it is bounded by how many approved calls are in flight at once rather
+// than by how many videos were approved: enqueuing ten rows is not ten
+// reservations. Worth watching rather than pre-solving; the fix, if it bites,
+// is a third tier — true clicks ahead of approved downloads ahead of scans.
 func WithInteractive(ctx context.Context) context.Context {
 	return context.WithValue(ctx, interactiveKey{}, true)
 }
