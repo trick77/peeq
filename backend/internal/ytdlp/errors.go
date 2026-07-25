@@ -83,10 +83,13 @@ func (e *ExecError) Unwrap() error { return e.Err }
 // is the expected, boring outcome for most channels rather than a fault —
 // callers use it to keep an ordinary scan quiet.
 //
-// It is a LOGGING distinction only, never a correctness one: the caller must
-// treat any streams-tab failure as "no streams" so a reworded yt-dlp message
-// costs log noise and nothing else. The string match is deliberately loose on
-// the tab name for the same reason.
+// On the STREAMS side it is a logging distinction only: the caller treats any
+// streams-tab failure as "no streams", so a reworded yt-dlp message costs log
+// noise and nothing else. On the UPLOADS side it is correctness-bearing — it is
+// what stops a channel with no /videos tab (one that publishes only
+// livestreams) from failing every scan — so a reworded message there costs that
+// channel its scannability. The string match is deliberately loose on the tab
+// name to keep that as unlikely as possible; widen it, never narrow it.
 func IsMissingTab(err error) bool {
 	var ee *ExecError
 	if !errors.As(err, &ee) {

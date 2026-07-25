@@ -488,6 +488,83 @@ func TestScan_baselineCoversStreamsTab(t *testing.T) {
 	}
 }
 
+// TestScan_baseline_streamsFailure_doesNotBaselineHalfAChannel: a baseline is
+// the ONE listing that must be complete — every id it fails to see counts as
+// new on the next pass. Swallowing a transient /streams failure here would
+// stamp baselined_at from an uploads-only snapshot and then dump the channel's
+// whole back catalogue of VODs into the inbox on the following scan.
+func TestScan_baseline_streamsFailure_doesNotBaselineHalfAChannel(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "upload01", DurationSeconds: 600, LiveStatus: "not_live"}})
+	h.lister.setStreams("UC1", nil)
+	h.lister.streamErr = errors.New("some transient yt-dlp hiccup")
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err == nil {
+		t.Fatal("a baseline pass must fail rather than snapshot half a channel")
+	}
+	if st := h.ledgerStateOrAbsent("upload01"); st != "" {
+		t.Fatalf("failed baseline must record nothing; upload01 = %q", st)
+	}
+	// Still unbaselined, so a later pass gets to take the full snapshot.
+	sub2, _ := h.channels.ClaimDue("2999-01-01 00:00:00")
+	if sub2 != nil && sub2.BaselinedAt != "" {
+		t.Fatalf("baselined_at = %q, want unset after a failed baseline", sub2.BaselinedAt)
+	}
+}
+
+// TestScan_baseline_missingStreamsTab_stillBaselines: the strictness above is
+// about UNCERTAINTY, not about the streams call failing. A channel that has
+// never gone live has no tab to list and nothing to miss, so the common case
+// must still baseline on the first pass.
+func TestScan_baseline_missingStreamsTab_stillBaselines(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	// The harness lister already errors on /streams the way yt-dlp does.
+	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "upload01", DurationSeconds: 600, LiveStatus: "not_live"}})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatalf("a missing streams tab must not fail the baseline: %v", err)
+	}
+	if st := h.ledgerState("upload01"); st != "seen" {
+		t.Fatalf("upload01 state = %q, want seen", st)
+	}
+	sub2, _ := h.channels.ClaimDue("2999-01-01 00:00:00")
+	if sub2 != nil && sub2.BaselinedAt == "" {
+		t.Fatal("baselined_at must be set after the first scan")
+	}
+}
+
+// TestScan_missingVideosTab_streamOnlyChannelStillScans is the case this whole
+// feature exists for, taken to its limit: a channel that publishes ONLY
+// livestreams has no /videos tab at all, and yt-dlp refuses that call exactly
+// the way it refuses /streams elsewhere. Treating it as fatal would return
+// before the streams call and leave such a channel permanently unscannable.
+func TestScan_missingVideosTab_streamOnlyChannelStillScans(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.err = &ytdlp.ExecError{
+		Err:    errors.New("exit status 1"),
+		Stderr: "ERROR: [youtube:tab] UC1: This channel does not have a videos tab",
+	}
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
+		{ID: "vod00001", Title: "Sunday stream", DurationSeconds: 7200, LiveStatus: "was_live"},
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatalf("a missing videos tab must not fail the scan: %v", err)
+	}
+	if h.lister.streamCalls != 1 {
+		t.Fatalf("streams calls = %d, want 1 — the streams tab must still be listed", h.lister.streamCalls)
+	}
+	if st := h.ledgerState("vod00001"); st != "pending" {
+		t.Fatalf("stream state = %q, want pending", st)
+	}
+}
+
 // TestScan_missingStreamsTab_scanStillSucceeds covers the majority of channels:
 // they have never gone live, so yt-dlp fails the /streams call outright. That
 // must not fail the scan or cost the channel its uploads.

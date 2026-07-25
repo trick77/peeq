@@ -155,6 +155,11 @@ func pickBanner(thumbs []channelThumb, uncropped string) string {
 // tab via a single flat-playlist call. The /videos tab carries ordinary uploads
 // only — shorts and livestreams have their own tabs — so shorts stay excluded
 // by construction, and stream VODs come from ChannelStreams instead.
+//
+// The mirror of ChannelStreams' warning applies here too: a channel whose
+// output is entirely livestreams has no /videos tab, and yt-dlp fails this call
+// outright (IsMissingTab recognises it). Callers must treat that as "no
+// uploads", not as a broken scan.
 func (r *Runner) ChannelVideos(ctx context.Context, ucid string, n int) ([]ChannelEntry, error) {
 	return r.channelTab(ctx, ucid, "videos", n)
 }
@@ -163,11 +168,11 @@ func (r *Runner) ChannelVideos(ctx context.Context, ucid string, n int) ([]Chann
 // tab — the livestream counterpart of ChannelVideos, same call shape, same flat
 // listing. The tab mixes finished VODs with currently-live and scheduled items;
 // LiveStatus is what tells them apart, and deciding which are worth recording
-// is the caller's job (see scan.recordable).
+// is the caller's job (see scan.isUnfinishedStream).
 //
 // A channel that has never streamed has NO /streams tab, and yt-dlp fails the
-// call outright. Callers must treat such a failure as "no streams", not as a
-// broken scan.
+// call outright (IsMissingTab recognises it). Callers must treat such a failure
+// as "no streams", not as a broken scan.
 func (r *Runner) ChannelStreams(ctx context.Context, ucid string, n int) ([]ChannelEntry, error) {
 	return r.channelTab(ctx, ucid, "streams", n)
 }
