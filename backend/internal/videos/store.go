@@ -923,9 +923,14 @@ RETURNING state_version`
 //   - The check is "!=", not "<". Behind and ahead are both "not the version I
 //     validated against"; an ahead-version echo can only come from a client that
 //     read a row this one has never seen.
-//   - Only the auto-watch branch bumps state_version. A plain position write is
-//     not a watched-state transition, and bumping on every resume ping would
-//     invalidate every other client's echo instantly (see migration 0010).
+//   - Only a genuine unwatched -> watched transition bumps state_version. A
+//     plain position write is not a watched-state transition, and bumping on
+//     every resume ping would invalidate every other client's echo instantly
+//     (see migration 0010). That includes the pings AFTER the threshold has
+//     already been crossed: every one of them is "auto-watched" by the ratio
+//     test, so bumping on the ratio rather than on the transition would turn the
+//     whole last 10% of a video into exactly the 409 storm 0010 rules out. Hence
+//     the `watched = 0` guard on the bump.
 //
 // Returns the row's state_version after the write and whether the video is
 // watched, so the caller can hand both back to the client that just pinged —
@@ -965,7 +970,7 @@ func (s *Store) SetResume(id string, position float64, expectVersion *int64) (in
 		err = tx.QueryRowContext(ctx, `
 UPDATE videos
 SET resume_position_seconds = ?, watched = 1, watched_at = COALESCE(watched_at, datetime('now')),
-	state_version = state_version + 1
+	state_version = state_version + (CASE WHEN watched = 0 THEN 1 ELSE 0 END)
 WHERE id = ?
 RETURNING state_version`, position, id).Scan(&version)
 		watched = 1

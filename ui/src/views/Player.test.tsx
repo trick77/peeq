@@ -819,6 +819,48 @@ describe("Player", () => {
     await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 95, 9));
   });
 
+  it("adopts the version a flush returns, so the next write never 409s against it", async () => {
+    // The tab-hide flush writes the same position the throttled ping does, so
+    // past 90% it is just as capable of crossing the auto-watch threshold and
+    // bumping state_version server-side. Dropping that response would leave the
+    // ref stale and make the next ping 409 against this Player's own flush —
+    // pausing, rewinding and falsely blaming another device.
+    vi.mocked(setResume).mockReset();
+    vi.mocked(setResume).mockResolvedValue({
+      position: 40,
+      state_version: 1,
+      watched: false,
+    });
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 40,
+      writable: true,
+    });
+    // A first ping, so a position is known and the flush is allowed to write.
+    fireEvent.timeUpdate(videoEl);
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 40, 1));
+
+    // This flush is the one that crosses the threshold: the server auto-marks
+    // watched and bumps the version.
+    vi.mocked(setResume).mockResolvedValue({
+      position: 40,
+      state_version: 9,
+      watched: true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 40, 1));
+
+    // The next write must carry the version that flush handed back.
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 40, 9));
+  });
+
   it("pauses, rewinds and says so when a resume ping is refused as stale", async () => {
     // Issue #97 from this client's side: the video was marked watched
     // somewhere this Player never saw, so its position was refused with a 409.

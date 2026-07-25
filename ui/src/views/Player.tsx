@@ -262,11 +262,22 @@ export function Player({
       // cleanup, where there is no component left to toast and no playhead left
       // to rewind. A refused flush simply means the position the server already
       // holds is the right one.
-      setResume(
-        video.id,
-        positionRef.current,
-        stateVersionRef.current ?? undefined,
-      ).catch(() => {});
+      //
+      // An ACCEPTED flush must still adopt the version it hands back, exactly
+      // like the throttled ping does: past the 90% threshold this write
+      // auto-marks watched server-side and bumps state_version, so dropping the
+      // response would leave the ref stale and make the very next ping 409
+      // against this Player's own flush — pausing, rewinding to 0:00 and
+      // claiming the video was "marked watched on another device". Guarded on
+      // openVideoIdRef so a late response can't write this video's version into
+      // the ref after the user has moved to another one.
+      const id = video.id;
+      setResume(id, positionRef.current, stateVersionRef.current ?? undefined)
+        .then((res) => {
+          if (openVideoIdRef.current !== id) return;
+          stateVersionRef.current = res.state_version;
+        })
+        .catch(() => {});
     }
     document.addEventListener("visibilitychange", flush);
     window.addEventListener("pagehide", flush);

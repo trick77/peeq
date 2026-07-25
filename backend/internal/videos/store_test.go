@@ -468,8 +468,19 @@ func TestSetResume_onlyAutoWatchBumps(t *testing.T) {
 
 	// And the self-409 this is all designed to avoid: the same client's next
 	// ping echoes the version the auto-watch handed back, and is accepted.
-	if _, _, err := s.SetResume("v", 96, &bumped); err != nil {
+	again, watched, err := s.SetResume("v", 96, &bumped)
+	if err != nil {
 		t.Fatalf("next ping after auto-watch: %v, want accepted — a client must never 409 against its own threshold crossing", err)
+	}
+	if !watched {
+		t.Fatalf("watched = false, want true — the row is already watched")
+	}
+	// And it must NOT bump again. Every ping in the last 10% satisfies the
+	// >=90% ratio, so bumping on the ratio rather than on the unwatched->watched
+	// transition would invalidate every other client's echo once per ping — the
+	// 409 storm migration 0010 exists to avoid.
+	if again != bumped {
+		t.Fatalf("state_version = %d, want it unchanged at %d — only the transition bumps", again, bumped)
 	}
 }
 
