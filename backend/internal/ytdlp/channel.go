@@ -36,7 +36,17 @@ type flatEntry struct {
 	Duration   float64 `json:"duration"`
 	LiveStatus string  `json:"live_status"`
 	Timestamp  int64   `json:"timestamp"`
-	Thumbnails []struct {
+	// ReleaseTimestamp is when a broadcast went live, and is the ONLY date a
+	// /streams entry is guaranteed to carry: approximate_date derives timestamp
+	// from the relative-time text on an upload card, and a stream card carries
+	// "streamed 2 years ago" instead. Read as a fallback, never a replacement —
+	// timestamp is the better answer whenever it is present.
+	//
+	// Without this fallback a stream VOD reaches the scanner with no date at
+	// all, and every date-based decision there fails open. That is what turns a
+	// missing field into a fifty-item inbox.
+	ReleaseTimestamp int64 `json:"release_timestamp"`
+	Thumbnails       []struct {
 		URL string `json:"url"`
 	} `json:"thumbnails"`
 }
@@ -57,6 +67,19 @@ var approximateDateArgs = []string{"--extractor-args", "youtubetab:approximate_d
 // rest of peeq stores dates in (matching normalizeUploadDate's output). UTC,
 // so the same listing yields the same date regardless of host timezone.
 // Returns "" for a missing or non-positive timestamp.
+// firstTimestamp returns the first positive value, so a caller can express
+// "prefer timestamp, fall back to release_timestamp" without repeating the
+// >0 test that unixToDate already owns. Returns 0 when none is positive,
+// which unixToDate renders as the honest "" (date unknown).
+func firstTimestamp(candidates ...int64) int64 {
+	for _, ts := range candidates {
+		if ts > 0 {
+			return ts
+		}
+	}
+	return 0
+}
+
 func unixToDate(ts int64) string {
 	if ts <= 0 {
 		return ""
@@ -218,7 +241,7 @@ func (r *Runner) channelTab(ctx context.Context, ucid, tab string, n int) ([]Cha
 			DurationSeconds: int(e.Duration),
 			ThumbnailURL:    thumb,
 			LiveStatus:      e.LiveStatus,
-			PublishedAt:     unixToDate(e.Timestamp),
+			PublishedAt:     unixToDate(firstTimestamp(e.Timestamp, e.ReleaseTimestamp)),
 		})
 	}
 	return entries, nil

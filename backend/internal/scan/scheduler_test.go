@@ -1874,3 +1874,114 @@ func TestScan_requestArrivingMidPassSurvives(t *testing.T) {
 		t.Fatalf("scan_requested_at = %q, want cleared once answered", got)
 	}
 }
+
+// TestScan_backCatalogue_isNotNew is the regression for the flood: adding the
+// /streams tab made a source visible that no already-baselined channel had ever
+// been listed against, so its entire history was absent from the ledger and
+// every VOD in it read as brand new. baselined_at is 2026-07-19 12:00 here, so
+// the cutoff (grace included) is 2026-07-16.
+func TestScan_backCatalogue_isNotNew(t *testing.T) {
+	cases := []struct {
+		name      string
+		published string
+		want      string
+	}{
+		{"years old", "2019-03-04", "seen"},
+		{"just before the cutoff", "2026-07-15", "seen"},
+		{"just after the cutoff", "2026-07-17", "pending"},
+		{"published today", "2026-07-19", "pending"},
+		// Fails OPEN: an undated entry is a nuisance in the inbox, but marking
+		// it 'seen' would be terminal and lose a real video.
+		{"undated", "", "pending"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newScanHarness(t)
+			h.trackAndSubscribe("UC1", false, "")
+			h.markBaselined("UC1", nil)
+			h.lister.setStreams("UC1", []ytdlp.ChannelEntry{{
+				ID: "vod00001", Title: "Stream", DurationSeconds: 7200,
+				LiveStatus: "was_live", PublishedAt: tc.published,
+			}})
+			sub, _ := h.channels.ClaimDue(h.nowStr())
+			if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+				t.Fatal(err)
+			}
+			if st := h.ledgerState("vod00001"); st != tc.want {
+				t.Fatalf("published %q → state %q, want %q", tc.published, st, tc.want)
+			}
+		})
+	}
+}
+
+// TestScan_backCatalogue_autodownloadDoesNotDownloadHistory covers the
+// expensive half of the same bug: on an autodownload channel the back
+// catalogue was not merely offered, it was queued for real download. This is
+// why the gate sits BEFORE the autodownload branch.
+func TestScan_backCatalogue_autodownloadDoesNotDownloadHistory(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", true, "")
+	h.markBaselined("UC1", nil)
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
+		{ID: "oldvod01", DurationSeconds: 7200, LiveStatus: "was_live", PublishedAt: "2018-01-01"},
+		{ID: "newvod01", DurationSeconds: 7200, LiveStatus: "was_live", PublishedAt: "2026-07-19"},
+	})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.ledgerState("oldvod01"); st != "seen" {
+		t.Fatalf("old vod state = %q, want seen", st)
+	}
+	if st := h.ledgerState("newvod01"); st != "queued" {
+		t.Fatalf("new vod state = %q, want queued", st)
+	}
+	jobsList, _ := h.jobs.List()
+	if len(jobsList) != 1 {
+		t.Fatalf("jobs = %d, want exactly 1 (only the genuinely new vod)", len(jobsList))
+	}
+}
+
+// TestScan_backCatalogue_doesNotStrandAnAiringStream pins the branch ORDER. A
+// broadcast running right now is dated by when it STARTED, which can predate
+// the baseline; if the back-catalogue gate ran before the unfinished-stream
+// check it would write a terminal 'seen' row and the stream would be lost for
+// good once it ended — the exact silent loss #142 was written to prevent.
+func TestScan_backCatalogue_doesNotStrandAnAiringStream(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{{
+		ID: "vod00001", Title: "Marathon", DurationSeconds: 0,
+		LiveStatus: "is_live", PublishedAt: "2026-07-10", // started before the cutoff
+	}})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.ledgerStateOrAbsent("vod00001"); st != "" {
+		t.Fatalf("airing stream state = %q, want no row at all", st)
+	}
+}
+
+// TestScan_backCatalogue_firstPassStillBaselines: a channel being followed for
+// the first time has no baselined_at to compare against, and the baseline
+// branch already owns that case. The gate must not disturb it.
+func TestScan_backCatalogue_firstPassStillBaselines(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
+		{ID: "vod00001", DurationSeconds: 7200, LiveStatus: "was_live", PublishedAt: "2019-01-01"},
+	})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.ledgerState("vod00001"); st != "seen" {
+		t.Fatalf("state = %q, want seen", st)
+	}
+	sub2, _ := h.channels.GetSubscription("UC1")
+	if sub2 == nil || sub2.BaselinedAt == "" {
+		t.Fatal("baselined_at must be stamped by the first pass")
+	}
+}

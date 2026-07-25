@@ -522,3 +522,40 @@ func TestChannelVideos_requestsApproximateDates(t *testing.T) {
 		t.Fatalf("url is not the final arg: %s", args)
 	}
 }
+
+// TestChannelStreams_dateFallsBackToReleaseTimestamp guards the field the
+// scan-backlog gate depends on. approximate_date derives `timestamp` from the
+// relative-time text on an upload card; a stream card says "streamed 2 years
+// ago" instead, and yt-dlp reports that as release_timestamp. Without the
+// fallback a stream VOD arrives undated, every date-based decision downstream
+// fails open, and a whole back catalogue reads as brand new.
+func TestChannelStreams_dateFallsBackToReleaseTimestamp(t *testing.T) {
+	// 1583280000 = 2020-03-04, 1751328000 = 2025-07-01 (both UTC).
+	const listing = `{"id":"UCabc","channel":"Chan","entries":[
+	  {"id":"vod00000001","title":"Only release","live_status":"was_live","release_timestamp":1583280000},
+	  {"id":"vod00000002","title":"Both, timestamp wins","live_status":"was_live","timestamp":1751328000,"release_timestamp":1583280000},
+	  {"id":"vod00000003","title":"Neither","live_status":"was_live"}
+	]}`
+	r := New(RunnerConfig{
+		Bin:            fakeBinPrinting(t, listing),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	got, err := r.ChannelStreams(context.Background(), "UCabc", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].PublishedAt != "2020-03-04" {
+		t.Fatalf("release-only date = %q, want 2020-03-04", got[0].PublishedAt)
+	}
+	// timestamp is the better answer whenever present: release_timestamp is when
+	// the broadcast STARTED, which for a multi-day premiere is not publication.
+	if got[1].PublishedAt != "2025-07-01" {
+		t.Fatalf("both-present date = %q, want timestamp to win", got[1].PublishedAt)
+	}
+	// Undated must stay "" rather than becoming the epoch — the scan gate reads
+	// "" as "cannot judge" and fails open, which is the safe direction.
+	if got[2].PublishedAt != "" {
+		t.Fatalf("undated date = %q, want empty", got[2].PublishedAt)
+	}
+}
