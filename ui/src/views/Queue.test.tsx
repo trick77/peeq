@@ -52,6 +52,24 @@ describe("Queue", () => {
     expect(within(row).getByText(/62%/)).toHaveTextContent("00:41");
   });
 
+  // yt-dlp only reports a speed and an eta once a download is properly under
+  // way, so the first ticks arrive with the percent alone. Neither separator
+  // may show up on its own then — a trailing "3% ·" reads like a truncation.
+  it("shows only the percent while speed and eta are still unknown", () => {
+    render(
+      <Queue
+        jobs={[job({ job_id: 4, title: "Just started" })]}
+        progressByJobId={{ 4: { percent: 3, speed: "", eta: "" } }}
+        summaries={[]}
+        onCancel={noop}
+      />,
+    );
+    const row = screen
+      .getByText("Just started")
+      .closest(".qrow") as HTMLElement;
+    expect(row.querySelector(".qstate")?.textContent).toBe("3%");
+  });
+
   it("labels a queued (not running) download as Queued, no bar", () => {
     render(
       <Queue

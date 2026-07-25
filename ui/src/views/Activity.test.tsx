@@ -15,6 +15,7 @@ vi.mock("../api", () => ({
 }));
 
 import { listActivity, listUpcoming } from "../api";
+import { DOT } from "../sep";
 
 function ev(overrides: Partial<ActivityEvent> = {}): ActivityEvent {
   return {
@@ -173,6 +174,35 @@ describe("Activity", () => {
     ) as HTMLElement;
     expect(row.classList.contains("running")).toBe(true);
     expect(row.textContent).toMatch(/40%/);
+  });
+
+  // The detail line is assembled from three optional fragments, each carrying
+  // its own leading separator. Whichever ones yt-dlp has not reported yet must
+  // drop out cleanly rather than leave a dangling "· " behind them.
+  it("drops the eta fragment while the eta is still unknown", async () => {
+    render(
+      <Activity
+        live={[]}
+        jobs={[
+          {
+            job_id: 6,
+            video_id: "v6",
+            title: "No eta yet",
+            state: "running",
+            priority: 10,
+            attempts: 0,
+          } as Job,
+        ]}
+        progressByJobId={{ 6: { percent: 12, speed: "2MiB/s", eta: "" } }}
+        summaries={[]}
+      />,
+    );
+    const row = (await screen.findByText("No eta yet")).closest(
+      ".ag-row",
+    ) as HTMLElement;
+    expect(row.querySelector(".ag-detail")?.textContent).toBe(
+      `Downloading${DOT}12%${DOT}2MiB/s`,
+    );
   });
 
   it("problems-only hides ok events, the future half, and running work", async () => {

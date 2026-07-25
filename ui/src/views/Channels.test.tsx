@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Channels } from "./Channels";
 import type { Channel } from "../api/types";
+import { DOT } from "../sep";
 
 function baseChannel(overrides: Partial<Channel> = {}): Channel {
   return {
@@ -88,6 +89,30 @@ describe("Channels", () => {
     render(<Channels />);
     expect(await screen.findByText("Tracked Channel")).toBeInTheDocument();
     expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
+  });
+
+  // The counts line reads "@handle · N pending · N downloaded". A channel
+  // whose handle YouTube never gave us leads with the counts instead — the
+  // separator belongs to the handle, so it has to go when the handle does.
+  it("puts the handle at the head of the counts line, or nothing", async () => {
+    vi.mocked(listChannels).mockResolvedValue([
+      baseChannel({ pending_count: 2, downloaded_count: 2 }),
+      baseChannel({ id: "c3", name: "Nameless", handle: "" }),
+    ]);
+    render(<Channels />);
+    const withHandle = (await screen.findByText("Tracked Channel")).closest(
+      ".channel-row",
+    ) as HTMLElement;
+    expect(withHandle.querySelector(".channel-by")?.textContent).toBe(
+      `@trackedguy${DOT}2 pending${DOT}2 downloaded`,
+    );
+
+    const noHandle = screen
+      .getByText("Nameless")
+      .closest(".channel-row") as HTMLElement;
+    expect(noHandle.querySelector(".channel-by")?.textContent).toBe(
+      `3 pending${DOT}0 downloaded`,
+    );
   });
 
   it("clicking a tracked channel's star calls subscribeChannel", async () => {
