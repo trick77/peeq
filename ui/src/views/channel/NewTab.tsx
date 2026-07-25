@@ -4,30 +4,8 @@ import { Icon } from "../../icons";
 import { listPending, downloadPending, ignorePending } from "../../api/pending";
 import { scanChannel } from "../../api/channels";
 import { formatAgo, formatDuration } from "../../format";
+import { isCheckQueued, scanNotice, scheduleLine } from "./schedule";
 import type { ChannelDetail, PendingItem } from "../../api/types";
-
-// scheduleLine renders the "last checked / next check" sentence shown in
-// both the populated and the empty state. next_scan_at in the past means the
-// scheduler simply has not reached this channel yet.
-function scheduleLine(detail: ChannelDetail): string {
-  const parts: string[] = [];
-  if (detail.last_scanned_at) {
-    parts.push(
-      `Checked ${new Date(detail.last_scanned_at + "Z").toLocaleString()}`,
-    );
-  } else {
-    parts.push("Never checked");
-  }
-  if (detail.next_scan_at) {
-    const next = new Date(detail.next_scan_at + "Z").getTime();
-    parts.push(
-      next <= Date.now()
-        ? "next check due now"
-        : `next check ${new Date(next).toLocaleString()}`,
-    );
-  }
-  return parts.join(" · ");
-}
 
 export function NewTab({
   detail,
@@ -60,13 +38,11 @@ export function NewTab({
     setError(null);
     try {
       const res = await scanChannel(detail.id);
-      // The scheduler polls for due channels rather than being told to run,
-      // so a successful call means "queued", never "done".
-      setNotice(
-        res.status === "blocked"
-          ? (res.reason ?? "peeq cannot check this channel right now.")
-          : "Checking soon — peeq will look for new videos on its next pass.",
-      );
+      // The scheduler polls for due channels rather than being told to run, so a
+      // successful call means "queued", never "done" — scanNotice is worded that
+      // way, and onChanged refetches so the button settles into its Queued state
+      // from the server's own next_scan_at rather than a local flag.
+      setNotice(scanNotice(res));
       onChanged();
     } catch (e) {
       setError((e as Error).message);
@@ -89,14 +65,31 @@ export function NewTab({
     }
   }
 
+  // Queued comes from the server's schedule, not from having just clicked: a
+  // reload, or a second tab, shows the same state. It parks there until the scan
+  // lands and pushes next_scan_at back into the future — no spinner, because
+  // nothing is running yet; the channel is in line.
+  //
+  // Deliberately still clickable while queued. An overdue next_scan_at also
+  // describes a channel the loop CANNOT reach — a dead cookie or the kill-switch
+  // parks the loop, and next_scan_at then sits in the past indefinitely.
+  // Disabling would leave the user staring at "Queued" forever with no way to
+  // find out why; pressing again is idempotent on the server and surfaces the
+  // blocked reason that explains it.
+  const queued = isCheckQueued(detail);
   const checkNow = (
     <Button
       type="button"
       variant="secondary"
       busy={scanning}
       onClick={handleScan}
+      title={
+        queued
+          ? "Waiting for the next scan pass — press to check again"
+          : undefined
+      }
     >
-      <Icon name="clock" size="16px" /> Check now
+      <Icon name="clock" size="16px" /> {queued ? "Queued" : "Check now"}
     </Button>
   );
 

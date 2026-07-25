@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
@@ -33,6 +34,10 @@ type fakeLister struct {
 	entries  map[string][]ytdlp.ChannelEntry
 	calls    int
 	panicMsg string
+	// err, when set, is returned instead of entries — a plain (unclassified)
+	// listing failure, which is what the default branch of scanChannel's error
+	// classification handles.
+	err error
 }
 
 func newFakeLister() *fakeLister {
@@ -52,7 +57,37 @@ func (f *fakeLister) ChannelVideos(_ context.Context, ucid string, _ int) ([]ytd
 	if f.panicMsg != "" {
 		panic(f.panicMsg)
 	}
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.entries[ucid], nil
+}
+
+// fakeRecorder captures the activity rows a scan pass writes, so a test can
+// assert on the feed the user actually sees. Concurrency-safe for the same
+// reason fakeLister is: the goroutine-driven tests share it.
+type fakeRecorder struct {
+	mu     sync.Mutex
+	events []activity.Event
+}
+
+func (r *fakeRecorder) Record(e activity.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, e)
+}
+
+// scanEvents returns the captured rows of kind "scan".
+func (r *fakeRecorder) scanEvents() []activity.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []activity.Event
+	for _, e := range r.events {
+		if e.Kind == activity.KindScan {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // failOnceJobs wraps a real jobs store and fails the first Enqueue, then
@@ -83,6 +118,7 @@ type scanHarness struct {
 	jobs         *jobs.Store
 	settings     *settings.Store
 	lister       *fakeLister
+	activity     *fakeRecorder
 	sched        *Scheduler
 	cookieStatus string
 }
@@ -107,6 +143,7 @@ func newScanHarness(t *testing.T) *scanHarness {
 		jobs:         jobs.New(db),
 		settings:     settings.New(db),
 		lister:       newFakeLister(),
+		activity:     &fakeRecorder{},
 		cookieStatus: "valid",
 	}
 	h.sched = h.buildSched(h.jobs)
@@ -124,6 +161,7 @@ func (h *scanHarness) buildSched(j JobEnqueuer) *Scheduler {
 		Settings:     h.settings,
 		Lister:       h.lister,
 		CookieStatus: func(context.Context) string { return h.cookieStatus },
+		Activity:     h.activity,
 		Now:          func() time.Time { return fixedNow },
 		PollInterval: 5 * time.Millisecond,
 	})
@@ -193,6 +231,21 @@ func (h *scanHarness) ledgerState(videoID string) string {
 	return e.State
 }
 
+// ledgerStateOrAbsent is ledgerState for assertions where "no row at all" is a
+// legitimate outcome — an unfinished stream is deliberately not recorded, so the
+// absence itself is the thing under test. Returns "" when there is no row.
+func (h *scanHarness) ledgerStateOrAbsent(videoID string) string {
+	h.t.Helper()
+	e, err := h.ledger.Get(videoID)
+	if err != nil {
+		h.t.Fatalf("get ledger %s: %v", videoID, err)
+	}
+	if e == nil {
+		return ""
+	}
+	return e.State
+}
+
 func TestScan_firstRunBaseline_queuesNothing(t *testing.T) {
 	h := newScanHarness(t)
 	h.trackAndSubscribe("UC1", false /*autodownload*/, "" /*format*/)
@@ -233,7 +286,7 @@ func TestScan_subsequentNewVideo_pendingVsAutodownload(t *testing.T) {
 		{ID: "old1", DurationSeconds: 600, LiveStatus: "not_live"},  // dedup: skip
 		{ID: "newp", DurationSeconds: 600, LiveStatus: "not_live"},  // NEW → pending
 		{ID: "short", DurationSeconds: 60, LiveStatus: "not_live"},  // <180s → seen
-		{ID: "up", DurationSeconds: 600, LiveStatus: "is_upcoming"}, // upcoming → seen
+		{ID: "up", DurationSeconds: 600, LiveStatus: "is_upcoming"}, // upcoming → no row at all
 	})
 	sub, _ := h.channels.ClaimDue(h.nowStr())
 	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
@@ -243,13 +296,16 @@ func TestScan_subsequentNewVideo_pendingVsAutodownload(t *testing.T) {
 	if len(p) != 1 || p[0].VideoID != "newp" {
 		t.Fatalf("pending = %+v, want [newp]", p)
 	}
-	// Filtered-out ids must be 'seen' specifically (not merely non-pending:
-	// 'ignored' would also pass ListPending but means something else).
+	// A duration-filtered id must be 'seen' specifically (not merely non-pending:
+	// 'ignored' would also pass ListPending but means something else). 'seen' is
+	// terminal, which is correct here — a 60s video will not grow longer.
 	if st := h.ledgerState("short"); st != "seen" {
 		t.Fatalf("short state = %q, want seen", st)
 	}
-	if st := h.ledgerState("up"); st != "seen" {
-		t.Fatalf("up state = %q, want seen", st)
+	// An unfinished stream must leave NO ledger row: 'seen' is terminal, so
+	// recording one would lose the video permanently once the stream ended.
+	if st := h.ledgerStateOrAbsent("up"); st != "" {
+		t.Fatalf("upcoming state = %q, want no row", st)
 	}
 	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
 		t.Fatalf("non-autodownload must not enqueue; got %d jobs", len(jobsList))
@@ -1187,5 +1243,298 @@ func TestScan_autodownloadDoesNotSeedVideoPublishedAt(t *testing.T) {
 	}
 	if v.PublishedAt != "" {
 		t.Fatalf("videos.published_at = %q, want empty until real metadata arrives", v.PublishedAt)
+	}
+}
+
+// requestScan marks the subscription as having a user waiting on it, exactly as
+// the "Check now" endpoint does, and leaves next_scan_at due.
+func (h *scanHarness) requestScan(ucid string) {
+	h.t.Helper()
+	if err := h.channels.RequestScan(ucid, h.nowStr()); err != nil {
+		h.t.Fatalf("request scan %s: %v", ucid, err)
+	}
+}
+
+// scanRequestedAt reads the raw marker column, so a test can assert it was
+// cleared rather than inferring it from behaviour.
+func (h *scanHarness) scanRequestedAt(ucid string) string {
+	h.t.Helper()
+	var v sql.NullString
+	if err := h.db.QueryRow(
+		`SELECT scan_requested_at FROM subscriptions WHERE channel_id = ?`, ucid,
+	).Scan(&v); err != nil {
+		h.t.Fatalf("read scan_requested_at %s: %v", ucid, err)
+	}
+	return v.String
+}
+
+func TestScan_requestedScan_reportsNothingNew(t *testing.T) {
+	// The bug this fixes: a user pressed "Check now", the pass found nothing, and
+	// the silence rule left them with no evidence the check ever happened.
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", []string{"old1"})
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "old1", DurationSeconds: 600, LiveStatus: "not_live"}, // known → nothing new
+	})
+	h.requestScan("UC1")
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	h.sched.scanChannel(context.Background(), sub)
+
+	ev := h.activity.scanEvents()
+	if len(ev) != 1 {
+		t.Fatalf("scan events = %+v, want exactly one receipt", ev)
+	}
+	if ev[0].Outcome != activity.OutcomeOK {
+		t.Fatalf("outcome = %q, want ok", ev[0].Outcome)
+	}
+	if ev[0].Summary != "checked on request" || ev[0].Detail != "nothing new" {
+		t.Fatalf("row = %q / %q, want \"checked on request\" / \"nothing new\"", ev[0].Summary, ev[0].Detail)
+	}
+	if ev[0].SubjectID != "UC1" {
+		t.Fatalf("subject id = %q, want UC1 (the agenda links it)", ev[0].SubjectID)
+	}
+	// Spent: the next automatic pass must not re-announce itself as this answer.
+	if got := h.scanRequestedAt("UC1"); got != "" {
+		t.Fatalf("scan_requested_at = %q, want cleared", got)
+	}
+}
+
+func TestScan_automaticScan_staysSilentWhenNothingNew(t *testing.T) {
+	// The silence rule itself must survive: an unrequested pass that finds
+	// nothing writes nothing, or the agenda becomes a wall of "0 new".
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", []string{"old1"})
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "old1", DurationSeconds: 600, LiveStatus: "not_live"},
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	h.sched.scanChannel(context.Background(), sub)
+
+	if ev := h.activity.scanEvents(); len(ev) != 0 {
+		t.Fatalf("scan events = %+v, want none for an automatic nothing-new pass", ev)
+	}
+}
+
+func TestScan_requestedScan_newVideoReportsTheVideoNotAReceipt(t *testing.T) {
+	// A requested pass that DID find something already answers the user with the
+	// normal "N new" row — it must not also emit the nothing-new receipt.
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "newp", DurationSeconds: 600, LiveStatus: "not_live"},
+	})
+	h.requestScan("UC1")
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	h.sched.scanChannel(context.Background(), sub)
+
+	ev := h.activity.scanEvents()
+	if len(ev) != 1 {
+		t.Fatalf("scan events = %+v, want exactly one row", ev)
+	}
+	if ev[0].Summary != "1 new" {
+		t.Fatalf("summary = %q, want \"1 new\"", ev[0].Summary)
+	}
+}
+
+func TestScan_requestedScanFailure_recordsCheckFailedAndClearsMarker(t *testing.T) {
+	// Without this the marker would survive the failure and some later automatic
+	// pass would report itself as the answer to a request the user already saw
+	// fail — worse than the silence being fixed.
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.err = errors.New("yt-dlp exploded")
+	h.requestScan("UC1")
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	h.sched.scanChannel(context.Background(), sub)
+
+	ev := h.activity.scanEvents()
+	if len(ev) != 1 {
+		t.Fatalf("scan events = %+v, want one failure row", ev)
+	}
+	if ev[0].Outcome != activity.OutcomeFail {
+		t.Fatalf("outcome = %q, want fail", ev[0].Outcome)
+	}
+	if ev[0].Summary != "check failed" {
+		t.Fatalf("summary = %q, want \"check failed\" (the user pressed a button)", ev[0].Summary)
+	}
+	if got := h.scanRequestedAt("UC1"); got != "" {
+		t.Fatalf("scan_requested_at = %q, want cleared even on failure", got)
+	}
+}
+
+func TestScan_automaticFailure_keepsScanFailedWording(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.err = errors.New("yt-dlp exploded")
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	h.sched.scanChannel(context.Background(), sub)
+
+	ev := h.activity.scanEvents()
+	if len(ev) != 1 || ev[0].Summary != "scan failed" {
+		t.Fatalf("scan events = %+v, want one \"scan failed\" row", ev)
+	}
+}
+
+func TestScan_requestedScan_paused_reportsInsteadOfSilence(t *testing.T) {
+	// A kill-switch pause deliberately records nothing on a background pass. A
+	// requested one must still answer, or the user waits on a check that will
+	// never run.
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.err = ytdlp.ErrPaused
+	h.requestScan("UC1")
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	h.sched.scanChannel(context.Background(), sub)
+
+	ev := h.activity.scanEvents()
+	if len(ev) != 1 || ev[0].Summary != "check failed" || ev[0].Detail != "YouTube access is paused" {
+		t.Fatalf("scan events = %+v, want a paused check-failed row", ev)
+	}
+	if got := h.scanRequestedAt("UC1"); got != "" {
+		t.Fatalf("scan_requested_at = %q, want cleared", got)
+	}
+}
+
+func TestScan_automaticScan_paused_staysSilent(t *testing.T) {
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.err = ytdlp.ErrPaused
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	h.sched.scanChannel(context.Background(), sub)
+
+	if ev := h.activity.scanEvents(); len(ev) != 0 {
+		t.Fatalf("scan events = %+v, want none (a pause is not a failure)", ev)
+	}
+}
+
+func TestScan_liveEntry_notRecorded_thenPickedUpWhenFinished(t *testing.T) {
+	// The permanent-loss bug: 'seen' is terminal, so a stream snapshotted while
+	// live used to vanish for good — even after it became an ordinary video.
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "stream1", Title: "Launch stream", DurationSeconds: 0, LiveStatus: "is_live"},
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.ledgerStateOrAbsent("stream1"); st != "" {
+		t.Fatalf("live entry state = %q, want no row so a later pass reconsiders it", st)
+	}
+
+	// The stream ends: same id, now an ordinary finished video.
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "stream1", Title: "Launch stream", DurationSeconds: 7200, LiveStatus: "was_live"},
+	})
+	if _, err := h.db.Exec(
+		`UPDATE subscriptions SET next_scan_at = ? WHERE channel_id = ?`, h.nowStr(), "UC1",
+	); err != nil {
+		t.Fatal(err)
+	}
+	sub2, _ := h.channels.ClaimDue(h.nowStr())
+	if sub2 == nil {
+		t.Fatal("subscription must be due again")
+	}
+	if err := h.sched.scanOnce(context.Background(), sub2); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := h.ledger.ListPending()
+	if len(p) != 1 || p[0].VideoID != "stream1" {
+		t.Fatalf("pending = %+v, want the finished stream to land in the inbox", p)
+	}
+}
+
+func TestPassesFilters(t *testing.T) {
+	// passesFilters had no dedicated test; the duration floor's fail-open branch
+	// in particular was only exercised incidentally.
+	const minDuration = 180
+	cases := []struct {
+		name string
+		e    ytdlp.ChannelEntry
+		want bool
+	}{
+		{"ordinary video", ytdlp.ChannelEntry{DurationSeconds: 600, LiveStatus: "not_live"}, true},
+		{"finished stream", ytdlp.ChannelEntry{DurationSeconds: 7200, LiveStatus: "was_live"}, true},
+		{"exactly at the floor", ytdlp.ChannelEntry{DurationSeconds: 180, LiveStatus: "not_live"}, true},
+		{"below the floor", ytdlp.ChannelEntry{DurationSeconds: 179, LiveStatus: "not_live"}, false},
+		{"zero duration fails open", ytdlp.ChannelEntry{DurationSeconds: 0, LiveStatus: "not_live"}, true},
+		{"live", ytdlp.ChannelEntry{DurationSeconds: 600, LiveStatus: "is_live"}, false},
+		{"upcoming", ytdlp.ChannelEntry{DurationSeconds: 600, LiveStatus: "is_upcoming"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := passesFilters(c.e, minDuration); got != c.want {
+				t.Fatalf("passesFilters = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsLiveOrUpcoming(t *testing.T) {
+	for status, want := range map[string]bool{
+		"is_live":     true,
+		"is_upcoming": true,
+		"was_live":    false,
+		"not_live":    false,
+		"":            false,
+	} {
+		if got := isLiveOrUpcoming(ytdlp.ChannelEntry{LiveStatus: status}); got != want {
+			t.Fatalf("isLiveOrUpcoming(%q) = %v, want %v", status, got, want)
+		}
+	}
+}
+
+func TestScan_requestArrivingMidPassSurvives(t *testing.T) {
+	// End to end through the scheduler: the pass that did not see the request
+	// must leave both the marker and the due-now schedule alone, so the loop
+	// re-claims the channel and the user still gets their answer.
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", []string{"old1"})
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "old1", DurationSeconds: 600, LiveStatus: "not_live"},
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	// The click lands after the claim, before the pass finishes.
+	h.requestScan("UC1")
+	h.sched.scanChannel(context.Background(), sub)
+
+	if got := h.scanRequestedAt("UC1"); got == "" {
+		t.Fatal("the mid-pass request was consumed by a scan that never saw it")
+	}
+	if h.activity.scanEvents() != nil {
+		t.Fatalf("scan events = %+v, want none yet — that pass owed nothing", h.activity.scanEvents())
+	}
+	// The loop re-claims it, and this time the receipt is owed.
+	sub2, _ := h.channels.ClaimDue(h.nowStr())
+	if sub2 == nil {
+		t.Fatal("subscription must still be due so the request is honoured")
+	}
+	h.sched.scanChannel(context.Background(), sub2)
+
+	ev := h.activity.scanEvents()
+	if len(ev) != 1 || ev[0].Summary != "checked on request" {
+		t.Fatalf("scan events = %+v, want the receipt on the re-claimed pass", ev)
+	}
+	if got := h.scanRequestedAt("UC1"); got != "" {
+		t.Fatalf("scan_requested_at = %q, want cleared once answered", got)
 	}
 }

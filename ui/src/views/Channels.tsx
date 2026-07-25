@@ -14,6 +14,7 @@ import {
   type ChannelFilter,
 } from "../api/channels";
 import { gradientClassFor } from "../format";
+import { scanNotice } from "./channel/schedule";
 import type { AutoUnsubscribedChannel, Channel } from "../api/types";
 import { RowMenu } from "../components/RowMenu";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -170,17 +171,16 @@ export function Channels({
   async function handleScan(c: Channel) {
     setError(null);
     // Drop the previous row's answer before awaiting: the banner never names a
-    // channel, so a stale "Checking soon" left up while this request is in
-    // flight reads as though it were about the row just clicked. Both sibling
-    // surfaces (the New and Settings tabs) clear their notice the same way.
+    // channel, so a stale queued notice left up while this request is in flight
+    // reads as though it were about the row just clicked. Both sibling surfaces
+    // (the New and Settings tabs) clear their notice the same way.
     setNotice(null);
     try {
       const res = await scanChannel(c.id);
-      setNotice(
-        res.status === "blocked"
-          ? (res.reason ?? "peeq cannot check this channel right now.")
-          : "Checking soon — peeq will look for new videos on its next pass.",
-      );
+      // scanNotice is the one place the wording lives, so this surface cannot
+      // drift from the channel page's two — which is what the note above asks
+      // for and what a duplicated literal here could not guarantee.
+      setNotice(scanNotice(res));
     } catch (err) {
       setNotice(null);
       setError((err as Error).message);

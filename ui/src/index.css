@@ -741,6 +741,34 @@ button.srow:not(:disabled):hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A channel name in the agenda links to its page. Deliberately its OWN class
+   rather than reusing .chan-link: that one is shared by Library, Decide, Player
+   and Channels, so restyling it bleeds across four views. Same visual contract,
+   scoped to the agenda — and it must inherit .ag-subject's ellipsis, since a
+   long channel name is exactly as likely to overflow here as a plain one. */
+.ag-link {
+  display: inline;
+  max-width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.12s ease;
+}
+.ag-link:hover {
+  color: var(--color-accent);
+}
+.ag-link:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 .ag-row.planned .ag-subject {
   color: var(--color-ink-dim);
 }

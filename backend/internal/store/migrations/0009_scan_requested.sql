@@ -1,0 +1,14 @@
+-- "Check now" does not scan: the handler only pulls next_scan_at into the past
+-- so the serial scan loop claims the channel on its next poll. That makes a
+-- requested check indistinguishable from an automatic one by the time the loop
+-- runs, and the loop's silence rule writes no activity row when a pass finds
+-- nothing new -- so a user who pressed the button gets no evidence it happened.
+--
+-- This column is the marker that survives the gap between the click and the
+-- pass. The scanner reads it to decide whether the pass owes the user a receipt,
+-- and clears it on both the success and the failure path.
+--
+-- Nullable with no default on purpose: NULL means "no one is waiting on this
+-- channel", which is the correct state for every existing subscription and for
+-- every automatic scan. A default would make every pass look requested.
+ALTER TABLE subscriptions ADD COLUMN scan_requested_at TEXT;

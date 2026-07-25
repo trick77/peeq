@@ -248,7 +248,7 @@ describe("Channels", () => {
       await waitFor(() => expect(scanChannel).toHaveBeenCalledWith("c2"));
       expect(
         await screen.findByText(
-          "Checking soon — peeq will look for new videos on its next pass.",
+          "Added to the check queue — usually done within a minute.",
         ),
       ).toBeInTheDocument();
     });
@@ -308,7 +308,7 @@ describe("Channels", () => {
       await openRowMenu(user, first);
       await user.click(screen.getByRole("menuitem", { name: /check now/i }));
       const scheduled =
-        "Checking soon — peeq will look for new videos on its next pass.";
+        "Added to the check queue — usually done within a minute.";
       await screen.findByText(scheduled);
 
       const second = screen
@@ -339,7 +339,7 @@ describe("Channels", () => {
       await openRowMenu(user, row);
       await user.click(screen.getByRole("menuitem", { name: /check now/i }));
       const scheduled =
-        "Checking soon — peeq will look for new videos on its next pass.";
+        "Added to the check queue — usually done within a minute.";
       await screen.findByText(scheduled);
 
       await openRowMenu(user, row);
@@ -408,14 +408,14 @@ describe("Channels", () => {
       await openRowMenu(user, row);
       await user.click(screen.getByRole("menuitem", { name: /check now/i }));
       await screen.findByText(
-        "Checking soon — peeq will look for new videos on its next pass.",
+        "Added to the check queue — usually done within a minute.",
       );
 
       await user.click(screen.getByRole("button", { name: "All" }));
       await waitFor(() =>
         expect(
           screen.queryByText(
-            "Checking soon — peeq will look for new videos on its next pass.",
+            "Added to the check queue — usually done within a minute.",
           ),
         ).not.toBeInTheDocument(),
       );

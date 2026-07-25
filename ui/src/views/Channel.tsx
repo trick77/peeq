@@ -12,7 +12,7 @@ import {
 } from "../api/channels";
 import { CookieRequiredError } from "../api/downloads";
 import { formatAge, gradientClassFor } from "../format";
-import type { ChannelDetail } from "../api/types";
+import type { ActivityEvent, ChannelDetail } from "../api/types";
 import { ArchiveTab } from "./channel/ArchiveTab";
 import { NewTab } from "./channel/NewTab";
 import { SettingsTab } from "./channel/SettingsTab";
@@ -138,10 +138,19 @@ export function Channel({
   channelId,
   onOpenVideo,
   onBack,
+  live = [],
 }: {
   channelId: string | null;
   onOpenVideo: (id: string) => void;
   onBack: () => void;
+  /**
+   * Newest activity events pushed over SSE, the same stream the Activity page
+   * reads. The channel page needs them because "Check now" is asynchronous: the
+   * scan happens up to a minute later on the scan loop, and without a signal the
+   * button would sit at "Queued" until the user reloaded by hand. A scan event
+   * for this channel is exactly that signal.
+   */
+  live?: ActivityEvent[];
 }) {
   const [detail, setDetail] = useState<ChannelDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -191,12 +200,38 @@ export function Channel({
 
   useEffect(() => {
     channelIdRef.current = channelId;
+    handledScanID.current = 0;
     setDetail(null);
     setTab("archive");
     setDescOpen(false);
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
+
+  // handledScanID is the newest scan event already acted on. App keeps `live` as
+  // a rolling buffer of the last 50 events, so a matching scan event STAYS in it:
+  // without this high-water mark the effect below would refetch again on every
+  // later unrelated event (a download, a summary) for as long as that scan sat in
+  // the buffer, turning one scan into dozens of channel requests.
+  const handledScanID = useRef(0);
+
+  // Refetch when a scan for THIS channel lands, so last_scanned_at and
+  // next_scan_at move on their own and the Check now button leaves its "Queued"
+  // state without a reload. Filtered by subject id — another channel's scan says
+  // nothing about this page.
+  useEffect(() => {
+    if (!channelId) return;
+    let newest = 0;
+    for (const e of live) {
+      if (e.kind === "scan" && e.subject_id === channelId && e.id > newest) {
+        newest = e.id;
+      }
+    }
+    if (newest === 0 || newest <= handledScanID.current) return;
+    handledScanID.current = newest;
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, channelId]);
 
   // Measure after layout, and only while the clamp is actually on: an
   // expanded paragraph never overflows, so measuring one would say "no

@@ -683,6 +683,7 @@ function ViewSwitch({
           progressByJobId={progressByJobId}
           summaries={summaries}
           summaryPhaseByVideoId={summaryPhaseByVideoId}
+          onOpenChannel={onOpenChannel}
         />
       );
     case "channels":
@@ -693,6 +694,7 @@ function ViewSwitch({
           channelId={selectedChannelId}
           onOpenVideo={onOpenVideo}
           onBack={() => setView("channels")}
+          live={liveActivity}
         />
       );
     case "settings":

@@ -115,6 +115,10 @@ export type UpcomingItem = {
   at?: string;
   kind: string;
   approx: boolean;
+  // subject_id identifies what the row is about so the agenda can link it: the
+  // channel id on a scan/metadata row, absent on a download/summary row (those
+  // name a video, and the agenda links channels only). Mirrors ActivityEvent.
+  subject_id?: string;
   subject?: string;
   summary?: string;
 };

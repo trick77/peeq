@@ -81,14 +81,16 @@ func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) 
 		if scans, err := s.channels.ScanDueSoon(upcomingCap); err == nil {
 			for _, c := range scans {
 				items = append(items, activity.UpcomingItem{
-					At: c.At, Kind: activity.KindScan, Subject: c.Name, Summary: "channel scan",
+					At: c.At, Kind: activity.KindScan, SubjectID: c.ChannelID,
+					Subject: c.Name, Summary: "channel scan",
 				})
 			}
 		}
 		if metas, err := s.channels.MetaDueSoon(upcomingCap); err == nil {
 			for _, c := range metas {
 				items = append(items, activity.UpcomingItem{
-					At: c.At, Kind: activity.KindChannelMeta, Subject: c.Name, Summary: "metadata refresh",
+					At: c.At, Kind: activity.KindChannelMeta, SubjectID: c.ChannelID,
+					Subject: c.Name, Summary: "metadata refresh",
 				})
 			}
 		}

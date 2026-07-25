@@ -726,7 +726,10 @@ func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]string{"status": "blocked", "reason": msg})
 			return
 		}
-		if status := s.settings.CookieStatus(r.Context()); status != "valid" {
+		// Mirror the scan loop's own cookie gate, AllowAnonymous included: without
+		// that escape hatch this endpoint reports "blocked" on a missing cookie
+		// while the loop behind it is scanning anonymously without complaint.
+		if status := s.settings.CookieStatus(r.Context()); status != "valid" && !s.allowAnonymous {
 			writeJSON(w, map[string]string{
 				"status": "blocked",
 				"reason": "Your YouTube cookie needs refreshing before peeq can check this channel.",
@@ -736,7 +739,10 @@ func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	if err := s.channels.Backoff(id, now); err != nil {
+	// RequestScan, not Backoff: besides pulling the schedule into the past it
+	// records that someone is waiting, which is what earns this pass an activity
+	// row even when it finds nothing new.
+	if err := s.channels.RequestScan(id, now); err != nil {
 		serverError(w, r, err, "schedule scan failed")
 		return
 	}

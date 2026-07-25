@@ -115,6 +115,12 @@ type Deps struct {
 	// is built from Channels/Jobs/SummaryList and needs no separate dependency.
 	Activity ActivityReader
 
+	// AllowAnonymous mirrors the dev-only "reach YouTube without a cookie" flag
+	// that the scan loop and the yt-dlp runner already honour. The scan endpoint
+	// needs it so it does not report a check as blocked on a missing cookie
+	// while the loop behind it is in fact scanning happily.
+	AllowAnonymous bool
+
 	// OnResumeYoutube is invoked after POST /api/youtube/resume clears the
 	// kill-switch, so the shared failure monitor gets reset and the user gets
 	// a fresh auto-pause window. Optional: when nil, resume only clears the
@@ -190,6 +196,8 @@ type server struct {
 	summaryList SummaryLister
 	activity    ActivityReader
 
+	allowAnonymous bool
+
 	onResumeYoutube func()
 
 	onChannelResolved func(channelID string)
@@ -227,6 +235,8 @@ func New(d Deps) http.Handler {
 		summaryJobs: d.SummaryJobs,
 		summaryList: d.SummaryList,
 		activity:    d.Activity,
+
+		allowAnonymous: d.AllowAnonymous,
 
 		onResumeYoutube: d.OnResumeYoutube,
 

@@ -321,4 +321,88 @@ describe("Activity", () => {
       expect(screen.getAllByText("Tears of Steel")).toHaveLength(1);
     });
   });
+
+  it("links a channel name in Up next to its page", async () => {
+    const onOpenChannel = vi.fn();
+    const user = userEvent.setup();
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          at: "2026-07-25 08:00:00",
+          kind: "scan",
+          approx: false,
+          subject_id: "UCea",
+          subject: "Everyday Astronaut",
+          summary: "channel scan",
+        } as UpcomingItem,
+      ],
+      truncated: 0,
+    });
+    render(<Activity live={[]} {...noProps} onOpenChannel={onOpenChannel} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Everyday Astronaut" }),
+    );
+
+    expect(onOpenChannel).toHaveBeenCalledWith("UCea");
+  });
+
+  it("links a channel name in Recent activity too", async () => {
+    // Both halves of the agenda or neither: a linked name above the line and
+    // dead text below it is exactly the drift this avoids.
+    const onOpenChannel = vi.fn();
+    const user = userEvent.setup();
+    vi.mocked(listActivity).mockResolvedValue({
+      events: [
+        ev({
+          id: 9,
+          kind: "scan",
+          subject_id: "UCea",
+          subject: "Everyday Astronaut",
+          summary: "checked on request",
+          detail: "nothing new",
+        }),
+      ],
+      has_more: false,
+      retained_max: 2000,
+    });
+    render(<Activity live={[]} {...noProps} onOpenChannel={onOpenChannel} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Everyday Astronaut" }),
+    );
+
+    expect(onOpenChannel).toHaveBeenCalledWith("UCea");
+  });
+
+  it("leaves a video subject as plain text", async () => {
+    // Download and summary rows name a video; the agenda is a log of work, not
+    // a video browser, so those must not become links.
+    const onOpenChannel = vi.fn();
+    vi.mocked(listActivity).mockResolvedValue({
+      events: [ev({ id: 10, kind: "download", subject: "A clip" })],
+      has_more: false,
+      retained_max: 2000,
+    });
+    render(<Activity live={[]} {...noProps} onOpenChannel={onOpenChannel} />);
+
+    expect(await screen.findByText("A clip")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "A clip" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders a channel name as plain text when no navigation is wired", async () => {
+    vi.mocked(listActivity).mockResolvedValue({
+      events: [ev({ id: 11, kind: "scan", subject_id: "UCea", subject: "EA" })],
+      has_more: false,
+      retained_max: 2000,
+    });
+    render(<Activity live={[]} {...noProps} />);
+
+    expect(await screen.findByText("EA")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "EA" }),
+    ).not.toBeInTheDocument();
+  });
 });
