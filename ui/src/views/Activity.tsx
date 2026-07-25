@@ -9,6 +9,7 @@ import {
 } from "../api";
 import { Icon, type IconName } from "../icons";
 import { summaryPhaseLabel } from "../format";
+import { DOT } from "../sep";
 
 // Activity — two sections, each with one consistent order (a single folded
 // timeline through a *now* marker reversed direction at the seam, which read as
@@ -109,7 +110,7 @@ function subjectNode(
 // eventDetail joins an event's summary and detail into one lead-capitalized
 // line; the kind is shown by the icon, not repeated in words.
 function eventDetail(e: ActivityEvent): string {
-  const text = [e.summary, e.detail].filter(Boolean).join(" · ");
+  const text = [e.summary, e.detail].filter(Boolean).join(DOT);
   return text ? leadCap(text) : "";
 }
 
@@ -286,7 +287,7 @@ export function Activity({
     queuedCount > 0 ? `${queuedCount} queued` : "",
   ]
     .filter(Boolean)
-    .join(" · ");
+    .join(DOT);
 
   if (error) {
     return <div className="errline">{error}</div>;
@@ -412,9 +413,10 @@ export function Activity({
                           </div>
                         ) : null}
                         <div className="ag-detail">
-                          Downloading{p ? ` · ${Math.round(p.percent)}%` : ""}
-                          {p?.speed ? ` · ${p.speed}` : ""}
-                          {p?.eta ? ` · ${p.eta} left` : ""}
+                          Downloading
+                          {p ? `${DOT}${Math.round(p.percent)}%` : ""}
+                          {p?.speed ? `${DOT}${p.speed}` : ""}
+                          {p?.eta ? `${DOT}${p.eta} left` : ""}
                         </div>
                       </div>
                       <span className="ag-when">now</span>

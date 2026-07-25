@@ -23,6 +23,7 @@ import { ReviewBand } from "./ReviewBand";
 import { AutoUnsubscribedSection } from "./AutoUnsubscribedSection";
 import { SearchField } from "../components/SearchField";
 import { controlClass } from "../ui";
+import { DOT } from "../sep";
 
 // Subscribed leads and is the default: the page is about the channels you
 // follow, and opening on "All" put channels you never subscribed to first.
@@ -424,9 +425,9 @@ export function Channels({
                 ) : null}
               </div>
               <div className="channel-by">
-                {c.handle ? `${c.handle} · ` : ""}
-                <b>{c.pending_count}</b> pending · <b>{c.downloaded_count}</b>{" "}
-                downloaded
+                {c.handle ? `${c.handle}${DOT}` : ""}
+                <b>{c.pending_count}</b> pending{DOT}
+                <b>{c.downloaded_count}</b> downloaded
               </div>
             </div>
             {/* The star and the ⋮ menu share one plate so they read as a single

@@ -4,6 +4,7 @@ import { Spinner } from "../ui";
 import { searchVideos, type SearchResult } from "../api/search";
 import { thumbnailUrl } from "../api/videos";
 import { formatDuration, gradientClassFor } from "../format";
+import { DOT } from "../sep";
 
 // Search — the global semantic-search view (Task 18), per the mockup's
 // `.gsearch-hero`/`.result`/`.match` blocks: a query box over `searchVideos`
@@ -92,7 +93,8 @@ export function Search({
               Matches
             </span>
             <span className="n mono">
-              {results.length} video{results.length === 1 ? "" : "s"} ·{" "}
+              {results.length} video{results.length === 1 ? "" : "s"}
+              {DOT}
               {matchCount} moment
               {matchCount === 1 ? "" : "s"}
             </span>

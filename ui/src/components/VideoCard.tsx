@@ -11,6 +11,7 @@ import {
   gradientClassFor,
 } from "../format";
 import { CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
+import { DOT } from "../sep";
 
 // VideoCard — one grid tile, per the mockup's `.card`/`.thumb`/`.life`
 // blocks. Pure presentational: all data comes in as props, all mutation
@@ -206,7 +207,7 @@ function Lifecycle({
           <span className="led" />
           {video.status === "error"
             ? "Download failed"
-            : "Removed to save space · summary kept"}
+            : `Removed to save space${DOT}summary kept`}
         </div>
         {onRedownload && (
           <Button

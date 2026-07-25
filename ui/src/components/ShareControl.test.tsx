@@ -15,6 +15,7 @@ vi.mock("../api", () => ({
 }));
 
 import { createShare, stopShare } from "../api";
+import { DOT } from "../sep";
 
 // A UTC expiry `days` from now, in the backend's 'YYYY-MM-DD HH:MM:SS' shape.
 function expiryIn(days: number): string {
@@ -41,7 +42,7 @@ describe("daysUntil / shareChipLabel", () => {
   it("labels the chip with the countdown", () => {
     expect(shareChipLabel({ shared: true })).toBe("Shared");
     expect(shareChipLabel({ shared: true, expires_at: expiryIn(6) })).toBe(
-      "Shared · 6 days left",
+      `Shared${DOT}6 days left`,
     );
   });
 });

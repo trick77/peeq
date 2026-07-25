@@ -7,6 +7,7 @@ import {
   type ShareStatus,
   type ShareTTL,
 } from "../api";
+import { DOT } from "../sep";
 
 // The fixed lifetimes the popover offers, in the order they read on screen.
 const TTLS: { id: ShareTTL; label: string }[] = [
@@ -29,9 +30,9 @@ export function daysUntil(expiresAt: string | undefined): number | null {
 export function shareChipLabel(status: ShareStatus): string {
   const d = daysUntil(status.expires_at);
   if (d === null) return "Shared";
-  if (d <= 0) return "Shared · expires today";
-  if (d === 1) return "Shared · 1 day left";
-  return `Shared · ${d} days left`;
+  if (d <= 0) return `Shared${DOT}expires today`;
+  if (d === 1) return `Shared${DOT}1 day left`;
+  return `Shared${DOT}${d} days left`;
 }
 
 // ShareChip is the at-a-glance "this video is public" signal beside the title.

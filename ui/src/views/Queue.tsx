@@ -1,6 +1,7 @@
 import { Button } from "../ui";
 import { summaryPhaseInfo, SUMMARY_PHASE_COUNT } from "../format";
 import type { Job, SummaryJob } from "../api/types";
+import { DOT } from "../sep";
 
 // Queue — everything peeq is working on right now, in two lanes: downloads and
 // summaries. This is the machine-state page the Library shed in PR 1 (a video
@@ -120,7 +121,7 @@ export function Queue({
                 <span className="qstate">
                   {running
                     ? p
-                      ? `${Math.round(p.percent)}%${p.speed ? ` · ${p.speed}` : ""}${p.eta ? ` · ${p.eta} left` : ""}`
+                      ? `${Math.round(p.percent)}%${p.speed ? `${DOT}${p.speed}` : ""}${p.eta ? `${DOT}${p.eta} left` : ""}`
                       : "Downloading"
                     : "Queued"}
                 </span>

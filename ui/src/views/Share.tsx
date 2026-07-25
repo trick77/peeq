@@ -21,6 +21,7 @@ import {
   useCopyTranscript,
   type Cue,
 } from "../vtt";
+import { DOT } from "../sep";
 
 // Highlight timestamps use the same m:ss / h:mm:ss formatter as the rest of the
 // app (Player aliases it the same way).
@@ -379,8 +380,9 @@ export function Share({ token }: { token: string | null }) {
               Shared via{" "}
               <b>
                 pee<span>q</span>
-              </b>{" "}
-              · {expiryLabel(video)}
+              </b>
+              {DOT}
+              {expiryLabel(video)}
             </span>
           </footer>
         </div>

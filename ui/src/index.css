@@ -3094,6 +3094,11 @@ textarea.cookiebox:focus {
   display: inline-flex;
   margin-top: 0;
 }
+/* Separators come in two flavours and have to stay in step: byline rows put
+   the dot in its own `<span class="dot">` and space it with the parent's
+   `gap: 6px`, while plain-text lines (the Channels counts line, the queue
+   chip, the share chip) carry the dot inside a string and space it with the
+   en spaces in `DOT` (ui/src/sep.ts). Change one, change the other. */
 .by .dot {
   color: var(--color-faint);
 }
