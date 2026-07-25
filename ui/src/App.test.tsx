@@ -365,6 +365,27 @@ describe("App deep links", () => {
     expect(window.location.pathname).toBe("/video/v1");
   });
 
+  it("re-reads the pointer on each Now playing click, so a cleared one is not reopened", async () => {
+    // The pointer is server state other actions clear: marking the pointed-at
+    // video watched from a Library card, or deleting it, clears it server-side.
+    // Trusting the copy loaded at bootstrap would have this click reopen a
+    // finished video at 0:00 — exactly what the clear rule exists to prevent.
+    vi.mocked(getPlaybackState).mockResolvedValue({ video_id: "v1" });
+    vi.mocked(listVideos).mockResolvedValue([mockVideo]);
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+    await waitFor(() => expect(getPlaybackState).toHaveBeenCalled());
+
+    // Something else clears it — another tab, or a Library card in this one.
+    vi.mocked(getPlaybackState).mockResolvedValue({ video_id: "" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Now playing" }));
+
+    expect(await screen.findByText(/Nothing playing/i)).toBeInTheDocument();
+    // And the URL must not claim a video either.
+    expect(window.location.pathname).toBe("/video");
+  });
+
   it("leaves Now playing empty when the pointer can't be loaded", async () => {
     // A convenience that fails must degrade to the behaviour peeq had before
     // it existed, not to an error.
