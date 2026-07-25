@@ -462,6 +462,14 @@ func TestStallGuard_firesOnceAndRemembersTheArmedReason(t *testing.T) {
 	for fired.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
+	// Separated from the count assertion below so the two failures never read
+	// alike: a guard that never fired within the window is a stalled runner,
+	// while a count other than 1 is a real defect. Both used to print "cancel
+	// called 0 times, want 1", and this file has already cost more than one
+	// misdiagnosis.
+	if fired.Load() == 0 {
+		t.Fatal("guard never fired within 2s of a 10ms deadline — runner stalled, not a miscount")
+	}
 	if got := fired.Load(); got != 1 {
 		t.Fatalf("cancel called %d times, want 1", got)
 	}
