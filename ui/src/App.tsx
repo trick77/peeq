@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
-import { TopBar } from "./shell/TopBar";
+import { SearchBar } from "./shell/SearchBar";
 import {
   getMe,
   listDownloads,
@@ -28,24 +28,12 @@ import { Share } from "./views/Share";
 import { useRoute } from "./route";
 import { Button } from "./ui";
 
-// Page titles/subtitles per view, per the mockup's `titles` map.
-const VIEW_META: Record<ViewId, { title: string; subtitle?: string }> = {
-  library: { title: "Library" },
-  player: { title: "Now playing" },
-  search: { title: "Search" },
-  add: { title: "Add" },
-  inbox: { title: "Inbox" },
-  queue: { title: "Queue" },
-  channels: { title: "Channels" },
-  channel: { title: "Channel" },
-  activity: { title: "Activity" },
-  settings: { title: "Settings" },
-  // share renders chromeless (no rail/top bar), so this title is never shown —
-  // it exists only to satisfy the Record<ViewId, …> exhaustiveness.
-  share: { title: "Shared video" },
-};
+// Per-view page titles used to live here, in a VIEW_META map feeding the top
+// bar's <h1>. They were dropped: the title only ever restated the rail item
+// you had just clicked, and every page paid ~66px of chrome for it. The rail's
+// active marker is now the sole "where am I" signal.
 
-// App — the shell (rail + topbar + routed main) plus the four Task 14
+// App — the shell (rail + optional search bar + routed main) plus the four Task 14
 // views. Routing is manual view-state, no router lib — matches loom's
 // pattern for a single-page app this size.
 export function App() {
@@ -67,7 +55,11 @@ export function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [pendingCount, setPendingCount] = useState(0);
+  // undefined until the first listPending() lands. The rail greys Inbox out on
+  // a real 0, so a 0 default would flash the item dim on every cold load.
+  const [pendingCount, setPendingCount] = useState<number | undefined>(
+    undefined,
+  );
   // The in-flight summary queue (pending/running), for the Queue page and the
   // rail's Queue badge. Kept alongside jobs because summaries are the second
   // half of "work in flight" — the Queue count is downloads + summaries.
@@ -181,11 +173,22 @@ export function App() {
     };
   }, [authChecked, user]);
 
-  // The rail's "Pending" badge reflects the channel_videos ledger's
-  // pending count (Task 14), not the download-jobs queue — loaded once on
-  // sign-in and refetched whenever the user navigates into the Pending view
-  // itself, so acting on an item (download/ignore) there updates the badge
-  // without a manual refresh.
+  // Refetch the Inbox count on demand. Beyond the navigation-triggered load
+  // below, the SSE handler calls this whenever background work reports in: a
+  // scan can surface new videos to decide while the user sits on another page,
+  // and the rail now greys Inbox out when the count is 0 — a stale 0 would
+  // claim there is nothing to decide when there is.
+  const refreshPending = useCallback(() => {
+    listPending()
+      .then((p) => setPendingCount(p.length))
+      .catch(() => {});
+  }, []);
+
+  // The rail's "Inbox" badge reflects the channel_videos ledger's pending
+  // count (Task 14), not the download-jobs queue — loaded once on sign-in and
+  // refetched whenever the user navigates into the Inbox view itself, so
+  // acting on an item (download/ignore) there updates the badge without a
+  // manual refresh.
   useEffect(() => {
     if (!authChecked || !user) return;
     let active = true;
@@ -314,6 +317,12 @@ export function App() {
         // Keep a bounded buffer of the newest events; the Activity page merges
         // them into its log by id, so a live row appears without a reload.
         setLiveActivity((prev) => [...prev, e].slice(-50));
+        // A scan that surfaced new videos changes the Inbox count, and
+        // retention can remove rows from under it. Activity events are rare by
+        // design (the scheduler's silence rule writes nothing for a scan that
+        // found nothing), so refreshing on all of them costs next to nothing
+        // and keeps the rail's greyed-out state honest.
+        refreshPending();
         return;
       }
       if (evt.event === "summary") {
@@ -361,7 +370,7 @@ export function App() {
       }
     }, controller.signal).catch(() => {});
     return () => controller.abort();
-  }, [authChecked, user, refreshSummaries]);
+  }, [authChecked, user, refreshSummaries, refreshPending]);
 
   // The public share page renders above everything else — no rail, no top bar,
   // and crucially before the auth gate below, since its whole point is to work
@@ -401,8 +410,6 @@ export function App() {
     );
   }
 
-  const meta = VIEW_META[view];
-
   function openVideo(id: string) {
     setPendingSeek(undefined);
     navigate({ view: "player", videoId: id });
@@ -433,18 +440,20 @@ export function App() {
         cookieStatus={cookieStatus}
       />
       <main className="main">
-        <TopBar
-          title={meta.title}
-          subtitle={meta.subtitle}
-          showSearch={view === "library" || view === "channels"}
-          search={view === "channels" ? channelSearch : librarySearch}
-          onSearchChange={
-            view === "channels" ? setChannelSearch : setLibrarySearch
-          }
-          searchPlaceholder={
-            view === "channels" ? "Search channels" : "Search titles"
-          }
-        />
+        {/* The bar exists only where there is something to put in it. On every
+            other view it is not rendered at all — an empty sticky strip would
+            just be a border with nothing above the content. */}
+        {view === "library" || view === "channels" ? (
+          <SearchBar
+            search={view === "channels" ? channelSearch : librarySearch}
+            onSearchChange={
+              view === "channels" ? setChannelSearch : setLibrarySearch
+            }
+            searchPlaceholder={
+              view === "channels" ? "Search channels" : "Search titles"
+            }
+          />
+        ) : null}
         <section className="page">
           <DownloadStatusBanner
             status={downloadStatus}

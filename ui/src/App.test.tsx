@@ -245,10 +245,10 @@ describe("App deep links", () => {
     vi.mocked(searchVideos).mockResolvedValue([]);
   });
 
-  // Only the Player view renders a <video>; the top bar's search box only
-  // shows on the library view (showSearch={view === "library"}). Use those
-  // as unambiguous discriminators (both "Library" and "Now playing" always
-  // appear as rail nav labels).
+  // Only the Player view renders a <video>; the SearchBar's "Search titles"
+  // box is rendered only on the Library (App renders the bar at all only for
+  // library/channels). Use those as unambiguous discriminators — the pages
+  // carry no titles, and "Library"/"Now playing" always appear as rail labels.
   it("a cold /video/<id> deep link opens the Player on that video", async () => {
     window.history.replaceState(null, "", "/video/v1");
     render(<App />);
@@ -527,6 +527,35 @@ describe("App queue and summaries", () => {
       await screen.findByText("A clip being summarized"),
     ).toBeInTheDocument();
     expect(screen.getByText("Being summarized")).toBeInTheDocument();
+  }, 20000);
+
+  it("refreshes the Inbox count when an activity SSE event arrives", async () => {
+    // A scan can surface new videos to decide while the user is on another
+    // page. Without this refresh the rail keeps the count it loaded at
+    // navigation time — and since the rail now greys Inbox out at 0, a stale
+    // count claims there is nothing to decide when there is.
+    vi.mocked(listPending).mockResolvedValue([]);
+    vi.mocked(streamDownloads).mockImplementation((onEvent) => {
+      // The next fetch is what the scan surfaced.
+      vi.mocked(listPending).mockResolvedValue([
+        { video_id: "p1", channel_id: "c1", title: "Fresh upload" },
+        { video_id: "p2", channel_id: "c1", title: "Another one" },
+      ] as unknown as Awaited<ReturnType<typeof listPending>>);
+      onEvent({
+        event: "activity",
+        data: { id: 7, at: "2026-07-25 08:00:00", kind: "scan", outcome: "ok" },
+      });
+      return Promise.resolve();
+    });
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Inbox/ })).toHaveTextContent(
+        "2",
+      );
+    });
   }, 20000);
 
   it("cancels a download from the Queue page", async () => {
