@@ -160,7 +160,7 @@ func (s *Sweeper) SweepOnce() error {
 			s.deps.Logger.Info("retention sweep: skipping currently-playing video", "video_id", v.ID)
 			continue
 		}
-		media.RemoveVideoFiles(s.deps.MediaDir, v.MediaPath, v.ThumbnailPath, v.SubtitlePath)
+		media.RemoveTombstonedVideoFiles(s.deps.MediaDir, v.MediaPath, v.SubtitlePath)
 		if err := s.deps.Videos.Tombstone(v.ID); err != nil {
 			s.deps.Logger.Error("retention sweep: tombstone failed", "video_id", v.ID, "err", err)
 			continue

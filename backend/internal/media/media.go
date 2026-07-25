@@ -122,17 +122,14 @@ func RemoveMediaAndSidecars(mediaPath string) {
 
 // RemoveVideoFiles removes a video's media file (plus sidecars), thumbnail,
 // and subtitle from disk under mediaDir, resolving each path safely first.
-// It mirrors exactly what the manual DELETE endpoint does, so the
-// retention sweeper's automatic tombstone can never diverge from it.
+// This is the hard-delete flavour, for when the database row goes too (a
+// channel cascade): nothing is left behind that could reference the files.
+// A tombstone must call RemoveTombstonedVideoFiles instead — see there.
 // Best-effort: an unresolvable (already-gone, or not a local path) media,
 // thumbnail, or subtitle path is silently skipped rather than treated as
 // an error — there is nothing on disk to remove in that case.
 func RemoveVideoFiles(mediaDir, mediaPath, thumbnailPath, subtitlePath string) {
-	if mediaPath != "" {
-		if safe, err := SafeMediaPath(mediaDir, mediaPath); err == nil {
-			RemoveMediaAndSidecars(safe)
-		}
-	}
+	RemoveTombstonedVideoFiles(mediaDir, mediaPath, subtitlePath)
 	if thumbnailPath != "" {
 		// A queued-but-not-yet-downloaded video may have a remote thumbnail
 		// URL here instead of a local path; SafeMediaPath rejecting that (or
@@ -140,6 +137,25 @@ func RemoveVideoFiles(mediaDir, mediaPath, thumbnailPath, subtitlePath string) {
 		// is nothing on local disk to remove in that case.
 		if safe, err := SafeMediaPath(mediaDir, thumbnailPath); err == nil {
 			_ = os.Remove(safe)
+		}
+	}
+}
+
+// RemoveTombstonedVideoFiles reclaims what a tombstone is for — the media
+// file (plus sidecars) and the subtitle — and deliberately KEEPS the
+// thumbnail. A tombstoned row survives with its title, summary and watched
+// history, and its card still says "summary kept", so it should still look
+// like the video it remembers; a poster is tens of kilobytes against the
+// megabytes the media file just gave back. Removing it used to leave
+// thumbnail_path pointing at a file that no longer existed, which rendered
+// as a broken image on every tombstoned card.
+//
+// Both tombstone paths — the manual DELETE endpoint and the retention
+// sweeper — go through here, so the two can never diverge.
+func RemoveTombstonedVideoFiles(mediaDir, mediaPath, subtitlePath string) {
+	if mediaPath != "" {
+		if safe, err := SafeMediaPath(mediaDir, mediaPath); err == nil {
+			RemoveMediaAndSidecars(safe)
 		}
 	}
 	if subtitlePath != "" {

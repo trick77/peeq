@@ -278,7 +278,9 @@ func TestVideosResume_versionEchoAccepted(t *testing.T) {
 
 // TestVideosDelete_tombstonesRowAndUnlinksFile is the central Task 11
 // delete guarantee: DELETE removes the media file from disk but keeps the
-// row, clearing media_path and setting status=tombstoned.
+// row, clearing media_path and setting status=tombstoned. The thumbnail is
+// the deliberate exception — file and column both survive, so the
+// remembered card still has a poster instead of a broken image.
 func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	deps, mediaDir := videosTestDeps(t)
 	videoDir := filepath.Join(mediaDir, "chan1", "v1")
@@ -316,8 +318,8 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	if _, err := os.Stat(mediaPath); !os.IsNotExist(err) {
 		t.Fatalf("media file still exists after delete: err = %v", err)
 	}
-	if _, err := os.Stat(thumbPath); !os.IsNotExist(err) {
-		t.Fatalf("thumbnail file still exists after delete: err = %v", err)
+	if _, err := os.Stat(thumbPath); err != nil {
+		t.Fatalf("thumbnail file gone after delete, want kept: err = %v", err)
 	}
 	if _, err := os.Stat(vttPath); !os.IsNotExist(err) {
 		t.Fatalf("vtt file still exists after delete: err = %v", err)
@@ -335,6 +337,13 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	}
 	if got.MediaPath != "" {
 		t.Fatalf("media_path = %q, want cleared", got.MediaPath)
+	}
+	// The column has to stay in step with the file that was just kept:
+	// clearing it here would drop the poster the tombstoned card is meant
+	// to keep, and keeping it while deleting the file is what produced the
+	// broken image this test now guards against.
+	if got.ThumbnailPath != thumbPath {
+		t.Fatalf("thumbnail_path = %q, want kept as %q", got.ThumbnailPath, thumbPath)
 	}
 }
 
