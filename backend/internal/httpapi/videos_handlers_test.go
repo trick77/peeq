@@ -345,6 +345,13 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	if got.ThumbnailPath != thumbPath {
 		t.Fatalf("thumbnail_path = %q, want kept as %q", got.ThumbnailPath, thumbPath)
 	}
+	// End to end, because file-kept and column-kept are only worth anything
+	// if the endpoint the card's <img> points at still answers: this is the
+	// broken image on a tombstoned card, expressed as a request.
+	thumbRec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/thumbnail", nil)
+	if thumbRec.Code != http.StatusOK {
+		t.Fatalf("GET thumbnail after delete = %d, want 200 (card would show a broken image)", thumbRec.Code)
+	}
 }
 
 // TestVideosStream_rangeRequest asserts the player-facing Range support:
