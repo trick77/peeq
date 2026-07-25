@@ -489,6 +489,43 @@ describe("App queue and summaries", () => {
     vi.mocked(cancelDownload).mockResolvedValue(undefined);
   });
 
+  it("does not grey the rail's Inbox or Queue before their counts load", async () => {
+    // Both counts are 0-ish before their fetches land — pendingCount defaults
+    // to undefined, but jobs/summaries start as empty arrays, which is
+    // indistinguishable from an empty queue. Dimming on that would flash the
+    // rail on every cold load, so App must withhold queueCount until both
+    // lists have actually loaded. These promises never settle, pinning the
+    // pre-load render.
+    vi.mocked(listDownloads).mockReturnValue(new Promise(() => {}));
+    vi.mocked(listSummaries).mockReturnValue(new Promise(() => {}));
+    vi.mocked(listPending).mockReturnValue(new Promise(() => {}));
+
+    render(<App />);
+    const inbox = await screen.findByRole(
+      "button",
+      { name: "Inbox" },
+      { timeout: 8000 },
+    );
+    expect(inbox.className).not.toContain("idle");
+    expect(
+      screen.getByRole("button", { name: "Queue" }).className,
+    ).not.toContain("idle");
+  }, 20000);
+
+  it("greys Inbox and Queue once both counts load empty", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Queue" }).className).toContain(
+        "idle",
+      );
+    });
+    expect(screen.getByRole("button", { name: "Inbox" }).className).toContain(
+      "idle",
+    );
+  }, 20000);
+
   it("reflects a summary SSE event in the rail and the Queue page", async () => {
     // The summarize worker publishes a "summary" phase event on the same SSE
     // stream as download progress; App must route it to the summaries lane.

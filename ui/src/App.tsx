@@ -64,6 +64,13 @@ export function App() {
   // rail's Queue badge. Kept alongside jobs because summaries are the second
   // half of "work in flight" — the Queue count is downloads + summaries.
   const [summaries, setSummaries] = useState<SummaryJob[]>([]);
+  // Whether the two halves of the queue count have ever loaded successfully.
+  // `jobs`/`summaries` start as empty arrays — indistinguishable from a genuinely
+  // empty queue — and the rail greys Queue out on a real 0, so without these the
+  // item would dim on every cold paint until the first fetch lands. A failed
+  // fetch deliberately leaves the flag down: unknown is not empty.
+  const [jobsLoaded, setJobsLoaded] = useState(false);
+  const [summariesLoaded, setSummariesLoaded] = useState(false);
   // Live summary phase per video (summarizing → embedding), accumulated from
   // the same "summary" SSE event the Player consumes, so the Queue lane can
   // show a job advancing without a reload.
@@ -150,12 +157,16 @@ export function App() {
     let active = true;
     listDownloads()
       .then((j) => {
-        if (active) setJobs(j);
+        if (!active) return;
+        setJobs(j);
+        setJobsLoaded(true);
       })
       .catch(() => {});
     listSummaries()
       .then((s) => {
-        if (active) setSummaries(s);
+        if (!active) return;
+        setSummaries(s);
+        setSummariesLoaded(true);
       })
       .catch(() => {});
     cookieHealth()
@@ -224,7 +235,10 @@ export function App() {
   // an active entry, so something has to seed the first one.
   const refreshQueue = useCallback(() => {
     listDownloads()
-      .then((j) => setJobs(j))
+      .then((j) => {
+        setJobs(j);
+        setJobsLoaded(true);
+      })
       .catch(() => {});
     downloadsStatus()
       .then((s) => setDownloadStatus(s))
@@ -251,6 +265,7 @@ export function App() {
     listSummaries()
       .then((list) => {
         setSummaries(list);
+        setSummariesLoaded(true);
         setSummaryPhaseByVideoId((prev) => {
           const next: Record<string, string> = {};
           for (const s of list) {
@@ -436,7 +451,11 @@ export function App() {
         active={view}
         onNavigate={setView}
         pendingCount={pendingCount}
-        queueCount={activeDownloads + summaries.length}
+        queueCount={
+          jobsLoaded && summariesLoaded
+            ? activeDownloads + summaries.length
+            : undefined
+        }
         cookieStatus={cookieStatus}
       />
       <main className="main">
