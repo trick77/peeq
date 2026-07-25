@@ -1254,3 +1254,45 @@ func TestMarshalStrings_emptyMeansLeaveAlone(t *testing.T) {
 		t.Fatalf("marshalStrings = %q, want escaped JSON", got)
 	}
 }
+
+// --- Scenario: which lane a job takes on the yt-dlp pacer -------------------
+
+// laneHarness runs one job through the worker and reports whether the context
+// that reached yt-dlp was on the interactive lane.
+func laneHarness(t *testing.T, priority int) bool {
+	t.Helper()
+	var interactive bool
+	var mu sync.Mutex
+	runner := &fakeRunner{
+		fn: func(ctx context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			mu.Lock()
+			interactive = ytdlp.IsInteractive(ctx)
+			mu.Unlock()
+			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h := newHarness(t, runner, func(*Deps) {})
+	id := h.enqueue(t, "lane1", priority)
+	job := h.jobState(t, id)
+	h.worker.process(context.Background(), &job)
+	mu.Lock()
+	defer mu.Unlock()
+	return interactive
+}
+
+// Approving in the Inbox is a person clicking. Before this, the approved
+// download took the background lane and could sit through a full pacer gap
+// behind a channel scan that happened to start first.
+func TestProcess_userAskedForItTakesTheInteractiveLane(t *testing.T) {
+	if !laneHarness(t, 10) {
+		t.Fatal("a priority-10 job reached yt-dlp on the background lane")
+	}
+}
+
+// The other half of the rule, and the one the old "never for worker calls"
+// comment was really protecting: scan-driven work must not crowd out clicks.
+func TestProcess_scheduledWorkStaysOnTheBackgroundLane(t *testing.T) {
+	if laneHarness(t, autoDownloadPriority) {
+		t.Fatal("a scheduler-priority job jumped the interactive lane")
+	}
+}
