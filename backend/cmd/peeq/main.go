@@ -271,6 +271,7 @@ func run() error {
 		Settings:       settingsStore,
 		Runner:         runner,
 		Prober:         prober,
+		Channels:       channelsStore,
 		MediaDir:       cfg.MediaDir,
 		SummaryJobs:    summaryJobsStore,
 		DefaultSubLang: cfg.DefaultSubLang,

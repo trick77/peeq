@@ -318,7 +318,7 @@ export function Channel({
   // tells you how many items are behind that tab, distinct from the
   // "archived" stat shown in the header, which is part of the channel's
   // summary.
-  const tabs: { id: TabId; label: string; count?: number }[] = detail.tracked
+  const tabs: { id: TabId; label: string; count?: number }[] = detail.added
     ? [
         { id: "archive", label: "Archive", count: detail.archived_count },
         { id: "new", label: "New", count: detail.pending_count },
@@ -386,8 +386,8 @@ export function Channel({
                   <span className="sep">·</span>
                 </>
               ) : null}
-              {detail.tracked ? (
-                <span>Added {formatStamp(detail.tracked_at)}</span>
+              {detail.added ? (
+                <span>Added {formatStamp(detail.added_at)}</span>
               ) : (
                 <span style={{ color: "var(--color-faint)" }}>Not added</span>
               )}
@@ -443,7 +443,7 @@ export function Channel({
             </div>
           </div>
           <div className="chan-acts">
-            {detail.tracked ? (
+            {detail.added ? (
               <Button
                 type="button"
                 variant={detail.subscribed ? "gold" : "secondary"}

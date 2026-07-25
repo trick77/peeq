@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/activity"
+	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/sched"
@@ -70,6 +71,13 @@ type MediaProber interface {
 	Probe(ctx context.Context, path string) (mediaprobe.Info, error)
 }
 
+// ChannelCache is the slice of channels.Store the worker needs: caching the
+// identity of a downloaded video's channel. Narrow on purpose — the worker
+// has no business adding, subscribing or deleting anything.
+type ChannelCache interface {
+	Upsert(channels.Channel) error
+}
+
 // Deps are the worker's collaborators and tunables. The stores and Runner
 // are required; the rest have safe defaults applied in New.
 type Deps struct {
@@ -84,6 +92,13 @@ type Deps struct {
 	// entirely (the backfill loop then picks the video up); production
 	// always sets it.
 	Prober MediaProber
+
+	// Channels, when set, caches the identity of the channel a downloaded
+	// video came from, so a video added by URL leaves its channel reachable in
+	// the Channels list under "From downloads". Nil (the default in tests that
+	// do not care) skips the write; production always sets it. Caching a
+	// channel never adds it — see channels.Store.Upsert.
+	Channels ChannelCache
 
 	// SummaryJobs, when set, is enqueued for every successful download
 	// (initial or re-download) right after SetDownloaded persists. Nil
@@ -374,6 +389,25 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 			w.deps.Logger.Error("download worker: save metadata failed", "job_id", job.ID, "err", err)
 			w.fail(job, video, job.Attempts, "save metadata: "+err.Error())
 			return
+		}
+		// Cache the channel's identity so the Channels list has a row to join
+		// against. videos has no FK to channels, so a video added by URL would
+		// otherwise leave its channel with no row at all and no way of ever
+		// appearing in the list — see the "From downloads" filter.
+		//
+		// This does NOT add the channel: Upsert never writes added_at, so the
+		// row stays out of the scan scheduler's reach, and Upsert's never-blank
+		// COALESCE rules mean a re-download cannot clobber a channel whose
+		// metadata is already resolved. Best-effort: failing to cache the
+		// channel must not fail the download.
+		if w.deps.Channels != nil && video.ChannelID != "" {
+			if err := w.deps.Channels.Upsert(channels.Channel{
+				ID:   video.ChannelID,
+				Name: video.ChannelName,
+			}); err != nil {
+				w.deps.Logger.Warn("download worker: cache channel failed",
+					"job_id", job.ID, "channel_id", video.ChannelID, "err", err)
+			}
 		}
 	}
 

@@ -19,8 +19,8 @@ func TestDormantChannels_flagsChannelQuietLongerThanThreshold(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -52,8 +52,8 @@ func TestDormantChannels_ignoresChannelJustInsideThreshold(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -81,8 +81,8 @@ func TestDormantChannels_neverFlagsChannelWithNoVideos(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -104,11 +104,11 @@ func TestDormantChannels_ignoresUnsubscribedChannels(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
-	// Tracked only, never subscribed. 7 months before fixedNow: would be
+	// Added only, never subscribed. 7 months before fixedNow: would be
 	// flagged if the channel were subscribed, so this genuinely exercises
 	// the "unsubscribed channels are ignored" rule rather than passing
 	// vacuously because the video looks recent.
@@ -131,8 +131,8 @@ func TestDismissDormant_suppressesTheFlag(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -171,8 +171,8 @@ func TestDismissDormant_reArmsAfterNewerDiscovery(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -210,7 +210,7 @@ VALUES ('v2', 'UC1', 'seen', datetime(?, '+1 second'))`, dismissedAt)
 
 // TestDismissDormant_unknownChannel_reportsFalse asserts DismissDormant
 // reports ok=false for a channel with no subscription row (unknown, or
-// tracked-but-unsubscribed), so callers can distinguish that from a real
+// added-but-unsubscribed), so callers can distinguish that from a real
 // dismissal instead of treating a zero-row UPDATE as success.
 func TestDismissDormant_unknownChannel_reportsFalse(t *testing.T) {
 	st := newTestStore(t)
@@ -228,8 +228,8 @@ func TestRecordDeadScan_incrementsAndReturnsCount(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -252,8 +252,8 @@ func TestResetDeadScan_zeroesPartialCount(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -292,8 +292,8 @@ func TestAutoUnsubscribe_secondDeathAfterManualResubscribe_updatesRecord(t *test
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -336,8 +336,8 @@ func TestAutoUnsubscribe_removesSubscriptionAndRecordsReason(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -354,7 +354,7 @@ func TestAutoUnsubscribe_removesSubscriptionAndRecordsReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(items) != 1 || items[0].Subscribed {
-		t.Fatalf("list after auto unsubscribe = %+v, want one tracked-but-unsubscribed item", items)
+		t.Fatalf("list after auto unsubscribe = %+v, want one added-but-unsubscribed item", items)
 	}
 
 	list, err := st.AutoUnsubscribedList()
@@ -386,8 +386,8 @@ func TestAutoUnsubscribe_keepsChannelAndVideos(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -421,8 +421,8 @@ func TestClearAutoUnsubscribe_allowsResubscribe(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	// A channels row is only a metadata cache; tracking is explicit.
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	// A channels row is only a metadata cache; adding is explicit.
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -485,8 +485,8 @@ func TestAutoUnsubscribeFor_reportsTheRecord(t *testing.T) {
 	if err := s.Upsert(Channel{ID: "UCgone", Name: "Gone"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.Track("UCgone", "2026-01-01 00:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded("UCgone", "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
 	if err := s.Subscribe("UCgone", "2026-01-01 00:00:00"); err != nil {
 		t.Fatalf("subscribe: %v", err)

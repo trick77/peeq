@@ -807,13 +807,13 @@ func (s *Scheduler) enqueueAuto(e ytdlp.ChannelEntry, sub *channels.Subscription
 	// deleted mid-scan, skip creating a download for it (videos has no FK to
 	// channels, so only the later ledger Insert would fail — leaving a stray
 	// videos row + job for a just-deleted channel). channels is now a
-	// metadata cache: Get() returning a row no longer means "tracked" — a
+	// metadata cache: Get() returning a row no longer means "added" — a
 	// concurrent maybeResolveChannel can re-create a cache-only row for the
-	// very id the user just deleted. So the guard must check tracked_at, not
+	// very id the user just deleted. So the guard must check added_at, not
 	// mere presence, or a scan in flight would enqueue a download for a
-	// channel that isn't tracked anymore. This is not fully atomic across
+	// channel that isn't added anymore. This is not fully atomic across
 	// stores; full atomicity is a documented follow-up.
-	if c, err := s.d.Channels.Get(sub.ChannelID); err != nil || c == nil || c.TrackedAt == "" {
+	if c, err := s.d.Channels.Get(sub.ChannelID); err != nil || c == nil || c.AddedAt == "" {
 		return nil
 	}
 	if err := s.d.Videos.Upsert(videos.Video{

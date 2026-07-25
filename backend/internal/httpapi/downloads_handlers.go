@@ -127,13 +127,16 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Deliberately NOT tracking the video's channel here. Adding one video by
-	// URL is a one-off; it must not silently populate the Channels view with
-	// every channel the user has ever grabbed a single video from. Tracking
-	// (and subscribing) stays an explicit action on the Channels page. The
-	// video keeps its channel_id on its own row (once the worker resolves it) —
-	// videos has no foreign key to channels, so an untracked channel_id is a
-	// normal, supported state.
+	// Deliberately NOT adding the video's channel here. Adding one video by
+	// URL is a one-off; adding (and subscribing) a channel stays an explicit
+	// action, and only an added channel is ever scanned for new videos.
+	//
+	// The channel is not invisible, though: once the worker resolves the
+	// metadata it caches a channels row (added_at NULL), which puts the
+	// channel in the list under the "From downloads" filter — reachable and
+	// subscribable, but never scanned. The video keeps its channel_id on its
+	// own row either way; videos has no foreign key to channels, so a
+	// channel_id with no added channel behind it is a normal, supported state.
 
 	jobID, err := s.jobs.Enqueue(id, downloadPriority)
 	if err != nil {

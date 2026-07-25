@@ -26,7 +26,7 @@ func newTestStore(t *testing.T) *Store {
 }
 
 // TestList_excludesCacheOnlyRows asserts a channel row that exists only as a
-// metadata cache entry (never tracked by the user) is invisible to every
+// metadata cache entry (never added by the user) is invisible to every
 // ?filter= value the channels list supports. If this regresses, the user's
 // Channels page fills up with channels they merely clicked on once.
 func TestList_excludesCacheOnlyRows(t *testing.T) {
@@ -35,14 +35,14 @@ func TestList_excludesCacheOnlyRows(t *testing.T) {
 	if err := s.Upsert(Channel{ID: "UCcache", Name: "Cache Only"}); err != nil {
 		t.Fatalf("upsert cache row: %v", err)
 	}
-	if err := s.Upsert(Channel{ID: "UCtracked", Name: "Tracked"}); err != nil {
-		t.Fatalf("upsert tracked row: %v", err)
+	if err := s.Upsert(Channel{ID: "UCadded", Name: "Added"}); err != nil {
+		t.Fatalf("upsert added row: %v", err)
 	}
-	if err := s.Track("UCtracked", "2026-07-20 10:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded("UCadded", "2026-07-20 10:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
 
-	for _, filter := range []string{"all", "tracked", "subscribed", "autodownload"} {
+	for _, filter := range []string{"all", "notsubscribed", "downloaded", "subscribed", "autodownload"} {
 		items, err := s.List(filter)
 		if err != nil {
 			t.Fatalf("list %s: %v", filter, err)
@@ -58,14 +58,14 @@ func TestList_excludesCacheOnlyRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
-	if len(all) != 1 || all[0].ID != "UCtracked" {
-		t.Fatalf("list all = %+v, want only UCtracked", all)
+	if len(all) != 1 || all[0].ID != "UCadded" {
+		t.Fatalf("list all = %+v, want only UCadded", all)
 	}
 }
 
 // TestGet_returnsCacheOnlyRow asserts Get still finds a cache-only row — the
-// channel page reads its metadata through Get even when untracked, so Get
-// must NOT inherit List's tracked_at filter.
+// channel page reads its metadata through Get even when not-added, so Get
+// must NOT inherit List's added_at filter.
 func TestGet_returnsCacheOnlyRow(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Upsert(Channel{ID: "UCcache", Name: "Cache Only", Description: "hello"}); err != nil {
@@ -78,23 +78,23 @@ func TestGet_returnsCacheOnlyRow(t *testing.T) {
 	if c == nil {
 		t.Fatal("get returned nil for a cache-only row")
 	}
-	if c.TrackedAt != "" {
-		t.Fatalf("TrackedAt = %q, want empty for an untracked row", c.TrackedAt)
+	if c.AddedAt != "" {
+		t.Fatalf("AddedAt = %q, want empty for a not-added row", c.AddedAt)
 	}
 	if c.Description != "hello" {
 		t.Fatalf("Description = %q, want %q", c.Description, "hello")
 	}
 }
 
-// TestUpsert_preservesTrackedAt asserts re-caching a channel's metadata (which
-// happens on every visit-triggered resolve) never silently untracks it.
-func TestUpsert_preservesTrackedAt(t *testing.T) {
+// TestUpsert_preservesAddedAt asserts re-caching a channel's metadata (which
+// happens on every visit-triggered resolve) never silently un-adds it.
+func TestUpsert_preservesAddedAt(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Upsert(Channel{ID: "UCx", Name: "Before"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.Track("UCx", "2026-07-20 10:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded("UCx", "2026-07-20 10:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
 	if err := s.Upsert(Channel{ID: "UCx", Name: "After"}); err != nil {
 		t.Fatalf("re-upsert: %v", err)
@@ -103,15 +103,15 @@ func TestUpsert_preservesTrackedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if c.TrackedAt == "" {
-		t.Fatal("re-upsert cleared tracked_at")
+	if c.AddedAt == "" {
+		t.Fatal("re-upsert cleared added_at")
 	}
 	if c.Name != "After" {
 		t.Fatalf("Name = %q, want refreshed to %q", c.Name, "After")
 	}
 }
 
-func TestChannels_trackSubscribeClaim(t *testing.T) {
+func TestChannels_addSubscribeClaim(t *testing.T) {
 	st := newTestStore(t)
 
 	if err := st.Upsert(Channel{ID: "UC1", Handle: "@one", Name: "One"}); err != nil {
@@ -120,13 +120,13 @@ func TestChannels_trackSubscribeClaim(t *testing.T) {
 	if err := st.Upsert(Channel{ID: "UC2", Name: "Two"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Track("UC2", "2000-01-01 00:00:00"); err != nil {
+	if err := st.MarkAdded("UC2", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
-	// Tracked only → ClaimDue returns nothing.
+	// Added only → ClaimDue returns nothing.
 	if sub, err := st.ClaimDue("2999-01-01 00:00:00"); err != nil || sub != nil {
 		t.Fatalf("no subscriptions yet: sub=%v err=%v", sub, err)
 	}
@@ -196,7 +196,7 @@ func TestChannels_updateConfigPartial_leavesOtherFieldUnchanged(t *testing.T) {
 }
 
 // TestChannels_updateConfig_notSubscribed reports ok=false, not an error,
-// when the channel has no subscription row (tracked-only or unknown).
+// when the channel has no subscription row (added-only or unknown).
 func TestChannels_updateConfig_notSubscribed(t *testing.T) {
 	st := newTestStore(t)
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
@@ -204,7 +204,86 @@ func TestChannels_updateConfig_notSubscribed(t *testing.T) {
 	}
 	adOn := true
 	if _, _, ok, err := st.UpdateConfig("UC1", &adOn, nil); err != nil || ok {
-		t.Fatalf("tracked-only channel: ok=%v err=%v, want ok=false err=nil", ok, err)
+		t.Fatalf("added-only channel: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+}
+
+// TestList_downloadOnlyChannel covers the second way a channel earns a place
+// in the list: it was never added, but the library holds a downloaded video
+// from it (a video added by URL). Before this, such a channel was invisible
+// under every filter including "all" — the bug the "downloaded" pill fixes.
+//
+// The filter matrix is the assertion, not just "it shows up somewhere": the
+// download-only row must NOT leak into "notsubscribed" (which means added but
+// not followed), and the cache-only rows beside it must stay out of every
+// filter, "downloaded" included.
+func TestList_downloadOnlyChannel(t *testing.T) {
+	st := newTestStore(t)
+	db := st.DB()
+
+	// Never added, one downloaded video — the "From downloads" case.
+	st.Upsert(Channel{ID: "UCdl", Name: "From A Download"})
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status) VALUES ('v1','u','UCdl','downloaded')`)
+	// Never added, one QUEUED video — nothing downloaded yet, still invisible.
+	st.Upsert(Channel{ID: "UCqueued", Name: "Queued Only"})
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status) VALUES ('v2','u','UCqueued','queued')`)
+	// Never added, nothing at all — a plain cache row from a page visit.
+	st.Upsert(Channel{ID: "UCcache", Name: "Cache Only"})
+	// Added but unsubscribed — the "Not subscribed" case, for contrast.
+	st.Upsert(Channel{ID: "UCadded", Name: "Added"})
+	if err := st.MarkAdded("UCadded", "2026-07-25 10:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
+	}
+
+	// Ordered by name, case-insensitive: "Added" before "From A Download".
+	want := map[string][]string{
+		"all":           {"UCadded", "UCdl"},
+		"downloaded":    {"UCdl"},
+		"notsubscribed": {"UCadded"},
+		"subscribed":    nil,
+		"autodownload":  nil,
+	}
+	for filter, ids := range want {
+		items, err := st.List(filter)
+		if err != nil {
+			t.Fatalf("list %s: %v", filter, err)
+		}
+		var got []string
+		for _, it := range items {
+			got = append(got, it.ID)
+		}
+		if len(got) != len(ids) {
+			t.Fatalf("filter %q = %v, want %v", filter, got, ids)
+		}
+		for i := range ids {
+			if got[i] != ids[i] {
+				t.Fatalf("filter %q = %v, want %v", filter, got, ids)
+			}
+		}
+	}
+}
+
+// TestHasDownloads pins the predicate the delete and subscribe guards share
+// with List. The queued video is the case that matters: VideoRefs would count
+// it, and a guard written that way would unlock destructive actions on a
+// channel nothing has ever been downloaded from.
+func TestHasDownloads(t *testing.T) {
+	st := newTestStore(t)
+	db := st.DB()
+	st.Upsert(Channel{ID: "UCdl", Name: "Downloaded"})
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status) VALUES ('v1','u','UCdl','downloaded')`)
+	st.Upsert(Channel{ID: "UCqueued", Name: "Queued"})
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status) VALUES ('v2','u','UCqueued','queued')`)
+	st.Upsert(Channel{ID: "UCempty", Name: "Empty"})
+
+	for id, want := range map[string]bool{"UCdl": true, "UCqueued": false, "UCempty": false, "UCunknown": false} {
+		got, err := st.HasDownloads(id)
+		if err != nil {
+			t.Fatalf("has downloads %s: %v", id, err)
+		}
+		if got != want {
+			t.Fatalf("has downloads %s = %v, want %v", id, got, want)
+		}
 	}
 }
 
@@ -343,18 +422,18 @@ func TestDeleteCascade_purgesVecAndFTSChunks(t *testing.T) {
 func TestChannels_unsubscribeKeepsChannel(t *testing.T) {
 	st := newTestStore(t)
 	st.Upsert(Channel{ID: "UC1", Name: "One"})
-	st.Track("UC1", "2000-01-01 00:00:00")
+	st.MarkAdded("UC1", "2000-01-01 00:00:00")
 	st.Subscribe("UC1", "2000-01-01 00:00:00")
 	ok, err := st.Unsubscribe("UC1")
 	if err != nil || !ok {
 		t.Fatalf("unsubscribe: ok=%v err=%v", ok, err)
 	}
 	if c, err := st.Get("UC1"); err != nil || c == nil {
-		t.Fatal("channel must stay tracked after unsubscribe")
+		t.Fatal("channel must stay added after unsubscribe")
 	}
-	items, _ := st.List("tracked")
+	items, _ := st.List("notsubscribed")
 	if len(items) != 1 {
-		t.Fatalf("tracked count = %d, want 1", len(items))
+		t.Fatalf("added count = %d, want 1", len(items))
 	}
 }
 
@@ -365,15 +444,15 @@ func TestChannels_unsubscribeKeepsChannel(t *testing.T) {
 func TestChannels_listAutodownloadFilter(t *testing.T) {
 	st := newTestStore(t)
 	for _, c := range []Channel{
-		{ID: "UC1", Name: "Tracked only"},
+		{ID: "UC1", Name: "Added only"},
 		{ID: "UC2", Name: "Subscribed, autodownload off"},
 		{ID: "UC3", Name: "Subscribed, autodownload on"},
 	} {
 		if err := st.Upsert(c); err != nil {
 			t.Fatalf("upsert %s: %v", c.ID, err)
 		}
-		if err := st.Track(c.ID, "2000-01-01 00:00:00"); err != nil {
-			t.Fatalf("track %s: %v", c.ID, err)
+		if err := st.MarkAdded(c.ID, "2000-01-01 00:00:00"); err != nil {
+			t.Fatalf("add %s: %v", c.ID, err)
 		}
 	}
 	for _, id := range []string{"UC2", "UC3"} {
@@ -402,7 +481,7 @@ func TestChannels_listAutodownloadFilter(t *testing.T) {
 }
 
 // TestUpsert_blankFieldsDoNotEraseCachedMetadata asserts a partial re-upsert
-// — which is exactly what the track path does, passing only id/name/handle —
+// — which is exactly what the add path does, passing only id/name/handle —
 // cannot wipe metadata a previous resolve already cached. Without the
 // COALESCE(NULLIF(...)) in Upsert this silently blanks the description and
 // both image paths.
@@ -444,17 +523,32 @@ func TestUpsert_blankFieldsDoNotEraseCachedMetadata(t *testing.T) {
 	}
 }
 
-// TestTrack_errorsOnClosedDB asserts a failed UPDATE (here forced by closing
-// the handle) is reported to the caller rather than swallowed, so a
-// tracking request that silently didn't happen isn't mistaken for success.
-func TestTrack_errorsOnClosedDB(t *testing.T) {
+// TestMarkAdded_errorsOnClosedDB asserts a failed UPDATE (here forced by
+// closing the handle) is reported to the caller rather than swallowed, so an
+// add request that silently didn't happen isn't mistaken for success.
+func TestMarkAdded_errorsOnClosedDB(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.DB().Close(); err != nil {
 		t.Fatalf("close db: %v", err)
 	}
 
-	if err := s.Track("UCx", "2026-07-20 10:00:00"); err == nil {
-		t.Fatal("expected an error tracking against a closed db")
+	if err := s.MarkAdded("UCx", "2026-07-20 10:00:00"); err == nil {
+		t.Fatal("expected an error adding against a closed db")
+	}
+}
+
+// TestHasDownloads_errorsOnClosedDB asserts a failed read is reported rather
+// than flattened to false. Both callers read false as "this channel is not
+// really in the list", so a swallowed error would turn a transient database
+// problem into a 404 on a row the user can plainly see.
+func TestHasDownloads_errorsOnClosedDB(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DB().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := s.HasDownloads("UCx"); err == nil {
+		t.Fatal("expected an error reading against a closed db")
 	}
 }
 
@@ -662,7 +756,7 @@ func TestUpsert_leavesResolveStateAlone(t *testing.T) {
 	}
 }
 
-// newSubTestStore returns a store with UC1 tracked and subscribed, the common
+// newSubTestStore returns a store with UC1 added and subscribed, the common
 // starting point for the scan-scheduling tests below.
 func newSubTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
@@ -670,7 +764,7 @@ func newSubTestStore(t *testing.T) (*Store, string) {
 	if err := st.Upsert(Channel{ID: "UC1", Name: "One"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Track("UC1", "2000-01-01 00:00:00"); err != nil {
+	if err := st.MarkAdded("UC1", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Subscribe("UC1", "2000-01-01 00:00:00"); err != nil {
@@ -787,5 +881,38 @@ func TestClearScanRequest_keepsARequestThatArrivedMidScan(t *testing.T) {
 	sub, _ := s.GetSubscription("UC1")
 	if sub.ScanRequestedAt != "2026-07-25 06:11:14" {
 		t.Fatalf("scan_requested_at = %q, want preserved (this pass never saw it)", sub.ScanRequestedAt)
+	}
+}
+
+// TestList_ordersByTheDisplayedName asserts the sort agrees with what the row
+// renders. An unresolved channel has an empty name and the UI shows its handle
+// or id instead; ordering on the raw name would park every one of them at the
+// top of the list under a label nobody sees.
+func TestList_ordersByTheDisplayedName(t *testing.T) {
+	st := newTestStore(t)
+	st.Upsert(Channel{ID: "UCzz", Name: "Zulu"})
+	st.Upsert(Channel{ID: "UCmm", Handle: "@mike"}) // no name: shows "@mike"
+	st.Upsert(Channel{ID: "UCbare"})                // nothing: shows "UCbare"
+	st.Upsert(Channel{ID: "UCaa", Name: "Alpha"})
+	for _, id := range []string{"UCzz", "UCmm", "UCbare", "UCaa"} {
+		if err := st.MarkAdded(id, "2026-07-25 10:00:00"); err != nil {
+			t.Fatalf("mark added %s: %v", id, err)
+		}
+	}
+
+	items, err := st.List("all")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var got []string
+	for _, it := range items {
+		got = append(got, it.ID)
+	}
+	// "@mike" < "Alpha" < "UCbare" < "Zulu", case-insensitively.
+	want := []string{"UCmm", "UCaa", "UCbare", "UCzz"}
+	for i := range want {
+		if i >= len(got) || got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
 	}
 }

@@ -1,11 +1,11 @@
 // Package channels persists a metadata cache of YouTube channels (the
 // channels table) and their optional subscriptions (the subscriptions
 // table) from migration 0001_init.sql. A channels row does NOT mean
-// "tracked" — it exists for any channel peeq has ever looked at, including
-// ones the user never explicitly added. Tracking is tracked_at IS NOT NULL,
-// set via Track. A subscription row means "subscribed" (the scheduler
-// periodically scans it for new videos); a channel can be tracked without
-// being subscribed, but a subscription always implies a tracked channel
+// "added" — it exists for any channel peeq has ever looked at, including
+// ones the user never explicitly added. Being added is added_at IS NOT NULL,
+// set via MarkAdded. A subscription row means "subscribed" (the scheduler
+// periodically scans it for new videos); a channel can be added without
+// being subscribed, but a subscription always implies an added channel
 // (subscriptions.channel_id references channels.id).
 package channels
 
@@ -17,8 +17,8 @@ import (
 )
 
 // Channel mirrors one row of the channels table. A Channel may exist purely
-// as a metadata cache entry: TrackedAt is empty for a channel the user has
-// visited but never tracked. AvatarPath and BannerPath are relative to the
+// as a metadata cache entry: AddedAt is empty for a channel the user has
+// visited but never added. AvatarPath and BannerPath are relative to the
 // media dir (resolve them with media.SafeMediaPath before serving).
 // Subscribers is 0 when YouTube did not report a count (it is hidden, or the
 // channel has never been resolved) — callers must treat 0 as "unknown", not
@@ -36,8 +36,8 @@ type Channel struct {
 	Verified    bool
 	ResolvedAt  string
 	ResolveOk   bool
-	TrackedAt   string
 	AddedAt     string
+	FirstSeenAt string
 }
 
 // Subscription mirrors one row of the subscriptions table. BaselinedAt and
@@ -68,13 +68,13 @@ type ListItem struct {
 	PendingCount    int
 	DownloadedCount int
 	// LastVideoAt is the discovered_at of the channel's most recently seen
-	// video, or "" if none has ever been discovered (tracked-but-unscanned,
+	// video, or "" if none has ever been discovered (added-but-unscanned,
 	// or genuinely brand new).
 	LastVideoAt string
 	// Dormant mirrors DormantChannels' predicate for this one channel: it is
 	// subscribed, has seen at least one video, that video is older than
 	// DormantAfter relative to now, and dormancy has not been dismissed
-	// since. Always false for a tracked-but-unsubscribed channel.
+	// since. Always false for an added-but-unsubscribed channel.
 	Dormant bool
 }
 
@@ -125,6 +125,25 @@ func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// HasDownloads reports whether the library holds at least one downloaded
+// video from channelID. It is the handler-side twin of hasDownloadsPredicate,
+// which List embeds in SQL — the two must stay in step, since together they
+// decide which channels are visible and which of those may be acted on.
+//
+// Deliberately NOT expressible as len(VideoRefs(id)) > 0: VideoRefs returns
+// every video row whatever its status, so a channel whose only video is
+// queued or failed would pass a check written that way.
+func (s *Store) HasDownloads(channelID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM videos WHERE channel_id = ? AND status = 'downloaded')`,
+		channelID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("has downloads %s: %w", channelID, err)
+	}
+	return n == 1, nil
 }
 
 // DeleteCascade removes a channel and everything belonging to it in one
@@ -191,12 +210,12 @@ WHERE v.channel_id = ?`, channelID)
 
 // Upsert caches a channel's identity, inserting it if new or refreshing the
 // resolved metadata if it already exists. It deliberately does NOT touch
-// tracked_at: caching a channel's details must never track or untrack it.
+// added_at: caching a channel's details must never add or un-add it.
 // Empty fields do not overwrite stored values, so a partial refresh cannot
 // blank out a name that was already known.
 //
 // Upsert deliberately does not touch subscriber_count, verified or
-// resolve_ok. Its callers (the TubeArchivist import, tracking a pasted url)
+// resolve_ok. Its callers (the TubeArchivist import, adding a pasted url)
 // know a channel's identity but nothing about its YouTube metadata, and
 // writing the zero values they carry would silently clear a resolved
 // channel's subscriber count and flip resolve_ok back to "never succeeded".
@@ -258,16 +277,16 @@ ON CONFLICT(id) DO UPDATE SET
 	return nil
 }
 
-// Track marks a cached channel as explicitly tracked by the user. It is
-// idempotent: re-tracking an already-tracked channel keeps the original
-// timestamp rather than resetting "tracked since".
-func (s *Store) Track(channelID, trackedAt string) error {
+// MarkAdded marks a cached channel as explicitly added by the user. It is
+// idempotent: re-adding an already-added channel keeps the original
+// timestamp rather than resetting "added since".
+func (s *Store) MarkAdded(channelID, addedAt string) error {
 	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE channels SET tracked_at = COALESCE(tracked_at, ?) WHERE id = ?`,
-		trackedAt, channelID,
+		`UPDATE channels SET added_at = COALESCE(added_at, ?) WHERE id = ?`,
+		addedAt, channelID,
 	)
 	if err != nil {
-		return fmt.Errorf("track channel %s: %w", channelID, err)
+		return fmt.Errorf("mark channel added %s: %w", channelID, err)
 	}
 	return nil
 }
@@ -291,9 +310,9 @@ func (s *Store) MarkResolveAttempted(channelID, at string) error {
 }
 
 // Get returns the channel with the given id, or (nil, nil) if no such
-// channel is cached. Unlike List, Get does NOT filter on tracked_at — it
+// channel is cached. Unlike List, Get does NOT filter on added_at — it
 // also finds cache-only rows, since the channel page reads metadata for
-// channels the user has never tracked.
+// channels the user has never added.
 func (s *Store) Get(id string) (*Channel, error) {
 	row := s.db.QueryRowContext(context.Background(),
 		`SELECT `+channelColumns+` FROM channels c WHERE c.id = ?`, id)
@@ -311,7 +330,7 @@ func (s *Store) Get(id string) (*Channel, error) {
 // from Get's column order, which scanChannel depends on.
 const channelColumns = `c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
        c.subscriber_count, c.verified,
-       COALESCE(c.resolved_at, ''), c.resolve_ok, COALESCE(c.tracked_at, ''), c.added_at`
+       COALESCE(c.resolved_at, ''), c.resolve_ok, COALESCE(c.added_at, ''), c.first_seen_at`
 
 // rowScanner is *sql.Row and *sql.Rows both.
 type rowScanner interface{ Scan(dest ...any) error }
@@ -322,7 +341,7 @@ func scanChannel(row rowScanner) (*Channel, error) {
 	var c Channel
 	if err := row.Scan(&c.ID, &c.Handle, &c.Name, &c.Description,
 		&c.AvatarPath, &c.BannerPath, &c.Subscribers, &c.Verified,
-		&c.ResolvedAt, &c.ResolveOk, &c.TrackedAt, &c.AddedAt); err != nil {
+		&c.ResolvedAt, &c.ResolveOk, &c.AddedAt, &c.FirstSeenAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -331,12 +350,35 @@ func scanChannel(row rowScanner) (*Channel, error) {
 	return &c, nil
 }
 
-// List returns tracked channels joined with their subscription state,
-// ordered by name (case-insensitive) then id. filter narrows the result:
-// "all" (no filter), "subscribed" (has a subscription row), "tracked"
-// (no subscription row), or "autodownload" (subscribed with autodownload
-// on — a strict subset of "subscribed", since autodownload lives on the
-// subscription row).
+// hasDownloadsPredicate is true for a channel with at least one downloaded
+// video in the library. It is the second way a channel earns a place in the
+// list: a video added by URL never adds its channel (see the download
+// handler), so without this the channel behind a one-off download would be
+// invisible under every filter.
+//
+// Shared by List, the delete guard and the subscribe guard so all three agree
+// on what "peeq holds videos from this channel" means. Note it is deliberately
+// narrower than VideoRefs, which returns every video row regardless of status
+// — a channel whose only video is queued or failed has downloaded nothing.
+const hasDownloadsPredicate = `EXISTS (SELECT 1 FROM videos v
+        WHERE v.channel_id = c.id AND v.status = 'downloaded')`
+
+// List returns the channels worth showing joined with their subscription
+// state, ordered by name (case-insensitive) then id.
+//
+// A channel qualifies two ways: the user added it (added_at IS NOT NULL), or
+// the library holds a downloaded video from it. The second kind is never
+// scanned and was never added — it is here so a one-off video download does
+// not leave its channel unreachable.
+//
+// filter narrows the result:
+//
+//   - "all"           — everything above
+//   - "subscribed"    — has a subscription row
+//   - "notsubscribed" — added, but no subscription row
+//   - "downloaded"    — never added, present only via a downloaded video
+//   - "autodownload"  — subscribed with autodownload on (a strict subset of
+//     "subscribed", since autodownload lives on the subscription row)
 //
 // The last_video_at/dormant columns come from a "lv" CTE (one row per
 // channel_id, its MAX(discovered_at)) joined in alongside subscriptions,
@@ -354,7 +396,7 @@ WITH lv AS (
   GROUP BY channel_id
 )
 SELECT c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
-       COALESCE(c.resolved_at, ''), COALESCE(c.tracked_at, ''), c.added_at,
+       COALESCE(c.resolved_at, ''), COALESCE(c.added_at, ''), c.first_seen_at,
        s.channel_id IS NOT NULL AS subscribed,
        COALESCE(s.autodownload, 0), COALESCE(s.format_override, ''),
        (SELECT count(*) FROM channel_videos cv WHERE cv.channel_id = c.id AND cv.state = 'pending'),
@@ -367,15 +409,23 @@ SELECT c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
 FROM channels c
 LEFT JOIN subscriptions s ON s.channel_id = c.id
 LEFT JOIN lv ON lv.channel_id = c.id
-WHERE c.tracked_at IS NOT NULL`
+WHERE (c.added_at IS NOT NULL OR ` + hasDownloadsPredicate + `)`
 
 	switch filter {
 	case "subscribed":
 		query += ` AND s.channel_id IS NOT NULL`
-	case "tracked":
-		query += ` AND s.channel_id IS NULL`
+	case "notsubscribed":
+		// The added_at check is load-bearing: without it the download-only
+		// rows, which have no subscription either, would land in this pill
+		// too — and they are exactly what the "downloaded" pill is for.
+		query += ` AND c.added_at IS NOT NULL AND s.channel_id IS NULL`
+	case "downloaded":
+		// The EXISTS is repeated rather than inherited from the base clause:
+		// a cache-only row written by merely visiting a channel page also has
+		// added_at IS NULL, and this pill must exclude it on its own terms.
+		query += ` AND c.added_at IS NULL AND ` + hasDownloadsPredicate
 	case "autodownload":
-		// s.autodownload is NULL for tracked-but-unsubscribed channels, and
+		// s.autodownload is NULL for added-but-unsubscribed channels, and
 		// `NULL = 1` is not true in SQLite, so those drop out without an
 		// extra IS NOT NULL guard.
 		query += ` AND s.autodownload = 1`
@@ -384,7 +434,11 @@ WHERE c.tracked_at IS NOT NULL`
 	default:
 		return nil, fmt.Errorf("list channels: unknown filter %q", filter)
 	}
-	query += ` ORDER BY c.name COLLATE NOCASE, c.id`
+	// Sort by what the row actually shows. A channel whose metadata has never
+	// resolved has an empty name, and the UI falls back to its handle and then
+	// its id — ordering on the raw name would sort every one of those to the
+	// very top under a label the list never displays.
+	query += ` ORDER BY COALESCE(NULLIF(c.name, ''), NULLIF(c.handle, ''), c.id) COLLATE NOCASE, c.id`
 
 	rows, err := s.db.QueryContext(context.Background(), query, DormantAfter)
 	if err != nil {
@@ -397,7 +451,7 @@ WHERE c.tracked_at IS NOT NULL`
 		var it ListItem
 		if err := rows.Scan(
 			&it.ID, &it.Handle, &it.Name, &it.Description, &it.AvatarPath, &it.BannerPath,
-			&it.ResolvedAt, &it.TrackedAt, &it.AddedAt,
+			&it.ResolvedAt, &it.AddedAt, &it.FirstSeenAt,
 			&it.Subscribed, &it.Autodownload, &it.FormatOverride,
 			&it.PendingCount, &it.DownloadedCount,
 			&it.LastVideoAt, &it.Dormant,
@@ -439,7 +493,7 @@ ON CONFLICT(channel_id) DO NOTHING`,
 	return nil
 }
 
-// Unsubscribe removes channelID's subscription, leaving the channel tracked.
+// Unsubscribe removes channelID's subscription, leaving the channel added.
 // Returns whether a subscription actually existed.
 func (s *Store) Unsubscribe(channelID string) (bool, error) {
 	res, err := s.db.ExecContext(context.Background(),
@@ -631,7 +685,7 @@ FROM videos WHERE status = 'downloaded' AND `+where, args...)
 
 // NameFromVideos returns the channel name recorded on this channel's videos
 // and whether the channel has any videos at all. Both matter to the channel
-// page: the name is all peeq knows about an untracked channel, and existence
+// page: the name is all peeq knows about a not-added channel, and existence
 // is what separates "a channel with nothing downloaded yet" from "an id that
 // names nothing". Existence is deliberately NOT filtered by status — a video
 // still downloading is still a video.
