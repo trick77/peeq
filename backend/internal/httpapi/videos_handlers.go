@@ -18,18 +18,27 @@ import (
 // (empty string / nil) into fields the frontend can read directly — the
 // "Expires in N days" UI is watched_at + settings.retention_days.
 type videoDTO struct {
-	ID                    string                   `json:"id"`
-	URL                   string                   `json:"url"`
-	Title                 string                   `json:"title"`
-	ChannelID             string                   `json:"channel_id"`
-	ChannelName           string                   `json:"channel_name"`
-	DurationSeconds       int64                    `json:"duration_seconds,omitempty"`
-	PublishedAt           string                   `json:"published_at,omitempty"`
-	Description           string                   `json:"description,omitempty"`
-	HasThumbnail          bool                     `json:"has_thumbnail"`
-	HasMedia              bool                     `json:"has_media"`
-	FilesizeBytes         int64                    `json:"filesize_bytes,omitempty"`
-	FormatUsed            string                   `json:"format_used,omitempty"`
+	ID              string `json:"id"`
+	URL             string `json:"url"`
+	Title           string `json:"title"`
+	ChannelID       string `json:"channel_id"`
+	ChannelName     string `json:"channel_name"`
+	DurationSeconds int64  `json:"duration_seconds,omitempty"`
+	PublishedAt     string `json:"published_at,omitempty"`
+	Description     string `json:"description,omitempty"`
+	HasThumbnail    bool   `json:"has_thumbnail"`
+	HasMedia        bool   `json:"has_media"`
+	FilesizeBytes   int64  `json:"filesize_bytes,omitempty"`
+	FormatUsed      string `json:"format_used,omitempty"`
+	// The media facts the player's stat strip shows, as ffprobe reported them
+	// ("mp4", "h264", 1080, "aac"). omitempty on purpose: an unprobed video
+	// omits the columns rather than rendering blanks. Friendly wording
+	// ("H.264", "1080p") is the UI's job, not the wire's, so it can change
+	// without a migration.
+	MediaContainer        string                   `json:"media_container,omitempty"`
+	VideoCodec            string                   `json:"video_codec,omitempty"`
+	VideoHeight           int64                    `json:"video_height,omitempty"`
+	AudioCodec            string                   `json:"audio_codec,omitempty"`
 	Availability          string                   `json:"availability"`
 	Status                string                   `json:"status"`
 	ErrorMessage          string                   `json:"error_message,omitempty"`
@@ -111,6 +120,10 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		HasMedia:              v.MediaPath != "",
 		FilesizeBytes:         v.FilesizeBytes,
 		FormatUsed:            v.FormatUsed,
+		MediaContainer:        v.MediaContainer,
+		VideoCodec:            v.VideoCodec,
+		VideoHeight:           v.VideoHeight,
+		AudioCodec:            v.AudioCodec,
 		Availability:          v.Availability,
 		Status:                v.Status,
 		ErrorMessage:          v.ErrorMessage,

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { daysSince, formatAge, formatAgo } from "./format";
+import {
+  codecLabel,
+  daysSince,
+  formatAge,
+  formatAgo,
+  formatSize,
+  resolutionLabel,
+} from "./format";
 
 // A fixed "now" so the relative output is deterministic. daysSince (which
 // formatAgo builds on) floors whole days, so each case picks a day offset
@@ -144,4 +151,87 @@ describe("formatAgo and formatAge agree on every bucket", () => {
       expect(age).toBe(`${n} ${short} ago`);
     },
   );
+});
+
+// The wire carries ffprobe's raw values so these mappings are the only place
+// display wording lives; they can change without a migration.
+describe("codecLabel", () => {
+  it("names the codecs people recognise", () => {
+    expect(codecLabel("h264")).toBe("H.264");
+    expect(codecLabel("vp9")).toBe("VP9");
+    expect(codecLabel("aac")).toBe("AAC");
+    expect(codecLabel("opus")).toBe("Opus");
+  });
+
+  // Which spelling ffprobe reports depends on the container it read, so the
+  // aliases must land on the same label rather than leaking two names for one
+  // codec into the UI.
+  it("collapses the container-dependent aliases", () => {
+    expect(codecLabel("avc1")).toBe(codecLabel("h264"));
+    expect(codecLabel("mp4a")).toBe(codecLabel("aac"));
+    expect(codecLabel("av01")).toBe(codecLabel("av1"));
+    expect(codecLabel("hev1")).toBe("H.265");
+  });
+
+  it("is case-insensitive", () => {
+    expect(codecLabel("H264")).toBe("H.264");
+    expect(codecLabel("AAC")).toBe("AAC");
+  });
+
+  // A codec peeq has never seen is more useful shown than hidden.
+  it("falls back to the raw name uppercased", () => {
+    expect(codecLabel("someneWcodec")).toBe("SOMENEWCODEC");
+  });
+
+  it("renders nothing for a missing value", () => {
+    expect(codecLabel(undefined)).toBe("");
+    expect(codecLabel("")).toBe("");
+  });
+});
+
+describe("resolutionLabel", () => {
+  it("uses the p form for the ordinary heights", () => {
+    expect(resolutionLabel(1080)).toBe("1080p");
+    expect(resolutionLabel(720)).toBe("720p");
+    expect(resolutionLabel(1440)).toBe("1440p");
+  });
+
+  it("uses the names people say for the two heights that have one", () => {
+    expect(resolutionLabel(2160)).toBe("4K");
+    expect(resolutionLabel(4320)).toBe("8K");
+  });
+
+  // Matched exactly, not by threshold: a `>= 2160` test labels an 8K file
+  // "4K" — the same class of lie the strip replaced format_used to avoid.
+  it("does not sweep taller heights into the 4K label", () => {
+    expect(resolutionLabel(2880)).toBe("2880p");
+    expect(resolutionLabel(4320)).not.toBe("4K");
+  });
+
+  // Odd heights are reported as they are rather than rounded into a lie.
+  it("does not round a non-standard height", () => {
+    expect(resolutionLabel(1082)).toBe("1082p");
+  });
+
+  it("renders nothing for a missing or nonsense height", () => {
+    expect(resolutionLabel(undefined)).toBe("");
+    expect(resolutionLabel(0)).toBe("");
+    expect(resolutionLabel(-1)).toBe("");
+  });
+});
+
+describe("formatSize", () => {
+  it("keeps one decimal for GB and whole units below", () => {
+    expect(formatSize(1.4 * 1024 ** 3)).toBe("1.4 GB");
+    expect(formatSize(412 * 1024 ** 2)).toBe("412 MB");
+    expect(formatSize(8 * 1024)).toBe("8 KB");
+    expect(formatSize(512)).toBe("512 B");
+  });
+
+  // The stat strip drops a column whose value is empty, so an unknown size
+  // has to read as empty rather than "0 B".
+  it("renders nothing for a missing size", () => {
+    expect(formatSize(undefined)).toBe("");
+    expect(formatSize(0)).toBe("");
+  });
 });

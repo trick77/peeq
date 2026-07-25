@@ -22,7 +22,14 @@ import { getSettings, updateSettings } from "../api/settings";
 import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareChip, ShareControl } from "../components/ShareControl";
 import type { Video } from "../api/types";
-import { formatAgo, formatDuration, gradientClassFor } from "../format";
+import {
+  codecLabel,
+  formatAgo,
+  formatDuration,
+  formatSize,
+  gradientClassFor,
+  resolutionLabel,
+} from "../format";
 // The VTT parser and transcript helpers live in ../vtt so the public share page
 // can render the same Transcript card without importing this view.
 import {
@@ -810,11 +817,16 @@ export function Player({
           />
         </div>
         <div className="playmeta">
-          <div className="playtitle">
-            <h1>{video.title}</h1>
-            <ShareChip status={shareStatus} />
-          </div>
-          <div className="sub">
+          {/* Who made it and when, above the title — the same eyebrow a
+              library card carries, so a video reads the same way in the grid
+              and on the page it opens.
+
+              Both ages spelled out via formatAgo: the card abbreviates the
+              second one only because its column is narrow, and this one is
+              not. "aired" is conditional because published_at is unknown for
+              some live streams and premieres; "added" is conditional because
+              a row can be listed without ever having finished downloading. */}
+          <div className="by">
             {onOpenChannel && video.channel_id ? (
               <button
                 type="button"
@@ -824,13 +836,10 @@ export function Player({
                 {video.channel_name || video.channel_id}
               </button>
             ) : (
-              video.channel_name || video.channel_id
+              <span className="chan-name">
+                {video.channel_name || video.channel_id}
+              </span>
             )}
-            {/* Both ages, spelled out — the detail view has the room the card
-                eyebrow does not. "aired" is conditional because published_at
-                is unknown for some live streams and premieres; "added" is
-                conditional because a row can be listed without ever having
-                finished downloading. */}
             {video.published_at ? (
               <>
                 <span className="dot">·</span>
@@ -843,16 +852,10 @@ export function Player({
                 added {formatAgo(video.downloaded_at)}
               </>
             ) : null}
-            {video.format_used ? (
-              <span className="pill">{video.format_used}</span>
-            ) : null}
-            {video.filesize_bytes ? (
-              <span className="pill">{formatSize(video.filesize_bytes)}</span>
-            ) : null}
-            <CategoryPicker
-              category={video.category}
-              onPick={handlePickCategory}
-            />
+          </div>
+          <div className="playtitle">
+            <h1>{video.title}</h1>
+            <ShareChip status={shareStatus} />
           </div>
           {/* The action row splits on one rule: a control keeps its label if
               the label reports the current state (Keep forever / Kept
@@ -923,7 +926,17 @@ export function Player({
                 </ShareControl>
               );
             })()}
+            {/* The category picker is a control, not metadata, so it joins the
+                actions rather than the facts below. Behind a separator: the
+                controls to its left act on this video's state, this one
+                changes what the video IS filed as. */}
+            <span className="acts-sep" aria-hidden="true" />
+            <CategoryPicker
+              category={video.category}
+              onPick={handlePickCategory}
+            />
           </div>
+          <MediaStats video={video} />
         </div>
 
         <div className="belowvideo">
@@ -1185,9 +1198,54 @@ export function Player({
   );
 }
 
-function formatSize(bytes: number): string {
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${bytes} B`;
+// MediaStats is the labelled strip of file facts under the action row: what
+// this video is, as opposed to what it is about.
+//
+// It replaced a pill showing format_used — the resolved yt-dlp -f selector,
+// which rendered as
+// "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4". That
+// string describes the request, not the result, and is identical for every
+// video downloaded under one preset. These values come from ffprobe reading
+// the actual file.
+//
+// Every column is dropped when its value is missing, and the whole strip
+// disappears when nothing is left, so a video the probe has not reached yet
+// (or could not read) shows no empty scaffolding. Length and Size come from
+// the download itself and are therefore almost always present; the other
+// three arrive only once the file has been probed.
+function MediaStats({ video }: { video: Video }) {
+  const stats: Array<{ k: string; v: string }> = [
+    // formatDuration renders "--:--" for an unknown length, which is the
+    // right answer under a scrubber and the wrong one here: a labelled stat
+    // reading "--:--" claims the figure exists and is unreadable. Guard so
+    // the column drops out instead.
+    {
+      k: "Length",
+      v: video.duration_seconds ? formatDuration(video.duration_seconds) : "",
+    },
+    { k: "Size", v: formatSize(video.filesize_bytes) },
+    { k: "Format", v: video.media_container?.toUpperCase() ?? "" },
+    {
+      k: "Video",
+      // One column, because "1080p H.264" is how a person says it — two
+      // separate cells would imply the resolution and the codec are
+      // independently interesting, and they are not.
+      v: [resolutionLabel(video.video_height), codecLabel(video.video_codec)]
+        .filter(Boolean)
+        .join(" "),
+    },
+    { k: "Audio", v: codecLabel(video.audio_codec) },
+  ].filter((s) => s.v !== "");
+
+  if (stats.length === 0) return null;
+  return (
+    <dl className="playstats">
+      {stats.map((s) => (
+        <div className="stat" key={s.k}>
+          <dt>{s.k}</dt>
+          <dd>{s.v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
