@@ -84,8 +84,13 @@ func unescapeEntities(s string) string {
 	}
 	return entityRe.ReplaceAllStringFunc(s, func(m string) string {
 		// ToLower folds the &#X27; spelling onto the &#x27; key; every other
-		// form entityRe can match is already lower-case.
-		return entities[strings.ToLower(m)]
+		// form entityRe can match is already lower-case. A name added to
+		// entityRe but not to the table leaves the text alone rather than
+		// deleting it — the same fallback the TypeScript mirror takes.
+		if v, ok := entities[strings.ToLower(m)]; ok {
+			return v
+		}
+		return m
 	})
 }
 

@@ -1888,6 +1888,9 @@ button.catpick.unset:hover {
 }
 .playacts {
   display: flex;
+  /* Positioning context for the share popover on narrow screens — see the
+     media query beside .sharepop. */
+  position: relative;
   /* Centred, not stretched: the hairline (22px) and the kebab (32px) carry a
      definite height, so the default `stretch` parks them at the top of the
      40px line instead of on the buttons' centreline. */
@@ -3779,6 +3782,23 @@ details.tomb-sect[open] > summary svg {
   border-right: 1px solid var(--color-elevated-border);
   border-bottom: 1px solid var(--color-elevated-border);
   transform: rotate(45deg);
+}
+/* Phones: .playacts wraps, so the ⋮ can sit anywhere along the row and a fixed
+   320px panel hung off it would run off-screen. Dropping .share-ctl's
+   positioning context hands the popover to .playacts, so it spans the row
+   instead of pointing at a trigger it can no longer reach cleanly. */
+@media (max-width: 620px) {
+  .share-ctl {
+    position: static;
+  }
+  .sharepop {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+  .sharepop::after {
+    display: none;
+  }
 }
 .sharepop .ph {
   display: flex;
