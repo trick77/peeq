@@ -855,9 +855,16 @@ button.srow:not(:disabled):hover {
 .ag-edge {
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 12px;
   padding: 14px 0 4px;
   font-size: 13px;
   color: var(--color-faint);
+}
+/* A failed page-back is reported beside its own control, not in place of the
+   page: the rows already loaded are still good. */
+.ag-edge-err {
+  color: #d98b80;
 }
 
 .cookie-status {

@@ -284,3 +284,57 @@ describe("History", () => {
     expect(await screen.findByText("boom")).toBeInTheDocument();
   });
 });
+
+// These two pin the bugs a medium review of #161 turned up.
+describe("History regressions", () => {
+  beforeEach(() => {
+    vi.mocked(listActivity).mockReset();
+  });
+
+  // dayLabel round-tripped `now` through toISOString(), which already ends in
+  // "Z"; parseUTC then appended a second one, giving an Invalid Date. Both the
+  // today and yesterday keys read "NaN-NaN-NaN", matched nothing, and the two
+  // labels anyone actually reads never rendered. Fixed dates in the other test
+  // could not catch it — only an event stamped relative to now can.
+  it("names today and yesterday, not just their dates", async () => {
+    const iso = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
+    vi.mocked(listActivity).mockResolvedValue({
+      events: [
+        ev({ id: 1, at: iso(new Date()), subject: "Just happened" }),
+        ev({
+          id: 2,
+          at: iso(new Date(Date.now() - 86400_000)),
+          subject: "A day back",
+        }),
+      ],
+      has_more: false,
+      retained_max: 2000,
+    });
+    render(<History live={[]} />);
+    await screen.findByText("Just happened");
+    const seps = Array.from(document.querySelectorAll(".ag-daysep span")).map(
+      (s) => s.textContent,
+    );
+    expect(seps[0]).toBe("Today");
+    expect(seps[1]).toContain("Yesterday");
+  });
+
+  // A transient failure paging backwards used to render in place of the whole
+  // page, throwing away the log already on screen.
+  it("keeps the loaded log when paging backwards fails", async () => {
+    vi.mocked(listActivity).mockResolvedValueOnce({
+      events: [ev({ id: 9, subject: "Already here" })],
+      has_more: true,
+      retained_max: 2000,
+    });
+    vi.mocked(listActivity).mockRejectedValueOnce(new Error("network down"));
+    const user = userEvent.setup();
+    render(<History live={[]} />);
+    await screen.findByText("Already here");
+    await user.click(screen.getByRole("button", { name: LOAD_MORE }));
+    expect(await screen.findByText("network down")).toBeInTheDocument();
+    // The rows that did load are still there, and so is the retry.
+    expect(screen.getByText("Already here")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: LOAD_MORE })).toBeInTheDocument();
+  });
+});

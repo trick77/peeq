@@ -84,12 +84,16 @@ function clockOf(at: string): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-// dayKeyOf is the local calendar day an event belongs to, as a sortable key.
-// Derived in local time, not UTC, so a 01:00 event doesn't get filed under the
+// dayKeyOfDate is the local calendar day a Date falls on, as a sortable key.
+// Read in local time, not UTC, so a 01:00 event doesn't get filed under the
 // previous day for anyone east of Greenwich.
-function dayKeyOf(at: string): string {
-  const d = parseUTC(at);
+function dayKeyOfDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// dayKeyOf is the same for an event's backend timestamp.
+function dayKeyOf(at: string): string {
+  return dayKeyOfDate(parseUTC(at));
 }
 
 const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -111,10 +115,13 @@ const MONTH = [
 // dayLabel names a separator. The two days anyone reads by name get it; older
 // ones get a date, and yesterday gets both so the transition is never a guess.
 function dayLabel(key: string, now: number): string {
-  const today = dayKeyOf(new Date(now).toISOString().replace("T", " "));
-  const yesterday = dayKeyOf(
-    new Date(now - 86400_000).toISOString().replace("T", " "),
-  );
+  // Keyed straight off the Date. Round-tripping through toISOString() looked
+  // harmless but produced a string already ending in "Z", which parseUTC then
+  // appended a second "Z" to — an Invalid Date, so both keys read
+  // "NaN-NaN-NaN", never matched, and the two labels anyone actually reads
+  // never appeared.
+  const today = dayKeyOfDate(new Date(now));
+  const yesterday = dayKeyOfDate(new Date(now - 86400_000));
   const [y, m, d] = key.split("-").map(Number);
   const date = new Date(y, m - 1, d);
   const stamp = `${WEEKDAY[date.getDay()]} ${d} ${MONTH[m - 1]}`;
@@ -137,7 +144,11 @@ export function History({
   const [retainedMax, setRetainedMax] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Two error slots on purpose. `error` means the page never loaded and there
+  // is nothing to show; `moreError` means paging backwards failed while a good
+  // log is already on screen, which must not blank it.
   const [error, setError] = useState<string | null>(null);
+  const [moreError, setMoreError] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   // now is captured once per render pass for the relative-time labels and the
   // day names; it does not tick, which is fine for a log.
@@ -197,7 +208,11 @@ export function History({
         });
         setHasMore(page.has_more);
       })
-      .catch((e: Error) => setError(e.message))
+      // Deliberately NOT setError: that renders instead of the whole page, so a
+      // transient failure paging backwards would throw away the log already on
+      // screen. The rows you have are still good; only the fetch for older ones
+      // failed, and the control stays where it is to be tried again.
+      .catch((e: Error) => setMoreError(e.message))
       .finally(() => setLoadingMore(false));
   }
 
@@ -326,6 +341,9 @@ export function History({
               >
                 {loadingMore ? "Loading…" : `Load ${PAGE_SIZE} more`}
               </button>
+              {moreError ? (
+                <span className="ag-edge-err">{moreError}</span>
+              ) : null}
             </div>
           ) : null}
         </>
