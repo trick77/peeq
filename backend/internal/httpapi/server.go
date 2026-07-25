@@ -13,6 +13,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/playback"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/sharelink"
@@ -36,6 +37,11 @@ type Deps struct {
 	TokenMiddleware *auth.TokenMiddleware
 	// Settings is the singleton settings store backing the Settings API.
 	Settings *settings.Store
+	// Playback is the singleton "now playing" pointer store. Optional: when nil,
+	// GET /api/playback reports an empty pointer and PUT is a no-op 200, so the
+	// rail simply falls back to its in-memory behaviour rather than surfacing an
+	// error for a convenience feature (see playback_handlers.go).
+	Playback *playback.Store
 	// DevAuthClaims, when Subject is non-empty, makes /api/auth/login create a
 	// session directly from these claims instead of redirecting to OIDC. Only
 	// ever set when BACKEND_AUTH_MODE=dev (see config's loopback-only guard).
@@ -170,6 +176,7 @@ type server struct {
 	authMW        *auth.Middleware
 	tokenMW       *auth.TokenMiddleware
 	settings      *settings.Store
+	playback      *playback.Store
 	devAuthClaims auth.Claims
 
 	jobs       *jobs.Store
@@ -212,6 +219,7 @@ func New(d Deps) http.Handler {
 		authMW:        d.AuthMiddleware,
 		tokenMW:       d.TokenMiddleware,
 		settings:      d.Settings,
+		playback:      d.Playback,
 		devAuthClaims: d.DevAuthClaims,
 		jobs:          d.Jobs,
 		videos:        d.Videos,
@@ -279,6 +287,10 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/s/{token}/stream", s.handleShareStream)
 	mux.HandleFunc("GET /api/s/{token}/thumbnail", s.handleShareThumbnail)
 	mux.HandleFunc("GET /api/s/{token}/subtitles", s.handleShareSubtitles)
+	// The "now playing" pointer: which video the rail reopens when the URL
+	// carries no id. Session-gated like everything else the SPA reads.
+	mux.Handle("GET /api/playback", s.requireAuth(http.HandlerFunc(s.handleGetPlaybackState)))
+	mux.Handle("PUT /api/playback", s.requireAuth(http.HandlerFunc(s.handlePutPlaybackState)))
 	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleGetSettings)))
 	mux.Handle("PUT /api/settings", s.requireAuth(http.HandlerFunc(s.handlePutSettings)))
 	mux.Handle("PUT /api/settings/cookie", s.requireAuth(http.HandlerFunc(s.handlePutSettingsCookie)))

@@ -159,6 +159,12 @@ export function toPath(state: RouteState): string {
 // when the canonical path actually changes, so repeat clicks on the active
 // view don't stack duplicate history entries.
 //
+// That in-memory survival is per-tab, and dies with it. The case it can't cover
+// — a fresh tab, or another device entirely — is answered by App's server-side
+// "now playing" pointer (GET /api/playback), which it uses as the fallback when
+// videoId is null. The URL stays authoritative for which page is open: a cold
+// "/" still parses to the Library, pointer or no pointer.
+//
 // The merge reads a ref rather than closing over `route`, which keeps navigate
 // referentially stable (safe to pass straight to children / effect deps) and
 // correct even across several transitions within one tick. pushState is done

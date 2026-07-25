@@ -32,6 +32,7 @@ import (
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/mediaprobe"
+	"github.com/trick77/peeq/internal/playback"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/retention"
 	"github.com/trick77/peeq/internal/scan"
@@ -176,6 +177,7 @@ func run() error {
 
 	authSvc := auth.NewService(oidcSvc, sessions, users)
 	settingsStore := settings.New(db)
+	playbackStore := playback.New(db)
 	jobsStore := jobs.New(db)
 	videosStore := videos.New(db)
 	shareLinksStore := sharelink.New(db)
@@ -427,6 +429,7 @@ func run() error {
 		AuthMiddleware:  authMW,
 		TokenMiddleware: auth.NewTokenMiddleware(settingsStore),
 		Settings:        settingsStore,
+		Playback:        playbackStore,
 		DevAuthClaims:   devClaims,
 		Jobs:            jobsStore,
 		Videos:          videosStore,

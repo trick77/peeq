@@ -363,3 +363,51 @@ FROM subscriptions`).Scan(&seeded, &inWindow, &distinctDays); err != nil {
 		t.Fatalf("refreshes land on only %d distinct days; the backfill is not spreading them", distinctDays)
 	}
 }
+
+// TestMigrate_seedsPlaybackStateOnAnExistingDB guards migration 0011. Unlike the
+// ALTER TABLE migrations, this one INSERTs: the singleton row has to be there for
+// playback.Store's plain UPDATE/QueryRow to work at all, so a DB that upgraded
+// rather than being created fresh must come out of Migrate with the row present.
+func TestMigrate_seedsPlaybackStateOnAnExistingDB(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Given: a DB standing at the migration right before this one.
+	applyThrough(t, db, "0010_video_state_version.sql")
+
+	// When: peeq starts and migrates.
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Then: exactly one row, pointing at nothing.
+	var count int
+	var videoID sql.NullString
+	if err := db.QueryRow(`SELECT COUNT(*) FROM playback_state`).Scan(&count); err != nil {
+		t.Fatalf("playback_state missing after migrate: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("playback_state row count = %d, want 1", count)
+	}
+	if err := db.QueryRow(`SELECT video_id FROM playback_state WHERE id = 1`).Scan(&videoID); err != nil {
+		t.Fatalf("read playback_state: %v", err)
+	}
+	if videoID.Valid {
+		t.Fatalf("video_id = %q, want NULL on a freshly migrated DB", videoID.String)
+	}
+
+	// And: re-running is a no-op rather than a duplicate-key failure — every
+	// restart re-runs Migrate.
+	if err := Migrate(db); err != nil {
+		t.Fatalf("second Migrate: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM playback_state`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("playback_state row count = %d after a second migrate, want 1", count)
+	}
+}

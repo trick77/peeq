@@ -43,6 +43,10 @@ vi.mock("../api/videos", () => ({
   thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
 }));
 
+vi.mock("../api/playback", () => ({
+  setPlaybackState: vi.fn().mockResolvedValue({ video_id: "v1" }),
+}));
+
 vi.mock("../api/search", () => ({
   subtitlesUrl: (id: string) => `/api/videos/${id}/subtitles`,
   reprocess: vi.fn().mockResolvedValue(undefined),
@@ -81,6 +85,7 @@ import {
   setCategory,
 } from "../api/videos";
 import { reprocess } from "../api/search";
+import { setPlaybackState } from "../api/playback";
 import { getSettings, updateSettings } from "../api/settings";
 import type { Settings } from "../api/types";
 import { gradientClassFor } from "../format";
@@ -126,6 +131,7 @@ describe("Player", () => {
       watched: false,
     });
     vi.mocked(reprocess).mockClear();
+    vi.mocked(setPlaybackState).mockClear();
     vi.mocked(redownload).mockClear();
     vi.mocked(deleteVideo).mockClear();
     // mockReset, not mockClear: these carry per-test queued outcomes
@@ -947,6 +953,58 @@ describe("Player", () => {
     expect(
       screen.queryByText("Marked watched on another device."),
     ).not.toBeInTheDocument();
+  });
+
+  it("records the open video as now playing, server-side", async () => {
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    // waitFor, not a bare expect after a findBy: React 19 defers passive
+    // effects to a macrotask, so a rendered player does NOT mean the effect
+    // that writes the pointer has run yet.
+    await waitFor(() => expect(setPlaybackState).toHaveBeenCalledWith("v1"));
+    // Once per video opened — not on every resume ping.
+    expect(setPlaybackState).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not clear the pointer on unmount", async () => {
+    // Navigating to the Library is not "I stopped watching" — clearing here
+    // would defeat the whole point of the pointer.
+    const { unmount } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    await waitFor(() => expect(setPlaybackState).toHaveBeenCalledWith("v1"));
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setPlaybackState).not.toHaveBeenCalledWith(null);
+  });
+
+  it("shows the watched state on the button, not only in its label", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ watched: true }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const button = await screen.findByRole("button", {
+      name: "Mark unwatched",
+    });
+    // Tinted, and aria-pressed for anyone who can't see the colour. Not gold:
+    // that is "Kept forever" sitting in the same row.
+    expect(button).toHaveClass("ui-btn--tinted");
+    expect(button).not.toHaveClass("ui-btn--gold");
+    expect(button).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("flips the watched styling optimistically when toggled", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ watched: false }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const button = await screen.findByRole("button", { name: "Mark watched" });
+    expect(button).toHaveClass("ui-btn--secondary");
+    expect(button).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(button);
+
+    const flipped = await screen.findByRole("button", {
+      name: "Mark unwatched",
+    });
+    expect(flipped).toHaveClass("ui-btn--tinted");
+    expect(flipped).toHaveAttribute("aria-pressed", "true");
   });
 
   it('the ⋮ menu holds a "Watch on YouTube" link to the video url', async () => {
