@@ -24,21 +24,30 @@ describe("formatAgo", () => {
     expect(formatAgo(daysAgo(29), NOW)).toBe("29 days ago");
   });
 
-  it("rounds to months between 30 and 364 days", () => {
+  it("rounds to months once past 30 days", () => {
     expect(formatAgo(daysAgo(30), NOW)).toBe("1 month ago");
     expect(formatAgo(daysAgo(150), NOW)).toBe("5 months ago");
+    expect(formatAgo(daysAgo(344), NOW)).toBe("11 months ago");
   });
 
-  it("caps months at 11 so it never reads '12 months ago'", () => {
-    // ~345+ days rounds to 12 months without the cap; it must stay 11 until
-    // the 365-day year threshold takes over.
-    expect(formatAgo(daysAgo(355), NOW)).toBe("11 months ago");
-    expect(formatAgo(daysAgo(364), NOW)).toBe("11 months ago");
-  });
-
-  it("rounds to years at a year and beyond", () => {
+  // Twelve months is a year and has to read as one. Neither "12 months ago"
+  // (the arithmetic left unattended) nor "11 months ago" (clamping, which
+  // under-reports something 11½ months old) is acceptable here.
+  it("rolls into years as soon as the month count would reach 12", () => {
+    expect(formatAgo(daysAgo(345), NOW)).toBe("1 year ago");
+    expect(formatAgo(daysAgo(364), NOW)).toBe("1 year ago");
     expect(formatAgo(daysAgo(365), NOW)).toBe("1 year ago");
+  });
+
+  it("rounds to years beyond the first", () => {
     expect(formatAgo(daysAgo(740), NOW)).toBe("2 years ago");
+    expect(formatAgo(daysAgo(1100), NOW)).toBe("3 years ago");
+  });
+
+  it("never says '12 months ago' at any age", () => {
+    for (let days = 1; days <= 3650; days++) {
+      expect(formatAgo(daysAgo(days), NOW)).not.toContain("12 months");
+    }
   });
 });
 
@@ -94,4 +103,45 @@ describe("formatAge", () => {
     expect(formatAge(daysAgo(90), NOW)).toBe("3 mo ago");
     expect(formatAge(daysAgo(400), NOW)).toBe("1 y ago");
   });
+
+  it("rolls into years with formatAgo rather than reading '12 mo ago'", () => {
+    expect(formatAge(daysAgo(344), NOW)).toBe("11 mo ago");
+    expect(formatAge(daysAgo(345), NOW)).toBe("1 y ago");
+    expect(formatAge(daysAgo(364), NOW)).toBe("1 y ago");
+  });
+});
+
+// The two formatters exist only to spell the same age differently. Anything
+// that makes one pick a different bucket than the other is a bug in whichever
+// one changed, so assert the agreement directly rather than trusting two lists
+// of hand-written cases to stay in step.
+describe("formatAgo and formatAge agree on every bucket", () => {
+  const EXPECTED_UNIT = [
+    { days: 1, long: "day", short: "d" },
+    { days: 29, long: "day", short: "d" },
+    { days: 30, long: "month", short: "mo" },
+    { days: 200, long: "month", short: "mo" },
+    { days: 344, long: "month", short: "mo" },
+    { days: 345, long: "year", short: "y" },
+    { days: 364, long: "year", short: "y" },
+    { days: 365, long: "year", short: "y" },
+    { days: 1000, long: "year", short: "y" },
+  ];
+
+  it.each(EXPECTED_UNIT)(
+    "picks the same count and unit at $days days",
+    ({ days, long, short }) => {
+      const ago = formatAgo(daysAgo(days), NOW);
+      const age = formatAge(daysAgo(days), NOW);
+
+      // Same leading number, whatever it is — that is the part the two used to
+      // disagree on once the month cap existed in only one of them.
+      const count = (s: string) => s.split(" ")[0];
+      expect(count(age)).toBe(count(ago));
+
+      const n = Number(count(ago));
+      expect(ago).toBe(`${n} ${long}${n === 1 ? "" : "s"} ago`);
+      expect(age).toBe(`${n} ${short} ago`);
+    },
+  );
 });

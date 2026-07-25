@@ -88,11 +88,36 @@ export function daysSince(
   return Math.max(0, Math.floor(diffMs / (24 * 60 * 60 * 1000)));
 }
 
+// ageBucket reduces a whole-day age to the count and unit both formatters
+// render. It is the single place the thresholds live: formatAgo and formatAge
+// differ only in how they spell the result, and the two drifted apart for
+// exactly as long as each carried its own copy of this arithmetic.
+//
+// Callers handle `days <= 0` before getting here — the two disagree on what
+// that means ("today" either way, but only after their own empty-input guard).
+//
+// The month/year boundary is where the month COUNT would reach 12, not at a
+// literal 365 days. Twelve months is a year and must read as one; clamping to
+// "11 months ago" instead would be just as wrong the other way, since it says
+// eleven for something eleven and a half months old. So once the rounded month
+// count hits 12, the age is a year and the year bucket takes it.
+function ageBucket(days: number): {
+  n: number;
+  unit: "day" | "month" | "year";
+} {
+  if (days < 30) return { n: days, unit: "day" };
+  const months = Math.round(days / 30);
+  if (months < 12) return { n: months, unit: "month" };
+  // max(1, …) because the handover starts at ~345 days, which rounds to 0
+  // years — "0 years ago" would be nonsense for something nearly a year old.
+  return { n: Math.max(1, Math.round(days / 365)), unit: "year" };
+}
+
 // formatAgo renders an ISO timestamp as a full-word relative age ("3 days
 // ago", "5 months ago"). The primary of the two ages: use it wherever the
-// layout has room. Coarse by design — the same day/month/year thresholds as
-// the abbreviated formatAge below, just spelled out. Built on daysSince, so
-// it shares the invalid/future -> "today" guard and is testable via `now`.
+// layout has room. Coarse by design — the same buckets as the abbreviated
+// formatAge below, just spelled out. Built on daysSince, so it shares the
+// invalid/future -> "today" guard and is testable via `now`.
 export function formatAgo(
   iso: string | undefined,
   now: Date = new Date(),
@@ -100,13 +125,8 @@ export function formatAgo(
   if (!iso) return "";
   const days = daysSince(iso, now);
   if (days <= 0) return "today";
-  const unit = (n: number, word: string) =>
-    `${n} ${word}${n === 1 ? "" : "s"} ago`;
-  if (days < 30) return unit(days, "day");
-  // Cap at 11 months: Math.round(days / 30) reaches 12 by ~345 days, which
-  // would read "12 months ago" right before the year bucket takes over.
-  if (days < 365) return unit(Math.min(11, Math.round(days / 30)), "month");
-  return unit(Math.round(days / 365), "year");
+  const { n, unit } = ageBucket(days);
+  return `${n} ${unit}${n === 1 ? "" : "s"} ago`;
 }
 
 // formatAge is formatAgo's abbreviated sibling ("3 d ago", "2 mo ago"), for
@@ -115,24 +135,22 @@ export function formatAgo(
 // until the library card started showing two dates at once and needed both
 // forms in one line.
 //
-// Two differences from formatAgo. Unknown input reads "—" rather than "" — a
-// caller depends on that (Channel.tsx's stat cell must not collapse). The
-// uncapped month bucket is not intentional, just inherited: past ~345 days it
-// reads "12 mo ago" where formatAgo caps at 11. Preserved on the move so this
-// stayed a relocation; worth aligning separately.
+// One difference from formatAgo survives the shared buckets: unknown input
+// reads "—" rather than "", and a caller depends on it — Channel.tsx's stat
+// cell must not collapse. That is why this keeps its own NaN guard instead of
+// leaning on daysSince, which cannot distinguish "unparseable" from "today".
+const AGE_ABBREV = { day: "d", month: "mo", year: "y" } as const;
+
 export function formatAge(
   iso: string | undefined,
   now: Date = new Date(),
 ): string {
   if (!iso) return "—";
-  const then = parseStamp(iso);
-  if (Number.isNaN(then)) return "—";
-  const days = Math.floor((now.getTime() - then) / 86400000);
+  if (Number.isNaN(parseStamp(iso))) return "—";
+  const days = daysSince(iso, now);
   if (days <= 0) return "today";
-  if (days === 1) return "1 d ago";
-  if (days < 30) return `${days} d ago`;
-  if (days < 365) return `${Math.round(days / 30)} mo ago`;
-  return `${Math.round(days / 365)} y ago`;
+  const { n, unit } = ageBucket(days);
+  return `${n} ${AGE_ABBREV[unit]} ago`;
 }
 
 // GRADIENT_CLASSES mirrors the mockup's six thumbnail gradient fallbacks
