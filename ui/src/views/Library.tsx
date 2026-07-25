@@ -25,13 +25,27 @@ const CHIPS: { id: VideoFilter; label: string }[] = [
 ];
 
 // SORT_OPTIONS is shared with the channel page's Archive tab so the two
-// lists can never drift apart in wording or in accepted values.
+// lists can never drift apart in wording or in accepted values. Newest/Oldest
+// carry no qualifier because they are the default reading of "new here" — the
+// added date; the air-date pair names its date precisely because it is the
+// exception.
 export const SORT_OPTIONS: { id: VideoSort; label: string }[] = [
   { id: "newest", label: "Newest first" },
   { id: "oldest", label: "Oldest first" },
+  { id: "air_newest", label: "Air date, newest" },
+  { id: "air_oldest", label: "Air date, oldest" },
   { id: "longest", label: "Longest first" },
   { id: "title", label: "Title A–Z" },
 ];
+
+// INBOX_SORT_OPTIONS drops the added-date pair for the Inbox and the channel
+// page's New tab. Items there have never been downloaded, so they have no
+// added date at all — offering it would be an option that cannot work. It
+// lives beside SORT_OPTIONS rather than in Inbox.tsx so the two lists stay
+// adjacent and cannot drift.
+export const INBOX_SORT_OPTIONS = SORT_OPTIONS.filter(
+  (o) => o.id !== "newest" && o.id !== "oldest",
+);
 
 // matchesFilter mirrors videos.Store.List's SQL WHERE clauses exactly (see
 // backend/internal/videos/store.go), so the chip counts computed here from

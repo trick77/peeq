@@ -40,6 +40,52 @@ function baseVideo(overrides: Partial<Video> = {}): Video {
 
 const noop = () => {};
 
+describe("VideoCard channel/date eyebrow", () => {
+  const daysAgo = (n: number) =>
+    new Date(Date.now() - n * 86400000).toISOString();
+
+  function eyebrow(video: Video): string {
+    render(
+      <VideoCard
+        video={video}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+    return document.querySelector(".by")?.textContent ?? "";
+  }
+
+  // Added date leads because it is what the grid's default order ranks by; an
+  // eyebrow leading with the air date would make that order look broken.
+  it("leads with the added date and follows with the abbreviated air date", () => {
+    const text = eyebrow(
+      baseVideo({ downloaded_at: daysAgo(3), published_at: daysAgo(90) }),
+    );
+    expect(text).toContain("Test Channel");
+    expect(text).toContain("added 3 days ago");
+    expect(text).toContain("aired 3 mo ago");
+    expect(text.indexOf("added")).toBeLessThan(text.indexOf("aired"));
+  });
+
+  // Both halves are independently optional: published_at is unknown for some
+  // live streams, and a row can be listed without ever having downloaded.
+  it("drops the air date when the video has none", () => {
+    const text = eyebrow(baseVideo({ downloaded_at: daysAgo(3) }));
+    expect(text).toContain("added 3 days ago");
+    expect(text).not.toContain("aired");
+  });
+
+  it("drops the added date for a row that never downloaded", () => {
+    const text = eyebrow(
+      baseVideo({ status: "error", published_at: daysAgo(90) }),
+    );
+    expect(text).toContain("aired 3 mo ago");
+    expect(text).not.toContain("added");
+  });
+});
+
 describe("VideoCard lifecycle line", () => {
   it('renders "Kept forever" for a favorite video', () => {
     render(

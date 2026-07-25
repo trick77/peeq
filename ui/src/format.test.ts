@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAgo } from "./format";
+import { formatAge, formatAgo } from "./format";
 
 // A fixed "now" so the relative output is deterministic. daysSince (which
 // formatAgo builds on) floors whole days, so each case picks a day offset
@@ -39,5 +39,28 @@ describe("formatAgo", () => {
   it("rounds to years at a year and beyond", () => {
     expect(formatAgo(daysAgo(365), NOW)).toBe("1 year ago");
     expect(formatAgo(daysAgo(740), NOW)).toBe("2 years ago");
+  });
+});
+
+describe("formatAge", () => {
+  // The channel header renders formatAge into a stat cell that must not
+  // collapse, and the library card eyebrow puts it beside a formatAgo value.
+  // Both depend on the em dash, so pin it: a later pass at making the two
+  // helpers "consistent" must not quietly turn it into an empty string.
+  it("returns an em dash, not an empty string, for unknown input", () => {
+    expect(formatAge(undefined, NOW)).toBe("—");
+    expect(formatAge("not-a-date", NOW)).toBe("—");
+  });
+
+  it("says 'today' for now and for a future date", () => {
+    expect(formatAge(NOW.toISOString(), NOW)).toBe("today");
+    expect(formatAge(daysAgo(-3), NOW)).toBe("today");
+  });
+
+  it("renders the same buckets as formatAgo, abbreviated", () => {
+    expect(formatAge(daysAgo(1), NOW)).toBe("1 d ago");
+    expect(formatAge(daysAgo(10), NOW)).toBe("10 d ago");
+    expect(formatAge(daysAgo(90), NOW)).toBe("3 mo ago");
+    expect(formatAge(daysAgo(400), NOW)).toBe("1 y ago");
   });
 });

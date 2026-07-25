@@ -4,7 +4,7 @@ import { listPending, downloadPending, ignorePending } from "../api/pending";
 import type { PendingItem, VideoSort } from "../api/types";
 import { formatAgo, formatDuration } from "../format";
 import { Button, controlClass } from "../ui";
-import { SORT_OPTIONS } from "./Library";
+import { INBOX_SORT_OPTIONS } from "./Library";
 
 // Inbox — new uploads awaiting the user's keep/ignore call: an inbox of things
 // your channels posted, a count of what is unread, cleared by acting on each.
@@ -20,7 +20,7 @@ import { SORT_OPTIONS } from "./Library";
 // favorite/watched.
 
 // sortKey is the date an item orders by: its publish date when known, else
-// the day the scan discovered it. This mirrors the Library's
+// the day the scan discovered it. This mirrors the Library's air_* clauses'
 // COALESCE(published_at, date(created_at)) ORDER BY, so a dateless row (one
 // the scanner hasn't healed yet) still lands somewhere sensible instead of
 // sinking to the bottom. discovered_at is a datetime; slicing to 10 chars
@@ -29,17 +29,21 @@ function sortKey(i: PendingItem): string {
   return i.published_at || i.discovered_at.slice(0, 10);
 }
 
-// compareBy returns the comparator for one SORT_OPTIONS id, matching the
+// compareBy returns the comparator for one INBOX_SORT_OPTIONS id, matching the
 // backend's sortClauses (videos/store.go) so the two lists order alike.
 // video_id is the final tiebreak everywhere, which is what keeps the grid
 // from reshuffling between renders when the primary keys tie.
+//
+// The added-date ids ("newest"/"oldest") get no arm: INBOX_SORT_OPTIONS never
+// offers them here, since an inbox item has no added date. They would land in
+// default: and order by air date, which is the only honest answer anyway.
 function compareBy(
   sort: VideoSort,
 ): (a: PendingItem, b: PendingItem) => number {
   const byID = (a: PendingItem, b: PendingItem) =>
     a.video_id.localeCompare(b.video_id);
   switch (sort) {
-    case "oldest":
+    case "air_oldest":
       return (a, b) => sortKey(a).localeCompare(sortKey(b)) || byID(a, b);
     case "longest":
       return (a, b) =>
@@ -71,11 +75,12 @@ export function Inbox({
   // channel dumping a week of uploads at once, this narrows the grid (and the
   // Download-all action) to one channel.
   const [channel, setChannel] = useState<string>("all");
-  // Same four orderings as the Library, from the same shared list. Applied
-  // client-side (unlike Library's `sort` query param) because /api/pending
-  // returns the whole inbox in one unpaged response — there is nothing for a
-  // server-side ORDER BY to win here.
-  const [sort, setSort] = useState<VideoSort>("newest");
+  // The Library's orderings minus the added-date pair (see
+  // INBOX_SORT_OPTIONS), which is why the default is air_newest rather than
+  // the Library's newest. Applied client-side (unlike Library's `sort` query
+  // param) because /api/pending returns the whole inbox in one unpaged
+  // response — there is nothing for a server-side ORDER BY to win here.
+  const [sort, setSort] = useState<VideoSort>("air_newest");
   // Bulk state: bulkBusy while the Download-all loop runs; confirmBulk is the
   // inline two-step guard for large batches (a 40-video download is not a
   // click to fire by accident).
@@ -240,7 +245,7 @@ export function Inbox({
             onChange={(e) => setSort(e.target.value as VideoSort)}
             aria-label="Sort"
           >
-            {SORT_OPTIONS.map((o) => (
+            {INBOX_SORT_OPTIONS.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.label}
               </option>

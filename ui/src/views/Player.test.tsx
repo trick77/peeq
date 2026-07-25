@@ -137,6 +137,42 @@ describe("Player", () => {
     sessionStorage.clear();
   });
 
+  // The detail view is where both dates appear spelled out; the card eyebrow
+  // abbreviates the air date because it has less room.
+  describe("meta line dates", () => {
+    const daysAgo = (n: number) =>
+      new Date(Date.now() - n * 86400000).toISOString();
+
+    async function subLine(overrides: Partial<Video>): Promise<string> {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo(overrides));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("heading", { level: 1 });
+      return await waitFor(() => {
+        const el = document.querySelector(".playmeta .sub");
+        if (!el) throw new Error("meta line not rendered yet");
+        return el.textContent ?? "";
+      });
+    }
+
+    it("shows the air date and the added date, both in full words", async () => {
+      const text = await subLine({
+        published_at: daysAgo(90),
+        downloaded_at: daysAgo(3),
+      });
+      expect(text).toContain("aired 3 months ago");
+      expect(text).toContain("added 3 days ago");
+    });
+
+    it("shows only the added date when the air date is unknown", async () => {
+      const text = await subLine({
+        published_at: undefined,
+        downloaded_at: daysAgo(3),
+      });
+      expect(text).toContain("added 3 days ago");
+      expect(text).not.toContain("aired");
+    });
+  });
+
   describe("stage poster", () => {
     it("posters the video with its thumbnail when one was downloaded", async () => {
       vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_thumbnail: true }));

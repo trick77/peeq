@@ -380,11 +380,25 @@ describe("Inbox", () => {
       );
     }
 
-    it("defaults to newest first", async () => {
+    it("defaults to newest air date first", async () => {
       vi.mocked(listPending).mockResolvedValue([older, newer]);
       render(<Inbox />);
       await screen.findByText("Older video");
       expect(titles()).toEqual(["Anewer video", "Older video"]);
+    });
+
+    // The Library's added-date orderings are meaningless here: an inbox item
+    // has never been downloaded, so it has no added date to rank by. The
+    // dropdown must not offer them at all.
+    it("offers only the orderings an undownloaded item can satisfy", async () => {
+      vi.mocked(listPending).mockResolvedValue([older, newer]);
+      render(<Inbox />);
+      await screen.findByText("Older video");
+
+      const select = screen.getByLabelText("Sort") as HTMLSelectElement;
+      const values = Array.from(select.options).map((o) => o.value);
+      expect(values).toEqual(["air_newest", "air_oldest", "longest", "title"]);
+      expect(select.value).toBe("air_newest");
     });
 
     it("reorders the grid when a different order is picked", async () => {
@@ -393,7 +407,7 @@ describe("Inbox", () => {
       render(<Inbox />);
       await screen.findByText("Older video");
 
-      await user.selectOptions(screen.getByLabelText("Sort"), "oldest");
+      await user.selectOptions(screen.getByLabelText("Sort"), "air_oldest");
       expect(titles()).toEqual(["Older video", "Anewer video"]);
 
       await user.selectOptions(screen.getByLabelText("Sort"), "longest");
