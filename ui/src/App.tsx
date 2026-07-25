@@ -71,13 +71,28 @@ export function App() {
   // address bar would read "/video" while a video plays, and a refresh or a
   // copied link would lose it — which would fight route.ts's URL-as-truth rule
   // rather than respect it.
+  //
+  // It also RE-READS the pointer instead of trusting the copy loaded at
+  // bootstrap. The pointer is server state that other actions clear: marking the
+  // pointed-at video watched from a Library or Channel card, or deleting it,
+  // clears it server-side, and a stale local copy would have this click reopen a
+  // finished video at 0:00 — exactly what the clear rule exists to prevent. Any
+  // pointer another device has moved on lands here too. One request per click on
+  // one rail item, only when the URL has no id of its own; a failed read falls
+  // back to the loaded copy, so this is never worse than not asking.
   const setView = useCallback(
     (v: ViewId) => {
-      if (v === "player" && !route.videoId && persistedVideoId) {
-        navigate({ view: "player", videoId: persistedVideoId });
+      if (v !== "player" || route.videoId) {
+        navigate({ view: v });
         return;
       }
-      navigate({ view: v });
+      void getPlaybackState()
+        .then((p) => {
+          const fresh = p.video_id || null;
+          setPersistedVideoId(fresh);
+          navigate({ view: "player", videoId: fresh });
+        })
+        .catch(() => navigate({ view: "player", videoId: persistedVideoId }));
     },
     [navigate, route.videoId, persistedVideoId],
   );
