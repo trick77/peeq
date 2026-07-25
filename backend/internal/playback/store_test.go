@@ -181,3 +181,38 @@ func TestClearIfVideo_onlyClearsTheMatchingVideo(t *testing.T) {
 		t.Fatalf("video_id = %q, want empty", got.VideoID)
 	}
 }
+
+// TestStoreErrors_wrapRatherThanPanic drops the table out from under every
+// method. Each one has to surface a wrapped error naming what it was doing:
+// these are the branches the httpapi layer turns into a 500, and the one place
+// that distinguishes a BROKEN pointer from the MISSING one it deliberately
+// treats as a no-op.
+func TestStoreErrors_wrapRatherThanPanic(t *testing.T) {
+	s, vs, db := newTestStore(t)
+	seedDownloaded(t, vs, "v1")
+	ctx := context.Background()
+	if err := s.Set(ctx, "v1"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if _, err := db.Exec(`DROP TABLE playback_state`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	if _, err := s.Get(ctx); err == nil {
+		t.Fatal("Get on a broken table returned nil — a read failure must not look like an empty pointer")
+	}
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"Set", func() error { return s.Set(ctx, "v1") }},
+		{"Clear", func() error { return s.Clear(ctx) }},
+		{"ClearIfVideo", func() error { return s.ClearIfVideo(ctx, "v1") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); err == nil {
+				t.Fatalf("%s on a broken table returned nil", tc.name)
+			}
+		})
+	}
+}

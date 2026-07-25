@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,10 +16,20 @@ import (
 // database so the pointer and the videos it points at agree.
 func playbackTestDeps(t *testing.T) Deps {
 	t.Helper()
+	deps, _ := playbackTestDepsDB(t)
+	return deps
+}
+
+// playbackTestDepsDB also returns the backing *sql.DB, so a test can drop a
+// table and force a store-level error out of an otherwise normal handler flow
+// (Videos/Playback are concrete stores, not interfaces). Same trick as
+// videosTestDepsDB.
+func playbackTestDepsDB(t *testing.T) (Deps, *sql.DB) {
+	t.Helper()
 	db := openTestDB(t)
 	sessions := auth.NewSessionStore(db, false)
 	users := auth.NewUserStore(db)
-	return Deps{
+	deps := Deps{
 		AuthService:    auth.NewService(nil, sessions, users),
 		AuthMiddleware: auth.NewMiddleware(sessions, users),
 		Videos:         videos.New(db),
@@ -31,6 +42,7 @@ func playbackTestDeps(t *testing.T) Deps {
 			Name:              "Dev Tester",
 		},
 	}
+	return deps, db
 }
 
 // seedPlayable upserts a video and marks it downloaded — PUT /api/playback
@@ -212,4 +224,104 @@ func TestPlayback_requiresAuth(t *testing.T) {
 			t.Fatalf("%s %s status = %d, want 401", req.Method, req.URL.Path, rec.Code)
 		}
 	}
+}
+
+// The error paths below all go through the same door: drop the table the store
+// reads and every query fails, which is the only way to reach these branches
+// from a handler test (Playback and Videos are concrete stores, not interfaces).
+// They matter because the two fail-OPEN cases in this file are deliberate and
+// narrow — a MISSING store is a no-op, a BROKEN one is a 500, and nothing should
+// quietly conflate the two.
+
+func TestPlaybackGet_storeError_500(t *testing.T) {
+	deps, db := playbackTestDepsDB(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if _, err := db.Exec(`DROP TABLE playback_state`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/playback", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET playback status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPlaybackPut_storeErrors_500(t *testing.T) {
+	t.Run("setFails", func(t *testing.T) {
+		deps, db := playbackTestDepsDB(t)
+		seedPlayable(t, deps.Videos, "v1")
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		if _, err := db.Exec(`DROP TABLE playback_state`); err != nil {
+			t.Fatalf("drop table: %v", err)
+		}
+		body, _ := json.Marshal(map[string]string{"video_id": "v1"})
+		rec := doReq(t, h, cookie, http.MethodPut, "/api/playback", body)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("PUT playback status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("clearFails", func(t *testing.T) {
+		deps, db := playbackTestDepsDB(t)
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		if _, err := db.Exec(`DROP TABLE playback_state`); err != nil {
+			t.Fatalf("drop table: %v", err)
+		}
+		body, _ := json.Marshal(map[string]string{"video_id": ""})
+		rec := doReq(t, h, cookie, http.MethodPut, "/api/playback", body)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("PUT empty playback status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("videoLookupFails", func(t *testing.T) {
+		deps, db := playbackTestDepsDB(t)
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		if _, err := db.Exec(`DROP TABLE videos`); err != nil {
+			t.Fatalf("drop table: %v", err)
+		}
+		body, _ := json.Marshal(map[string]string{"video_id": "v1"})
+		rec := doReq(t, h, cookie, http.MethodPut, "/api/playback", body)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("PUT playback status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("writeAbortedByAConstraint", func(t *testing.T) {
+		// A second shape of write failure: the table is present and the video is
+		// valid, but the UPDATE itself is refused. A dropped table makes the
+		// statement invalid; this makes it fail at execution, which is the case a
+		// real constraint or a busy database produces.
+		deps, db := playbackTestDepsDB(t)
+		seedPlayable(t, deps.Videos, "v1")
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		if _, err := db.Exec(`CREATE TRIGGER boom AFTER UPDATE ON playback_state
+BEGIN SELECT RAISE(ABORT, 'no'); END`); err != nil {
+			t.Fatalf("create trigger: %v", err)
+		}
+		body, _ := json.Marshal(map[string]string{"video_id": "v1"})
+		rec := doReq(t, h, cookie, http.MethodPut, "/api/playback", body)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("PUT playback status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	// A MISSING videos store is a 503, not the 500 a broken one gives: the
+	// pointer's own fail-open rule covers a missing Playback store, and must not
+	// be read as "any missing dependency is fine here".
+	t.Run("noVideosStore_503", func(t *testing.T) {
+		deps, _ := playbackTestDepsDB(t)
+		deps.Videos = nil
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		body, _ := json.Marshal(map[string]string{"video_id": "v1"})
+		rec := doReq(t, h, cookie, http.MethodPut, "/api/playback", body)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("PUT playback status = %d, want 503, body = %s", rec.Code, rec.Body.String())
+		}
+	})
 }
