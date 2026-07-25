@@ -273,7 +273,7 @@ func (r *Runner) throttle(ctx context.Context) error {
 	slot := now
 	if slot.Before(r.nextSlot) {
 		// Busy: a call is outstanding, or one started less than a gap ago.
-		if isInteractive(ctx) {
+		if IsInteractive(ctx) {
 			// A person is waiting, so skip the background queue — but not the
 			// throttle. now.Add(gap) is required rather than nextInteractiveSlot
 			// alone: nextInteractiveSlot tracks only the priority lane, so a
@@ -301,7 +301,7 @@ func (r *Runner) throttle(ctx context.Context) error {
 	if tail.After(r.nextSlot) {
 		r.nextSlot = tail
 	}
-	if isInteractive(ctx) && tail.After(r.nextInteractiveSlot) {
+	if IsInteractive(ctx) && tail.After(r.nextInteractiveSlot) {
 		r.nextInteractiveSlot = tail
 	}
 	r.mu.Unlock()
@@ -339,10 +339,6 @@ func WithInteractive(ctx context.Context) context.Context {
 func IsInteractive(ctx context.Context) bool {
 	v, _ := ctx.Value(interactiveKey{}).(bool)
 	return v
-}
-
-func isInteractive(ctx context.Context) bool {
-	return IsInteractive(ctx)
 }
 
 // now reads the injectable clock, defaulting to time.Now.
