@@ -451,9 +451,19 @@ func TestStallGuard_firesOnceAndRemembersTheArmedReason(t *testing.T) {
 	g := newStallGuard(func() { fired.Add(1) }, time.Hour, stallHeaders)
 	g.arm(10*time.Millisecond, stallIdle)
 
+	// Wait on the CANCEL, not on the reason. fire() publishes the reason under
+	// the mutex but calls cancel() after unlocking — deliberately, so the
+	// caller's function never runs under the guard's lock — which leaves a
+	// window where firedReason() already answers and the counter is still 0.
+	// Polling the reason and then asserting the count raced that window and
+	// failed with "cancel called 0 times". Once the count is 1 the reason is
+	// necessarily published too, so this order has no window at all.
 	deadline := time.Now().Add(2 * time.Second)
-	for g.firedReason() == "" && time.Now().Before(deadline) {
+	for fired.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
+	}
+	if got := fired.Load(); got != 1 {
+		t.Fatalf("cancel called %d times, want 1", got)
 	}
 	if got := g.firedReason(); got != stallIdle {
 		t.Fatalf("reason = %q, want %q", got, stallIdle)
@@ -465,8 +475,9 @@ func TestStallGuard_firesOnceAndRemembersTheArmedReason(t *testing.T) {
 		t.Fatalf("reason after late arm = %q, want %q", got, stallIdle)
 	}
 	g.stop()
+	// Still exactly one: neither the late arm nor stop() may fire it again.
 	if got := fired.Load(); got != 1 {
-		t.Fatalf("cancel called %d times, want 1", got)
+		t.Fatalf("cancel called %d times after late arm, want 1", got)
 	}
 }
 
@@ -482,10 +493,26 @@ func TestStallGuard_ignoresAFiringOvertakenByAnEvent(t *testing.T) {
 	g := newStallGuard(func() { fired.Add(1) }, time.Hour, stallHeaders)
 	defer g.stop()
 
-	// Expire the header deadline, then let an event re-arm for idleness — the
-	// order a real stream produces when its first byte arrives right on the
-	// bound.
-	g.arm(-time.Second, stallHeaders)
+	// Expire the header deadline WITHOUT letting the runtime schedule a firing
+	// of its own. Writing the fields directly is the point: `arm(-time.Second,
+	// …)` would call timer.Reset with a negative duration, so the runtime runs
+	// the real callback at once, on its own goroutine, racing everything below.
+	// When it won that race — landing before the re-arm on the next line — it
+	// fired legitimately (the deadline really had passed) and recorded
+	// stallHeaders, and the assertion then blamed the code under test for the
+	// test's own timer. That is the flake that reddened Backend CI on PRs
+	// touching nothing near this package.
+	//
+	// This test drives fire() by hand precisely because the window is
+	// microseconds wide by wall-clock; the timer must stay out of it. It keeps
+	// its original one-hour arming throughout and never fires on its own.
+	g.mu.Lock()
+	g.pending = stallHeaders
+	g.deadline = time.Now().Add(-time.Second)
+	g.mu.Unlock()
+
+	// The event lands and re-arms for idleness — the order a real stream
+	// produces when its first byte arrives right on the bound.
 	g.arm(time.Hour, stallIdle)
 
 	// The firing the expired deadline had already scheduled now runs.
