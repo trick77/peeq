@@ -1911,13 +1911,84 @@ button.catpick.unset:hover {
   letter-spacing: -0.01em;
   line-height: 1.2;
 }
-.playmeta .sub {
-  color: var(--color-muted);
-  font-size: 14px;
+/* The eyebrow above the title: channel, aired, added. Deliberately the same
+   shape as the library card's kicker (.card.video-card .by) so a video reads
+   identically in the grid and on the page it opens.
+
+   Scoped to .playmeta rather than restyling bare .by, which Library, Decide
+   and Channels all share — see the card's own block for the other end of
+   that contract. Unlike the card's, this one may wrap: the player's column is
+   wide, but "aired 11 months ago · added 11 months ago" plus a long channel
+   name still overflows a narrow stage, and wrapping beats truncating here
+   because nothing else on the line is competing for the space. */
+.playmeta .by {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 6px;
   flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-bottom: 6px;
+  min-width: 0;
+}
+.playmeta .by .chan-link,
+.playmeta .by .chan-name {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.playmeta .by .dot {
+  color: var(--color-faint);
+  flex: none;
+}
+
+/* The file-facts strip under the action row. Hairline rules top and bottom
+   rather than a filled panel: these are reference figures, and a card would
+   give them more weight than the actions above them.
+
+   It is a <dl>, so each figure is bound to its label for a screen reader
+   instead of being two loose spans that happen to sit near each other. */
+.playstats {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 16px 0 0;
+  border-top: 1px solid var(--color-border-soft);
+  border-bottom: 1px solid var(--color-border-soft);
+}
+.playstats .stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 18px 10px 0;
+  margin-right: 18px;
+  border-right: 1px solid var(--color-border-soft);
+}
+/* The divider belongs BETWEEN figures, so the last one drops it. On a wrapped
+   row this leaves a trailing rule mid-line, which is the lesser evil: the
+   alternative (a rule on every item) puts one at the page edge. */
+.playstats .stat:last-child {
+  border-right: none;
+  margin-right: 0;
+}
+.playstats dt {
+  font-size: var(--text-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-faint);
+}
+.playstats dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-ink-dim);
+  /* Sizes and durations are digits that sit in a column; lining them up is
+     the whole reason this is a strip and not a sentence. */
+  font-variant-numeric: tabular-nums;
 }
 .pill {
   font-family: var(--font-mono);

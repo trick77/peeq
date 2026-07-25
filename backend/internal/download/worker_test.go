@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
@@ -975,4 +976,106 @@ func TestWorker_youtubePausedGateBlocksClaiming(t *testing.T) {
 	mu.Unlock()
 
 	waitFor(t, "job done after youtube_paused cleared", func() bool { return h.jobState(t, id).State == "done" })
+}
+
+// stubProber answers every path with one canned result, or fails.
+type stubProber struct {
+	info  mediaprobe.Info
+	err   error
+	mu    sync.Mutex
+	calls []string
+}
+
+func (s *stubProber) Probe(_ context.Context, path string) (mediaprobe.Info, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, path)
+	s.mu.Unlock()
+	return s.info, s.err
+}
+
+func (s *stubProber) called() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.calls...)
+}
+
+// probeRunner is the minimal successful download the probe tests need.
+func probeRunner() *fakeRunner {
+	return &fakeRunner{
+		fn: func(context.Context, int, ytdlp.DownloadReq, func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			return &ytdlp.Result{MediaPath: "/media/vid/vid.mp4", FilesizeBytes: 42, FormatUsed: "bv*+ba"}, nil
+		},
+	}
+}
+
+func TestWorker_probesTheFinishedFile(t *testing.T) {
+	prober := &stubProber{info: mediaprobe.Info{
+		Container: "mp4", VideoCodec: "h264", VideoHeight: 1080, AudioCodec: "aac",
+	}}
+	h := newHarness(t, probeRunner(), func(d *Deps) { d.Prober = prober })
+	id := h.enqueue(t, "vid", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	waitForVideoStatus(t, h, "vid", "downloaded")
+	waitFor(t, "probe persisted", func() bool {
+		v, err := h.videos.Get("vid")
+		return err == nil && v != nil && v.ProbedAt != ""
+	})
+
+	v, err := h.videos.Get("vid")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.MediaContainer != "mp4" || v.VideoCodec != "h264" || v.VideoHeight != 1080 || v.AudioCodec != "aac" {
+		t.Fatalf("probe not persisted: %+v", v)
+	}
+	if got := prober.called(); len(got) != 1 || got[0] != "/media/vid/vid.mp4" {
+		t.Fatalf("probed %v, want the finished media path once", got)
+	}
+}
+
+// The media facts are decoration. A broken or missing ffprobe must cost the
+// user nothing: the download still lands, and the summary is still queued.
+func TestWorker_probeFailureIsNotFatal(t *testing.T) {
+	spy := &spySummaryJobs{}
+	h := newHarness(t, probeRunner(), func(d *Deps) {
+		d.Prober = &stubProber{err: errors.New("ffprobe: not found")}
+		d.SummaryJobs = spy
+	})
+	id := h.enqueue(t, "vid", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	waitForVideoStatus(t, h, "vid", "downloaded")
+	waitFor(t, "summary enqueued", func() bool { return len(spy.enqueued()) == 1 })
+
+	// The attempt is still recorded, or the backfill sweep would retry this
+	// file on every boot forever.
+	waitFor(t, "attempt recorded", func() bool {
+		v, err := h.videos.Get("vid")
+		return err == nil && v != nil && v.ProbedAt != ""
+	})
+	v, _ := h.videos.Get("vid")
+	if v.MediaContainer != "" || v.VideoCodec != "" {
+		t.Fatalf("failed probe wrote values: %+v", v)
+	}
+}
+
+func TestWorker_nilProberSkipsTheProbe(t *testing.T) {
+	h := newHarness(t, probeRunner(), func(d *Deps) { d.Prober = nil })
+	id := h.enqueue(t, "vid", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	waitForVideoStatus(t, h, "vid", "downloaded")
+
+	v, err := h.videos.Get("vid")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	// Left unprobed on purpose: the backfill loop is what picks it up.
+	if v.ProbedAt != "" {
+		t.Fatalf("probed_at stamped with no prober: %+v", v)
+	}
 }

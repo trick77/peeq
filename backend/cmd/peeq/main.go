@@ -31,6 +31,7 @@ import (
 	"github.com/trick77/peeq/internal/httpapi"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/retention"
 	"github.com/trick77/peeq/internal/scan"
@@ -257,11 +258,17 @@ func run() error {
 		}
 		sseHub.Publish("activity", string(data))
 	}
+	// prober reads what a downloaded file actually is (container, codecs,
+	// resolution) with ffprobe, which ships in the image alongside the ffmpeg
+	// yt-dlp already needs for merging.
+	prober := mediaprobe.New(mediaprobe.Config{})
+
 	worker := download.New(download.Deps{
 		Jobs:           jobsStore,
 		Videos:         videosStore,
 		Settings:       settingsStore,
 		Runner:         runner,
+		Prober:         prober,
 		MediaDir:       cfg.MediaDir,
 		SummaryJobs:    summaryJobsStore,
 		DefaultSubLang: cfg.DefaultSubLang,
@@ -351,16 +358,26 @@ func run() error {
 		Videos:  videosStore,
 	})
 
-	// Bound all seven background goroutines' lifetimes to the process: the
+	// mediaprobeWorker fills in the media facts for everything downloaded
+	// before peeq probed anything, so an existing library shows a full stat
+	// strip without being re-downloaded. It goes idle once drained. Like the
+	// SponsorBlock backfill it touches no network at all — here, not even
+	// another host: it reads local files with a local binary.
+	mediaprobeWorker := mediaprobe.NewWorker(mediaprobe.Deps{
+		Prober: prober,
+		Videos: videosStore,
+	})
+
+	// Bound all eight background goroutines' lifetimes to the process: the
 	// download worker, the retention sweeper, the yt-dlp self-update ticker,
 	// the scan scheduler, the summarize worker, the channel-metadata
-	// refresher, and the SponsorBlock backfill. workerWG.Wait() below (after
-	// serve returns, i.e. after ctx is cancelled) blocks until all seven have
-	// actually observed ctx.Done() and returned, rather than exiting the
-	// process out from under them. All seven loops exit promptly on
-	// ctx.Done(), so this wait is short.
+	// refresher, the SponsorBlock backfill and the media-probe backfill.
+	// workerWG.Wait() below (after serve returns, i.e. after ctx is
+	// cancelled) blocks until all eight have actually observed ctx.Done() and
+	// returned, rather than exiting the process out from under them. All
+	// eight loops exit promptly on ctx.Done(), so this wait is short.
 	var workerWG sync.WaitGroup
-	workerWG.Add(7)
+	workerWG.Add(8)
 	go func() {
 		defer workerWG.Done()
 		slog.Info("download worker started")
@@ -394,6 +411,11 @@ func run() error {
 		defer workerWG.Done()
 		slog.Info("sponsorblock backfill started")
 		sponsorblockWorker.Run(ctx)
+	}()
+	go func() {
+		defer workerWG.Done()
+		slog.Info("media probe backfill started")
+		mediaprobeWorker.Run(ctx)
 	}()
 
 	slog.Info("SSE hub ready")

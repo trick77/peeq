@@ -139,7 +139,7 @@ describe("Player", () => {
 
   // The detail view is where both dates appear spelled out; the card eyebrow
   // abbreviates the air date because it has less room.
-  describe("meta line dates", () => {
+  describe("eyebrow dates", () => {
     const daysAgo = (n: number) =>
       new Date(Date.now() - n * 86400000).toISOString();
 
@@ -148,8 +148,8 @@ describe("Player", () => {
       render(<Player videoId="v1" onDeleted={() => {}} />);
       await screen.findByRole("heading", { level: 1 });
       return await waitFor(() => {
-        const el = document.querySelector(".playmeta .sub");
-        if (!el) throw new Error("meta line not rendered yet");
+        const el = document.querySelector(".playmeta .by");
+        if (!el) throw new Error("eyebrow not rendered yet");
         return el.textContent ?? "";
       });
     }
@@ -170,6 +170,109 @@ describe("Player", () => {
       });
       expect(text).toContain("added 3 days ago");
       expect(text).not.toContain("aired");
+    });
+
+    // The point of the change: the eyebrow sits ABOVE the title, the way a
+    // library card reads. Asserted through the DOM order rather than a class,
+    // because "above" is the actual requirement.
+    it("renders the eyebrow before the title", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo({}));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      const heading = await screen.findByRole("heading", { level: 1 });
+
+      const eyebrow = await waitFor(() => {
+        const el = document.querySelector(".playmeta .by");
+        if (!el) throw new Error("eyebrow not rendered yet");
+        return el;
+      });
+      expect(
+        eyebrow.compareDocumentPosition(heading) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+  });
+
+  // The strip replaced a pill showing format_used — the raw yt-dlp -f
+  // selector, which said what was requested rather than what arrived.
+  describe("media stats strip", () => {
+    async function stats(overrides: Partial<Video>): Promise<string> {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo(overrides));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("heading", { level: 1 });
+      return await waitFor(() => {
+        const el = document.querySelector(".playstats");
+        if (!el) throw new Error("stats strip not rendered yet");
+        return el.textContent ?? "";
+      });
+    }
+
+    it("names the codecs and resolution in human terms", async () => {
+      const text = await stats({
+        duration_seconds: 1795,
+        filesize_bytes: 412 * 1024 ** 2,
+        media_container: "mp4",
+        video_codec: "h264",
+        video_height: 1080,
+        audio_codec: "aac",
+      });
+      expect(text).toContain("29:55");
+      expect(text).toContain("412 MB");
+      expect(text).toContain("MP4");
+      expect(text).toContain("1080p H.264");
+      expect(text).toContain("AAC");
+    });
+
+    it("never shows the raw yt-dlp format selector", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          format_used:
+            "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
+          video_codec: "h264",
+          video_height: 1080,
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("heading", { level: 1 });
+      await waitFor(() => {
+        if (!document.querySelector(".playstats")) {
+          throw new Error("stats strip not rendered yet");
+        }
+      });
+      expect(document.body.textContent).not.toContain("bestvideo");
+    });
+
+    // A video the backfill has not reached yet still has its download-time
+    // facts, and must not render empty columns for the rest.
+    it("omits the columns an unprobed video has no value for", async () => {
+      const text = await stats({
+        duration_seconds: 1795,
+        filesize_bytes: 412 * 1024 ** 2,
+        media_container: undefined,
+        video_codec: undefined,
+        video_height: undefined,
+        audio_codec: undefined,
+      });
+      expect(text).toContain("29:55");
+      expect(text).toContain("412 MB");
+      expect(text).not.toContain("Format");
+      expect(text).not.toContain("Video");
+      expect(text).not.toContain("Audio");
+    });
+
+    it("drops the whole strip when there is nothing to show", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          duration_seconds: undefined,
+          filesize_bytes: undefined,
+          media_container: undefined,
+          video_codec: undefined,
+          video_height: undefined,
+          audio_codec: undefined,
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("heading", { level: 1 });
+      expect(document.querySelector(".playstats")).toBeNull();
     });
   });
 

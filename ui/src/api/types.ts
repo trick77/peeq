@@ -43,7 +43,17 @@ export type Video = {
   has_thumbnail: boolean;
   has_media: boolean;
   filesize_bytes?: number;
+  // format_used is the resolved yt-dlp -f selector — what was ASKED FOR, the
+  // same string for every video downloaded under one preset. Kept because it
+  // is the record of the request, but never shown: the fields below are what
+  // the file actually turned out to be.
   format_used?: string;
+  // ffprobe's raw values ("mp4", "h264", 1080, "aac"), absent until the file
+  // has been probed. codecLabel/resolutionLabel in format.ts do the naming.
+  media_container?: string;
+  video_codec?: string;
+  video_height?: number;
+  audio_codec?: string;
   availability: string;
   status: string;
   error_message?: string;

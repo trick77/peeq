@@ -63,6 +63,17 @@ type Video struct {
 	EmbedModel            string
 	EmbedDim              int
 	Category              string
+	// MediaContainer, VideoCodec, VideoHeight and AudioCodec are what the
+	// downloaded file actually is, filled in by mediaprobe. They carry
+	// ffprobe's raw values ("mp4", "h264", 1080, "aac"); the UI does the
+	// friendly naming. All are empty/zero until the file has been probed.
+	MediaContainer string
+	VideoCodec     string
+	VideoHeight    int64
+	AudioCodec     string
+	// ProbedAt is when the probe was last ATTEMPTED, success or failure.
+	// Empty means never attempted, which is what the backfill sweep selects.
+	ProbedAt string
 }
 
 // watchedThreshold is the fraction of a video's duration that, once
@@ -165,7 +176,8 @@ const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	v.availability, v.status, v.error_message, v.sponsorblock_segments,
 	v.watched, v.watched_at, v.resume_position_seconds, v.favorite, v.favorited_at,
 	v.created_at, v.downloaded_at,
-	v.audio_language, v.subtitle_path, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.category`
+	v.audio_language, v.subtitle_path, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.category,
+	v.media_container, v.video_codec, v.video_height, v.audio_codec, v.probed_at`
 
 // videoFrom is the FROM clause every whole-Video read shares: videos aliased
 // "v", LEFT JOINed to the channels metadata cache so videoColumns can resolve
@@ -182,7 +194,7 @@ type rowScanner interface {
 func scanVideo(rs rowScanner) (Video, error) {
 	var v Video
 	var duration, filesize sql.NullInt64
-	var publishedAt, watchedAt, favoritedAt, downloadedAt sql.NullString
+	var publishedAt, watchedAt, favoritedAt, downloadedAt, probedAt sql.NullString
 	var watched, favorite int
 	err := rs.Scan(
 		&v.ID, &v.URL, &v.Title, &v.ChannelID, &v.ChannelName, &duration, &publishedAt,
@@ -192,6 +204,7 @@ func scanVideo(rs rowScanner) (Video, error) {
 		&v.CreatedAt, &downloadedAt,
 		&v.AudioLanguage, &v.SubtitlePath, &v.Summary, &v.Chapters, &v.KeyPoints,
 		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim, &v.Category,
+		&v.MediaContainer, &v.VideoCodec, &v.VideoHeight, &v.AudioCodec, &probedAt,
 	)
 	if err != nil {
 		return Video{}, err
@@ -204,6 +217,7 @@ func scanVideo(rs rowScanner) (Video, error) {
 	v.Favorite = favorite != 0
 	v.FavoritedAt = favoritedAt.String
 	v.DownloadedAt = downloadedAt.String
+	v.ProbedAt = probedAt.String
 	return v, nil
 }
 
@@ -443,6 +457,73 @@ WHERE id = ?`,
 		return fmt.Errorf("set video %s downloaded: %w", id, err)
 	}
 	return nil
+}
+
+// ProbeResult is what mediaprobe read out of a downloaded file. A zero
+// ProbeResult is a legitimate value: SetProbed stores it after a failed or
+// empty probe so the attempt is still recorded.
+type ProbeResult struct {
+	Container   string
+	VideoCodec  string
+	VideoHeight int64
+	AudioCodec  string
+}
+
+// SetProbed records a probe attempt against id.
+//
+// probed_at is stamped unconditionally — the caller is expected to call this
+// on the failure path too, passing a zero ProbeResult. That is what stops the
+// backfill sweep re-probing a deleted or corrupt file on every boot.
+func (s *Store) SetProbed(id string, res ProbeResult) error {
+	_, err := s.db.ExecContext(context.Background(), `
+UPDATE videos
+SET media_container = ?, video_codec = ?, video_height = ?, audio_codec = ?,
+	probed_at = datetime('now')
+WHERE id = ?`,
+		res.Container, res.VideoCodec, res.VideoHeight, res.AudioCodec, id,
+	)
+	if err != nil {
+		return fmt.Errorf("set video %s probed: %w", id, err)
+	}
+	return nil
+}
+
+// ProbeCandidate is one video whose media file has never been probed.
+type ProbeCandidate struct {
+	ID        string
+	MediaPath string
+}
+
+// UnprobedDownloaded returns up to limit downloaded videos that still have a
+// media file and have never been probed. Selecting on probed_at IS NULL (not
+// on the value columns) is what makes the sweep converge: a file that yields
+// nothing is still marked attempted and never comes back.
+//
+// Oldest first, so a library backfilled over several boots fills in the order
+// it was built.
+func (s *Store) UnprobedDownloaded(limit int) ([]ProbeCandidate, error) {
+	rows, err := s.db.QueryContext(context.Background(), `
+SELECT id, media_path FROM videos
+WHERE status = 'downloaded' AND media_path != '' AND probed_at IS NULL
+ORDER BY downloaded_at ASC
+LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list unprobed videos: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ProbeCandidate
+	for rows.Next() {
+		var c ProbeCandidate
+		if err := rows.Scan(&c.ID, &c.MediaPath); err != nil {
+			return nil, fmt.Errorf("scan unprobed video: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list unprobed videos: %w", err)
+	}
+	return out, nil
 }
 
 // SponsorblockCandidate is one video due a SponsorBlock segment lookup.

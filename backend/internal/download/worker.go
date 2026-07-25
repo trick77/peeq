@@ -17,6 +17,7 @@ import (
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
@@ -62,6 +63,13 @@ type SummaryEnqueuer interface {
 	Enqueue(videoID string) (int64, error)
 }
 
+// MediaProber reads the container/codec/resolution facts out of a finished
+// download. Declared as an interface so the worker's tests can drive a stub
+// instead of needing a real ffprobe binary.
+type MediaProber interface {
+	Probe(ctx context.Context, path string) (mediaprobe.Info, error)
+}
+
 // Deps are the worker's collaborators and tunables. The stores and Runner
 // are required; the rest have safe defaults applied in New.
 type Deps struct {
@@ -69,6 +77,13 @@ type Deps struct {
 	Videos   *videos.Store
 	Settings *settings.Store
 	Runner   Runner
+
+	// Prober, when set, is run against the finished file right after
+	// SetDownloaded persists, so a new download shows its media facts on
+	// first play without waiting for the backfill loop. Nil skips the probe
+	// entirely (the backfill loop then picks the video up); production
+	// always sets it.
+	Prober MediaProber
 
 	// SummaryJobs, when set, is enqueued for every successful download
 	// (initial or re-download) right after SetDownloaded persists. Nil
@@ -615,6 +630,12 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 		return
 	}
 
+	// Probe the finished file so the player can show what it actually is.
+	// Deliberately after SetDownloaded and never gating anything below: the
+	// media facts are decoration, and a missing or broken ffprobe must not
+	// cost the user a summary.
+	w.probeDownloaded(video.ID, res.MediaPath)
+
 	// Enqueue a summary job as a downstream consequence of every successful
 	// download (initial or re-download). SummaryJobs is nil in tests that
 	// don't care about summaries; production always sets it. Only reached
@@ -632,6 +653,32 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 		SubjectID: video.ID, Subject: video.Title, Summary: "downloaded",
 		Detail: humanSize(res.FilesizeBytes),
 	})
+}
+
+// probeProbeTimeout bounds the inline probe of a just-finished download. The
+// file is local and already written, so this only ever fires if ffprobe is
+// wedged; the download itself is long since done by then.
+const probeProbeTimeout = 30 * time.Second
+
+// probeDownloaded reads the finished file's media facts and records the
+// attempt. Nothing here is fatal: a failure stores a zero result, which still
+// stamps probed_at so the backfill loop does not re-probe a file that just
+// told us it cannot be read.
+func (w *Worker) probeDownloaded(videoID, mediaPath string) {
+	if w.deps.Prober == nil || mediaPath == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), probeProbeTimeout)
+	defer cancel()
+
+	info, err := w.deps.Prober.Probe(ctx, mediaPath)
+	if err != nil {
+		w.deps.Logger.Warn("download worker: probe failed", "video_id", videoID, "err", err)
+		info = mediaprobe.Info{}
+	}
+	if err := w.deps.Videos.SetProbed(videoID, mediaprobe.StoreResult(info)); err != nil {
+		w.deps.Logger.Error("download worker: store probe failed", "video_id", videoID, "err", err)
+	}
 }
 
 // recordActivity records a download event for the Activity feed, nil-safe.

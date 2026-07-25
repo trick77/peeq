@@ -153,6 +153,65 @@ export function formatAge(
   return `${n} ${AGE_ABBREV[unit]} ago`;
 }
 
+// CODEC_LABELS turns ffprobe's codec_name into what the codec is called in
+// public. The wire deliberately carries the raw value, so this mapping is the
+// only place the wording lives and can change without a migration.
+//
+// The aliases are not redundant: which spelling ffprobe reports depends on the
+// container it read (an mp4 says "h264" where the stream tag says "avc1"), so
+// both have to resolve to the same label.
+const CODEC_LABELS: Record<string, string> = {
+  h264: "H.264",
+  avc1: "H.264",
+  hevc: "H.265",
+  hev1: "H.265",
+  hvc1: "H.265",
+  h265: "H.265",
+  vp9: "VP9",
+  vp09: "VP9",
+  vp8: "VP8",
+  av1: "AV1",
+  av01: "AV1",
+  aac: "AAC",
+  mp4a: "AAC",
+  opus: "Opus",
+  vorbis: "Vorbis",
+  mp3: "MP3",
+  flac: "FLAC",
+  ac3: "AC-3",
+  eac3: "E-AC-3",
+};
+
+// codecLabel names a codec for display. An unmapped codec falls back to its
+// own name uppercased rather than to a placeholder: a codec peeq has not seen
+// before is still more useful shown than hidden.
+export function codecLabel(raw: string | undefined): string {
+  if (!raw) return "";
+  return CODEC_LABELS[raw.toLowerCase()] ?? raw.toUpperCase();
+}
+
+// resolutionLabel names a pixel height the way people say it. 2160 is the one
+// height with a common name of its own; everything else takes the "p" form,
+// including odd ones (a 1082px-tall re-encode reads "1082p", which is strange
+// but true, and better than rounding it into a lie).
+export function resolutionLabel(height: number | undefined): string {
+  if (!height || height <= 0) return "";
+  if (height >= 2160) return "4K";
+  return `${height}p`;
+}
+
+// formatSize renders a byte count: one decimal for GB, whole units below. A
+// 1.4 GB file is worth telling apart from a 1.9 GB one; nobody needs 412.3 MB.
+// Moved here from Player.tsx when the stat strip stopped being its only
+// caller.
+export function formatSize(bytes: number | undefined): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
 // GRADIENT_CLASSES mirrors the mockup's six thumbnail gradient fallbacks
 // (g1..g6, defined in index.css). gradientClassFor picks a stable one per
 // video id (a simple string hash) so a given card keeps the same color
