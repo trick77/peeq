@@ -42,6 +42,17 @@ if [ -n "$outtmpl" ]; then
   mkdir -p "$outdir"
   id="${FAKE_YTDLP_ID:-testid}"
 
+  # FAKE_YTDLP_EXTRA_LINES lets a test supply its own non-progress stdout,
+  # newline-separated. Deliberately caller-supplied and empty by default: peeq
+  # has not yet captured what real yt-dlp narrates during a download, and a
+  # fixture that invented those lines would be exactly the mistake that let a
+  # SponsorBlock pipeline parsing nothing pass every test for months. The test
+  # using this asserts only that non-progress lines reach the log, never that
+  # any particular line is one yt-dlp really emits.
+  if [ -n "${FAKE_YTDLP_EXTRA_LINES:-}" ]; then
+    printf '%b\n' "$FAKE_YTDLP_EXTRA_LINES"
+  fi
+
   echo "[download]  10.0% of   50.00MiB at    2.00MiB/s ETA 01:23"
 
   if [ -n "${FAKE_YTDLP_STDERR:-}" ]; then
