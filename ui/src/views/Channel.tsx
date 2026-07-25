@@ -244,7 +244,7 @@ export function Channel({
     }
   }
 
-  async function handleTrack() {
+  async function handleAdd() {
     if (!detail) return;
     setBusy(true);
     try {
@@ -366,9 +366,9 @@ export function Channel({
                 </>
               ) : null}
               {detail.tracked ? (
-                <span>Tracked since {formatStamp(detail.tracked_at)}</span>
+                <span>Added {formatStamp(detail.tracked_at)}</span>
               ) : (
-                <span style={{ color: "var(--color-faint)" }}>Not tracked</span>
+                <span style={{ color: "var(--color-faint)" }}>Not added</span>
               )}
               <ChannelState detail={detail} />
             </div>
@@ -440,9 +440,9 @@ export function Channel({
                 type="button"
                 variant="primary"
                 busy={busy}
-                onClick={handleTrack}
+                onClick={handleAdd}
               >
-                Track this channel
+                Add this channel
               </Button>
             )}
             {/* Refresh turns primary when it is the thing to press: a channel

@@ -156,12 +156,12 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		Verified:    info.Verified,
 		ResolvedAt:  time.Now().UTC().Format("2006-01-02 15:04:05"),
 	}); err != nil {
-		serverError(w, r, err, "track channel failed")
+		serverError(w, r, err, "adding the channel failed")
 		return
 	}
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	if err := s.channels.Track(ucid, now); err != nil {
-		serverError(w, r, err, "track channel failed")
+		serverError(w, r, err, "adding the channel failed")
 		return
 	}
 	if req.Subscribe {
@@ -597,7 +597,7 @@ func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Reques
 	// Resubscribing one would conjure a subscription for a channel the user
 	// never added, so tracked_at is what decides.
 	if c == nil || c.TrackedAt == "" {
-		writeJSONError(w, http.StatusNotFound, "channel not tracked")
+		writeJSONError(w, http.StatusNotFound, "channel not added")
 		return
 	}
 	if err := s.channels.ClearAutoUnsubscribe(id); err != nil {
@@ -661,7 +661,7 @@ func (s *server) handleChannelsSubscribe(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if c == nil || c.TrackedAt == "" {
-		writeJSONError(w, http.StatusNotFound, "channel not tracked")
+		writeJSONError(w, http.StatusNotFound, "channel not added")
 		return
 	}
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
@@ -771,7 +771,7 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if c == nil || c.TrackedAt == "" {
-		writeJSONError(w, http.StatusNotFound, "channel not tracked")
+		writeJSONError(w, http.StatusNotFound, "channel not added")
 		return
 	}
 	// 1. Read refs BEFORE deleting (we need media paths after the rows are gone).

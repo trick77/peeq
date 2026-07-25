@@ -8,6 +8,7 @@ import {
   listAutoUnsubscribedChannels,
   dismissDormantChannel,
   resubscribeChannel,
+  scanChannel,
   channelAvatarUrl,
   channelBannerUrl,
   type ChannelFilter,
@@ -20,18 +21,25 @@ import { ChannelDeleteWarning } from "../components/ChannelDeleteWarning";
 import { ReviewBand } from "./ReviewBand";
 import { AutoUnsubscribedSection } from "./AutoUnsubscribedSection";
 
+// Subscribed leads and is the default: the page is about the channels you
+// follow, and opening on "All" put channels you never subscribed to first.
 const CHIPS: { id: ChannelFilter; label: string }[] = [
-  { id: "all", label: "All" },
   { id: "subscribed", label: "Subscribed" },
-  { id: "tracked", label: "Tracked" },
+  { id: "all", label: "All" },
+  // The filter id stays "tracked" — it is the API's ?filter= value, and the
+  // store clause is `s.channel_id IS NULL`, i.e. added but NOT subscribed.
+  // "Tracked" read as though it should include subscribed channels too, so
+  // only the label says what the filter actually does.
+  { id: "tracked", label: "Not subscribed" },
   // The filter id stays "autodownload" — it is the API's ?filter= value and
   // the subscriptions column name. Only the label is user-facing.
   { id: "autodownload", label: "Auto-add" },
 ];
 
-// Channels — tracked/subscribed channel management: filter chips and a top-bar
+// Channels — added/subscribed channel management: filter chips and a top-bar
 // search box, with each row showing the channel's banner-and-avatar art, its
-// counts, a clickable subscription star, and a ⋮ actions menu (Open, Delete).
+// counts, an auto-add marker when autodownload is on, a clickable subscription
+// star, and a ⋮ actions menu (Open, Check now, Delete).
 // Adding a channel lives on the Add page; auto-add and the format override live
 // on the channel's own Settings tab, not here. Mirrors Library's chip/search
 // pattern for visual consistency.
@@ -47,9 +55,13 @@ export function Channels({
   // side, since the whole list is already in memory.
   search?: string;
 } = {}) {
-  const [filter, setFilter] = useState<ChannelFilter>("all");
+  const [filter, setFilter] = useState<ChannelFilter>("subscribed");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // notice carries the outcome of the ⋮ menu's "Check now" — an inline banner
+  // under the chips, matching the channel tabs' own scan feedback. There is no
+  // shared toast component in the app.
+  const [notice, setNotice] = useState<string | null>(null);
   // pendingDelete holds the channel the ⋮ menu's Delete opened the confirm
   // dialog for; deleteBusy disables the dialog while the request is in flight.
   const [pendingDelete, setPendingDelete] = useState<Channel | null>(null);
@@ -90,6 +102,9 @@ export function Channels({
   }
 
   useEffect(() => {
+    // Drop any "Check now" notice: it names a channel that may not even be in
+    // the list the new chip is about to show.
+    setNotice(null);
     load(filter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
@@ -144,6 +159,25 @@ export function Channels({
     } catch (err) {
       applyLocalUpdate(c.id, { subscribed: c.subscribed });
       if (!next) loadDormant();
+      setError((err as Error).message);
+    }
+  }
+
+  // handleScan is the ⋮ menu's "Check now" — the same action the channel's own
+  // New and Settings tabs offer, so a check no longer means opening the channel
+  // first. Wording is kept identical to those two on purpose: three surfaces
+  // reporting the same backend outcome must not describe it differently.
+  async function handleScan(c: Channel) {
+    setError(null);
+    try {
+      const res = await scanChannel(c.id);
+      setNotice(
+        res.status === "blocked"
+          ? (res.reason ?? "peeq cannot check this channel right now.")
+          : "Checking soon — peeq will look for new videos on its next pass.",
+      );
+    } catch (err) {
+      setNotice(null);
       setError((err as Error).message);
     }
   }
@@ -239,6 +273,7 @@ export function Channels({
         ))}
       </div>
       {error ? <div className="errline">{error}</div> : null}
+      {notice ? <div className="hint">{notice}</div> : null}
       <ReviewBand
         channels={dormant}
         onKeep={handleKeepDormant}
@@ -278,6 +313,18 @@ export function Channels({
                     c.name
                   )}
                 </h3>
+                {/* Auto-add lives on the channel's own Settings tab, so without
+                    a marker here the list gives no hint which channels download
+                    by themselves — the only way to tell was to click the
+                    Auto-add chip. */}
+                {c.autodownload ? (
+                  <span
+                    className="chan-autotag"
+                    title="Auto-add is on — new videos download automatically"
+                  >
+                    <Icon name="download" size="12px" label="Auto-add is on" />
+                  </span>
+                ) : null}
               </div>
               <div className="channel-by">
                 {c.handle ? `${c.handle} · ` : ""}
@@ -321,6 +368,18 @@ export function Channels({
                         },
                       ]
                     : []),
+                  // Subscribed channels only: the endpoint answers 400
+                  // "channel is not subscribed" otherwise, which is why the
+                  // channel page hides its own Check now the same way.
+                  ...(c.subscribed
+                    ? [
+                        {
+                          label: "Check now",
+                          icon: "clock" as const,
+                          onClick: () => handleScan(c),
+                        },
+                      ]
+                    : []),
                   {
                     label: "Delete channel",
                     icon: "trash",
@@ -341,11 +400,18 @@ export function Channels({
       !error &&
       (channels.length === 0 || (q !== "" && hasNonDormant)) ? (
         <p style={{ color: "var(--color-faint)" }}>
+          {/* A filtered view can be empty while channels sit one chip away, so
+              every branch but "all" points at All rather than implying there is
+              nothing here. */}
           {q !== "" && hasNonDormant
             ? "No channels match your search."
             : filter === "all"
               ? "No channels yet."
-              : "No channels match this filter."}
+              : filter === "subscribed"
+                ? "No subscribed channels — see All."
+                : filter === "tracked"
+                  ? "Every channel here is subscribed — see All."
+                  : "No channels match this filter."}
         </p>
       ) : null}
       <AutoUnsubscribedSection

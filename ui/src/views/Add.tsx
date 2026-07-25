@@ -14,14 +14,14 @@ import { isChannelURL } from "../youtube";
 // separate "peek at metadata" endpoint, so this queues the download
 // directly on submit and shows the resulting queue entry as confirmation
 // instead of a pre-download preview. Task 13 adds channel-URL routing: a
-// pasted channel link tracks the channel (POST /api/channels) instead of
+// pasted channel link adds the channel (POST /api/channels) instead of
 // queuing a video download — subscribing is left to the Channels view.
 export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [queued, setQueued] = useState(false);
-  const [tracked, setTracked] = useState<{ name: string } | null>(null);
+  const [added, setAdded] = useState<{ name: string } | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -30,11 +30,11 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
     setBusy(true);
     setError(null);
     setQueued(false);
-    setTracked(null);
+    setAdded(null);
     try {
       if (isChannelURL(trimmed)) {
         const channel = await addChannel(trimmed, false);
-        setTracked({ name: channel.name });
+        setAdded({ name: channel.name });
         setUrl("");
       } else {
         const job = await addDownload(trimmed);
@@ -79,19 +79,15 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
         </label>
         <Button type="submit" busy={busy} disabled={!url.trim()}>
           {!busy && <Icon name="download" size="18px" />}
-          {busy
-            ? "Adding"
-            : isChannelURL(url)
-              ? "Track channel"
-              : "Add to queue"}
+          {busy ? "Adding" : isChannelURL(url) ? "Add channel" : "Add to queue"}
         </Button>
       </form>
 
       <div className="hint">
         Downloads queue immediately using the format preset from Settings —
         subtitles &amp; a summary are included automatically once later phases
-        add them. A channel link tracks the channel instead, downloading nothing
-        — you can also add channels from the Channels page.
+        add them. A channel link adds the channel instead, downloading nothing —
+        you can also add channels from the Channels page.
       </div>
 
       {error ? <div className="errline">{error}</div> : null}
@@ -114,13 +110,13 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
         </div>
       ) : null}
 
-      {tracked ? (
+      {added ? (
         <div className="preview">
           <div>
             <div className="pt g4" />
           </div>
           <div>
-            <h2>Tracked {tracked.name}</h2>
+            <h2>Added {added.name}</h2>
             <div className="by">
               Not subscribed — new uploads won't auto-download yet.
             </div>

@@ -53,6 +53,7 @@ import {
   listAutoUnsubscribedChannels,
   dismissDormantChannel,
   resubscribeChannel,
+  scanChannel,
 } from "../api/channels";
 
 // openRowMenu clicks a row's ⋮ trigger so its actions (Open, Delete) become
@@ -115,19 +116,30 @@ describe("Channels", () => {
     });
   });
 
+  // The page opens on Subscribed, not All: it is about the channels you follow,
+  // and defaulting to All led with channels the user never subscribed to.
+  it("loads the subscribed filter on mount", async () => {
+    render(<Channels />);
+    await waitFor(() =>
+      expect(listChannels).toHaveBeenCalledWith("subscribed"),
+    );
+    expect(screen.getByRole("button", { name: "Subscribed" })).toHaveClass(
+      "on",
+    );
+  });
+
   it("filter chips drive listChannels(filter)", async () => {
     const user = userEvent.setup();
     render(<Channels />);
     await screen.findByText("Tracked Channel");
     vi.mocked(listChannels).mockClear();
 
-    await user.click(screen.getByRole("button", { name: "Subscribed" }));
-    await waitFor(() =>
-      expect(listChannels).toHaveBeenCalledWith("subscribed"),
-    );
+    await user.click(screen.getByRole("button", { name: "All" }));
+    await waitFor(() => expect(listChannels).toHaveBeenCalledWith("all"));
 
+    // "Not subscribed" is the label; the filter id stays "tracked".
     vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: "Tracked" }));
+    await user.click(screen.getByRole("button", { name: "Not subscribed" }));
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("tracked"));
 
     vi.mocked(listChannels).mockClear();
@@ -137,47 +149,153 @@ describe("Channels", () => {
     );
 
     vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: "All" }));
-    await waitFor(() => expect(listChannels).toHaveBeenCalledWith("all"));
+    await user.click(screen.getByRole("button", { name: "Subscribed" }));
+    await waitFor(() =>
+      expect(listChannels).toHaveBeenCalledWith("subscribed"),
+    );
   });
 
   // A slow response for an abandoned filter must not overwrite the list the
-  // active chip asked for. Without the sequence guard the stale "all"
-  // response resolves last and wins, showing every channel under "Tracked".
+  // active chip asked for. Without the sequence guard the stale "subscribed"
+  // response (the mount default) resolves last and wins, showing every channel
+  // under "Not subscribed".
   it("a stale filter response does not overwrite the active filter's list", async () => {
     const user = userEvent.setup();
-    let releaseAll: (() => void) | undefined;
+    let releaseSubscribed: (() => void) | undefined;
     vi.mocked(listChannels).mockImplementation((f) => {
-      if (f === "all") {
+      if (f === "subscribed") {
         return new Promise((resolve) => {
-          releaseAll = () => resolve([tracked, subscribed]);
+          releaseSubscribed = () => resolve([tracked, subscribed]);
         });
       }
       return Promise.resolve([tracked]);
     });
 
     render(<Channels />);
-    // The initial "all" load is still in flight; switch to "Tracked".
-    await user.click(screen.getByRole("button", { name: "Tracked" }));
+    // The initial "subscribed" load is still in flight; switch to
+    // "Not subscribed".
+    await user.click(screen.getByRole("button", { name: "Not subscribed" }));
     expect(await screen.findByText("Tracked Channel")).toBeInTheDocument();
     expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
 
-    // Now let the abandoned "all" request resolve — it must be ignored.
-    releaseAll?.();
+    // Now let the abandoned "subscribed" request resolve — it must be ignored.
+    releaseSubscribed?.();
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("tracked"));
     expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
   });
 
+  // Every empty state but "All"'s points at the All chip: a filtered view can
+  // be blank while channels sit one chip away, and "No channels yet." there
+  // would repeat the very impression the All-by-default bug created.
   it("shows the filter-aware empty state", async () => {
     const user = userEvent.setup();
     vi.mocked(listChannels).mockResolvedValue([]);
     render(<Channels />);
+    expect(
+      await screen.findByText("No subscribed channels — see All."),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "All" }));
     expect(await screen.findByText("No channels yet.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Not subscribed" }));
+    expect(
+      await screen.findByText("Every channel here is subscribed — see All."),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Auto-add" }));
     expect(
       await screen.findByText("No channels match this filter."),
     ).toBeInTheDocument();
+  });
+
+  // Auto-add is configured on the channel's own Settings tab, so the list must
+  // say which channels download by themselves — otherwise the only way to tell
+  // is to click the Auto-add chip.
+  describe("the auto-add marker", () => {
+    it("marks a channel with autodownload on, and only that one", async () => {
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+
+      const subbedRow = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+      expect(
+        within(subbedRow).getByRole("img", { name: "Auto-add is on" }),
+      ).toBeInTheDocument();
+
+      const trackedRow = screen
+        .getByText("Tracked Channel")
+        .closest(".channel-row") as HTMLElement;
+      expect(
+        within(trackedRow).queryByRole("img", { name: "Auto-add is on" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Check now", () => {
+    beforeEach(() => {
+      vi.mocked(scanChannel).mockReset();
+      vi.mocked(scanChannel).mockResolvedValue({ status: "scheduled" });
+    });
+
+    it("schedules a check and reports it", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+
+      await waitFor(() => expect(scanChannel).toHaveBeenCalledWith("c2"));
+      expect(
+        await screen.findByText(
+          "Checking soon — peeq will look for new videos on its next pass.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("reports the backend's reason when the check is blocked", async () => {
+      const user = userEvent.setup();
+      vi.mocked(scanChannel).mockResolvedValue({
+        status: "blocked",
+        reason: "YouTube access is paused.",
+      });
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+
+      expect(
+        await screen.findByText("YouTube access is paused."),
+      ).toBeInTheDocument();
+    });
+
+    // The endpoint answers 400 "channel is not subscribed", so the entry must
+    // not be offered — the same reason the channel page hides its own button.
+    it("is not offered for a channel that is not subscribed", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Tracked Channel");
+      const row = screen
+        .getByText("Tracked Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      expect(
+        screen.queryByRole("menuitem", { name: /check now/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: /delete channel/i }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("the search box filters the list by name or handle", async () => {

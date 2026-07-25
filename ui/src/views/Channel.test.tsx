@@ -179,7 +179,7 @@ describe("Channel", () => {
     expect(within(archiveTab).getByText("142")).toBeInTheDocument();
   });
 
-  it("an untracked channel hides the New and Settings tabs", async () => {
+  it("a channel that has not been added hides the New and Settings tabs", async () => {
     vi.mocked(getChannel).mockResolvedValue(
       detail({ tracked: false, subscribed: false, pending_count: 0 }),
     );
@@ -192,7 +192,7 @@ describe("Channel", () => {
     expect(screen.queryByRole("tab", { name: /new/i })).toBeNull();
     expect(screen.queryByRole("tab", { name: /settings/i })).toBeNull();
     expect(
-      screen.getByRole("button", { name: /track this channel/i }),
+      screen.getByRole("button", { name: /add this channel/i }),
     ).toBeInTheDocument();
   });
 
@@ -489,7 +489,7 @@ describe("Channel", () => {
     ).toBeInTheDocument();
   });
 
-  it("an untracked channel's Track button calls addChannel and reloads as tracked", async () => {
+  it("the Add button calls addChannel and reloads the channel as added", async () => {
     const user = userEvent.setup();
     vi.mocked(getChannel).mockResolvedValue(
       detail({ tracked: false, subscribed: false, pending_count: 0 }),
@@ -506,9 +506,7 @@ describe("Channel", () => {
     );
     await screen.findByText("Uncanny Expeditions");
 
-    await user.click(
-      screen.getByRole("button", { name: /track this channel/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /add this channel/i }));
 
     await waitFor(() => {
       expect(addChannel).toHaveBeenCalledWith(
@@ -519,7 +517,7 @@ describe("Channel", () => {
     await waitFor(() => expect(getChannel).toHaveBeenCalledTimes(2));
   });
 
-  it("shows an error when tracking an untracked channel fails", async () => {
+  it("shows an error when adding the channel fails", async () => {
     const user = userEvent.setup();
     vi.mocked(getChannel).mockResolvedValue(
       detail({ tracked: false, subscribed: false, pending_count: 0 }),
@@ -532,16 +530,14 @@ describe("Channel", () => {
     );
     await screen.findByText("Uncanny Expeditions");
 
-    await user.click(
-      screen.getByRole("button", { name: /track this channel/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /add this channel/i }));
 
     expect(
       await screen.findByText("failed to add channel"),
     ).toBeInTheDocument();
   });
 
-  it("renders a handle-less, untracked, description-less channel without crashing", async () => {
+  it("renders a handle-less, not-added, description-less channel without crashing", async () => {
     vi.mocked(getChannel).mockResolvedValue(
       detail({
         handle: undefined,
@@ -555,7 +551,7 @@ describe("Channel", () => {
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
     );
     await screen.findByText("Uncanny Expeditions");
-    expect(screen.getByText("Not tracked")).toBeInTheDocument();
+    expect(screen.getByText("Not added")).toBeInTheDocument();
   });
 
   it("the New tab shows its own pending-count badge", async () => {
