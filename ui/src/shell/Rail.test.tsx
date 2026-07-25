@@ -40,9 +40,13 @@ describe("Rail", () => {
     expect(html).toContain(">Add<");
     expect(html).not.toContain("Add a video");
     expect(html).toContain("Inbox");
-    expect(html).toContain("Queue");
-    expect(html).toContain("Activity");
+    expect(html).toContain("Up next");
+    expect(html).toContain("History");
     expect(html).toContain("Settings");
+    // The two pages Up next and History replaced are gone from the rail, not
+    // merely relabelled somewhere further down it.
+    expect(html).not.toContain(">Queue<");
+    expect(html).not.toContain(">Activity<");
   });
 
   it("marks the active view", () => {
@@ -58,52 +62,90 @@ describe("Rail", () => {
     expect(labels.slice(0, 2)).toEqual(["Library", "Channels"]);
   });
 
-  // The rail greys Inbox/Queue out when there is genuinely nothing in them, so
+  // The rail greys Inbox/Up next out when there is genuinely nothing in them, so
   // the counts double as a to-do signal. `undefined` is NOT nothing — it means
   // the first fetch hasn't landed — or every cold load would flash dim.
   describe("idle state", () => {
-    it("dims Queue and hides its pill when the queue is empty", () => {
+    it("dims Up next and hides its pill when there is no work", () => {
       const props = {
         active: "library" as const,
         onNavigate: () => {},
         pendingCount: 3,
-        queueCount: 0,
+        upNextCount: 0,
+        upNextLive: false,
       };
-      const queue = navItem(props, "Queue");
-      expect(queue.classes).toContain("idle");
-      expect(queue.pill).toBeNull();
+      const upnext = navItem(props, "Up next");
+      expect(upnext.classes).toContain("idle");
+      expect(upnext.pill).toBeNull();
       // Inbox, which has work waiting, is untouched.
       expect(navItem(props, "Inbox").classes).not.toContain("idle");
     });
 
-    it("gives a non-empty Queue the same accent pill as Inbox", () => {
+    it("gives a running Up next the same accent pill as Inbox", () => {
       const props = {
         active: "library" as const,
         onNavigate: () => {},
         pendingCount: 4,
-        queueCount: 2,
+        upNextCount: 2,
+        upNextLive: true,
       };
-      const queue = navItem(props, "Queue");
-      expect(queue.classes).not.toContain("idle");
-      expect(queue.pill?.className).toBe("rail-nav-count hot");
-      expect(queue.pill?.textContent).toBe("2");
+      const upnext = navItem(props, "Up next");
+      expect(upnext.classes).not.toContain("idle");
+      expect(upnext.pill?.className).toBe("rail-nav-count hot");
+      expect(upnext.pill?.textContent).toBe("2");
       expect(navItem(props, "Inbox").pill?.className).toBe(
         "rail-nav-count hot",
       );
     });
 
-    it("never dims the view you are already on", () => {
-      const queue = navItem(
+    // The pill is a "something is moving" light. Work that is queued but frozen
+    // — everything paused, YouTube blocked — shows no number, because a count
+    // that never falls reads as progress. The item still must not dim: there IS
+    // work, it just isn't going anywhere, and the pause banner says why.
+    it("hides the pill when work is waiting but nothing is running", () => {
+      const upnext = navItem(
         {
-          active: "queue",
+          active: "library",
           onNavigate: () => {},
           pendingCount: 0,
-          queueCount: 0,
+          upNextCount: 3,
+          upNextLive: false,
         },
-        "Queue",
+        "Up next",
       );
-      expect(queue.classes).toContain("active");
-      expect(queue.classes).not.toContain("idle");
+      expect(upnext.pill).toBeNull();
+      expect(upnext.classes).not.toContain("idle");
+    });
+
+    it("never dims the view you are already on", () => {
+      const upnext = navItem(
+        {
+          active: "upnext",
+          onNavigate: () => {},
+          pendingCount: 0,
+          upNextCount: 0,
+          upNextLive: false,
+        },
+        "Up next",
+      );
+      expect(upnext.classes).toContain("active");
+      expect(upnext.classes).not.toContain("idle");
+    });
+
+    // History is a log, never a to-do: it has no count and must never dim.
+    it("leaves History undimmed and pill-less", () => {
+      const history = navItem(
+        {
+          active: "library",
+          onNavigate: () => {},
+          pendingCount: 0,
+          upNextCount: 0,
+          upNextLive: false,
+        },
+        "History",
+      );
+      expect(history.classes).not.toContain("idle");
+      expect(history.pill).toBeNull();
     });
 
     it("does not dim counts that have not loaded yet", () => {

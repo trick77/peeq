@@ -21,8 +21,8 @@ import { Settings } from "./views/Settings";
 import { Channels } from "./views/Channels";
 import { Channel } from "./views/Channel";
 import { Inbox } from "./views/Inbox";
-import { Queue } from "./views/Queue";
-import { Activity } from "./views/Activity";
+import { UpNext } from "./views/UpNext";
+import { History } from "./views/History";
 import { Search } from "./views/Search";
 import { Share } from "./views/Share";
 import { useRoute } from "./route";
@@ -506,10 +506,17 @@ export function App() {
         active={view}
         onNavigate={setView}
         pendingCount={pendingCount}
-        queueCount={
+        upNextCount={
           jobsLoaded && summariesLoaded
             ? activeDownloads + summaries.length
             : undefined
+        }
+        // The pill is a "something is happening" light, not a backlog size, so
+        // it needs a job actually running in either lane. Both lanes count: a
+        // running summary lights it exactly as a running download does.
+        upNextLive={
+          jobs.some((j) => j.state === "running") ||
+          summaries.some((s) => s.state === "running")
         }
         cookieStatus={cookieStatus}
       />
@@ -546,6 +553,11 @@ export function App() {
             summaryPhaseByVideoId={summaryPhaseByVideoId}
             onCancelDownload={onCancelDownload}
             liveActivity={liveActivity}
+            paused={
+              downloadStatus.paused ||
+              downloadStatus.low_disk ||
+              downloadStatus.youtube_paused
+            }
           />
         </section>
       </main>
@@ -640,6 +652,7 @@ function ViewSwitch({
   summaryPhaseByVideoId,
   onCancelDownload,
   liveActivity,
+  paused,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
@@ -666,6 +679,8 @@ function ViewSwitch({
   summaryPhaseByVideoId: Record<string, string>;
   onCancelDownload: (jobId: number) => void;
   liveActivity: ActivityEvent[];
+  /** Any reason YouTube work is stopped — only Up next's empty state uses it. */
+  paused: boolean;
 }) {
   switch (view) {
     case "library":
@@ -712,28 +727,20 @@ function ViewSwitch({
           onQueued={onQueued}
         />
       );
-    case "queue":
+    case "upnext":
       return (
-        <Queue
+        <UpNext
           jobs={jobs}
           progressByJobId={progressByJobId}
           summaries={summaries}
           summaryPhaseByVideoId={summaryPhaseByVideoId}
           onCancel={onCancelDownload}
           onOpenChannel={onOpenChannel}
+          paused={paused}
         />
       );
-    case "activity":
-      return (
-        <Activity
-          live={liveActivity}
-          jobs={jobs}
-          progressByJobId={progressByJobId}
-          summaries={summaries}
-          summaryPhaseByVideoId={summaryPhaseByVideoId}
-          onOpenChannel={onOpenChannel}
-        />
-      );
+    case "history":
+      return <History live={liveActivity} onOpenChannel={onOpenChannel} />;
     case "channels":
       return (
         <Channels

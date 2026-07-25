@@ -67,13 +67,20 @@ type upcomingResponse struct {
 	Truncated int                     `json:"truncated"`
 }
 
-// handleActivityUpcoming serves the future half: a live projection over the
-// existing schedules and queues (never stored). It gathers the soonest channel
-// scans and metadata refreshes (timed) plus the PENDING downloads and summaries
-// (ordered, not timed — a running job renders at the *now* marker on the client,
-// so it must not appear here too), merges them, caps at 20, and reports how many
-// were dropped for the top-edge label. Everything is best-effort: a store that
+// handleActivityUpcoming serves peeq's own timed schedule: a live projection
+// over the existing schedules (never stored). It gathers the soonest channel
+// scans and metadata refreshes, merges them, caps at 20, and reports how many
+// were dropped for the edge label. Everything is best-effort: a store that
 // errors simply contributes nothing rather than failing the whole projection.
+//
+// Pending downloads and summaries used to be projected here too, as ordered
+// (untimed) items. Up next now renders those from the jobs and summaries the
+// client already holds, with live progress the projection never had, so
+// emitting them here would print every waiting download twice. Dropping them
+// also hands the whole cap back to the timed items: ordered ones sorted ahead
+// of every timed one in Merge and shared the same budget of 20, so a backlog of
+// 20+ pending downloads used to return no scheduled items at all — the schedule
+// section vanished exactly when peeq was busiest.
 func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) {
 	var items []activity.UpcomingItem
 
@@ -95,60 +102,9 @@ func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	// The ordered (untimed) items — pending downloads then summaries — sort ahead
-	// of every timed one in Merge, so at most `upcomingCap` of them can survive.
-	// Resolve titles only up to that bound rather than doing a videos.Get for
-	// every job in a large backlog and throwing all but 20 away.
-	ordered := 0
-	addOrdered := func(kind, videoID, summary string) bool {
-		if ordered >= upcomingCap {
-			return false
-		}
-		items = append(items, activity.UpcomingItem{
-			Kind: kind, Approx: true, Subject: s.videoTitle(videoID), Summary: summary,
-		})
-		ordered++
-		return true
-	}
-	if s.jobs != nil {
-		if all, err := s.jobs.List(); err == nil {
-			for _, j := range all {
-				if j.State != "pending" {
-					continue
-				}
-				if !addOrdered(activity.KindDownload, j.VideoID, "download") {
-					break
-				}
-			}
-		}
-	}
-	if s.summaryList != nil {
-		if all, err := s.summaryList.ListActive(); err == nil {
-			for _, j := range all {
-				if j.State != "pending" {
-					continue // running summaries render at *now* on the client, not here
-				}
-				if !addOrdered(activity.KindSummary, j.VideoID, "summary") {
-					break
-				}
-			}
-		}
-	}
-
 	merged, truncated := activity.Merge(items, upcomingCap)
 	if merged == nil {
 		merged = []activity.UpcomingItem{}
 	}
 	writeJSON(w, upcomingResponse{Items: merged, Truncated: truncated})
-}
-
-// videoTitle resolves a video's display title for a projection row, falling
-// back to the id. Best-effort — a missing/errored row just shows the id.
-func (s *server) videoTitle(videoID string) string {
-	if s.videos != nil {
-		if v, err := s.videos.Get(videoID); err == nil && v != nil && v.Title != "" {
-			return v.Title
-		}
-	}
-	return videoID
 }

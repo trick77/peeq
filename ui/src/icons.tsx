@@ -17,6 +17,8 @@ import {
   SkipForward,
   ExternalLink,
   ListTree,
+  ClockArrowUp,
+  History,
   Play,
   Tv,
   Captions,
@@ -61,6 +63,11 @@ const COMPONENTS = {
   skipForward: SkipForward,
   externalLink: ExternalLink,
   listTree: ListTree,
+  // The two Collect destinations that face opposite directions in time: a clock
+  // pointing forward for what peeq is about to do, a clock winding back for what
+  // it already did. The pair reads as a pair, which "download"/"list" did not.
+  clockArrowUp: ClockArrowUp,
+  history: History,
   play: Play,
   tv: Tv,
   playFilled: Play, // rendered solid via the FILLED set below — rail logo + player play button

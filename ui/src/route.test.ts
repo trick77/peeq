@@ -65,9 +65,19 @@ describe("parsePath", () => {
     expect(parsePath("/search").view).toBe("search");
     expect(parsePath("/add").view).toBe("add");
     expect(parsePath("/inbox").view).toBe("inbox");
-    expect(parsePath("/queue").view).toBe("queue");
-    expect(parsePath("/activity").view).toBe("activity");
+    expect(parsePath("/up-next").view).toBe("upnext");
+    expect(parsePath("/history").view).toBe("history");
     expect(parsePath("/settings").view).toBe("settings");
+  });
+
+  it("keeps the old /queue and /activity paths working (soft redirect)", () => {
+    // Queue's work is the top of Up next now, and /activity's content was a
+    // log — which is what a bookmark to that URL was keeping — so it lands on
+    // History. useRoute's mount normalize then rewrites the address bar.
+    expect(parsePath("/queue").view).toBe("upnext");
+    expect(parsePath("/activity").view).toBe("history");
+    expect(toPath(parsePath("/queue"))).toBe("/up-next");
+    expect(toPath(parsePath("/activity"))).toBe("/history");
   });
 
   it("keeps the old /pending and /decide paths pointing at Inbox (soft redirect)", () => {
@@ -147,10 +157,13 @@ describe("toPath", () => {
     ],
     [{ view: "add", videoId: null, channelId: null, token: null }, "/add"],
     [{ view: "inbox", videoId: null, channelId: null, token: null }, "/inbox"],
-    [{ view: "queue", videoId: null, channelId: null, token: null }, "/queue"],
     [
-      { view: "activity", videoId: null, channelId: null, token: null },
-      "/activity",
+      { view: "upnext", videoId: null, channelId: null, token: null },
+      "/up-next",
+    ],
+    [
+      { view: "history", videoId: null, channelId: null, token: null },
+      "/history",
     ],
     [
       { view: "settings", videoId: null, channelId: null, token: null },
@@ -189,8 +202,8 @@ describe("round-trip", () => {
     "/search",
     "/add",
     "/inbox",
-    "/queue",
-    "/activity",
+    "/up-next",
+    "/history",
     "/settings",
   ];
 
