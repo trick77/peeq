@@ -331,7 +331,7 @@ type channelDetail struct {
 
 // handleChannelDetail returns the data behind the channel page: identity,
 // the four header stats, and (if added) the subscription/schedule state.
-// It serves both a added channel AND one the user never added but whose
+// It serves both an added channel AND one the user never added but whose
 // videos live in the library (added by URL) — videos.channel_id has no
 // foreign key to channels, so that case is real. 404 is reserved for an id
 // that names nothing at all: neither a cached channels row nor any video.

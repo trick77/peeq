@@ -79,7 +79,7 @@ func TestGet_returnsCacheOnlyRow(t *testing.T) {
 		t.Fatal("get returned nil for a cache-only row")
 	}
 	if c.AddedAt != "" {
-		t.Fatalf("AddedAt = %q, want empty for an not-added row", c.AddedAt)
+		t.Fatalf("AddedAt = %q, want empty for a not-added row", c.AddedAt)
 	}
 	if c.Description != "hello" {
 		t.Fatalf("Description = %q, want %q", c.Description, "hello")
@@ -866,5 +866,38 @@ func TestClearScanRequest_keepsARequestThatArrivedMidScan(t *testing.T) {
 	sub, _ := s.GetSubscription("UC1")
 	if sub.ScanRequestedAt != "2026-07-25 06:11:14" {
 		t.Fatalf("scan_requested_at = %q, want preserved (this pass never saw it)", sub.ScanRequestedAt)
+	}
+}
+
+// TestList_ordersByTheDisplayedName asserts the sort agrees with what the row
+// renders. An unresolved channel has an empty name and the UI shows its handle
+// or id instead; ordering on the raw name would park every one of them at the
+// top of the list under a label nobody sees.
+func TestList_ordersByTheDisplayedName(t *testing.T) {
+	st := newTestStore(t)
+	st.Upsert(Channel{ID: "UCzz", Name: "Zulu"})
+	st.Upsert(Channel{ID: "UCmm", Handle: "@mike"}) // no name: shows "@mike"
+	st.Upsert(Channel{ID: "UCbare"})                // nothing: shows "UCbare"
+	st.Upsert(Channel{ID: "UCaa", Name: "Alpha"})
+	for _, id := range []string{"UCzz", "UCmm", "UCbare", "UCaa"} {
+		if err := st.MarkAdded(id, "2026-07-25 10:00:00"); err != nil {
+			t.Fatalf("mark added %s: %v", id, err)
+		}
+	}
+
+	items, err := st.List("all")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var got []string
+	for _, it := range items {
+		got = append(got, it.ID)
+	}
+	// "@mike" < "Alpha" < "UCbare" < "Zulu", case-insensitively.
+	want := []string{"UCmm", "UCaa", "UCbare", "UCzz"}
+	for i := range want {
+		if i >= len(got) || got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
 	}
 }

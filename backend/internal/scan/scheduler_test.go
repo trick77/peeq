@@ -740,10 +740,10 @@ func TestScan_autodownload_notEnqueued_whenChannelNotAdded(t *testing.T) {
 		t.Fatal(err)
 	}
 	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
-		t.Fatalf("must not enqueue a download for an not-added channel; got %+v", jobsList)
+		t.Fatalf("must not enqueue a download for a not-added channel; got %+v", jobsList)
 	}
 	if v, _ := h.videos.Get("newv"); v != nil {
-		t.Fatalf("must not upsert a video row for an not-added channel; got %+v", v)
+		t.Fatalf("must not upsert a video row for a not-added channel; got %+v", v)
 	}
 }
 

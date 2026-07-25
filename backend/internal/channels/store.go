@@ -74,7 +74,7 @@ type ListItem struct {
 	// Dormant mirrors DormantChannels' predicate for this one channel: it is
 	// subscribed, has seen at least one video, that video is older than
 	// DormantAfter relative to now, and dormancy has not been dismissed
-	// since. Always false for a added-but-unsubscribed channel.
+	// since. Always false for an added-but-unsubscribed channel.
 	Dormant bool
 }
 
@@ -434,7 +434,11 @@ WHERE (c.added_at IS NOT NULL OR ` + hasDownloadsPredicate + `)`
 	default:
 		return nil, fmt.Errorf("list channels: unknown filter %q", filter)
 	}
-	query += ` ORDER BY c.name COLLATE NOCASE, c.id`
+	// Sort by what the row actually shows. A channel whose metadata has never
+	// resolved has an empty name, and the UI falls back to its handle and then
+	// its id — ordering on the raw name would sort every one of those to the
+	// very top under a label the list never displays.
+	query += ` ORDER BY COALESCE(NULLIF(c.name, ''), NULLIF(c.handle, ''), c.id) COLLATE NOCASE, c.id`
 
 	rows, err := s.db.QueryContext(context.Background(), query, DormantAfter)
 	if err != nil {
@@ -681,7 +685,7 @@ FROM videos WHERE status = 'downloaded' AND `+where, args...)
 
 // NameFromVideos returns the channel name recorded on this channel's videos
 // and whether the channel has any videos at all. Both matter to the channel
-// page: the name is all peeq knows about an not-added channel, and existence
+// page: the name is all peeq knows about a not-added channel, and existence
 // is what separates "a channel with nothing downloaded yet" from "an id that
 // names nothing". Existence is deliberately NOT filtered by status — a video
 // still downloading is still a video.

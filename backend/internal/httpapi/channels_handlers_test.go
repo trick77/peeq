@@ -318,7 +318,7 @@ func TestChannelsPut_notSubscribed_400(t *testing.T) {
 }
 
 // TestChannelsPutSubscribeUnsubscribe covers the full config + subscribe/
-// unsubscribe lifecycle for a added channel.
+// unsubscribe lifecycle for an added channel.
 func TestChannelsPutSubscribeUnsubscribe(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UClifecycle", Name: "Lifecycle"}})
 	cookie := loginAndGetCookie(t, h)
@@ -568,7 +568,7 @@ func TestChannelDetail_getSubscriptionError_500(t *testing.T) {
 }
 
 // TestChannelDetail_listPendingError_500 asserts a pending-ledger lookup
-// failure for a added channel is a 500. GetSubscription must still
+// failure for an added channel is a 500. GetSubscription must still
 // succeed (sub can legitimately be nil — added but not subscribed), so
 // only the channel_videos table is dropped.
 func TestChannelDetail_listPendingError_500(t *testing.T) {
@@ -657,7 +657,7 @@ func seedVideoRow(t *testing.T, deps Deps, id, channelID, channelName string) {
 }
 
 // TestDownloadsPost_doesNotAddChannel asserts adding a single video via
-// POST /api/downloads leaves the Channels view untouched. Being added is an
+// POST /api/downloads leaves the Channels view untouched. Adding is an
 // explicit action on the Channels page; grabbing one video must not
 // silently subscribe the user to its channel.
 func TestDownloadsPost_doesNotAddChannel(t *testing.T) {
