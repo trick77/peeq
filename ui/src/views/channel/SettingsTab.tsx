@@ -165,8 +165,12 @@ export function SettingsTab({
                 type="button"
                 variant="secondary"
                 busy={scanning}
-                disabled={isCheckQueued(detail)}
                 onClick={handleScan}
+                title={
+                  isCheckQueued(detail)
+                    ? "Waiting for the next scan pass — press to check again"
+                    : undefined
+                }
               >
                 {isCheckQueued(detail) ? "Queued" : "Check now"}
               </Button>

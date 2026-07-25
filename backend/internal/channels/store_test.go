@@ -719,7 +719,7 @@ func TestMarkScanned_clearsTheScanRequestMarker(t *testing.T) {
 	if err := s.RequestScan("UC1", "2026-07-25 06:11:14"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkScanned("UC1", false, "2026-07-25 06:12:00", "2026-07-26 06:12:00"); err != nil {
+	if err := s.MarkScanned("UC1", false, "2026-07-25 06:12:00", "2026-07-26 06:12:00", "2026-07-25 06:11:14"); err != nil {
 		t.Fatal(err)
 	}
 	sub, _ := s.GetSubscription("UC1")
@@ -733,7 +733,7 @@ func TestClearScanRequest_leavesTheScheduleAlone(t *testing.T) {
 	if err := s.RequestScan("UC1", "2026-07-25 06:11:14"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ClearScanRequest("UC1"); err != nil {
+	if err := s.ClearScanRequest("UC1", "2026-07-25 06:11:14"); err != nil {
 		t.Fatal(err)
 	}
 	sub, _ := s.GetSubscription("UC1")
@@ -742,5 +742,50 @@ func TestClearScanRequest_leavesTheScheduleAlone(t *testing.T) {
 	}
 	if sub.NextScanAt != "2026-07-25 06:11:14" {
 		t.Fatalf("next_scan_at = %q, want untouched by clearing the marker", sub.NextScanAt)
+	}
+}
+
+func TestMarkScanned_keepsARequestThatArrivedMidScan(t *testing.T) {
+	// The race: a user presses "Check now" while a scan of the same channel is
+	// already running. That pass never saw the request, so consuming it would
+	// swallow the click AND push next_scan_at a day out — the exact "the button
+	// does nothing" bug the receipt mechanism exists to fix.
+	s, _ := newSubTestStore(t)
+	// The in-flight pass claimed the subscription with no request pending.
+	observed := ""
+	// Mid-scan, the user clicks.
+	if err := s.RequestScan("UC1", "2026-07-25 06:11:14"); err != nil {
+		t.Fatal(err)
+	}
+	// The pass finishes and stamps its result.
+	if err := s.MarkScanned("UC1", false, "2026-07-25 06:11:20", "2026-07-26 06:11:20", observed); err != nil {
+		t.Fatal(err)
+	}
+
+	sub, _ := s.GetSubscription("UC1")
+	if sub.ScanRequestedAt != "2026-07-25 06:11:14" {
+		t.Fatalf("scan_requested_at = %q, want the mid-scan request preserved", sub.ScanRequestedAt)
+	}
+	if sub.NextScanAt != "2026-07-25 06:11:14" {
+		t.Fatalf("next_scan_at = %q, want left due so the loop re-claims it", sub.NextScanAt)
+	}
+	// last_scanned_at still advances: that pass really did happen.
+	if sub.LastScannedAt != "2026-07-25 06:11:20" {
+		t.Fatalf("last_scanned_at = %q, want stamped", sub.LastScannedAt)
+	}
+}
+
+func TestClearScanRequest_keepsARequestThatArrivedMidScan(t *testing.T) {
+	// Same race on the failure path.
+	s, _ := newSubTestStore(t)
+	if err := s.RequestScan("UC1", "2026-07-25 06:11:14"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClearScanRequest("UC1", ""); err != nil {
+		t.Fatal(err)
+	}
+	sub, _ := s.GetSubscription("UC1")
+	if sub.ScanRequestedAt != "2026-07-25 06:11:14" {
+		t.Fatalf("scan_requested_at = %q, want preserved (this pass never saw it)", sub.ScanRequestedAt)
 	}
 }

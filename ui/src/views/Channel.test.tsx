@@ -1040,8 +1040,11 @@ describe("Channel", () => {
     await user.click(screen.getByRole("tab", { name: /new/i }));
 
     expect(await screen.findByText(/check queued/i)).toBeInTheDocument();
+    // Still clickable: an overdue schedule also describes a channel the scan
+    // loop cannot reach (dead cookie, kill-switch), and disabling would strand
+    // the user on "Queued" with no way to learn why.
     const btn = screen.getByRole("button", { name: /queued/i });
-    expect(btn).toBeDisabled();
+    expect(btn).toBeEnabled();
     expect(
       screen.queryByRole("button", { name: /check now/i }),
     ).not.toBeInTheDocument();
@@ -1080,7 +1083,7 @@ describe("Channel", () => {
     await user.click(screen.getByRole("tab", { name: /settings/i }));
 
     expect(await screen.findByText(/check queued/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /queued/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /queued/i })).toBeEnabled();
   });
 
   it("refetches the channel when a scan for it lands over SSE", async () => {
@@ -1120,6 +1123,63 @@ describe("Channel", () => {
     await waitFor(() => {
       expect(vi.mocked(getChannel).mock.calls.length).toBeGreaterThan(before);
     });
+  });
+
+  it("refetches once per scan, not again on every later event", async () => {
+    // App keeps `live` as a rolling buffer, so a matching scan event stays in it.
+    // Without a high-water mark every later unrelated event would refetch again.
+    const scan = {
+      id: 1,
+      at: "2026-07-25 06:12:00",
+      kind: "scan",
+      outcome: "ok",
+      subject_id: "UCa",
+      subject: "Uncanny Expeditions",
+    };
+    const { rerender } = render(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        live={[]}
+      />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    const before = vi.mocked(getChannel).mock.calls.length;
+
+    rerender(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        live={[scan]}
+      />,
+    );
+    await waitFor(() => {
+      expect(vi.mocked(getChannel).mock.calls.length).toBe(before + 1);
+    });
+
+    // An unrelated download event arrives; the scan is still in the buffer.
+    rerender(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        live={[
+          scan,
+          {
+            id: 2,
+            at: "2026-07-25 06:13:00",
+            kind: "download",
+            outcome: "ok",
+            subject: "A clip",
+          },
+        ]}
+      />,
+    );
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(vi.mocked(getChannel).mock.calls.length).toBe(before + 1);
   });
 
   it("ignores a scan for a different channel", async () => {

@@ -197,7 +197,7 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 		if !requested {
 			return
 		}
-		if err := s.d.Channels.ClearScanRequest(sub.ChannelID); err != nil {
+		if err := s.d.Channels.ClearScanRequest(sub.ChannelID, sub.ScanRequestedAt); err != nil {
 			s.d.Logger.Error("scan: clear scan request failed", "channel", sub.ChannelID, "err", err)
 		}
 	}()
@@ -491,7 +491,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	}
 	next := s.d.Now().Add(s.jitteredInterval()).UTC().Format(sqlTimeLayout)
 	lastScanned := s.d.Now().UTC().Format(sqlTimeLayout)
-	if err := s.d.Channels.MarkScanned(sub.ChannelID, baseline, lastScanned, next); err != nil {
+	if err := s.d.Channels.MarkScanned(sub.ChannelID, baseline, lastScanned, next, sub.ScanRequestedAt); err != nil {
 		return err
 	}
 	// Clean scan pass: reset the consecutive dead-scan streak (a channel that

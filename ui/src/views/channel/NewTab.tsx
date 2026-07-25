@@ -69,14 +69,21 @@ export function NewTab({
   // reload, or a second tab, shows the same state. It parks there until the scan
   // lands and pushes next_scan_at back into the future — no spinner, because
   // nothing is running yet; the channel is in line.
+  //
+  // Deliberately still clickable while queued. An overdue next_scan_at also
+  // describes a channel the loop CANNOT reach — a dead cookie or the kill-switch
+  // parks the loop, and next_scan_at then sits in the past indefinitely.
+  // Disabling would leave the user staring at "Queued" forever with no way to
+  // find out why; pressing again is idempotent on the server and surfaces the
+  // blocked reason that explains it.
   const queued = isCheckQueued(detail);
   const checkNow = (
     <Button
       type="button"
       variant="secondary"
       busy={scanning}
-      disabled={queued}
       onClick={handleScan}
+      title={queued ? "Waiting for the next scan pass — press to check again" : undefined}
     >
       <Icon name="clock" size="16px" /> {queued ? "Queued" : "Check now"}
     </Button>

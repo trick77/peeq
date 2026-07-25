@@ -652,27 +652,38 @@ func (s *Store) NameFromVideos(channelID string) (name string, found bool, err e
 // also pass baseline=true, e.g. on baseline retries) leave the original
 // value untouched. When baseline is false, baselined_at is left alone
 // entirely (this scan does not represent a completed baseline).
-// scan_requested_at is cleared unconditionally: any completed pass has actually
-// looked at the channel, so it satisfies whatever "Check now" was waiting on.
-// The scanner reads the marker off the subscription it claimed (before this
-// write) to decide whether that pass owed the user a receipt, so clearing here
-// cannot race its own decision.
-func (s *Store) MarkScanned(channelID string, baseline bool, lastScannedAt, nextScanAt string) error {
+// observedRequest is the scan_requested_at value the caller saw when it claimed
+// this subscription ("" for an ordinary automatic pass). Both the schedule and
+// the marker are only written when the column STILL holds that value — a
+// compare-and-set, not a blind overwrite.
+//
+// That guard exists for a specific race: a user can press "Check now" while a
+// scan of the same channel is already running. Clearing unconditionally would
+// consume their request (no receipt is owed, since this pass never saw it) AND
+// push next_scan_at a day out, silently swallowing the click — reproducing the
+// very "the button does nothing" bug this all exists to fix. Leaving both
+// columns alone instead means the loop re-claims the channel on its next poll
+// and the request is honoured properly.
+func (s *Store) MarkScanned(channelID string, baseline bool, lastScannedAt, nextScanAt, observedRequest string) error {
 	var err error
 	if baseline {
 		_, err = s.db.ExecContext(context.Background(), `
 UPDATE subscriptions
-SET last_scanned_at = ?, next_scan_at = ?, baselined_at = COALESCE(baselined_at, ?),
-    scan_requested_at = NULL
+SET last_scanned_at = ?,
+    baselined_at = COALESCE(baselined_at, ?),
+    next_scan_at = CASE WHEN COALESCE(scan_requested_at, '') = ? THEN ? ELSE next_scan_at END,
+    scan_requested_at = CASE WHEN COALESCE(scan_requested_at, '') = ? THEN NULL ELSE scan_requested_at END
 WHERE channel_id = ?`,
-			lastScannedAt, nextScanAt, lastScannedAt, channelID,
+			lastScannedAt, lastScannedAt, observedRequest, nextScanAt, observedRequest, channelID,
 		)
 	} else {
 		_, err = s.db.ExecContext(context.Background(), `
 UPDATE subscriptions
-SET last_scanned_at = ?, next_scan_at = ?, scan_requested_at = NULL
+SET last_scanned_at = ?,
+    next_scan_at = CASE WHEN COALESCE(scan_requested_at, '') = ? THEN ? ELSE next_scan_at END,
+    scan_requested_at = CASE WHEN COALESCE(scan_requested_at, '') = ? THEN NULL ELSE scan_requested_at END
 WHERE channel_id = ?`,
-			lastScannedAt, nextScanAt, channelID,
+			lastScannedAt, observedRequest, nextScanAt, observedRequest, channelID,
 		)
 	}
 	if err != nil {
@@ -720,10 +731,15 @@ WHERE channel_id = ?`,
 // schedule. The failure path needs this: a scan that errored never reaches
 // MarkScanned, and leaving the marker set would make some later automatic pass
 // report itself as the answer to a request the user already saw fail.
-func (s *Store) ClearScanRequest(channelID string) error {
-	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE subscriptions SET scan_requested_at = NULL WHERE channel_id = ?`,
-		channelID,
+//
+// observedRequest is compared the same way MarkScanned compares it, and for the
+// same reason: a request that arrived DURING the pass was never answered by it,
+// so this must not consume it.
+func (s *Store) ClearScanRequest(channelID, observedRequest string) error {
+	_, err := s.db.ExecContext(context.Background(), `
+UPDATE subscriptions SET scan_requested_at = NULL
+WHERE channel_id = ? AND COALESCE(scan_requested_at, '') = ?`,
+		channelID, observedRequest,
 	)
 	if err != nil {
 		return fmt.Errorf("clear scan request %s: %w", channelID, err)

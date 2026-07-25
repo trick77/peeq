@@ -1500,3 +1500,41 @@ func TestIsLiveOrUpcoming(t *testing.T) {
 		}
 	}
 }
+
+func TestScan_requestArrivingMidPassSurvives(t *testing.T) {
+	// End to end through the scheduler: the pass that did not see the request
+	// must leave both the marker and the due-now schedule alone, so the loop
+	// re-claims the channel and the user still gets their answer.
+	h := newScanHarness(t)
+	h.trackAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", []string{"old1"})
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "old1", DurationSeconds: 600, LiveStatus: "not_live"},
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	// The click lands after the claim, before the pass finishes.
+	h.requestScan("UC1")
+	h.sched.scanChannel(context.Background(), sub)
+
+	if got := h.scanRequestedAt("UC1"); got == "" {
+		t.Fatal("the mid-pass request was consumed by a scan that never saw it")
+	}
+	if h.activity.scanEvents() != nil {
+		t.Fatalf("scan events = %+v, want none yet — that pass owed nothing", h.activity.scanEvents())
+	}
+	// The loop re-claims it, and this time the receipt is owed.
+	sub2, _ := h.channels.ClaimDue(h.nowStr())
+	if sub2 == nil {
+		t.Fatal("subscription must still be due so the request is honoured")
+	}
+	h.sched.scanChannel(context.Background(), sub2)
+
+	ev := h.activity.scanEvents()
+	if len(ev) != 1 || ev[0].Summary != "checked on request" {
+		t.Fatalf("scan events = %+v, want the receipt on the re-claimed pass", ev)
+	}
+	if got := h.scanRequestedAt("UC1"); got != "" {
+		t.Fatalf("scan_requested_at = %q, want cleared once answered", got)
+	}
+}
