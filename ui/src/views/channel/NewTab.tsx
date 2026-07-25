@@ -83,7 +83,11 @@ export function NewTab({
       variant="secondary"
       busy={scanning}
       onClick={handleScan}
-      title={queued ? "Waiting for the next scan pass — press to check again" : undefined}
+      title={
+        queued
+          ? "Waiting for the next scan pass — press to check again"
+          : undefined
+      }
     >
       <Icon name="clock" size="16px" /> {queued ? "Queued" : "Check now"}
     </Button>

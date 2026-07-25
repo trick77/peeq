@@ -159,7 +159,9 @@ export function SettingsTab({
             <div className="chan-srow">
               <div>
                 <div className="lab">Checking for new videos</div>
-                <div className="hint">{scheduleLine(detail, "Last checked")}</div>
+                <div className="hint">
+                  {scheduleLine(detail, "Last checked")}
+                </div>
               </div>
               <Button
                 type="button"

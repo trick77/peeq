@@ -338,9 +338,7 @@ describe("Activity", () => {
       ],
       truncated: 0,
     });
-    render(
-      <Activity live={[]} {...noProps} onOpenChannel={onOpenChannel} />,
-    );
+    render(<Activity live={[]} {...noProps} onOpenChannel={onOpenChannel} />);
 
     await user.click(
       await screen.findByRole("button", { name: "Everyday Astronaut" }),
@@ -368,9 +366,7 @@ describe("Activity", () => {
       has_more: false,
       retained_max: 2000,
     });
-    render(
-      <Activity live={[]} {...noProps} onOpenChannel={onOpenChannel} />,
-    );
+    render(<Activity live={[]} {...noProps} onOpenChannel={onOpenChannel} />);
 
     await user.click(
       await screen.findByRole("button", { name: "Everyday Astronaut" }),
@@ -388,9 +384,7 @@ describe("Activity", () => {
       has_more: false,
       retained_max: 2000,
     });
-    render(
-      <Activity live={[]} {...noProps} onOpenChannel={onOpenChannel} />,
-    );
+    render(<Activity live={[]} {...noProps} onOpenChannel={onOpenChannel} />);
 
     expect(await screen.findByText("A clip")).toBeInTheDocument();
     expect(
@@ -400,15 +394,15 @@ describe("Activity", () => {
 
   it("renders a channel name as plain text when no navigation is wired", async () => {
     vi.mocked(listActivity).mockResolvedValue({
-      events: [
-        ev({ id: 11, kind: "scan", subject_id: "UCea", subject: "EA" }),
-      ],
+      events: [ev({ id: 11, kind: "scan", subject_id: "UCea", subject: "EA" })],
       has_more: false,
       retained_max: 2000,
     });
     render(<Activity live={[]} {...noProps} />);
 
     expect(await screen.findByText("EA")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "EA" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "EA" }),
+    ).not.toBeInTheDocument();
   });
 });
