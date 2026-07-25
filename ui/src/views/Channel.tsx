@@ -11,7 +11,7 @@ import {
   refreshChannel,
 } from "../api/channels";
 import { CookieRequiredError } from "../api/downloads";
-import { gradientClassFor } from "../format";
+import { formatAge, gradientClassFor } from "../format";
 import type { ChannelDetail } from "../api/types";
 import { ArchiveTab } from "./channel/ArchiveTab";
 import { NewTab } from "./channel/NewTab";
@@ -69,20 +69,6 @@ export function formatStamp(stored: string | undefined): string {
   const d = new Date(stored + "Z");
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString();
-}
-
-// formatAge renders an ISO timestamp as a coarse "how long ago", matching
-// how the rest of peeq talks about time on cards.
-export function formatAge(iso: string | undefined): string {
-  if (!iso) return "—";
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "—";
-  const days = Math.floor((Date.now() - then) / 86400000);
-  if (days <= 0) return "today";
-  if (days === 1) return "1 d ago";
-  if (days < 30) return `${days} d ago`;
-  if (days < 365) return `${Math.round(days / 30)} mo ago`;
-  return `${Math.round(days / 365)} y ago`;
 }
 
 // ChannelState is the part of the handle line that reports on YouTube rather

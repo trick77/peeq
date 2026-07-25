@@ -55,6 +55,24 @@ export function summaryPhaseLabel(phase: string | undefined): string {
   return summaryPhaseInfo(phase).label;
 }
 
+// parseStamp turns any timestamp the backend sends into a Date.
+//
+// Two shapes arrive. Date-only ('2026-03-01', from published_at) and true ISO
+// ('...Z') both parse as UTC, which is right. But SQLite's datetime('now')
+// yields '2026-03-01 09:00:00' — UTC with no zone marker — and JS parses that
+// space-separated form as LOCAL time, silently shifting the age by the
+// viewer's UTC offset and flipping "today" to "1 day ago" near a boundary.
+// Elsewhere the fix is spelled out at each call site (`new Date(x + "Z")` in
+// Channel.tsx, `x.replace(" ", "T") + "Z"` in Activity.tsx); doing it here
+// means daysSince and both formatters get it for free, whatever they are
+// handed.
+function parseStamp(iso: string): number {
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(iso)
+    ? iso.replace(" ", "T") + "Z"
+    : iso;
+  return new Date(normalized).getTime();
+}
+
 // daysBetween returns the whole number of days elapsed from `from` (an ISO
 // timestamp) to now. Negative/invalid input yields 0 rather than NaN, so a
 // caller doing retention arithmetic on it never produces "Expires in NaN
@@ -64,16 +82,16 @@ export function daysSince(
   now: Date = new Date(),
 ): number {
   if (!iso) return 0;
-  const then = new Date(iso).getTime();
+  const then = parseStamp(iso);
   if (Number.isNaN(then)) return 0;
   const diffMs = now.getTime() - then;
   return Math.max(0, Math.floor(diffMs / (24 * 60 * 60 * 1000)));
 }
 
 // formatAgo renders an ISO timestamp as a full-word relative age ("3 days
-// ago", "5 months ago") for the video-card date line. Coarse by design — the
-// same day/month/year thresholds the channel page's abbreviated formatAge
-// uses, just spelled out, since the card has the room. Built on daysSince, so
+// ago", "5 months ago"). The primary of the two ages: use it wherever the
+// layout has room. Coarse by design — the same day/month/year thresholds as
+// the abbreviated formatAge below, just spelled out. Built on daysSince, so
 // it shares the invalid/future -> "today" guard and is testable via `now`.
 export function formatAgo(
   iso: string | undefined,
@@ -89,6 +107,32 @@ export function formatAgo(
   // would read "12 months ago" right before the year bucket takes over.
   if (days < 365) return unit(Math.min(11, Math.round(days / 30)), "month");
   return unit(Math.round(days / 365), "year");
+}
+
+// formatAge is formatAgo's abbreviated sibling ("3 d ago", "2 mo ago"), for
+// the tight spots: the channel header's stat grid, and the secondary half of a
+// card eyebrow that already carries a full-word age. It lived in Channel.tsx
+// until the library card started showing two dates at once and needed both
+// forms in one line.
+//
+// Two differences from formatAgo. Unknown input reads "—" rather than "" — a
+// caller depends on that (Channel.tsx's stat cell must not collapse). The
+// uncapped month bucket is not intentional, just inherited: past ~345 days it
+// reads "12 mo ago" where formatAgo caps at 11. Preserved on the move so this
+// stayed a relocation; worth aligning separately.
+export function formatAge(
+  iso: string | undefined,
+  now: Date = new Date(),
+): string {
+  if (!iso) return "—";
+  const then = parseStamp(iso);
+  if (Number.isNaN(then)) return "—";
+  const days = Math.floor((now.getTime() - then) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "1 d ago";
+  if (days < 30) return `${days} d ago`;
+  if (days < 365) return `${Math.round(days / 30)} mo ago`;
+  return `${Math.round(days / 365)} y ago`;
 }
 
 // GRADIENT_CLASSES mirrors the mockup's six thumbnail gradient fallbacks

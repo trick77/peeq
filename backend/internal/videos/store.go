@@ -245,19 +245,31 @@ type ListOptions struct {
 // interpolated into SQL, so it must only ever come from this map — never
 // from the caller's string.
 //
-// newest/oldest rank by RELEASE date (published_at), not by when peeq added
-// the row: an old video downloaded this morning belongs where it was
-// published, not at the top of the library. published_at is NULL when yt-dlp
-// reports no upload_date (some live streams and premieres), so those rows
-// fall back to created_at and stay interleaved rather than sinking to one
-// end forever. date() normalizes the fallback — published_at is 'YYYY-MM-DD'
-// while created_at is 'YYYY-MM-DD HH:MM:SS', and comparing the two shapes
-// lexically would sort a same-day date-only value before the datetime one.
+// Two date dimensions, kept apart on purpose. newest/oldest rank by ADDED
+// date (downloaded_at) — the default ordering, because the Library's job is
+// to answer "what's here now that wasn't yesterday", and a 2019 talk fetched
+// this morning is new to this library whatever YouTube says. air_newest/
+// air_oldest rank by RELEASE date (published_at) for when the question is
+// about the video rather than the collection.
+//
+// downloaded_at is NULL for rows that never finished downloading — an 'error'
+// row, which the Library still lists (see notInFlight) so it can be retried —
+// so the added-date clauses fall back to created_at. Both columns are
+// 'YYYY-MM-DD HH:MM:SS', so that fallback needs no normalization.
+//
+// The air-date clauses do need it. published_at is NULL when yt-dlp reports no
+// upload_date (some live streams and premieres); those rows fall back to
+// created_at and stay interleaved rather than sinking to one end forever, and
+// date() normalizes the fallback — published_at is 'YYYY-MM-DD' while
+// created_at is 'YYYY-MM-DD HH:MM:SS', and comparing the two shapes lexically
+// would sort a same-day date-only value before the datetime one.
 var sortClauses = map[string]string{
-	"newest":  "COALESCE(v.published_at, date(v.created_at)) DESC, v.created_at DESC, v.id DESC",
-	"oldest":  "COALESCE(v.published_at, date(v.created_at)) ASC, v.created_at ASC, v.id ASC",
-	"longest": "COALESCE(v.duration_seconds, 0) DESC, v.id DESC",
-	"title":   "v.title COLLATE NOCASE ASC, v.id ASC",
+	"newest":     "COALESCE(v.downloaded_at, v.created_at) DESC, v.id DESC",
+	"oldest":     "COALESCE(v.downloaded_at, v.created_at) ASC, v.id ASC",
+	"air_newest": "COALESCE(v.published_at, date(v.created_at)) DESC, v.created_at DESC, v.id DESC",
+	"air_oldest": "COALESCE(v.published_at, date(v.created_at)) ASC, v.created_at ASC, v.id ASC",
+	"longest":    "COALESCE(v.duration_seconds, 0) DESC, v.id DESC",
+	"title":      "v.title COLLATE NOCASE ASC, v.id ASC",
 }
 
 // escapeLike escapes the three characters LIKE treats specially so a user
@@ -295,9 +307,10 @@ const notInFlight = "v.status NOT IN ('new', 'queued', 'downloading')"
 // where it returns the same thing "all" does.
 //   - Category: empty/"all"/unknown ⇒ no category constraint
 //   - Query: case-insensitive substring match against title
-//   - Sort: newest|oldest|longest|title; anything else falls back to newest.
-//     newest/oldest order by release date (published_at), falling back to
-//     created_at for rows with no known release date
+//   - Sort: newest|oldest|air_newest|air_oldest|longest|title; anything else
+//     falls back to newest. newest/oldest order by added date (downloaded_at),
+//     air_newest/air_oldest by release date (published_at); both fall back to
+//     created_at for rows missing their date. See sortClauses.
 //   - ChannelID/ChannelName: scopes to one channel, matching channel_id or,
 //     for rows written before channel ids were recorded, an exact
 //     channel_name match on rows with an empty channel_id

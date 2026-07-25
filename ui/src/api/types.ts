@@ -21,8 +21,10 @@ export type User = {
 export type VideoFilter =
   "all" | "unwatched" | "in_progress" | "watched" | "favorites" | "downloading";
 
-// VideoSort mirrors the sort keys videos.Store.List accepts.
-export type VideoSort = "newest" | "oldest" | "longest" | "title";
+// VideoSort mirrors the sort keys videos.Store.List accepts. newest/oldest are
+// the ADDED date (downloaded_at); the air_* pair is the release date.
+export type VideoSort =
+  "newest" | "oldest" | "air_newest" | "air_oldest" | "longest" | "title";
 
 // Video mirrors httpapi.videoDTO exactly. media_path is deliberately never
 // exposed (server-local filesystem path); has_media + the /stream endpoint

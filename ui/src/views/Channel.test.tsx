@@ -49,7 +49,6 @@ import type { Settings, Video } from "../api/types";
 import {
   formatRuntime,
   formatBytes,
-  formatAge,
   formatSubscribers,
   formatStamp,
 } from "./Channel";
@@ -1035,16 +1034,8 @@ describe("Channel format helpers", () => {
     expect(formatBytes(3 * 1024 ** 4)).toBe("3.0 TB");
   });
 
-  it("formatAge renders coarse buckets: today, days, months, years", () => {
-    const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
-    expect(formatAge(undefined)).toBe("—");
-    expect(formatAge("not-a-date")).toBe("—");
-    expect(formatAge(iso(0))).toBe("today");
-    expect(formatAge(iso(1 * 86400000))).toBe("1 d ago");
-    expect(formatAge(iso(10 * 86400000))).toBe("10 d ago");
-    expect(formatAge(iso(90 * 86400000))).toBe("3 mo ago");
-    expect(formatAge(iso(400 * 86400000))).toBe("1 y ago");
-  });
+  // formatAge moved to ../format when the library card started needing both
+  // age forms in one line; its cases live in format.test.ts now.
 });
 
 describe("Channel YouTube metadata", () => {

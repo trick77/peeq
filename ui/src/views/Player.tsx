@@ -22,7 +22,7 @@ import { getSettings, updateSettings } from "../api/settings";
 import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareChip, ShareControl } from "../components/ShareControl";
 import type { Video } from "../api/types";
-import { formatDuration, gradientClassFor } from "../format";
+import { formatAgo, formatDuration, gradientClassFor } from "../format";
 // The VTT parser and transcript helpers live in ../vtt so the public share page
 // can render the same Transcript card without importing this view.
 import {
@@ -814,6 +814,23 @@ export function Player({
             ) : (
               video.channel_name || video.channel_id
             )}
+            {/* Both ages, spelled out — the detail view has the room the card
+                eyebrow does not. "aired" is conditional because published_at
+                is unknown for some live streams and premieres; "added" is
+                conditional because a row can be listed without ever having
+                finished downloading. */}
+            {video.published_at ? (
+              <>
+                <span className="dot">·</span>
+                aired {formatAgo(video.published_at)}
+              </>
+            ) : null}
+            {video.downloaded_at ? (
+              <>
+                <span className="dot">·</span>
+                added {formatAgo(video.downloaded_at)}
+              </>
+            ) : null}
             {video.format_used ? (
               <span className="pill">{video.format_used}</span>
             ) : null}

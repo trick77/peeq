@@ -4,6 +4,7 @@ import { thumbnailUrl } from "../api/videos";
 import type { Video } from "../api/types";
 import {
   daysSince,
+  formatAge,
   formatAgo,
   formatDuration,
   gradientClassFor,
@@ -140,10 +141,21 @@ export function VideoCard({
             {video.channel_name || video.channel_id}
           </span>
         )}
+        {/* Added date first, because it is what the grid's default order ranks
+            by — an eyebrow leading with the air date would make that order
+            look broken. The two ages use different helpers on purpose: the
+            primary gets formatAgo's full words, the secondary formatAge's
+            abbreviations, so three parts still fit the narrowest column. */}
+        {video.downloaded_at ? (
+          <>
+            <span className="dot">·</span>
+            added {formatAgo(video.downloaded_at)}
+          </>
+        ) : null}
         {video.published_at ? (
           <>
             <span className="dot">·</span>
-            {formatAgo(video.published_at)}
+            aired {formatAge(video.published_at)}
           </>
         ) : null}
       </div>
