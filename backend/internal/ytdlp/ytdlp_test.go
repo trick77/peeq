@@ -917,6 +917,39 @@ func TestThrottle_interactiveStillWaitsItsOwnGap(t *testing.T) {
 	if got < 20*time.Second {
 		t.Fatalf("second interactive wait = %v, want >=20s (spaced from the first)", got)
 	}
+	// A third: now the priority lane's own tail is what binds, not now+gap.
+	// Two clicks deep, now+gap would land on top of the second call — the
+	// interactive tail is what keeps a burst of clicks spaced from each other.
+	if err := r.throttle(WithInteractive(context.Background())); err != nil {
+		t.Fatalf("throttle: %v", err)
+	}
+	if got < 40*time.Second {
+		t.Fatalf("third interactive wait = %v, want >=40s (the priority lane keeps its own tail)", got)
+	}
+}
+
+// TestThrottle_idleRunnerDoesNotSleepAtAll exercises the PRODUCTION sleeper on
+// the newly reachable zero wait. Every other idle-Runner test injects a fake
+// Sleep, so nothing would otherwise prove that defaultSleep returns straight
+// away instead of arming a timer — the whole point of the change is that an
+// idle click is not delayed, and a real timer with a non-positive duration is
+// where that could quietly go wrong.
+func TestThrottle_idleRunnerDoesNotSleepAtAll(t *testing.T) {
+	r := New(RunnerConfig{
+		CookieProvider: func() (string, string) { return "c", "valid" },
+		ThrottleFloor:  minThrottleFloor,
+		ThrottleJitter: 15 * time.Second,
+		RandFloat64:    func() float64 { return 0.999999 },
+		// Sleep left unset: the real defaultSleep runs.
+	})
+
+	start := time.Now()
+	if err := r.throttle(context.Background()); err != nil {
+		t.Fatalf("throttle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("idle throttle took %v, want a prompt return rather than the ~20-35s gap", elapsed)
+	}
 }
 
 // TestThrottle_interactiveNeverLandsOnAJustStartedBackgroundCall guards the
