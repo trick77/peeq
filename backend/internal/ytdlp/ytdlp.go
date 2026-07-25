@@ -279,8 +279,10 @@ func (r *Runner) throttle(ctx context.Context) error {
 			// alone: nextInteractiveSlot tracks only the priority lane, so a
 			// background call that just started (at or before now, invisible to
 			// it) would otherwise get an interactive call fired on top of it.
-			// Anything already admitted did so at or before now, so a full gap
-			// from now clears it.
+			// Anything already ADMITTED did so at or before now, so a full gap
+			// from now clears it. A background reservation made for a time still
+			// in the future is NOT cleared — that is the burst-of-two trade-off
+			// stated above, not something this branch fixes.
 			slot = now.Add(gap)
 			// ...and not other interactive calls either: two clicks in the same
 			// second must not fire together, so the priority lane keeps a tail.

@@ -959,6 +959,11 @@ func TestThrottle_idleRunnerDoesNotSleepAtAll(t *testing.T) {
 // arriving the instant a background call started would fire on top of it — two
 // yt-dlp processes hitting YouTube together, which is the exact failure the
 // pacer exists to prevent. The busy branch must clear it by a full gap.
+//
+// "Never" is scoped to a call that has ALREADY STARTED. A background slot
+// reserved for a time still in the future is a separate, pre-existing case the
+// pacer deliberately does not push back (the burst-of-two trade-off documented
+// on throttle), and this test says nothing about it.
 func TestThrottle_interactiveNeverLandsOnAJustStartedBackgroundCall(t *testing.T) {
 	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
 	var got time.Duration
@@ -988,9 +993,11 @@ func TestThrottle_interactiveNeverLandsOnAJustStartedBackgroundCall(t *testing.T
 	}
 }
 
-// TestThrottle_backgroundQueuesBehindAnInteractiveJump: the queue tail moves
-// when an interactive call jumps in, so work queued AFTERWARDS stays spaced
-// rather than piling onto the slot the jumper took.
+// TestThrottle_backgroundQueuesBehindAnInteractiveJump: an interactive call
+// jumps a queue of background reservations, and work queued AFTERWARDS still
+// lands a full gap past the slot the jumper took rather than piling onto it.
+// (The jumper's own tail does not move nextSlot here — it is already further
+// out than the jumper's tail; the spacing comes from the standing queue.)
 func TestThrottle_backgroundQueuesBehindAnInteractiveJump(t *testing.T) {
 	base := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
 	var got time.Duration
@@ -1003,13 +1010,28 @@ func TestThrottle_backgroundQueuesBehindAnInteractiveJump(t *testing.T) {
 		Sleep:          func(_ context.Context, d time.Duration) error { got = d; return nil },
 	})
 
+	// There must actually BE a queue for the interactive call to jump: on an
+	// idle Runner it takes the current instant and the assertion below would
+	// hold for a plain background call too, proving nothing about the jump.
+	for i := 0; i < 3; i++ {
+		if err := r.throttle(context.Background()); err != nil {
+			t.Fatalf("priming background throttle: %v", err)
+		}
+	}
+
 	if err := r.throttle(WithInteractive(context.Background())); err != nil {
 		t.Fatalf("interactive throttle: %v", err)
 	}
+	jumper := got
+	if jumper < 20*time.Second || jumper > 21*time.Second {
+		t.Fatalf("interactive wait = %v, want ~20s (it jumped the 3-deep queue)", jumper)
+	}
+
 	if err := r.throttle(context.Background()); err != nil {
 		t.Fatalf("background throttle: %v", err)
 	}
-	if got < 20*time.Second {
-		t.Fatalf("background wait after an interactive jump = %v, want >=20s (queued behind the jumper)", got)
+	if got < jumper+20*time.Second {
+		t.Fatalf("background wait after an interactive jump = %v, want >=%v — a full gap past the jumper's slot, not piled onto it",
+			got, jumper+20*time.Second)
 	}
 }
