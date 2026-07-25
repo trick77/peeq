@@ -21,8 +21,8 @@ import { Settings } from "./views/Settings";
 import { Channels } from "./views/Channels";
 import { Channel } from "./views/Channel";
 import { Inbox } from "./views/Inbox";
-import { Queue } from "./views/Queue";
-import { Activity } from "./views/Activity";
+import { UpNext } from "./views/UpNext";
+import { History } from "./views/History";
 import { Search } from "./views/Search";
 import { Share } from "./views/Share";
 import { useRoute } from "./route";
@@ -506,10 +506,17 @@ export function App() {
         active={view}
         onNavigate={setView}
         pendingCount={pendingCount}
-        queueCount={
+        upNextCount={
           jobsLoaded && summariesLoaded
             ? activeDownloads + summaries.length
             : undefined
+        }
+        // The pill is a "something is happening" light, not a backlog size, so
+        // it needs a job actually running in either lane. Both lanes count: a
+        // running summary lights it exactly as a running download does.
+        upNextLive={
+          jobs.some((j) => j.state === "running") ||
+          summaries.some((s) => s.state === "running")
         }
         cookieStatus={cookieStatus}
       />
@@ -546,6 +553,19 @@ export function App() {
             summaryPhaseByVideoId={summaryPhaseByVideoId}
             onCancelDownload={onCancelDownload}
             liveActivity={liveActivity}
+            // Same precedence the banner uses: the kill-switch outranks a full
+            // disk, which outranks the cookie pause. Up next names the cause
+            // because each one has a different way out — only the kill-switch
+            // has a Resume button.
+            stalled={
+              downloadStatus.youtube_paused
+                ? "youtube"
+                : downloadStatus.low_disk
+                  ? "disk"
+                  : downloadStatus.paused
+                    ? "cookie"
+                    : undefined
+            }
           />
         </section>
       </main>
@@ -640,6 +660,7 @@ function ViewSwitch({
   summaryPhaseByVideoId,
   onCancelDownload,
   liveActivity,
+  stalled,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
@@ -666,6 +687,8 @@ function ViewSwitch({
   summaryPhaseByVideoId: Record<string, string>;
   onCancelDownload: (jobId: number) => void;
   liveActivity: ActivityEvent[];
+  /** Why YouTube work is stopped, if it is — only Up next's empty state uses it. */
+  stalled?: "youtube" | "disk" | "cookie";
 }) {
   switch (view) {
     case "library":
@@ -712,28 +735,20 @@ function ViewSwitch({
           onQueued={onQueued}
         />
       );
-    case "queue":
+    case "upnext":
       return (
-        <Queue
+        <UpNext
           jobs={jobs}
           progressByJobId={progressByJobId}
           summaries={summaries}
           summaryPhaseByVideoId={summaryPhaseByVideoId}
           onCancel={onCancelDownload}
           onOpenChannel={onOpenChannel}
+          stalled={stalled}
         />
       );
-    case "activity":
-      return (
-        <Activity
-          live={liveActivity}
-          jobs={jobs}
-          progressByJobId={progressByJobId}
-          summaries={summaries}
-          summaryPhaseByVideoId={summaryPhaseByVideoId}
-          onOpenChannel={onOpenChannel}
-        />
-      );
+    case "history":
+      return <History live={liveActivity} onOpenChannel={onOpenChannel} />;
     case "channels":
       return (
         <Channels

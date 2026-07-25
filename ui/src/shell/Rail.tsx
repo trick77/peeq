@@ -14,10 +14,10 @@ export type ViewId =
   | "search"
   | "add"
   | "inbox"
-  | "queue"
+  | "upnext"
   | "channels"
   | "channel"
-  | "activity"
+  | "history"
   | "settings"
   // share is the public /s/<token> page — reached only by a share link, never
   // a rail item, and rendered chromeless (no rail/top bar) above the app shell.
@@ -49,8 +49,12 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     items: [
       { id: "add", label: "Add", icon: "plus" },
       { id: "inbox", label: "Inbox", icon: "inbox", hot: true },
-      { id: "queue", label: "Queue", icon: "download", hot: true },
-      { id: "activity", label: "Activity", icon: "listTree" },
+      // Up next and History are the same question asked in two directions —
+      // what peeq is about to do, and what it already did. They sit adjacent so
+      // the pair is obvious; the old Queue/Activity split put the two halves of
+      // "what is peeq doing" on pages in different visual languages.
+      { id: "upnext", label: "Up next", icon: "clockArrowUp", hot: true },
+      { id: "history", label: "History", icon: "history" },
     ],
   },
   {
@@ -63,7 +67,8 @@ export function Rail({
   active,
   onNavigate,
   pendingCount,
-  queueCount,
+  upNextCount,
+  upNextLive,
   cookieStatus,
   cookieUpdatedAtLabel,
 }: {
@@ -76,8 +81,22 @@ export function Rail({
    * rail on every cold paint until the first fetch lands.
    */
   pendingCount?: number;
-  /** Badge count for "Queue" — downloads + summaries in flight. Same rule. */
-  queueCount?: number;
+  /**
+   * Work in "Up next" — running plus waiting, across both lanes. Same
+   * undefined-means-unloaded rule as pendingCount. Housekeeping (scans,
+   * metadata refreshes, retention) is never counted: it is scheduled work peeq
+   * does on its own, not a backlog anyone is waiting on.
+   */
+  upNextCount?: number;
+  /**
+   * Whether a download or a summary is actually RUNNING. The pill needs both:
+   * a count says how much there is, this says it is moving. Waiting-but-frozen
+   * work — everything paused, YouTube blocked — shows no pill, because a number
+   * that never falls reads as progress when nothing is happening. The item
+   * still doesn't dim (the count is non-zero), and the pause banner above the
+   * page is the louder signal about why.
+   */
+  upNextLive?: boolean;
   cookieStatus?: string;
   cookieUpdatedAtLabel?: string;
 }) {
@@ -105,18 +124,26 @@ export function Rail({
               const count =
                 item.id === "inbox"
                   ? pendingCount
-                  : item.id === "queue"
-                    ? queueCount
+                  : item.id === "upnext"
+                    ? upNextCount
                     : item.count;
-              // Inbox and Queue fade out when there is genuinely nothing in
+              // Inbox and Up next fade out when there is genuinely nothing in
               // them, so the rail reads as a to-do list at a glance. They stay
               // clickable — the page shows its own empty state, and nothing is
               // ever unreachable. The view you are standing on never dims, so
-              // an empty Queue you navigated to keeps its active marker legible.
+              // an empty Up next you navigated to keeps its active marker
+              // legible. History never dims: a log is never "empty to do".
               const idle =
-                (item.id === "inbox" || item.id === "queue") &&
+                (item.id === "inbox" || item.id === "upnext") &&
                 count === 0 &&
                 item.id !== active;
+              // Up next additionally needs something running before it shows a
+              // number — see upNextLive. Every other counted item shows its
+              // count whenever it has one.
+              const showCount =
+                count !== undefined &&
+                count > 0 &&
+                (item.id !== "upnext" || upNextLive === true);
               return (
                 <button
                   key={item.id}
@@ -131,7 +158,7 @@ export function Rail({
                     style={{ width: 18, height: 18 }}
                   />
                   {item.label}
-                  {count !== undefined && count > 0 ? (
+                  {showCount ? (
                     <span className={`rail-nav-count${item.hot ? " hot" : ""}`}>
                       {count}
                     </span>

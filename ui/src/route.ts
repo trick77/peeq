@@ -5,7 +5,8 @@
 // linked, refreshed, and walked with the browser's back/forward buttons.
 //
 // Scope is the "big pages" only — `/`, `/video/<id>`, `/channel/<id>`,
-// `/channels`, `/inbox`, `/queue`, `/search`, `/add`, `/settings`. Sub-page state
+// `/channels`, `/inbox`, `/up-next`, `/history`, `/search`, `/add`,
+// `/settings`. Sub-page state
 // (library filters, in-transcript search text, the scrub position) stays in
 // its own component and is intentionally NOT reflected in the URL.
 //
@@ -102,10 +103,19 @@ export function parsePath(pathname: string): RouteState {
     case "pending":
     case "decide":
       return { view: "inbox", videoId: null, channelId: null, token: null };
+    case "up-next":
+      return { view: "upnext", videoId: null, channelId: null, token: null };
+    case "history":
+      return { view: "history", videoId: null, channelId: null, token: null };
+    // /queue and /activity are the paths the two pages had before they were
+    // split into Up next and History. Queue's work is now the top of Up next,
+    // so it lands there. /activity meant "the whole agenda", but its content
+    // was a log — and a log is what a bookmark to that URL was keeping — so it
+    // lands on History. Both normalise in the address bar on mount.
     case "queue":
-      return { view: "queue", videoId: null, channelId: null, token: null };
+      return { view: "upnext", videoId: null, channelId: null, token: null };
     case "activity":
-      return { view: "activity", videoId: null, channelId: null, token: null };
+      return { view: "history", videoId: null, channelId: null, token: null };
     case "settings":
       return { view: "settings", videoId: null, channelId: null, token: null };
     default:
@@ -139,10 +149,10 @@ export function toPath(state: RouteState): string {
       return "/add";
     case "inbox":
       return "/inbox";
-    case "queue":
-      return "/queue";
-    case "activity":
-      return "/activity";
+    case "upnext":
+      return "/up-next";
+    case "history":
+      return "/history";
     case "settings":
       return "/settings";
   }

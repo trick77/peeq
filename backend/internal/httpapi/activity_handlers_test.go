@@ -3,6 +3,7 @@ package httpapi
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -109,12 +110,14 @@ func TestActivity_list503WhenUnwired(t *testing.T) {
 	}
 }
 
-func TestActivity_upcomingProjectsPendingAndScheduled(t *testing.T) {
+func TestActivity_upcomingProjectsScheduledOnly(t *testing.T) {
 	deps, _, ch, jb, vids, _, _ := activityTestDeps(t)
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
-	// A subscribed channel (scheduled scan) and a pending download (ordered).
+	// A subscribed channel (scheduled scan) and a pending download, which the
+	// projection must now ignore — Up next renders queued jobs from the client's
+	// own live state, so projecting them here would print each one twice.
 	if err := ch.Upsert(channels.Channel{ID: "UCx", Name: "Veritasium"}); err != nil {
 		t.Fatal(err)
 	}
@@ -145,31 +148,29 @@ func TestActivity_upcomingProjectsPendingAndScheduled(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	// Three items: the pending download (ordered, no time → sorts first), then
-	// the scheduled scan, then the metadata refresh pinned after it above.
-	// Ordered-before-timed, then by time.
-	if len(resp.Items) != 3 {
-		t.Fatalf("items = %+v", resp.Items)
+	// Two items, both timed: the scheduled scan, then the metadata refresh pinned
+	// after it above. The pending download contributes nothing.
+	if len(resp.Items) != 2 {
+		t.Fatalf("items = %+v, want the two scheduled rows only", resp.Items)
 	}
-	if resp.Items[0].Kind != activity.KindDownload || resp.Items[0].Subject != "Queued clip" {
-		t.Fatalf("first item = %+v, want the pending download", resp.Items[0])
+	if resp.Items[0].Kind != activity.KindScan || resp.Items[0].Subject != "Veritasium" {
+		t.Fatalf("first item = %+v, want the scheduled scan", resp.Items[0])
 	}
-	if resp.Items[1].Kind != activity.KindScan || resp.Items[1].Subject != "Veritasium" {
-		t.Fatalf("second item = %+v, want the scheduled scan", resp.Items[1])
+	if resp.Items[1].Kind != activity.KindChannelMeta {
+		t.Fatalf("second item = %+v, want the metadata refresh", resp.Items[1])
 	}
-	if resp.Items[2].Kind != activity.KindChannelMeta {
-		t.Fatalf("third item = %+v, want the metadata refresh", resp.Items[2])
+	// Channel rows carry the id so the schedule can link them to the channel page.
+	if resp.Items[0].SubjectID != "UCx" {
+		t.Fatalf("scan subject_id = %q, want UCx", resp.Items[0].SubjectID)
 	}
-	// Channel rows carry the id so the agenda can link them to the channel page;
-	// a video row does not (the agenda links channels only).
 	if resp.Items[1].SubjectID != "UCx" {
-		t.Fatalf("scan subject_id = %q, want UCx", resp.Items[1].SubjectID)
+		t.Fatalf("metadata subject_id = %q, want UCx", resp.Items[1].SubjectID)
 	}
-	if resp.Items[2].SubjectID != "UCx" {
-		t.Fatalf("metadata subject_id = %q, want UCx", resp.Items[2].SubjectID)
-	}
-	if resp.Items[0].SubjectID != "" {
-		t.Fatalf("download subject_id = %q, want empty", resp.Items[0].SubjectID)
+	// Every row is timed now, so nothing is approximate.
+	for _, it := range resp.Items {
+		if it.Approx || it.At == "" {
+			t.Fatalf("item = %+v, want an exact timed row", it)
+		}
 	}
 }
 
@@ -237,40 +238,56 @@ func TestActivity_upcomingEmptyIsArray(t *testing.T) {
 	}
 }
 
-func TestActivity_upcomingFallsBackToVideoIDAndListsSummaries(t *testing.T) {
-	deps, _, _, jb, vids, sj, _ := activityTestDeps(t)
+// A backlog of queued work used to sort ahead of every timed row and eat the
+// shared cap of 20, so the schedule section silently emptied exactly when peeq
+// was busiest. Queued jobs are no longer projected at all, so a big backlog must
+// leave the scheduled rows completely untouched.
+func TestActivity_upcomingBacklogDoesNotCrowdOutTheSchedule(t *testing.T) {
+	deps, _, ch, jb, vids, sj, _ := activityTestDeps(t)
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
-	// A pending download whose video row has no title → subject falls back to the
-	// video id; and a pending summary → the summary lane of the projection. Both
-	// jobs FK-reference videos, so the rows must exist (with empty titles).
-	if err := vids.Upsert(videos.Video{ID: "no-title-vid", URL: "u"}); err != nil {
+
+	if err := ch.Upsert(channels.Channel{ID: "UCx", Name: "Veritasium"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := vids.Upsert(videos.Video{ID: "summ-vid", URL: "u"}); err != nil {
+	if err := ch.MarkAdded("UCx", "2026-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jb.Enqueue("no-title-vid", 10); err != nil {
+	if err := ch.Subscribe("UCx", "2026-07-25 12:00:00"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sj.Enqueue("summ-vid"); err != nil {
+	if err := ch.MarkMetaRefreshed("UCx", "2026-08-01 12:00:00"); err != nil {
 		t.Fatal(err)
 	}
+	// More queued jobs than the whole projection cap. Jobs FK-reference videos,
+	// so each needs its row.
+	for i := 0; i < upcomingCap+5; i++ {
+		id := fmt.Sprintf("v%d", i)
+		if err := vids.Upsert(videos.Video{ID: id, URL: "u"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := jb.Enqueue(id, 10); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := sj.Enqueue(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	rec := getActivityJSON(t, h, cookie, "/api/activity/upcoming")
 	var resp upcomingResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	var sawDownloadFallback, sawSummary bool
+	if len(resp.Items) != 2 {
+		t.Fatalf("items = %+v, want only the scan and the metadata refresh", resp.Items)
+	}
 	for _, it := range resp.Items {
-		if it.Kind == activity.KindDownload && it.Subject == "no-title-vid" {
-			sawDownloadFallback = true
-		}
-		if it.Kind == activity.KindSummary && it.Subject == "summ-vid" {
-			sawSummary = true
+		if it.Kind == activity.KindDownload || it.Kind == activity.KindSummary {
+			t.Fatalf("queued job leaked into the projection: %+v", it)
 		}
 	}
-	if !sawDownloadFallback || !sawSummary {
-		t.Fatalf("items = %+v (download fallback=%v, summary=%v)", resp.Items, sawDownloadFallback, sawSummary)
+	if resp.Truncated != 0 {
+		t.Fatalf("truncated = %d, want 0 — the backlog must not consume the cap", resp.Truncated)
 	}
 }

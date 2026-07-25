@@ -298,8 +298,8 @@ button {
   color: var(--color-muted);
   text-decoration: none;
   font-size: 14.5px;
-  /* tighter than the body's 1.5 — the rail only holds seven items and the
-     looser leading made the list read as loose rather than airy. */
+  /* tighter than the body's 1.5 — the rail holds nine items and the looser
+     leading made the list read as loose rather than airy. */
   line-height: 1.3;
   font-weight: 500;
   border: 1px solid transparent;
@@ -494,13 +494,21 @@ button.srow:not(:disabled):hover {
   color: var(--color-faint);
 }
 
-/* Queue page — two lanes (downloads, summaries) of in-flight work. Each lane
-   is a stack of .qrow cards; a lane with nothing in it hides its heading, the
-   same "absence is absence" rule the status panel follows. */
-.queue-lane {
+/* Up next — two lanes of work in flight (downloads, summaries) followed by
+   peeq's own timed schedule. Deliberately NOT built on .qrow, which the old
+   Queue page used: its summary-meter rules were anchored as `.qrow .qdot…` and
+   would all have needed re-anchoring, so the new rows get their own class and
+   the old block went with the old page.
+
+   Every row is the same three-column grid — a lead column, the body, an action —
+   so the lanes and the schedule line up down the page even though they are
+   headed differently (by kind above, by time below). */
+.un-lane,
+.un-sched {
   margin-bottom: 26px;
 }
-.queue-lane > h2 {
+.un-lane > h2,
+.un-sched > h2 {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -508,247 +516,272 @@ button.srow:not(:disabled):hover {
   margin: 0 0 11px;
   font-weight: 600;
 }
-.qrow {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  padding: 11px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-ui);
-  background: var(--color-panel);
-  margin-bottom: 8px;
+.un-row {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  align-items: start;
+  gap: 14px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--color-border-soft);
+  max-width: 760px;
 }
-.qrow > .qmeta {
+.un-row:last-child {
+  border-bottom: 0;
+}
+/* The running job leads its lane: a touch more room and full-strength ink,
+   so the eye lands on what is happening now rather than on the backlog. */
+.un-row.hero {
+  padding: 13px 0 15px;
+}
+/* The lead column carries WHEN, not a rank — "3m left" for a running download,
+   "then" for anything waiting. Ranks across two independent lanes would imply a
+   comparison that doesn't exist: a waiting summary does not hold up a download. */
+.un-lead {
+  grid-column: 1;
+  font-size: 13px;
+  color: var(--color-faint);
+  padding-top: 2px;
+  white-space: nowrap;
+}
+.un-row.hero .un-lead {
+  color: var(--color-accent);
+}
+/* Numerals only — never whole phrases. Setting words in mono is most of why the
+   old queue rows read as messy; here it aligns the digits and stops there. */
+.un-lead .num,
+.un-detail .num {
+  font-variant-numeric: tabular-nums;
+}
+.un-body {
+  grid-column: 2;
   min-width: 0;
-  flex: 1;
 }
-.qrow .qtitle {
-  font-size: 13.5px;
+.un-title {
+  font-size: 15px;
   color: var(--color-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.qrow .qsub {
-  font-size: 12px;
+.un-row:not(.hero) .un-title {
+  color: var(--color-ink-dim);
+}
+.un-sub {
+  font-size: 12.5px;
   color: var(--color-muted);
   margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.qrow .qstate {
-  font-family:
-    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
-    monospace;
-  font-size: 11px;
-  color: var(--color-ink-dim);
-  flex: none;
+.un-detail {
+  font-size: 13px;
+  color: var(--color-muted);
+  margin-top: 5px;
 }
-.qrow .qbar {
-  width: 120px;
+.un-row.planned .un-detail {
+  font-style: italic;
+  color: var(--color-faint);
+}
+.un-row.planned .un-title {
+  color: var(--color-ink-dim);
+}
+
+/* TWO BAR SHAPES, one slot and one height. A download's progress is continuous,
+   so it fills; a summary knows four discrete steps, so it segments. Same
+   geometry either way, so the lanes read as siblings rather than as two
+   unrelated widgets. */
+.un-bar,
+.un-steps {
+  margin-top: 9px;
   height: 4px;
+  max-width: 320px;
+}
+.un-bar {
   border-radius: 4px;
   background: var(--color-elevated);
   overflow: hidden;
-  flex: none;
 }
-.qrow .qbar > i {
+.un-bar > i {
   display: block;
   height: 100%;
+  border-radius: 4px;
   background: linear-gradient(
     90deg,
     var(--color-accent-dim),
     var(--color-accent)
   );
-  border-radius: 4px;
+  box-shadow: 0 0 8px var(--glow-accent);
+  transition: width 0.4s ease;
 }
-/* Summary phase indicator — a live progression through the four summarize
-   stages (summarize → classify → embed → key points), replacing the old
-   monospace status word. The word names the current stage in the UI sans face;
-   the fraction and the row of four dots show position in the pipeline (done ·
-   running · ahead), the running dot pulsing so the row reads as live. Downloads
-   keep .qstate (percent · speed · ETA) — that stays monospace tabular data. */
-.qrow .qphase {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: none;
-}
-.qrow .qphase-word {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-ink-dim);
-}
-.qrow .qphase-frac {
-  margin-left: 5px;
-  font-weight: 500;
-  color: var(--color-faint);
-  font-variant-numeric: tabular-nums;
-}
-.qrow .qphase-dots {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.qrow .qdot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+/* Before the first progress event there is nothing honest to fill, so the bar
+   is a grey stub rather than a spinner — the lead column says "starting". */
+.un-bar.stub {
   background: var(--color-border);
 }
-.qrow .qdot.done {
+.un-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.un-step {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--color-elevated);
+}
+.un-step.done {
   background: var(--color-kept);
 }
-.qrow .qdot.active {
+.un-step.active {
   background: var(--color-accent);
-  animation: qphase-pulse 1.6s ease-out infinite;
+  animation: un-step-pulse 1.6s ease-out infinite;
 }
-@keyframes qphase-pulse {
+@keyframes un-step-pulse {
   0% {
     box-shadow: 0 0 0 0 var(--glow-accent);
   }
   70% {
-    box-shadow: 0 0 0 6px rgba(217, 119, 87, 0);
+    box-shadow: 0 0 0 5px rgba(217, 119, 87, 0);
   }
   100% {
     box-shadow: 0 0 0 0 rgba(217, 119, 87, 0);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .qrow .qdot.active {
+  .un-step.active {
     animation: none;
   }
 }
-.queue-empty {
+.un-edge {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 4px;
+  font-size: 13px;
+  color: var(--color-faint);
+  max-width: 760px;
+}
+.un-empty {
   color: var(--color-faint);
   font-size: 13px;
+  max-width: 60ch;
 }
 
-/* Activity — one agenda through a "now" marker, on a left optical rail (loom's
-   trace-rail pattern). The kind icon IS the node: its shape says what the work
-   was, its colour says how it went (ok / warn / fail / running). Future rows sit
-   above the marker on a faint rail; the log sits below on a solid one. Type holds
-   to two steps only — 15px subject, 13px everything else — in the one inherited
-   family; the icon and its colour carry the rest so the text never has to. */
+/* History — a grouped timeline on a left optical rail (loom's trace-rail
+   pattern). Four columns: a clock gutter, the node, the body, and how long ago.
+   The kind icon IS the node — its shape says what the work was — while the ring
+   around it carries the outcome, so a failure is findable by scanning the rail
+   instead of by reading every line. Day separators place each row in its day,
+   which is what a log is read for; the relative time stays on the right for the
+   newest rows. Type holds to two steps only — 15px subject, 13px everything
+   else — in the one inherited family, plus mono for the clock, whose numerals
+   are a column that has to align. */
 .agenda {
   position: relative;
-  max-width: 680px;
-}
-/* Up next carries a faint accent wash so the projection reads as distinct from
-   the log below it; rows sit directly on it, no boxed panel. */
-.agenda.up {
-  border-radius: var(--radius-ui);
-  background: color-mix(in srgb, var(--color-accent) 5%, var(--color-bg));
-  border: 1px solid var(--color-accent-dim);
-  padding: 4px 14px;
-}
-/* The accent wash changes the rail's backdrop, so the node's punch-through hole
-   must match it (the default --color-bg would show a seam). */
-.agenda.up .ag-node::before {
-  background: color-mix(in srgb, var(--color-accent) 5%, var(--color-bg));
+  max-width: 760px;
 }
 .agenda-empty {
   color: var(--color-faint);
   font-size: 13px;
   max-width: 60ch;
 }
-/* Two stacked sections — "Up next" then "Recent activity" — each with its own
-   consistent order, separated instead of folded around a now marker. */
-.ag-section + .ag-section {
-  margin-top: 26px;
-}
-.ag-sec-head {
+/* A labelled rule between days. First one sits flush — the chip row above is
+   already the page's top edge. */
+.ag-daysep {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin: 0 0 8px;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 6px;
 }
-.ag-sec-title {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+.ag-day:first-child .ag-daysep {
+  margin-top: 0;
+}
+.ag-daysep span {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--color-muted);
-  margin: 0;
-}
-.ag-sec-count {
-  font-size: 12px;
-  color: var(--color-faint);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 1px 9px;
-  font-variant-numeric: tabular-nums;
-}
-.ag-sec-note {
-  font-size: 12px;
   color: var(--color-faint);
 }
-/* The live pulse that used to sit on the now marker now marks "Up next". */
-.ag-live {
-  align-self: center;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  box-shadow: 0 0 8px var(--glow-accent);
+.ag-daysep i {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-soft);
 }
 .ag-row {
   position: relative;
   display: grid;
-  grid-template-columns: 22px 1fr auto;
+  grid-template-columns: 46px 22px 1fr auto;
   align-items: start;
   column-gap: 14px;
-  padding: 12px 2px;
+  padding: 11px 2px;
 }
 /* Per-row connector: from just below THIS node to the next one, anchored to the
-   row's own top/bottom edges so it spans the gap whatever the body height. The
-   edges live outside .agenda, so the last row is a true last-child and draws
-   none — no line dangles past the log. */
-.agenda > .ag-row:not(:last-child)::before {
+   row's own top/bottom edges so it spans the gap whatever the body height. It
+   stops at each day's last row — the separator below is the break, and a line
+   crossing it would deny the grouping the separator just made. */
+.ag-day > .ag-row:not(:last-child)::before {
   content: "";
   position: absolute;
-  left: 10.25px;
+  /* centre of the node column: 46px gutter + 14px gap + half of 22px, less
+     half the rule's own width. */
+  left: 70.25px;
   top: 33px;
-  bottom: -13px;
+  bottom: -11px;
   width: 1.5px;
   background: var(--color-border);
 }
-.agenda > .ag-row.planned::before {
-  background: var(--color-border-soft);
+
+/* The clock gutter. Mono and tabular so the colon lands in the same place on
+   every row; right-aligned so the hours column reads down the page. It carries
+   no date — the separator above the group already did. */
+.ag-clock {
+  grid-column: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--color-faint);
+  padding-top: 4px;
 }
 
 .ag-node {
-  grid-column: 1;
+  grid-column: 2;
   justify-self: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   margin-top: 1px;
   display: grid;
   place-items: center;
   position: relative;
   z-index: 1;
-  /* Icons stay a neutral glyph — they name the kind by SHAPE only. Outcome is
-     carried by the detail text (problems tint red/amber) and by position
-     (log above, running at now, future below), not by tinting the icon. */
+  border-radius: 50%;
+  /* The ring, not the glyph, is the outcome. The icon still names the kind by
+     SHAPE alone, so colour is never the only thing distinguishing two kinds —
+     it only ever separates fine from went-wrong, which is a distinction the
+     text repeats anyway. */
+  background: var(--color-elevated);
+  border: 1px solid var(--color-border);
   color: var(--color-muted);
 }
-.ag-node::before {
-  /* punch a clean hole in the rail behind the icon */
-  content: "";
-  position: absolute;
-  inset: -3px;
-  border-radius: 50%;
-  background: var(--color-bg);
-  z-index: -1;
+.ag-row.ok .ag-node {
+  color: var(--color-online);
 }
-.ag-row.planned .ag-node {
-  color: var(--color-faint);
+.ag-row.warn .ag-node {
+  color: var(--color-kept);
+  border-color: #4c3b22;
+}
+.ag-row.fail .ag-node {
+  color: #d98b80;
+  border-color: #5a2f2a;
+  background: color-mix(
+    in srgb,
+    var(--color-danger) 18%,
+    var(--color-elevated)
+  );
 }
 
 .ag-body {
-  grid-column: 2;
+  grid-column: 3;
   min-width: 0;
 }
 .ag-subject {
@@ -786,9 +819,6 @@ button.srow:not(:disabled):hover {
   border-radius: 2px;
 }
 
-.ag-row.planned .ag-subject {
-  color: var(--color-ink-dim);
-}
 .ag-detail {
   font-size: 13px;
   color: var(--color-muted);
@@ -800,48 +830,41 @@ button.srow:not(:disabled):hover {
 .ag-row.warn .ag-detail {
   color: #cda765;
 }
-.ag-row.planned .ag-detail {
-  font-style: italic;
-  color: var(--color-faint);
+/* The kind, leading the detail line as a past-tense word. Weight rather than
+   colour separates it from the rest of the line, so it stays legible in the
+   tinted fail/warn rows where a second colour would fight the outcome. */
+.ag-kind {
+  font-weight: 600;
+  color: var(--color-ink-dim);
+}
+.ag-row.fail .ag-kind,
+.ag-row.warn .ag-kind {
+  color: inherit;
 }
 .ag-when {
-  grid-column: 3;
-  font-size: 13px;
+  grid-column: 4;
+  font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   color: var(--color-faint);
   white-space: nowrap;
-  margin-top: 3px;
+  padding-top: 4px;
 }
-.ag-row.running .ag-when {
-  color: var(--color-accent);
-}
-.ag-progress {
-  margin-top: 8px;
-  height: 4px;
-  border-radius: 4px;
-  background: var(--color-elevated);
-  overflow: hidden;
-  max-width: 240px;
-}
-.ag-progress > i {
-  display: block;
-  height: 100%;
-  border-radius: 4px;
-  background: linear-gradient(
-    90deg,
-    var(--color-accent-dim),
-    var(--color-accent)
-  );
-  box-shadow: 0 0 8px var(--glow-accent);
-}
-/* A labelled edge closes each section — "+N more scheduled" under Up next,
-   "+N earlier" under Recent activity. It sits OUTSIDE .agenda so it gets no rail. */
+/* The edge that closes the log — the "load older" control. It sits OUTSIDE
+   .agenda so it gets no rail. (Up next's own edge is .un-edge, which has no
+   rail to avoid.) */
 .ag-edge {
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 12px;
   padding: 14px 0 4px;
   font-size: 13px;
   color: var(--color-faint);
+}
+/* A failed page-back is reported beside its own control, not in place of the
+   page: the rows already loaded are still good. */
+.ag-edge-err {
+  color: #d98b80;
 }
 
 .cookie-status {
@@ -899,6 +922,18 @@ button.srow:not(:disabled):hover {
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 22px;
+}
+/* A quiet note at the end of a chip row — History's retention ceiling. Aligned
+   to the chips' centre so it reads as part of the row, not a stray caption.
+   Only its numeral is tabular; the words stay in the inherited family. */
+.chips-note {
+  align-self: center;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-faint);
+}
+.chips-note .num {
+  font-variant-numeric: tabular-nums;
 }
 .chip {
   min-height: 32px;

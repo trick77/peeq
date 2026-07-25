@@ -43,6 +43,13 @@ vi.mock("./api", () => ({
   cancelDownload: vi.fn().mockResolvedValue(undefined),
   streamDownloads: vi.fn().mockResolvedValue(undefined),
   listVideos: vi.fn().mockResolvedValue([]),
+  // Up next fetches the timed schedule; History fetches the log. Both are one
+  // rail click away, so the barrel needs them even in tests that never open
+  // those pages.
+  listUpcoming: vi.fn().mockResolvedValue({ items: [], truncated: 0 }),
+  listActivity: vi
+    .fn()
+    .mockResolvedValue({ events: [], has_more: false, retained_max: 2000 }),
   getSettings: vi.fn().mockResolvedValue({}),
   setFavorite: vi.fn(),
   setWatched: vi.fn(),
@@ -177,18 +184,13 @@ describe("App dock bootstrap", () => {
     // race its 1s default timeout against an unrendered nav. The waits must
     // stay comfortably under this test's own timeout (last arg to it()),
     // or vitest aborts the test before the query can report what it saw.
-    const queueNav = await screen.findByRole(
-      "button",
-      { name: /Queue/ },
-      { timeout: 8000 },
-    );
+    await screen.findByRole("button", { name: /Up next/ }, { timeout: 8000 });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
-    // Starts empty — the rail's Queue entry carries no count badge.
-    expect(queueNav).not.toHaveTextContent("1");
-
-    // Once queued, the rail's Queue badge must reflect it without a reload —
-    // this is the state that used to be terminal (the add seeds the poll).
+    // Once queued, Up next must show the video without a reload — this is the
+    // state that used to be terminal (the add seeds the poll). The rail pill
+    // deliberately stays dark: it lights for RUNNING work, and this job is
+    // still only pending, so the page is what has to prove the refresh.
     vi.mocked(listDownloads).mockResolvedValue([
       {
         job_id: 7,
@@ -204,10 +206,9 @@ describe("App dock bootstrap", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Add to queue/ }));
 
+    fireEvent.click(screen.getByRole("button", { name: /Up next/ }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Queue/ })).toHaveTextContent(
-        "1",
-      );
+      expect(screen.getByText("Queued video")).toBeInTheDocument();
     });
   }, 20000);
 });
@@ -553,11 +554,11 @@ describe("App queue and summaries", () => {
     vi.mocked(cancelDownload).mockResolvedValue(undefined);
   });
 
-  it("does not grey the rail's Inbox or Queue before their counts load", async () => {
+  it("does not grey the rail's Inbox or Up next before their counts load", async () => {
     // Both counts are 0-ish before their fetches land — pendingCount defaults
     // to undefined, but jobs/summaries start as empty arrays, which is
     // indistinguishable from an empty queue. Dimming on that would flash the
-    // rail on every cold load, so App must withhold queueCount until both
+    // rail on every cold load, so App must withhold upNextCount until both
     // lists have actually loaded. These promises never settle, pinning the
     // pre-load render.
     vi.mocked(listDownloads).mockReturnValue(new Promise(() => {}));
@@ -572,25 +573,25 @@ describe("App queue and summaries", () => {
     );
     expect(inbox.className).not.toContain("idle");
     expect(
-      screen.getByRole("button", { name: "Queue" }).className,
+      screen.getByRole("button", { name: "Up next" }).className,
     ).not.toContain("idle");
   }, 20000);
 
-  it("greys Inbox and Queue once both counts load empty", async () => {
+  it("greys Inbox and Up next once both counts load empty", async () => {
     render(<App />);
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Queue" }).className).toContain(
-        "idle",
-      );
+      expect(
+        screen.getByRole("button", { name: "Up next" }).className,
+      ).toContain("idle");
     });
     expect(screen.getByRole("button", { name: "Inbox" }).className).toContain(
       "idle",
     );
   }, 20000);
 
-  it("reflects a summary SSE event in the rail and the Queue page", async () => {
+  it("reflects a summary SSE event in the rail and on Up next", async () => {
     // The summarize worker publishes a "summary" phase event on the same SSE
     // stream as download progress; App must route it to the summaries lane.
     vi.mocked(streamDownloads).mockImplementation((onEvent) => {
@@ -614,20 +615,21 @@ describe("App queue and summaries", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
 
-    // The rail's Queue badge picks up the in-flight summary once the re-list
-    // settles (queueCount = downloads + summaries).
+    // The rail pill picks up the in-flight summary once the re-list settles.
+    // A RUNNING summary lights it exactly as a running download would — the
+    // gate is "something is moving", not "a download is moving".
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Queue/ })).toHaveTextContent(
+      expect(screen.getByRole("button", { name: /Up next/ })).toHaveTextContent(
         "1",
       );
     });
 
-    // The Queue page shows the job with its live phase.
-    fireEvent.click(screen.getByRole("button", { name: /Queue/ }));
+    // Up next shows the job in its own lane with its live phase.
+    fireEvent.click(screen.getByRole("button", { name: /Up next/ }));
     expect(
       await screen.findByText("A clip being summarized"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Being summarized")).toBeInTheDocument();
+    expect(screen.getByText("Summarising")).toBeInTheDocument();
   }, 20000);
 
   it("refreshes the Inbox count when an activity SSE event arrives", async () => {
@@ -659,7 +661,7 @@ describe("App queue and summaries", () => {
     });
   }, 20000);
 
-  it("cancels a download from the Queue page", async () => {
+  it("cancels a download from Up next", async () => {
     vi.mocked(listDownloads).mockResolvedValue([
       {
         job_id: 5,
@@ -673,7 +675,7 @@ describe("App queue and summaries", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
 
-    fireEvent.click(screen.getByRole("button", { name: /Queue/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Up next/ }));
     const cancel = await screen.findByRole("button", { name: /cancel/i });
     fireEvent.click(cancel);
 
