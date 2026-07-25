@@ -608,7 +608,7 @@ func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Reques
 		serverError(w, r, err, "get channel failed")
 		return
 	}
-	// A row in channels no longer means the user adds the channel — it may
+	// A row in channels no longer means the user added the channel — it may
 	// be a cache-only row written when the channel page was merely visited.
 	// Resubscribing one would conjure a subscription for a channel the user
 	// never added, so added_at is what decides.

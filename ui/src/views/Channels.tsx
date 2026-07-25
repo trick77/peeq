@@ -334,11 +334,15 @@ export function Channels({
   }
 
   // The rendered list: never the dormant channels (they live in the review
-  // band), and — when the search box has a query — only those whose name or
-  // handle matches it, in the chosen order. All of it is client-side: the whole
-  // list is already loaded, so there is no request to make per keystroke.
-  // .filter() already returns a fresh array, so sorting it in place does not
-  // touch the `channels` state.
+  // band), and — when the search box has a query — only those whose name,
+  // handle or displayed name matches it, in the chosen order. All of it is
+  // client-side: the whole list is already loaded, so there is no request to
+  // make per keystroke. .filter() already returns a fresh array, so sorting it
+  // in place does not touch the `channels` state.
+  //
+  // displayName is matched as well as name/handle, not instead of them: a
+  // "From downloads" row whose metadata never resolved shows its raw UCID, and
+  // searching for the very text on screen must not make the row disappear.
   const q = search.trim().toLowerCase();
   const visibleChannels = channels
     .filter(
@@ -346,7 +350,8 @@ export function Channels({
         !c.dormant &&
         (q === "" ||
           c.name.toLowerCase().includes(q) ||
-          (c.handle ?? "").toLowerCase().includes(q)),
+          (c.handle ?? "").toLowerCase().includes(q) ||
+          displayName(c).toLowerCase().includes(q)),
     )
     .sort((a, b) => compareChannels(a, b, sort));
   const hasNonDormant = channels.some((c) => !c.dormant);

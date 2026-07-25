@@ -57,7 +57,7 @@ const scanQuietPredicate = `
 // exists at all) and the query has already matched it — fetching it again by
 // id would be a second round trip for a row we are holding.
 //
-// Only subscribed channels are in this rotation. A added-but-unsubscribed
+// Only subscribed channels are in this rotation. An added-but-unsubscribed
 // channel has no subscriptions row and so no schedule — ClaimUnresolved is
 // what covers it, once.
 func (s *Store) ClaimDueMetadata(now string) (*Channel, error) {
@@ -77,7 +77,7 @@ LIMIT 1`, now, now, now, now)
 	return c, nil
 }
 
-// ClaimUnresolved returns the longest-added channel peeq has NEVER read from
+// ClaimUnresolved returns the longest-listed channel peeq has NEVER read from
 // YouTube (resolved_at IS NULL), or (nil, nil) if there is none. The
 // same ScanQuietWindow applies, for the same reason — most of these channels
 // are unsubscribed and have no scan to collide with at all, but the ones that
