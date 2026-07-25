@@ -63,6 +63,10 @@ type channelItem struct {
 	// never had a video discovered.
 	Dormant     bool   `json:"dormant"`
 	LastVideoAt string `json:"last_video_at,omitempty"`
+	// AddedAt is when the channel row was first created — what the Channels
+	// list's "Recently added" ordering sorts on. channels.Store.List already
+	// selects and scans it, so this only stops dropping it before JSON.
+	AddedAt string `json:"added_at,omitempty"`
 }
 
 // autoUnsubscribedItem is the JSON shape returned by GET
@@ -238,6 +242,7 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 			HasBanner:       it.BannerPath != "",
 			Dormant:         it.Dormant,
 			LastVideoAt:     it.LastVideoAt,
+			AddedAt:         it.AddedAt,
 		})
 	}
 	writeJSON(w, out)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoCard } from "../components/VideoCard";
 import { PillStrip } from "../components/PillStrip";
+import { SearchField } from "../components/SearchField";
 import {
   listVideos,
   getSettings,
@@ -99,14 +100,16 @@ function emptyMessage(filter: VideoFilter): string {
   }
 }
 
-// Library — the default view: filter chips + a grid of VideoCards, per the
-// mockup's `.chips`/`.grid` blocks. The search query itself lives in App
-// (it's the top bar's search box, wired there since the top bar is
-// Library-only chrome) and arrives here as the `search` prop.
+// Library — the default view: a search + sort bar, filter chips, and a grid of
+// VideoCards. The search query itself still lives in App and arrives as the
+// `search`/`onSearchChange` pair: the state is lifted so that a query survives
+// navigating away to a channel and back, which is exactly what it did while it
+// belonged to the (now deleted) top bar.
 export function Library({
   onOpenVideo,
   onOpenChannel,
   search,
+  onSearchChange,
   queueSignal = "",
   onQueued,
 }: {
@@ -115,6 +118,7 @@ export function Library({
   // name links in Task 15.
   onOpenChannel?: (id: string) => void;
   search: string;
+  onSearchChange: (value: string) => void;
   /**
    * Identity of the jobs currently pending or running, from App's queue state.
    * Used only as a change signal: a video appears in the Library the moment its
@@ -342,6 +346,31 @@ export function Library({
 
   return (
     <>
+      {/* Search and sort lead the page, above the chips: they act on the whole
+          grid, whereas a chip only narrows what the two of them already
+          selected. The sort control sits at the far right of the same row so
+          the pair reads as one toolbar rather than two stray controls. */}
+      <div className="listbar">
+        <SearchField
+          value={search}
+          onChange={onSearchChange}
+          placeholder="Search titles"
+          label="Search titles"
+        />
+        <select
+          className={`${controlClass} push-end`}
+          style={{ maxWidth: 190 }}
+          value={sort}
+          onChange={(e) => setSort(e.target.value as VideoSort)}
+          aria-label="Sort"
+        >
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="chips">
         {CHIPS.map((chip) => (
           <button
@@ -384,21 +413,6 @@ export function Library({
           ))}
         </div>
       </PillStrip>
-      <div className="listbar">
-        <select
-          className={controlClass}
-          style={{ maxWidth: 190 }}
-          value={sort}
-          onChange={(e) => setSort(e.target.value as VideoSort)}
-          aria-label="Sort"
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </div>
       {error ? <div className="errline">{error}</div> : null}
       <div className="grid">{visible.map(renderCard)}</div>
       {visible.length === 0 && !error ? (

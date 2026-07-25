@@ -2364,6 +2364,36 @@ func TestChannelsList_includesImageFlags(t *testing.T) {
 	}
 }
 
+// TestChannelsList_includesAddedAt asserts the list JSON carries added_at.
+// The Channels page's "Recently added" ordering sorts on it client-side, so a
+// handler that drops the field leaves that option silently ordering by nothing
+// but the name tiebreak — a bug no UI test can see.
+func TestChannelsList_includesAddedAt(t *testing.T) {
+	h := newChannelsListTestServer(t, &testResolver{})
+	if err := h.channels.Upsert(channels.Channel{ID: "UCadded", Name: "Added"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.Track("UCadded", "2000-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+
+	body := getJSON(t, h, "/api/channels")
+	var items []struct {
+		ID      string `json:"id"`
+		AddedAt string `json:"added_at"`
+	}
+	if err := json.Unmarshal([]byte(body), &items); err != nil {
+		t.Fatalf("decode: %v body=%s", err, body)
+	}
+	addedAt := map[string]string{}
+	for _, it := range items {
+		addedAt[it.ID] = it.AddedAt
+	}
+	if addedAt["UCadded"] == "" {
+		t.Fatalf("UCadded added_at empty, want the channel row's creation time: %s", body)
+	}
+}
+
 // TestAutoUnsubscribedList_returnsRecordedChannels asserts GET
 // /api/channels/auto-unsubscribed returns a channel peeq auto-unsubscribed,
 // with its reason and timestamp.

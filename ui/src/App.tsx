@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
-import { SearchBar } from "./shell/SearchBar";
 import {
   getMe,
   listDownloads,
@@ -135,11 +134,13 @@ export function App() {
     youtube_paused: false,
     youtube_pause_reason: "",
   });
-  // Search boxes for the two list pages that have one. Both live in the top
-  // bar (which neither view renders itself), so their state is lifted here.
+  // Search boxes for the two list pages that have one. Each view now renders
+  // its own field, in its own toolbar row above the chips; the state stays
+  // lifted here so that a query survives leaving the page and coming back —
+  // the behaviour it had while the field belonged to the shell's top bar.
   // They are kept apart on purpose: a video-title query must not carry over
   // into a channel-name filter when you switch pages. The channel *detail*
-  // page still keeps its own in-page search — the top bar isn't detail-aware.
+  // page keeps its own separate in-page search.
   const [librarySearch, setLibrarySearch] = useState("");
   const [channelSearch, setChannelSearch] = useState("");
   // How many jobs are pending or running. A plain count is what the queue poll
@@ -513,20 +514,6 @@ export function App() {
         cookieStatus={cookieStatus}
       />
       <main className="main">
-        {/* The bar exists only where there is something to put in it. On every
-            other view it is not rendered at all — an empty sticky strip would
-            just be a border with nothing above the content. */}
-        {view === "library" || view === "channels" ? (
-          <SearchBar
-            search={view === "channels" ? channelSearch : librarySearch}
-            onSearchChange={
-              view === "channels" ? setChannelSearch : setLibrarySearch
-            }
-            searchPlaceholder={
-              view === "channels" ? "Search channels" : "Search titles"
-            }
-          />
-        ) : null}
         <section className="page">
           <DownloadStatusBanner
             status={downloadStatus}
@@ -550,6 +537,8 @@ export function App() {
             onQueued={refreshQueue}
             librarySearch={librarySearch}
             channelSearch={channelSearch}
+            onLibrarySearchChange={setLibrarySearch}
+            onChannelSearchChange={setChannelSearch}
             queueSignal={queueSignal}
             jobs={jobs}
             progressByJobId={progressByJobId}
@@ -642,6 +631,8 @@ function ViewSwitch({
   onQueued,
   librarySearch,
   channelSearch,
+  onLibrarySearchChange,
+  onChannelSearchChange,
   queueSignal,
   jobs,
   progressByJobId,
@@ -663,6 +654,8 @@ function ViewSwitch({
   onQueued: () => void;
   librarySearch: string;
   channelSearch: string;
+  onLibrarySearchChange: (value: string) => void;
+  onChannelSearchChange: (value: string) => void;
   queueSignal: string;
   jobs: Job[];
   progressByJobId: Record<
@@ -681,6 +674,7 @@ function ViewSwitch({
           onOpenVideo={onOpenVideo}
           onOpenChannel={onOpenChannel}
           search={librarySearch}
+          onSearchChange={onLibrarySearchChange}
           queueSignal={queueSignal}
           onQueued={onQueued}
         />
@@ -741,7 +735,13 @@ function ViewSwitch({
         />
       );
     case "channels":
-      return <Channels onOpenChannel={onOpenChannel} search={channelSearch} />;
+      return (
+        <Channels
+          onOpenChannel={onOpenChannel}
+          search={channelSearch}
+          onSearchChange={onChannelSearchChange}
+        />
+      );
     case "channel":
       return (
         <Channel
