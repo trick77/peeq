@@ -54,7 +54,7 @@ describe("Add", () => {
       );
     });
     expect(addDownload).not.toHaveBeenCalled();
-    expect(await screen.findByText(/Tracked A Channel/)).toBeInTheDocument();
+    expect(await screen.findByText(/Added A Channel/)).toBeInTheDocument();
   });
 
   it("submitting a video URL still uses the download path", async () => {

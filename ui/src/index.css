@@ -2583,6 +2583,22 @@ textarea.cookiebox:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Auto-add marker — a glyph beside the name saying this channel downloads new
+   videos by itself. Wears the canonical active-pill tint (the same mix as
+   .chip.on) so a row's state reads in the same colour language as the lit
+   Auto-add chip that filters for it. Not a button: state only, so no hover or
+   pointer affordance. flex: none keeps the ellipsising name from squeezing it. */
+.chan-autotag {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  border: 1px solid var(--color-accent-dim);
+  color: var(--color-accent-strong);
+}
 /* ---- Right-edge control plate ----
    The 90deg scrim fades to near-transparent at the row's right edge, which is
    exactly where the star and the ⋮ sit — so both controls used to float on the

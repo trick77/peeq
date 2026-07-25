@@ -53,6 +53,7 @@ import {
   listAutoUnsubscribedChannels,
   dismissDormantChannel,
   resubscribeChannel,
+  scanChannel,
 } from "../api/channels";
 
 // openRowMenu clicks a row's ⋮ trigger so its actions (Open, Delete) become
@@ -115,19 +116,30 @@ describe("Channels", () => {
     });
   });
 
+  // The page opens on Subscribed, not All: it is about the channels you follow,
+  // and defaulting to All led with channels the user never subscribed to.
+  it("loads the subscribed filter on mount", async () => {
+    render(<Channels />);
+    await waitFor(() =>
+      expect(listChannels).toHaveBeenCalledWith("subscribed"),
+    );
+    expect(screen.getByRole("button", { name: "Subscribed" })).toHaveClass(
+      "on",
+    );
+  });
+
   it("filter chips drive listChannels(filter)", async () => {
     const user = userEvent.setup();
     render(<Channels />);
     await screen.findByText("Tracked Channel");
     vi.mocked(listChannels).mockClear();
 
-    await user.click(screen.getByRole("button", { name: "Subscribed" }));
-    await waitFor(() =>
-      expect(listChannels).toHaveBeenCalledWith("subscribed"),
-    );
+    await user.click(screen.getByRole("button", { name: "All" }));
+    await waitFor(() => expect(listChannels).toHaveBeenCalledWith("all"));
 
+    // "Not subscribed" is the label; the filter id stays "tracked".
     vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: "Tracked" }));
+    await user.click(screen.getByRole("button", { name: "Not subscribed" }));
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("tracked"));
 
     vi.mocked(listChannels).mockClear();
@@ -137,47 +149,296 @@ describe("Channels", () => {
     );
 
     vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: "All" }));
-    await waitFor(() => expect(listChannels).toHaveBeenCalledWith("all"));
+    await user.click(screen.getByRole("button", { name: "Subscribed" }));
+    await waitFor(() =>
+      expect(listChannels).toHaveBeenCalledWith("subscribed"),
+    );
   });
 
   // A slow response for an abandoned filter must not overwrite the list the
-  // active chip asked for. Without the sequence guard the stale "all"
-  // response resolves last and wins, showing every channel under "Tracked".
+  // active chip asked for. Without the sequence guard the stale "subscribed"
+  // response (the mount default) resolves last and wins, showing every channel
+  // under "Not subscribed".
   it("a stale filter response does not overwrite the active filter's list", async () => {
     const user = userEvent.setup();
-    let releaseAll: (() => void) | undefined;
+    let releaseSubscribed: (() => void) | undefined;
     vi.mocked(listChannels).mockImplementation((f) => {
-      if (f === "all") {
+      if (f === "subscribed") {
         return new Promise((resolve) => {
-          releaseAll = () => resolve([tracked, subscribed]);
+          releaseSubscribed = () => resolve([tracked, subscribed]);
         });
       }
       return Promise.resolve([tracked]);
     });
 
     render(<Channels />);
-    // The initial "all" load is still in flight; switch to "Tracked".
-    await user.click(screen.getByRole("button", { name: "Tracked" }));
+    // The initial "subscribed" load is still in flight; switch to
+    // "Not subscribed".
+    await user.click(screen.getByRole("button", { name: "Not subscribed" }));
     expect(await screen.findByText("Tracked Channel")).toBeInTheDocument();
     expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
 
-    // Now let the abandoned "all" request resolve — it must be ignored.
-    releaseAll?.();
+    // Now let the abandoned "subscribed" request resolve — it must be ignored.
+    releaseSubscribed?.();
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("tracked"));
     expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
   });
 
+  // Every empty state but "All"'s points at the All chip: a filtered view can
+  // be blank while channels sit one chip away, and "No channels yet." there
+  // would repeat the very impression the All-by-default bug created.
   it("shows the filter-aware empty state", async () => {
     const user = userEvent.setup();
     vi.mocked(listChannels).mockResolvedValue([]);
     render(<Channels />);
+    expect(
+      await screen.findByText("No subscribed channels — see All."),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "All" }));
     expect(await screen.findByText("No channels yet.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Auto-add" }));
     expect(
-      await screen.findByText("No channels match this filter."),
+      await screen.findByText("No channels match this filter — see All."),
     ).toBeInTheDocument();
+  });
+
+  // Auto-add is configured on the channel's own Settings tab, so the list must
+  // say which channels download by themselves — otherwise the only way to tell
+  // is to click the Auto-add chip.
+  describe("the auto-add marker", () => {
+    it("marks a channel with autodownload on, and only that one", async () => {
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+
+      const subbedRow = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+      expect(
+        within(subbedRow).getByRole("img", { name: "Auto-add is on" }),
+      ).toBeInTheDocument();
+
+      const trackedRow = screen
+        .getByText("Tracked Channel")
+        .closest(".channel-row") as HTMLElement;
+      expect(
+        within(trackedRow).queryByRole("img", { name: "Auto-add is on" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Check now", () => {
+    beforeEach(() => {
+      vi.mocked(scanChannel).mockReset();
+      vi.mocked(scanChannel).mockResolvedValue({ status: "scheduled" });
+    });
+
+    it("schedules a check and reports it", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+
+      await waitFor(() => expect(scanChannel).toHaveBeenCalledWith("c2"));
+      expect(
+        await screen.findByText(
+          "Checking soon — peeq will look for new videos on its next pass.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("reports the backend's reason when the check is blocked", async () => {
+      const user = userEvent.setup();
+      vi.mocked(scanChannel).mockResolvedValue({
+        status: "blocked",
+        reason: "YouTube access is paused.",
+      });
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+
+      expect(
+        await screen.findByText("YouTube access is paused."),
+      ).toBeInTheDocument();
+    });
+
+    // The banner never names a channel, so one row's answer must not still be
+    // up while the next row's request is in flight — it would read as that
+    // row's answer.
+    it("drops the previous row's answer while the next check is in flight", async () => {
+      const user = userEvent.setup();
+      const secondSubbed = baseChannel({
+        id: "c3",
+        handle: "@alsosubbed",
+        name: "Also Subbed",
+        subscribed: true,
+      });
+      vi.mocked(listChannels).mockResolvedValue([
+        tracked,
+        subscribed,
+        secondSubbed,
+      ]);
+
+      let releaseSecond: (() => void) | undefined;
+      vi.mocked(scanChannel).mockImplementation((id) =>
+        id === "c3"
+          ? new Promise((resolve) => {
+              releaseSecond = () => resolve({ status: "scheduled" });
+            })
+          : Promise.resolve({ status: "scheduled" }),
+      );
+
+      render(<Channels />);
+      await screen.findByText("Also Subbed");
+
+      const first = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+      await openRowMenu(user, first);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      const scheduled =
+        "Checking soon — peeq will look for new videos on its next pass.";
+      await screen.findByText(scheduled);
+
+      const second = screen
+        .getByText("Also Subbed")
+        .closest(".channel-row") as HTMLElement;
+      await openRowMenu(user, second);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+
+      // c3's request has not resolved yet — the banner must be blank, not
+      // still showing the first row's answer.
+      await waitFor(() =>
+        expect(screen.queryByText(scheduled)).not.toBeInTheDocument(),
+      );
+      releaseSecond?.();
+      expect(await screen.findByText(scheduled)).toBeInTheDocument();
+    });
+
+    // Deleting the channel a notice is about leaves it promising a check for a
+    // row that no longer exists.
+    it("clears the notice when the checked channel is deleted", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      const scheduled =
+        "Checking soon — peeq will look for new videos on its next pass.";
+      await screen.findByText(scheduled);
+
+      await openRowMenu(user, row);
+      await user.click(
+        screen.getByRole("menuitem", { name: /delete channel/i }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      await user.click(
+        within(dialog).getByRole("button", { name: /delete channel/i }),
+      );
+
+      await waitFor(() => expect(deleteChannel).toHaveBeenCalledWith("c2"));
+      await waitFor(() =>
+        expect(screen.queryByText(scheduled)).not.toBeInTheDocument(),
+      );
+    });
+
+    // A blocked answer with no reason still has to say something: the backend
+    // omits `reason` for some blocks, and a silent menu click reads as dead.
+    it("falls back to generic wording when a block carries no reason", async () => {
+      const user = userEvent.setup();
+      vi.mocked(scanChannel).mockResolvedValue({ status: "blocked" });
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+
+      expect(
+        await screen.findByText("peeq cannot check this channel right now."),
+      ).toBeInTheDocument();
+    });
+
+    it("shows an error line when the request fails", async () => {
+      const user = userEvent.setup();
+      vi.mocked(scanChannel).mockRejectedValue(
+        new Error("failed to schedule a check"),
+      );
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+
+      expect(
+        await screen.findByText("failed to schedule a check"),
+      ).toBeInTheDocument();
+    });
+
+    // A notice reports on the row that was clicked, so it must not survive a
+    // chip click that may not even show that row.
+    it("clears the notice when the filter changes", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Subbed Channel");
+      const row = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      await screen.findByText(
+        "Checking soon — peeq will look for new videos on its next pass.",
+      );
+
+      await user.click(screen.getByRole("button", { name: "All" }));
+      await waitFor(() =>
+        expect(
+          screen.queryByText(
+            "Checking soon — peeq will look for new videos on its next pass.",
+          ),
+        ).not.toBeInTheDocument(),
+      );
+    });
+
+    // The endpoint answers 400 "channel is not subscribed", so the entry must
+    // not be offered — the same reason the channel page hides its own button.
+    it("is not offered for a channel that is not subscribed", async () => {
+      const user = userEvent.setup();
+      render(<Channels />);
+      await screen.findByText("Tracked Channel");
+      const row = screen
+        .getByText("Tracked Channel")
+        .closest(".channel-row") as HTMLElement;
+
+      await openRowMenu(user, row);
+      expect(
+        screen.queryByRole("menuitem", { name: /check now/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: /delete channel/i }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("the search box filters the list by name or handle", async () => {
