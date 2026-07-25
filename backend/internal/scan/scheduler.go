@@ -423,7 +423,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	// Tally for the Activity record: how many genuinely-new uploads were queued
 	// automatically vs left for a manual decision, and (on the first pass) how
 	// many the baseline snapshot recorded.
-	var queuedCount, pendingCount, baselineCount int
+	var queuedCount, pendingCount, baselineCount, backlogCount int
 	for _, e := range entries {
 		exists, err := s.d.Ledger.Exists(e.ID)
 		if err != nil {
@@ -469,6 +469,31 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 			// first pass is a deliberate snapshot of "everything that already
 			// existed", and that includes a stream running at the time.
 			continue
+		case isBackCatalogue(e.PublishedAt, sub.BaselinedAt):
+			// Published before this channel was ever followed, so it is back
+			// catalogue no matter how new it looks to the ledger. Terminal
+			// 'seen' is right: the user subscribed to be told what a channel
+			// posts NEXT, and an old upload will not become new later.
+			//
+			// This branch exists because "absent from the ledger" is only a
+			// proxy for "new", and the proxy holds only while the set of
+			// listed sources never changes. Adding the /streams tab broke it:
+			// every stream VOD ever published was missing from the ledger of
+			// every already-baselined channel, so a whole back catalogue
+			// arrived at once as 'pending' (or, with autodownload, 'queued' —
+			// fifty real downloads). The baseline branch above cannot cover
+			// that, since it keys on BaselinedAt == "" and those channels were
+			// baselined long ago. A publish-date gate is the general fix: any
+			// source added later is covered without a further code change.
+			//
+			// ORDER IS LOAD-BEARING, both sides:
+			//   - AFTER isUnfinishedStream: an in-flight broadcast's date is
+			//     its START, which can predate the baseline. Gating it would
+			//     write the terminal row that branch exists to avoid.
+			//   - BEFORE Autodownload: otherwise the expensive version of this
+			//     bug (a back catalogue downloaded to disk) survives.
+			entry.State = "seen"
+			backlogCount++
 		case !passesFilters(e, set.MinVideoDurationSeconds):
 			// Reached only for the duration floor now (the live case above is
 			// matched first). Terminal 'seen' is right here: a video too short
@@ -523,8 +548,13 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	// listed at all — without opening the database. It is the raw /streams tab
 	// count, not the post-dedup one, so it stays honest for a channel whose
 	// streams also surface elsewhere.
+	// backlog is broken out because suppressing items in bulk is exactly the kind
+	// of thing that must never be silent — the one-shot burst when a new source
+	// tab first appears should be readable in the log, not inferred from an
+	// inbox that stayed empty.
 	s.d.Logger.Info("scan complete", "channel", sub.ChannelID,
-		"listed", len(entries), "streams", streamCount, "new", newCount)
+		"listed", len(entries), "streams", streamCount, "new", newCount,
+		"backlog", backlogCount)
 
 	// Activity record. The silence rule applies: a scan that surfaced nothing new
 	// (the common case) writes nothing, so the agenda is not a wall of "0 new".
@@ -548,10 +578,25 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		if pendingCount > 0 {
 			parts = append(parts, fmt.Sprintf("%d to decide", pendingCount))
 		}
+		if backlogCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d older skipped", backlogCount))
+		}
 		s.recordActivity(activity.Event{
 			Kind: activity.KindScan, Outcome: activity.OutcomeOK,
 			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
 			Summary: fmt.Sprintf("%d new", newCount), Detail: strings.Join(parts, ", "),
+		})
+	case backlogCount > 0:
+		// Nothing new, but a pile of history was just swallowed — almost always
+		// the first pass after a new source tab starts being listed. The silence
+		// rule does not apply to it: this is a one-off, it explains an otherwise
+		// unexplained burst of work, and staying quiet here is the same invisible
+		// bulk behaviour that made the flood so unwelcome in the first place.
+		s.recordActivity(activity.Event{
+			Kind: activity.KindScan, Outcome: activity.OutcomeOK,
+			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
+			Summary: fmt.Sprintf("%d older videos skipped", backlogCount),
+			Detail:  "published before you followed this channel",
 		})
 	case sub.ScanRequestedAt != "":
 		// Requested, and it found nothing. The two cases above already answer a
@@ -644,6 +689,57 @@ func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool)
 		merged = append(merged, e)
 	}
 	return merged, len(streams), nil
+}
+
+// isBackCatalogue reports whether an entry was published before the channel was
+// first followed, i.e. whether it belongs to the back catalogue the baseline
+// pass was supposed to swallow.
+//
+// The cutoff is baselined_at — "everything that already existed when I started
+// following this channel" — and deliberately NOT last_scanned_at, which is the
+// tempting reading of "what's new since the last check". last_scanned_at would
+// be wrong in a way that loses data: a broadcast that started three days ago and
+// only settles into a VOD today has a publish date older than the last scan, so
+// it would be marked terminally 'seen' and vanish. That is exactly the silent
+// loss the unfinished-stream branch above was written to prevent. Ongoing
+// "new since last check" is already the ledger's job; this gate only has to
+// answer the question the ledger cannot — whether a source peeq has not looked
+// at before is showing us history.
+//
+// BOTH empty cases fail OPEN (not back catalogue) on purpose:
+//   - no publish date: yt-dlp omitted every timestamp, so there is nothing to
+//     judge. An unjudgeable entry reaching the inbox is a nuisance; one silently
+//     marked 'seen' is a lost video, and 'seen' is terminal.
+//   - no baseline: the first pass has not completed, and the baseline branch
+//     owns that case anyway.
+//
+// backCatalogueGrace absorbs skew rather than precision: PublishedAt comes from
+// approximate_date, which is derived from relative-time text ("2 weeks ago") and
+// so is good to the day only for recent items. Three days is ample at the
+// boundary, and it errs toward the inbox — a recoverable nuisance — rather than
+// toward a terminal row.
+//
+// The effective window is three to four days, not exactly three: publishedAt is
+// date-only (parsed as midnight UTC) while baselinedAt carries a time of day, so
+// a channel baselined at 12:00 admits everything published from cutoff-day+1
+// onward and still suppresses the cutoff day itself. That imprecision is
+// deliberate — sharpening it would only move a boundary the input is too coarse
+// to place anyway — and it stays on the fail-open side of nothing that matters.
+const backCatalogueGrace = 3 * 24 * time.Hour
+
+func isBackCatalogue(publishedAt, baselinedAt string) bool {
+	if publishedAt == "" || baselinedAt == "" {
+		return false
+	}
+	pub, err := time.Parse("2006-01-02", publishedAt)
+	if err != nil {
+		return false
+	}
+	base, err := time.Parse(sqlTimeLayout, baselinedAt)
+	if err != nil {
+		return false
+	}
+	return pub.Before(base.Add(-backCatalogueGrace))
 }
 
 // isUnfinishedStream reports whether an entry is a stream that has not settled
