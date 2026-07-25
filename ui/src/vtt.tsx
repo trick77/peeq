@@ -59,6 +59,33 @@ function stripSoundEvents(s: string): string {
     .trim();
 }
 
+// ENTITIES / unescapeEntities mirror unescapeEntities in
+// backend/internal/subtitles/vtt.go. YouTube escapes caption text, so without
+// this the panel shows "&gt;" where the browser's own <track> renderer shows
+// ">". Deliberately a closed list rather than the DOM's full HTML5 decoder:
+// the Go side has to decode exactly the same set or the panel and the summary
+// end up disagreeing. &nbsp; becomes a plain space, never U+00A0, so the word
+// splitting and dedup on both sides see ordinary whitespace.
+const ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&apos;": "'",
+  "&nbsp;": " ",
+  "&#39;": "'",
+  "&#x27;": "'",
+};
+
+// One pass, so "&amp;lt;" decodes to "&lt;" rather than to "<".
+function unescapeEntities(s: string): string {
+  if (!s.includes("&")) return s;
+  return s.replace(
+    /&(?:amp|lt|gt|quot|apos|nbsp|#39|#[xX]27);/g,
+    (m) => ENTITIES[m.toLowerCase()] ?? m,
+  );
+}
+
 // sameLines reports whether two line slices hold the same strings in order.
 function sameLines(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((s, i) => s === b[i]);
@@ -103,7 +130,11 @@ export function parseVtt(text: string): Cue[] {
     // the words that survive stripping can be compared.
     let cueLines: string[] = [];
     while (i < lines.length && lines[i].trim() !== "") {
-      const clean = stripSoundEvents(lines[i].replace(/<[^>]+>/g, "").trim());
+      // Tags first, then entities: decoding first would turn an escaped
+      // "&lt;c&gt;" spoken on screen into a real tag and the strip would eat it.
+      const clean = stripSoundEvents(
+        unescapeEntities(lines[i].replace(/<[^>]+>/g, "")).trim(),
+      );
       if (clean) cueLines.push(clean);
       i++;
     }

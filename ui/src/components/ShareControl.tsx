@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../icons";
 import { Button } from "../ui";
 import {
@@ -78,19 +78,35 @@ type Props = {
   videoId: string;
   status: ShareStatus;
   onStatusChange: (s: ShareStatus) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** The trigger the popover hangs off — the Player passes its ⋮ menu. */
+  children: ReactNode;
 };
 
-// ShareControl is the player's Share button plus its anchored popover: create a
-// link, pick a lifetime, copy it, or stop sharing. Chosen over a modal so the
-// action stays light — no dimmed backdrop, closes on an outside click.
-export function ShareControl({ videoId, status, onStatusChange }: Props) {
-  const [open, setOpen] = useState(false);
+// ShareControl is the anchored share popover: create a link, pick a lifetime,
+// copy it, or stop sharing. Chosen over a modal so the action stays light — no
+// dimmed backdrop, closes on an outside click.
+//
+// It owns no trigger of its own. The caller opens it (from the ⋮ menu) and
+// passes that trigger as children, so the trigger sits *inside* the wrapper the
+// outside-click handler below tests against — otherwise the very click that
+// opens the popover would read as an outside click and close it again.
+export function ShareControl({
+  videoId,
+  status,
+  onStatusChange,
+  open,
+  onOpenChange,
+  children,
+}: Props) {
   const [ttl, setTtl] = useState<ShareTTL>(() => bucketTtl(status));
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLSpanElement | null>(null);
+  const popRef = useRef<HTMLDivElement | null>(null);
   const copyTimer = useRef<number | undefined>(undefined);
 
   // Re-seed the selected chip when the status changes. status often arrives
@@ -105,10 +121,10 @@ export function ShareControl({ videoId, status, onStatusChange }: Props) {
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!wrapRef.current?.contains(e.target as Node)) onOpenChange(false);
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") onOpenChange(false);
     }
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
@@ -116,6 +132,14 @@ export function ShareControl({ videoId, status, onStatusChange }: Props) {
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
     };
+  }, [open, onOpenChange]);
+
+  // Pull focus into the dialog when it opens. RowMenu returns focus to the ⋮
+  // before it fires the action, so without this the popover would open with the
+  // keyboard still parked on the trigger behind it.
+  useEffect(() => {
+    if (!open) return;
+    popRef.current?.querySelector<HTMLElement>("button")?.focus();
   }, [open]);
 
   // Reset the transient popover state each time it closes.
@@ -179,19 +203,15 @@ export function ShareControl({ videoId, status, onStatusChange }: Props) {
 
   return (
     <span className="share-ctl" ref={wrapRef}>
-      <Button
-        type="button"
-        variant={status.shared ? "tinted" : "secondary"}
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-      >
-        <Icon name="share" size="16px" />
-        {status.shared ? "Shared" : "Share"}
-      </Button>
+      {children}
 
       {open && (
-        <div className="sharepop" role="dialog" aria-label="Share this video">
+        <div
+          className="sharepop"
+          role="dialog"
+          aria-label="Share this video"
+          ref={popRef}
+        >
           <div className="ph">
             <Icon name="share" size="15px" />
             <b>Share link</b>
