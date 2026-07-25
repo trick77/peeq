@@ -234,6 +234,101 @@ func TestPass_boundsTheBatch(t *testing.T) {
 	}
 }
 
+// cancelOnListStore cancels the run's context as it hands back a batch, so a
+// test can drive Run to the exact point after pass() succeeded.
+type cancelOnListStore struct {
+	*fakeStore
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnListStore) UnprobedDownloaded(limit int) ([]videos.ProbeCandidate, error) {
+	out, err := c.fakeStore.UnprobedDownloaded(limit)
+	c.cancel()
+	return out, err
+}
+
+// panicProber stands in for a prober that blows up on malformed output from
+// the external binary.
+type panicProber struct{}
+
+func (panicProber) Probe(context.Context, string) (Info, error) {
+	panic("ffprobe output was not what we assumed")
+}
+
+// A panic in the prober must not take the process down with it. It parses the
+// output of an external binary, so the guard is the difference between one
+// unprobeable file and a dead peeq.
+func TestPass_survivesAProberPanic(t *testing.T) {
+	store := newFakeStore([]videos.ProbeCandidate{{ID: "v1", MediaPath: "/m/v1.mp4"}})
+	testee := quietWorker(Deps{Prober: panicProber{}, Videos: store})
+
+	if !testee.pass(context.Background()) {
+		t.Error("pass reported cancellation after a panic; the loop would exit for good")
+	}
+	// The guard swallows the panic before the write, so the row stays unprobed
+	// and the next pass picks it up again.
+	if _, ok := store.wrote("v1"); ok {
+		t.Error("a panicking probe still wrote a result")
+	}
+}
+
+// Run must return, not spin, when a batch is abandoned half-way: pass()
+// reporting false is the loop's signal that the context is gone.
+func TestRun_returnsWhenAPassIsCancelledMidBatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := newFakeStore([]videos.ProbeCandidate{
+		{ID: "v1", MediaPath: "/m/v1.mp4"},
+		{ID: "v2", MediaPath: "/m/v2.mp4"},
+	})
+	// Cancelling as the batch is handed over means pass() probes nothing and
+	// returns false on its first candidate check.
+	testee := quietWorker(Deps{
+		Prober:       &fakeProber{byPath: map[string]Info{"/m/v1.mp4": {Container: "mp4"}}},
+		Videos:       &cancelOnListStore{fakeStore: store, cancel: cancel},
+		PollInterval: time.Hour,
+	})
+
+	done := make(chan struct{})
+	go func() {
+		testee.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after a cancelled pass")
+	}
+	if _, ok := store.wrote("v1"); ok {
+		t.Error("Run worked through the batch despite cancellation")
+	}
+}
+
+// With nothing to do, Run parks in sched.Sleep. Cancellation there must end
+// the loop rather than wait out a poll interval that may be minutes long.
+func TestRun_returnsFromTheIdleSleep(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	// An empty batch, so pass() succeeds and Run reaches the sleep with the
+	// context already cancelled.
+	testee := quietWorker(Deps{
+		Prober:       &fakeProber{},
+		Videos:       &cancelOnListStore{fakeStore: newFakeStore(), cancel: cancel},
+		PollInterval: time.Hour,
+	})
+
+	done := make(chan struct{})
+	go func() {
+		testee.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run sat out the poll interval instead of returning")
+	}
+}
+
 func TestStoreResult_carriesEveryField(t *testing.T) {
 	got := StoreResult(Info{Container: "mkv", VideoCodec: "av01", VideoHeight: 2160, AudioCodec: "opus"})
 

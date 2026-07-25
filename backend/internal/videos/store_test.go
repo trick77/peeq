@@ -2235,3 +2235,30 @@ func TestUnprobedDownloaded_respectsTheLimit(t *testing.T) {
 		t.Fatalf("claimed %d rows, want 2", len(got))
 	}
 }
+
+// A write that never landed must be reported. The backfill worker logs the
+// error and leaves the row unprobed for the next pass; a swallowed error would
+// instead look like a successful attempt that wrote nothing.
+func TestSetProbed_errorsOnClosedDB(t *testing.T) {
+	testee := newTestStore(t)
+	if err := testee.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if err := testee.SetProbed("v", ProbeResult{Container: "mp4"}); err == nil {
+		t.Fatal("expected an error writing against a closed db")
+	}
+}
+
+// An empty candidate list and a failed query must not look alike: the sweep
+// treats "nothing to do" as done, so a masked error would strand the backlog.
+func TestUnprobedDownloaded_errorsOnClosedDB(t *testing.T) {
+	testee := newTestStore(t)
+	if err := testee.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if _, err := testee.UnprobedDownloaded(10); err == nil {
+		t.Fatal("expected an error listing against a closed db")
+	}
+}

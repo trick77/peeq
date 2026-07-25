@@ -142,3 +142,30 @@ func TestNew_defaultsToFfprobeOnPath(t *testing.T) {
 		t.Errorf("bin = %q, want /opt/ffprobe", got)
 	}
 }
+
+// Every test above injects Config.Run, so the default runner — the one
+// production actually uses — would otherwise never be executed at all. Driving
+// it through /bin/echo pins that it runs the named binary, passes the args
+// through in order, and hands back stdout.
+func TestNew_defaultRunnerExecutesTheBinary(t *testing.T) {
+	p := New(Config{Bin: "/bin/echo"})
+
+	out, err := p.run(context.Background(), p.bin, "-show_streams", "/m/v.mp4")
+	if err != nil {
+		t.Fatalf("default runner: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "-show_streams /m/v.mp4" {
+		t.Errorf("stdout = %q, want the args echoed back in order", got)
+	}
+}
+
+// A binary that is not there must surface as an error, not an empty parse:
+// Probe's caller distinguishes "ffprobe is missing" from "this file has no
+// streams", and only the former should keep the row queued for a retry.
+func TestNew_defaultRunnerReportsAMissingBinary(t *testing.T) {
+	p := New(Config{Bin: "/nonexistent/ffprobe"})
+
+	if _, err := p.run(context.Background(), p.bin); err == nil {
+		t.Fatal("default runner: want an error for a missing binary, got nil")
+	}
+}
