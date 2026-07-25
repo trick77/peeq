@@ -351,6 +351,30 @@ describe("VideoCard lifecycle line", () => {
     expect(onOpen).toHaveBeenCalledWith("v1");
   });
 
+  it("does not open the video when the click merely ended a text selection", () => {
+    // Given: a card, and text selected on the page.
+    const onOpen = vi.fn();
+    const selection = vi
+      .spyOn(window, "getSelection")
+      .mockReturnValue({ toString: () => "A Test Vid" } as Selection);
+    render(
+      <VideoCard
+        video={baseVideo({ downloaded_at: new Date().toISOString() })}
+        retentionDays={14}
+        onOpen={onOpen}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+
+    // When: the drag ends with a click on the card.
+    fireEvent.click(document.querySelector(".by") as HTMLElement);
+
+    // Then: the selection survives instead of being replaced by a navigation.
+    expect(onOpen).not.toHaveBeenCalled();
+    selection.mockRestore();
+  });
+
   it("does not open the video when a control inside the card is clicked", () => {
     // Given: a card with a channel link and a watched toggle.
     const onOpen = vi.fn();

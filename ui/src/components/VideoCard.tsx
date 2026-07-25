@@ -57,13 +57,11 @@ export function VideoCard({
     : 0;
 
   // The card is one big open-the-video target: the thumbnail and title
-  // buttons only cover part of it, so the eyebrow, the lifecycle row and the
-  // gaps between them would otherwise be dead space even though `.card`
-  // already shows a pointer cursor over all of it. A click that landed on a
-  // real control (star, check, channel link, Re-download) belongs to that
-  // control — one bail-out here beats a stopPropagation on each, and it also
-  // keeps onOpen from firing twice when the title or thumbnail button bubbles
-  // up. A click that ends a text selection is a selection, not a tap.
+  // buttons only cover part of it, leaving the eyebrow, the lifecycle row and
+  // the gaps between them dead space under a pointer cursor. Two exceptions —
+  // a click that landed on a real control belongs to that control (and the
+  // title/thumbnail buttons must not open twice by bubbling here), and a click
+  // that ends a text selection is a selection, not a tap.
   function handleCardClick(e: MouseEvent<HTMLElement>) {
     if ((e.target as HTMLElement).closest('button, a, [role="button"]')) return;
     if (window.getSelection()?.toString()) return;
