@@ -326,6 +326,79 @@ describe("VideoCard lifecycle line", () => {
     // Video" and a loose match would hit that one instead.
     fireEvent.click(screen.getByRole("button", { name: "A Test Video" }));
     expect(onOpen).toHaveBeenCalledWith("v1");
+    // Once, not twice: the title button's own click must not also be handled
+    // by the card-wide handler it bubbles into.
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the video when the dead space around the title is clicked", () => {
+    // Given: a card whose eyebrow carries dates but no channel link.
+    const onOpen = vi.fn();
+    render(
+      <VideoCard
+        video={baseVideo({ downloaded_at: new Date().toISOString() })}
+        retentionDays={14}
+        onOpen={onOpen}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+
+    // When: the eyebrow row itself is clicked — not a control.
+    fireEvent.click(document.querySelector(".by") as HTMLElement);
+
+    // Then: the click reaches the card and opens the video.
+    expect(onOpen).toHaveBeenCalledWith("v1");
+  });
+
+  it("does not open the video when the click merely ended a text selection", () => {
+    // Given: a card, and text selected on the page.
+    const onOpen = vi.fn();
+    const selection = vi
+      .spyOn(window, "getSelection")
+      .mockReturnValue({ toString: () => "A Test Vid" } as Selection);
+    render(
+      <VideoCard
+        video={baseVideo({ downloaded_at: new Date().toISOString() })}
+        retentionDays={14}
+        onOpen={onOpen}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+
+    // When: the drag ends with a click on the card.
+    fireEvent.click(document.querySelector(".by") as HTMLElement);
+
+    // Then: the selection survives instead of being replaced by a navigation.
+    expect(onOpen).not.toHaveBeenCalled();
+    selection.mockRestore();
+  });
+
+  it("does not open the video when a control inside the card is clicked", () => {
+    // Given: a card with a channel link and a watched toggle.
+    const onOpen = vi.fn();
+    const onOpenChannel = vi.fn();
+    const onToggleWatched = vi.fn();
+    render(
+      <VideoCard
+        video={baseVideo()}
+        retentionDays={14}
+        onOpen={onOpen}
+        onToggleFavorite={noop}
+        onToggleWatched={onToggleWatched}
+        onOpenChannel={onOpenChannel}
+      />,
+    );
+
+    // When: the channel link and the watched toggle are clicked.
+    fireEvent.click(screen.getByRole("button", { name: "Test Channel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
+
+    // Then: each control did its own job and neither navigated to the player.
+    expect(onOpenChannel).toHaveBeenCalledWith("chan1");
+    expect(onToggleWatched).toHaveBeenCalledWith("v1");
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("does not show the file size", () => {

@@ -1314,7 +1314,10 @@ button.srow:not(:disabled):hover {
 }
 .card h3 {
   margin: 0;
-  font-family: var(--font-sans);
+  /* Serif, as the cards started out — #104 flipped this to sans. Only the
+     family goes back: the size, leading and weight below are tuned for the
+     two-line clamp and stay as they are. */
+  font-family: var(--font-serif);
   font-size: 16px;
   line-height: 1.26;
   font-weight: 500;

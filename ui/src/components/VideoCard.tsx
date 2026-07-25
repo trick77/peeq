@@ -1,3 +1,4 @@
+import type { MouseEvent } from "react";
 import { Icon } from "../icons";
 import { Button } from "../ui";
 import { thumbnailUrl } from "../api/videos";
@@ -55,8 +56,20 @@ export function VideoCard({
       )
     : 0;
 
+  // The card is one big open-the-video target: the thumbnail and title
+  // buttons only cover part of it, leaving the eyebrow, the lifecycle row and
+  // the gaps between them dead space under a pointer cursor. Two exceptions —
+  // a click that landed on a real control belongs to that control (and the
+  // title/thumbnail buttons must not open twice by bubbling here), and a click
+  // that ends a text selection is a selection, not a tap.
+  function handleCardClick(e: MouseEvent<HTMLElement>) {
+    if ((e.target as HTMLElement).closest('button, a, [role="button"]')) return;
+    if (window.getSelection()?.toString()) return;
+    onOpen(video.id);
+  }
+
   return (
-    <article className="card video-card">
+    <article className="card video-card" onClick={handleCardClick}>
       <div className="thumb">
         <button
           type="button"
