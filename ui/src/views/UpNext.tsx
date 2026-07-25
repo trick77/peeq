@@ -98,7 +98,7 @@ export function UpNext({
   summaryPhaseByVideoId,
   onCancel,
   onOpenChannel,
-  paused,
+  stalled,
 }: {
   jobs: Job[];
   progressByJobId?: Record<
@@ -110,12 +110,13 @@ export function UpNext({
   onCancel: (jobId: number) => void;
   onOpenChannel?: (channelId: string) => void;
   /**
-   * Whether YouTube work is stopped (the kill-switch, a bad cookie, a full
-   * disk). Only changes the empty-state wording — the banner above the page is
-   * what explains it — so that "nothing is running" doesn't read as "nothing is
-   * wrong" while the queue is frozen.
+   * Why YouTube work is stopped, if it is. Only the empty-state wording uses
+   * it — the banner above the page is what explains the stall — but silence has
+   * to name its cause, or "nothing is running" reads as "nothing is wrong"
+   * while the queue is frozen. The cause matters because each one has a
+   * different way out, and only the kill-switch has a Resume button to point at.
    */
-  paused?: boolean;
+  stalled?: "youtube" | "disk" | "cookie";
 }) {
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
   const [truncated, setTruncated] = useState(0);
@@ -130,11 +131,25 @@ export function UpNext({
   const runningSummaries = summaries.filter((s) => s.state === "running");
   const waitingSummaries = summaries.filter((s) => s.state !== "running");
 
+  // What the schedule actually depends on: which jobs exist and what state each
+  // is in. Keyed on this rather than on the `jobs`/`summaries` arrays, because
+  // App's 3-second poll calls setJobs with a FRESH array every tick while
+  // either lane has work — so an identity-keyed effect would refetch the
+  // schedule every 3 seconds for the whole length of a download, for a
+  // projection that only changes when a job starts, finishes or is cancelled.
+  const laneSignature = useMemo(
+    () =>
+      [
+        ...jobs.map((j) => `d${j.job_id}:${j.state}`),
+        ...summaries.map((s) => `s${s.id}:${s.state}`),
+      ].join(","),
+    [jobs, summaries],
+  );
+
   // Keep the schedule in step with the lanes. The projection is a server
   // snapshot of peeq's own timed work, but it goes stale as the lanes move: a
   // scan whose instant has passed lingers with a past label until something
-  // refetches. Refetch whenever the live job sets shift, which is the same
-  // signal that something actually happened.
+  // refetches. A lane transition is exactly the signal that something happened.
   useEffect(() => {
     let active = true;
     listUpcoming()
@@ -147,7 +162,7 @@ export function UpNext({
     return () => {
       active = false;
     };
-  }, [jobs, summaries]);
+  }, [laneSignature]);
 
   // The schedule renders peeq's own timed housekeeping only. Queued downloads
   // and summaries are the lanes' business — they are rendered above with live
@@ -177,16 +192,24 @@ export function UpNext({
   const nothingInFlight =
     running.length === 0 && waiting.length === 0 && summaries.length === 0;
 
-  // Three empty states, each naming what happens next rather than just saying
-  // "nothing here": stopped on purpose, waiting on a schedule, or nothing set
-  // up yet. The third is inferred from the schedule being empty too — with no
-  // subscribed channel there is nothing for peeq to be scheduled to do.
+  // Every empty state names what happens next rather than just saying "nothing
+  // here" — and when work is stopped it names the way out, which differs by
+  // cause: only the kill-switch has a Resume button above, a full disk needs
+  // space freed, and a dead cookie needs replacing in Settings. Pointing at a
+  // Resume button that isn't there would be worse than saying nothing.
+  //
+  // With nothing stalled, an empty page also means nothing is scheduled, and
+  // with no subscribed channel there is nothing for peeq to be scheduled to do.
   if (nothingInFlight && scheduled.length === 0) {
     return (
       <p className="un-empty">
-        {paused
+        {stalled === "youtube"
           ? "Nothing is running — peeq is paused. Resume it above and queued work starts again."
-          : "Nothing scheduled yet — subscribe to a channel and peeq will start checking it for you."}
+          : stalled === "disk"
+            ? "Nothing is running — the disk is full. Free up space and downloads start again."
+            : stalled === "cookie"
+              ? "Nothing is running — YouTube needs a fresh cookie. Replace it in Settings and downloads start again."
+              : "Nothing scheduled yet — subscribe to a channel and peeq will start checking it for you."}
       </p>
     );
   }

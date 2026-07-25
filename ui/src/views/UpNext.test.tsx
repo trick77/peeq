@@ -56,11 +56,33 @@ describe("UpNext", () => {
     expect(screen.queryByText("Summarising")).not.toBeInTheDocument();
   });
 
-  // Paused is a different silence from idle, and saying only "nothing running"
+  // A stall is a different silence from idle, and saying only "nothing running"
   // would read as healthy while the queue is frozen.
-  it("says peeq is paused rather than idle when it is", async () => {
-    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} paused />);
+  it("says peeq is paused, and points at the Resume button that exists", async () => {
+    render(
+      <UpNext jobs={[]} summaries={[]} onCancel={noop} stalled="youtube" />,
+    );
     expect(await screen.findByText(/peeq is paused/i)).toBeInTheDocument();
+    expect(screen.getByText(/resume it above/i)).toBeInTheDocument();
+  });
+
+  // Each stall has a different way out, and only the kill-switch has a Resume
+  // button — telling someone with a full disk to "resume above" would point at
+  // an affordance the banner never renders for them.
+  it("names the way out for a full disk, not a Resume button", async () => {
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} stalled="disk" />);
+    expect(await screen.findByText(/free up space/i)).toBeInTheDocument();
+    expect(screen.queryByText(/resume it above/i)).not.toBeInTheDocument();
+  });
+
+  it("sends a dead cookie to Settings, not to a Resume button", async () => {
+    render(
+      <UpNext jobs={[]} summaries={[]} onCancel={noop} stalled="cookie" />,
+    );
+    expect(
+      await screen.findByText(/replace it in settings/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/resume it above/i)).not.toBeInTheDocument();
   });
 
   it("leads the download lane with the running job, its bar and its eta", async () => {
@@ -311,6 +333,35 @@ describe("UpNext", () => {
     await waitFor(() => expect(listUpcoming).toHaveBeenCalledTimes(1));
     rerender(
       <UpNext jobs={[job({ job_id: 1 })]} summaries={[]} onCancel={noop} />,
+    );
+    await waitFor(() => expect(listUpcoming).toHaveBeenCalledTimes(2));
+  });
+
+  // App's 3-second poll hands down a fresh array every tick while either lane
+  // has work. Keying the refetch on array identity would hit
+  // /api/activity/upcoming every 3 seconds for the whole length of a download,
+  // for a projection that only moves when a job changes state.
+  it("does not refetch when an unchanged job set arrives as a new array", async () => {
+    const { rerender } = render(
+      <UpNext jobs={[job({ job_id: 1 })]} summaries={[]} onCancel={noop} />,
+    );
+    await waitFor(() => expect(listUpcoming).toHaveBeenCalledTimes(1));
+    // Same job, same state — a new array object, as the poll produces.
+    rerender(
+      <UpNext jobs={[job({ job_id: 1 })]} summaries={[]} onCancel={noop} />,
+    );
+    rerender(
+      <UpNext jobs={[job({ job_id: 1 })]} summaries={[]} onCancel={noop} />,
+    );
+    expect(listUpcoming).toHaveBeenCalledTimes(1);
+
+    // A state transition IS a reason to refetch.
+    rerender(
+      <UpNext
+        jobs={[job({ job_id: 1, state: "pending" })]}
+        summaries={[]}
+        onCancel={noop}
+      />,
     );
     await waitFor(() => expect(listUpcoming).toHaveBeenCalledTimes(2));
   });

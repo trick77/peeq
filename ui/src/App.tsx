@@ -553,10 +553,18 @@ export function App() {
             summaryPhaseByVideoId={summaryPhaseByVideoId}
             onCancelDownload={onCancelDownload}
             liveActivity={liveActivity}
-            paused={
-              downloadStatus.paused ||
-              downloadStatus.low_disk ||
+            // Same precedence the banner uses: the kill-switch outranks a full
+            // disk, which outranks the cookie pause. Up next names the cause
+            // because each one has a different way out — only the kill-switch
+            // has a Resume button.
+            stalled={
               downloadStatus.youtube_paused
+                ? "youtube"
+                : downloadStatus.low_disk
+                  ? "disk"
+                  : downloadStatus.paused
+                    ? "cookie"
+                    : undefined
             }
           />
         </section>
@@ -652,7 +660,7 @@ function ViewSwitch({
   summaryPhaseByVideoId,
   onCancelDownload,
   liveActivity,
-  paused,
+  stalled,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
@@ -679,8 +687,8 @@ function ViewSwitch({
   summaryPhaseByVideoId: Record<string, string>;
   onCancelDownload: (jobId: number) => void;
   liveActivity: ActivityEvent[];
-  /** Any reason YouTube work is stopped — only Up next's empty state uses it. */
-  paused: boolean;
+  /** Why YouTube work is stopped, if it is — only Up next's empty state uses it. */
+  stalled?: "youtube" | "disk" | "cookie";
 }) {
   switch (view) {
     case "library":
@@ -736,7 +744,7 @@ function ViewSwitch({
           summaryPhaseByVideoId={summaryPhaseByVideoId}
           onCancel={onCancelDownload}
           onOpenChannel={onOpenChannel}
-          paused={paused}
+          stalled={stalled}
         />
       );
     case "history":
