@@ -46,11 +46,15 @@ func TestDownload_happyPath(t *testing.T) {
 	t.Setenv("FAKE_YTDLP_ID", "dQw4w9WgXcQ")
 	t.Setenv("FAKE_YTDLP_CHANNEL_ID", "UCuAXFkgsw1L7xaCfnd5JJOw")
 
+	throttleNow := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
 	var throttleCalls int
 	var throttleDuration time.Duration
 	r := New(RunnerConfig{
 		Bin:            fakeBinPath(t),
 		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		// Frozen so the gap the download waits is exact rather than a hair
+		// under the floor from real elapsed time between the two calls.
+		Now: func() time.Time { return throttleNow },
 		Sleep: func(_ context.Context, d time.Duration) error {
 			throttleCalls++
 			throttleDuration = d
@@ -58,6 +62,13 @@ func TestDownload_happyPath(t *testing.T) {
 		},
 		MediaDir: mediaDir,
 	})
+	// The gap is trailing, so a call on an idle Runner correctly waits nothing.
+	// Prime it, so what this test measures is a download spaced behind a
+	// previous YouTube call — the case the floor actually governs.
+	if err := r.throttle(context.Background()); err != nil {
+		t.Fatalf("priming throttle: %v", err)
+	}
+	throttleCalls = 0
 
 	var progressed []Progress
 	res, err := r.Download(context.Background(), DownloadReq{
