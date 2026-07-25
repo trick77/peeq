@@ -111,6 +111,21 @@ describe("RowMenu", () => {
     );
   });
 
+  it("marks a danger href action too, and still fences it off", async () => {
+    const user = userEvent.setup();
+    setup({
+      actions: [
+        { label: "Subscribe", icon: "star", onClick: vi.fn() },
+        { label: "Purge", icon: "trash", href: "#purge", danger: true },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Actions for X" }));
+    const item = screen.getByRole("menuitem", { name: "Purge" });
+    expect(item.tagName).toBe("A");
+    expect(item).toHaveClass("danger");
+    expect(screen.getByRole("separator")).toBeInTheDocument();
+  });
+
   it("Escape closes the menu and returns focus to the trigger", async () => {
     const user = userEvent.setup();
     setup();
