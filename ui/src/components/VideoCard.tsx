@@ -57,6 +57,25 @@ export function VideoCard({
       )
     : 0;
 
+  // The category pill used to own a row of its own under the title, which left
+  // a band of dead space on every card whose title ran short of two lines. It
+  // now sits in the thumbnail's empty bottom-left corner, opposite the runtime.
+  // The text rows were the wrong home for it: the eyebrow already carries three
+  // items, and at the narrowest card peeq draws (228px, two columns with the
+  // rail still open) a fourth one truncates the channel name to a stub. The
+  // thumbnail corner is the same width on every card, so nothing competes.
+  //
+  // The condition is unchanged from when Lifecycle rendered it: only a fresh
+  // video (not failed, not tombstoned, not kept, not watched) shows a category,
+  // because for the others the lifecycle row still has something to say.
+  const thumbCategory =
+    video.status !== "error" &&
+    video.status !== "tombstoned" &&
+    !video.favorite &&
+    !video.watched
+      ? categoryMeta(video.category)
+      : null;
+
   // The card is one big open-the-video target: the thumbnail and title
   // buttons only cover part of it, leaving the eyebrow, the lifecycle row and
   // the gaps between them dead space under a pointer cursor. Two exceptions —
@@ -99,8 +118,29 @@ export function VideoCard({
           ) : (
             <div className={`fill ${gradientClassFor(video.id)}`} />
           )}
-          {isNew ? <span className="tag new">Unwatched</span> : null}
+          {/* Dot only: the word "Unwatched" was the loudest thing on the
+              thumbnail for a fact the glowing dot already carries. The pill
+              shape and the label stay for anyone not reading it visually. */}
+          {isNew ? (
+            <span
+              className="tag new"
+              role="img"
+              aria-label="Unwatched"
+              title="Unwatched"
+            />
+          ) : null}
           <span className="dur">{formatDuration(video.duration_seconds)}</span>
+          {/* Decorative inside the button: the button's aria-label already
+              names the video, so the pill adds no accessible text. */}
+          {thumbCategory ? (
+            <span className="metapill oncover">
+              <span
+                className="dotc"
+                style={{ background: thumbCategory.color }}
+              />
+              {thumbCategory.label}
+            </span>
+          ) : null}
           {resuming ? (
             <div className="resume">
               <i style={{ width: `${resumePercent}%` }} />
@@ -243,20 +283,11 @@ function Lifecycle({
       </div>
     );
   }
-  // Nothing to say about a fresh video's lifecycle that the thumbnail does
-  // not already say (NEW tag, resume bar), so the row carries the category
-  // pill instead. With no category there is nothing left to render at all —
+  // Nothing to say about a fresh video's lifecycle that the thumbnail does not
+  // already say (unwatched dot, resume bar), and the category pill it used to
+  // carry now sits on the thumbnail, so there is nothing left to render —
   // an empty .life would still eat a 10px `.card` flex gap, hence null.
-  const category = categoryMeta(video.category);
-  if (!category) return null;
-  return (
-    <div className="life fresh">
-      <span className="metapill">
-        <span className="dotc" style={{ background: category.color }} />
-        {category.label}
-      </span>
-    </div>
-  );
+  return null;
 }
 
 // categoryMeta resolves the classifier's label/color for a video, or null

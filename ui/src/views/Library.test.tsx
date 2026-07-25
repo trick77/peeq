@@ -143,7 +143,25 @@ describe("VideoCard lifecycle line", () => {
     expect(screen.queryByText("Downloading")).not.toBeInTheDocument();
   });
 
-  it("renders the category pill on the lifecycle line of a fresh video", () => {
+  it("marks an unwatched video with a wordless dot that still reads as Unwatched", () => {
+    render(
+      <VideoCard
+        video={baseVideo()}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+      />,
+    );
+    // The pill carries no visible text — only the glowing dot — so the label
+    // has to survive as the accessible name or the state becomes invisible to
+    // anyone not looking at the colour.
+    const tag = screen.getByRole("img", { name: "Unwatched" });
+    expect(tag).toHaveClass("tag", "new");
+    expect(tag).toHaveTextContent("");
+  });
+
+  it("renders the category pill on the thumbnail of a fresh video", () => {
     render(
       <VideoCard
         video={baseVideo({ category: "ai" })}
@@ -153,11 +171,12 @@ describe("VideoCard lifecycle line", () => {
         onToggleWatched={noop}
       />,
     );
-    // The pill sits in the lifecycle row, not on the channel/date line.
-    const pill = document.querySelector(".life.fresh .metapill");
+    // The pill sits in the thumbnail's corner, and the lifecycle row it used
+    // to occupy is gone entirely.
+    const pill = document.querySelector(".thumb .metapill.oncover");
     expect(pill).not.toBeNull();
     expect(pill).toHaveTextContent("AI");
-    expect(document.querySelector(".by .metapill")).toBeNull();
+    expect(document.querySelector(".life")).toBeNull();
   });
 
   it("renders no lifecycle row at all for a fresh uncategorized video", () => {
@@ -1131,10 +1150,10 @@ describe("Library category chips", () => {
       );
     });
     // Back to the fresh lifecycle state — the error line is gone and the
-    // category pill has taken its place. Scoped to .life.fresh because the
-    // chip row above the grid also carries an "AI" label.
+    // category pill on the thumbnail is showing again. Scoped to .thumb
+    // because the chip row above the grid also carries an "AI" label.
     await waitFor(() => {
-      expect(document.querySelector(".life.fresh .metapill")).toHaveTextContent(
+      expect(document.querySelector(".thumb .metapill")).toHaveTextContent(
         "AI",
       );
     });

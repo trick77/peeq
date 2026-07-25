@@ -1232,6 +1232,22 @@ button.srow:not(:disabled):hover {
   padding: 2px 7px;
   border-radius: 6px;
 }
+/* The category pill lives in the thumbnail's free bottom-left corner, opposite
+   the runtime, rather than on a row of its own under the title. Text rows are
+   the wrong home for it: at the narrowest card peeq draws (228px — two columns
+   with the rail still open) a fourth item on the eyebrow truncates the channel
+   name, while this corner is the same size on every card. Same scrim treatment
+   as .dur and .tag so the three chips read as one family. */
+.thumb .metapill.oncover {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 3px 9px;
+  background: rgba(5, 8, 11, 0.72);
+  border-color: var(--color-border);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
 .thumb .resume {
   position: absolute;
   left: 0;
@@ -1255,7 +1271,9 @@ button.srow:not(:disabled):hover {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 9px 3px 7px;
+  /* Symmetric now that the pill holds nothing but its dot — the old
+     3px 9px 3px 7px was tuned to sit the dot closer to the word it led. */
+  padding: 5px 9px;
   border-radius: 999px;
   font-size: 10.5px;
   font-weight: 600;
@@ -1403,6 +1421,14 @@ button.srow:not(:disabled):hover {
 }
 .card h3 .title-btn:hover {
   color: var(--color-accent);
+}
+/* The title is the card's headline and now the only thing under the eyebrow,
+   so it takes back the room the category row used to occupy. Scoped to
+   .video-card: `.card h3` is shared with Inbox and the channel pages, which
+   keep the smaller setting. min-height is em-relative, so the reserved two
+   lines grow with it. */
+.card.video-card h3 {
+  font-size: 18px;
 }
 .card .by {
   font-size: 12.5px;
@@ -1585,28 +1611,9 @@ button.catpick.unset:hover {
   max-width: 78px;
   opacity: 0.85;
 }
-.life.fresh {
-  color: var(--color-faint);
-}
-/* The category pill sits at the right edge of the lifecycle row, lining up
-   with the download percentage in .sz (same margin-left: auto idiom) rather
-   than sitting under the title. It is the row's only child when shown, so
-   this is what moves it. */
-.life .metapill {
-  margin-left: auto;
-}
-/* On a Library card the category pill is the last thing before the card's
-   bottom edge and the only child of its row, so it reads cramped against both
-   the channel line above and the edge below. Scoped to .video-card: the same
-   .metapill on the Player and the Channels rows sits in a populated row and
-   needs no extra room. */
-.card.video-card .life.fresh {
-  margin-top: 5px;
-  margin-bottom: 2px;
-}
-.card.video-card .life.fresh .metapill {
-  padding: 3px 9px;
-}
+/* .life.fresh and its `.metapill` rules lived here until the category pill
+   moved onto the thumbnail; nothing renders that row any more, so the pill's
+   placement now lives with `.thumb .metapill.oncover`. */
 .life .sz {
   margin-left: auto;
   font-family: var(--font-mono);
