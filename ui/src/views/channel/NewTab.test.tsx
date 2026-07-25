@@ -13,6 +13,7 @@ vi.mock("../../api/channels", () => ({
 }));
 
 import { listPending } from "../../api/pending";
+import { DOT } from "../../sep";
 
 function makeDetail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
   return {
@@ -99,7 +100,7 @@ describe("NewTab", () => {
     const rowFor = (title: string) =>
       screen.getByText(title).closest(".chan-prow") as HTMLElement;
     expect(rowFor("Dated upload").querySelector(".sub")?.textContent).toBe(
-      "2:05 · 3 days ago",
+      `2:05${DOT}3 days ago`,
     );
     expect(rowFor("Undated upload").querySelector(".sub")?.textContent).toBe(
       "1:00",

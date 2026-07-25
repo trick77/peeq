@@ -11,6 +11,7 @@ import {
 import { getYtdlpVersion, updateYtdlp } from "../api/ytdlp";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 import type { Settings as SettingsType } from "../api/types";
+import { DOT } from "../sep";
 
 // PRESETS mirrors ytdlp.Presets exactly (backend/internal/ytdlp/format.go)
 // plus the "custom" id Resolve special-cases — the format string shown
@@ -295,7 +296,7 @@ export function Settings() {
             <span className="led" />
             {settings.youtube_paused
               ? settings.youtube_pause_reason
-                ? "Paused · auto"
+                ? `Paused${DOT}auto`
                 : "Paused"
               : "Active"}
           </span>
@@ -343,7 +344,7 @@ export function Settings() {
             <span className="led" />
             {cookieHealthy ? "Active" : settings.cookie_status}
             {settings.cookie_updated_at
-              ? ` · updated ${new Date(settings.cookie_updated_at).toLocaleString()}`
+              ? `${DOT}updated ${new Date(settings.cookie_updated_at).toLocaleString()}`
               : ""}
           </span>
         </h2>

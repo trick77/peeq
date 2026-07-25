@@ -6,6 +6,7 @@ import { scanChannel } from "../../api/channels";
 import { formatAgo, formatDuration } from "../../format";
 import { isCheckQueued, scanNotice, scheduleLine } from "./schedule";
 import type { ChannelDetail, PendingItem } from "../../api/types";
+import { DOT } from "../../sep";
 
 export function NewTab({
   detail,
@@ -148,7 +149,7 @@ export function NewTab({
                   <div className="sub">
                     {formatDuration(item.duration_seconds)}
                     {item.published_at
-                      ? ` · ${formatAgo(item.published_at)}`
+                      ? `${DOT}${formatAgo(item.published_at)}`
                       : ""}
                   </div>
                 </div>

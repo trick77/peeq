@@ -1,4 +1,5 @@
 import type { ChannelDetail, ScanResult } from "../../api/types";
+import { DOT } from "../../sep";
 
 // The channel page reports its scan schedule in two places — the New tab and
 // the Settings tab — and they had drifted: New handled a next_scan_at in the
@@ -47,7 +48,7 @@ export function scheduleLine(
         : `next check ${parseSqlUTC(detail.next_scan_at).toLocaleString()}`,
     );
   }
-  return parts.join(" · ");
+  return parts.join(DOT);
 }
 
 // scanNotice turns a scan response into the line shown after pressing the

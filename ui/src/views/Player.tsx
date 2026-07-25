@@ -43,6 +43,7 @@ import {
   useCopyTranscript,
   type Cue,
 } from "../vtt";
+import { DOT } from "../sep";
 
 // RESUME_THROTTLE_MS bounds how often `timeupdate` (which fires ~4x/sec)
 // is allowed to actually POST the resume position — see handleTimeUpdate.
@@ -514,7 +515,7 @@ export function Player({
         setCurrentTime(seg.end_time);
         positionRef.current = seg.end_time;
         showToast(
-          `Skipped ${categoryLabel(seg.category)} · ${formatDuration(seg.end_time - seg.start_time)}`,
+          `Skipped ${categoryLabel(seg.category)}${DOT}${formatDuration(seg.end_time - seg.start_time)}`,
           "skipForward",
           "info",
         );
