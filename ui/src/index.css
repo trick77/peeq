@@ -1513,6 +1513,18 @@ button.catpick.unset:hover {
 .life .metapill {
   margin-left: auto;
 }
+/* On a Library card the category pill is the last thing before the card's
+   bottom edge and the only child of its row, so it reads cramped against both
+   the channel line above and the edge below. Scoped to .video-card: the same
+   .metapill on the Player and the Channels rows sits in a populated row and
+   needs no extra room. */
+.card.video-card .life.fresh {
+  margin-top: 5px;
+  margin-bottom: 2px;
+}
+.card.video-card .life.fresh .metapill {
+  padding: 3px 9px;
+}
 .life .sz {
   margin-left: auto;
   font-family: var(--font-mono);
