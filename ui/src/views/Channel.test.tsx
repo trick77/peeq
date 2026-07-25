@@ -124,8 +124,8 @@ function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     resolved_at: "2026-07-21 06:00:00",
     resolve_ok: true,
     gone: false,
-    tracked: true,
-    tracked_at: "2026-03-14 09:00:00",
+    added: true,
+    added_at: "2026-03-14 09:00:00",
     archived_count: 142,
     runtime_seconds: 219600,
     disk_bytes: 40802189312,
@@ -195,7 +195,7 @@ describe("Channel", () => {
 
   it("a channel that has not been added hides the New and Settings tabs", async () => {
     vi.mocked(getChannel).mockResolvedValue(
-      detail({ tracked: false, subscribed: false, pending_count: 0 }),
+      detail({ added: false, subscribed: false, pending_count: 0 }),
     );
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
@@ -506,7 +506,7 @@ describe("Channel", () => {
   it("the Add button calls addChannel and reloads the channel as added", async () => {
     const user = userEvent.setup();
     vi.mocked(getChannel).mockResolvedValue(
-      detail({ tracked: false, subscribed: false, pending_count: 0 }),
+      detail({ added: false, subscribed: false, pending_count: 0 }),
     );
     const { addChannel } = await import("../api/channels");
     vi.mocked(addChannel).mockReset();
@@ -534,7 +534,7 @@ describe("Channel", () => {
   it("shows an error when adding the channel fails", async () => {
     const user = userEvent.setup();
     vi.mocked(getChannel).mockResolvedValue(
-      detail({ tracked: false, subscribed: false, pending_count: 0 }),
+      detail({ added: false, subscribed: false, pending_count: 0 }),
     );
     const { addChannel } = await import("../api/channels");
     vi.mocked(addChannel).mockReset();
@@ -556,7 +556,7 @@ describe("Channel", () => {
       detail({
         handle: undefined,
         description: undefined,
-        tracked: false,
+        added: false,
         subscribed: false,
         pending_count: 0,
       }),

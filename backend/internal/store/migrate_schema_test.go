@@ -331,7 +331,7 @@ func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
 	const channelCount = 40
 	for i := 0; i < channelCount; i++ {
 		id := fmt.Sprintf("UC%03d", i)
-		if _, err := db.Exec(`INSERT INTO channels (id, name, tracked_at) VALUES (?, ?, datetime('now'))`, id, id); err != nil {
+		if _, err := db.Exec(`INSERT INTO channels (id, name, added_at) VALUES (?, ?, datetime('now'))`, id, id); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO subscriptions (channel_id, next_scan_at) VALUES (?, datetime('now'))`, id); err != nil {
@@ -409,5 +409,96 @@ func TestMigrate_seedsPlaybackStateOnAnExistingDB(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("playback_state row count = %d after a second migrate, want 1", count)
+	}
+}
+
+// TestSchemaRenamesTrackedAt guards migration 0012's column swap. It is a
+// two-step rename — added_at has to be vacated before tracked_at can take the
+// name — so getting the order wrong would either fail outright or leave the
+// two columns holding each other's meaning, which nothing else would catch.
+func TestSchemaRenamesTrackedAt(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "r.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+
+	for col, want := range map[string]int{"first_seen_at": 1, "added_at": 1, "tracked_at": 0} {
+		var cnt int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name = ?`, col,
+		).Scan(&cnt); err != nil || cnt != want {
+			t.Fatalf("channels.%s count = %d, want %d (err=%v)", col, cnt, want, err)
+		}
+	}
+
+	// added_at carries the OLD tracked_at's meaning: nullable, so a cache-only
+	// row can say "never added". first_seen_at keeps the NOT NULL default.
+	var notNull int
+	if err := db.QueryRow(
+		`SELECT "notnull" FROM pragma_table_info('channels') WHERE name = 'added_at'`,
+	).Scan(&notNull); err != nil {
+		t.Fatal(err)
+	}
+	if notNull != 0 {
+		t.Fatal("channels.added_at is NOT NULL; a never-added channel needs it nullable")
+	}
+}
+
+// TestMigrate_backfillsChannelsFromDownloadedVideos asserts 0012's backfill.
+// Adding a video by URL never created a channels row, so channels the library
+// already holds downloads from had nothing to list — this is what makes them
+// appear under "From downloads" on an existing install rather than only for
+// videos downloaded from here on.
+func TestMigrate_backfillsChannelsFromDownloadedVideos(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// Stop just before 0012 so the videos below look exactly like an existing
+	// install's: channel_id set, no channels row anywhere.
+	applyThrough(t, db, "0011_playback_state.sql")
+
+	if _, err := db.Exec(`
+INSERT INTO videos (id, url, channel_id, channel_name, status) VALUES
+  ('v1','u','UCdl','Downloaded Channel','downloaded'),
+  ('v2','u','UCdl','','downloaded'),
+  ('v3','u','UCqueued','Queued Channel','queued'),
+  ('v4','u','','Orphan','downloaded')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+
+	var name string
+	if err := db.QueryRow(`SELECT name FROM channels WHERE id = 'UCdl'`).Scan(&name); err != nil {
+		t.Fatalf("backfilled row for UCdl missing: %v", err)
+	}
+	// The empty channel_name on v2 must not win over v1's real one.
+	if name != "Downloaded Channel" {
+		t.Fatalf("backfilled name = %q, want %q", name, "Downloaded Channel")
+	}
+	// It is visible, but NOT added: added_at stays NULL so nothing scans it.
+	var addedAt sql.NullString
+	if err := db.QueryRow(`SELECT added_at FROM channels WHERE id = 'UCdl'`).Scan(&addedAt); err != nil {
+		t.Fatal(err)
+	}
+	if addedAt.Valid {
+		t.Fatalf("backfill added the channel (added_at = %q)", addedAt.String)
+	}
+
+	// A channel with nothing downloaded, and the empty channel_id, get no row.
+	var cnt int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM channels WHERE id IN ('UCqueued', '')`).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 0 {
+		t.Fatalf("backfill created %d row(s) it should not have", cnt)
 	}
 }

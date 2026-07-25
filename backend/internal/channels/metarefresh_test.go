@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// seedSubscribed tracks and subscribes channelID, then sets its metadata
+// seedSubscribed adds and subscribes channelID, then sets its metadata
 // schedule explicitly. Subscribe seeds next_meta_refresh_at a week out on its
 // own, which is right for production and useless for a test that wants to say
 // "this one is due".
@@ -14,8 +14,8 @@ func seedSubscribed(t *testing.T, s *Store, channelID, nextMetaRefreshAt string)
 	if err := s.Upsert(Channel{ID: channelID, Name: channelID}); err != nil {
 		t.Fatalf("upsert %s: %v", channelID, err)
 	}
-	if err := s.Track(channelID, "2026-01-01 00:00:00"); err != nil {
-		t.Fatalf("track %s: %v", channelID, err)
+	if err := s.MarkAdded(channelID, "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("add %s: %v", channelID, err)
 	}
 	if err := s.Subscribe(channelID, "2026-01-01 00:00:00"); err != nil {
 		t.Fatalf("subscribe %s: %v", channelID, err)
@@ -108,30 +108,30 @@ func TestClaimDueMetadata_keepsAwayFromScans(t *testing.T) {
 	}
 }
 
-// TestClaimUnresolved_onlyTrackedAndNeverRead covers the never-read backlog:
-// it is what fills in a channel the user just tracked (or one of the hundreds
+// TestClaimUnresolved_onlyListedAndNeverRead covers the never-read backlog:
+// it is what fills in a channel the user just added (or one of the hundreds
 // a TubeArchivist import created) without waiting for someone to open its
 // page — and it must not become a retry loop for channels that already had
 // their attempt.
-func TestClaimUnresolved_onlyTrackedAndNeverRead(t *testing.T) {
+func TestClaimUnresolved_onlyListedAndNeverRead(t *testing.T) {
 	s := newTestStore(t)
 	// Cache-only: peeq glanced at it, the user never asked for it.
 	if err := s.Upsert(Channel{ID: "UCcache", Name: "Cache"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	// Tracked and already read.
+	// Added and already read.
 	if err := s.Upsert(Channel{ID: "UCread", Name: "Read", ResolvedAt: "2026-07-01 00:00:00"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.Track("UCread", "2026-01-01 00:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded("UCread", "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
-	// Tracked, never read: the one we want.
+	// Added, never read: the one we want.
 	if err := s.Upsert(Channel{ID: "UCnew", Name: "New"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.Track("UCnew", "2026-02-01 00:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded("UCnew", "2026-02-01 00:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
 
 	got, err := s.ClaimUnresolved(metaNow)
@@ -153,6 +153,46 @@ func TestClaimUnresolved_onlyTrackedAndNeverRead(t *testing.T) {
 	}
 }
 
+// TestClaimUnresolved_includesDownloadOnly asserts the backlog covers exactly
+// what the list shows. A channel present only because the library holds a
+// downloaded video from it lists under "From downloads" carrying nothing but
+// whatever name the video row happened to have — without a resolve it would
+// sit there behind a placeholder gradient forever.
+//
+// The cache-only channel beside it is the control: it is not in the list, so
+// it must not be in the backlog either, or every channel peeq ever glanced at
+// would cost a YouTube request.
+func TestClaimUnresolved_includesDownloadOnly(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Channel{ID: "UCcache", Name: "Cache"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.Upsert(Channel{ID: "UCdl", Name: "From A Download"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if _, err := s.DB().Exec(
+		`INSERT INTO videos (id,url,channel_id,status) VALUES ('v1','u','UCdl','downloaded')`); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+
+	got, err := s.ClaimUnresolved(metaNow)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if got == nil || got.ID != "UCdl" {
+		t.Fatalf("claimed = %+v; want UCdl", got)
+	}
+
+	// With the download-only channel resolved, the cache-only one must not
+	// take its place.
+	if err := s.MarkResolveAttempted("UCdl", "2026-07-22 12:00:00"); err != nil {
+		t.Fatalf("mark attempted: %v", err)
+	}
+	if got, err := s.ClaimUnresolved(metaNow); err != nil || got != nil {
+		t.Fatalf("backlog claimed a cache-only channel (got=%+v, err=%v)", got, err)
+	}
+}
+
 // TestClaimUnresolved_keepsAwayFromScans asserts the backlog honours the same
 // quiet window. Most backlog channels are unsubscribed and have no scan at
 // all — the LEFT JOIN is what keeps those claimable.
@@ -161,8 +201,8 @@ func TestClaimUnresolved_keepsAwayFromScans(t *testing.T) {
 	if err := s.Upsert(Channel{ID: "UCsub"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.Track("UCsub", "2026-01-01 00:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded("UCsub", "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
 	if err := s.Subscribe("UCsub", "2026-01-01 00:00:00"); err != nil {
 		t.Fatalf("subscribe: %v", err)
@@ -173,13 +213,13 @@ func TestClaimUnresolved_keepsAwayFromScans(t *testing.T) {
 		t.Fatalf("claimed a channel scanned ten minutes ago (got=%+v, err=%v)", got, err)
 	}
 
-	// An unsubscribed tracked channel has no subscriptions row and so nothing
+	// An unsubscribed added channel has no subscriptions row and so nothing
 	// to collide with.
 	if err := s.Upsert(Channel{ID: "UCloose"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.Track("UCloose", "2026-01-02 00:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded("UCloose", "2026-01-02 00:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
 	got, err := s.ClaimUnresolved(metaNow)
 	if err != nil {
@@ -204,7 +244,7 @@ func TestMarkMetaRefreshed_advancesTheSchedule(t *testing.T) {
 }
 
 // TestMarkMetaRefreshed_unsubscribedIsANoOp: a backlog channel that is merely
-// tracked has no rotation to be scheduled into, and saying so must not be an
+// added has no rotation to be scheduled into, and saying so must not be an
 // error the worker logs on every pass.
 func TestMarkMetaRefreshed_unsubscribedIsANoOp(t *testing.T) {
 	s := newTestStore(t)

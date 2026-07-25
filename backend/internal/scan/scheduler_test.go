@@ -215,18 +215,18 @@ func (h *scanHarness) nowStr() string {
 	return fixedNow.Format(sqlTimeLayout)
 }
 
-// trackAndSubscribe tracks ucid and subscribes it with a next_scan_at in the
+// addAndSubscribe adds ucid and subscribes it with a next_scan_at in the
 // past, so the first ClaimDue(nowStr) finds it. Mirrors the real API flow
-// (Track before Subscribe — subscribing requires an already-tracked
-// channel), so the harness state matches what enqueueAuto's tracked_at guard
+// (MarkAdded before Subscribe — subscribing requires an already-added
+// channel), so the harness state matches what enqueueAuto's added_at guard
 // sees in production.
-func (h *scanHarness) trackAndSubscribe(ucid string, autodownload bool, format string) {
+func (h *scanHarness) addAndSubscribe(ucid string, autodownload bool, format string) {
 	h.t.Helper()
 	if err := h.channels.Upsert(channels.Channel{ID: ucid, Name: ucid}); err != nil {
-		h.t.Fatalf("track %s: %v", ucid, err)
+		h.t.Fatalf("add %s: %v", ucid, err)
 	}
-	if err := h.channels.Track(ucid, h.nowStr()); err != nil {
-		h.t.Fatalf("track %s: %v", ucid, err)
+	if err := h.channels.MarkAdded(ucid, h.nowStr()); err != nil {
+		h.t.Fatalf("add %s: %v", ucid, err)
 	}
 	if err := h.channels.Subscribe(ucid, "2000-01-01 00:00:00"); err != nil {
 		h.t.Fatalf("subscribe %s: %v", ucid, err)
@@ -300,7 +300,7 @@ func (h *scanHarness) ledgerStateOrAbsent(videoID string) string {
 
 func TestScan_firstRunBaseline_queuesNothing(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false /*autodownload*/, "" /*format*/)
+	h.addAndSubscribe("UC1", false /*autodownload*/, "" /*format*/)
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "v1", Title: "A", DurationSeconds: 600, LiveStatus: "not_live"},
 		{ID: "v2", Title: "B", DurationSeconds: 600, LiveStatus: "not_live"},
@@ -332,7 +332,7 @@ func TestScan_firstRunBaseline_queuesNothing(t *testing.T) {
 func TestScan_subsequentNewVideo_pendingVsAutodownload(t *testing.T) {
 	// Non-autodownload: new id after baseline → pending.
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", []string{"old1"}) // seed ledger 'seen' + baselined_at set
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "old1", DurationSeconds: 600, LiveStatus: "not_live"},  // dedup: skip
@@ -368,7 +368,7 @@ func TestScan_subsequentNewVideo_pendingVsAutodownload(t *testing.T) {
 // the two tabs disjoint forever, and an id listed twice would be offered twice.
 func TestScan_tabsOverlappingOnAnIdCountItOnce(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	both := ytdlp.ChannelEntry{ID: "vod00001", Title: "On both tabs", DurationSeconds: 7200, LiveStatus: "was_live"}
 	h.lister.set("UC1", []ytdlp.ChannelEntry{both})
@@ -388,7 +388,7 @@ func TestScan_tabsOverlappingOnAnIdCountItOnce(t *testing.T) {
 // though it never appears on the /videos tab.
 func TestScan_completedLivestreamIsOffered(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "upload01", DurationSeconds: 600, LiveStatus: "not_live"},
@@ -414,7 +414,7 @@ func TestScan_completedLivestreamIsOffered(t *testing.T) {
 // have masked it forever.
 func TestScan_unfinishedStreamDeferredThenOffered(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
 		{ID: "vod00001", Title: "Live now", DurationSeconds: 0, LiveStatus: "is_live"},
@@ -448,7 +448,7 @@ func TestScan_unfinishedStreamDeferredThenOffered(t *testing.T) {
 // airing case — left without a row so a later scan can offer the finished cut.
 func TestScan_postLiveStreamDeferred(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", true /*autodownload*/, "")
+	h.addAndSubscribe("UC1", true /*autodownload*/, "")
 	h.markBaselined("UC1", nil)
 	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
 		{ID: "vod00001", DurationSeconds: 3600, LiveStatus: "post_live"},
@@ -473,7 +473,7 @@ func TestScan_postLiveStreamDeferred(t *testing.T) {
 // whole back catalogue of VODs as new on the second scan.
 func TestScan_baselineCoversStreamsTab(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "upload01", DurationSeconds: 600, LiveStatus: "not_live"}})
 	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{{ID: "vod00001", DurationSeconds: 7200, LiveStatus: "was_live"}})
 	sub, _ := h.channels.ClaimDue(h.nowStr())
@@ -495,7 +495,7 @@ func TestScan_baselineCoversStreamsTab(t *testing.T) {
 // whole back catalogue of VODs into the inbox on the following scan.
 func TestScan_baseline_streamsFailure_doesNotBaselineHalfAChannel(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "upload01", DurationSeconds: 600, LiveStatus: "not_live"}})
 	h.lister.setStreams("UC1", nil)
 	h.lister.streamErr = errors.New("some transient yt-dlp hiccup")
@@ -520,7 +520,7 @@ func TestScan_baseline_streamsFailure_doesNotBaselineHalfAChannel(t *testing.T) 
 // must still baseline on the first pass.
 func TestScan_baseline_missingStreamsTab_stillBaselines(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	// The harness lister already errors on /streams the way yt-dlp does.
 	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "upload01", DurationSeconds: 600, LiveStatus: "not_live"}})
 	sub, _ := h.channels.ClaimDue(h.nowStr())
@@ -543,7 +543,7 @@ func TestScan_baseline_missingStreamsTab_stillBaselines(t *testing.T) {
 // before the streams call and leave such a channel permanently unscannable.
 func TestScan_missingVideosTab_streamOnlyChannelStillScans(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.err = &ytdlp.ExecError{
 		Err:    errors.New("exit status 1"),
@@ -570,7 +570,7 @@ func TestScan_missingVideosTab_streamOnlyChannelStillScans(t *testing.T) {
 // must not fail the scan or cost the channel its uploads.
 func TestScan_missingStreamsTab_scanStillSucceeds(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	// The harness lister already errors on /streams the way yt-dlp does.
 	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "newp", DurationSeconds: 600, LiveStatus: "not_live"}})
@@ -598,7 +598,7 @@ func TestScan_streamsTabError_toleratedExceptSentinels(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newScanHarness(t)
-			h.trackAndSubscribe("UC1", false, "")
+			h.addAndSubscribe("UC1", false, "")
 			h.markBaselined("UC1", nil)
 			h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "newp", DurationSeconds: 600, LiveStatus: "not_live"}})
 			h.lister.setStreams("UC1", nil)
@@ -626,7 +626,7 @@ func TestScan_streamsTabError_toleratedExceptSentinels(t *testing.T) {
 // channel whose first call already failed must not spend a second one.
 func TestScan_uploadsFailure_skipsStreamsCall(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.err = errors.New("listing failed")
 
@@ -641,7 +641,7 @@ func TestScan_uploadsFailure_skipsStreamsCall(t *testing.T) {
 
 func TestScan_autodownloadEnqueuesWithFormatOverride(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", true /*autodownload*/, "bestvideo+bestaudio")
+	h.addAndSubscribe("UC1", true /*autodownload*/, "bestvideo+bestaudio")
 	h.markBaselined("UC1", nil)
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "newv", Title: "N", URL: "https://www.youtube.com/watch?v=newv", DurationSeconds: 600, LiveStatus: "not_live"},
@@ -675,7 +675,7 @@ func TestScan_autodownloadEnqueuesWithFormatOverride(t *testing.T) {
 // videos-table dedup on the next scan.
 func TestScan_autodownloadEnqueueFailure_notMaskedByLedger(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", true, "bestvideo+bestaudio")
+	h.addAndSubscribe("UC1", true, "bestvideo+bestaudio")
 	h.markBaselined("UC1", nil)
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "newv", Title: "N", URL: "https://www.youtube.com/watch?v=newv", DurationSeconds: 600, LiveStatus: "not_live"},
@@ -709,16 +709,16 @@ func TestScan_autodownloadEnqueueFailure_notMaskedByLedger(t *testing.T) {
 	}
 }
 
-// TestScan_autodownload_notEnqueued_whenChannelUntracked proves enqueueAuto's
-// guard checks tracked_at, not mere row presence. channels is a metadata
-// cache: maybeResolveChannel can re-create a cache-only row (tracked_at
-// NULL) for an id the user just untracked/deleted, while a scan for its
+// TestScan_autodownload_notEnqueued_whenChannelNotAdded proves enqueueAuto's
+// guard checks added_at, not mere row presence. channels is a metadata
+// cache: maybeResolveChannel can re-create a cache-only row (added_at
+// NULL) for an id the user just not-added/deleted, while a scan for its
 // still-due subscription is in flight. Get() != nil alone would look
-// identical to a genuinely tracked channel, so a scan should NOT enqueue a
-// download for a channel whose row exists but isn't tracked.
-func TestScan_autodownload_notEnqueued_whenChannelUntracked(t *testing.T) {
+// identical to a genuinely added channel, so a scan should NOT enqueue a
+// download for a channel whose row exists but isn't added.
+func TestScan_autodownload_notEnqueued_whenChannelNotAdded(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", true /*autodownload*/, "")
+	h.addAndSubscribe("UC1", true /*autodownload*/, "")
 	h.markBaselined("UC1", nil)
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "newv", Title: "N", URL: "https://www.youtube.com/watch?v=newv", DurationSeconds: 600, LiveStatus: "not_live"},
@@ -728,22 +728,22 @@ func TestScan_autodownload_notEnqueued_whenChannelUntracked(t *testing.T) {
 		t.Fatal("expected a due subscription")
 	}
 
-	// Simulate the race: the channel is untracked (row reverts to cache-only)
+	// Simulate the race: the channel is not-added (row reverts to cache-only)
 	// after ClaimDue but before the scan's enqueueAuto call. The subscription
 	// row is left dangling, mirroring maybeResolveChannel re-creating a
-	// cache-only row for a just-deleted/untracked channel mid-scan.
-	if _, err := h.db.Exec(`UPDATE channels SET tracked_at = NULL WHERE id = ?`, "UC1"); err != nil {
-		t.Fatalf("untrack UC1: %v", err)
+	// cache-only row for a just-deleted/not-added channel mid-scan.
+	if _, err := h.db.Exec(`UPDATE channels SET added_at = NULL WHERE id = ?`, "UC1"); err != nil {
+		t.Fatalf("un-add UC1: %v", err)
 	}
 
 	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
 		t.Fatal(err)
 	}
 	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
-		t.Fatalf("must not enqueue a download for an untracked channel; got %+v", jobsList)
+		t.Fatalf("must not enqueue a download for an not-added channel; got %+v", jobsList)
 	}
 	if v, _ := h.videos.Get("newv"); v != nil {
-		t.Fatalf("must not upsert a video row for an untracked channel; got %+v", v)
+		t.Fatalf("must not upsert a video row for an not-added channel; got %+v", v)
 	}
 }
 
@@ -752,7 +752,7 @@ func TestScan_autodownload_notEnqueued_whenChannelUntracked(t *testing.T) {
 // without clearing its baseline.
 func TestScan_panicDuringScan_backsOff(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil) // baselined_at set
 	h.lister.panicMsg = "boom"  // ChannelVideos panics
 
@@ -792,7 +792,7 @@ func (l errLister) ChannelStreams(context.Context, string, int) ([]ytdlp.Channel
 // stops hammering YouTube on a dead cookie.
 func TestScan_blockedCookie_flipsStatus(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	// Seed cookie_status="valid" via the status-only path (empty text skips
 	// cookie validation), so we can observe the flip away from "valid".
@@ -823,7 +823,7 @@ func TestScan_blockedCookie_flipsStatus(t *testing.T) {
 // 1 flips cookie_status to "stale".
 func TestScan_expiredCookie_flipsStale(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	if err := h.settings.SetCookie(context.Background(), "", "valid"); err != nil {
 		t.Fatalf("seed cookie status: %v", err)
@@ -870,7 +870,7 @@ func (f *fakeMonitor) Reset() {
 // existing cookie-gate test (TestScan_noCookie_skipsScan) above.
 func TestScanSkipsWhilePaused(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "v1", DurationSeconds: 600}})
 	h.sched = New(Deps{
 		Channels: h.channels, Ledger: h.ledger, Videos: h.videos, Jobs: h.jobs,
@@ -905,7 +905,7 @@ func TestScanSkipsWhilePaused(t *testing.T) {
 // pass feeds Reset().
 func TestScanCountsDistinctChannelFailures(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 
 	var fails []string
@@ -946,7 +946,7 @@ func TestScanCountsDistinctChannelFailures(t *testing.T) {
 // auto-pause heuristic.
 func TestScanTerminalErrorDoesNotCountFailure(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 
 	var fails []string
@@ -982,7 +982,7 @@ func TestScanTerminalErrorDoesNotCountFailure(t *testing.T) {
 // real failure and must not feed FailMonitor.Fail.
 func TestScanPausedErrorDoesNotCountFailure(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 
 	var fails []string
@@ -1019,7 +1019,7 @@ func TestScanPausedErrorDoesNotCountFailure(t *testing.T) {
 // so it must NOT feed FailMonitor.Fail.
 func TestScanErrNoCookieDoesNotCountTowardAutoPause(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 
 	var fails []string
@@ -1052,7 +1052,7 @@ func TestScanErrNoCookieDoesNotCountTowardAutoPause(t *testing.T) {
 
 func TestScanCleanPassResetsFailMonitor(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "v1", Title: "A", DurationSeconds: 600, LiveStatus: "not_live"},
@@ -1085,7 +1085,7 @@ func TestScanCleanPassResetsFailMonitor(t *testing.T) {
 func TestScan_noCookie_skipsScan(t *testing.T) {
 	h := newScanHarness(t)
 	h.cookieStatus = "absent" // harness wires CookieStatus to return this
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "v1", DurationSeconds: 600}})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -1112,7 +1112,7 @@ func TestScan_noCookie_skipsScan(t *testing.T) {
 func TestScan_anonymousAllowed_proceedsWithAbsentCookie(t *testing.T) {
 	h := newScanHarness(t)
 	h.cookieStatus = "absent"
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.lister.set("UC1", []ytdlp.ChannelEntry{{ID: "v1", DurationSeconds: 600, LiveStatus: "not_live"}})
 
 	h.sched = New(Deps{
@@ -1263,7 +1263,7 @@ func (h *scanHarness) terminalSched(reason string) *Scheduler {
 // behind (reason "deleted"), so the automatic action always leaves a trace.
 func TestScan_deletedThreeTimes_autoUnsubscribes(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	// The interlock must be open (healthy cookie, not paused) for this test:
 	// cookie_status defaults to "absent", which would otherwise mask the
@@ -1296,7 +1296,7 @@ func TestScan_deletedThreeTimes_autoUnsubscribes(t *testing.T) {
 // channel must remain subscribed.
 func TestScan_deletedTwice_thenCleanScan_doesNotUnsubscribe(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	if err := h.settings.SetCookie(context.Background(), "", "valid"); err != nil {
 		t.Fatalf("seed cookie status: %v", err)
@@ -1375,7 +1375,7 @@ func TestScan_interlockEngaged_neverUnsubscribes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newScanHarness(t)
-			h.trackAndSubscribe("UC1", false, "")
+			h.addAndSubscribe("UC1", false, "")
 			h.markBaselined("UC1", nil)
 			sub, _ := h.channels.ClaimDue(h.nowStr())
 			if sub == nil {
@@ -1427,7 +1427,7 @@ func TestScan_nonDeletedTerminalReasons_neverCount(t *testing.T) {
 	for _, reason := range reasons {
 		t.Run(reason, func(t *testing.T) {
 			h := newScanHarness(t)
-			h.trackAndSubscribe("UC1", false, "")
+			h.addAndSubscribe("UC1", false, "")
 			h.markBaselined("UC1", nil)
 			// Cookie must be healthy here: the point of this test is that the
 			// reason check alone (not the interlock) keeps a non-deleted
@@ -1458,7 +1458,7 @@ func TestScan_nonDeletedTerminalReasons_neverCount(t *testing.T) {
 }
 
 // TestScan_nonConsecutiveDeleted_resetsAndDoesNotUnsubscribe proves the
-// counter really tracks CONSECUTIVE dead scans, not merely "at least N dead
+// counter really adds CONSECUTIVE dead scans, not merely "at least N dead
 // scans out of the last M". The sequence deleted, deleted, members, deleted,
 // deleted has four "deleted" results total (more than DeadScanThreshold) but
 // never three IN A ROW: the "members" result in the middle is affirmative
@@ -1466,7 +1466,7 @@ func TestScan_nonDeletedTerminalReasons_neverCount(t *testing.T) {
 // and the channel must remain subscribed after all five scans.
 func TestScan_nonConsecutiveDeleted_resetsAndDoesNotUnsubscribe(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	if err := h.settings.SetCookie(context.Background(), "", "valid"); err != nil {
 		t.Fatalf("seed cookie status: %v", err)
@@ -1511,7 +1511,7 @@ func TestScan_nonConsecutiveDeleted_resetsAndDoesNotUnsubscribe(t *testing.T) {
 // today is such a row.
 func TestScan_backfillsPublishedDateOnKnownRows(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	// A pending row written the old way: known to the ledger, no date.
 	if err := h.ledger.Insert(channelvideos.Entry{
@@ -1556,7 +1556,7 @@ func TestScan_backfillsPublishedDateOnKnownRows(t *testing.T) {
 // downgrade the date the Library renders.
 func TestScan_autodownloadDoesNotSeedVideoPublishedAt(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", true /*autodownload*/, "")
+	h.addAndSubscribe("UC1", true /*autodownload*/, "")
 	h.markBaselined("UC1", nil)
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "auto1", DurationSeconds: 600, LiveStatus: "not_live", PublishedAt: "2026-07-18"},
@@ -1603,7 +1603,7 @@ func TestScan_requestedScan_reportsNothingNew(t *testing.T) {
 	// The bug this fixes: a user pressed "Check now", the pass found nothing, and
 	// the silence rule left them with no evidence the check ever happened.
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", []string{"old1"})
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "old1", DurationSeconds: 600, LiveStatus: "not_live"}, // known → nothing new
@@ -1636,7 +1636,7 @@ func TestScan_automaticScan_staysSilentWhenNothingNew(t *testing.T) {
 	// The silence rule itself must survive: an unrequested pass that finds
 	// nothing writes nothing, or the agenda becomes a wall of "0 new".
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", []string{"old1"})
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "old1", DurationSeconds: 600, LiveStatus: "not_live"},
@@ -1654,7 +1654,7 @@ func TestScan_requestedScan_newVideoReportsTheVideoNotAReceipt(t *testing.T) {
 	// A requested pass that DID find something already answers the user with the
 	// normal "N new" row — it must not also emit the nothing-new receipt.
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "newp", DurationSeconds: 600, LiveStatus: "not_live"},
@@ -1678,7 +1678,7 @@ func TestScan_requestedScanFailure_recordsCheckFailedAndClearsMarker(t *testing.
 	// pass would report itself as the answer to a request the user already saw
 	// fail — worse than the silence being fixed.
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.err = errors.New("yt-dlp exploded")
 	h.requestScan("UC1")
@@ -1703,7 +1703,7 @@ func TestScan_requestedScanFailure_recordsCheckFailedAndClearsMarker(t *testing.
 
 func TestScan_automaticFailure_keepsScanFailedWording(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.err = errors.New("yt-dlp exploded")
 
@@ -1721,7 +1721,7 @@ func TestScan_requestedScan_paused_reportsInsteadOfSilence(t *testing.T) {
 	// requested one must still answer, or the user waits on a check that will
 	// never run.
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.err = ytdlp.ErrPaused
 	h.requestScan("UC1")
@@ -1740,7 +1740,7 @@ func TestScan_requestedScan_paused_reportsInsteadOfSilence(t *testing.T) {
 
 func TestScan_automaticScan_paused_staysSilent(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.err = ytdlp.ErrPaused
 
@@ -1756,7 +1756,7 @@ func TestScan_liveEntry_notRecorded_thenPickedUpWhenFinished(t *testing.T) {
 	// The permanent-loss bug: 'seen' is terminal, so a stream snapshotted while
 	// live used to vanish for good — even after it became an ordinary video.
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "stream1", Title: "Launch stream", DurationSeconds: 0, LiveStatus: "is_live"},
@@ -1842,7 +1842,7 @@ func TestScan_requestArrivingMidPassSurvives(t *testing.T) {
 	// must leave both the marker and the due-now schedule alone, so the loop
 	// re-claims the channel and the user still gets their answer.
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", []string{"old1"})
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
 		{ID: "old1", DurationSeconds: 600, LiveStatus: "not_live"},
@@ -1902,7 +1902,7 @@ func TestScan_backCatalogue_isNotNew(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newScanHarness(t)
-			h.trackAndSubscribe("UC1", false, "")
+			h.addAndSubscribe("UC1", false, "")
 			h.markBaselined("UC1", nil)
 			h.lister.setStreams("UC1", []ytdlp.ChannelEntry{{
 				ID: "vod00001", Title: "Stream", DurationSeconds: 7200,
@@ -1925,7 +1925,7 @@ func TestScan_backCatalogue_isNotNew(t *testing.T) {
 // why the gate sits BEFORE the autodownload branch.
 func TestScan_backCatalogue_autodownloadDoesNotDownloadHistory(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", true, "")
+	h.addAndSubscribe("UC1", true, "")
 	h.markBaselined("UC1", nil)
 	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
 		{ID: "oldvod01", DurationSeconds: 7200, LiveStatus: "was_live", PublishedAt: "2018-01-01"},
@@ -1954,7 +1954,7 @@ func TestScan_backCatalogue_autodownloadDoesNotDownloadHistory(t *testing.T) {
 // good once it ended — the exact silent loss #142 was written to prevent.
 func TestScan_backCatalogue_doesNotStrandAnAiringStream(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", nil)
 	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{{
 		ID: "vod00001", Title: "Marathon", DurationSeconds: 0,
@@ -1974,7 +1974,7 @@ func TestScan_backCatalogue_doesNotStrandAnAiringStream(t *testing.T) {
 // branch already owns that case. The gate must not disturb it.
 func TestScan_backCatalogue_firstPassStillBaselines(t *testing.T) {
 	h := newScanHarness(t)
-	h.trackAndSubscribe("UC1", false, "")
+	h.addAndSubscribe("UC1", false, "")
 	h.lister.setStreams("UC1", []ytdlp.ChannelEntry{
 		{ID: "vod00001", DurationSeconds: 7200, LiveStatus: "was_live", PublishedAt: "2019-01-01"},
 	})

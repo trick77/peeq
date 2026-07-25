@@ -118,7 +118,7 @@ func TestActivity_upcomingProjectsPendingAndScheduled(t *testing.T) {
 	if err := ch.Upsert(channels.Channel{ID: "UCx", Name: "Veritasium"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ch.Track("UCx", "2026-01-01 00:00:00"); err != nil {
+	if err := ch.MarkAdded("UCx", "2026-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := ch.Subscribe("UCx", "2026-07-25 12:00:00"); err != nil {

@@ -24,7 +24,7 @@ function makeDetail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     verified: false,
     resolve_ok: true,
     gone: false,
-    tracked: true,
+    added: true,
     archived_count: 0,
     runtime_seconds: 0,
     disk_bytes: 0,

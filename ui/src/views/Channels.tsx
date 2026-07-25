@@ -30,11 +30,12 @@ import { DOT } from "../sep";
 const CHIPS: { id: ChannelFilter; label: string }[] = [
   { id: "subscribed", label: "Subscribed" },
   { id: "all", label: "All" },
-  // The filter id stays "tracked" — it is the API's ?filter= value, and the
-  // store clause is `s.channel_id IS NULL`, i.e. added but NOT subscribed.
-  // "Tracked" read as though it should include subscribed channels too, so
-  // only the label says what the filter actually does.
-  { id: "tracked", label: "Not subscribed" },
+  { id: "notsubscribed", label: "Not subscribed" },
+  // "From downloads" says where these channels came from rather than what
+  // they are not: they were never added, they are only in the list because
+  // the library holds a video downloaded from them. Naming it "Not added"
+  // would sit one chip away from "Not subscribed" and read as the same thing.
+  { id: "downloaded", label: "From downloads" },
   // The filter id stays "autodownload" — it is the API's ?filter= value and
   // the subscriptions column name. Only the label is user-facing.
   { id: "autodownload", label: "Auto-add" },
@@ -70,12 +71,26 @@ export const CHANNEL_SORTS: { id: ChannelSort; label: string }[] = [
   { id: "most_pending", label: "Most pending" },
 ];
 
+// displayName is the text a row actually shows, falling back through the
+// handle to the raw UCID. A channel whose metadata has never resolved has an
+// empty name, and the name is the row's only text — leaving it empty renders a
+// zero-width clickable heading, an empty accessible name on the ⋮ menu, and an
+// empty delete dialog. Rare for added channels; common for the "From
+// downloads" ones until the metadata backlog reaches them.
+//
+// Module scope, not inside the component, because compareChannels needs it
+// too: sorting on the raw name would park every unresolved channel at the top
+// of Name A–Z under a label the list never displays.
+export function displayName(c: Channel): string {
+  return c.name || c.handle || c.id;
+}
+
 // compareChannels orders two rows for the given sort. Every ordering falls
 // back to name so the list is stable when the primary key ties — without it,
 // the fifty channels that share a zero video count would shuffle on each
 // render.
 function compareChannels(a: Channel, b: Channel, sort: ChannelSort): number {
-  const byName = a.name.localeCompare(b.name, undefined, {
+  const byName = displayName(a).localeCompare(displayName(b), undefined, {
     sensitivity: "base",
   });
   switch (sort) {
@@ -92,7 +107,9 @@ function compareChannels(a: Channel, b: Channel, sort: ChannelSort): number {
     case "most_videos":
       return b.downloaded_count - a.downloaded_count || byName;
     case "recently_added":
-      return (b.added_at ?? "").localeCompare(a.added_at ?? "") || byName;
+      return (
+        (b.first_seen_at ?? "").localeCompare(a.first_seen_at ?? "") || byName
+      );
     case "most_pending":
       return b.pending_count - a.pending_count || byName;
   }
@@ -405,10 +422,10 @@ export function Channels({
                       className="chan-link"
                       onClick={() => onOpenChannel(c.id)}
                     >
-                      {c.name}
+                      {displayName(c)}
                     </button>
                   ) : (
-                    c.name
+                    displayName(c)
                   )}
                 </h3>
                 {/* Auto-add lives on the channel's own Settings tab, so without
@@ -455,7 +472,7 @@ export function Channels({
                 />
               </button>
               <RowMenu
-                label={`Actions for ${c.name}`}
+                label={`Actions for ${displayName(c)}`}
                 actions={[
                   ...(onOpenChannel
                     ? [
@@ -529,7 +546,7 @@ export function Channels({
       >
         {pendingDelete ? (
           <ChannelDeleteWarning
-            name={pendingDelete.name}
+            name={displayName(pendingDelete)}
             count={pendingDelete.downloaded_count}
           />
         ) : null}

@@ -39,7 +39,7 @@ type channelsPutRequest struct {
 	FormatOverride *string `json:"format_override"`
 }
 
-// channelItem is the JSON shape returned by GET /api/channels: one tracked
+// channelItem is the JSON shape returned by GET /api/channels: one listed
 // channel, joined with its (optional) subscription state and video counts.
 type channelItem struct {
 	ID              string `json:"id"`
@@ -63,10 +63,20 @@ type channelItem struct {
 	// never had a video discovered.
 	Dormant     bool   `json:"dormant"`
 	LastVideoAt string `json:"last_video_at,omitempty"`
-	// AddedAt is when the channel row was first created — what the Channels
+	// FirstSeenAt is when the channel row was first created — what the Channels
 	// list's "Recently added" ordering sorts on. channels.Store.List already
 	// selects and scans it, so this only stops dropping it before JSON.
-	AddedAt string `json:"added_at,omitempty"`
+	//
+	// Deliberately NOT the added_at column, despite the sort's label: a channel
+	// listed only because a video was downloaded from it was never added, and
+	// sorting on added_at would collapse every one of those to the bottom under
+	// an empty value. For a channel the user did add the two are the same
+	// instant anyway — the row is created and stamped in one request.
+	//
+	// The distinct name also keeps this apart from channelDetail.AddedAt, which
+	// IS the user-added timestamp. One JSON key meaning two different things
+	// across the two DTOs would be a trap.
+	FirstSeenAt string `json:"first_seen_at,omitempty"`
 }
 
 // autoUnsubscribedItem is the JSON shape returned by GET
@@ -100,7 +110,7 @@ func channelHandleFromURL(rawURL string) string {
 	return "@" + rest
 }
 
-// handleChannelsPost tracks a channel (and optionally subscribes it). Flow:
+// handleChannelsPost adds a channel (and optionally subscribes it). Flow:
 // canonicalize the pasted url (rejecting anything that is not a channel
 // link) → resolve the authoritative UCID via yt-dlp (surfacing a missing/
 // invalid cookie as 409) → upsert the channel row → optionally subscribe.
@@ -140,7 +150,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		handle = info.Handle
 	}
 	// Images are best-effort: a channel with no banner, or a transient fetch
-	// failure, must not prevent the channel from being tracked.
+	// failure, must not prevent the channel from being added.
 	avatarPath, err := media.FetchImage(r.Context(), info.AvatarURL, s.mediaDir, ".channels/"+ucid+"/avatar")
 	if err != nil {
 		slog.Warn("channel avatar fetch failed", "channel_id", ucid, "err", err)
@@ -164,7 +174,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	if err := s.channels.Track(ucid, now); err != nil {
+	if err := s.channels.MarkAdded(ucid, now); err != nil {
 		serverError(w, r, err, "adding the channel failed")
 		return
 	}
@@ -203,9 +213,10 @@ func (s *server) channelSubscribed(channelID string) (bool, error) {
 	return false, nil
 }
 
-// handleChannelsList returns tracked channels, optionally narrowed by the
-// ?filter= query param ("all" default, "subscribed", "tracked", or
-// "autodownload").
+// handleChannelsList returns the channels worth showing, optionally narrowed
+// by the ?filter= query param: "all" (default), "subscribed",
+// "notsubscribed", "downloaded" or "autodownload". See channels.Store.List
+// for what each one means.
 func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
@@ -216,7 +227,7 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 		filter = "all"
 	}
 	switch filter {
-	case "all", "subscribed", "tracked", "autodownload":
+	case "all", "subscribed", "notsubscribed", "downloaded", "autodownload":
 		// valid
 	default:
 		writeJSONError(w, http.StatusBadRequest, "invalid filter: "+filter)
@@ -242,7 +253,7 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 			HasBanner:       it.BannerPath != "",
 			Dormant:         it.Dormant,
 			LastVideoAt:     it.LastVideoAt,
-			AddedAt:         it.AddedAt,
+			FirstSeenAt:     it.FirstSeenAt,
 		})
 	}
 	writeJSON(w, out)
@@ -274,7 +285,7 @@ func (s *server) handleChannelsAutoUnsubscribedList(w http.ResponseWriter, r *ht
 }
 
 // channelDetail is the JSON shape returned by GET /api/channels/{id}. It
-// covers both a tracked channel and one the user has merely visited: Tracked
+// covers both an added channel and one the user has merely visited: Added
 // and Subscribed are the flags the page branches on, and the subscription
 // fields are zero when Subscribed is false.
 type channelDetail struct {
@@ -302,8 +313,8 @@ type channelDetail struct {
 	// The channel's videos are untouched by it.
 	Gone bool `json:"gone"`
 
-	Tracked   bool   `json:"tracked"`
-	TrackedAt string `json:"tracked_at,omitempty"`
+	Added   bool   `json:"added"`
+	AddedAt string `json:"added_at,omitempty"`
 
 	ArchivedCount     int    `json:"archived_count"`
 	RuntimeSeconds    int64  `json:"runtime_seconds"`
@@ -319,8 +330,8 @@ type channelDetail struct {
 }
 
 // handleChannelDetail returns the data behind the channel page: identity,
-// the four header stats, and (if tracked) the subscription/schedule state.
-// It serves both a tracked channel AND one the user never tracked but whose
+// the four header stats, and (if added) the subscription/schedule state.
+// It serves both a added channel AND one the user never added but whose
 // videos live in the library (added by URL) — videos.channel_id has no
 // foreign key to channels, so that case is real. 404 is reserved for an id
 // that names nothing at all: neither a cached channels row nor any video.
@@ -383,13 +394,13 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		out.Verified = c.Verified
 		out.ResolvedAt = c.ResolvedAt
 		out.ResolveOk = c.ResolveOk
-		out.Tracked = c.TrackedAt != ""
-		out.TrackedAt = c.TrackedAt
+		out.Added = c.AddedAt != ""
+		out.AddedAt = c.AddedAt
 	}
 
-	// "Gone" is asked for regardless of whether the channel is still tracked
+	// "Gone" is asked for regardless of whether the channel is still added
 	// or subscribed: auto-unsubscribe REMOVES the subscription row, so by the
-	// time a channel is gone it is exactly the kind of channel the tracked/
+	// time a channel is gone it is exactly the kind of channel the added/
 	// subscribed branches below would skip.
 	au, aerr := s.channels.AutoUnsubscribeFor(id)
 	if aerr != nil {
@@ -398,7 +409,7 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Gone = au != nil && au.Reason == channels.ReasonDeleted
 
-	if out.Tracked {
+	if out.Added {
 		sub, serr := s.channels.GetSubscription(id)
 		if serr != nil {
 			serverError(w, r, serr, "load subscription failed")
@@ -477,7 +488,7 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 // what makes this endpoint necessary: it treats a FAILED resolve as final, so
 // a channel whose one attempt failed (no cookie at the time, a network blip
 // during an import) keeps its blank avatar, banner and description forever with
-// no way back — and for an UNSUBSCRIBED tracked channel there is no weekly
+// no way back — and for an UNSUBSCRIBED added channel there is no weekly
 // rotation to retry it either. This is that way back, and it is deliberately
 // manual: nothing re-resolves a failed unsubscribed channel on its own (#106).
 //
@@ -541,7 +552,7 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 
 // handleChannelsDismissDormant suppresses a channel's dormancy flag until it
 // next posts and then goes quiet again. 404s for a channel with no
-// subscription (unknown, or tracked-but-unsubscribed) rather than the
+// subscription (unknown, or added-but-unsubscribed) rather than the
 // silent no-op DismissDormant used to return — a 200 there would tell the
 // caller its dismissal took effect when nothing was flagged in the first
 // place (Task 2 review finding).
@@ -568,7 +579,7 @@ func (s *server) handleChannelsDismissDormant(w http.ResponseWriter, r *http.Req
 // clear the auto-unsubscribe record, THEN subscribe with next_scan_at = now
 // so the channel is picked up on the next tick rather than waiting a full
 // scan interval. The order matters: a crash between the two steps leaves the
-// channel merely tracked, with its auto-unsubscribe record already cleared —
+// channel merely added, with its auto-unsubscribe record already cleared —
 // a clean state a retried resubscribe finishes correctly. The reverse order
 // would risk the opposite: a channel that looks subscribed again while it
 // still carries a stale auto-unsubscribe record, which is the confusing
@@ -597,11 +608,11 @@ func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Reques
 		serverError(w, r, err, "get channel failed")
 		return
 	}
-	// A row in channels no longer means the user tracks the channel — it may
+	// A row in channels no longer means the user adds the channel — it may
 	// be a cache-only row written when the channel page was merely visited.
 	// Resubscribing one would conjure a subscription for a channel the user
-	// never added, so tracked_at is what decides.
-	if c == nil || c.TrackedAt == "" {
+	// never added, so added_at is what decides.
+	if c == nil || c.AddedAt == "" {
 		writeJSONError(w, http.StatusNotFound, "channel not added")
 		return
 	}
@@ -627,7 +638,7 @@ func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Reques
 
 // handleChannelsPut updates a subscribed channel's autodownload flag and/or
 // format override. Only subscribed channels have a config to update; a
-// merely-tracked channel yields a clean 400 rather than a silent no-op.
+// merely-added channel yields a clean 400 rather than a silent no-op.
 func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
@@ -652,8 +663,16 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"id": id, "autodownload": autodownload, "format_override": formatOverride})
 }
 
-// handleChannelsSubscribe subscribes an already-tracked channel, scheduling
-// its first scan immediately.
+// handleChannelsSubscribe subscribes a channel, scheduling its first scan
+// immediately.
+//
+// A channel listed only because the library holds a downloaded video from it
+// has never been added, and subscriptions.channel_id references channels.id
+// with "subscribed implies added" as the standing invariant. Rather than
+// 404ing the star on those rows, subscribing adds the channel first — one
+// request, so there is no window where the add succeeded and the subscribe
+// did not. Genuine cache-only rows (visited, nothing downloaded) still 404:
+// nothing about a page visit says the user wants the channel.
 func (s *server) handleChannelsSubscribe(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
@@ -665,11 +684,26 @@ func (s *server) handleChannelsSubscribe(w http.ResponseWriter, r *http.Request)
 		serverError(w, r, err, "get channel failed")
 		return
 	}
-	if c == nil || c.TrackedAt == "" {
+	if c == nil {
 		writeJSONError(w, http.StatusNotFound, "channel not added")
 		return
 	}
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	if c.AddedAt == "" {
+		hasDownloads, err := s.channels.HasDownloads(id)
+		if err != nil {
+			serverError(w, r, err, "get channel failed")
+			return
+		}
+		if !hasDownloads {
+			writeJSONError(w, http.StatusNotFound, "channel not added")
+			return
+		}
+		if err := s.channels.MarkAdded(id, now); err != nil {
+			serverError(w, r, err, "adding the channel failed")
+			return
+		}
+	}
 	if err := s.channels.Subscribe(id, now); err != nil {
 		serverError(w, r, err, "subscribe failed")
 		return
@@ -678,7 +712,7 @@ func (s *server) handleChannelsSubscribe(w http.ResponseWriter, r *http.Request)
 }
 
 // handleChannelsUnsubscribe removes a channel's subscription, leaving it
-// tracked. 404s if the channel was never subscribed.
+// added. 404s if the channel was never subscribed.
 func (s *server) handleChannelsUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
@@ -774,16 +808,32 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	// A cache-only row (visited, never tracked) must not be deletable:
-	// DeleteCascade destroys every video belonging to the channel.
+	// A cache-only row (visited, never added, nothing downloaded) must not be
+	// deletable: DeleteCascade destroys every video belonging to the channel,
+	// and that row is one the user has no idea exists.
+	//
+	// A download-only row is different — it lists under "From downloads" with
+	// its own ⋮ menu, so deleting it is a deliberate act on something visible,
+	// and refusing would leave it the one row in the list you cannot remove.
 	c, err := s.channels.Get(id)
 	if err != nil {
 		serverError(w, r, err, "delete failed")
 		return
 	}
-	if c == nil || c.TrackedAt == "" {
+	if c == nil {
 		writeJSONError(w, http.StatusNotFound, "channel not added")
 		return
+	}
+	if c.AddedAt == "" {
+		hasDownloads, herr := s.channels.HasDownloads(id)
+		if herr != nil {
+			serverError(w, r, herr, "delete failed")
+			return
+		}
+		if !hasDownloads {
+			writeJSONError(w, http.StatusNotFound, "channel not added")
+			return
+		}
 	}
 	// 1. Read refs BEFORE deleting (we need media paths after the rows are gone).
 	refs, rerr := s.channels.VideoRefs(id)

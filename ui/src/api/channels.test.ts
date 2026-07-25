@@ -100,19 +100,16 @@ describe("channels api", () => {
   });
 
   it("getChannel GETs /api/channels/{id} and returns the detail body", async () => {
-    const f = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(
-          JSON.stringify({ id: "UC1", name: "One", tracked: true }),
-          { status: 200 },
-        ),
-      );
+    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "UC1", name: "One", added: true }), {
+        status: 200,
+      }),
+    );
     const detail = await getChannel("UC1");
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/channels/UC1");
     expect(init?.method ?? "GET").toBe("GET");
-    expect(detail).toEqual({ id: "UC1", name: "One", tracked: true });
+    expect(detail).toEqual({ id: "UC1", name: "One", added: true });
   });
 
   it("scanChannel POSTs to /api/channels/{id}/scan and returns the result", async () => {

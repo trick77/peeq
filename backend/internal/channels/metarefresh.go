@@ -57,7 +57,7 @@ const scanQuietPredicate = `
 // exists at all) and the query has already matched it — fetching it again by
 // id would be a second round trip for a row we are holding.
 //
-// Only subscribed channels are in this rotation. A tracked-but-unsubscribed
+// Only subscribed channels are in this rotation. A added-but-unsubscribed
 // channel has no subscriptions row and so no schedule — ClaimUnresolved is
 // what covers it, once.
 func (s *Store) ClaimDueMetadata(now string) (*Channel, error) {
@@ -77,7 +77,7 @@ LIMIT 1`, now, now, now, now)
 	return c, nil
 }
 
-// ClaimUnresolved returns the longest-tracked channel peeq has NEVER read from
+// ClaimUnresolved returns the longest-added channel peeq has NEVER read from
 // YouTube (resolved_at IS NULL), or (nil, nil) if there is none. The
 // same ScanQuietWindow applies, for the same reason — most of these channels
 // are unsubscribed and have no scan to collide with at all, but the ones that
@@ -86,7 +86,7 @@ LIMIT 1`, now, now, now, now)
 // This is the never-read backlog, not the weekly rotation, and it exists
 // because "resolve on first page visit" is not good enough for a channel that
 // has no name, avatar, banner or subscriber count at all: a channel the user
-// just tracked, or one of the hundreds a TubeArchivist import created, should
+// just added, or one of the hundreds a TubeArchivist import created, should
 // fill itself in without waiting for someone to open its page.
 //
 // It is self-limiting without any extra bookkeeping: every resolve attempt
@@ -96,17 +96,27 @@ LIMIT 1`, now, now, now, now)
 // so would recreate exactly the retry-forever loop 0001's resolved_at rule
 // exists to prevent.
 //
-// Untracked cache-only rows are excluded: they exist for any channel peeq has
+// The backlog covers exactly the channels List shows: added ones, plus the
+// ones present only because the library holds a downloaded video from them.
+// The latter have to be in it — they list under "From downloads" with nothing
+// but whatever name the video row carried, so without a resolve they would sit
+// there behind a placeholder gradient forever.
+//
+// Purely cache-only rows stay excluded: they exist for any channel peeq has
 // ever glanced at, and reading every one of them from YouTube is a lot of
 // requests for channels the user never asked about.
+//
+// Ordering falls back to first_seen_at for the download-only rows, which have
+// no added_at — oldest first either way, so nothing starves.
 func (s *Store) ClaimUnresolved(now string) (*Channel, error) {
 	row := s.db.QueryRowContext(context.Background(), `
 SELECT `+channelColumns+`
 FROM channels c
 LEFT JOIN subscriptions s ON s.channel_id = c.id
-WHERE c.tracked_at IS NOT NULL AND c.resolved_at IS NULL
+WHERE (c.added_at IS NOT NULL OR `+hasDownloadsPredicate+`)
+  AND c.resolved_at IS NULL
   AND `+scanQuietPredicate+`
-ORDER BY c.tracked_at ASC
+ORDER BY COALESCE(c.added_at, c.first_seen_at) ASC
 LIMIT 1`, now, now, now)
 
 	c, err := scanChannel(row)
@@ -156,7 +166,7 @@ func (s *Store) MarkResolveAttemptedIfUnset(channelID, at string) error {
 //
 // A no-op for an unsubscribed channel (no subscriptions row to update), which
 // is the correct outcome for a ClaimUnresolved backlog channel that is merely
-// tracked: it has no rotation to be scheduled into.
+// added: it has no rotation to be scheduled into.
 func (s *Store) MarkMetaRefreshed(channelID, nextAt string) error {
 	_, err := s.db.ExecContext(context.Background(),
 		`UPDATE subscriptions SET next_meta_refresh_at = ? WHERE channel_id = ?`,

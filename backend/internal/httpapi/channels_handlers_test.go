@@ -118,27 +118,27 @@ func getJSON(t *testing.T, h http.Handler, path string) string {
 	return rec.Body.String()
 }
 
-// TestChannelsPost_tracksAndSubscribes asserts POST /api/channels tracks the
+// TestChannelsPost_addsAndSubscribes asserts POST /api/channels adds the
 // resolved channel and, when subscribe:true is passed, also subscribes it.
-func TestChannelsPost_tracksAndSubscribes(t *testing.T) {
+func TestChannelsPost_addsAndSubscribes(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCxyz", Name: "My Channel"}})
 	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@x", "subscribe": true})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
-	// It is now tracked AND subscribed.
+	// It is now added AND subscribed.
 	list := getJSON(t, h, "/api/channels?filter=subscribed")
 	if !strings.Contains(list, "UCxyz") {
 		t.Fatalf("subscribed list missing channel: %s", list)
 	}
 }
 
-// TestChannelsPost_imageFetchFailure_stillTracks asserts that a channel
+// TestChannelsPost_imageFetchFailure_stillAdds asserts that a channel
 // whose avatar/banner cannot be fetched (here, no MediaDir is configured, so
-// media.FetchImage always errors) is still tracked — a broken or missing
+// media.FetchImage always errors) is still added — a broken or missing
 // image must never block adding the channel, only leave the image paths
 // empty.
-func TestChannelsPost_imageFetchFailure_stillTracks(t *testing.T) {
+func TestChannelsPost_imageFetchFailure_stillAdds(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{
 		UCID:      "UCimg",
 		Name:      "Image Channel",
@@ -149,9 +149,9 @@ func TestChannelsPost_imageFetchFailure_stillTracks(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
-	list := getJSON(t, h, "/api/channels?filter=tracked")
+	list := getJSON(t, h, "/api/channels?filter=notsubscribed")
 	if !strings.Contains(list, "UCimg") {
-		t.Fatalf("tracked list missing channel despite image fetch failure: %s", list)
+		t.Fatalf("added list missing channel despite image fetch failure: %s", list)
 	}
 }
 
@@ -165,22 +165,22 @@ func TestChannelsPost_noCookie_409(t *testing.T) {
 	}
 }
 
-// TestChannelsPost_trackOnly_notSubscribed asserts subscribe:false (or
-// omitted) only tracks the channel — it does not appear in the subscribed
-// filter, only in tracked/all.
-func TestChannelsPost_trackOnly_notSubscribed(t *testing.T) {
-	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCtrackonly", Name: "Track Only"}})
-	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@trackonly"})
+// TestChannelsPost_addOnly_notSubscribed asserts subscribe:false (or
+// omitted) only adds the channel — it does not appear in the subscribed
+// filter, only in added/all.
+func TestChannelsPost_addOnly_notSubscribed(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCaddonly", Name: "Add Only"}})
+	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@addonly"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
 	subscribed := getJSON(t, h, "/api/channels?filter=subscribed")
-	if strings.Contains(subscribed, "UCtrackonly") {
-		t.Fatalf("track-only channel must not appear in subscribed filter: %s", subscribed)
+	if strings.Contains(subscribed, "UCaddonly") {
+		t.Fatalf("add-only channel must not appear in subscribed filter: %s", subscribed)
 	}
-	tracked := getJSON(t, h, "/api/channels?filter=tracked")
-	if !strings.Contains(tracked, "UCtrackonly") {
-		t.Fatalf("tracked filter missing channel: %s", tracked)
+	added := getJSON(t, h, "/api/channels?filter=notsubscribed")
+	if !strings.Contains(added, "UCaddonly") {
+		t.Fatalf("added filter missing channel: %s", added)
 	}
 }
 
@@ -286,7 +286,7 @@ func TestChannelsList_autodownloadFilter(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCauto", Name: "Auto"}})
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@auto", "subscribe": true}); rr.Code != http.StatusCreated {
-		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("add status = %d body=%s", rr.Code, rr.Body.String())
 	}
 
 	// Subscribed but autodownload still off: must not be listed.
@@ -303,12 +303,12 @@ func TestChannelsList_autodownloadFilter(t *testing.T) {
 }
 
 // TestChannelsPut_notSubscribed_400 asserts updating config on a channel
-// that is tracked but not subscribed is a clean 400, not a silent no-op.
+// that is added but not subscribed is a clean 400, not a silent no-op.
 func TestChannelsPut_notSubscribed_400(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCnotsub", Name: "Not Sub"}})
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@notsub"}); rr.Code != http.StatusCreated {
-		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("add status = %d body=%s", rr.Code, rr.Body.String())
 	}
 	autodl := true
 	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UCnotsub", map[string]any{"autodownload": autodl})
@@ -318,12 +318,12 @@ func TestChannelsPut_notSubscribed_400(t *testing.T) {
 }
 
 // TestChannelsPutSubscribeUnsubscribe covers the full config + subscribe/
-// unsubscribe lifecycle for a tracked channel.
+// unsubscribe lifecycle for a added channel.
 func TestChannelsPutSubscribeUnsubscribe(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UClifecycle", Name: "Lifecycle"}})
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@lifecycle"}); rr.Code != http.StatusCreated {
-		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("add status = %d body=%s", rr.Code, rr.Body.String())
 	}
 
 	// Subscribe.
@@ -355,9 +355,9 @@ func TestChannelsPutSubscribeUnsubscribe(t *testing.T) {
 	if strings.Contains(afterUnsub, "UClifecycle") {
 		t.Fatalf("channel still subscribed after unsubscribe: %s", afterUnsub)
 	}
-	tracked := getJSON(t, h, "/api/channels?filter=tracked")
-	if !strings.Contains(tracked, "UClifecycle") {
-		t.Fatalf("channel should remain tracked after unsubscribe: %s", tracked)
+	added := getJSON(t, h, "/api/channels?filter=notsubscribed")
+	if !strings.Contains(added, "UClifecycle") {
+		t.Fatalf("channel should remain added after unsubscribe: %s", added)
 	}
 }
 
@@ -370,7 +370,7 @@ func TestChannelsPut_partialUpdate_preservesOtherField(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCpartial", Name: "Partial"}})
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@partial", "subscribe": true}); rr.Code != http.StatusCreated {
-		t.Fatalf("track+subscribe status = %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("add+subscribe status = %d body=%s", rr.Code, rr.Body.String())
 	}
 
 	// Seed both fields with a full PUT.
@@ -419,17 +419,17 @@ func TestChannels_requireAuth(t *testing.T) {
 	}
 }
 
-// TestChannelDetail_untrackedChannel_200 asserts a channel that exists only
+// TestChannelDetail_notAddedChannel_200 asserts a channel that exists only
 // because the user downloaded one of its videos by URL still has a page.
-// This is the whole point of splitting the cache from the tracking list.
-func TestChannelDetail_untrackedChannel_200(t *testing.T) {
+// This is the whole point of splitting the cache from the adding list.
+func TestChannelDetail_notAddedChannel_200(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{})
 	h := New(deps)
 	seedVideoRow(t, deps, "v1", "UCloose", "Deep Field Radio")
 
 	body := getJSON(t, h, "/api/channels/UCloose")
-	if !strings.Contains(body, `"tracked":false`) {
-		t.Fatalf("want tracked:false, got %s", body)
+	if !strings.Contains(body, `"added":false`) {
+		t.Fatalf("want added:false, got %s", body)
 	}
 	if !strings.Contains(body, "Deep Field Radio") {
 		t.Fatalf("want the channel name from its videos, got %s", body)
@@ -545,7 +545,7 @@ func TestChannelDetail_statsError_500(t *testing.T) {
 }
 
 // TestChannelDetail_getSubscriptionError_500 asserts a subscription lookup
-// failure for a TRACKED channel is a 500. The subscriptions table itself
+// failure for an ADDED channel is a 500. The subscriptions table itself
 // stays present (Backoff-style trigger tests exist elsewhere for that); here
 // dropping it entirely is fine because nothing earlier in the handler reads
 // it.
@@ -568,8 +568,8 @@ func TestChannelDetail_getSubscriptionError_500(t *testing.T) {
 }
 
 // TestChannelDetail_listPendingError_500 asserts a pending-ledger lookup
-// failure for a tracked channel is a 500. GetSubscription must still
-// succeed (sub can legitimately be nil — tracked but not subscribed), so
+// failure for a added channel is a 500. GetSubscription must still
+// succeed (sub can legitimately be nil — added but not subscribed), so
 // only the channel_videos table is dropped.
 func TestChannelDetail_listPendingError_500(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "S"}})
@@ -589,19 +589,19 @@ func TestChannelDetail_listPendingError_500(t *testing.T) {
 	}
 }
 
-// TestChannelDetail_untrackedChannel_onlyQueuedVideos_200 asserts the page
+// TestChannelDetail_notAddedChannel_onlyQueuedVideos_200 asserts the page
 // exists for a channel whose videos have not finished downloading. The stats
 // count only downloaded videos, so archived_count is 0 here — but the channel
 // is plainly real, and 404ing it would make the page flap to 200 the moment
 // the download completed.
-func TestChannelDetail_untrackedChannel_onlyQueuedVideos_200(t *testing.T) {
+func TestChannelDetail_notAddedChannel_onlyQueuedVideos_200(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{})
 	h := New(deps)
 	seedVideoRowFull(t, deps, seedVideo{ID: "v1", ChannelID: "UCq", ChannelName: "Queued Channel", Status: "queued"})
 
 	body := getJSON(t, h, "/api/channels/UCq")
-	if !strings.Contains(body, `"tracked":false`) {
-		t.Fatalf("want tracked:false, got %s", body)
+	if !strings.Contains(body, `"added":false`) {
+		t.Fatalf("want added:false, got %s", body)
 	}
 	if !strings.Contains(body, `"archived_count":0`) {
 		t.Fatalf("want archived_count 0, got %s", body)
@@ -622,7 +622,7 @@ func TestChannelDetail_subscribed_includesSchedule(t *testing.T) {
 	}
 
 	body := getJSON(t, h, "/api/channels/UCs")
-	for _, want := range []string{`"tracked":true`, `"subscribed":true`, `"next_scan_at"`} {
+	for _, want := range []string{`"added":true`, `"subscribed":true`, `"next_scan_at"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("want %s in %s", want, body)
 		}
@@ -656,17 +656,17 @@ func seedVideoRow(t *testing.T, deps Deps, id, channelID, channelName string) {
 	seedVideoRowFull(t, deps, seedVideo{ID: id, ChannelID: channelID, ChannelName: channelName, Status: "downloaded"})
 }
 
-// TestDownloadsPost_doesNotTrackChannel asserts adding a single video via
-// POST /api/downloads leaves the Channels view untouched. Tracking is an
+// TestDownloadsPost_doesNotAddChannel asserts adding a single video via
+// POST /api/downloads leaves the Channels view untouched. Being added is an
 // explicit action on the Channels page; grabbing one video must not
 // silently subscribe the user to its channel.
-func TestDownloadsPost_doesNotTrackChannel(t *testing.T) {
+func TestDownloadsPost_doesNotAddChannel(t *testing.T) {
 	db := openTestDB(t)
 	sessions := auth.NewSessionStore(db, false)
 	users := auth.NewUserStore(db)
 	runner := &fakeDownloadsRunner{meta: &ytdlp.Meta{
 		ID:      "vid00000001",
-		Title:   "Auto Tracked Video",
+		Title:   "Auto Added Video",
 		Channel: "Auto",
 		// Video ids must be exactly 11 chars per ytdlp.Canonicalize; a
 		// real channel_id from yt-dlp always has a "UC" prefix.
@@ -695,9 +695,9 @@ func TestDownloadsPost_doesNotTrackChannel(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	list := getJSON(t, h, "/api/channels?filter=tracked")
+	list := getJSON(t, h, "/api/channels?filter=notsubscribed")
 	if strings.Contains(list, "UCauto") {
-		t.Fatalf("channel was tracked by a plain video download: %s", list)
+		t.Fatalf("channel was added by a plain video download: %s", list)
 	}
 }
 
@@ -712,7 +712,7 @@ type pendingTestHarness struct {
 	jobs     *jobs.Store
 }
 
-// seedChannel tracks id as a bare channel row, satisfying channel_videos'
+// seedChannel adds id as a bare channel row, satisfying channel_videos'
 // foreign key on channel_id before a ledger entry referencing it is
 // inserted.
 func (h *pendingTestHarness) seedChannel(id string) {
@@ -798,7 +798,7 @@ func (h *channelsDeleteHarness) seedChannel(id string) {
 		panic(err)
 	}
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	if err := h.channels.Track(id, now); err != nil {
+	if err := h.channels.MarkAdded(id, now); err != nil {
 		panic(err)
 	}
 }
@@ -871,19 +871,23 @@ func doDelete(t *testing.T, h http.Handler, path string) *httptest.ResponseRecor
 }
 
 // TestChannelsDelete_cacheOnlyRow_404 asserts a channel that exists only as a
-// metadata cache entry cannot be deleted. DeleteCascade destroys every video
-// belonging to a channel, including favorited ones — reaching it for a
-// channel the user never tracked would be data loss from a page they merely
-// visited. A video is seeded up front so this test actually catches that
-// data loss, rather than merely observing the 404 and the (possibly already
-// emptied) channel row.
+// metadata cache entry — nothing downloaded from it — cannot be deleted.
+// DeleteCascade destroys every video belonging to a channel, including
+// favorited ones, and such a row never appears in the Channels list at all, so
+// a delete reaching it could only ever be a mistake.
+//
+// A queued video is seeded on purpose: the guard asks whether the channel has
+// a DOWNLOADED video, and a row that merely exists in videos must not be
+// enough to unlock the delete.
 func TestChannelsDelete_cacheOnlyRow_404(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}})
 	h := New(deps)
 	if err := deps.Channels.Upsert(channels.Channel{ID: "UCcache", Name: "Cache Only"}); err != nil {
 		t.Fatalf("seed cache row: %v", err)
 	}
-	seedDownloadedVideo(deps.Videos, "UCcache", "v1", "/tmp/does-not-matter.mp4")
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", ChannelID: "UCcache", Status: "queued"}); err != nil {
+		t.Fatalf("seed queued video: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/channels/UCcache", nil)
 	req.AddCookie(loginAndGetCookie(t, h))
@@ -909,9 +913,41 @@ func TestChannelsDelete_cacheOnlyRow_404(t *testing.T) {
 	}
 }
 
+// TestChannelsDelete_downloadOnlyRow_deletes is the other half of the guard:
+// a channel the user never added but does hold a downloaded video from lists
+// under "From downloads", ⋮ menu and all, so its Delete has to work. Refusing
+// would leave it the one row in the list that cannot be removed.
+func TestChannelsDelete_downloadOnlyRow_deletes(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}})
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCdl", Name: "From A Download"}); err != nil {
+		t.Fatalf("seed cache row: %v", err)
+	}
+	seedDownloadedVideo(deps.Videos, "UCdl", "v1", "/tmp/does-not-matter.mp4")
+
+	rec := doDelete(t, h, "/api/channels/UCdl")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	c, err := deps.Channels.Get("UCdl")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c != nil {
+		t.Fatal("delete left the channel row behind")
+	}
+	v, err := deps.Videos.Get("v1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v != nil {
+		t.Fatal("delete left the channel's video behind")
+	}
+}
+
 // TestChannelsSubscribe_cacheOnlyRow_404 asserts subscribing requires an
-// explicitly tracked channel — a cache row is not enough, or visiting a
-// channel page would make it subscribable without ever tracking it.
+// explicitly added channel — a cache row is not enough, or visiting a
+// channel page would make it subscribable without ever adding it.
 func TestChannelsSubscribe_cacheOnlyRow_404(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}})
 	h := New(deps)
@@ -925,8 +961,50 @@ func TestChannelsSubscribe_cacheOnlyRow_404(t *testing.T) {
 	}
 }
 
+// TestChannelsSubscribe_downloadOnlyRow_addsFirst asserts the star on a "From
+// downloads" row works in one click: the channel was never added, but it is
+// visible and holds a downloaded video, so subscribing adds it and then
+// subscribes rather than 404ing. Subscriptions reference channels.id with
+// "subscribed implies added" as the standing invariant, so the add is not
+// optional — it is what keeps that invariant true.
+func TestChannelsSubscribe_downloadOnlyRow_addsFirst(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCx", Name: "X"}})
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCdl", Name: "From A Download"}); err != nil {
+		t.Fatalf("seed cache row: %v", err)
+	}
+	seedDownloadedVideo(deps.Videos, "UCdl", "v1", "/tmp/does-not-matter.mp4")
+
+	rec := postJSON(t, h, "/api/channels/UCdl/subscribe", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	c, err := deps.Channels.Get("UCdl")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c == nil || c.AddedAt == "" {
+		t.Fatalf("subscribe did not add the channel: %+v", c)
+	}
+	sub, err := deps.Channels.GetSubscription("UCdl")
+	if err != nil {
+		t.Fatalf("get subscription: %v", err)
+	}
+	if sub == nil {
+		t.Fatal("subscribe created no subscription")
+	}
+	// It has left the "From downloads" pill for good — added_at is set now.
+	items, err := deps.Channels.List("downloaded")
+	if err != nil {
+		t.Fatalf("list downloaded: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("channel still in the downloaded filter: %+v", items)
+	}
+}
+
 // TestChannelsResubscribe_cacheOnlyRow_404 asserts resubscribe, like
-// subscribe, requires an explicitly tracked channel. A cache row is written
+// subscribe, requires an explicitly added channel. A cache row is written
 // merely by visiting a channel page, so accepting one here would conjure a
 // subscription for a channel the user never added.
 func TestChannelsResubscribe_cacheOnlyRow_404(t *testing.T) {
@@ -1243,13 +1321,13 @@ func TestChannelDetail_resolveFailure_cacheOnlyRow_upsertError(t *testing.T) {
 	}
 }
 
-// TestChannelDetail_resolveFailure_trackedRow_markAttemptedError asserts
+// TestChannelDetail_resolveFailure_addedRow_markAttemptedError asserts
 // that when a background resolve fails for a channel that already HAS a
-// cached row (tracked, but never successfully resolved — e.g. added via a
+// cached row (added, but never successfully resolved — e.g. added via a
 // single-video download before its channel was ever visited), and the
 // MarkResolveAttempted write itself fails, the failure is logged rather
 // than crashing the goroutine.
-func TestChannelDetail_resolveFailure_trackedRow_markAttemptedError(t *testing.T) {
+func TestChannelDetail_resolveFailure_addedRow_markAttemptedError(t *testing.T) {
 	db := openTestDB(t)
 	sessions := auth.NewSessionStore(db, false)
 	users := auth.NewUserStore(db)
@@ -1257,8 +1335,8 @@ func TestChannelDetail_resolveFailure_trackedRow_markAttemptedError(t *testing.T
 	if err := chStore.Upsert(channels.Channel{ID: "UCpending", Name: "Pending Resolve"}); err != nil {
 		t.Fatalf("seed channel: %v", err)
 	}
-	if err := chStore.Track("UCpending", "2026-07-20 10:00:00"); err != nil {
-		t.Fatalf("track channel: %v", err)
+	if err := chStore.MarkAdded("UCpending", "2026-07-20 10:00:00"); err != nil {
+		t.Fatalf("add channel: %v", err)
 	}
 	resolver := &dbClosingResolver{db: db, err: errors.New("boom")}
 	deps := Deps{
@@ -1488,7 +1566,7 @@ func TestListVideos_channelParam_scopes(t *testing.T) {
 	}
 }
 
-// seedChannelAndPending tracks a channel and inserts one pending ledger row
+// seedChannelAndPending adds a channel and inserts one pending ledger row
 // for it directly, without going through the resolver/scan machinery.
 func seedChannelAndPending(t *testing.T, deps Deps, channelID, videoID string) {
 	t.Helper()
@@ -1849,7 +1927,7 @@ func TestChannelsList_defaultsToAllWhenFilterOmitted(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCdefault", Name: "Default"}})
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@default"}); rr.Code != http.StatusCreated {
-		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("add status = %d body=%s", rr.Code, rr.Body.String())
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/channels", nil)
@@ -1860,7 +1938,7 @@ func TestChannelsList_defaultsToAllWhenFilterOmitted(t *testing.T) {
 		t.Fatalf("GET /api/channels (no filter) status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "UCdefault") {
-		t.Fatalf("GET /api/channels (no filter) missing tracked channel: %s", rec.Body.String())
+		t.Fatalf("GET /api/channels (no filter) missing added channel: %s", rec.Body.String())
 	}
 }
 
@@ -1921,7 +1999,7 @@ func TestChannelsPut_updateConfigStoreError_500(t *testing.T) {
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@put", "subscribe": true}); rr.Code != http.StatusCreated {
-		t.Fatalf("track+subscribe status = %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("add+subscribe status = %d body=%s", rr.Code, rr.Body.String())
 	}
 	if _, err := deps.Channels.DB().Exec(`CREATE TRIGGER block_subscriptions_update BEFORE UPDATE ON subscriptions BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
 		t.Fatalf("create trigger: %v", err)
@@ -1958,7 +2036,7 @@ func TestChannelsSubscribe_getStoreError_500(t *testing.T) {
 }
 
 // TestChannelsSubscribe_unknownChannel_404 covers the c == nil branch: a
-// channel that was never tracked can't be subscribed.
+// channel that was never added can't be subscribed.
 func TestChannelsSubscribe_unknownChannel_404(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{})
 	rr := postJSON(t, h, "/api/channels/nope/subscribe", nil)
@@ -1968,14 +2046,14 @@ func TestChannelsSubscribe_unknownChannel_404(t *testing.T) {
 }
 
 // TestChannelsSubscribe_storeError_500 covers the s.channels.Subscribe
-// error branch: the channel is tracked (Get succeeds) but the
+// error branch: the channel is added (Get succeeds) but the
 // subscriptions table itself is broken.
 func TestChannelsSubscribe_storeError_500(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCsub", Name: "Sub"}})
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@sub"}); rr.Code != http.StatusCreated {
-		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("add status = %d body=%s", rr.Code, rr.Body.String())
 	}
 	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {
 		t.Fatalf("drop subscriptions table: %v", err)
@@ -1998,12 +2076,12 @@ func TestChannelsUnsubscribe_notConfigured_503(t *testing.T) {
 }
 
 // TestChannelsUnsubscribe_notSubscribed_404 covers the !ok branch: a
-// tracked-but-never-subscribed channel can't be unsubscribed.
+// added-but-never-subscribed channel can't be unsubscribed.
 func TestChannelsUnsubscribe_notSubscribed_404(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCunsub", Name: "Unsub"}})
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@unsub"}); rr.Code != http.StatusCreated {
-		t.Fatalf("track status = %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("add status = %d body=%s", rr.Code, rr.Body.String())
 	}
 
 	rr := postJSONWithCookie(t, h, cookie, "/api/channels/UCunsub/unsubscribe", nil)
@@ -2019,7 +2097,7 @@ func TestChannelsUnsubscribe_storeError_500(t *testing.T) {
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@unsub2", "subscribe": true}); rr.Code != http.StatusCreated {
-		t.Fatalf("track+subscribe status = %d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("add+subscribe status = %d body=%s", rr.Code, rr.Body.String())
 	}
 	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {
 		t.Fatalf("drop subscriptions table: %v", err)
@@ -2269,8 +2347,8 @@ func TestChannelsList_includesDormantFields(t *testing.T) {
 	if err := h.channels.Upsert(channels.Channel{ID: "UCdormant", Name: "Dormant"}); err != nil {
 		t.Fatal(err)
 	}
-	// channels rows are a metadata cache now; tracking is explicit.
-	if err := h.channels.Track("UCdormant", "2000-01-01 00:00:00"); err != nil {
+	// channels rows are a metadata cache now; adding is explicit.
+	if err := h.channels.MarkAdded("UCdormant", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.channels.Subscribe("UCdormant", "2000-01-01 00:00:00"); err != nil {
@@ -2279,8 +2357,8 @@ func TestChannelsList_includesDormantFields(t *testing.T) {
 	if err := h.channels.Upsert(channels.Channel{ID: "UChealthy", Name: "Healthy"}); err != nil {
 		t.Fatal(err)
 	}
-	// channels rows are a metadata cache now; tracking is explicit.
-	if err := h.channels.Track("UChealthy", "2000-01-01 00:00:00"); err != nil {
+	// channels rows are a metadata cache now; adding is explicit.
+	if err := h.channels.MarkAdded("UChealthy", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.channels.Subscribe("UChealthy", "2000-01-01 00:00:00"); err != nil {
@@ -2331,13 +2409,13 @@ func TestChannelsList_includesImageFlags(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.channels.Track("UCart", "2000-01-01 00:00:00"); err != nil {
+	if err := h.channels.MarkAdded("UCart", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.channels.Upsert(channels.Channel{ID: "UCbare", Name: "No Art"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.channels.Track("UCbare", "2000-01-01 00:00:00"); err != nil {
+	if err := h.channels.MarkAdded("UCbare", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2364,33 +2442,45 @@ func TestChannelsList_includesImageFlags(t *testing.T) {
 	}
 }
 
-// TestChannelsList_includesAddedAt asserts the list JSON carries added_at.
-// The Channels page's "Recently added" ordering sorts on it client-side, so a
-// handler that drops the field leaves that option silently ordering by nothing
-// but the name tiebreak — a bug no UI test can see.
-func TestChannelsList_includesAddedAt(t *testing.T) {
+// TestChannelsList_includesFirstSeenAt asserts the list JSON carries
+// first_seen_at. The Channels page's "Recently added" ordering sorts on it
+// client-side, so a handler that drops the field leaves that option silently
+// ordering by nothing but the name tiebreak — a bug no UI test can see.
+//
+// A download-only channel is in the fixture on purpose. It has no added_at at
+// all, so sorting that ordering on the added_at column instead would collapse
+// every "From downloads" row to the bottom under an empty value; first_seen_at
+// is populated for both kinds.
+func TestChannelsList_includesFirstSeenAt(t *testing.T) {
 	h := newChannelsListTestServer(t, &testResolver{})
 	if err := h.channels.Upsert(channels.Channel{ID: "UCadded", Name: "Added"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.channels.Track("UCadded", "2000-01-01 00:00:00"); err != nil {
+	if err := h.channels.MarkAdded("UCadded", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
+	if err := h.channels.Upsert(channels.Channel{ID: "UCdl", Name: "From A Download"}); err != nil {
+		t.Fatal(err)
+	}
+	mustExecDB(t, h.channels.DB(),
+		`INSERT INTO videos (id,url,channel_id,status) VALUES ('v1','u','UCdl','downloaded')`)
 
 	body := getJSON(t, h, "/api/channels")
 	var items []struct {
-		ID      string `json:"id"`
-		AddedAt string `json:"added_at"`
+		ID          string `json:"id"`
+		FirstSeenAt string `json:"first_seen_at"`
 	}
 	if err := json.Unmarshal([]byte(body), &items); err != nil {
 		t.Fatalf("decode: %v body=%s", err, body)
 	}
-	addedAt := map[string]string{}
+	firstSeen := map[string]string{}
 	for _, it := range items {
-		addedAt[it.ID] = it.AddedAt
+		firstSeen[it.ID] = it.FirstSeenAt
 	}
-	if addedAt["UCadded"] == "" {
-		t.Fatalf("UCadded added_at empty, want the channel row's creation time: %s", body)
+	for _, id := range []string{"UCadded", "UCdl"} {
+		if firstSeen[id] == "" {
+			t.Fatalf("%s first_seen_at empty, want the row's creation time: %s", id, body)
+		}
 	}
 }
 
@@ -2402,8 +2492,8 @@ func TestAutoUnsubscribedList_returnsRecordedChannels(t *testing.T) {
 	if err := h.channels.Upsert(channels.Channel{ID: "UCdead", Name: "Dead Channel"}); err != nil {
 		t.Fatal(err)
 	}
-	// channels rows are a metadata cache now; tracking is explicit.
-	if err := h.channels.Track("UCdead", "2000-01-01 00:00:00"); err != nil {
+	// channels rows are a metadata cache now; adding is explicit.
+	if err := h.channels.MarkAdded("UCdead", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.channels.Subscribe("UCdead", "2000-01-01 00:00:00"); err != nil {
@@ -2426,8 +2516,8 @@ func TestDismissDormant_removesChannelFromDormantSet(t *testing.T) {
 	if err := h.channels.Upsert(channels.Channel{ID: "UCdormant", Name: "Dormant"}); err != nil {
 		t.Fatal(err)
 	}
-	// channels rows are a metadata cache now; tracking is explicit.
-	if err := h.channels.Track("UCdormant", "2000-01-01 00:00:00"); err != nil {
+	// channels rows are a metadata cache now; adding is explicit.
+	if err := h.channels.MarkAdded("UCdormant", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.channels.Subscribe("UCdormant", "2000-01-01 00:00:00"); err != nil {
@@ -2452,7 +2542,7 @@ func TestDismissDormant_removesChannelFromDormantSet(t *testing.T) {
 }
 
 // TestDismissDormant_unknownChannel_404 asserts dismissing a channel with no
-// subscription (unknown, or tracked-but-unsubscribed) is a clean 404 rather
+// subscription (unknown, or added-but-unsubscribed) is a clean 404 rather
 // than the silent no-op DismissDormant used to be (Task 2 review finding).
 func TestDismissDormant_unknownChannel_404(t *testing.T) {
 	h := newChannelsListTestServer(t, &testResolver{})
@@ -2470,8 +2560,8 @@ func TestResubscribe_restoresSubscriptionAndClearsRecord(t *testing.T) {
 	if err := h.channels.Upsert(channels.Channel{ID: "UCdead", Name: "Dead"}); err != nil {
 		t.Fatal(err)
 	}
-	// channels rows are a metadata cache now; tracking is explicit.
-	if err := h.channels.Track("UCdead", "2000-01-01 00:00:00"); err != nil {
+	// channels rows are a metadata cache now; adding is explicit.
+	if err := h.channels.MarkAdded("UCdead", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.channels.Subscribe("UCdead", "2000-01-01 00:00:00"); err != nil {
@@ -2517,8 +2607,8 @@ func TestResubscribe_afterSecondDeath_recordsAgain(t *testing.T) {
 	if err := h.channels.Upsert(channels.Channel{ID: "UCdead", Name: "Dead"}); err != nil {
 		t.Fatal(err)
 	}
-	// channels rows are a metadata cache now; tracking is explicit.
-	if err := h.channels.Track("UCdead", "2000-01-01 00:00:00"); err != nil {
+	// channels rows are a metadata cache now; adding is explicit.
+	if err := h.channels.MarkAdded("UCdead", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.channels.Subscribe("UCdead", "2000-01-01 00:00:00"); err != nil {
@@ -2557,8 +2647,8 @@ func TestResubscribe_longDeadChannel_notImmediatelyDormant(t *testing.T) {
 	if err := h.channels.Upsert(channels.Channel{ID: "UCdead", Name: "Long Dead"}); err != nil {
 		t.Fatal(err)
 	}
-	// channels rows are a metadata cache now; tracking is explicit.
-	if err := h.channels.Track("UCdead", "2000-01-01 00:00:00"); err != nil {
+	// channels rows are a metadata cache now; adding is explicit.
+	if err := h.channels.MarkAdded("UCdead", "2000-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.channels.Subscribe("UCdead", "2000-01-01 00:00:00"); err != nil {
@@ -2824,8 +2914,8 @@ func TestChannelDetail_goneChannel(t *testing.T) {
 	if err := deps.Channels.Upsert(channels.Channel{ID: "UCa", Name: "Uncanny"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if err := deps.Channels.Track("UCa", "2026-01-01 00:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := deps.Channels.MarkAdded("UCa", "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
 	if err := deps.Channels.Subscribe("UCa", "2026-01-01 00:00:00"); err != nil {
 		t.Fatalf("subscribe: %v", err)

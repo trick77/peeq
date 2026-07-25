@@ -8,8 +8,8 @@ import { DOT } from "../sep";
 function baseChannel(overrides: Partial<Channel> = {}): Channel {
   return {
     id: "c1",
-    handle: "@trackedguy",
-    name: "Tracked Channel",
+    handle: "@addedguy",
+    name: "Added Channel",
     subscribed: false,
     autodownload: false,
     format_override: "",
@@ -20,7 +20,7 @@ function baseChannel(overrides: Partial<Channel> = {}): Channel {
   };
 }
 
-const tracked = baseChannel();
+const notSubscribed = baseChannel();
 const subscribed = baseChannel({
   id: "c2",
   handle: "@subbedguy",
@@ -73,7 +73,7 @@ describe("Channels", () => {
     vi.mocked(subscribeChannel).mockReset();
     vi.mocked(unsubscribeChannel).mockReset();
     vi.mocked(deleteChannel).mockReset();
-    vi.mocked(listChannels).mockResolvedValue([tracked, subscribed]);
+    vi.mocked(listChannels).mockResolvedValue([notSubscribed, subscribed]);
     vi.mocked(subscribeChannel).mockResolvedValue({ status: "subscribed" });
     vi.mocked(unsubscribeChannel).mockResolvedValue({ status: "unsubscribed" });
     vi.mocked(deleteChannel).mockResolvedValue(undefined);
@@ -85,9 +85,9 @@ describe("Channels", () => {
     vi.mocked(resubscribeChannel).mockResolvedValue({ status: "subscribed" });
   });
 
-  it("lists both tracked and subscribed channels", async () => {
+  it("lists both not-subscribed and subscribed channels", async () => {
     render(<Channels />);
-    expect(await screen.findByText("Tracked Channel")).toBeInTheDocument();
+    expect(await screen.findByText("Added Channel")).toBeInTheDocument();
     expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
   });
 
@@ -100,11 +100,11 @@ describe("Channels", () => {
       baseChannel({ id: "c3", name: "Nameless", handle: "" }),
     ]);
     render(<Channels />);
-    const withHandle = (await screen.findByText("Tracked Channel")).closest(
+    const withHandle = (await screen.findByText("Added Channel")).closest(
       ".channel-row",
     ) as HTMLElement;
     expect(withHandle.querySelector(".channel-by")?.textContent).toBe(
-      `@trackedguy${DOT}2 pending${DOT}2 downloaded`,
+      `@addedguy${DOT}2 pending${DOT}2 downloaded`,
     );
 
     const noHandle = screen
@@ -115,17 +115,35 @@ describe("Channels", () => {
     );
   });
 
-  it("clicking a tracked channel's star calls subscribeChannel", async () => {
+  it("clicking a not-subscribed channel's star calls subscribeChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
-    await screen.findByText("Tracked Channel");
+    await screen.findByText("Added Channel");
     const row = screen
-      .getByText("Tracked Channel")
+      .getByText("Added Channel")
       .closest(".channel-row") as HTMLElement;
     await user.click(within(row).getByRole("button", { name: /^subscribe$/i }));
     await waitFor(() => {
       expect(subscribeChannel).toHaveBeenCalledWith("c1");
     });
+  });
+
+  // A "From downloads" channel arrives with whatever name its video row
+  // carried — often nothing, until the metadata backlog resolves it. The row's
+  // only text is that name, so an empty one renders a zero-width clickable
+  // heading and an ⋮ menu with no accessible name.
+  it("falls back to the handle, then the id, when a channel has no name", async () => {
+    vi.mocked(listChannels).mockResolvedValue([
+      baseChannel({ id: "c9", name: "", handle: "@handleonly" }),
+      baseChannel({ id: "UCbare", name: "", handle: "" }),
+    ]);
+    render(<Channels />);
+
+    expect(await screen.findByText("@handleonly")).toBeInTheDocument();
+    expect(screen.getByText("UCbare")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Actions for UCbare" }),
+    ).toBeInTheDocument();
   });
 
   it("clicking a subscribed channel's star calls unsubscribeChannel", async () => {
@@ -156,16 +174,28 @@ describe("Channels", () => {
   it("filter chips drive listChannels(filter)", async () => {
     const user = userEvent.setup();
     render(<Channels />);
-    await screen.findByText("Tracked Channel");
+    await screen.findByText("Added Channel");
     vi.mocked(listChannels).mockClear();
 
     await user.click(screen.getByRole("button", { name: "All" }));
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("all"));
 
-    // "Not subscribed" is the label; the filter id stays "tracked".
+    // "Not subscribed" is the label; the filter id is "notsubscribed".
     vi.mocked(listChannels).mockClear();
     await user.click(screen.getByRole("button", { name: "Not subscribed" }));
-    await waitFor(() => expect(listChannels).toHaveBeenCalledWith("tracked"));
+    await waitFor(() =>
+      expect(listChannels).toHaveBeenCalledWith("notsubscribed"),
+    );
+
+    // "From downloads" — channels in the list only because the library holds
+    // a video downloaded from them. It sits next to "Not subscribed" (added,
+    // but not followed), which is a different thing entirely, so the
+    // label-to-filter mapping is worth pinning.
+    vi.mocked(listChannels).mockClear();
+    await user.click(screen.getByRole("button", { name: "From downloads" }));
+    await waitFor(() =>
+      expect(listChannels).toHaveBeenCalledWith("downloaded"),
+    );
 
     vi.mocked(listChannels).mockClear();
     await user.click(screen.getByRole("button", { name: "Auto-add" }));
@@ -190,22 +220,24 @@ describe("Channels", () => {
     vi.mocked(listChannels).mockImplementation((f) => {
       if (f === "subscribed") {
         return new Promise((resolve) => {
-          releaseSubscribed = () => resolve([tracked, subscribed]);
+          releaseSubscribed = () => resolve([notSubscribed, subscribed]);
         });
       }
-      return Promise.resolve([tracked]);
+      return Promise.resolve([notSubscribed]);
     });
 
     render(<Channels />);
     // The initial "subscribed" load is still in flight; switch to
     // "Not subscribed".
     await user.click(screen.getByRole("button", { name: "Not subscribed" }));
-    expect(await screen.findByText("Tracked Channel")).toBeInTheDocument();
+    expect(await screen.findByText("Added Channel")).toBeInTheDocument();
     expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
 
     // Now let the abandoned "subscribed" request resolve — it must be ignored.
     releaseSubscribed?.();
-    await waitFor(() => expect(listChannels).toHaveBeenCalledWith("tracked"));
+    await waitFor(() =>
+      expect(listChannels).toHaveBeenCalledWith("notsubscribed"),
+    );
     expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
   });
 
@@ -244,11 +276,11 @@ describe("Channels", () => {
         within(subbedRow).getByRole("img", { name: "Auto-add is on" }),
       ).toBeInTheDocument();
 
-      const trackedRow = screen
-        .getByText("Tracked Channel")
+      const addedRow = screen
+        .getByText("Added Channel")
         .closest(".channel-row") as HTMLElement;
       expect(
-        within(trackedRow).queryByRole("img", { name: "Auto-add is on" }),
+        within(addedRow).queryByRole("img", { name: "Auto-add is on" }),
       ).not.toBeInTheDocument();
     });
   });
@@ -310,7 +342,7 @@ describe("Channels", () => {
         subscribed: true,
       });
       vi.mocked(listChannels).mockResolvedValue([
-        tracked,
+        notSubscribed,
         subscribed,
         secondSubbed,
       ]);
@@ -451,9 +483,9 @@ describe("Channels", () => {
     it("is not offered for a channel that is not subscribed", async () => {
       const user = userEvent.setup();
       render(<Channels />);
-      await screen.findByText("Tracked Channel");
+      await screen.findByText("Added Channel");
       const row = screen
-        .getByText("Tracked Channel")
+        .getByText("Added Channel")
         .closest(".channel-row") as HTMLElement;
 
       await openRowMenu(user, row);
@@ -468,14 +500,14 @@ describe("Channels", () => {
 
   it("the search box filters the list by name or handle", async () => {
     const { rerender } = render(<Channels search="" />);
-    await screen.findByText("Tracked Channel");
+    await screen.findByText("Added Channel");
     expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
 
     // "subbed" matches the Subbed Channel (name + @subbedguy handle) but not
-    // the Tracked Channel.
+    // the Added Channel.
     rerender(<Channels search="subbed" />);
     expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
-    expect(screen.queryByText("Tracked Channel")).not.toBeInTheDocument();
+    expect(screen.queryByText("Added Channel")).not.toBeInTheDocument();
 
     // A query that matches nothing shows the search-specific empty state, not
     // the "No channels yet." one (channels do exist — the query hid them).
@@ -488,9 +520,9 @@ describe("Channels", () => {
   it("delete opens a confirm dialog, then calls deleteChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
-    await screen.findByText("Tracked Channel");
+    await screen.findByText("Added Channel");
     const row = screen
-      .getByText("Tracked Channel")
+      .getByText("Added Channel")
       .closest(".channel-row") as HTMLElement;
     await openRowMenu(user, row);
     await user.click(
@@ -500,7 +532,7 @@ describe("Channels", () => {
     // videos go too, and that it cannot be undone — the same four things the
     // channel page's own delete says.
     const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent("Tracked Channel");
+    expect(dialog).toHaveTextContent("Added Channel");
     expect(dialog).toHaveTextContent("0 videos");
     expect(dialog).toHaveTextContent(/including any you kept forever/);
     expect(dialog).toHaveTextContent(/cannot be undone/);
@@ -516,9 +548,9 @@ describe("Channels", () => {
     const user = userEvent.setup();
     const onOpenChannel = vi.fn();
     render(<Channels onOpenChannel={onOpenChannel} />);
-    await screen.findByText("Tracked Channel");
+    await screen.findByText("Added Channel");
 
-    await user.click(screen.getByRole("button", { name: "Tracked Channel" }));
+    await user.click(screen.getByRole("button", { name: "Added Channel" }));
 
     expect(onOpenChannel).toHaveBeenCalledWith("c1");
   });
@@ -526,9 +558,9 @@ describe("Channels", () => {
   it("cancelling the delete dialog does not call deleteChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
-    await screen.findByText("Tracked Channel");
+    await screen.findByText("Added Channel");
     const row = screen
-      .getByText("Tracked Channel")
+      .getByText("Added Channel")
       .closest(".channel-row") as HTMLElement;
     await openRowMenu(user, row);
     await user.click(
@@ -549,9 +581,9 @@ describe("Channels", () => {
     const user = userEvent.setup();
     vi.mocked(deleteChannel).mockRejectedValue(new Error("nope, still busy"));
     render(<Channels />);
-    await screen.findByText("Tracked Channel");
+    await screen.findByText("Added Channel");
     const row = screen
-      .getByText("Tracked Channel")
+      .getByText("Added Channel")
       .closest(".channel-row") as HTMLElement;
     await openRowMenu(user, row);
     await user.click(
@@ -579,7 +611,11 @@ describe("Channels", () => {
     });
 
     it("shows the review band with a count when channels are dormant", async () => {
-      vi.mocked(listChannels).mockResolvedValue([tracked, subscribed, dormant]);
+      vi.mocked(listChannels).mockResolvedValue([
+        notSubscribed,
+        subscribed,
+        dormant,
+      ]);
       render(<Channels />);
       expect(
         await screen.findByText("1 channel needs review"),
@@ -589,7 +625,7 @@ describe("Channels", () => {
 
     it("hides the band entirely when nothing is dormant", async () => {
       render(<Channels />);
-      await screen.findByText("Tracked Channel");
+      await screen.findByText("Added Channel");
       expect(screen.queryByText(/needs? review/)).not.toBeInTheDocument();
     });
 
@@ -604,7 +640,11 @@ describe("Channels", () => {
 
     it("dismissing a dormant channel removes it from the band", async () => {
       const user = userEvent.setup();
-      vi.mocked(listChannels).mockResolvedValue([tracked, subscribed, dormant]);
+      vi.mocked(listChannels).mockResolvedValue([
+        notSubscribed,
+        subscribed,
+        dormant,
+      ]);
       render(<Channels />);
       await screen.findByText("1 channel needs review");
       const row = screen
@@ -638,7 +678,7 @@ describe("Channels", () => {
     it("lists auto-unsubscribed channels with the reason and a re-subscribe button", async () => {
       vi.mocked(listAutoUnsubscribedChannels).mockResolvedValue([tombstone]);
       render(<Channels />);
-      await screen.findByText("Tracked Channel");
+      await screen.findByText("Added Channel");
 
       expect(await screen.findByText("Vanished Channel")).toBeInTheDocument();
       expect(screen.getByText(/deleted on YouTube/i)).toBeInTheDocument();
@@ -670,7 +710,11 @@ describe("Channels", () => {
         name: "Vanished Channel",
         subscribed: true,
       });
-      vi.mocked(listChannels).mockResolvedValue([tracked, subscribed, revived]);
+      vi.mocked(listChannels).mockResolvedValue([
+        notSubscribed,
+        subscribed,
+        revived,
+      ]);
 
       const row = screen
         .getByText("Vanished Channel")
@@ -715,7 +759,7 @@ describe("Channels", () => {
       downloaded_count: 5,
       pending_count: 1,
       last_video_at: "2026-07-01 00:00:00",
-      added_at: "2026-01-01 00:00:00",
+      first_seen_at: "2026-01-01 00:00:00",
     });
     const mid = baseChannel({
       id: "m",
@@ -725,7 +769,7 @@ describe("Channels", () => {
       downloaded_count: 40,
       pending_count: 9,
       last_video_at: "2026-07-20 00:00:00",
-      added_at: "2026-06-01 00:00:00",
+      first_seen_at: "2026-06-01 00:00:00",
     });
     // Zulu, not "Zeta": the search test filters on "a", and this row has to be
     // the one that does not match.
@@ -737,7 +781,7 @@ describe("Channels", () => {
       downloaded_count: 1,
       pending_count: 0,
       last_video_at: "2026-07-10 00:00:00",
-      added_at: "2026-03-01 00:00:00",
+      first_seen_at: "2026-03-01 00:00:00",
     });
 
     beforeEach(() => {

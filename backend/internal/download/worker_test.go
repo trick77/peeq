@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/settings"
@@ -67,6 +68,7 @@ type harness struct {
 	jobs     *jobs.Store
 	videos   *videos.Store
 	settings *settings.Store
+	channels *channels.Store
 	runner   *fakeRunner
 	worker   *Worker
 }
@@ -87,12 +89,17 @@ func newHarness(t *testing.T, runner *fakeRunner, tune func(*Deps)) *harness {
 		jobs:     jobs.New(db),
 		videos:   videos.New(db),
 		settings: settings.New(db),
+		channels: channels.New(db),
 		runner:   runner,
 	}
+	// Channels is wired by default so the harness matches production, where
+	// the worker always caches a downloaded video's channel. Tests that want
+	// the nil path set it back to nil in tune.
 	deps := Deps{
 		Jobs:         h.jobs,
 		Videos:       h.videos,
 		Settings:     h.settings,
+		Channels:     h.channels,
 		Runner:       runner,
 		PollInterval: 2 * time.Millisecond,
 		Watchdog:     -1, // disabled here; the watchdog tests set their own via tune
@@ -404,6 +411,78 @@ func TestWorker_metadataPreflightPopulatesTitle(t *testing.T) {
 	}
 	if n := runner.metaCalls(); n != 1 {
 		t.Fatalf("metadata calls = %d, want 1", n)
+	}
+}
+
+// TestWorker_metadataPreflightCachesChannel asserts the preflight also leaves
+// a channels row behind. videos has no FK to channels, so without this a video
+// added by URL would leave its channel with no row at all and no way of ever
+// reaching the Channels list.
+//
+// The row must stay cache-only: added_at NULL, or the channel would silently
+// become a scan target the user never asked for.
+func TestWorker_metadataPreflightCachesChannel(t *testing.T) {
+	runner := &fakeRunner{
+		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+			return &ytdlp.Meta{Title: "T", ChannelID: "UC123", Channel: "Some Channel", Availability: "public"}, nil
+		},
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h := newHarness(t, runner, nil)
+	job := h.enqueue(t, "vid1", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job done", func() bool { return h.jobState(t, job).State == "done" })
+
+	c, err := h.channels.Get("UC123")
+	if err != nil {
+		t.Fatalf("get channel: %v", err)
+	}
+	if c == nil {
+		t.Fatal("preflight left no channels row for the downloaded video's channel")
+	}
+	if c.Name != "Some Channel" {
+		t.Fatalf("cached channel name = %q, want %q", c.Name, "Some Channel")
+	}
+	if c.AddedAt != "" {
+		t.Fatalf("caching the channel added it (added_at = %q)", c.AddedAt)
+	}
+	// It is listed now — under "downloaded", never under the added filters.
+	items, err := h.channels.List("downloaded")
+	if err != nil {
+		t.Fatalf("list downloaded: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "UC123" {
+		t.Fatalf("downloaded filter = %+v, want just UC123", items)
+	}
+}
+
+// TestWorker_metadataPreflightWithoutChannelStore proves Deps.Channels is
+// optional: a nil store skips the cache write instead of panicking mid-
+// download, which is what keeps every test that does not care about channels
+// working unchanged.
+func TestWorker_metadataPreflightWithoutChannelStore(t *testing.T) {
+	runner := &fakeRunner{
+		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+			return &ytdlp.Meta{Title: "T", ChannelID: "UC123", Channel: "Some Channel"}, nil
+		},
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h := newHarness(t, runner, func(d *Deps) { d.Channels = nil })
+	job := h.enqueue(t, "vid1", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job done", func() bool { return h.jobState(t, job).State == "done" })
+	c, err := h.channels.Get("UC123")
+	if err != nil {
+		t.Fatalf("get channel: %v", err)
+	}
+	if c != nil {
+		t.Fatal("a nil Deps.Channels still wrote a channels row")
 	}
 }
 

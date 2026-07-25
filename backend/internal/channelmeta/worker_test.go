@@ -83,15 +83,15 @@ func newTestWorker(t *testing.T, s *channels.Store, r Resolver, d Deps) *Worker 
 	return NewWorker(d)
 }
 
-// seedDue tracks, subscribes and back-dates a channel so it is due for a
+// seedDue adds, subscribes and back-dates a channel so it is due for a
 // metadata refresh with no scan anywhere near it.
 func seedDue(t *testing.T, s *channels.Store, channelID string) {
 	t.Helper()
 	if err := s.Upsert(channels.Channel{ID: channelID, Name: "Old Name", ResolvedAt: "2026-07-01 00:00:00"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.Track(channelID, "2026-01-01 00:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded(channelID, "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
 	if err := s.Subscribe(channelID, "2026-07-23 12:00:00"); err != nil {
 		t.Fatalf("subscribe: %v", err)
@@ -300,17 +300,17 @@ func TestWorker_killSwitch(t *testing.T) {
 }
 
 // TestWorker_drainsTheNeverReadBacklog covers the channel the user just
-// tracked: it has no name, no artwork and no schedule, and it must fill itself
+// added: it has no name, no artwork and no schedule, and it must fill itself
 // in without anyone opening its page.
 func TestWorker_drainsTheNeverReadBacklog(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Upsert(channels.Channel{ID: "UCnew"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.Track("UCnew", "2026-07-22 11:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded("UCnew", "2026-07-22 11:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
-	r := &fakeResolver{info: ytdlp.ChannelInfo{UCID: "UCnew", Name: "Just Tracked", Subscribers: 12}}
+	r := &fakeResolver{info: ytdlp.ChannelInfo{UCID: "UCnew", Name: "Just Added", Subscribers: 12}}
 	w := newTestWorker(t, s, r, Deps{})
 
 	if !runUntilResolved(t, w, r) {
@@ -321,7 +321,7 @@ func TestWorker_drainsTheNeverReadBacklog(t *testing.T) {
 	if err != nil || c == nil {
 		t.Fatalf("get: %v, %v", c, err)
 	}
-	if c.Name != "Just Tracked" || c.Subscribers != 12 {
+	if c.Name != "Just Added" || c.Subscribers != 12 {
 		t.Fatalf("backlog channel was not filled in: %+v", *c)
 	}
 }
@@ -334,8 +334,8 @@ func TestWorker_dueRotationBeatsTheBacklog(t *testing.T) {
 	if err := s.Upsert(channels.Channel{ID: "UCbacklog"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.Track("UCbacklog", "2026-01-01 00:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded("UCbacklog", "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
 	r := &fakeResolver{info: ytdlp.ChannelInfo{UCID: "UCdue", Name: "Refreshed"}}
 	w := newTestWorker(t, s, r, Deps{})
@@ -502,7 +502,7 @@ func TestResolve_handlePrecedence(t *testing.T) {
 	}
 }
 
-// seedBacklog tracks a channel WITHOUT subscribing it: the never-read backlog
+// seedBacklog adds a channel WITHOUT subscribing it: the never-read backlog
 // shape. This is the row shape the panic/failure tests above miss, and the one
 // where a missed settle is unbounded rather than merely late — there is no
 // subscriptions row for MarkMetaRefreshed to update, so channels.resolved_at is
@@ -512,8 +512,8 @@ func seedBacklog(t *testing.T, s *channels.Store, channelID string) {
 	if err := s.Upsert(channels.Channel{ID: channelID}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.Track(channelID, "2026-07-22 11:00:00"); err != nil {
-		t.Fatalf("track: %v", err)
+	if err := s.MarkAdded(channelID, "2026-07-22 11:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
 	}
 }
 

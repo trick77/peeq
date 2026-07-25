@@ -223,7 +223,7 @@ export type SettingsPatch = Partial<{
   subtitles_default: boolean;
 }>;
 
-// Channel mirrors httpapi.channelItem — one tracked channel, joined with
+// Channel mirrors httpapi.channelItem — one listed channel, joined with
 // its (optional) subscription state and video counts.
 // dormant/last_video_at mirror the Task 4 staleness fields: dormant is
 // always present (true only for a subscribed channel quiet 6+ months);
@@ -245,10 +245,13 @@ export type Channel = {
   has_banner?: boolean;
   dormant: boolean;
   last_video_at?: string;
-  // added_at is when the channel was first added — what the list's "Recently
-  // added" ordering sorts on. omitempty on the wire, so the sort treats a
-  // missing value as "" and lets it fall through to the name tiebreak.
-  added_at?: string;
+  // first_seen_at is when peeq first created the channel row — what the list's
+  // "Recently added" ordering sorts on. NOT the same as ChannelDetail.added_at,
+  // which is when the USER added the channel: a "From downloads" channel was
+  // never added, and sorting on that would collapse every one of them to the
+  // bottom. omitempty on the wire, so the sort treats a missing value as "" and
+  // falls through to the name tiebreak.
+  first_seen_at?: string;
 };
 
 // AutoUnsubscribedChannel mirrors httpapi's GET
@@ -310,7 +313,7 @@ export type APITokenCreated = {
 };
 
 // ChannelDetail mirrors httpapi.channelDetail — one channel's page data.
-// Tracked is false for a channel the user has only visited; when it is false
+// Added is false for a channel the user has only visited; when it is false
 // every subscription field below is at its zero value.
 export type ChannelDetail = {
   id: string;
@@ -336,8 +339,11 @@ export type ChannelDetail = {
   // deleted. The archived videos are unaffected.
   gone: boolean;
 
-  tracked: boolean;
-  tracked_at?: string;
+  added: boolean;
+  // added_at is when the USER added this channel — the timestamp the page
+  // shows as "Added <date>". Distinct from Channel.first_seen_at on the list
+  // DTO, which is merely when peeq created the row.
+  added_at?: string;
 
   archived_count: number;
   runtime_seconds: number;

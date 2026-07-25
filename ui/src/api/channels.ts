@@ -9,7 +9,8 @@ import type {
 
 // ChannelFilter mirrors the ?filter= values the channels handler
 // understands (Task 12 brief / channels_handlers.go).
-export type ChannelFilter = "all" | "subscribed" | "tracked" | "autodownload";
+export type ChannelFilter =
+  "all" | "subscribed" | "notsubscribed" | "downloaded" | "autodownload";
 
 export async function listChannels(
   filter: ChannelFilter = "all",
@@ -20,7 +21,7 @@ export async function listChannels(
   );
 }
 
-// addChannel tracks a channel (and subscribes it when subscribe is true).
+// addChannel adds a channel (and subscribes it when subscribe is true).
 // Resolving a channel shells out to yt-dlp and needs a cookie, so the
 // handler's 409 is mapped to the same CookieRequiredError addDownload
 // raises — callers can then use one cookie-missing branch for both.
