@@ -18,9 +18,9 @@ type ActivityReader interface {
 const (
 	activityDefaultLimit = 40
 	activityMaxLimit     = 100
-	// upcomingCap bounds the future projection: how many items the agenda shows
-	// above the now marker, and the ceiling on the per-source queries so a large
-	// backlog can't turn one request into hundreds of title lookups.
+	// upcomingCap bounds the future projection: how many scheduled items Up next
+	// renders, and the ceiling on each per-source query so a large subscription
+	// list can't turn one request into a full table scan per source.
 	upcomingCap = 20
 )
 

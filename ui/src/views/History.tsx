@@ -200,6 +200,9 @@ export function History({
     const oldest = past[past.length - 1];
     if (!oldest || loadingMore) return;
     setLoadingMore(true);
+    // Clear last attempt's message, or a failure followed by a successful retry
+    // would append the older rows and still sit beside a stale error.
+    setMoreError(null);
     listActivity(oldest.id, PAGE_SIZE)
       .then((page) => {
         setPast((prev) => {

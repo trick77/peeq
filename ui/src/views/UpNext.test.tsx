@@ -56,6 +56,31 @@ describe("UpNext", () => {
     expect(screen.queryByText("Summarising")).not.toBeInTheDocument();
   });
 
+  // The schedule starts empty, so "nothing scheduled" is only true once the
+  // fetch has settled. Claiming it earlier tells someone with subscribed
+  // channels to go subscribe to one.
+  it("does not claim nothing is scheduled before the fetch settles", () => {
+    vi.mocked(listUpcoming).mockReturnValue(new Promise(() => {}));
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/subscribe to a channel/i),
+    ).not.toBeInTheDocument();
+  });
+
+  // A failed fetch means the page has no schedule to speak for — it must not
+  // report the absence as "you have nothing scheduled".
+  it("says so when the schedule cannot be loaded", async () => {
+    vi.mocked(listUpcoming).mockRejectedValue(new Error("boom"));
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+    expect(
+      await screen.findByText(/Couldn’t load the schedule/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/subscribe to a channel/i),
+    ).not.toBeInTheDocument();
+  });
+
   // A stall is a different silence from idle, and saying only "nothing running"
   // would read as healthy while the queue is frozen.
   it("says peeq is paused, and points at the Resume button that exists", async () => {
@@ -123,7 +148,23 @@ describe("UpNext", () => {
       .getByText("Just started")
       .closest(".un-row") as HTMLElement;
     expect(row.querySelector(".un-detail")?.textContent).toBe("3%");
-    // With no eta yet the lead column says so rather than showing an empty slot.
+    // The lead column answers WHEN. With bytes moving but no ETA yet there is
+    // no honest answer, so it stays empty — saying "starting" over a bar that
+    // is already filling would contradict the row's own progress.
+    expect(row.querySelector(".un-lead")?.textContent).toBe("");
+  });
+
+  // "starting" is reserved for the one moment it is true: nothing has come back
+  // from yt-dlp at all.
+  it("says starting only while there is no progress at all", () => {
+    render(
+      <UpNext
+        jobs={[job({ job_id: 6, title: "Not begun" })]}
+        summaries={[]}
+        onCancel={noop}
+      />,
+    );
+    const row = screen.getByText("Not begun").closest(".un-row") as HTMLElement;
     expect(row.querySelector(".un-lead")?.textContent).toBe("starting");
   });
 

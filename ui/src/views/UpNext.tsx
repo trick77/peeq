@@ -120,6 +120,14 @@ export function UpNext({
 }) {
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
   const [truncated, setTruncated] = useState(0);
+  // Whether the schedule fetch has SETTLED at least once, and whether the last
+  // attempt failed. Both matter to the empty state below: an empty `upcoming`
+  // means "nothing scheduled" only once we have actually asked. Set-once, never
+  // reset on a refetch — the effect re-runs on every lane transition, and a
+  // resetting flag would flash the loading line for the whole length of a
+  // download.
+  const [schedLoaded, setSchedLoaded] = useState(false);
+  const [schedFailed, setSchedFailed] = useState(false);
   // now is captured once per render pass for the relative labels; it does not
   // tick, which is fine for a schedule measured in minutes and hours.
   const now = Date.now();
@@ -157,8 +165,14 @@ export function UpNext({
         if (!active) return;
         setUpcoming(up.items);
         setTruncated(up.truncated);
+        setSchedFailed(false);
+        setSchedLoaded(true);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!active) return;
+        setSchedFailed(true);
+        setSchedLoaded(true);
+      });
     return () => {
       active = false;
     };
@@ -200,6 +214,18 @@ export function UpNext({
   //
   // With nothing stalled, an empty page also means nothing is scheduled, and
   // with no subscribed channel there is nothing for peeq to be scheduled to do.
+  //
+  // None of that can be claimed before the schedule fetch has settled: it
+  // starts empty, so an idle queue would otherwise paint "nothing scheduled" to
+  // someone with channels subscribed for the frame before the fetch lands — and
+  // if the fetch fails the page has no schedule to speak for, so it says that
+  // rather than inventing "subscribe to a channel".
+  if (nothingInFlight && !schedLoaded) {
+    return <p className="un-empty">Loading…</p>;
+  }
+  if (nothingInFlight && schedFailed && scheduled.length === 0) {
+    return <div className="errline">Couldn’t load the schedule.</div>;
+  }
   if (nothingInFlight && scheduled.length === 0) {
     return (
       <p className="un-empty">
@@ -223,8 +249,19 @@ export function UpNext({
             const p = progressByJobId?.[j.job_id];
             return (
               <div key={j.job_id} className="un-row hero">
+                {/* The lead column answers WHEN, and only that. An ETA when
+                    yt-dlp has one; "starting" only while there is no progress
+                    at all, which is the one moment the honest answer is "it
+                    hasn't begun". Once bytes are moving without an ETA yet the
+                    column stays empty rather than saying "starting" over a bar
+                    at 47% — the bar and the detail line already say it is under
+                    way, and a wrong word beats no word only if it is right. */}
                 <span className="un-lead">
-                  {p?.eta ? <span className="num">{p.eta}</span> : "starting"}
+                  {p?.eta ? (
+                    <span className="num">{p.eta}</span>
+                  ) : p ? null : (
+                    "starting"
+                  )}
                 </span>
                 <div className="un-body">
                   <div className="un-title">{j.title || j.video_id}</div>
