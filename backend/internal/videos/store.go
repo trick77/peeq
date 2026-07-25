@@ -1053,8 +1053,14 @@ ORDER BY v.watched_at ASC`, cutoffUTC,
 // subtitle_path are cleared and status becomes 'tombstoned', but the row
 // (and its watched history) is kept — a future badge can offer
 // re-download. Tombstone only updates the database; the caller must unlink
-// the actual media/thumbnail/subtitle files first (it needs
-// config.MediaDir and path-safety checks the store doesn't have).
+// the actual media/subtitle files first (it needs config.MediaDir and
+// path-safety checks the store doesn't have) via
+// media.RemoveTombstonedVideoFiles.
+//
+// thumbnail_path is deliberately NOT cleared: the thumbnail file survives a
+// tombstone, so the remembered card keeps its poster. The two must stay in
+// step — clearing the column here without keeping the file (or the reverse)
+// is what left tombstoned cards showing a broken image.
 func (s *Store) Tombstone(id string) error {
 	ctx := context.Background()
 	tx, err := s.db.BeginTx(ctx, nil)

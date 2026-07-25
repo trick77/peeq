@@ -502,3 +502,45 @@ INSERT INTO videos (id, url, channel_id, channel_name, status) VALUES
 		t.Fatalf("backfill created %d row(s) it should not have", cnt)
 	}
 }
+
+// TestMigrate_clearsStaleTombstonedThumbnailPath asserts 0013. Tombstoning
+// used to unlink the thumbnail file while leaving thumbnail_path set, so
+// has_thumbnail stayed true and every tombstoned card asked for a poster
+// that 404s. Those files are gone for good, so the migration clears the
+// column and the UI draws its gradient placeholder instead. Rows in any
+// other status keep their path — theirs still points at a real file.
+func TestMigrate_clearsStaleTombstonedThumbnailPath(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	applyThrough(t, db, "0012_channel_added_rename.sql")
+
+	if _, err := db.Exec(`
+INSERT INTO videos (id, url, status, thumbnail_path) VALUES
+  ('t1','u','tombstoned','/media/c/t1/t1.jpg'),
+  ('d1','u','downloaded','/media/c/d1/d1.jpg'),
+  ('e1','u','error','/media/c/e1/e1.jpg')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+
+	var got string
+	if err := db.QueryRow(`SELECT thumbnail_path FROM videos WHERE id = 't1'`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("tombstoned thumbnail_path = %q, want cleared", got)
+	}
+	for _, id := range []string{"d1", "e1"} {
+		if err := db.QueryRow(`SELECT thumbnail_path FROM videos WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got == "" {
+			t.Fatalf("%s thumbnail_path was cleared, want kept", id)
+		}
+	}
+}

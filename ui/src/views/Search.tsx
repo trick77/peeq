@@ -2,8 +2,8 @@ import { useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Spinner } from "../ui";
 import { searchVideos, type SearchResult } from "../api/search";
-import { thumbnailUrl } from "../api/videos";
-import { formatDuration, gradientClassFor } from "../format";
+import { ThumbFill } from "../components/ThumbFill";
+import { formatDuration } from "../format";
 import { DOT } from "../sep";
 
 // Search — the global semantic-search view (Task 18), per the mockup's
@@ -107,16 +107,10 @@ export function Search({
             results.map((r) => (
               <div className="result" key={r.video.id}>
                 <div className="thumb">
-                  {r.video.has_thumbnail ? (
-                    <img
-                      className="fill"
-                      src={thumbnailUrl(r.video.id)}
-                      alt=""
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className={`fill ${gradientClassFor(r.video.id)}`} />
-                  )}
+                  <ThumbFill
+                    id={r.video.id}
+                    hasThumbnail={r.video.has_thumbnail}
+                  />
                   <div className="play">
                     <Icon name="play" size="30px" />
                   </div>

@@ -171,6 +171,55 @@ func TestSweepOnce_deletesOnlyWatchedNonFavoriteAgedAndNotPlaying(t *testing.T) 
 	}
 }
 
+// TestSweepOnce_keepsThumbnailOfTombstonedVideo pins the automatic
+// tombstone to the same rule the manual DELETE endpoint follows: the media
+// file goes, the poster stays. A tombstoned row keeps its title and summary
+// and its card says "summary kept", so it should still look like the video
+// it remembers — and thumbnail_path stays set, so a deleted file would show
+// up as a broken image rather than as no image.
+func TestSweepOnce_keepsThumbnailOfTombstonedVideo(t *testing.T) {
+	h := newHarness(t, 30) // retention_days = 30; fixed now is 2026-07-18
+
+	mediaPath := filepath.Join(h.mediaDir, "v1.mp4")
+	thumbPath := filepath.Join(h.mediaDir, "v1.jpg")
+	for _, p := range []string{mediaPath, thumbPath} {
+		if err := os.WriteFile(p, []byte("bytes"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+	if err := h.vs.Upsert(videos.Video{ID: "v1", URL: "https://youtu.be/v1"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := h.vs.SetDownloaded("v1", videos.DownloadedResult{MediaPath: mediaPath, ThumbnailPath: thumbPath}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	if _, err := h.vs.SetWatched("v1", true); err != nil {
+		t.Fatalf("set watched: %v", err)
+	}
+	h.backdateWatchedAt(t, "v1", "2026-01-01 00:00:00")
+
+	if err := h.sw.SweepOnce(); err != nil {
+		t.Fatalf("sweep once: %v", err)
+	}
+
+	v, err := h.vs.Get("v1")
+	if err != nil {
+		t.Fatalf("get v1: %v", err)
+	}
+	if v.Status != "tombstoned" {
+		t.Fatalf("status = %q, want tombstoned", v.Status)
+	}
+	if _, err := os.Stat(mediaPath); !os.IsNotExist(err) {
+		t.Fatalf("v1.mp4 still on disk (stat err = %v), want removed", err)
+	}
+	if _, err := os.Stat(thumbPath); err != nil {
+		t.Fatalf("v1.jpg gone after sweep, want kept: %v", err)
+	}
+	if v.ThumbnailPath != thumbPath {
+		t.Fatalf("thumbnail_path = %q, want kept as %q", v.ThumbnailPath, thumbPath)
+	}
+}
+
 // TestSweepOnce_negativeRetentionSkipsSweep is finding 4's defense in depth:
 // a negative retention_days (which would move the cutoff into the future and
 // match EVERY watched non-favorite video) must NOT tombstone anything — the

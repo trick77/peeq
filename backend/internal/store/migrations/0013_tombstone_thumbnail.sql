@@ -1,0 +1,25 @@
+-- 0013: heal tombstoned rows that point at a thumbnail file which is gone.
+--
+-- A tombstone reclaims disk space but keeps the row (title, summary, watched
+-- history), and its card says "Removed to save space · summary kept". Until
+-- now the tombstone path also unlinked the thumbnail from disk while leaving
+-- videos.thumbnail_path set, so has_thumbnail stayed true and every such card
+-- requested a poster that 404s — a broken image on exactly the cards that are
+-- supposed to look like the video they remember.
+--
+-- Going forward the tombstone keeps the file (media.RemoveTombstonedVideoFiles;
+-- a poster is tens of kilobytes against the megabytes the media file gave
+-- back), so thumbnail_path stays truthful. The already-tombstoned rows cannot
+-- be repaired that way — their file is long deleted — so their stale path is
+-- cleared here and they fall back to the deterministic gradient placeholder
+-- the UI already draws for any video with no thumbnail.
+--
+-- Only tombstoned rows are touched: for every other status thumbnail_path is
+-- either live or legitimately empty. A row whose thumbnail_path held a remote
+-- URL rather than a local path is cleared too, which is equally correct — the
+-- thumbnail endpoint only ever serves files under the media dir, so that path
+-- could never have produced a poster either.
+--
+-- Re-downloading a tombstoned video repopulates thumbnail_path on success
+-- (videos.Store.SetDownloaded), so this is not a one-way loss.
+UPDATE videos SET thumbnail_path = '' WHERE status = 'tombstoned';

@@ -1,15 +1,9 @@
 import type { MouseEvent } from "react";
 import { Icon } from "../icons";
 import { Button } from "../ui";
-import { thumbnailUrl } from "../api/videos";
+import { ThumbFill } from "./ThumbFill";
 import type { Video } from "../api/types";
-import {
-  daysSince,
-  formatAge,
-  formatAgo,
-  formatDuration,
-  gradientClassFor,
-} from "../format";
+import { daysSince, formatAge, formatAgo, formatDuration } from "../format";
 import { CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
 import { DOT } from "../sep";
 
@@ -108,16 +102,7 @@ export function VideoCard({
           onClick={() => onOpen(video.id)}
           aria-label={`Open ${video.title}`}
         >
-          {video.has_thumbnail ? (
-            <img
-              className="fill"
-              src={thumbnailUrl(video.id)}
-              alt=""
-              loading="lazy"
-            />
-          ) : (
-            <div className={`fill ${gradientClassFor(video.id)}`} />
-          )}
+          <ThumbFill id={video.id} hasThumbnail={video.has_thumbnail} />
           {/* Dot only: the word "Unwatched" was the loudest thing on the
               thumbnail for a fact the glowing dot already carries. The pill
               shape and the label stay for anyone not reading it visually. */}

@@ -208,17 +208,18 @@ func (s *server) handleGetVideo(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeleteVideo is the manual DELETE endpoint: unconditionally
-// tombstones the video (unlinking its media/thumbnail/subtitle files from
-// disk to reclaim space) while keeping the row for watched history and a
-// future re-download badge. Never-delete-a-playing-video is a Task 12
-// sweeper concern, not this endpoint's.
+// tombstones the video (unlinking its media and subtitle files from disk
+// to reclaim space, keeping the thumbnail so the remembered card still has
+// a poster) while keeping the row for watched history and a future
+// re-download badge. Never-delete-a-playing-video is a Task 12 sweeper
+// concern, not this endpoint's.
 func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.lookupVideo(w, r)
 	if !ok {
 		return
 	}
 
-	media.RemoveVideoFiles(s.mediaDir, v.MediaPath, v.ThumbnailPath, v.SubtitlePath)
+	media.RemoveTombstonedVideoFiles(s.mediaDir, v.MediaPath, v.SubtitlePath)
 
 	if err := s.videos.Tombstone(v.ID); err != nil {
 		serverError(w, r, err, "delete video failed")
