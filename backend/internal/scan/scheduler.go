@@ -718,6 +718,13 @@ func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool)
 // so is good to the day only for recent items. Three days is ample at the
 // boundary, and it errs toward the inbox — a recoverable nuisance — rather than
 // toward a terminal row.
+//
+// The effective window is three to four days, not exactly three: publishedAt is
+// date-only (parsed as midnight UTC) while baselinedAt carries a time of day, so
+// a channel baselined at 12:00 admits everything published from cutoff-day+1
+// onward and still suppresses the cutoff day itself. That imprecision is
+// deliberate — sharpening it would only move a boundary the input is too coarse
+// to place anyway — and it stays on the fail-open side of nothing that matters.
 const backCatalogueGrace = 3 * 24 * time.Hour
 
 func isBackCatalogue(publishedAt, baselinedAt string) bool {

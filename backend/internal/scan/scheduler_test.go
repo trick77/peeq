@@ -1879,7 +1879,9 @@ func TestScan_requestArrivingMidPassSurvives(t *testing.T) {
 // /streams tab made a source visible that no already-baselined channel had ever
 // been listed against, so its entire history was absent from the ledger and
 // every VOD in it read as brand new. baselined_at is 2026-07-19 12:00 here, so
-// the cutoff (grace included) is 2026-07-16.
+// with the three-day grace the boundary sits at 2026-07-16 12:00. A publish
+// date is date-only, so 2026-07-16 (midnight) is still BEFORE that boundary and
+// is suppressed; 2026-07-17 is the first date admitted to the inbox.
 func TestScan_backCatalogue_isNotNew(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -1887,8 +1889,11 @@ func TestScan_backCatalogue_isNotNew(t *testing.T) {
 		want      string
 	}{
 		{"years old", "2019-03-04", "seen"},
-		{"just before the cutoff", "2026-07-15", "seen"},
-		{"just after the cutoff", "2026-07-17", "pending"},
+		{"inside the grace but before it", "2026-07-15", "seen"},
+		// The boundary day itself: date-only midnight is before 07-16 12:00, so
+		// the effective window is three-to-four days, not exactly three.
+		{"the boundary day", "2026-07-16", "seen"},
+		{"the first admitted day", "2026-07-17", "pending"},
 		{"published today", "2026-07-19", "pending"},
 		// Fails OPEN: an undated entry is a nuisance in the inbox, but marking
 		// it 'seen' would be terminal and lose a real video.

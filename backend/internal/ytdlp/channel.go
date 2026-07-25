@@ -67,6 +67,13 @@ var approximateDateArgs = []string{"--extractor-args", "youtubetab:approximate_d
 // rest of peeq stores dates in (matching normalizeUploadDate's output). UTC,
 // so the same listing yields the same date regardless of host timezone.
 // Returns "" for a missing or non-positive timestamp.
+func unixToDate(ts int64) string {
+	if ts <= 0 {
+		return ""
+	}
+	return time.Unix(ts, 0).UTC().Format("2006-01-02")
+}
+
 // firstTimestamp returns the first positive value, so a caller can express
 // "prefer timestamp, fall back to release_timestamp" without repeating the
 // >0 test that unixToDate already owns. Returns 0 when none is positive,
@@ -78,13 +85,6 @@ func firstTimestamp(candidates ...int64) int64 {
 		}
 	}
 	return 0
-}
-
-func unixToDate(ts int64) string {
-	if ts <= 0 {
-		return ""
-	}
-	return time.Unix(ts, 0).UTC().Format("2006-01-02")
 }
 
 type flatListing struct {
