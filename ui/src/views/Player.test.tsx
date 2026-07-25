@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { Player } from "./Player";
 import { parseVtt } from "../vtt";
 import type { Video } from "../api/types";
+import { ApiError } from "../api/http";
 
 const mockVideo: Video = {
   id: "v1",
@@ -17,6 +18,7 @@ const mockVideo: Video = {
   status: "downloaded",
   watched: false,
   resume_position_seconds: 42,
+  state_version: 1,
   favorite: false,
   summary: "",
   chapters: [],
@@ -32,7 +34,9 @@ vi.mock("../api/videos", () => ({
   setFavorite: vi.fn().mockResolvedValue(true),
   setWatched: vi.fn().mockResolvedValue(true),
   setCategory: vi.fn().mockResolvedValue("ai"),
-  setResume: vi.fn().mockResolvedValue(42),
+  setResume: vi
+    .fn()
+    .mockResolvedValue({ position: 42, state_version: 1, watched: false }),
   deleteVideo: vi.fn().mockResolvedValue(undefined),
   redownload: vi.fn().mockResolvedValue(undefined),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
@@ -111,7 +115,16 @@ describe("Player", () => {
       configurable: true,
     });
     vi.mocked(getVideo).mockReset();
-    vi.mocked(setResume).mockClear();
+    // mockReset, not mockClear, for the same reason setWatched uses it below:
+    // the stale-version tests queue a mockRejectedValueOnce, and one that its
+    // own test never consumed would otherwise detonate in the next test that
+    // pings. The default resolution is restored right after.
+    vi.mocked(setResume).mockReset();
+    vi.mocked(setResume).mockResolvedValue({
+      position: 42,
+      state_version: 1,
+      watched: false,
+    });
     vi.mocked(reprocess).mockClear();
     vi.mocked(redownload).mockClear();
     vi.mocked(deleteVideo).mockClear();
@@ -121,7 +134,10 @@ describe("Player", () => {
     // cumulative call counts make `toHaveBeenCalled()` gates pass on a
     // previous test's click.
     vi.mocked(setWatched).mockReset();
-    vi.mocked(setWatched).mockResolvedValue(true);
+    vi.mocked(setWatched).mockResolvedValue({
+      watched: true,
+      state_version: 2,
+    });
     vi.mocked(setFavorite).mockReset();
     vi.mocked(setFavorite).mockResolvedValue(true);
     vi.mocked(setCategory).mockReset();
@@ -325,7 +341,7 @@ describe("Player", () => {
       writable: true,
     });
     fireEvent.timeUpdate(videoEl);
-    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 50));
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 50, 1));
     vi.mocked(setResume).mockClear();
 
     // Second timeupdate lands inside the RESUME_THROTTLE_MS window, so on
@@ -342,7 +358,7 @@ describe("Player", () => {
     unmount();
 
     await waitFor(() => {
-      expect(setResume).toHaveBeenCalledWith("v1", 77);
+      expect(setResume).toHaveBeenCalledWith("v1", 77, 1);
     });
   });
 
@@ -377,7 +393,7 @@ describe("Player", () => {
         writable: true,
       });
       fireEvent.timeUpdate(videoEl);
-      await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 40));
+      await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 40, 1));
       vi.mocked(setResume).mockClear();
 
       fireEvent.click(screen.getByRole("button", { name }));
@@ -618,7 +634,7 @@ describe("Player", () => {
       writable: true,
     });
     fireEvent.timeUpdate(videoEl);
-    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 95));
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 95, 1));
     vi.mocked(setResume).mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: "Mark unwatched" }));
@@ -766,8 +782,129 @@ describe("Player", () => {
     fireEvent.timeUpdate(videoEl);
 
     await waitFor(() => {
-      expect(setResume).toHaveBeenCalledWith("v1", 100);
+      expect(setResume).toHaveBeenCalledWith("v1", 100, 1);
     });
+  });
+
+  it("keeps echoing the version the resume response returned, not the one it loaded", async () => {
+    // The self-409 guard: crossing 90% auto-marks watched server-side, which
+    // bumps state_version. A Player that kept echoing what getVideo gave it
+    // would 409 against its own threshold crossing on the very next ping.
+    vi.mocked(setResume).mockReset();
+    vi.mocked(setResume).mockResolvedValue({
+      position: 95,
+      state_version: 9,
+      watched: true,
+    });
+    const { unmount } = render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 95,
+      writable: true,
+    });
+
+    fireEvent.timeUpdate(videoEl);
+    // The first ping echoes what getVideo reported.
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 95, 1));
+
+    // The throttle only lets one ping through per RESUME_THROTTLE_MS, so the
+    // unmount flush is what carries the second one — and it must carry the
+    // version the response handed back.
+    unmount();
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 95, 9));
+  });
+
+  it("pauses, rewinds and says so when a resume ping is refused as stale", async () => {
+    // Issue #97 from this client's side: the video was marked watched
+    // somewhere this Player never saw, so its position was refused with a 409.
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ duration_seconds: 100 }));
+    vi.mocked(setResume).mockReset();
+    vi.mocked(setResume).mockRejectedValue(
+      new ApiError(409, "video state changed on another device"),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    const pause = vi.fn();
+    videoEl.pause = pause;
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 40,
+      writable: true,
+    });
+
+    // The refetch that follows the 409 reports the state this Player missed.
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({
+        watched: true,
+        resume_position_seconds: 0,
+        state_version: 5,
+      }),
+    );
+    fireEvent.timeUpdate(videoEl);
+
+    // Same pause-and-rewind the local toggle does — anything else keeps
+    // pushing the old position at a row that was deliberately zeroed.
+    await waitFor(() => expect(pause).toHaveBeenCalled());
+    expect(videoEl.currentTime).toBe(0);
+    expect(
+      await screen.findByText("Marked watched on another device."),
+    ).toBeInTheDocument();
+    // And the label reflects the adopted state, not the stale local copy.
+    expect(
+      screen.getByRole("button", { name: "Mark unwatched" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not yank the playhead when a 409 turns out not to be a mark-watched", async () => {
+    // An un-watch elsewhere, or a re-download's watched-state rescue, also
+    // bumps the version. Adopting the fresh state is enough: there is no
+    // reason to stop a video the user is still watching.
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ watched: true, duration_seconds: 100 }),
+    );
+    vi.mocked(setResume).mockReset();
+    vi.mocked(setResume).mockRejectedValue(
+      new ApiError(409, "video state changed on another device"),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    const pause = vi.fn();
+    videoEl.pause = pause;
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 40,
+      writable: true,
+    });
+
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ watched: false, duration_seconds: 100, state_version: 5 }),
+    );
+    fireEvent.timeUpdate(videoEl);
+
+    // Wait on something the refetch actually changes — the label — rather
+    // than on the absence of a call, which would pass before the refetch even
+    // resolved.
+    expect(
+      await screen.findByRole("button", { name: "Mark watched" }),
+    ).toBeInTheDocument();
+    expect(pause).not.toHaveBeenCalled();
+    expect(videoEl.currentTime).toBe(40);
+    expect(
+      screen.queryByText("Marked watched on another device."),
+    ).not.toBeInTheDocument();
   });
 
   it('the ⋮ menu holds a "Watch on YouTube" link to the video url', async () => {

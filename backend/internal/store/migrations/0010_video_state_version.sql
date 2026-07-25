@@ -1,0 +1,22 @@
+-- state_version arbitrates between two clients holding the same video open.
+--
+-- Issue #97: marking a video watched zeroes resume_position_seconds (see
+-- videos.SetWatched), but a second client still playing never learns the toggle
+-- happened and POSTs its stale position straight back within the Player's
+-- RESUME_THROTTLE_MS window. The row ends up watched = 1 with a non-zero
+-- position -- a state that contradicts itself, and exactly what #82 set out to
+-- remove.
+--
+-- Every write that changes a video's *watched* state bumps this counter. A
+-- resume POST echoes the version the client last read; SetResume refuses a
+-- write whose echoed version no longer matches the row, so the losing client
+-- learns it is stale instead of silently clobbering.
+--
+-- Plain position writes deliberately do NOT bump: position is not contended
+-- state that needs arbitrating, and bumping on every resume ping would
+-- invalidate every other client's echo instantly, turning the guard into a 409
+-- storm.
+--
+-- DEFAULT 1 rather than 0 so "never touched" is still a legitimate version a
+-- client can echo, and no existing row needs backfilling.
+ALTER TABLE videos ADD COLUMN state_version INTEGER NOT NULL DEFAULT 1;

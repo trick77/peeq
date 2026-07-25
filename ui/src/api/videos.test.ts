@@ -101,29 +101,63 @@ describe("videos api", () => {
   });
 
   it("setWatched POSTs the flag and returns the server's echoed value", async () => {
-    const f = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(JSON.stringify({ watched: false }), { status: 200 }),
-      );
+    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ watched: false, state_version: 4 }), {
+        status: 200,
+      }),
+    );
     const result = await setWatched("v1", false);
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/videos/v1/watched");
     expect(JSON.parse(init!.body as string)).toEqual({ watched: false });
-    expect(result).toBe(false);
+    expect(result).toEqual({ watched: false, state_version: 4 });
   });
 
   it("setResume POSTs the position and returns the server's echoed value", async () => {
     const f = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
-        new Response(JSON.stringify({ position: 42 }), { status: 200 }),
+        new Response(
+          JSON.stringify({ position: 42, state_version: 3, watched: false }),
+          { status: 200 },
+        ),
       );
     const result = await setResume("v1", 42);
     const [url, init] = f.mock.calls[0];
     expect(url).toBe("/api/videos/v1/resume");
+    // No state_version in the body at all when the caller passes none — the
+    // backend reads that as "skip the conflict check", which is what keeps a
+    // non-Player caller working.
     expect(JSON.parse(init!.body as string)).toEqual({ position: 42 });
-    expect(result).toBe(42);
+    expect(result).toEqual({ position: 42, state_version: 3, watched: false });
+  });
+
+  it("setResume echoes a state_version when given one", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ position: 42, state_version: 7, watched: false }),
+          { status: 200 },
+        ),
+      );
+    await setResume("v1", 42, 7);
+    const [, init] = f.mock.calls[0];
+    expect(JSON.parse(init!.body as string)).toEqual({
+      position: 42,
+      state_version: 7,
+    });
+  });
+
+  it("setResume rejects with a 409 ApiError when the version is stale", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "video state changed" }), {
+        status: 409,
+      }),
+    );
+    // The Player branches on exactly this: status 409 means a watched toggle
+    // landed elsewhere and its position was refused (issue #97).
+    await expect(setResume("v1", 42, 1)).rejects.toMatchObject({ status: 409 });
   });
 
   it("redownload POSTs to /api/videos/{id}/redownload and resolves on an empty 202 body", async () => {

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -35,26 +36,31 @@ type videoDTO struct {
 	// omits the columns rather than rendering blanks. Friendly wording
 	// ("H.264", "1080p") is the UI's job, not the wire's, so it can change
 	// without a migration.
-	MediaContainer        string                   `json:"media_container,omitempty"`
-	VideoCodec            string                   `json:"video_codec,omitempty"`
-	VideoHeight           int64                    `json:"video_height,omitempty"`
-	AudioCodec            string                   `json:"audio_codec,omitempty"`
-	Availability          string                   `json:"availability"`
-	Status                string                   `json:"status"`
-	ErrorMessage          string                   `json:"error_message,omitempty"`
-	Watched               bool                     `json:"watched"`
-	WatchedAt             string                   `json:"watched_at,omitempty"`
-	ResumePositionSeconds float64                  `json:"resume_position_seconds"`
-	Favorite              bool                     `json:"favorite"`
-	DownloadedAt          string                   `json:"downloaded_at,omitempty"`
-	SponsorblockSegments  []sponsorblockSegmentDTO `json:"sponsorblock_segments,omitempty"`
-	Summary               string                   `json:"summary"`
-	Chapters              json.RawMessage          `json:"chapters,omitempty"`
-	KeyPoints             json.RawMessage          `json:"key_points,omitempty"`
-	SummaryStatus         string                   `json:"summary_status"`
-	Category              string                   `json:"category"`
-	AudioLanguage         string                   `json:"audio_language"`
-	HasSubtitles          bool                     `json:"has_subtitles"`
+	MediaContainer        string  `json:"media_container,omitempty"`
+	VideoCodec            string  `json:"video_codec,omitempty"`
+	VideoHeight           int64   `json:"video_height,omitempty"`
+	AudioCodec            string  `json:"audio_codec,omitempty"`
+	Availability          string  `json:"availability"`
+	Status                string  `json:"status"`
+	ErrorMessage          string  `json:"error_message,omitempty"`
+	Watched               bool    `json:"watched"`
+	WatchedAt             string  `json:"watched_at,omitempty"`
+	ResumePositionSeconds float64 `json:"resume_position_seconds"`
+	// StateVersion is the row's watched-state generation counter. The Player
+	// echoes it back on every resume POST so a watched toggle made elsewhere
+	// can't be undone by a client that never saw it — see videos.SetResume
+	// and issue #97.
+	StateVersion         int64                    `json:"state_version"`
+	Favorite             bool                     `json:"favorite"`
+	DownloadedAt         string                   `json:"downloaded_at,omitempty"`
+	SponsorblockSegments []sponsorblockSegmentDTO `json:"sponsorblock_segments,omitempty"`
+	Summary              string                   `json:"summary"`
+	Chapters             json.RawMessage          `json:"chapters,omitempty"`
+	KeyPoints            json.RawMessage          `json:"key_points,omitempty"`
+	SummaryStatus        string                   `json:"summary_status"`
+	Category             string                   `json:"category"`
+	AudioLanguage        string                   `json:"audio_language"`
+	HasSubtitles         bool                     `json:"has_subtitles"`
 	// MediaType/LiveStatus/YTTags/YTCategories are YouTube's own facts about
 	// the video, straight from yt-dlp. Note Category (peeq's classification
 	// enum) and YTCategories (YouTube's labels) are different things that
@@ -130,6 +136,7 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		Watched:               v.Watched,
 		WatchedAt:             v.WatchedAt,
 		ResumePositionSeconds: v.ResumePositionSeconds,
+		StateVersion:          v.StateVersion,
 		Favorite:              v.Favorite,
 		DownloadedAt:          v.DownloadedAt,
 		SponsorblockSegments:  parseSponsorblockSegments(v.SponsorblockSegments),
@@ -287,12 +294,26 @@ type watchedRequest struct {
 	Watched *bool `json:"watched"`
 }
 
+// watchedResponse is the body of POST .../watched.
+type watchedResponse struct {
+	Watched      bool  `json:"watched"`
+	StateVersion int64 `json:"state_version"`
+}
+
 // handleWatchedVideo is the manual watched toggle. true marks watched
 // (without resetting watched_at if already set); false clears both watched
 // and watched_at, rescuing the video from the retention sweep. Either
 // direction resets resume_position_seconds to 0 — see videos.SetWatched.
-// The response carries only the new watched flag, so a client holding a
-// local copy of the video has to zero the position itself.
+// The response carries the new watched flag and the bumped state_version, but
+// not the zeroed position: a client holding a local copy of the video has to
+// zero that itself.
+//
+// Returning the version is not a convenience. The Player's watched toggle
+// pauses and rewinds (#87), the spec fires a timeupdate on that seek even while
+// paused, and the resulting resume POST would still carry the pre-toggle
+// version — so without handing the new one back here, the very client that
+// pressed the button would 409 against its own toggle and tell itself the video
+// had been marked watched elsewhere.
 func (s *server) handleWatchedVideo(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.lookupVideo(w, r)
 	if !ok {
@@ -303,21 +324,40 @@ func (s *server) handleWatchedVideo(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "watched (bool) is required")
 		return
 	}
-	if err := s.videos.SetWatched(v.ID, *req.Watched); err != nil {
+	version, err := s.videos.SetWatched(v.ID, *req.Watched)
+	if err != nil {
 		serverError(w, r, err, "set watched failed")
 		return
 	}
-	writeJSON(w, map[string]bool{"watched": *req.Watched})
+	writeJSON(w, watchedResponse{Watched: *req.Watched, StateVersion: version})
 }
 
 // resumeRequest is the required body of POST .../resume.
 type resumeRequest struct {
 	Position *float64 `json:"position"`
+	// StateVersion is the videos.state_version the client last read, echoed
+	// back so a position written by a client that never saw a watched toggle
+	// elsewhere can be refused (issue #97). Optional on purpose: nil skips the
+	// check entirely, which keeps every non-Player caller — and an older cached
+	// SPA bundle still pinging after a deploy — working exactly as before.
+	StateVersion *int64 `json:"state_version"`
+}
+
+// resumeResponse is the body of POST .../resume. It reports the row's version
+// after the write so the client can keep echoing a current value: SetResume's
+// own >=90% auto-watch bumps it, and a client refreshing only from GET
+// /api/videos/{id} would 409 against its own threshold crossing.
+type resumeResponse struct {
+	Position     float64 `json:"position"`
+	StateVersion int64   `json:"state_version"`
+	Watched      bool    `json:"watched"`
 }
 
 // handleResumeVideo records the player's resume position. The >=90%
 // auto-watched rule (and its no-reset-on-rewatch guarantee) lives in
-// videos.Store.SetResume; this handler is just the transport.
+// videos.Store.SetResume; this handler is just the transport, plus the mapping
+// of a stale echoed version to 409 so the losing client refetches instead of
+// clobbering.
 func (s *server) handleResumeVideo(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.lookupVideo(w, r)
 	if !ok {
@@ -332,11 +372,16 @@ func (s *server) handleResumeVideo(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "position must not be negative")
 		return
 	}
-	if err := s.videos.SetResume(v.ID, *req.Position); err != nil {
+	version, watched, err := s.videos.SetResume(v.ID, *req.Position, req.StateVersion)
+	if errors.Is(err, videos.ErrStaleVersion) {
+		writeJSONError(w, http.StatusConflict, "video state changed on another device")
+		return
+	}
+	if err != nil {
 		serverError(w, r, err, "set resume failed")
 		return
 	}
-	writeJSON(w, map[string]float64{"position": *req.Position})
+	writeJSON(w, resumeResponse{Position: *req.Position, StateVersion: version, Watched: watched})
 }
 
 // handleStreamVideo serves the video's media file via http.ServeContent,
@@ -482,7 +527,7 @@ func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
 	// rescues it from SweepCandidates so the sweeper doesn't delete the
 	// freshly re-downloaded media within its next hourly pass. Mirrors the
 	// existing "un-watch rescues from the auto-delete sweep" rule from P1.
-	if err := s.videos.SetWatched(v.ID, false); err != nil {
+	if _, err := s.videos.SetWatched(v.ID, false); err != nil {
 		serverError(w, r, err, "reset watched state failed")
 		return
 	}
