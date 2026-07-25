@@ -22,6 +22,7 @@ import { getSettings, updateSettings } from "../api/settings";
 import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareChip, ShareControl } from "../components/ShareControl";
 import type { Video } from "../api/types";
+import { ApiError } from "../api/http";
 import {
   codecLabel,
   formatAgo,
@@ -175,6 +176,17 @@ export function Player({
   // a legitimately stored resume_position_seconds with 0. Only flush once
   // a real position has been observed.
   const positionKnownRef = useRef(false);
+  // stateVersionRef is the video's state_version as this Player last saw it,
+  // echoed on every resume POST so a watched toggle made in another tab or on
+  // another device can't be undone by this client writing its stale position
+  // back (issue #97). null means "not known yet" — a ping before the video has
+  // loaded sends no version and is checked server-side as before, which is
+  // correct: there is no stale read to guard against yet.
+  //
+  // It is refreshed from EVERY response that reports a version, not just
+  // getVideo: the resume POST's own >=90% auto-watch bumps it, so a client
+  // refreshing only from getVideo would 409 against its own threshold crossing.
+  const stateVersionRef = useRef<number | null>(null);
   const resumeAppliedRef = useRef(false);
   // ccAppliedForRef holds the video id the subtitles default was last
   // applied to, so it lands exactly once per video. Without it the toggle
@@ -194,6 +206,7 @@ export function Player({
   useEffect(() => {
     resumeAppliedRef.current = false;
     positionKnownRef.current = false;
+    stateVersionRef.current = null;
     openVideoIdRef.current = videoId;
     setVideo(null);
     setError(null);
@@ -211,7 +224,9 @@ export function Player({
     let active = true;
     getVideo(videoId)
       .then((v) => {
-        if (active) setVideo(v);
+        if (!active) return;
+        setVideo(v);
+        stateVersionRef.current = v.state_version;
       })
       .catch((e: Error) => {
         if (active) setError(e.message);
@@ -243,7 +258,26 @@ export function Player({
   useEffect(() => {
     function flush() {
       if (!video || !positionKnownRef.current) return;
-      setResume(video.id, positionRef.current).catch(() => {});
+      // No 409 branch here, deliberately: this also runs from the unmount
+      // cleanup, where there is no component left to toast and no playhead left
+      // to rewind. A refused flush simply means the position the server already
+      // holds is the right one.
+      //
+      // An ACCEPTED flush must still adopt the version it hands back, exactly
+      // like the throttled ping does: past the 90% threshold this write
+      // auto-marks watched server-side and bumps state_version, so dropping the
+      // response would leave the ref stale and make the very next ping 409
+      // against this Player's own flush — pausing, rewinding to 0:00 and
+      // claiming the video was "marked watched on another device". Guarded on
+      // openVideoIdRef so a late response can't write this video's version into
+      // the ref after the user has moved to another one.
+      const id = video.id;
+      setResume(id, positionRef.current, stateVersionRef.current ?? undefined)
+        .then((res) => {
+          if (openVideoIdRef.current !== id) return;
+          stateVersionRef.current = res.state_version;
+        })
+        .catch(() => {});
     }
     document.addEventListener("visibilitychange", flush);
     window.addEventListener("pagehide", flush);
@@ -283,7 +317,9 @@ export function Player({
         // which would otherwise overwrite v2's video with v1's data.
         getVideo(videoId)
           .then((v) => {
-            if (!cancelled) setVideo(v);
+            if (cancelled) return;
+            setVideo(v);
+            stateVersionRef.current = v.state_version;
           })
           .catch(() => {});
       } else {
@@ -471,8 +507,53 @@ export function Player({
     const now = Date.now();
     if (now - lastSentRef.current >= RESUME_THROTTLE_MS) {
       lastSentRef.current = now;
-      setResume(video.id, el.currentTime).catch(() => {});
+      const id = video.id;
+      setResume(id, el.currentTime, stateVersionRef.current ?? undefined)
+        .then((res) => {
+          if (openVideoIdRef.current !== id) return;
+          stateVersionRef.current = res.state_version;
+        })
+        .catch((e: unknown) => {
+          if (e instanceof ApiError && e.status === 409) {
+            void handleStaleState(id);
+          }
+        });
     }
+  }
+
+  // handleStaleState answers a 409 from a resume ping: the video's watched state
+  // changed somewhere this Player never saw, so its position was refused (see
+  // setResume and issue #97). Refetch, adopt the real state, and — only if the
+  // video came back watched — do exactly what the local toggle does: stop and
+  // rewind, so nothing keeps pushing the old position at a row that has
+  // deliberately been zeroed.
+  //
+  // Every step is guarded on openVideoIdRef, the rule the toggle and category
+  // handlers already follow: a continuation that resumes after the user has
+  // moved on must not paint this video's state onto whichever one is open now.
+  async function handleStaleState(id: string) {
+    if (openVideoIdRef.current !== id) return;
+    let fresh: Video;
+    try {
+      fresh = await getVideo(id);
+    } catch {
+      // Nothing to adopt. The next ping will 409 again and retry this.
+      return;
+    }
+    if (openVideoIdRef.current !== id) return;
+    setVideo(fresh);
+    stateVersionRef.current = fresh.state_version;
+    if (!fresh.watched) {
+      // A conflict that wasn't a mark-watched (an un-watch, a re-download's
+      // rescue). The refreshed version is enough; there is no reason to yank a
+      // playhead the user is still watching.
+      return;
+    }
+    videoRef.current?.pause();
+    seek(0);
+    positionRef.current = 0;
+    positionKnownRef.current = false;
+    showToast("Marked watched on another device.", "check", "info");
   }
 
   // seek — shared by the scrubber and every intelligence-panel click target
@@ -571,7 +652,13 @@ export function Player({
     positionKnownRef.current = false;
 
     try {
-      await setWatched(id, next);
+      const res = await setWatched(id, next);
+      // Same-video guard as the rollback below. The ref belongs to whichever
+      // video is open now, so writing this one's version into it would 409 the
+      // next ping for the other video.
+      if (openVideoIdRef.current === id) {
+        stateVersionRef.current = res.state_version;
+      }
     } catch {
       // Nothing below is safe once the user has moved on — the same rule
       // handlePickCategory follows. The rollback would paint this video's

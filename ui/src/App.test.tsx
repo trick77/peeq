@@ -59,6 +59,7 @@ const mockVideo = vi.hoisted<Video>(() => ({
   status: "downloaded",
   watched: false,
   resume_position_seconds: 42,
+  state_version: 1,
   favorite: false,
   summary: "",
   chapters: [],

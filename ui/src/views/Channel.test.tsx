@@ -87,6 +87,7 @@ function archiveVideo(overrides: Partial<Video> = {}): Video {
     status: "downloaded",
     watched: false,
     resume_position_seconds: 0,
+    state_version: 1,
     favorite: false,
     summary: "",
     chapters: [],
@@ -152,7 +153,10 @@ describe("Channel", () => {
     vi.mocked(setFavorite).mockReset();
     vi.mocked(setFavorite).mockResolvedValue(true);
     vi.mocked(setWatched).mockReset();
-    vi.mocked(setWatched).mockResolvedValue(true);
+    vi.mocked(setWatched).mockResolvedValue({
+      watched: true,
+      state_version: 2,
+    });
     vi.mocked(updateChannel).mockReset();
     vi.mocked(updateChannel).mockResolvedValue({
       id: "UCa",

@@ -55,16 +55,20 @@ export async function setFavorite(
   return res.favorite;
 }
 
+// setWatched flips the manual watched toggle. It returns the bumped
+// state_version alongside the flag so the Player can keep echoing a current
+// value on its resume pings — its own toggle pauses and rewinds, and the
+// timeupdate that seek fires would otherwise POST the pre-toggle version and
+// 409 the toggling client against itself.
 export async function setWatched(
   id: string,
   watched: boolean,
-): Promise<boolean> {
-  const res = await api.post<{ watched: boolean }>(
+): Promise<{ watched: boolean; state_version: number }> {
+  return api.post<{ watched: boolean; state_version: number }>(
     `/api/videos/${encodeURIComponent(id)}/watched`,
     { watched },
     "failed to set watched",
   );
-  return res.watched;
 }
 
 // setCategory overrides the classifier's guess from the Player. The choice
@@ -85,13 +89,29 @@ export async function setCategory(
 // setResume records the player's resume position (seconds). Note the
 // asymmetry with Video.resume_position_seconds: this is the write body
 // (`position`), the video row is read back with a differently-named field.
-export async function setResume(id: string, position: number): Promise<number> {
-  const res = await api.post<{ position: number }>(
+//
+// stateVersion is the video's state_version as the caller last saw it, echoed
+// back so the backend can refuse a position written by a client that never saw
+// a watched toggle made elsewhere (issue #97). Omitting it skips that check
+// server-side. A refused write rejects with an ApiError of status 409; the
+// response of an accepted one carries the row's current version, which the
+// caller should keep — SetResume's own >=90% auto-watch bumps it.
+export async function setResume(
+  id: string,
+  position: number,
+  stateVersion?: number,
+): Promise<{ position: number; state_version: number; watched: boolean }> {
+  return api.post<{
+    position: number;
+    state_version: number;
+    watched: boolean;
+  }>(
     `/api/videos/${encodeURIComponent(id)}/resume`,
-    { position },
+    stateVersion === undefined
+      ? { position }
+      : { position, state_version: stateVersion },
     "failed to set resume position",
   );
-  return res.position;
 }
 
 // redownload re-queues a failed or tombstoned video. 202/empty, so it uses

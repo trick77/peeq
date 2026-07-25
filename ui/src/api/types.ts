@@ -61,6 +61,11 @@ export type Video = {
   watched: boolean;
   watched_at?: string;
   resume_position_seconds: number;
+  // state_version is the row's watched-state generation counter. The Player
+  // echoes it on every resume POST so a watched toggle made in another tab or
+  // on another device can't be undone by a client that never saw it — see
+  // setResume in api/videos.ts and issue #97.
+  state_version: number;
   favorite: boolean;
   downloaded_at?: string;
   // sponsorblock_segments mirrors httpapi.sponsorblockSegmentDTO, parsed

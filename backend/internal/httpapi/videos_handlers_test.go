@@ -120,7 +120,7 @@ func TestVideosWatched_clearsResumePosition(t *testing.T) {
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", DurationSeconds: 600}); err != nil {
 		t.Fatalf("seed video: %v", err)
 	}
-	if err := deps.Videos.SetResume("v1", 120); err != nil {
+	if _, _, err := deps.Videos.SetResume("v1", 120, nil); err != nil {
 		t.Fatalf("seed resume: %v", err)
 	}
 	h := New(deps)
@@ -146,6 +146,134 @@ func TestVideosWatched_clearsResumePosition(t *testing.T) {
 	if got.ResumePositionSeconds != 0 {
 		t.Fatalf("resume_position_seconds = %v, want 0", got.ResumePositionSeconds)
 	}
+}
+
+// TestVideosResume_staleStateVersionConflicts is issue #97 through the full
+// HTTP stack: tab A marks the video watched, tab B's next throttled resume POST
+// still carries the version it read on open, and must be refused rather than
+// writing its stale position over the deliberately zeroed one.
+func TestVideosResume_staleStateVersionConflicts(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", DurationSeconds: 600}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// What tab B read when it opened the video.
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
+	var opened videoDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &opened); err != nil {
+		t.Fatalf("decode video: %v", err)
+	}
+	if opened.StateVersion == 0 {
+		t.Fatalf("state_version missing from the video DTO")
+	}
+
+	// Tab A marks it watched.
+	body, _ := json.Marshal(map[string]bool{"watched": true})
+	rec = doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/watched", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST watched status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var toggled watchedResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &toggled); err != nil {
+		t.Fatalf("decode watched response: %v", err)
+	}
+	if toggled.StateVersion != opened.StateVersion+1 {
+		t.Fatalf("watched response state_version = %d, want %d", toggled.StateVersion, opened.StateVersion+1)
+	}
+
+	// Tab B pings with the version it is still holding.
+	body, _ = json.Marshal(map[string]any{"position": 300, "state_version": opened.StateVersion})
+	rec = doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/resume", body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale resume status = %d, want 409, body = %s", rec.Code, rec.Body.String())
+	}
+
+	// The row must be untouched — the 409 alone doesn't prove that.
+	rec = doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
+	var after videoDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &after); err != nil {
+		t.Fatalf("decode video: %v", err)
+	}
+	if !after.Watched {
+		t.Fatalf("watched = false, want true — the stale ping must not undo the toggle")
+	}
+	if after.ResumePositionSeconds != 0 {
+		t.Fatalf("resume_position_seconds = %v, want 0", after.ResumePositionSeconds)
+	}
+}
+
+// TestVideosResume_versionEchoAccepted covers the two ways a resume POST is
+// allowed through, and the self-409 the response body exists to prevent.
+func TestVideosResume_versionEchoAccepted(t *testing.T) {
+	t.Run("noVersionStaysBackCompatible", func(t *testing.T) {
+		deps, _ := videosTestDeps(t)
+		if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", DurationSeconds: 600}); err != nil {
+			t.Fatalf("seed video: %v", err)
+		}
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		if _, err := deps.Videos.SetWatched("v1", true); err != nil {
+			t.Fatalf("bump version: %v", err)
+		}
+
+		// An older cached SPA bundle sends no state_version at all.
+		body, _ := json.Marshal(map[string]any{"position": 120})
+		rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/resume", body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("versionless resume status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+		}
+		var got resumeResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode resume response: %v", err)
+		}
+		if got.Position != 120 || got.StateVersion == 0 {
+			t.Fatalf("resume response = %+v, want position 120 and a real state_version", got)
+		}
+	})
+
+	t.Run("autoWatchThenNextPing", func(t *testing.T) {
+		deps, _ := videosTestDeps(t)
+		if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", DurationSeconds: 100}); err != nil {
+			t.Fatalf("seed video: %v", err)
+		}
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+
+		rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
+		var opened videoDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &opened); err != nil {
+			t.Fatalf("decode video: %v", err)
+		}
+
+		// Crossing 90% auto-marks watched, which bumps the version.
+		body, _ := json.Marshal(map[string]any{"position": 95, "state_version": opened.StateVersion})
+		rec = doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/resume", body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("resume at 95%% status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var crossed resumeResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &crossed); err != nil {
+			t.Fatalf("decode resume response: %v", err)
+		}
+		if !crossed.Watched {
+			t.Fatalf("watched = false, want true at 95%%")
+		}
+		if crossed.StateVersion != opened.StateVersion+1 {
+			t.Fatalf("state_version = %d, want %d after auto-watch", crossed.StateVersion, opened.StateVersion+1)
+		}
+
+		// The same client's next ping echoes what THAT response returned. This
+		// is the whole reason the body carries the version: a client refreshing
+		// only from GET /api/videos/{id} would 409 against its own crossing.
+		body, _ = json.Marshal(map[string]any{"position": 96, "state_version": crossed.StateVersion})
+		rec = doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/resume", body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("ping after auto-watch status = %d, want 200 — a client must never 409 against itself, body = %s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 // TestVideosDelete_tombstonesRowAndUnlinksFile is the central Task 11

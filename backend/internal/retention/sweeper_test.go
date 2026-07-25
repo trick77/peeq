@@ -111,7 +111,7 @@ func TestSweepOnce_deletesOnlyWatchedNonFavoriteAgedAndNotPlaying(t *testing.T) 
 			t.Fatalf("set downloaded %s: %v", id, err)
 		}
 		if watched {
-			if err := h.vs.SetWatched(id, true); err != nil {
+			if _, err := h.vs.SetWatched(id, true); err != nil {
 				t.Fatalf("set watched %s: %v", id, err)
 			}
 		}
@@ -183,7 +183,7 @@ func TestSweepOnce_negativeRetentionSkipsSweep(t *testing.T) {
 	if err := h.vs.SetDownloaded("victim", videos.DownloadedResult{MediaPath: "victim.mp4"}); err != nil {
 		t.Fatalf("set downloaded: %v", err)
 	}
-	if err := h.vs.SetWatched("victim", true); err != nil {
+	if _, err := h.vs.SetWatched("victim", true); err != nil {
 		t.Fatalf("set watched: %v", err)
 	}
 	// Watched right now (well inside any sane window); only a future cutoff
@@ -213,7 +213,7 @@ func TestSweepOnce_recentlyWatchedIsKept(t *testing.T) {
 	if err := h.vs.SetDownloaded("fresh", videos.DownloadedResult{MediaPath: "fresh.mp4"}); err != nil {
 		t.Fatalf("set downloaded: %v", err)
 	}
-	if err := h.vs.SetWatched("fresh", true); err != nil {
+	if _, err := h.vs.SetWatched("fresh", true); err != nil {
 		t.Fatalf("set watched: %v", err)
 	}
 	h.backdateWatchedAt(t, "fresh", "2026-07-10 00:00:00") // 8 days ago, well inside 30-day retention
@@ -260,7 +260,7 @@ func TestSweepOnce_recordsWhenItReclaims(t *testing.T) {
 	if err := h.vs.SetDownloaded("old", videos.DownloadedResult{MediaPath: "old.mp4"}); err != nil {
 		t.Fatalf("set downloaded: %v", err)
 	}
-	if err := h.vs.SetWatched("old", true); err != nil {
+	if _, err := h.vs.SetWatched("old", true); err != nil {
 		t.Fatalf("set watched: %v", err)
 	}
 	h.backdateWatchedAt(t, "old", "2026-01-01 00:00:00") // well past the 30-day cutoff

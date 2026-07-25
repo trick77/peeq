@@ -26,6 +26,7 @@ function baseVideo(overrides: Partial<Video> = {}): Video {
     status: "downloaded",
     watched: false,
     resume_position_seconds: 0,
+    state_version: 1,
     favorite: false,
     summary: "",
     chapters: [],
@@ -372,6 +373,7 @@ function categoryVideo(overrides: Partial<Video> = {}): Video {
     status: "downloaded",
     watched: false,
     resume_position_seconds: 0,
+    state_version: 1,
     favorite: false,
     summary: "",
     chapters: [],
@@ -484,7 +486,10 @@ describe("Library category chips", () => {
       watched: false,
     });
     vi.mocked(listVideos).mockResolvedValue([v]);
-    vi.mocked(setWatched).mockResolvedValue(true);
+    vi.mocked(setWatched).mockResolvedValue({
+      watched: true,
+      state_version: 2,
+    });
     render(<Library onOpenVideo={() => {}} search="" />);
     await screen.findByText("unwatched vid");
 
@@ -792,7 +797,10 @@ describe("Library category chips", () => {
   it("clicking watched calls setWatched and updates optimistically", async () => {
     const v = categoryVideo({ id: "v1", watched: false });
     vi.mocked(listVideos).mockResolvedValue([v]);
-    vi.mocked(setWatched).mockResolvedValue(true);
+    vi.mocked(setWatched).mockResolvedValue({
+      watched: true,
+      state_version: 2,
+    });
     render(<Library onOpenVideo={() => {}} search="" />);
     // Use the All filter so the card stays put after being marked watched
     // (under Unwatched it would correctly leave the grid).
@@ -847,9 +855,13 @@ describe("Library category chips", () => {
       watched: false,
       duration_seconds: 100,
       resume_position_seconds: 40,
+      state_version: 1,
     });
     vi.mocked(listVideos).mockResolvedValue([v]);
-    vi.mocked(setWatched).mockResolvedValue(true);
+    vi.mocked(setWatched).mockResolvedValue({
+      watched: true,
+      state_version: 2,
+    });
     render(<Library onOpenVideo={() => {}} search="" />);
     // A partially-watched card (resume > 0) is hidden under the default
     // Unwatched filter; the All filter shows it so the resume bar is present.
@@ -867,7 +879,10 @@ describe("Library category chips", () => {
     expect(document.querySelector(".grid .card")).not.toBeNull();
 
     // And the position is gone: un-watching brings the card back with no bar.
-    vi.mocked(setWatched).mockResolvedValue(false);
+    vi.mocked(setWatched).mockResolvedValue({
+      watched: false,
+      state_version: 2,
+    });
     fireEvent.click(screen.getByRole("button", { name: "Mark unwatched" }));
     await waitFor(() => expect(setWatched).toHaveBeenCalledWith("v1", false));
     expect(document.querySelector(".resume")).toBeNull();
