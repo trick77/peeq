@@ -31,6 +31,16 @@ import (
 // starves the rest of the queue.
 const metadataPreflightTimeout = 2 * time.Minute
 
+// autoDownloadPriority is the priority the scan scheduler enqueues with — work
+// nobody is sitting in front of. Anything above it was asked for by a person
+// (the Inbox approve, the re-download button, the channel handler all use 10),
+// and process() puts those on the pacer's interactive lane.
+//
+// Deliberately re-stated here rather than imported from internal/scan: the
+// worker must not depend on the scheduler, and the contract this encodes is
+// "0 means automatic", not "whatever the scheduler happens to pass today".
+const autoDownloadPriority = 0
+
 // Runner is the subset of *ytdlp.Runner the worker needs. Declaring it here
 // (rather than importing the concrete type) keeps the worker testable with
 // a fake that never shells out to yt-dlp; the real *ytdlp.Runner satisfies
@@ -296,6 +306,18 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	// reason: an early Cancel cancels it, so a slow preflight read or the
 	// Download call aborts.
 	jobCtx, cancel := context.WithCancel(ctx)
+	// Approving something in the Inbox is a person clicking, even though a
+	// worker is what carries it out. Without this the approved download takes
+	// the background lane and can queue behind a channel scan that happened to
+	// start first — the person waits out a full pacer gap for work they asked
+	// for by hand, while a robot's scan goes first.
+	//
+	// The distinction is already in the data and needs no schema change: every
+	// user-initiated enqueue uses priority 10 (the Inbox approve, the
+	// re-download button, the channel handler), while the scan scheduler uses 0.
+	if job.Priority > autoDownloadPriority {
+		jobCtx = ytdlp.WithInteractive(jobCtx)
+	}
 	// Panic-safe context cleanup: even if a later step panics (recovered at
 	// the loop level), the child context is always cancelled rather than
 	// leaked. cancel is idempotent, so the explicit teardown below is fine.

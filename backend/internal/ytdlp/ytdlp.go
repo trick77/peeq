@@ -314,15 +314,35 @@ type interactiveKey struct{}
 
 // WithInteractive marks ctx as user-facing, so the pacer lets it go ahead of
 // background work instead of behind it. Use it for the handlers a person waits
-// on with a spinner in front of them — never for worker calls, which have no
-// deadline and would only crowd out the ones that do.
+// on with a spinner in front of them.
+//
+// "Never for worker calls" is the wrong rule, and used to be stated here. What
+// matters is whether a PERSON asked for the work, not which goroutine carries
+// it out: approving an Inbox item is a click, and it happens to run on the
+// download worker. That worker marks a job interactive when its priority is
+// above the scheduler's automatic 0. Scan-driven downloads, metadata refreshes
+// and every other self-scheduled call stay on the background lane — which is
+// what the old wording was actually protecting.
+//
+// The trade-off, stated plainly: the interactive lane keeps its own tail, so
+// approving ten videos at once puts ten jobs in it, and a click arriving right
+// after them waits behind all ten. That shape is rare enough to watch rather
+// than pre-solve; the fix, if it bites, is a third tier.
 func WithInteractive(ctx context.Context) context.Context {
 	return context.WithValue(ctx, interactiveKey{}, true)
 }
 
-func isInteractive(ctx context.Context) bool {
+// IsInteractive reports whether ctx was marked by WithInteractive. Exported so
+// a caller that decides the lane — the download worker, which reads a job's
+// priority — can assert it actually did, without reaching into the unexported
+// context key or shelling out to a real yt-dlp to observe the pacing.
+func IsInteractive(ctx context.Context) bool {
 	v, _ := ctx.Value(interactiveKey{}).(bool)
 	return v
+}
+
+func isInteractive(ctx context.Context) bool {
+	return IsInteractive(ctx)
 }
 
 // now reads the injectable clock, defaulting to time.Now.
