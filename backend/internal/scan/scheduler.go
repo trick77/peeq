@@ -505,7 +505,11 @@ func (s *Scheduler) recheckUnavailable(ctx context.Context, row *channelvideos.E
 // particular a transient failure must NOT restamp, or a run of network trouble
 // would silently push the next real check out by a fortnight each time.
 func (s *Scheduler) probeAvailability(ctx context.Context, row *channelvideos.Entry, probes *int) (open bool, checked bool) {
-	if s.d.Prober == nil || *probes >= maxUnavailableProbes || !s.recheckDue(row.UnavailableAt) {
+	// The URL check is not merely defensive. A row with none can never be
+	// answered, and without this it would fail its probe on every pass without
+	// restamping — eating a slot from the per-pass budget forever and starving
+	// the rows that could actually be answered.
+	if s.d.Prober == nil || row.URL == "" || *probes >= maxUnavailableProbes || !s.recheckDue(row.UnavailableAt) {
 		return false, false
 	}
 	*probes++

@@ -91,7 +91,9 @@ SET state = 'unavailable',
 WHERE state = 'queued'
   AND video_id IN (
       SELECT v.id FROM videos v
-      WHERE v.status = 'error' AND v.error_message LIKE 'ytdlp: terminal (%'
+      WHERE v.status = 'error'
+        AND v.error_message LIKE 'ytdlp: terminal (%'
+        AND v.downloaded_at IS NULL
   );
 
 -- ...and drop the broken Library rows those tickets now stand for. The ledger
@@ -100,7 +102,20 @@ WHERE state = 'queued'
 -- re-download which cannot ever work. Scoped to rows the ledger just adopted,
 -- so a manually-added video (which has no ledger row to remember it) keeps its
 -- error row and stays visible.
+--
+-- downloaded_at IS NULL is the load-bearing guard, on BOTH statements. A video
+-- that once downloaded and was later tombstoned can be re-downloaded from the
+-- Library, and if the channel has since gated it that re-download fails with
+-- exactly this error text — on a row that still holds watch history, a resume
+-- position, favorites, a summary, transcript chunks, share links and a
+-- thumbnail file on disk. Deleting it would be silent data loss and would
+-- orphan the file. downloaded_at is stamped once on the first success and never
+-- cleared, so it survives both the tombstone and the failed retry; those rows
+-- keep their Library card and their re-download button, which starts working
+-- again if the channel ever ungates the video. Worker.park applies the same
+-- guard for the live path.
 DELETE FROM videos
 WHERE status = 'error'
   AND error_message LIKE 'ytdlp: terminal (%'
+  AND downloaded_at IS NULL
   AND id IN (SELECT video_id FROM channel_videos WHERE state = 'unavailable');

@@ -17,8 +17,12 @@ const entryPublishedAt = "2026-07-19"
 
 // gatedEntry is a listing entry yt-dlp flagged as members-only.
 func gatedEntry(id string) ytdlp.ChannelEntry {
+	// URL matters: it is what a probe is issued against, and parseChannelEntries
+	// always synthesises one, so omitting it here would test a row shape
+	// production never produces.
 	return ytdlp.ChannelEntry{
 		ID: id, Title: id, DurationSeconds: 600, LiveStatus: "not_live",
+		URL:         "https://www.youtube.com/watch?v=" + id,
 		PublishedAt: entryPublishedAt, Availability: "subscriber_only",
 	}
 }
@@ -327,6 +331,27 @@ func TestScan_probeBudgetCapsOnePass(t *testing.T) {
 
 	if prober.calls != maxUnavailableProbes {
 		t.Fatalf("probed %d times, want the cap of %d", prober.calls, maxUnavailableProbes)
+	}
+}
+
+// A row with no URL can never be answered. It must consume no probe budget,
+// or it would starve the rows that can.
+func TestScan_rowWithoutURL_spendsNoProbeBudget(t *testing.T) {
+	h := parkedHarness(t, false)
+	h.lister.set("UC1", []ytdlp.ChannelEntry{silentEntry("v1")})
+	backdate(t, h, "v1")
+	if _, err := h.db.Exec(`UPDATE channel_videos SET url = '' WHERE video_id = 'v1'`); err != nil {
+		t.Fatal(err)
+	}
+	prober := useProber(t, h, &fakeProber{availability: "public"})
+
+	scanAgain(t, h)
+
+	if prober.calls != 0 {
+		t.Fatalf("probed %d times against an empty URL, want 0", prober.calls)
+	}
+	if st := h.ledgerState("v1"); st != channelvideos.StateUnavailable {
+		t.Fatalf("v1 state = %q, want %q", st, channelvideos.StateUnavailable)
 	}
 }
 

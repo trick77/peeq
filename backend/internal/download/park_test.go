@@ -8,6 +8,7 @@ import (
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
@@ -130,6 +131,38 @@ func TestWorker_membersOnly_keepsRowWhenNothingElseRemembersIt(t *testing.T) {
 	}
 	if v.ErrorMessage == "" {
 		t.Fatal("error_message not recorded")
+	}
+}
+
+// A video that has downloaded before is never discarded, however it fails.
+// Re-download is offered for tombstoned rows too, so a channel gating a
+// previously-public video would otherwise turn one click into the loss of the
+// watch history, summary and transcript that row still carries.
+func TestWorker_membersOnly_neverDiscardsAVideoThatOnceDownloaded(t *testing.T) {
+	h, ledger, _ := parkHarness(t, gatedRunner("members"), true /*ledgerRow*/)
+	id := h.enqueue(t, "vid", 0)
+	// Stamp the row the way a completed download would, then tombstone it —
+	// exactly the state the re-download button acts on.
+	if err := h.videos.SetDownloaded("vid", videos.DownloadedResult{
+		MediaPath: "vid.mp4", ThumbnailPath: "vid.jpg", FilesizeBytes: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.videos.Tombstone("vid"); err != nil {
+		t.Fatal(err)
+	}
+	runWorker(t, h.worker)
+
+	waitFor(t, "job failed", func() bool { return h.jobState(t, id).State == "failed" })
+	waitForVideoStatus(t, h, "vid", "error")
+
+	v, err := h.videos.Get("vid")
+	if err != nil || v == nil {
+		t.Fatalf("a previously-downloaded video must never be discarded: %v", err)
+	}
+	row, _ := ledger.Get("vid")
+	if row.State == channelvideos.StateUnavailable {
+		t.Fatal("it must not be parked either — the Library row is the record")
 	}
 }
 

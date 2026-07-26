@@ -90,6 +90,14 @@ func TestMigrate0014_rescuesStrandedTerminalFailures(t *testing.T) {
 	}
 	seed("gated", "ytdlp: terminal (members)")
 	seed("flaky", "network unreachable after 3 attempts")
+	// A video that once downloaded, was tombstoned, and whose re-download then
+	// hit a freshly-raised members wall. Same error text as "gated", but this
+	// row still holds watch history, a summary and a thumbnail file.
+	seed("owned", "ytdlp: terminal (members)")
+	if _, err := db.Exec(
+		`UPDATE videos SET downloaded_at = '2026-01-01 00:00:00' WHERE id = 'owned'`); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := Migrate(db); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -130,5 +138,22 @@ func TestMigrate0014_rescuesStrandedTerminalFailures(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatal("a retryable failure must keep its video row")
+	}
+
+	// Same gate, but the video once downloaded: deleting it would lose watch
+	// history and orphan its thumbnail on disk. downloaded_at guards both
+	// statements, so neither the row nor its ledger state moves.
+	if err := db.QueryRow(`SELECT COUNT(*) FROM videos WHERE id='owned'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("a previously-downloaded video must never be deleted by this migration")
+	}
+	if err := db.QueryRow(
+		`SELECT state FROM channel_videos WHERE video_id='owned'`).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "queued" {
+		t.Fatalf("owned ledger state = %q, want it untouched", state)
 	}
 }

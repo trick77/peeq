@@ -936,6 +936,23 @@ func (w *Worker) park(video *videos.Video, reason string) bool {
 	if video == nil || w.deps.Ledger == nil {
 		return false
 	}
+	// Never discard a video that has ever finished downloading. Re-download is
+	// offered for error AND tombstoned rows (handleRedownloadVideo), so a
+	// channel that gates a previously-public video turns one click into a
+	// terminal 'members' failure on a row holding watch history, a resume
+	// position, favorites, a summary, transcript chunks, share links and a
+	// thumbnail file on disk. Discarding that is silent data loss — and the
+	// file would be orphaned besides, since nothing here unlinks it.
+	//
+	// DownloadedAt is the signal rather than status or media_path: it is
+	// stamped once on the first success and never cleared, so it stays true
+	// through the tombstone that clears media_path and through the 'error'
+	// status a failed re-download writes. Such a row falls through to the plain
+	// error path, which is right — it stays visible and keeps offering the
+	// re-download that will work again if the channel ever ungates it.
+	if video.DownloadedAt != "" {
+		return false
+	}
 	row, err := w.deps.Ledger.Get(video.ID)
 	if err != nil {
 		w.deps.Logger.Error("download worker: ledger lookup failed", "video_id", video.ID, "err", err)
