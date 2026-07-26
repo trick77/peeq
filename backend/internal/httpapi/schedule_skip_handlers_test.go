@@ -276,3 +276,62 @@ func TestSkip_rejectsAMalformedRestoreInstant(t *testing.T) {
 		t.Fatalf("a rejected request still moved the schedule to %q", sub.NextScanAt)
 	}
 }
+
+// Both endpoints depend on the channels store; without it there is nothing to
+// reschedule, and the house rule for an optional dependency is 503 rather than
+// a nil dereference.
+func TestSkip_reportsUnconfiguredChannels(t *testing.T) {
+	deps, _, _, _, _, _, _ := activityTestDeps(t)
+	deps.Channels = nil
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	for _, path := range []string{"/api/channels/UCx/skip-scan", "/api/channels/UCx/skip-meta"} {
+		if rec := postSkip(t, h, cookie, path, ""); rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s status = %d, want 503", path, rec.Code)
+		}
+	}
+}
+
+// An absent body is the ordinary skip and must not be an error, but a body that
+// is not JSON at all is: it means the client meant to say something and failed,
+// and guessing "they probably meant skip" would silently discard an undo.
+func TestSkip_rejectsAMalformedBody(t *testing.T) {
+	deps, _, ch, _, _, _, _ := activityTestDeps(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	seedSkippableChannel(t, ch, "UCx", "2026-07-26 09:00:00", "2026-08-01 12:00:00")
+
+	for _, path := range []string{"/api/channels/UCx/skip-scan", "/api/channels/UCx/skip-meta"} {
+		if rec := postSkip(t, h, cookie, path, `{"at":`); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s status = %d, want 400 for a malformed body", path, rec.Code)
+		}
+	}
+	sub, err := ch.GetSubscription("UCx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub.NextScanAt != "2026-07-26 09:00:00" || sub.NextMetaRefreshAt != "2026-08-01 12:00:00" {
+		t.Fatal("a rejected request still moved a schedule")
+	}
+}
+
+// A store that cannot be read is a server fault, not a bad request: the client
+// asked for something reasonable and peeq failed to do it.
+func TestSkip_reportsAStoreFailure(t *testing.T) {
+	deps, _, ch, _, _, _, db := activityTestDeps(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	seedSkippableChannel(t, ch, "UCx", "2026-07-26 09:00:00", "2026-08-01 12:00:00")
+	// Closing the database is the bluntest way to make every query fail, and
+	// the login above has already happened so the session still resolves.
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/api/channels/UCx/skip-scan", "/api/channels/UCx/skip-meta"} {
+		if rec := postSkip(t, h, cookie, path, ""); rec.Code != http.StatusInternalServerError {
+			t.Fatalf("%s status = %d, want 500", path, rec.Code)
+		}
+	}
+}
