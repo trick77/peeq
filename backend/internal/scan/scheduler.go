@@ -228,12 +228,12 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 		var terminal *ytdlp.TerminalError
 		switch {
 		case errors.Is(err, ytdlp.ErrBlocked):
-			if serr := s.d.Settings.SetCookie(ctx, "", "blocked"); serr != nil {
+			if serr := s.d.Settings.SetCookie(ctx, "", settings.CookieBlocked); serr != nil {
 				s.d.Logger.Error("scan: set cookie status failed", "status", "blocked", "err", serr)
 			}
 			s.recordScanFail(sub.ChannelID, requested, "YouTube blocked the request")
 		case errors.Is(err, ytdlp.ErrCookieExpired):
-			if serr := s.d.Settings.SetCookie(ctx, "", "stale"); serr != nil {
+			if serr := s.d.Settings.SetCookie(ctx, "", settings.CookieStale); serr != nil {
 				s.d.Logger.Error("scan: set cookie status failed", "status", "stale", "err", serr)
 			}
 			s.recordScanFail(sub.ChannelID, requested, "cookie expired")
@@ -452,7 +452,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		}
 		switch {
 		case baseline:
-			entry.State = "seen"
+			entry.State = channelvideos.StateSeen
 			baselineCount++
 		case isUnfinishedStream(e):
 			// Record NOTHING for a stream that has not finished. 'seen'
@@ -492,19 +492,19 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 			//     write the terminal row that branch exists to avoid.
 			//   - BEFORE Autodownload: otherwise the expensive version of this
 			//     bug (a back catalogue downloaded to disk) survives.
-			entry.State = "seen"
+			entry.State = channelvideos.StateSeen
 			backlogCount++
 		case !passesFilters(e, set.MinVideoDurationSeconds):
 			// Reached only for the duration floor now (the live case above is
 			// matched first). Terminal 'seen' is right here: a video too short
 			// today will not grow longer tomorrow, so re-listing it every pass
 			// forever would buy nothing.
-			entry.State = "seen"
+			entry.State = channelvideos.StateSeen
 		case sub.Autodownload:
-			entry.State = "queued"
+			entry.State = channelvideos.StateQueued
 			queuedCount++
 		default:
-			entry.State = "pending"
+			entry.State = channelvideos.StatePending
 			pendingCount++
 		}
 		// Autodownload: enqueue FIRST, then record the ledger row LAST. If
@@ -513,7 +513,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		// enqueueAuto Upserted) catches the half-done id — rather than a
 		// premature 'queued' ledger row permanently masking a video that was
 		// never actually enqueued.
-		if entry.State == "queued" {
+		if entry.State == channelvideos.StateQueued {
 			if err := s.enqueueAuto(e, sub); err != nil {
 				return err
 			}
@@ -827,7 +827,7 @@ func (s *Scheduler) enqueueAuto(e ytdlp.ChannelEntry, sub *channels.Subscription
 	}); err != nil {
 		return err
 	}
-	if err := s.d.Videos.SetStatus(e.ID, "queued", ""); err != nil {
+	if err := s.d.Videos.SetStatus(e.ID, videos.StatusQueued, ""); err != nil {
 		return err
 	}
 	if _, err := s.d.Jobs.Enqueue(e.ID, autoPriority); err != nil {

@@ -97,7 +97,7 @@ func (s *Store) Fail(id int64, attempts int, lastErr string) (terminal bool, err
 	if err != nil {
 		return false, err
 	}
-	return state == "failed", nil
+	return state == StateFailed, nil
 }
 
 // EnqueueMissing enqueues a job for every downloaded video that has no

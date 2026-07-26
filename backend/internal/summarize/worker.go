@@ -140,14 +140,14 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 			w.d.Logger.Error("summarize worker: recovered", "job_id", job.ID, "panic", r)
 			run.finished("panic")
 			_, _ = w.d.Jobs.Fail(job.ID, job.Attempts, "panic")
-			_ = w.d.Videos.SetSummaryStatus(job.VideoID, "error", "internal error")
+			_ = w.d.Videos.SetSummaryStatus(job.VideoID, videos.SummaryError, "internal error")
 		}
 	}()
 
 	video, err := w.d.Videos.Get(job.VideoID)
 	if err != nil || video == nil {
 		w.d.Logger.Warn("summarize worker: video missing", "job_id", job.ID, "video_id", job.VideoID, "err", err)
-		_ = w.d.Jobs.Finish(job.ID, "failed", "video missing")
+		_ = w.d.Jobs.Finish(job.ID, summaryjobs.StateFailed, "video missing")
 		return true, err
 	}
 
@@ -163,8 +163,8 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// Announce "running" only for a fresh job; a resumed one (retrying just the
 	// key-points step) already has its summary marked done and must not regress.
 	if video.SummaryStatus != "done" {
-		_ = w.d.Videos.SetSummaryStatus(video.ID, "running", "")
-		w.emit(video.ID, "running", "summarizing")
+		_ = w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryRunning, "")
+		w.emit(video.ID, videos.SummaryRunning, PhaseSummarizing)
 	}
 
 	safe, err := media.SafeMediaPath(w.d.MediaDir, video.SubtitlePath)
@@ -239,7 +239,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		// Surface the classify step as a live phase (summarizing → classifying →
 		// embedding). It sits before the "done" emit below, so it is safe for the
 		// Player, which treats "done" as terminal.
-		w.emit(video.ID, "running", "classifying")
+		w.emit(video.ID, videos.SummaryRunning, PhaseClassifying)
 		cctx, done := run.step("classify")
 		raw, cerr := w.d.Summarizer.Classify(cctx, video.Title, summary, videos.ClassifiableCategories())
 		switch {
@@ -262,7 +262,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 
 	// Step 3 — embeddings. Skip if already embedded (embed_model is set).
 	if video.EmbedModel == "" {
-		w.emit(video.ID, "running", "embedding")
+		w.emit(video.ID, videos.SummaryRunning, PhaseEmbedding)
 		ectx, done := run.step("embedding")
 		if err := w.embedAndStore(ectx, video.ID, parsed, summary); err != nil {
 			return true, w.failJob(job, video, run, err.Error())
@@ -282,9 +282,9 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// while status "done" — not "running" — is what the Player keys on, so the
 	// two consumers stay correct off one event.
 	if video.SummaryStatus != "done" {
-		_ = w.d.Videos.SetSummaryStatus(video.ID, "done", "")
+		_ = w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryDone, "")
 	}
-	w.emit(video.ID, "done", "keypoints")
+	w.emit(video.ID, videos.SummaryDone, PhaseKeypoints)
 
 	// Step 4 — key points (and chapters when yt-dlp didn't supply them). The
 	// fragile call, run last so a failure retries only this and costs nothing.
@@ -298,7 +298,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		return true, w.requeueJob(job, video, run, err.Error())
 	}
 	done("chapters", len(chapters), "key_points", len(keyPoints))
-	w.emit(video.ID, "done", "")
+	w.emit(video.ID, videos.SummaryDone, "")
 
 	run.finished("done")
 	_ = w.d.Jobs.Finish(job.ID, "done", "")
@@ -491,8 +491,8 @@ func (r *analysisRun) finished(outcome string) {
 // clean terminal state, not an error, but it must still be visible: otherwise
 // a video simply disappears from the queue with no explanation.
 func (w *Worker) finishNoTranscript(job *summaryjobs.Job, video *videos.Video, reason string) {
-	_ = w.d.Videos.SetSummaryStatus(video.ID, "no_transcript", "")
-	w.emit(video.ID, "no_transcript", "")
+	_ = w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryNoTranscript, "")
+	w.emit(video.ID, videos.SummaryNoTranscript, "")
 	_ = w.d.Jobs.Finish(job.ID, "done", "")
 	w.d.Logger.Info("summarize worker: no transcript", "video_id", video.ID, "title", video.Title,
 		"channel", video.ChannelName, "reason", reason)
@@ -610,10 +610,10 @@ func (w *Worker) emit(videoID, status, phase string) {
 // the common path, so it must never be returned as-is.
 func (w *Worker) failJob(job *summaryjobs.Job, video *videos.Video, run *analysisRun, msg string) error {
 	videoID := video.ID
-	if err := w.d.Videos.SetSummaryStatus(videoID, "error", msg); err != nil {
+	if err := w.d.Videos.SetSummaryStatus(videoID, videos.SummaryError, msg); err != nil {
 		w.d.Logger.Error("summarize worker: set error status", "video_id", videoID, "err", err)
 	}
-	w.emit(videoID, "error", "")
+	w.emit(videoID, videos.SummaryError, "")
 	run.finished("error")
 	terminal, ferr := w.d.Jobs.Fail(job.ID, job.Attempts, msg)
 	if ferr != nil {

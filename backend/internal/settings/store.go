@@ -194,10 +194,10 @@ func (s *Store) recordAccessTransition(old, newStatus string) {
 	case "valid":
 		e = activity.Event{Kind: activity.KindAccess, Outcome: activity.OutcomeOK,
 			Summary: "YouTube access restored"}
-	case "blocked":
+	case CookieBlocked:
 		e = activity.Event{Kind: activity.KindAccess, Outcome: activity.OutcomeWarn,
 			Summary: "YouTube blocked the request"}
-	case "stale":
+	case CookieStale:
 		e = activity.Event{Kind: activity.KindAccess, Outcome: activity.OutcomeWarn,
 			Summary: "cookie expired"}
 	default:
@@ -216,7 +216,7 @@ func (s *Store) recordAccessTransition(old, newStatus string) {
 func (s *Store) CookieCredentials(ctx context.Context) (text string, status string) {
 	err := s.db.QueryRowContext(ctx, `SELECT cookie_text, cookie_status FROM settings WHERE id = 1`).Scan(&text, &status)
 	if err != nil {
-		return "", "absent"
+		return "", CookieAbsent
 	}
 	return text, status
 }
@@ -228,7 +228,7 @@ func (s *Store) CookieStatus(ctx context.Context) string {
 	var status string
 	err := s.db.QueryRowContext(ctx, `SELECT cookie_status FROM settings WHERE id = 1`).Scan(&status)
 	if err != nil {
-		return "absent"
+		return CookieAbsent
 	}
 	return status
 }

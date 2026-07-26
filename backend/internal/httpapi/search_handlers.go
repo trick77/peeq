@@ -140,7 +140,7 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	// A tombstoned or subtitle-less video has no transcript to (re)summarize;
 	// re-enqueuing would only flip a valid summary to no_transcript. Point the
 	// caller at re-download (Phase 3.1b) instead of corrupting the summary.
-	if v.Status == "tombstoned" || v.MediaPath == "" || v.SubtitlePath == "" {
+	if v.Status == videos.StatusTombstoned || v.MediaPath == "" || v.SubtitlePath == "" {
 		writeJSONError(w, http.StatusConflict, "media not present; re-download to restore before reprocessing")
 		return
 	}
@@ -148,7 +148,7 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "summaries are not configured")
 		return
 	}
-	if err := s.videos.SetSummaryStatus(id, "pending", ""); err != nil {
+	if err := s.videos.SetSummaryStatus(id, videos.SummaryPending, ""); err != nil {
 		serverError(w, r, err, "reset summary status failed")
 		return
 	}

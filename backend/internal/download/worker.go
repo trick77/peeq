@@ -474,7 +474,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		}
 	}
 
-	_ = w.deps.Videos.SetStatus(video.ID, "downloading", "")
+	_ = w.deps.Videos.SetStatus(video.ID, videos.StatusDownloading, "")
 
 	format := set.FormatPreset
 	custom := set.FormatCustom
@@ -591,7 +591,7 @@ func (w *Worker) settleCanceled(job *jobs.Job, video *videos.Video) {
 		w.deps.Logger.Error("download worker: mark canceled failed", "job_id", job.ID, "err", err)
 	}
 	if video != nil {
-		if err := w.deps.Videos.SetStatus(video.ID, "new", ""); err != nil {
+		if err := w.deps.Videos.SetStatus(video.ID, videos.StatusNew, ""); err != nil {
 			w.deps.Logger.Error("download worker: reset video status failed", "video_id", video.ID, "err", err)
 		}
 	}
@@ -607,9 +607,9 @@ func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Vide
 	var terminal *ytdlp.TerminalError
 	switch {
 	case errors.Is(err, ytdlp.ErrBlocked):
-		w.pause(job, "blocked", err.Error())
+		w.pause(job, settings.CookieBlocked, err.Error())
 	case errors.Is(err, ytdlp.ErrCookieExpired):
-		w.pause(job, "stale", err.Error())
+		w.pause(job, settings.CookieStale, err.Error())
 	case errors.Is(err, ytdlp.ErrNoCookie):
 		// No cookie at all: pausing (rather than failing the job) lets the
 		// user paste a cookie and resume without losing the queue. Cookie
@@ -841,7 +841,7 @@ func (w *Worker) fail(job *jobs.Job, video *videos.Video, attempts int, msg stri
 		w.deps.Logger.Error("download worker: finish failed", "job_id", job.ID, "err", err)
 	}
 	if video != nil {
-		if err := w.deps.Videos.SetStatus(video.ID, "error", msg); err != nil {
+		if err := w.deps.Videos.SetStatus(video.ID, videos.StatusError, msg); err != nil {
 			w.deps.Logger.Error("download worker: set error status failed", "video_id", video.ID, "err", err)
 		}
 		// A preflight-failed video has no title yet, so fall back to its id

@@ -186,6 +186,6 @@ func (s *server) handleCookieHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, cookieHealthResponse{
 		Status:    got.CookieStatus,
 		UpdatedAt: got.CookieUpdatedAt,
-		Present:   got.CookieStatus != "absent",
+		Present:   got.CookieStatus != settings.CookieAbsent,
 	})
 }

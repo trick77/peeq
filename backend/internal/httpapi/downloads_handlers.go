@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -122,7 +123,7 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	// Upsert deliberately never touches status (so re-running metadata on an
 	// already-downloaded video can't wipe its state); a fresh add must be
 	// marked 'queued' explicitly.
-	if err := s.videos.SetStatus(id, "queued", ""); err != nil {
+	if err := s.videos.SetStatus(id, videos.StatusQueued, ""); err != nil {
 		serverError(w, r, err, "save video failed")
 		return
 	}
@@ -150,7 +151,7 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, http.StatusCreated, downloadItem{
 		JobID:    jobID,
 		VideoID:  id,
-		State:    "pending",
+		State:    jobs.StatePending,
 		Priority: downloadPriority,
 	})
 }
