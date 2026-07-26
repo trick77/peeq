@@ -10,7 +10,7 @@ export type SearchMatch = {
   kind: string;
 };
 
-// SearchResult mirrors one httpapi.searchResultItem — a video joined with
+// SearchResult mirrors one httpapi.searchResult — a video joined with
 // its best-matching chunks for the query.
 export type SearchResult = {
   video: Video;

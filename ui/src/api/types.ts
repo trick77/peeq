@@ -32,8 +32,14 @@ export type User = {
 };
 
 // VideoFilter mirrors the ?filter= values videos.Store.List understands.
+//
+// "downloading" was one of them until the Library became ready-only. Go
+// removed it (see the note on videos.Store.List) and it is dropped here rather
+// than kept as an alias: the server now folds it into the default branch and
+// returns what "all" returns, so a caller still passing it would silently get
+// something other than what the name promises.
 export type VideoFilter =
-  "all" | "unwatched" | "in_progress" | "watched" | "favorites" | "downloading";
+  "all" | "unwatched" | "in_progress" | "watched" | "favorites";
 
 // VideoSort mirrors the sort keys videos.Store.List accepts. newest/oldest are
 // the default release-date ordering; the added_* pair ranks by when peeq

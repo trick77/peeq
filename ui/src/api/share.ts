@@ -7,7 +7,7 @@ import type { SponsorblockSegment } from "../components/Scrubber";
 // ShareTTL is the fixed set of link lifetimes the share popover offers. The
 // empty string / "never" mean the link never expires. These strings are the
 // wire contract with the backend's shareTTLs map — keep them in step.
-export type ShareTTL = "24h" | "7d" | "30d" | "never";
+export type ShareTTL = "" | "24h" | "7d" | "30d" | "never";
 
 // ShareStatus is the owner-facing view of a video's share link, returned by
 // create/status/stop. `shared` is the one field always present; the rest are

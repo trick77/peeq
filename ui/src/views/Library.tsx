@@ -73,8 +73,6 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
       return v.watched;
     case "favorites":
       return v.favorite;
-    case "downloading":
-      return v.status === "queued" || v.status === "downloading";
     default:
       return true;
   }
