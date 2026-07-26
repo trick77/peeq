@@ -224,7 +224,7 @@ describe("History", () => {
     const user = userEvent.setup();
     render(<History live={[]} />);
     await screen.findByText("Fine one");
-    await user.click(screen.getByRole("button", { name: "Problems only" }));
+    await user.click(screen.getByRole("button", { name: /^Problems only\b/ }));
     expect(screen.queryByText("Fine one")).not.toBeInTheDocument();
     expect(screen.getByText("Broken one")).toBeInTheDocument();
     expect(screen.getByText("Iffy one")).toBeInTheDocument();
@@ -234,20 +234,95 @@ describe("History", () => {
     const user = userEvent.setup();
     render(<History live={[]} />);
     await screen.findByText("A clip");
-    await user.click(screen.getByRole("button", { name: "Scans" }));
+    await user.click(screen.getByRole("button", { name: /^Scans\b/ }));
     expect(
       screen.getByText(/nothing matching that filter/i),
     ).toBeInTheDocument();
   });
 
-  // The ceiling explains why the page stops where it does, so it belongs where
-  // it is read before scrolling — the end of the chip row.
-  it("states the retention ceiling in the chip row", async () => {
-    render(<History live={[]} />);
-    await screen.findByText("A clip");
-    const note = document.querySelector(".chips .chips-note") as HTMLElement;
-    expect(note).toBeTruthy();
-    expect(note.textContent).toContain("2000");
+  // Reads a chip's count off its own button, so the number is asserted where the
+  // user reads it rather than by index into the row.
+  function countOn(label: string): number {
+    const chip = screen.getByRole("button", {
+      name: new RegExp(`^${label}\\b`),
+    });
+    return Number(chip.querySelector(".n")?.textContent);
+  }
+
+  describe("chip counts", () => {
+    it("numbers every chip from the rows on the page", async () => {
+      // Given: three kinds in the log, one of them a failure.
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [
+          ev({ id: 5, kind: "download", subject: "One" }),
+          ev({ id: 4, kind: "download", outcome: "fail", subject: "Two" }),
+          ev({ id: 3, kind: "scan", subject: "Three" }),
+          ev({ id: 2, kind: "summary", subject: "Four" }),
+        ],
+        has_more: false,
+        retained_max: 2000,
+      });
+
+      // When
+      render(<History live={[]} />);
+      await screen.findByText("Four");
+
+      // Then: each chip counts what clicking it would show. "Problems only"
+      // cuts across kinds, so the failed download is counted twice on purpose;
+      // "All" is the row total, not the sum of the chips.
+      expect(countOn("All")).toBe(4);
+      expect(countOn("Downloads")).toBe(2);
+      expect(countOn("Scans")).toBe(1);
+      expect(countOn("Summaries")).toBe(1);
+      expect(countOn("Cleanup")).toBe(0);
+      expect(countOn("Problems only")).toBe(1);
+    });
+
+    it("counts kinds with no chip of their own under All", async () => {
+      // Given: a ytdlp row, which the log renders but no chip filters.
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [
+          ev({ id: 5, kind: "scan", subject: "Scanned one" }),
+          ev({ id: 4, kind: "ytdlp", subject: "Updated yt-dlp" }),
+        ],
+        has_more: false,
+        retained_max: 2000,
+      });
+
+      // When
+      render(<History live={[]} />);
+      await screen.findByText("Updated yt-dlp");
+
+      // Then: All is every row, so it exceeds the sum of the four kind chips.
+      expect(countOn("All")).toBe(2);
+      expect(countOn("Scans")).toBe(1);
+    });
+
+    it("narrows the counts with the search, through the server's own answer", async () => {
+      // Given: two downloads on the page.
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 5 }), ev({ id: 4, subject: "Another clip" })],
+        has_more: false,
+        retained_max: 2000,
+      });
+      const { rerender } = render(<History live={[]} search="" />);
+      await screen.findByText("Another clip");
+      expect(countOn("Downloads")).toBe(2);
+
+      // When: a query the server answers with one of them. The box is
+      // server-side, so the counts follow the rows it sent back rather than a
+      // second predicate here that could search different fields.
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 5 })],
+        has_more: false,
+        retained_max: 2000,
+      });
+      rerender(<History live={[]} search="A clip" />);
+
+      // Then
+      await waitFor(() => expect(countOn("Downloads")).toBe(1));
+      expect(countOn("All")).toBe(1);
+    });
   });
 
   it("links a channel-kind subject to its page", async () => {

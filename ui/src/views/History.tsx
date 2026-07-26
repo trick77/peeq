@@ -165,7 +165,6 @@ export function History({
 }) {
   const [past, setPast] = useState<ActivityEvent[]>([]);
   const [hasMore, setHasMore] = useState(false);
-  const [retainedMax, setRetainedMax] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   // Two error slots on purpose. `error` means the page never loaded and there
@@ -229,7 +228,6 @@ export function History({
           return [...liveOnly, ...page.events];
         });
         setHasMore(page.has_more);
-        setRetainedMax(page.retained_max);
         setLoaded(true);
         // A successful refetch clears a previous failure, or a page that
         // recovered would still be showing the error that replaced it. The
@@ -311,6 +309,31 @@ export function History({
     [past, matches],
   );
 
+  // What each chip would show if you clicked it, counted over the rows this page
+  // is holding — every other list numbers its chips, and this one made you click
+  // each one to find out what was behind it.
+  //
+  // Two things this number is NOT. It is not a count of the whole retained log:
+  // the rows arrive twenty at a time, so it grows as you page back, the same way
+  // the log under it does. And it is not independent of the search: `past` is
+  // whatever the server returned for the current query (the box is server-side —
+  // see the fetch above), so typing narrows the numbers with the rows for free,
+  // through the server's own matching rather than a second predicate here that
+  // would be free to disagree with it.
+  //
+  // "All" is past.length rather than the sum of the other chips: `channel_meta`
+  // and `ytdlp` rows have no chip of their own but are still entries in the log,
+  // and "problems" cuts across kinds rather than partitioning them.
+  const counts = useMemo(() => {
+    const out: Record<string, number> = { all: past.length };
+    for (const f of FILTERS) if (f.id !== "all") out[f.id] = 0;
+    for (const e of past) {
+      if (e.outcome === "fail" || e.outcome === "warn") out.problems++;
+      if (out[e.kind] !== undefined) out[e.kind]++;
+    }
+    return out;
+  }, [past]);
+
   // Group into days, preserving the newest-first order the server sent.
   const days = useMemo(() => {
     const out: { key: string; events: ActivityEvent[] }[] = [];
@@ -351,17 +374,9 @@ export function History({
             className={`chip${filter === f.id ? " on" : ""}`}
             onClick={() => setFilter(f.id)}
           >
-            {f.label}
+            {f.label} <span className="n">{counts[f.id] ?? 0}</span>
           </button>
         ))}
-        {/* The retention ceiling ends the chip row rather than sitting under
-            the log: it explains why the page stops where it does, which is
-            worth knowing before you scroll to the bottom and wonder. */}
-        {retainedMax > 0 ? (
-          <span className="chips-note">
-            keeps the last <span className="num">{retainedMax}</span> entries
-          </span>
-        ) : null}
       </div>
     </>
   );

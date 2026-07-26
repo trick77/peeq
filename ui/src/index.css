@@ -943,18 +943,6 @@ button.srow:not(:disabled):hover {
   flex-wrap: wrap;
   margin-bottom: 22px;
 }
-/* A quiet note at the end of a chip row — History's retention ceiling. Aligned
-   to the chips' centre so it reads as part of the row, not a stray caption.
-   Only its numeral is tabular; the words stay in the inherited family. */
-.chips-note {
-  align-self: center;
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--color-faint);
-}
-.chips-note .num {
-  font-variant-numeric: tabular-nums;
-}
 .chip {
   min-height: 32px;
   padding: 0 14px;
@@ -989,11 +977,22 @@ button.srow:not(:disabled):hover {
   font-size: var(--text-micro);
   opacity: 0.7;
 }
+/* The -10px pulls this row up under the status chips it refines: on the Library
+   the two rows are a pair, and the full 18px between them read as two unrelated
+   bars. */
 .catchips {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   margin: -10px 0 22px;
+}
+/* …but on the Inbox this row IS the page's first chip row — there are no status
+   chips above it, only the .listbar — and the pull was closing the gap under the
+   search box to 8px, where every other list sits 18px clear of its toolbar. The
+   modifier hands the row the spacing .chips has, so the Inbox's toolbar-to-chips
+   gap matches the Library's, the Channels list's and History's. */
+.catchips.lead {
+  margin-top: 0;
 }
 .catchip {
   min-height: 32px;
