@@ -2,8 +2,10 @@ import { api } from "./http";
 import type { ActivityEvent, UpcomingItem } from "./types";
 
 // ActivityPage is one keyset page of the background-work log, newest first.
-// has_more says an older page exists; retained_max is the fixed row ceiling, so
-// the UI can label the oldest edge.
+// has_more says an older page exists; retained_max is the fixed row ceiling.
+// Nothing renders retained_max today — History used to end its chip row with
+// "keeps the last N entries", and that note is gone — but the server still sends
+// it, and the ceiling is the kind of fact a future edge label would want.
 export type ActivityPage = {
   events: ActivityEvent[];
   has_more: boolean;

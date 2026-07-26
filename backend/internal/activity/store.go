@@ -180,8 +180,11 @@ func (s *Store) Recent(beforeID int64, limit int, search string) (Page, error) {
 	return Page{Events: out, HasMore: hasMore}, nil
 }
 
-// RetainedMax is the fixed row ceiling, surfaced so the UI can label the log's
-// oldest edge ("the most recent N of up to 2000").
+// RetainedMax is the fixed row ceiling, reported on every page of the log. It
+// had one consumer — History's "keeps the last N entries" note, since removed —
+// so nothing renders it today. Kept on the wire rather than dropped: it is the
+// one fact that explains why the log stops where it does, and a caller that
+// wants to label the oldest edge should not have to hardcode 2000.
 func (s *Store) RetainedMax() int { return maxRows }
 
 // likeEscape neutralises LIKE's own metacharacters so a query is matched
