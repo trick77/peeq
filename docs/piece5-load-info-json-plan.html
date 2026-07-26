@@ -1,0 +1,266 @@
+<title>peeq — piece 5: stop fetching the same video twice</title>
+<style>
+  :root{
+    --bg:#1f1f1e; --panel:#1b1b1a; --border:#323230; --border-soft:#2a2a28;
+    --ink:#faf9f5; --ink-dim:#e4e1d8; --muted:#9c9a92; --faint:#6f6d66;
+    --accent:#c6613f; --accent-strong:#d97757; --accent-dim:#5a3527;
+    --go:#5aa06a; --stop:#c14638; --hold:#d6a15a;
+    --sans:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --r:10px; --r-sm:8px;
+  }
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(120% 80% at 80% -10%,rgba(198,97,63,.06),transparent 60%),
+                     radial-gradient(90% 70% at 8% 110%,rgba(214,161,90,.03),transparent 55%);}
+  .wrap{max-width:940px;margin:0 auto;padding:46px 26px 110px;}
+  h1{font-family:var(--serif);font-weight:600;font-size:2rem;margin:0 0 10px;
+     letter-spacing:-.01em;text-wrap:balance;}
+  h2{font-family:var(--serif);font-weight:600;font-size:1.25rem;margin:0;}
+  h3{font-size:12.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+     color:var(--muted);margin:26px 0 8px;}
+  .eyebrow{font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;
+           color:var(--faint);margin:0 0 6px;}
+  .lede{color:var(--muted);max-width:70ch;margin:0 0 4px;}
+  p{max-width:74ch;color:var(--ink-dim);}
+  section{margin-top:44px;border-top:1px solid var(--border-soft);padding-top:26px;}
+  code{font-family:var(--mono);font-size:12.5px;color:var(--ink-dim);background:var(--panel);
+       border:1px solid var(--border-soft);border-radius:4px;padding:1px 5px;}
+  pre{margin:14px 0 0;padding:13px 15px;border:1px solid var(--border);border-radius:var(--r-sm);
+      background:var(--panel);overflow-x:auto;font-family:var(--mono);font-size:12.5px;
+      line-height:1.6;color:var(--ink-dim);}
+  pre code{background:none;border:0;padding:0;font-size:inherit;}
+  .c{color:var(--faint);} .del{color:#d98b80;} .add{color:var(--go);}
+  ul{max-width:74ch;color:var(--ink-dim);padding-left:19px;}
+  li{margin:5px 0;} li::marker{color:var(--faint);}
+  .piece{border:1px solid var(--border);border-radius:var(--r);background:var(--panel);
+         padding:18px 20px 20px;margin-top:18px;}
+  .phead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px;}
+  .badge{font-family:var(--mono);font-size:11px;color:var(--faint);border:1px solid var(--border);
+         border-radius:999px;padding:1px 9px;white-space:nowrap;}
+  .badge.be{color:var(--hold);border-color:#4c3b22;}
+  .badge.n{color:var(--accent);border-color:var(--accent-dim);}
+  .tw{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r);
+      background:var(--panel);margin-top:14px;}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:600px;margin:0;}
+  th{text-align:left;font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;
+     color:var(--faint);font-weight:600;padding:9px 12px;border-bottom:1px solid var(--border);
+     white-space:nowrap;}
+  td{padding:10px 12px;border-bottom:1px solid var(--border-soft);vertical-align:top;
+     color:var(--ink-dim);}
+  tr:last-child td{border-bottom:0;}
+  td.k{white-space:nowrap;font-family:var(--mono);font-size:12px;color:var(--muted);}
+  .gate{border:1px solid var(--stop);border-radius:var(--r);
+        background:color-mix(in srgb,var(--stop) 9%,var(--panel));padding:20px 22px 22px;margin-top:20px;}
+  .gate h2{color:var(--ink);}
+  .stopline{display:flex;gap:10px;align-items:flex-start;margin-top:16px;padding:12px 15px;
+            border-left:2px solid var(--stop);background:color-mix(in srgb,var(--stop) 12%,transparent);
+            border-radius:0 var(--r-sm) var(--r-sm) 0;max-width:76ch;}
+  .stopline b{color:var(--ink);}
+  .warn{border-left:2px solid var(--hold);background:color-mix(in srgb,var(--hold) 8%,transparent);
+        padding:12px 16px;border-radius:0 var(--r-sm) var(--r-sm) 0;margin-top:16px;max-width:76ch;}
+  .warn b{color:var(--ink);}
+  .ok{border-left:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent);
+      padding:12px 16px;border-radius:0 var(--r-sm) var(--r-sm) 0;margin-top:16px;max-width:76ch;}
+  a{color:var(--accent-strong);}
+</style>
+
+<div class="wrap">
+
+<p class="eyebrow">peeq · implementation plan · 2026-07-26</p>
+<h1>Stop fetching the same video twice</h1>
+<p class="lede">Piece 5 of the Up next plan, and the last one outstanding. It is small, it is
+entirely backend, and it may not be worth building at all — which is why it opens with a
+measurement rather than a change.</p>
+
+<section>
+<h2>Context</h2>
+<p>Paste a URL into Add and peeq runs yt-dlp <b>twice</b> against the same video, seconds
+apart. First the metadata preflight, then the download.</p>
+<p>The preflight exists because <code>POST /api/downloads</code> stopped blocking on yt-dlp: a
+video added by URL is enqueued instantly with no title, so the worker resolves one before
+downloading (<code>worker.go:462</code>, guarded on <code>video.Title == ""</code>). It calls
+<code>Runner.Metadata</code>, which runs <code>-J --skip-download</code> and throws away
+everything but a handful of parsed fields.</p>
+<p>Then the download extracts the same video all over again. Two YouTube calls, two full
+extractions, and — since both go through the shared pacer — two gaps.</p>
+<div class="ok">
+<b>Scope, stated up front:</b> this only helps the URL-added path. A video discovered by a
+channel scan already has a title, skips the preflight entirely, and is unaffected. That is
+also the path a person is most likely to be watching, which is what makes it worth doing.
+</div>
+</section>
+
+<section>
+<div class="gate">
+<p class="eyebrow" style="color:var(--stop)">Phase 0 · before any code is written</p>
+<h2>Measure first. This phase can end the plan.</h2>
+<p>The premise is that <code>--load-info-json</code> lets yt-dlp skip extraction. If it still
+contacts YouTube, the second pacer gap remains, the saving is imaginary, and the only thing
+left is added complexity around a file that can go stale.</p>
+<p>Run both variants against one real video on a machine that has yt-dlp — the peeq container
+does. Keep the full output of each.</p>
+<pre><code><span class="c"># A — what peeq does today: resolve, then download.</span>
+time yt-dlp -J --skip-download --no-playlist "$URL" &gt; /tmp/info.json
+time yt-dlp -f 'bv*+ba' -o '/tmp/a/%(id)s.%(ext)s' "$URL"
+
+<span class="c"># B — the proposal: resolve once, then download from the saved JSON.</span>
+time yt-dlp --load-info-json /tmp/info.json -f 'bv*+ba' -o '/tmp/b/%(id)s.%(ext)s'</code></pre>
+<div class="stopline">
+<div><b>Stop condition.</b> If B's output still shows an extraction step —
+<code>[youtube] Extracting URL</code>, <code>Downloading webpage</code>, or any
+<code>[youtube]</code> line before the first byte — then abandon this piece and close it out.
+The plan's own words: <i>if it still contacts YouTube, the change is not worth its risk.</i></div>
+</div>
+<p style="margin-top:16px">Record wall-clock for A's two calls versus B's one. The expected
+saving is roughly one extraction plus one pacer gap, which is 20–35 seconds — but the number
+that decides this is whether B makes a network call at all, not how fast it is.</p>
+</div>
+</section>
+
+<section>
+<p class="eyebrow">Phase 1</p>
+<h2>Keep the JSON that was already fetched</h2>
+<span class="badge be">backend</span> <span class="badge n">~20 lines</span>
+<div class="piece">
+<p><code>Metadata</code> already holds the complete info JSON and discards it:</p>
+<pre><code><span class="c">// meta.go:86</span>
+out, err := r.exec(ctx, cookieText, "-J", "--skip-download", "--no-playlist", watchURL)
+if err != nil { return nil, err }
+return parseMeta(out)   <span class="c">// ← `out` dies here</span></code></pre>
+<p>Add <code>Raw []byte</code> to <code>Meta</code> and populate it in <code>parseMeta</code>.
+Nothing else changes; every existing caller ignores the new field.</p>
+<p>Deliberately <b>not</b> a new <code>MetadataToFile</code> method: where the bytes get
+written is the worker's business, not the Runner's, and a Runner that writes files for its
+callers is a wider surface than this needs.</p>
+</div>
+</section>
+
+<section>
+<p class="eyebrow">Phase 2</p>
+<h2>Hand it to the download</h2>
+<span class="badge be">backend</span> <span class="badge n">~40 lines</span>
+<div class="piece">
+<p>The worker writes <code>meta.Raw</code> into the job's staging directory and passes the path
+on the request. <code>DownloadReq</code> gains one optional field:</p>
+<pre><code>// InfoJSONPath, when set, is a yt-dlp info JSON already fetched for this
+// video by the metadata preflight. yt-dlp loads it instead of extracting
+// the URL again, which removes a whole YouTube call — and with it a pacer
+// gap — from every video added by URL. Empty means extract as before.
+InfoJSONPath string</code></pre>
+<p>In <code>Download</code>, when the field is set, the args use
+<code>--load-info-json &lt;path&gt;</code> <b>in place of</b> the watch URL rather than
+alongside it. Everything else — format selector, output template, subtitle and SponsorBlock
+flags — is unchanged.</p>
+<div class="warn">
+<b>Verify against the real binary, not from memory.</b> Whether <code>--load-info-json</code>
+accepts or rejects a trailing URL, and whether it honours <code>-f</code> at all, is exactly
+the kind of detail that reads plausibly and is wrong. Phase 0's run B answers both; write the
+arg construction from what it printed.
+</div>
+</div>
+</section>
+
+<section>
+<p class="eyebrow">Phase 3</p>
+<h2>Make sure it can never load a stale file</h2>
+<span class="badge be">backend</span> <span class="badge n">the risky part</span>
+<div class="piece">
+<p>This is where the change earns its danger, and it is worth being precise about why.</p>
+<p>The staging directory is keyed by <b>video id</b>, not by job or attempt
+(<code>download.go:242</code>), and on a <i>retryable</i> failure it is deliberately kept so
+<code>--continue</code> can resume a partial file:</p>
+<pre><code><span class="c">// download.go:279-283</span>
+if _, execErr := r.execWithProgress(...); execErr != nil {
+    if !isRetryable(execErr) { _ = os.RemoveAll(stagingDir) }
+    return nil, execErr
+}</code></pre>
+<p>So an info JSON written on attempt 1 survives into attempt 2 — and a job that failed
+retryably, waited out a backoff, or sat behind the cookie gate for hours would then be handed
+format URLs that have since expired. The download fails in a new and confusing way, and the
+retry that should have fixed it reuses the same bad file.</p>
+<h3>Rules</h3>
+<ul>
+  <li><b>Write it fresh on every attempt.</b> The preflight runs, or it does not; if it does
+  not run, no info JSON is passed — never a leftover one.</li>
+  <li><b>Delete it the moment the download starts</b>, or immediately after
+  <code>execWithProgress</code> returns. It has no second use, and a file that cannot outlive
+  its attempt cannot go stale.</li>
+  <li><b>Name it apart from yt-dlp's own output.</b> <code>finalizeDownload</code> reads
+  <code>&lt;videoID&gt;.info.json</code> from the staging dir (<code>download.go:306</code>) —
+  the file yt-dlp writes at the <i>end</i>. The preflight's file must not collide with it, or
+  finalize will parse the preflight's copy and record the wrong facts. Use a distinct name,
+  e.g. <code>&lt;videoID&gt;.preflight.json</code>.</li>
+</ul>
+<div class="warn">
+<b>That collision is the one real correctness risk in this plan.</b> Everything else fails
+loudly; this one would fail quietly, writing plausible-but-wrong metadata for a downloaded
+video. It gets its own test.
+</div>
+</div>
+</section>
+
+<section>
+<h2>Risks, and what each one costs</h2>
+<div class="tw">
+<table>
+<thead><tr><th>Risk</th><th>If it happens</th><th>Answer</th></tr></thead>
+<tbody>
+<tr><td class="k">still extracts</td><td>No saving at all; pure added complexity</td>
+    <td>Phase 0 stops the plan before any code exists</td></tr>
+<tr><td class="k">stale formats</td><td>A retry fails oddly and keeps failing</td>
+    <td>Written per attempt, deleted after use</td></tr>
+<tr><td class="k">name collision</td><td>Wrong metadata recorded, silently</td>
+    <td>Distinct filename + a test that asserts finalize reads yt-dlp's file</td></tr>
+<tr><td class="k">version drift</td><td>A yt-dlp self-update changes the flag's behaviour</td>
+    <td>Fall back to the URL path on any load-info failure, rather than failing the job</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section>
+<h2>Tests</h2>
+<div class="tw">
+<table>
+<thead><tr><th>Test</th><th>Asserts</th></tr></thead>
+<tbody>
+<tr><td class="k">meta keeps raw</td><td><code>parseMeta</code> populates <code>Raw</code>, byte-identical to the input</td></tr>
+<tr><td class="k">args use the file</td><td>With <code>InfoJSONPath</code> set, the yt-dlp args carry <code>--load-info-json</code> and no watch URL</td></tr>
+<tr><td class="k">args unchanged without it</td><td>Empty <code>InfoJSONPath</code> produces today's args exactly — the scan path must not shift</td></tr>
+<tr><td class="k">no reuse across attempts</td><td>A retryable failure leaves no preflight JSON behind for the next attempt</td></tr>
+<tr><td class="k">finalize reads yt-dlp's file</td><td>A preflight JSON in the staging dir does not become the video's recorded metadata</td></tr>
+</tbody>
+</table>
+</div>
+<p style="margin-top:14px">The fake yt-dlp stub covers all five; none of them need the network.
+What the stub cannot cover is whether the flag works, which is what Phase 0 is for.</p>
+</section>
+
+<section>
+<h2>Verification</h2>
+<ul>
+  <li>Worktree and PR, never a direct push to master.</li>
+  <li>Full backend suite, <code>go vet</code>, <code>gofmt</code>.</li>
+  <li><code>/code-review medium &lt;PR#&gt;</code> with the number.</li>
+  <li>By stopwatch, on the real thing: paste a URL into Add and time it from click to first
+  byte, before and after. Expect roughly one pacer gap less.</li>
+  <li>Then paste a <b>second</b> URL and confirm it still waits its gap — the pacer must not
+  have been weakened, only asked to do less work.</li>
+</ul>
+</section>
+
+<section>
+<h2>What this does not do</h2>
+<ul>
+  <li>Nothing for channel-scan videos, which never run the preflight.</li>
+  <li>No change to the pacer, its floor, or its lanes.</li>
+  <li>No schema change, no migration, no UI.</li>
+</ul>
+<p>Total, if Phase 0 passes: three files and roughly sixty lines. If Phase 0 fails, the right
+outcome is a closed issue and a note saying why — which is a real result, not a wasted
+afternoon.</p>
+</section>
+
+</div>
