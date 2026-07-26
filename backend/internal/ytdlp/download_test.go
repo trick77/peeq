@@ -1,12 +1,15 @@
 package ytdlp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -535,4 +538,73 @@ func TestSponsorblockSegmentsFromInfo_dropsWholeVideoLabel(t *testing.T) {
 	if segs := sponsorblockSegmentsFromInfo(info); len(segs) != 0 {
 		t.Fatalf("segments = %+v, want none from a whole-video label", segs)
 	}
+}
+
+// --- yt-dlp's own narration ------------------------------------------------
+
+// Everything yt-dlp says that is not a percentage used to be dropped inside
+// Download's onLine callback, so what a download actually did — extracting the
+// URL, picking formats, merging streams — was invisible from outside the
+// process. It now reaches the logger at debug.
+func TestDownload_logsTheLinesThatArentProgress(t *testing.T) {
+	mediaDir := t.TempDir()
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	logger := slog.New(slog.NewTextHandler(&syncWriter{w: &buf, mu: &mu}, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	// The lines are supplied here rather than baked into the fixture: peeq has
+	// not captured real yt-dlp narration yet, so the fixture must not pretend
+	// to know its shape. What this asserts is routing, not wording.
+	t.Setenv("FAKE_YTDLP_ID", "dQw4w9WgXcQ")
+	t.Setenv("FAKE_YTDLP_EXTRA_LINES", "[youtube] dQw4w9WgXcQ: Downloading webpage\\n[info] Downloading 1 format(s): 137+140")
+
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		MediaDir:       mediaDir,
+		Logger:         logger,
+	})
+	if _, err := r.Download(context.Background(), DownloadReq{
+		URL:     "https://youtu.be/dQw4w9WgXcQ",
+		VideoID: "dQw4w9WgXcQ",
+		Format:  "best-mp4",
+	}, nil); err != nil {
+		t.Fatalf("download: %v", err)
+	}
+
+	mu.Lock()
+	out := buf.String()
+	mu.Unlock()
+
+	for _, want := range []string{"Downloading webpage", "Downloading 1 format(s)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log missing %q\n%s", want, out)
+		}
+	}
+	// The video id rides along, so a line can be attributed when two downloads
+	// are interleaved in one log.
+	if !strings.Contains(out, "video_id=dQw4w9WgXcQ") {
+		t.Fatalf("log missing the video id\n%s", out)
+	}
+	// Progress lines stay OUT: they are already visible as progress, and one
+	// line per update would bury the handful that say what phase this is.
+	if strings.Contains(out, "10.0%") || strings.Contains(out, "[download]") {
+		t.Fatalf("progress lines must not be logged\n%s", out)
+	}
+}
+
+// syncWriter serialises writes from slog, which the download path may call
+// from the scanner goroutine while the test reads the buffer.
+type syncWriter struct {
+	w  *bytes.Buffer
+	mu *sync.Mutex
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -92,6 +93,22 @@ type RunnerConfig struct {
 	// value that was itself gated on BACKEND_AUTH_MODE=dev at boot
 	// (config.Load); Runner does not re-derive or re-validate that here.
 	AllowAnonymous bool
+	// Logger receives yt-dlp's own narration during a download: every stdout
+	// line that is NOT a progress update, at debug level. Those lines
+	// ("[youtube] Extracting URL", "[info] Downloading 1 format(s)",
+	// "[Merger] Merging formats into …", "[SponsorBlock] …") already arrived
+	// and were silently discarded, which left what yt-dlp actually did
+	// unobservable from outside the process — peeq could report a percentage
+	// and, when something went wrong, whatever landed on stderr.
+	//
+	// Progress lines are deliberately NOT logged: they are already visible as
+	// progress, and at one line per update they would bury the handful that say
+	// which phase a download is in.
+	//
+	// Defaults to slog.Default(). Only the download path uses it; Metadata
+	// returns JSON on stdout, and logging that would dump a whole info blob per
+	// call.
+	Logger *slog.Logger
 }
 
 // Runner wraps the yt-dlp binary: cookie gate, throttle, and error
@@ -144,6 +161,9 @@ func New(cfg RunnerConfig) *Runner {
 	}
 	if cfg.RandFloat64 == nil {
 		cfg.RandFloat64 = rand.Float64
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
 	}
 	return &Runner{cfg: cfg}
 }
