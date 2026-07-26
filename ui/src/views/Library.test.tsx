@@ -522,6 +522,74 @@ describe("Library category chips", () => {
   // query in the search box it has to be scoped to that query too. The counts
   // come from their own filter:"all" fetch, which therefore has to carry `q` —
   // otherwise a chip reads 65 above a grid of 3.
+  // Two effects write the counts: the query's own, and the one that refires when
+  // a download finishes — and the second carries whatever query was in the box at
+  // the time. Without an epoch of their own, its late response repaints every
+  // chip with the older query's numbers, and unlike the grid the counts have
+  // nothing to correct them until the query changes again.
+  it("ignores a queue-triggered count response the search has moved past", async () => {
+    const deferred: Array<(v: Video[]) => void> = [];
+    vi.mocked(listVideos).mockImplementation((opts) => {
+      // Only the counts' fetch (filter "all") is held open; the grid's resolves
+      // straight away so the page renders.
+      if (opts?.filter === "all") {
+        return new Promise<Video[]>((resolve) => deferred.push(resolve));
+      }
+      return Promise.resolve([categoryVideo({ id: "v1", title: "a video" })]);
+    });
+
+    const { rerender } = render(
+      <Library
+        onOpenVideo={() => {}}
+        search="kub"
+        onSearchChange={() => {}}
+        queueSignal="job-1"
+      />,
+    );
+    await screen.findByText("a video");
+
+    // A download finishes while "kub" is in the box: a second count fetch goes
+    // out carrying that query.
+    rerender(
+      <Library
+        onOpenVideo={() => {}}
+        search="kub"
+        onSearchChange={() => {}}
+        queueSignal="job-1,job-2"
+      />,
+    );
+    // Then the user finishes typing, which claims the counts for the new query.
+    rerender(
+      <Library
+        onOpenVideo={() => {}}
+        search="kubernetes"
+        onSearchChange={() => {}}
+        queueSignal="job-1,job-2"
+      />,
+    );
+    await waitFor(() => expect(deferred.length).toBe(3));
+
+    // The newest query answers first, then the queue's older one arrives late.
+    deferred[2]([
+      categoryVideo({ id: "a", title: "kubernetes one" }),
+      categoryVideo({ id: "b", title: "kubernetes two" }),
+    ]);
+    deferred[1]([
+      categoryVideo({ id: "c" }),
+      categoryVideo({ id: "d" }),
+      categoryVideo({ id: "e" }),
+      categoryVideo({ id: "f" }),
+    ]);
+
+    // The chips still report the query the user is actually looking at.
+    await waitFor(() => {
+      const all = Array.from(document.querySelectorAll(".chips .chip")).find(
+        (c) => c.textContent?.startsWith("All"),
+      );
+      expect(all?.querySelector(".n")?.textContent).toBe("2");
+    });
+  });
+
   it("scopes the chip counts to the search query", async () => {
     vi.mocked(listVideos).mockImplementation((opts) =>
       Promise.resolve(
@@ -558,6 +626,62 @@ describe("Library category chips", () => {
       expect(document.querySelector(".catchips .catchip .n")?.textContent).toBe(
         "1",
       );
+    });
+  });
+
+  // A search narrows the page temporarily; it must not destroy a choice made
+  // before typing. The category fallback resets but never re-selects, so a query
+  // matching no video of the chosen category would clear it for good — clearing
+  // the box afterwards would leave the user on All categories.
+  it("keeps the chosen category when a search matches none of it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listVideos).mockImplementation((opts) =>
+      Promise.resolve(
+        opts?.q
+          ? // The query matches a video, but not one in the AI category.
+            [
+              categoryVideo({
+                id: "v2",
+                title: "kubernetes talk",
+                category: "tech",
+              }),
+            ]
+          : [
+              categoryVideo({ id: "v1", title: "an ai video", category: "ai" }),
+              categoryVideo({
+                id: "v2",
+                title: "kubernetes talk",
+                category: "tech",
+              }),
+            ],
+      ),
+    );
+    const { rerender } = render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
+    await screen.findByText("an ai video");
+
+    await user.click(await screen.findByRole("button", { name: /^AI/ }));
+    expect(screen.getByRole("button", { name: /^AI/ })).toHaveClass("on");
+
+    rerender(
+      <Library
+        onOpenVideo={() => {}}
+        search="kubernetes"
+        onSearchChange={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: "all", q: "kubernetes" }),
+      );
+    });
+    // Still selected and still on the row — reading 0, which is the honest
+    // answer for "AI videos matching this text".
+    await waitFor(() => {
+      const ai = screen.getByRole("button", { name: /^AI/ });
+      expect(ai).toHaveClass("on");
+      expect(ai.querySelector(".n")?.textContent).toBe("0");
     });
   });
 
