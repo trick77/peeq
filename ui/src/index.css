@@ -640,6 +640,14 @@ button.srow:not(:disabled):hover {
   text-align: right;
   color: var(--color-faint);
   padding-top: 4px;
+  /* The column is sized for History's HH:MM, but Up next puts yt-dlp's raw ETA
+     token in it, which is whatever yt-dlp felt like saying — "1:02:03",
+     "Unknown". Right-aligned text with no clip bleeds LEFT, out of the gutter
+     and under the node. Clipped here rather than by widening the column, which
+     would move every History row to accommodate a case History never has. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ag-node {
