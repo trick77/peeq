@@ -4,7 +4,7 @@
 // constraint by backend/internal/store/enums_test.go. The chain is:
 //
 //   0001_init.sql CHECK  ->  Go constants  ->  this file
-//        (enums_test.go)         (enumsync.test.ts)
+//        (enums_test.go)         (wireenums.test.ts)
 //
 // so a value can only drift if BOTH guards are removed. Before #196 these were
 // bare string literals on both sides with nothing connecting them, which is how
@@ -74,7 +74,7 @@ export type CookieStatus = (typeof COOKIE_STATUSES)[number];
 // Summarize progress phases — backend/internal/summarize/phase.go.
 //
 // The one set here with no CHECK constraint behind it: nothing persists a
-// phase, so this file and phase.go are the whole contract, and enumsync.test.ts
+// phase, so this file and phase.go are the whole contract, and wireenums.test.ts
 // is the only thing checking it. The empty string is also a valid phase on the
 // wire ("no stage in flight", carried by the terminal done/error events) and is
 // deliberately not a member — it is an absence, not a stage.
