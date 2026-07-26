@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../ui";
+import { Icon } from "../icons";
 import {
   listUpcoming,
   skipScheduledMeta,
@@ -9,7 +10,7 @@ import {
 import { summaryPhaseInfo, SUMMARY_PHASE_COUNT } from "../format";
 import type { Job, SummaryJob } from "../api/types";
 import { DOT } from "../sep";
-import { kindOf, leadCap, parseUTC, plannedWhen, subjectNode } from "./agenda";
+import { kindOf, parseUTC, plannedWhen, subjectNode } from "./agenda";
 
 // UpNext — everything peeq is about to do, in the order it will do it. It
 // absorbs the old Queue page and the projection half of the old Activity page,
@@ -120,6 +121,27 @@ function rowKey(item: UpcomingItem): string {
   return `${item.kind}:${item.subject_id ?? ""}`;
 }
 
+// FILTERS narrows the page to one kind of work. Deliberately the same chip row,
+// vocabulary and default ("All") as History, so the two halves of "what is peeq
+// doing" are filtered the same way rather than each inventing its own controls.
+//
+// Two of History's chips are absent on purpose. "Cleanup" has nothing to match:
+// retention is a sweep peeq runs on its own, with no scheduled instant to
+// project. "Problems only" has nothing either — nothing here has happened yet,
+// so nothing can have failed, which is the same reason the old Activity page
+// had to blank its whole projection under that filter.
+const FILTERS: { id: string; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "download", label: "Downloads" },
+  { id: "summary", label: "Summaries" },
+  { id: "scan", label: "Scans" },
+  { id: "channel_meta", label: "Metadata" },
+];
+
+// The kinds the schedule can ever contain: the projection is peeq's own timed
+// housekeeping, which is scans and metadata refreshes and nothing else.
+const SCHED_KINDS = new Set(["scan", "channel_meta"]);
+
 export function UpNext({
   jobs,
   progressByJobId,
@@ -176,6 +198,10 @@ export function UpNext({
     Record<string, { previousAt: string; busy: boolean }>
   >({});
   const [skipError, setSkipError] = useState<string | null>(null);
+  // "All" by default: the page's job is to answer "what is peeq doing", and a
+  // filter remembered from last time would answer a narrower question without
+  // saying so.
+  const [filter, setFilter] = useState("all");
   // now is captured once per render pass for the relative labels; it does not
   // tick, which is fine for a schedule measured in minutes and hours.
   const now = Date.now();
@@ -292,9 +318,23 @@ export function UpNext({
   // The endpoint stopped emitting them, and this guard keeps the page honest
   // against an older backend still serving them.
   const scheduled = useMemo(
-    () => upcoming.filter((i) => i.at && !i.approx),
-    [upcoming],
+    () =>
+      upcoming.filter(
+        (i) => i.at && !i.approx && (filter === "all" || filter === i.kind),
+      ),
+    [upcoming, filter],
   );
+
+  // Which sections the current filter admits. The lanes are kinds too, so
+  // "Downloads" hides the summary lane and the whole schedule rather than just
+  // dimming them.
+  const showDownloads = filter === "all" || filter === "download";
+  const showSummaries = filter === "all" || filter === "summary";
+  // Whether the schedule is part of the current view at all. Only scans and
+  // metadata refreshes are ever projected, so under "Downloads" or "Summaries"
+  // the schedule is not merely empty — it is out of scope, and neither its
+  // loading state nor its failure is this page's news to report.
+  const showSched = filter === "all" || SCHED_KINDS.has(filter);
 
   const grouped = useMemo(() => {
     const by = new Map<string, UpcomingItem[]>();
@@ -311,8 +351,31 @@ export function UpNext({
     // now is a render-scoped constant; recomputing per render is the point.
   }, [scheduled, now]);
 
-  const nothingInFlight =
-    running.length === 0 && waiting.length === 0 && summaries.length === 0;
+  // Emptiness is measured through the filter, not around it: with "Downloads"
+  // selected, a summary sitting in the other lane is not something this page is
+  // currently showing, so it must not count as "there is work here".
+  const laneEmpty =
+    (!showDownloads || (running.length === 0 && waiting.length === 0)) &&
+    (!showSummaries || summaries.length === 0);
+  const nothingToShow = laneEmpty && scheduled.length === 0;
+
+  // The chips render on EVERY branch below, including the empty ones. An early
+  // return without them would strand anyone who filtered to a kind with nothing
+  // in it: the page would say "nothing" with no control left to undo it.
+  const chips = (
+    <div className="chips">
+      {FILTERS.map((f) => (
+        <button
+          key={f.id}
+          type="button"
+          className={`chip${filter === f.id ? " on" : ""}`}
+          onClick={() => setFilter(f.id)}
+        >
+          {f.label}
+        </button>
+      ))}
+    </div>
+  );
 
   // Every empty state names what happens next rather than just saying "nothing
   // here" — and when work is stopped it names the way out, which differs by
@@ -328,29 +391,50 @@ export function UpNext({
   // someone with channels subscribed for the frame before the fetch lands — and
   // if the fetch fails the page has no schedule to speak for, so it says that
   // rather than inventing "subscribe to a channel".
-  if (nothingInFlight && !schedLoaded) {
-    return <p className="un-empty">Loading…</p>;
-  }
-  if (nothingInFlight && schedFailed && scheduled.length === 0) {
-    return <div className="errline">Couldn’t load the schedule.</div>;
-  }
-  if (nothingInFlight && scheduled.length === 0) {
+  //
+  // Both of those are claims about the SCHEDULE, so they are only made by a
+  // filter the schedule is in: under "Downloads" with nothing downloading, the
+  // answer is "nothing of that kind", not "Loading…" and not "couldn't load the
+  // schedule" — the schedule holds no downloads either way.
+  if (nothingToShow && showSched && !schedLoaded) {
     return (
-      <p className="un-empty">
-        {stalled === "youtube"
-          ? "Nothing is running — peeq is paused. Resume it above and queued work starts again."
-          : stalled === "disk"
-            ? "Nothing is running — the disk is full. Free up space and downloads start again."
-            : stalled === "cookie"
-              ? "Nothing is running — YouTube needs a fresh cookie. Replace it in Settings and downloads start again."
-              : "Nothing scheduled yet — subscribe to a channel and peeq will start checking it for you."}
-      </p>
+      <>
+        {chips}
+        <p className="un-empty">Loading…</p>
+      </>
+    );
+  }
+  if (nothingToShow && showSched && schedFailed) {
+    return (
+      <>
+        {chips}
+        <div className="errline">Couldn’t load the schedule.</div>
+      </>
+    );
+  }
+  if (nothingToShow) {
+    return (
+      <>
+        {chips}
+        <p className="un-empty">
+          {filter !== "all"
+            ? "Nothing of that kind is queued or scheduled."
+            : stalled === "youtube"
+              ? "Nothing is running — peeq is paused. Resume it above and queued work starts again."
+              : stalled === "disk"
+                ? "Nothing is running — the disk is full. Free up space and downloads start again."
+                : stalled === "cookie"
+                  ? "Nothing is running — YouTube needs a fresh cookie. Replace it in Settings and downloads start again."
+                  : "Nothing scheduled yet — subscribe to a channel and peeq will start checking it for you."}
+        </p>
+      </>
     );
   }
 
   return (
     <>
-      {running.length > 0 || waiting.length > 0 ? (
+      {chips}
+      {showDownloads && (running.length > 0 || waiting.length > 0) ? (
         <section className="un-lane">
           <h2>Downloading</h2>
           {running.map((j) => {
@@ -440,7 +524,7 @@ export function UpNext({
         </section>
       ) : null}
 
-      {summaries.length > 0 ? (
+      {showSummaries && summaries.length > 0 ? (
         <section className="un-lane">
           <h2>Summarising</h2>
           {[...runningSummaries, ...waitingSummaries].map((s) => {
@@ -520,8 +604,22 @@ export function UpNext({
                 key={key}
                 className={`un-row planned${isSkipped ? " skipped" : ""}`}
               >
+                {/* A skipped row says so in the lead column, where its time was.
+                    The row stays put rather than vanishing — a row that
+                    disappeared would take its own Undo with it. */}
                 <span className="un-lead">
                   {isSkipped ? "Skipped" : plannedWhen(item.at, now)}
+                </span>
+                {/* The kind, as a glyph rather than a sentence — the same one
+                    History uses for it, so both pages name the same work the
+                    same way. This was a second line reading "Channel scan",
+                    which on a real schedule meant that phrase written out
+                    fifteen times under fifteen channel names: the only thing
+                    that varied was the name, and the repetition made a short
+                    list look long. The glyph says it in space the row already
+                    had, and each entry drops from two lines to one. */}
+                <span className="un-kind">
+                  <Icon name={k.icon} size="14px" label={k.label} />
                 </span>
                 <div className="un-body">
                   <div className="un-title">
@@ -532,13 +630,6 @@ export function UpNext({
                       onOpenChannel,
                     )}
                   </div>
-                  {item.summary ? (
-                    <div className="un-detail">
-                      {isSkipped
-                        ? `${leadCap(item.summary)}${DOT}not this time`
-                        : leadCap(item.summary)}
-                    </div>
-                  ) : null}
                 </div>
                 {skippable ? (
                   isSkipped ? (
@@ -571,7 +662,12 @@ export function UpNext({
         </section>
       ))}
 
-      {truncated > 0 ? (
+      {/* Only under "All". The server's count is how many items the merge
+          dropped across every kind at once, so under a narrowed filter it would
+          either count work the page is hiding — "+4 more scheduled" sitting
+          alone beneath a Downloads view with no schedule on screen — or, under
+          Scans, silently include the dropped metadata refreshes. */}
+      {filter === "all" && truncated > 0 ? (
         <div className="un-edge">+{truncated} more scheduled</div>
       ) : null}
     </>

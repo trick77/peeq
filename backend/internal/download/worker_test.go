@@ -30,13 +30,25 @@ type fakeRunner struct {
 	// tests that only care about the download path are unaffected.
 	metaN  int
 	metaFn func(ctx context.Context, rawURL string) (*ytdlp.Meta, error)
+	// manualStart hands the scripted fn responsibility for calling
+	// ytdlp.SignalStart. The real Runner fires it once the pacer lets the call
+	// through and yt-dlp is about to run, so by default the fake fires it up
+	// front — a fake that never fired it would leave the worker's timers
+	// permanently unarmed, and the watchdog tests would pass by doing nothing.
+	// Set it when the test is ABOUT that gap: the pacer wait between entering
+	// the call and the process starting.
+	manualStart bool
 }
 
 func (f *fakeRunner) Download(ctx context.Context, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
 	f.mu.Lock()
 	call := f.n
 	f.n++
+	manual := f.manualStart
 	f.mu.Unlock()
+	if !manual {
+		ytdlp.SignalStart(ctx)
+	}
 	return f.fn(ctx, call, req, onProgress)
 }
 
@@ -44,7 +56,11 @@ func (f *fakeRunner) Metadata(ctx context.Context, rawURL string) (*ytdlp.Meta, 
 	f.mu.Lock()
 	f.metaN++
 	fn := f.metaFn
+	manual := f.manualStart
 	f.mu.Unlock()
+	if !manual {
+		ytdlp.SignalStart(ctx)
+	}
 	if fn == nil {
 		return &ytdlp.Meta{}, nil
 	}
@@ -810,6 +826,89 @@ func TestWorker_progressResetsWatchdog(t *testing.T) {
 	waitFor(t, "job done without watchdog kill", func() bool { return h.jobState(t, id).State == "done" })
 	if c := runner.calls(); c != 1 {
 		t.Fatalf("runner called %d times, want 1 (steady progress must not trip the watchdog)", c)
+	}
+}
+
+// A call that sits on the shared pacer for longer than the whole watchdog
+// window before yt-dlp starts must NOT be killed. This is the bug the watchdog
+// had: it was armed when Download was entered, but the pacer's wait happens
+// inside that call and emits no progress, so a job with a deep enough queue in
+// front of it was cancelled for being patient and reported as a failure.
+//
+// manualStart is what makes the test about that gap: the fake waits before
+// signalling the start hook, exactly as the real Runner waits on throttle
+// before launching the process.
+func TestWorker_pacerWaitDoesNotTripWatchdog(t *testing.T) {
+	const watchdog = 20 * time.Millisecond
+	runner := &fakeRunner{
+		manualStart: true,
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			// Queue for several watchdog windows with nothing to report, the
+			// way a background call waits its turn behind others.
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(5 * watchdog):
+			}
+			// The pacer let it through: yt-dlp starts here.
+			ytdlp.SignalStart(ctx)
+			onProgress(ytdlp.Progress{Percent: 50})
+			return &ytdlp.Result{MediaPath: "/m/vid.mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h := newHarness(t, runner, func(d *Deps) {
+		d.Watchdog = watchdog
+	})
+	id := h.enqueue(t, "vid", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job done after a long pacer wait", func() bool { return h.jobState(t, id).State == "done" })
+	if c := runner.calls(); c != 1 {
+		t.Fatalf("runner called %d times, want 1 (queueing is not a stalled download)", c)
+	}
+}
+
+// The same guarantee for the metadata preflight, which has its own (shorter)
+// cap and so tripped first: a preflight that queues past the cap before yt-dlp
+// starts must still resolve, not retry.
+func TestWorker_pacerWaitDoesNotTripPreflightCap(t *testing.T) {
+	runner := &fakeRunner{
+		manualStart: true,
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			ytdlp.SignalStart(ctx)
+			return &ytdlp.Result{MediaPath: "/m/vid.mp4", FormatUsed: "f"}, nil
+		},
+		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(250 * time.Millisecond):
+			}
+			ytdlp.SignalStart(ctx)
+			return &ytdlp.Meta{Title: "Resolved late", Channel: "Chan"}, nil
+		},
+	}
+	// A cap far shorter than the fake's queueing wait: timed from entry it
+	// would always fire, timed from the start hook it never does. The absolute
+	// numbers matter as well as the ratio — the cap has to be comfortably longer
+	// than the sliver between SignalStart and the fake's return, or a scheduling
+	// hiccup in that gap fires it for real and the job retries for no reason.
+	h := newHarness(t, runner, func(d *Deps) {
+		d.Watchdog = -1
+		d.MetadataTimeout = 25 * time.Millisecond
+	})
+	// enqueue seeds the video with no title, which is what puts the job
+	// through the preflight at all.
+	id := h.enqueue(t, "vid", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job done after a long preflight wait", func() bool { return h.jobState(t, id).State == "done" })
+	v, err := h.videos.Get("vid")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.Title != "Resolved late" {
+		t.Fatalf("title = %q, want the preflight result (the cap must not have fired)", v.Title)
 	}
 }
 

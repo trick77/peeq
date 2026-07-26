@@ -963,10 +963,15 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "already_downloaded"})
 		return
 	}
+	// The title is normalised again on the way out of the ledger. Entries
+	// discovered before title normalisation existed still hold the raw yt-dlp
+	// string, and this is where such an entry becomes a video row — the row is
+	// new here, so cleaning it stays within "new videos only". The ledger row
+	// itself is left as it was.
 	if err := s.videos.Upsert(videos.Video{
 		ID:              e.VideoID,
 		URL:             e.URL,
-		Title:           e.Title,
+		Title:           ytdlp.NormalizeTitle(e.Title),
 		ChannelID:       e.ChannelID,
 		DurationSeconds: int64(e.DurationSeconds),
 	}); err != nil {

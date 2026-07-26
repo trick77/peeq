@@ -351,6 +351,47 @@ func IsInteractive(ctx context.Context) bool {
 	return v
 }
 
+// startKey carries a callback fired when a call stops queueing and the yt-dlp
+// process is about to be launched.
+type startKey struct{}
+
+// WithStartHook marks ctx so fn is called at the moment a call leaves the pacer
+// and the yt-dlp process is about to start — after the pause gate, the cookie
+// gate and the throttle wait, before exec.
+//
+// It exists because "the call was entered" and "the process is running" are not
+// the same instant, and callers that bound a call with an inactivity watchdog
+// or a wall-clock cap mean the second one. The pacer's whole job is to make a
+// call wait its turn, so a timer armed on entry counts that deliberate wait as
+// though the process were hung: a deep enough queue in front of a job kills it
+// before yt-dlp ever runs, and it surfaces as a failure when nothing was wrong.
+// Arming on this hook makes such a timer mean "the process is running and has
+// gone quiet", which is what those timers are for.
+//
+// fn runs on the goroutine making the call, synchronously, immediately before
+// exec — so it must not block. It fires at most once per call, and NOT at all
+// when the call never reaches exec: a pause gate, a missing cookie, or a
+// context cancelled during the throttle wait all return early. That is the
+// point — there is no process to bound, and a user Cancel during the pre-call
+// wait is already handled by throttle's own cancellation.
+//
+// A context carrying no hook is the normal case and costs a nil check.
+func WithStartHook(ctx context.Context, fn func()) context.Context {
+	return context.WithValue(ctx, startKey{}, fn)
+}
+
+// SignalStart fires ctx's start hook, if it carries one. Exported for the same
+// reason IsInteractive is: a fake Runner standing in for this package in tests
+// must be able to reproduce the signal without shelling out to a real yt-dlp,
+// and the alternative is exposing the context key itself.
+//
+// Safe on a context with no hook, which is the normal case.
+func SignalStart(ctx context.Context) {
+	if fn, _ := ctx.Value(startKey{}).(func()); fn != nil {
+		fn()
+	}
+}
+
 // now reads the injectable clock, defaulting to time.Now.
 func (r *Runner) now() time.Time {
 	if r.cfg.Now != nil {
@@ -425,6 +466,14 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 	if err := r.throttle(ctx); err != nil {
 		return nil, err
 	}
+
+	// The queueing is over and the process is about to run: tell a caller that
+	// asked to be told. Deliberately here rather than beside cmd.Start() below,
+	// so both branches (buffered exec and streamed download) signal it — and
+	// deliberately AFTER throttle, since everything this hook exists for is
+	// about not counting the wait above as though the process were already
+	// running. See WithStartHook.
+	SignalStart(ctx)
 
 	fullArgs := args
 	if cookieFile != "" {

@@ -563,7 +563,167 @@ describe("UpNext", () => {
     });
     render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
 
-    expect(await screen.findByText(/retention sweep/i)).toBeInTheDocument();
+    // The row is identified by its kind label, not by the summary: a scheduled
+    // entry is one line now, so there is no detail line to carry "retention
+    // sweep". Asserting the row is present at all still matters — a missing row
+    // would make the no-Skip assertion below pass for the wrong reason.
+    expect(await screen.findByText("Cleanup")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Skip/ })).toBeNull();
+  });
+});
+
+describe("UpNext schedule rows", () => {
+  beforeEach(() => {
+    vi.mocked(listUpcoming).mockReset();
+    vi.mocked(listUpcoming).mockResolvedValue({ items: [], truncated: 0 });
+  });
+
+  // The kind used to be a second line under every channel name, so a real
+  // schedule read as "Channel scan" fifteen times. It is a glyph now, in its
+  // own column, leaving one line per entry.
+  it("names a scheduled row's kind with a glyph, not a repeated sentence", async () => {
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          kind: "scan",
+          approx: false,
+          at: soon(20),
+          subject: "Veritasium",
+          summary: "channel scan",
+        },
+      ],
+      truncated: 0,
+    });
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+    await screen.findByText("Veritasium");
+    const row = screen
+      .getByText("Veritasium")
+      .closest(".un-row") as HTMLElement;
+    expect(row.querySelector(".un-kind")).toBeTruthy();
+    // The words are gone from the row, but the kind is still named for anyone
+    // not reading it visually.
+    expect(row.textContent).not.toContain("Channel scan");
+    expect(within(row).getByLabelText("Scan")).toBeInTheDocument();
+  });
+});
+
+describe("UpNext filters", () => {
+  beforeEach(() => {
+    vi.mocked(listUpcoming).mockReset();
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          kind: "scan",
+          approx: false,
+          at: soon(20),
+          subject: "Veritasium",
+          summary: "channel scan",
+        },
+      ],
+      truncated: 0,
+    });
+  });
+
+  it("shows everything under All, which is the default", async () => {
+    render(
+      <UpNext
+        jobs={[job({ job_id: 1, title: "A download" })]}
+        summaries={[summary({ id: 2, video_id: "s2", title: "A summary" })]}
+        onCancel={noop}
+      />,
+    );
+    expect(await screen.findByText("Veritasium")).toBeInTheDocument();
+    expect(screen.getByText("A download")).toBeInTheDocument();
+    expect(screen.getByText("A summary")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All" })).toHaveClass("on");
+  });
+
+  it("narrows to one kind, hiding the other lane and the schedule", async () => {
+    const user = userEvent.setup();
+    render(
+      <UpNext
+        jobs={[job({ job_id: 1, title: "A download" })]}
+        summaries={[summary({ id: 2, video_id: "s2", title: "A summary" })]}
+        onCancel={noop}
+      />,
+    );
+    await screen.findByText("Veritasium");
+    await user.click(screen.getByRole("button", { name: "Downloads" }));
+    expect(screen.getByText("A download")).toBeInTheDocument();
+    expect(screen.queryByText("A summary")).not.toBeInTheDocument();
+    expect(screen.queryByText("Veritasium")).not.toBeInTheDocument();
+  });
+
+  it("filters the schedule by its own kind", async () => {
+    const user = userEvent.setup();
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+    await screen.findByText("Veritasium");
+    await user.click(screen.getByRole("button", { name: "Metadata" }));
+    expect(screen.queryByText("Veritasium")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Scans" }));
+    expect(await screen.findByText("Veritasium")).toBeInTheDocument();
+  });
+
+  // An early return without the chips would strand anyone who filtered to a
+  // kind with nothing in it — the page would say "nothing" with no way back.
+  it("keeps the chips when the filter matches nothing", async () => {
+    const user = userEvent.setup();
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+    await screen.findByText("Veritasium");
+    await user.click(screen.getByRole("button", { name: "Summaries" }));
+    expect(screen.getByText(/nothing of that kind/i)).toBeInTheDocument();
+    // Still there, so All can be chosen again.
+    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(await screen.findByText("Veritasium")).toBeInTheDocument();
+  });
+
+  // The server's count is a cross-kind drop count, so it can only be told
+  // truthfully under All — under Downloads it would sit alone beneath a view
+  // with no schedule in it at all.
+  it("drops the truncation hint once the filter narrows", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          kind: "scan",
+          approx: false,
+          at: soon(20),
+          subject: "Veritasium",
+          summary: "channel scan",
+        },
+      ],
+      truncated: 4,
+    });
+    render(
+      <UpNext
+        jobs={[job({ job_id: 1, title: "A download" })]}
+        summaries={[]}
+        onCancel={noop}
+      />,
+    );
+    expect(await screen.findByText("+4 more scheduled")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Downloads" }));
+    expect(screen.queryByText("+4 more scheduled")).not.toBeInTheDocument();
+  });
+
+  // A failed schedule fetch is not news under a filter the schedule is not in:
+  // the schedule holds no downloads whether it loaded or not.
+  it("does not blame the schedule under a filter it has no part in", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listUpcoming).mockRejectedValue(new Error("nope"));
+    render(
+      <UpNext
+        jobs={[job({ job_id: 1, title: "A download" })]}
+        summaries={[]}
+        onCancel={noop}
+      />,
+    );
+    await screen.findByText(/Couldn’t load the schedule|A download/i);
+    await user.click(screen.getByRole("button", { name: "Summaries" }));
+    expect(
+      screen.queryByText(/Couldn’t load the schedule/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/nothing of that kind/i)).toBeInTheDocument();
   });
 });
