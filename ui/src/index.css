@@ -595,10 +595,6 @@ button.srow:not(:disabled):hover {
   color: var(--color-muted);
   margin-top: 5px;
 }
-.un-row.planned .un-detail {
-  font-style: italic;
-  color: var(--color-faint);
-}
 .un-row.planned .un-title {
   color: var(--color-ink-dim);
 }

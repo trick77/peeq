@@ -109,6 +109,10 @@ const FILTERS: { id: string; label: string }[] = [
   { id: "channel_meta", label: "Metadata" },
 ];
 
+// The kinds the schedule can ever contain: the projection is peeq's own timed
+// housekeeping, which is scans and metadata refreshes and nothing else.
+const SCHED_KINDS = new Set(["scan", "channel_meta"]);
+
 export function UpNext({
   jobs,
   progressByJobId,
@@ -218,6 +222,11 @@ export function UpNext({
   // dimming them.
   const showDownloads = filter === "all" || filter === "download";
   const showSummaries = filter === "all" || filter === "summary";
+  // Whether the schedule is part of the current view at all. Only scans and
+  // metadata refreshes are ever projected, so under "Downloads" or "Summaries"
+  // the schedule is not merely empty — it is out of scope, and neither its
+  // loading state nor its failure is this page's news to report.
+  const showSched = filter === "all" || SCHED_KINDS.has(filter);
 
   const grouped = useMemo(() => {
     const by = new Map<string, UpcomingItem[]>();
@@ -274,7 +283,12 @@ export function UpNext({
   // someone with channels subscribed for the frame before the fetch lands — and
   // if the fetch fails the page has no schedule to speak for, so it says that
   // rather than inventing "subscribe to a channel".
-  if (nothingToShow && !schedLoaded) {
+  //
+  // Both of those are claims about the SCHEDULE, so they are only made by a
+  // filter the schedule is in: under "Downloads" with nothing downloading, the
+  // answer is "nothing of that kind", not "Loading…" and not "couldn't load the
+  // schedule" — the schedule holds no downloads either way.
+  if (nothingToShow && showSched && !schedLoaded) {
     return (
       <>
         {chips}
@@ -282,7 +296,7 @@ export function UpNext({
       </>
     );
   }
-  if (nothingToShow && schedFailed) {
+  if (nothingToShow && showSched && schedFailed) {
     return (
       <>
         {chips}
@@ -492,7 +506,12 @@ export function UpNext({
         </section>
       ))}
 
-      {truncated > 0 ? (
+      {/* Only under "All". The server's count is how many items the merge
+          dropped across every kind at once, so under a narrowed filter it would
+          either count work the page is hiding — "+4 more scheduled" sitting
+          alone beneath a Downloads view with no schedule on screen — or, under
+          Scans, silently include the dropped metadata refreshes. */}
+      {filter === "all" && truncated > 0 ? (
         <div className="un-edge">+{truncated} more scheduled</div>
       ) : null}
     </>

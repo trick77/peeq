@@ -530,4 +530,53 @@ describe("UpNext filters", () => {
     await user.click(screen.getByRole("button", { name: "All" }));
     expect(await screen.findByText("Veritasium")).toBeInTheDocument();
   });
+
+  // The server's count is a cross-kind drop count, so it can only be told
+  // truthfully under All — under Downloads it would sit alone beneath a view
+  // with no schedule in it at all.
+  it("drops the truncation hint once the filter narrows", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          kind: "scan",
+          approx: false,
+          at: soon(20),
+          subject: "Veritasium",
+          summary: "channel scan",
+        },
+      ],
+      truncated: 4,
+    });
+    render(
+      <UpNext
+        jobs={[job({ job_id: 1, title: "A download" })]}
+        summaries={[]}
+        onCancel={noop}
+      />,
+    );
+    expect(await screen.findByText("+4 more scheduled")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Downloads" }));
+    expect(screen.queryByText("+4 more scheduled")).not.toBeInTheDocument();
+  });
+
+  // A failed schedule fetch is not news under a filter the schedule is not in:
+  // the schedule holds no downloads whether it loaded or not.
+  it("does not blame the schedule under a filter it has no part in", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listUpcoming).mockRejectedValue(new Error("nope"));
+    render(
+      <UpNext
+        jobs={[job({ job_id: 1, title: "A download" })]}
+        summaries={[]}
+        onCancel={noop}
+      />,
+    );
+    await screen.findByText(/Couldn’t load the schedule|A download/i);
+    await user.click(screen.getByRole("button", { name: "Summaries" }));
+    expect(
+      screen.queryByText(/Couldn’t load the schedule/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/nothing of that kind/i)).toBeInTheDocument();
+  });
 });
