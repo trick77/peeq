@@ -47,6 +47,27 @@ import (
 // stored in — the same layout the two background loops write and compare.
 const skipTimeLayout = "2006-01-02 15:04:05"
 
+// skipAnchor is the instant a skip measures its next slot from: the later of
+// now and the occurrence being skipped.
+//
+// Measuring from now alone is not enough to make a skip a skip. Both cadences
+// are jittered — scans land 21–27h out, refreshes 6.5–7.5 days — and neither
+// due-soon query has a horizon, so Up next lists occurrences right up to the far
+// end of that spread. Skipping a scan already scheduled 26h out would then have
+// rolled a fresh 21–27h and could land it EARLIER, making Skip advance the very
+// thing it was asked to drop; a refresh sitting 6.9 days out was close to a coin
+// flip. Anchoring on the stored instant makes "strictly later" structural
+// instead of probabilistic, since JitteredInterval has a one-hour floor.
+//
+// A stored value that will not parse falls back to now rather than failing the
+// request: a bogus column should not make the row unskippable.
+func skipAnchor(now time.Time, scheduled string) time.Time {
+	if at, err := time.Parse(skipTimeLayout, scheduled); err == nil && at.After(now) {
+		return at
+	}
+	return now
+}
+
 // skipRequest is the optional body. Empty (or absent) means "skip": compute the
 // next slot from the owning package's own cadence. Populated means "undo":
 // restore this exact instant, which is the value a previous skip handed back.
@@ -109,7 +130,7 @@ func (s *server) handleChannelSkipScan(w http.ResponseWriter, r *http.Request) {
 
 	next := at
 	if next == "" {
-		next = scan.NextScanAt(time.Now(), sched.PseudoRand())
+		next = scan.NextScanAt(skipAnchor(time.Now(), sub.NextScanAt), sched.PseudoRand())
 	}
 	if err := s.channels.Backoff(id, next); err != nil {
 		serverError(w, r, err, "skip scan failed")
@@ -160,7 +181,7 @@ func (s *server) handleChannelSkipMeta(w http.ResponseWriter, r *http.Request) {
 
 	next := at
 	if next == "" {
-		next = channelmeta.NextRefreshAt(time.Now(), sched.PseudoRand())
+		next = channelmeta.NextRefreshAt(skipAnchor(time.Now(), sub.NextMetaRefreshAt), sched.PseudoRand())
 	}
 	if err := s.channels.MarkMetaRefreshed(id, next); err != nil {
 		serverError(w, r, err, "skip metadata refresh failed")

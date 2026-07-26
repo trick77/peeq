@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trick77/peeq/internal/channels"
 )
@@ -183,6 +184,32 @@ func TestSkipScan_clearsAnOutstandingCheckNow(t *testing.T) {
 	}
 	if sub.ScanRequestedAt != "" {
 		t.Fatalf("scan_requested_at = %q after a skip, want cleared", sub.ScanRequestedAt)
+	}
+}
+
+// A skip must move the occurrence LATER, including when the occurrence is
+// already further out than one fresh interval. Both cadences are jittered and
+// neither due-soon query has a horizon, so Up next lists scans up to 27h out and
+// refreshes up to 7.5 days out — measuring the new slot from now alone could
+// land either of them earlier than where it already was, which is Skip making
+// the thing happen sooner.
+func TestSkip_neverMovesAnOccurrenceEarlier(t *testing.T) {
+	deps, _, ch, _, _, _, _ := activityTestDeps(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	// The far end of each jitter spread: 30h for the scan (max 27h), 8 days for
+	// the refresh (max 7.5 days).
+	scanAt := time.Now().UTC().Add(30 * time.Hour).Format(skipTimeLayout)
+	metaAt := time.Now().UTC().Add(8 * 24 * time.Hour).Format(skipTimeLayout)
+	seedSkippableChannel(t, ch, "UCx", scanAt, metaAt)
+
+	scanResp := decodeSkip(t, postSkip(t, h, cookie, "/api/channels/UCx/skip-scan", ""))
+	if scanResp.At <= scanAt {
+		t.Fatalf("skip moved next_scan_at from %q to %q — a skip must not pull a scan earlier", scanAt, scanResp.At)
+	}
+	metaResp := decodeSkip(t, postSkip(t, h, cookie, "/api/channels/UCx/skip-meta", ""))
+	if metaResp.At <= metaAt {
+		t.Fatalf("skip moved next_meta_refresh_at from %q to %q — a skip must not pull a refresh earlier", metaAt, metaResp.At)
 	}
 }
 
