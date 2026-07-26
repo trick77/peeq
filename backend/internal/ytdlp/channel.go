@@ -221,6 +221,17 @@ func (r *Runner) channelTab(ctx context.Context, ucid, tab string, n int) ([]Cha
 	if err != nil {
 		return nil, err
 	}
+	return parseChannelEntries(out)
+}
+
+// parseChannelEntries turns one flat-listing response into ChannelEntries.
+// Split out from channelTab so it is testable without shelling out, the same
+// way parseChannelInfo is split out of ResolveChannel.
+//
+// This is where a title is normalised (see NormalizeTitle), and it is the only
+// place it has to happen for a scan: the entry returned here feeds BOTH the
+// channel_videos ledger row and the videos row the scheduler upserts.
+func parseChannelEntries(out []byte) ([]ChannelEntry, error) {
 	var raw flatListing
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("ytdlp: parse channel listing json: %w", err)
@@ -236,7 +247,7 @@ func (r *Runner) channelTab(ctx context.Context, ucid, tab string, n int) ([]Cha
 		}
 		entries = append(entries, ChannelEntry{
 			ID:              e.ID,
-			Title:           e.Title,
+			Title:           NormalizeTitle(e.Title),
 			URL:             "https://www.youtube.com/watch?v=" + e.ID,
 			DurationSeconds: int(e.Duration),
 			ThumbnailURL:    thumb,
