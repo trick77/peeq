@@ -49,10 +49,18 @@ export const INBOX_SORT_OPTIONS = SORT_OPTIONS.filter(
   (o) => o.id !== "added_newest" && o.id !== "added_oldest",
 );
 
-// matchesFilter mirrors videos.Store.List's SQL WHERE clauses exactly (see
+// matchesFilter mirrors videos.Store.List's SQL WHERE clauses (see
 // backend/internal/videos/store.go), so the chip counts computed here from
 // the unfiltered "all" list agree with what each chip's own listVideos(id)
 // call actually returns.
+//
+// One branch is deliberately WIDER than its SQL counterpart rather than an
+// exact mirror: "unwatched" also accepts queued/downloading, where the Go
+// clause is status = 'downloaded' only. It agrees anyway, because the server
+// applies notInFlight to every list, so a queued or downloading row never
+// reaches this function to be judged. Narrowing it would be equivalent, not a
+// fix — left alone because the extra states document what the filter means
+// ("play-eligible") independently of what the server happens to send.
 function matchesFilter(v: Video, filter: VideoFilter): boolean {
   switch (filter) {
     case "unwatched":
