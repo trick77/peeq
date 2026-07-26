@@ -30,6 +30,15 @@ type Entry struct {
 	// APPROXIMATE tab date, not the exact upload_date on videos.published_at,
 	// and rows written before migration 0008 carry "" until a scan heals them.
 	PublishedAt string
+	// UnavailableReason is why State is StateUnavailable — one of the
+	// ytdlp.TerminalError reasons (members, age, geo, private, deleted). It is
+	// "" in every other state; SetState clears it on the way out.
+	UnavailableReason string
+	// UnavailableAt is when the row was last confirmed unavailable, "" in every
+	// other state. It rate-limits the per-video availability probe the scan
+	// runs when the channel listing says nothing — see StateUnavailable. It is
+	// not a re-offer timer: nothing moves this row without an answer.
+	UnavailableAt string
 }
 
 // Store persists the channel_videos scan ledger.
@@ -44,27 +53,29 @@ func New(db *sql.DB) *Store {
 
 // selectColumns is the shared column list for every row read, in Entry field
 // order, so scanRow can be reused by Get and ListPending.
-const selectColumns = `video_id, channel_id, title, duration_seconds, url, thumbnail_url, state, discovered_at, decided_at, published_at`
+const selectColumns = `video_id, channel_id, title, duration_seconds, url, thumbnail_url, state, discovered_at, decided_at, published_at, unavailable_reason, unavailable_at`
 
 // pendingColumns is selectColumns aliased to the channel_videos table (cv), for
 // the ListPending JOIN where an unqualified column list would be ambiguous.
-const pendingColumns = `cv.video_id, cv.channel_id, cv.title, cv.duration_seconds, cv.url, cv.thumbnail_url, cv.state, cv.discovered_at, cv.decided_at, cv.published_at`
+const pendingColumns = `cv.video_id, cv.channel_id, cv.title, cv.duration_seconds, cv.url, cv.thumbnail_url, cv.state, cv.discovered_at, cv.decided_at, cv.published_at, cv.unavailable_reason, cv.unavailable_at`
 
 // scanRow scans one channel_videos row (in selectColumns order) into an
 // Entry, mapping NULL duration_seconds/decided_at to 0/"".
 func scanRow(sc interface{ Scan(...any) error }) (Entry, error) {
 	var e Entry
 	var duration sql.NullInt64
-	var decidedAt, publishedAt sql.NullString
+	var decidedAt, publishedAt, unavailableAt sql.NullString
 	if err := sc.Scan(
 		&e.VideoID, &e.ChannelID, &e.Title, &duration, &e.URL, &e.ThumbnailURL,
-		&e.State, &e.DiscoveredAt, &decidedAt, &publishedAt,
+		&e.State, &e.DiscoveredAt, &decidedAt, &publishedAt, &e.UnavailableReason,
+		&unavailableAt,
 	); err != nil {
 		return Entry{}, err
 	}
 	e.DurationSeconds = int(duration.Int64)
 	e.DecidedAt = decidedAt.String
 	e.PublishedAt = publishedAt.String
+	e.UnavailableAt = unavailableAt.String
 	return e, nil
 }
 
@@ -84,17 +95,23 @@ func (s *Store) Exists(videoID string) (bool, error) {
 	return true, nil
 }
 
-// Insert adds a new ledger row for e. e.State must be set by the caller
+// Insert adds a new ledger row for e. The unavailable_at stamp is derived in
+// SQL from the state being written rather than taken from the caller, so a row
+// born StateUnavailable (a scan that saw the gate badge before the video ever
+// reached the inbox) starts its re-offer clock on exactly the same footing as
+// one parked later by SetUnavailable. e.UnavailableAt is read-only.
+//
+// e.State must be set by the caller
 // (e.g. "seen" for a video below the duration floor, "pending" for one
 // awaiting a decision). DurationSeconds of 0 is stored as-is; the column
 // allows NULL for genuinely unknown durations, but a caller-supplied 0 is
 // indistinguishable from unknown and is treated the same way by consumers.
 func (s *Store) Insert(e Entry) error {
 	_, err := s.db.ExecContext(context.Background(), `
-INSERT INTO channel_videos (video_id, channel_id, title, duration_seconds, url, thumbnail_url, state, published_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO channel_videos (video_id, channel_id, title, duration_seconds, url, thumbnail_url, state, published_at, unavailable_reason, unavailable_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'unavailable' THEN datetime('now') END)`,
 		e.VideoID, e.ChannelID, e.Title, e.DurationSeconds, e.URL, e.ThumbnailURL, e.State,
-		nullIfEmpty(e.PublishedAt),
+		nullIfEmpty(e.PublishedAt), e.UnavailableReason, e.State,
 	)
 	if err != nil {
 		return fmt.Errorf("insert channel video %s: %w", e.VideoID, err)
@@ -138,13 +155,48 @@ func (s *Store) SetPublishedAt(videoID, publishedAt string) error {
 // SetState updates a ledger row's state and stamps decided_at with the
 // current time (this is how a video transitions out of "pending": ignored,
 // queued, or back to seen).
+//
+// It also clears unavailable_reason, which is only meaningful alongside
+// StateUnavailable. Leaving a stale reason on a row that has since become
+// queued would make the UI label a perfectly ordinary download "members only".
+// Use SetUnavailable to move a row the other way; it is the only writer of
+// that column.
 func (s *Store) SetState(videoID, state string) error {
 	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE channel_videos SET state = ?, decided_at = datetime('now') WHERE video_id = ?`,
+		`UPDATE channel_videos SET state = ?, unavailable_reason = '', unavailable_at = NULL, decided_at = datetime('now') WHERE video_id = ?`,
 		state, videoID,
 	)
 	if err != nil {
 		return fmt.Errorf("set state %s: %w", videoID, err)
+	}
+	return nil
+}
+
+// SetUnavailable parks a row in StateUnavailable with the ytdlp reason that
+// put it there. This is the one transition that is not a user decision, so it
+// deliberately does NOT stamp decided_at: the column means "when the user
+// decided", and a gate peeq discovered on its own is not a decision. Keeping
+// it NULL also preserves the original decided_at when a queued item lands
+// here, so a later return to 'pending' does not look like it was decided
+// twice.
+//
+// unavailable_at is always restamped, including when the row was already
+// unavailable, because every caller reaches here holding FRESH evidence the
+// gate still stands — a badge in the listing, a probe that answered, or a
+// download that hit the wall. Restamping is what spaces the next (costly)
+// per-video probe a full window out; see Entry.UnavailableAt.
+//
+// The one thing that must NOT reach here is a check that failed to produce an
+// answer. Restamping on those would let a run of network trouble silently
+// push the next real re-check out by a window each time, which is the
+// slow-motion version of burying the video.
+func (s *Store) SetUnavailable(videoID, reason string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE channel_videos SET state = ?, unavailable_reason = ?, unavailable_at = datetime('now') WHERE video_id = ?`,
+		StateUnavailable, reason, videoID,
+	)
+	if err != nil {
+		return fmt.Errorf("set unavailable %s: %w", videoID, err)
 	}
 	return nil
 }
@@ -221,15 +273,17 @@ func scanPendingEntries(rows *sql.Rows) ([]Entry, error) {
 func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 	var e Entry
 	var duration sql.NullInt64
-	var decidedAt, publishedAt sql.NullString
+	var decidedAt, publishedAt, unavailableAt sql.NullString
 	if err := sc.Scan(
 		&e.VideoID, &e.ChannelID, &e.Title, &duration, &e.URL, &e.ThumbnailURL,
-		&e.State, &e.DiscoveredAt, &decidedAt, &publishedAt, &e.ChannelName,
+		&e.State, &e.DiscoveredAt, &decidedAt, &publishedAt, &e.UnavailableReason,
+		&unavailableAt, &e.ChannelName,
 	); err != nil {
 		return Entry{}, err
 	}
 	e.DurationSeconds = int(duration.Int64)
 	e.DecidedAt = decidedAt.String
 	e.PublishedAt = publishedAt.String
+	e.UnavailableAt = unavailableAt.String
 	return e, nil
 }

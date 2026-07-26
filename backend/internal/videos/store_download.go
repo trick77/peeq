@@ -107,6 +107,43 @@ WHERE id = ?`,
 	return nil
 }
 
+// Discard hard-deletes a video row that never became a video. It exists for
+// exactly one caller: a download that failed with a per-video terminal reason
+// (members-only, age-gated, geo-blocked, private, deleted), where the scan
+// ledger holds a re-checkable record of the video and this row holds nothing
+// but a permanent error.
+//
+// Tombstone is deliberately NOT reused. A tombstone means "you had this and it
+// was reclaimed": the row survives, keeps its watch history, and shows in the
+// Library offering a re-download. Every one of those is wrong here — there is
+// no history, and the offered re-download cannot ever succeed. Leaving the row
+// as 'error' instead is what put an unfixable card in the Library in the first
+// place, since notInFlight keeps error rows visible on purpose so genuinely
+// retryable failures stay recoverable.
+//
+// Safe by construction rather than by guard: the row has no media or subtitle
+// file to unlink (it never downloaded), and every table that references it
+// cascades. The one exception is vec_chunks, which cannot participate in a
+// cascade — and cannot matter, because a video with no transcript has no
+// chunks to orphan.
+//
+// That cascade includes download_jobs, so the failed job row goes with it and
+// the attempt stops showing in History. Deliberate: a job row pointing at a
+// video that no longer exists is an orphan the History list cannot render
+// usefully, and the Activity feed keeps the durable record of what happened —
+// see Worker.park, which writes that event before calling this.
+//
+// Callers must have somewhere else to remember the video. Deleting a row with
+// no ledger entry behind it loses the video outright, which is why the worker
+// checks first.
+func (s *Store) Discard(id string) error {
+	if _, err := s.db.ExecContext(context.Background(),
+		`DELETE FROM videos WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("discard video %s: %w", id, err)
+	}
+	return nil
+}
+
 // Tombstone marks a video deleted-but-remembered: media_path and
 // subtitle_path are cleared and status becomes 'tombstoned', but the row
 // (and its watched history) is kept — a future badge can offer

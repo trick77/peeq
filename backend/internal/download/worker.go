@@ -17,6 +17,7 @@ import (
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/sched"
@@ -74,6 +75,22 @@ type SummaryEnqueuer interface {
 	Enqueue(videoID string) (int64, error)
 }
 
+// ScanLedger is the slice of *channelvideos.Store the worker needs to hand a
+// walled-off video back to the scan ledger. Narrow on purpose — the worker
+// only ever moves a row INTO the unavailable state; deciding when it comes
+// back out belongs to the scan scheduler, which is the thing that re-lists the
+// channel.
+//
+// Get rather than Exists: the answer is needed twice over. It says whether
+// there is a row to park at all, and it carries the title the Activity row
+// should name — a gated video usually has no title on its videos row, because
+// the metadata preflight hits the same wall the download does, so the ledger
+// row written by the scan is the only place the human-readable name survives.
+type ScanLedger interface {
+	Get(videoID string) (*channelvideos.Entry, error)
+	SetUnavailable(videoID, reason string) error
+}
+
 // MediaProber reads the container/codec/resolution facts out of a finished
 // download. Declared as an interface so the worker's tests can drive a stub
 // instead of needing a real ffprobe binary.
@@ -109,6 +126,12 @@ type Deps struct {
 	// do not care) skips the write; production always sets it. Caching a
 	// channel never adds it — see channels.Store.Upsert.
 	Channels ChannelCache
+
+	// Ledger, when set, is the scan ledger a walled-off video is handed back
+	// to instead of being left as a dead 'error' row in the Library. Nil (the
+	// default in tests that do not care) makes every terminal failure take the
+	// plain error path; production always sets it. See Worker.park.
+	Ledger ScanLedger
 
 	// SummaryJobs, when set, is enqueued for every successful download
 	// (initial or re-download) right after SetDownloaded persists. Nil
@@ -368,11 +391,11 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	}
 	if verr != nil {
 		w.deps.Logger.Error("download worker: load video failed", "job_id", job.ID, "err", verr)
-		w.fail(job, video, job.Attempts, "load video: "+verr.Error())
+		w.fail(job, video, job.Attempts, "load video: "+verr.Error(), "")
 		return
 	}
 	if video == nil {
-		w.fail(job, nil, job.Attempts, "video row missing")
+		w.fail(job, nil, job.Attempts, "video row missing", "")
 		return
 	}
 	if serr != nil {
@@ -450,7 +473,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		video.Availability = videos.NormalizeAvailability(meta.Availability)
 		if err := w.deps.Videos.Upsert(*video); err != nil {
 			w.deps.Logger.Error("download worker: save metadata failed", "job_id", job.ID, "err", err)
-			w.fail(job, video, job.Attempts, "save metadata: "+err.Error())
+			w.fail(job, video, job.Attempts, "save metadata: "+err.Error(), "")
 			return
 		}
 		// Cache the channel's identity so the Channels list has a row to join
@@ -622,8 +645,10 @@ func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Vide
 		// flag and it proceeds.
 		w.requeuePaused(job)
 	case errors.As(err, &terminal):
-		// Terminal ytdlp error: fail without changing the attempt count.
-		w.fail(job, video, job.Attempts, err.Error())
+		// Terminal ytdlp error: fail without changing the attempt count. The
+		// reason travels with it so fail can park the video in the scan ledger
+		// rather than stranding it as an un-retryable Library row.
+		w.fail(job, video, job.Attempts, err.Error(), terminal.Reason)
 	default:
 		// Count-worthy (unclassified exec/extractor + RetryableError) for
 		// auto-pause; per-video terminal errors above never reach here. A
@@ -684,7 +709,11 @@ func (w *Worker) retry(ctx context.Context, job *jobs.Job, video *videos.Video, 
 		// guarded write (via fail → Jobs.Fail), so there is no intermediate
 		// 'pending' window in which another claimer could grab a job that is
 		// about to be failed (finding 3).
-		w.fail(job, video, newAttempts, msg)
+		//
+		// No gate reason: exhausting the retries means something transient kept
+		// going wrong, which is exactly the case the Library's re-download
+		// button exists for. Parking it would take that away.
+		w.fail(job, video, newAttempts, msg, "")
 		return
 	}
 	// Record the attempt, then wait out the backoff before it can be
@@ -832,13 +861,30 @@ func humanSize(b int64) string {
 // in the same guarded write. If the job was canceled out from under us
 // (ErrNotRunning), it settles as canceled instead — leaving the video in 'new'
 // rather than 'error'.
-func (w *Worker) fail(job *jobs.Job, video *videos.Video, attempts int, msg string) {
+//
+// gateReason is the ytdlp.TerminalError reason when the download failed
+// because the video is walled off from us (members / age / geo / private /
+// deleted), and "" for every other failure. It selects between the two very
+// different meanings of "failed": a retryable thing that went wrong, versus a
+// video peeq is not allowed to have. See park.
+func (w *Worker) fail(job *jobs.Job, video *videos.Video, attempts int, msg string, gateReason string) {
+	// A download that simply fails logged NOTHING at any level before this:
+	// every other Logger call on this path fires only when a database write
+	// fails, so the container log was silent about the failure itself and the
+	// job row was the only trace. One line per terminal failure is cheap and
+	// makes the log the first place to look, matching what pause() already does.
+	w.deps.Logger.Warn("download worker: download failed",
+		"video_id", videoID(video), "job_id", job.ID, "attempts", attempts,
+		"gate", gateReason, "err", msg)
 	switch err := w.deps.Jobs.Fail(job.ID, attempts, msg); {
 	case errors.Is(err, jobs.ErrNotRunning):
 		w.settleCanceled(job, video)
 		return
 	case err != nil:
 		w.deps.Logger.Error("download worker: finish failed", "job_id", job.ID, "err", err)
+	}
+	if gateReason != "" && w.park(video, gateReason) {
+		return
 	}
 	if video != nil {
 		if err := w.deps.Videos.SetStatus(video.ID, videos.StatusError, msg); err != nil {
@@ -855,6 +901,101 @@ func (w *Worker) fail(job *jobs.Job, video *videos.Video, attempts int, msg stri
 			SubjectID: video.ID, Subject: subject, Summary: "download failed",
 			Detail: msg,
 		})
+	}
+}
+
+// videoID is video.ID, or "" when the video could not be loaded at all — so
+// the log line above can name the video without a nil check at the call site.
+func videoID(video *videos.Video) string {
+	if video == nil {
+		return ""
+	}
+	return video.ID
+}
+
+// park hands a walled-off video back to the scan ledger and removes its videos
+// row, reporting whether it did so.
+//
+// The Inbox's Download button flips the ledger row to 'queued' at CLICK time,
+// before yt-dlp has run, and nothing ever writes 'pending' back. So without
+// this, a members-only video was gone from the Inbox AND sitting in the
+// Library as an 'error' row whose re-download button could never succeed —
+// two wrong places at once, and no way for the user to be offered it again if
+// the channel later made it public.
+//
+// Parking the LEDGER row (not the videos row) is what makes the memory
+// re-checkable: channelvideos.StateUnavailable is revisited by every scan
+// pass, so a lifted gate returns the video to the Inbox on its own.
+//
+// It returns false — leaving the ordinary 'error' path to run — whenever there
+// is no ledger row to park: a video added by URL by hand has no scan ledger
+// behind it, and discarding its row would erase the only record that the user
+// ever asked for it. That row stays in the Library, which for a hand-added
+// video is the honest place for it.
+func (w *Worker) park(video *videos.Video, reason string) bool {
+	if video == nil || w.deps.Ledger == nil {
+		return false
+	}
+	row, err := w.deps.Ledger.Get(video.ID)
+	if err != nil {
+		w.deps.Logger.Error("download worker: ledger lookup failed", "video_id", video.ID, "err", err)
+		return false
+	}
+	if row == nil {
+		return false
+	}
+	if err := w.deps.Ledger.SetUnavailable(video.ID, reason); err != nil {
+		w.deps.Logger.Error("download worker: park unavailable failed", "video_id", video.ID, "err", err)
+		return false
+	}
+	// Best title wins, then the id. The ledger's title is preferred over the
+	// videos row's because a gated video's metadata preflight fails the same
+	// way its download does, so the videos row is usually still blank here
+	// while the ledger carries what the channel listing said.
+	subject := firstNonEmpty(row.Title, video.Title, video.ID)
+	w.recordActivity(activity.Event{
+		Kind: activity.KindDownload, Outcome: activity.OutcomeFail,
+		SubjectID: video.ID, Subject: subject, Summary: "not available",
+		Detail: gateDetail(reason),
+	})
+	// A failed discard is not worth undoing the park: the row is already
+	// recorded as unavailable, and a stale 'error' row in the Library is a
+	// cosmetic problem next to losing the ledger memory. Log and move on.
+	if err := w.deps.Videos.Discard(video.ID); err != nil {
+		w.deps.Logger.Error("download worker: discard video failed", "video_id", video.ID, "err", err)
+	}
+	return true
+}
+
+// firstNonEmpty returns the first non-empty string, or "" if there is none.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// gateDetail renders a ytdlp.TerminalError reason as the Activity feed's
+// one-line explanation. The raw reason words ("members", "geo") are peeq's
+// internal vocabulary and read as jargon in a user-facing row.
+func gateDetail(reason string) string {
+	switch reason {
+	case "members":
+		return "members-only video"
+	case "age":
+		return "age-restricted video"
+	case "geo":
+		return "not available in this region"
+	case "premium":
+		return "YouTube Premium video"
+	case "private":
+		return "private video"
+	case "deleted":
+		return "video was removed"
+	default:
+		return "not available to download"
 	}
 }
 

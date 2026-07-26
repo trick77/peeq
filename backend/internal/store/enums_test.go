@@ -35,25 +35,37 @@ func TestEnumConstantsMatchTheCheckConstraints(t *testing.T) {
 	// value set, say) lets one enum's constraint vouch for another's Go set —
 	// download_jobs.state losing 'canceled' would then silently match
 	// summary_jobs.state and pass.
+	//
+	// migration is where that column's CHECK currently LIVES, which is not
+	// always 0001: SQLite cannot widen a CHECK in place, so adding a value means
+	// rebuilding the table in a later migration, and from then on 0001's copy is
+	// history rather than authority. declaredAs is the name the CREATE TABLE in
+	// that migration uses, which during a rebuild is the temporary _new table
+	// that is renamed into place. Naming both per case keeps this test pointed
+	// at the definition a reviewer would actually read, and makes a future
+	// rebuild that forgets to update the pointer fail loudly rather than let a
+	// stale constraint vouch for a changed Go set.
 	cases := []struct {
-		table  string
-		column string
-		got    []string
+		table      string
+		column     string
+		got        []string
+		migration  string
+		declaredAs string
 	}{
-		{"videos", "status", videos.Statuses},
-		{"videos", "summary_status", videos.SummaryStatuses},
-		{"videos", "availability", videos.Availabilities},
-		{"settings", "cookie_status", settings.CookieStatuses},
-		{"download_jobs", "state", jobs.States},
-		{"summary_jobs", "state", summaryjobs.States},
-		{"channel_videos", "state", channelvideos.States},
+		{"videos", "status", videos.Statuses, "0001_init.sql", "videos"},
+		{"videos", "summary_status", videos.SummaryStatuses, "0001_init.sql", "videos"},
+		{"videos", "availability", videos.Availabilities, "0001_init.sql", "videos"},
+		{"settings", "cookie_status", settings.CookieStatuses, "0001_init.sql", "settings"},
+		{"download_jobs", "state", jobs.States, "0001_init.sql", "download_jobs"},
+		{"summary_jobs", "state", summaryjobs.States, "0001_init.sql", "summary_jobs"},
+		{"channel_videos", "state", channelvideos.States,
+			"0014_channel_videos_unavailable.sql", "channel_videos_new"},
 	}
 
-	src := readMigration(t, "0001_init.sql")
 	for _, c := range cases {
 		t.Run(c.table+"."+c.column, func(t *testing.T) {
 			name := c.table + "." + c.column
-			want := checkValues(t, src, c.table, c.column)
+			want := checkValues(t, readMigration(t, c.migration), c.declaredAs, c.column)
 			got := append([]string(nil), c.got...)
 			sort.Strings(got)
 			sort.Strings(want)
