@@ -423,9 +423,17 @@ func run() error {
 
 	slog.Info("SSE hub ready")
 
+	// The shell backs the share page's link-preview meta. A read failure is not
+	// fatal — the SPA still serves; only the unfurl degrades to a bare title.
+	shell, err := web.IndexHTML()
+	if err != nil {
+		slog.Warn("index.html unreadable; share links will not unfurl", "err", err)
+	}
+
 	deps := httpapi.Deps{
 		Version:         version.Version,
 		Static:          web.Handler(),
+		Shell:           shell,
 		AuthService:     authSvc,
 		AuthMiddleware:  authMW,
 		TokenMiddleware: auth.NewTokenMiddleware(settingsStore),
