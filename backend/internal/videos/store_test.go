@@ -33,18 +33,10 @@ func openTestDB(t *testing.T) *sql.DB {
 
 // newTestStore returns a Store backed by a fresh, migrated SQLite db in a
 // temp dir.
-
-// newTestStore returns a Store backed by a fresh, migrated SQLite db in a
-// temp dir.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	return New(openTestDB(t))
 }
-
-// seedVideo upserts v and, if v.CreatedAt is set, backfills the created_at
-// column directly (Upsert never writes it; the schema default is
-// datetime('now'), which tests need to override to control List sort
-// order).
 
 // seedVideo upserts v and, if v.CreatedAt is set, backfills the created_at
 // column directly (Upsert never writes it; the schema default is
@@ -96,15 +88,6 @@ func ids(vs []Video) []string {
 	return out
 }
 
-// TestList_newest_ranksByReleaseDate pins the DEFAULT ordering: release date,
-// newest first, with created_at as the fallback for a row yt-dlp gave no date
-// for.
-//
-// This is the guard against changing it a third time. It was repointed at
-// downloaded_at once (#139) on the argument that "new to this library" is what
-// the grid should answer; run against a real library that ordering was wrong,
-// and it was reverted. Reasoning lost to evidence — leave it alone.
-
 // categoryManual reads the flag column, which is deliberately not on the Video
 // struct: nothing outside the store needs it.
 func categoryManual(t *testing.T, s *Store, id string) int {
@@ -116,11 +99,6 @@ func categoryManual(t *testing.T, s *Store, id string) int {
 	}
 	return n
 }
-
-// TestSetCategory_maintainsTheManualFlag pins the rule migration 0004 depends
-// on: a real category is the human speaking and survives a bulk reset, while a
-// reset to 'uncategorized' (Re-summarize) hands the video back to the
-// classifier and must therefore clear the flag too.
 
 // minusSet returns the ids in a that are not in b.
 func minusSet(a, b []string) []string {
@@ -136,9 +114,6 @@ func minusSet(a, b []string) []string {
 	}
 	return out
 }
-
-// migration0004Update returns the UPDATE statement from the real migration
-// file, so this test cannot pass against a migration that says something else.
 
 // migration0004Update returns the UPDATE statement from the real migration
 // file, so this test cannot pass against a migration that says something else.
@@ -217,22 +192,12 @@ func sameSet(a, b []string) bool {
 // execTest runs a raw statement against the test database. Used to put a row
 // into a state the store's own API deliberately cannot produce — here, an
 // aged or never-set sponsorblock_refreshed_at.
-
-// execTest runs a raw statement against the test database. Used to put a row
-// into a state the store's own API deliberately cannot produce — here, an
-// aged or never-set sponsorblock_refreshed_at.
 func execTest(t *testing.T, s *Store, query string) {
 	t.Helper()
 	if _, err := s.db.ExecContext(context.Background(), query); err != nil {
 		t.Fatalf("exec %q: %v", query, err)
 	}
 }
-
-// TestClaimSponsorblockStale_ordersNeverFetchedFirst covers the backfill claim
-// order: a video that has never been looked up (empty
-// sponsorblock_refreshed_at) has to come before one that was merely looked up
-// a long time ago, since the first has no segments at all while the second
-// only has slightly old ones.
 
 // seedChannel inserts a channels metadata-cache row directly. The videos
 // package must not import channels (that would cycle), so tests write the row
@@ -244,11 +209,6 @@ func seedChannel(t *testing.T, s *Store, id, name string) {
 		t.Fatalf("seed channel %s: %v", id, err)
 	}
 }
-
-// TestChannelName_resolvesFromChannelsCache pins the fix for videos that
-// arrive through a channel scan/subscription: their own videos.channel_name
-// is never written, so both Get and List must fall back to the resolved name
-// in the channels metadata cache rather than surfacing the raw UCxxxx id.
 
 func TestUpsert_insertThenGet(t *testing.T) {
 	s := New(openTestDB(t))
@@ -304,14 +264,6 @@ func TestUpsert_requestedFormat(t *testing.T) {
 		t.Fatalf("after set, requested_format = %q", v.RequestedFormat)
 	}
 }
-
-// TestUpsert_requestedFormatSurvivesMetadataResync guards against Upsert
-// clobbering an already-set requested_format override: a later
-// metadata-only re-sync (e.g. the channel scanner refreshing title/
-// duration/etc.) always calls Upsert with a zero-value RequestedFormat,
-// and that must NOT wipe an override previously written by
-// SetRequestedFormat. requested_format is only ever changed via
-// SetRequestedFormat once a row exists.
 
 // TestUpsert_requestedFormatSurvivesMetadataResync guards against Upsert
 // clobbering an already-set requested_format override: a later
@@ -460,10 +412,6 @@ func TestList_filters(t *testing.T) {
 // TestList_unwatchedVsInProgress pins the split between "never opened" and
 // "partially watched": a resume position of zero keeps a row under "unwatched",
 // a non-zero one moves it to "in_progress", and the two sets never overlap.
-
-// TestList_unwatchedVsInProgress pins the split between "never opened" and
-// "partially watched": a resume position of zero keeps a row under "unwatched",
-// a non-zero one moves it to "in_progress", and the two sets never overlap.
 func TestList_unwatchedVsInProgress(t *testing.T) {
 	s := New(openTestDB(t))
 	// "fresh" is downloaded but never opened (resume stays 0).
@@ -525,14 +473,6 @@ func TestList_unwatchedVsInProgress(t *testing.T) {
 // watched-history entry the retention sweeper deliberately kept re-downloadable.
 // Hiding either would delete the only route back for both. The rule is
 // therefore "not in the pipeline", not "playable".
-
-// TestList_all_keepsRowsOnlyTheLibraryCanRecover is the guard on how far
-// "ready-only" goes. It is tempting to read it as status='downloaded', but the
-// Library grid is the ONLY place a failed download can be retried (VideoCard's
-// re-download button lives there and nowhere else), and a tombstoned row is the
-// watched-history entry the retention sweeper deliberately kept re-downloadable.
-// Hiding either would delete the only route back for both. The rule is
-// therefore "not in the pipeline", not "playable".
 func TestList_all_keepsRowsOnlyTheLibraryCanRecover(t *testing.T) {
 	s := New(openTestDB(t))
 	for _, id := range []string{"err", "tomb", "queued", "ok"} {
@@ -575,13 +515,6 @@ func TestList_all_keepsRowsOnlyTheLibraryCanRecover(t *testing.T) {
 // lists with no filter at all — so the badge and the list disagreed whenever
 // anything was queued. Excluding in-flight rows from List is what brings them
 // back into step, and this test fails if List ever widens again.
-
-// TestList_channelScoped_agreesWithArchivedCount pins a mismatch this change
-// closes. channels.Store.Stats and the channel list's archived_count have
-// always counted status='downloaded' only, while the channel page's Archive tab
-// lists with no filter at all — so the badge and the list disagreed whenever
-// anything was queued. Excluding in-flight rows from List is what brings them
-// back into step, and this test fails if List ever widens again.
 func TestList_channelScoped_agreesWithArchivedCount(t *testing.T) {
 	s := New(openTestDB(t))
 	for _, id := range []string{"done", "busy"} {
@@ -604,12 +537,6 @@ func TestList_channelScoped_agreesWithArchivedCount(t *testing.T) {
 		t.Fatalf("list by channel = %+v, want [done] to match archived_count = 1", got)
 	}
 }
-
-// TestList_unwatched_excludesDeadRows pins the other half of the rule: an
-// unwatched row whose download failed, or whose media the retention sweeper has
-// already reclaimed, is not something to watch. Those rows still belong in
-// "all" — that is where they are recovered from — but never in the list of
-// things you could press play on.
 
 // TestList_unwatched_excludesDeadRows pins the other half of the rule: an
 // unwatched row whose download failed, or whose media the retention sweeper has
@@ -707,9 +634,6 @@ func TestList_statusAndCategoryAreAnded(t *testing.T) {
 
 // TestList_query_matchesTitleCaseInsensitively asserts the search box matches
 // on title regardless of case, and that a non-matching row is excluded.
-
-// TestList_query_matchesTitleCaseInsensitively asserts the search box matches
-// on title regardless of case, and that a non-matching row is excluded.
 func TestList_query_matchesTitleCaseInsensitively(t *testing.T) {
 	s := newTestStore(t)
 	seedVideo(t, s, Video{ID: "v1", Title: "Descending the Hranice Abyss", Status: "downloaded"})
@@ -726,9 +650,6 @@ func TestList_query_matchesTitleCaseInsensitively(t *testing.T) {
 
 // TestList_query_escapesLikeWildcards asserts a literal % in the search box
 // does not turn into a match-everything wildcard.
-
-// TestList_query_escapesLikeWildcards asserts a literal % in the search box
-// does not turn into a match-everything wildcard.
 func TestList_query_escapesLikeWildcards(t *testing.T) {
 	s := newTestStore(t)
 	seedVideo(t, s, Video{ID: "v1", Title: "100% wool", Status: "downloaded"})
@@ -742,9 +663,6 @@ func TestList_query_escapesLikeWildcards(t *testing.T) {
 		t.Fatalf("got %d rows %+v, want only the row literally containing %%", len(got), got)
 	}
 }
-
-// TestList_sort_ordersRows asserts each sort key produces the documented
-// order. Sorting was previously hardcoded to created_at DESC.
 
 // TestList_sort_ordersRows asserts each sort key produces the documented
 // order. Sorting was previously hardcoded to created_at DESC.
@@ -795,11 +713,6 @@ func TestList_sort_ordersRows(t *testing.T) {
 	}
 }
 
-// TestSetDownloaded_fillsPublishedAt asserts the download's own info.json
-// supplies the release date for videos seeded from a metadata-poor flat
-// channel listing — without it, everything peeq auto-downloads would sort by
-// download date forever.
-
 // TestList_newest_ranksByReleaseDate pins the DEFAULT ordering: release date,
 // newest first, with created_at as the fallback for a row yt-dlp gave no date
 // for.
@@ -839,12 +752,6 @@ func TestList_newest_ranksByReleaseDate(t *testing.T) {
 // takes the position its insertion date implies, interleaved with the dated
 // rows rather than sinking to one end of the grid. The fixture puts `nodate`'s
 // created_at deliberately BETWEEN the two real air dates.
-
-// TestList_newest_missingReleaseDate_fallsBackToCreatedAt asserts a row with no
-// known release date (yt-dlp reports none for some live streams and premieres)
-// takes the position its insertion date implies, interleaved with the dated
-// rows rather than sinking to one end of the grid. The fixture puts `nodate`'s
-// created_at deliberately BETWEEN the two real air dates.
 func TestList_newest_missingReleaseDate_fallsBackToCreatedAt(t *testing.T) {
 	s := newTestStore(t)
 	seedVideo(t, s, Video{ID: "recent", PublishedAt: "2026-03-01", CreatedAt: "2026-03-02 00:00:00", Status: "downloaded"})
@@ -868,12 +775,6 @@ func TestList_newest_missingReleaseDate_fallsBackToCreatedAt(t *testing.T) {
 		t.Fatalf("oldest order = %v, want %v", ids(got), want)
 	}
 }
-
-// TestList_addedSort_undatedRowsSortLast covers the opt-in added-date pair. An
-// 'error' row never downloaded, so it has no added date — and the Library still
-// lists it (see notInFlight) so it can be retried. Its created_at sits between
-// the two real download times, so a row landing in the middle would mean the
-// clause had fallen back to created_at rather than ranking undated rows last.
 
 // TestList_addedSort_undatedRowsSortLast covers the opt-in added-date pair. An
 // 'error' row never downloaded, so it has no added date — and the Library still
@@ -904,14 +805,6 @@ func TestList_addedSort_undatedRowsSortLast(t *testing.T) {
 		t.Fatalf("added_oldest order = %v, want %v", ids(got), want)
 	}
 }
-
-// TestUpsert_neverClearsPublishedAtOrDescription guards the write side of the
-// same promise. Several callers legitimately have no date to offer — scan's
-// enqueueAuto seeds from a flat listing, the approve-from-inbox path passes
-// id/url/title/duration only — and the ON CONFLICT clause used to assign
-// excluded.published_at straight through, so any of them silently blanked a
-// good air date on a re-seen id. Fixing the sort would mean nothing if a scan
-// could still erase the value it sorts on.
 
 // TestUpsert_neverClearsPublishedAtOrDescription guards the write side of the
 // same promise. Several callers legitimately have no date to offer — scan's
@@ -956,11 +849,6 @@ func TestUpsert_neverClearsPublishedAtOrDescription(t *testing.T) {
 	}
 }
 
-// TestSetDownloaded_storesYouTubeMetadata covers the columns migration 0009
-// added: they arrive from the download's own info.json, and an empty value
-// leaves what is stored rather than wiping it (a re-download whose extractor
-// omitted tags must not erase the ones already there).
-
 // TestList_unknownSort_fallsBackToNewest asserts an unrecognized sort value
 // from a hand-edited URL yields the default order rather than a SQL error or
 // an injected ORDER BY clause.
@@ -977,10 +865,6 @@ func TestList_unknownSort_fallsBackToNewest(t *testing.T) {
 		t.Fatalf("got %+v, want newest-first fallback", got)
 	}
 }
-
-// TestList_channelID_scopesToOneChannel asserts channel scoping matches on
-// channel_id and, for older rows written before channel ids were recorded,
-// falls back to an exact channel_name match.
 
 // TestList_channelID_scopesToOneChannel asserts channel scoping matches on
 // channel_id and, for older rows written before channel ids were recorded,
@@ -1009,11 +893,6 @@ func TestList_channelID_scopesToOneChannel(t *testing.T) {
 // when ChannelName is not supplied, scoping matches strictly on channel_id
 // and does not fall back to matching rows by channel_name (that fallback
 // only makes sense when the caller has a name to fall back to).
-
-// TestList_channelID_withoutChannelName_matchesChannelIDOnly asserts that
-// when ChannelName is not supplied, scoping matches strictly on channel_id
-// and does not fall back to matching rows by channel_name (that fallback
-// only makes sense when the caller has a name to fall back to).
 func TestList_channelID_withoutChannelName_matchesChannelIDOnly(t *testing.T) {
 	s := newTestStore(t)
 	seedVideo(t, s, Video{ID: "v1", ChannelID: "UCa", ChannelName: "Alpha", Status: "downloaded"})
@@ -1028,11 +907,6 @@ func TestList_channelID_withoutChannelName_matchesChannelIDOnly(t *testing.T) {
 		t.Fatalf("got %+v, want only v1", got)
 	}
 }
-
-// TestList_errorsOnCorruptRow asserts a row that fails to scan (here, a
-// non-numeric value in an INTEGER column — SQLite's dynamic typing allows
-// writing it directly, bypassing the app-level guarantees Upsert provides)
-// surfaces as an error rather than a panic or a silently truncated list.
 
 // TestList_errorsOnCorruptRow asserts a row that fails to scan (here, a
 // non-numeric value in an INTEGER column — SQLite's dynamic typing allows
@@ -1054,10 +928,6 @@ func TestList_errorsOnCorruptRow(t *testing.T) {
 // TestList_errorsOnClosedDB asserts a query failure (here, a closed handle)
 // is reported to the caller rather than an empty list masquerading as "no
 // videos".
-
-// TestList_errorsOnClosedDB asserts a query failure (here, a closed handle)
-// is reported to the caller rather than an empty list masquerading as "no
-// videos".
 func TestList_errorsOnClosedDB(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.db.Close(); err != nil {
@@ -1068,17 +938,6 @@ func TestList_errorsOnClosedDB(t *testing.T) {
 		t.Fatal("expected an error listing against a closed db")
 	}
 }
-
-// TestNextUnclassified_picksAnySummarizedUncategorized covers the two
-// conditions the idle classify sweep depends on: a video is a candidate when it
-// is still uncategorized and actually has a summary to classify from (the
-// no-transcript case must stay out of the sweep).
-//
-// Status is deliberately NOT a condition. Classification reads a title and a
-// summary, never the media file, so a tombstoned video — media reclaimed, row
-// and summary kept, still listed and still filtered by category — is as
-// classifiable as any other and must not be stranded on whatever enum existed
-// when it was archived.
 
 // TestChannelName_resolvesFromChannelsCache pins the fix for videos that
 // arrive through a channel scan/subscription: their own videos.channel_name
@@ -1111,10 +970,6 @@ func TestChannelName_resolvesFromChannelsCache(t *testing.T) {
 		t.Fatalf("List ChannelName = %+v, want resolved name", list)
 	}
 }
-
-// TestChannelName_fallbacks covers the two other COALESCE branches: the
-// video's own channel_name wins when present, and the bare id remains the last
-// resort when the channel is genuinely unresolved (no cache row / blank name).
 
 // TestChannelName_fallbacks covers the two other COALESCE branches: the
 // video's own channel_name wins when present, and the bare id remains the last

@@ -58,12 +58,6 @@ func TestTombstone_clearsMediaPathSetsStatusKeepsRow(t *testing.T) {
 // has_subtitles from subtitle_path, so a leftover value would lie about
 // transcript availability, and a subsequent reprocess must not flip a
 // valid, kept summary to no_transcript.
-
-// TestTombstoneClearsSubtitlePathKeepsSummary guards against a stale
-// subtitle_path (and its .vtt) surviving a tombstone: the DTO derives
-// has_subtitles from subtitle_path, so a leftover value would lie about
-// transcript availability, and a subsequent reprocess must not flip a
-// valid, kept summary to no_transcript.
 func TestTombstoneClearsSubtitlePathKeepsSummary(t *testing.T) {
 	s := New(openTestDB(t))
 	const id = "vid1"
@@ -97,9 +91,6 @@ func TestTombstoneClearsSubtitlePathKeepsSummary(t *testing.T) {
 		t.Errorf("status = %q, want tombstoned", v.Status)
 	}
 }
-
-// idsOf collapses a result list to a set of ids, for assertions that care
-// about membership rather than the sort order List happens to apply.
 
 func TestSetDownloaded_recordsResult(t *testing.T) {
 	s := New(openTestDB(t))
@@ -148,11 +139,6 @@ func TestSetDownloaded_recordsResult(t *testing.T) {
 		t.Fatalf("thumbnail_path = %q", got.ThumbnailPath)
 	}
 }
-
-// TestSetResume_negativePositionClampedToZero is the store-level
-// defense-in-depth: the HTTP handler already rejects a negative resume
-// position with 400, but the store must never persist one either, in case
-// some other caller (a future internal job, a bug) skips the handler.
 
 // TestSweepCandidates_filtersByWatchedFavoriteTombstoneAndCutoff exercises
 // the retention sweeper's underlying query directly: only a watched,
@@ -236,10 +222,6 @@ func TestSetDownloaded_fillsPublishedAt(t *testing.T) {
 // TestSetDownloaded_emptyPublishedAt_keepsExisting asserts a re-download of a
 // video whose release date is already known (the manual-add path fetches it
 // up front) never blanks it out when yt-dlp reports no upload_date.
-
-// TestSetDownloaded_emptyPublishedAt_keepsExisting asserts a re-download of a
-// video whose release date is already known (the manual-add path fetches it
-// up front) never blanks it out when yt-dlp reports no upload_date.
 func TestSetDownloaded_emptyPublishedAt_keepsExisting(t *testing.T) {
 	// Given: a row that already knows its release date.
 	s := newTestStore(t)
@@ -259,8 +241,6 @@ func TestSetDownloaded_emptyPublishedAt_keepsExisting(t *testing.T) {
 		t.Fatalf("published_at = %q, want it preserved", got.PublishedAt)
 	}
 }
-
-// ids is the ordered id list of a result, for comparing against a want slice.
 
 // TestSetDownloaded_storesYouTubeMetadata covers the columns migration 0009
 // added: they arrive from the download's own info.json, and an empty value
@@ -303,10 +283,6 @@ func TestSetDownloaded_storesYouTubeMetadata(t *testing.T) {
 	}
 }
 
-// TestList_unknownSort_fallsBackToNewest asserts an unrecognized sort value
-// from a hand-edited URL yields the default order rather than a SQL error or
-// an injected ORDER BY clause.
-
 // TestSetDownloaded_stampsSponsorblockRefresh: yt-dlp already asked
 // SponsorBlock during the download, so the backfill worker must not
 // immediately ask again for a video whose segments just arrived.
@@ -328,10 +304,6 @@ func TestSetDownloaded_stampsSponsorblockRefresh(t *testing.T) {
 		t.Fatalf("claimed %+v, want a just-downloaded video not to be re-fetched", claimed)
 	}
 }
-
-// seedChannel inserts a channels metadata-cache row directly. The videos
-// package must not import channels (that would cycle), so tests write the row
-// via raw SQL against the shared db.
 
 func TestTombstone_revokesShareLink(t *testing.T) {
 	db := openTestDB(t)

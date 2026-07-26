@@ -43,10 +43,6 @@ func TestClaimSponsorblockStale_ordersNeverFetchedFirst(t *testing.T) {
 // TestClaimSponsorblockStale_skipsUndownloadedAndRespectsLimit: only videos
 // with media on disk are worth reading segments for, and the claim must stay
 // bounded so a large library isn't pulled into memory at once.
-
-// TestClaimSponsorblockStale_skipsUndownloadedAndRespectsLimit: only videos
-// with media on disk are worth reading segments for, and the claim must stay
-// bounded so a large library isn't pulled into memory at once.
 func TestClaimSponsorblockStale_skipsUndownloadedAndRespectsLimit(t *testing.T) {
 	// Given: two downloaded videos, one queued one, and one tombstoned one.
 	s := newTestStore(t)
@@ -89,10 +85,6 @@ func TestClaimSponsorblockStale_skipsUndownloadedAndRespectsLimit(t *testing.T) 
 // TestClaimSponsorblockStale_carriesDuration: the client needs the duration to
 // reject segments submitted against a different cut of the video, so the claim
 // has to carry it rather than the worker looking it up again.
-
-// TestClaimSponsorblockStale_carriesDuration: the client needs the duration to
-// reject segments submitted against a different cut of the video, so the claim
-// has to carry it rather than the worker looking it up again.
 func TestClaimSponsorblockStale_carriesDuration(t *testing.T) {
 	s := newTestStore(t)
 	seedVideo(t, s, Video{ID: "v", URL: "u", DurationSeconds: 612})
@@ -109,10 +101,6 @@ func TestClaimSponsorblockStale_carriesDuration(t *testing.T) {
 		t.Fatalf("claimed %+v, want the duration carried through", got)
 	}
 }
-
-// TestSetSponsorblockSegments_stampsEvenWhenEmpty: recording "this video has
-// no segments" is what takes it out of the claim set. Without the stamp the
-// worker would ask about the same video every minute forever.
 
 // TestSetSponsorblockSegments_stampsEvenWhenEmpty: recording "this video has
 // no segments" is what takes it out of the claim set. Without the stamp the
@@ -150,8 +138,6 @@ func TestSetSponsorblockSegments_stampsEvenWhenEmpty(t *testing.T) {
 }
 
 // TestSetSponsorblockSegments_storesJSON is the populated case.
-
-// TestSetSponsorblockSegments_storesJSON is the populated case.
 func TestSetSponsorblockSegments_storesJSON(t *testing.T) {
 	s := newTestStore(t)
 	seedVideo(t, s, Video{ID: "v", URL: "u"})
@@ -167,7 +153,3 @@ func TestSetSponsorblockSegments_storesJSON(t *testing.T) {
 		t.Fatalf("segments = %q, want %q", got.SponsorblockSegments, segments)
 	}
 }
-
-// TestSetDownloaded_stampsSponsorblockRefresh: yt-dlp already asked
-// SponsorBlock during the download, so the backfill worker must not
-// immediately ask again for a video whose segments just arrived.

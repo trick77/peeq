@@ -33,9 +33,6 @@ func TestSetProbed_persistsAndStampsTheAttempt(t *testing.T) {
 
 // A zero result is what the failure path writes. It must still stamp
 // probed_at, or UnprobedDownloaded returns the same unreadable file forever.
-
-// A zero result is what the failure path writes. It must still stamp
-// probed_at, or UnprobedDownloaded returns the same unreadable file forever.
 func TestSetProbed_stampsEvenForAZeroResult(t *testing.T) {
 	testee := newTestStore(t)
 	seedVideo(t, testee, Video{ID: "v", URL: "u", Title: "t", ChannelID: "c"})
@@ -116,10 +113,6 @@ func TestUnprobedDownloaded_respectsTheLimit(t *testing.T) {
 // A write that never landed must be reported. The backfill worker logs the
 // error and leaves the row unprobed for the next pass; a swallowed error would
 // instead look like a successful attempt that wrote nothing.
-
-// A write that never landed must be reported. The backfill worker logs the
-// error and leaves the row unprobed for the next pass; a swallowed error would
-// instead look like a successful attempt that wrote nothing.
 func TestSetProbed_errorsOnClosedDB(t *testing.T) {
 	testee := newTestStore(t)
 	if err := testee.db.Close(); err != nil {
@@ -130,9 +123,6 @@ func TestSetProbed_errorsOnClosedDB(t *testing.T) {
 		t.Fatal("expected an error writing against a closed db")
 	}
 }
-
-// An empty candidate list and a failed query must not look alike: the sweep
-// treats "nothing to do" as done, so a masked error would strand the backlog.
 
 // An empty candidate list and a failed query must not look alike: the sweep
 // treats "nothing to do" as done, so a masked error would strand the backlog.

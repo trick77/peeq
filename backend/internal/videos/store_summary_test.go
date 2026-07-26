@@ -126,9 +126,6 @@ func TestNextUnclassified_picksAnySummarizedUncategorized(t *testing.T) {
 
 // TestNextUnclassified_newestFirstAndSkipsMany asserts ordering and that the
 // skip list works with more than one entry (the IN-clause placeholder build).
-
-// TestNextUnclassified_newestFirstAndSkipsMany asserts ordering and that the
-// skip list works with more than one entry (the IN-clause placeholder build).
 func TestNextUnclassified_newestFirstAndSkipsMany(t *testing.T) {
 	s := newTestStore(t)
 
@@ -161,10 +158,6 @@ func TestNextUnclassified_newestFirstAndSkipsMany(t *testing.T) {
 // TestNextUnclassified_errorsOnClosedDB asserts a query failure is reported to
 // the caller rather than a nil video masquerading as "backlog empty" — which
 // would silently retire the classify sweep for the rest of the process.
-
-// TestNextUnclassified_errorsOnClosedDB asserts a query failure is reported to
-// the caller rather than a nil video masquerading as "backlog empty" — which
-// would silently retire the classify sweep for the rest of the process.
 func TestNextUnclassified_errorsOnClosedDB(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.db.Close(); err != nil {
@@ -175,11 +168,6 @@ func TestNextUnclassified_errorsOnClosedDB(t *testing.T) {
 		t.Fatal("expected an error querying against a closed db")
 	}
 }
-
-// TestSetCategoryIfUnset_guardsAManualPick is the whole reason the guarded
-// write exists: both classifier paths decide to classify from a row read
-// before a slow LLM call, so the write must re-check rather than trust that
-// decision.
 
 // TestSetCategoryIfUnset_guardsAManualPick is the whole reason the guarded
 // write exists: both classifier paths decide to classify from a row read
@@ -225,9 +213,6 @@ func TestSetCategoryIfUnset_guardsAManualPick(t *testing.T) {
 		t.Fatalf("category = %q, want gaming — a manual write must not be guarded", got.Category)
 	}
 }
-
-// categoryManual reads the flag column, which is deliberately not on the Video
-// struct: nothing outside the store needs it.
 
 // TestSetCategory_maintainsTheManualFlag pins the rule migration 0004 depends
 // on: a real category is the human speaking and survives a bulk reset, while a
@@ -294,12 +279,6 @@ func TestSetCategory_maintainsTheManualFlag(t *testing.T) {
 // text, and deliberately leaves summary_status for the caller to set, since the
 // resulting state differs (pending for a re-summarize, no_transcript for a
 // track that turned out to carry no speech).
-
-// TestClearSummary_wipesTheAnalysisButNotTheStatus asserts ClearSummary is the
-// exact counterpart of SetSummary: it removes the three artifacts and the error
-// text, and deliberately leaves summary_status for the caller to set, since the
-// resulting state differs (pending for a re-summarize, no_transcript for a
-// track that turned out to carry no speech).
 func TestClearSummary_wipesTheAnalysisButNotTheStatus(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Upsert(Video{ID: "v1", URL: "u1"}); err != nil {
@@ -335,10 +314,6 @@ func TestClearSummary_wipesTheAnalysisButNotTheStatus(t *testing.T) {
 // TestClearSummary_errorsOnClosedDB asserts a failed wipe is reported rather
 // than swallowed — a caller that thinks it cleared the summary but did not
 // would leave the resumable worker skipping the summary step forever.
-
-// TestClearSummary_errorsOnClosedDB asserts a failed wipe is reported rather
-// than swallowed — a caller that thinks it cleared the summary but did not
-// would leave the resumable worker skipping the summary step forever.
 func TestClearSummary_errorsOnClosedDB(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.db.Close(); err != nil {
@@ -348,19 +323,6 @@ func TestClearSummary_errorsOnClosedDB(t *testing.T) {
 		t.Fatal("expected an error clearing against a closed db")
 	}
 }
-
-// TestResetSetMatchesTheSweep pins migration 0004's reset to the query that is
-// supposed to undo it. The migration clears categories in bulk on the promise
-// that the summarize worker's idle sweep re-classifies whatever it cleared; if
-// the two predicates ever drift, the difference is not a stale category, it is
-// data erased with no path back — which is exactly the bug this pairing was
-// introduced to prevent.
-//
-// So rather than restate the rule, this reads the real UPDATE out of the real
-// migration file, runs it over a table seeded with every row shape peeq can
-// produce, and asserts the rows it cleared are exactly the rows
-// NextUnclassified will offer. Same trick as ui/src/enumsync.test.ts, which
-// reads category.go instead of mirroring it.
 
 // TestResetSetMatchesTheSweep pins migration 0004's reset to the query that is
 // supposed to undo it. The migration clears categories in bulk on the promise
@@ -450,5 +412,3 @@ func TestResetSetMatchesTheSweep(t *testing.T) {
 		}
 	}
 }
-
-// minusSet returns the ids in a that are not in b.

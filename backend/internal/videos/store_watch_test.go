@@ -74,10 +74,6 @@ func TestSetResume_autoMarksWatchedAtNinetyPercent_noResetOnRewatch(t *testing.T
 // TestStateVersion_watchedTogglesBump covers the counter migration 0010 added:
 // either direction of the manual toggle is a watched-state transition, so both
 // must invalidate whatever version other clients are holding.
-
-// TestStateVersion_watchedTogglesBump covers the counter migration 0010 added:
-// either direction of the manual toggle is a watched-state transition, so both
-// must invalidate whatever version other clients are holding.
 func TestStateVersion_watchedTogglesBump(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
@@ -116,10 +112,6 @@ func TestStateVersion_watchedTogglesBump(t *testing.T) {
 // TestSetResume_staleVersionRefusesWrite is the issue #97 regression test.
 // Asserting only the error would not prove the fix: the whole point is that
 // nothing was written, so the position is checked too.
-
-// TestSetResume_staleVersionRefusesWrite is the issue #97 regression test.
-// Asserting only the error would not prove the fix: the whole point is that
-// nothing was written, so the position is checked too.
 func TestSetResume_staleVersionRefusesWrite(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 1000}); err != nil {
@@ -150,11 +142,6 @@ func TestSetResume_staleVersionRefusesWrite(t *testing.T) {
 		t.Fatalf("watched = false, want true — the stale write must not undo the toggle")
 	}
 }
-
-// TestSetResume_versionEchoes covers the three accepting paths: the current
-// version, no version at all (the back-compat escape hatch every non-Player
-// caller uses), and the re-watch flow the #97 issue text calls out as the reason
-// a plain "refuse writes to a watched row" guard would have been wrong.
 
 // TestSetResume_versionEchoes covers the three accepting paths: the current
 // version, no version at all (the back-compat escape hatch every non-Player
@@ -247,12 +234,6 @@ func TestSetResume_versionEchoes(t *testing.T) {
 // every other client's echo and the guard would degrade into a 409 storm; if
 // auto-watch did NOT bump, crossing 90% in one tab would leave another tab free
 // to write its stale position back — #97 through a different door.
-
-// TestSetResume_onlyAutoWatchBumps pins the asymmetry the migration comment
-// depends on. If a plain position write bumped, every 5s ping would invalidate
-// every other client's echo and the guard would degrade into a 409 storm; if
-// auto-watch did NOT bump, crossing 90% in one tab would leave another tab free
-// to write its stale position back — #97 through a different door.
 func TestSetResume_onlyAutoWatchBumps(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
@@ -310,12 +291,6 @@ func TestSetResume_onlyAutoWatchBumps(t *testing.T) {
 // SetResumeRaw so a nearly-finished "continue" video kept its position without
 // being flipped to watched (which would drop it out of the Continue Watching
 // queue).
-
-// TestSetResumeRaw_doesNotAutoWatch is the discriminator against SetResume: the
-// TubeArchivist import (deleted in PR #125) wrote resume positions with
-// SetResumeRaw so a nearly-finished "continue" video kept its position without
-// being flipped to watched (which would drop it out of the Continue Watching
-// queue).
 func TestSetResumeRaw_doesNotAutoWatch(t *testing.T) {
 	s := New(openTestDB(t))
 	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
@@ -339,9 +314,6 @@ func TestSetResumeRaw_doesNotAutoWatch(t *testing.T) {
 		t.Fatalf("watched_at = %q, want empty", got.WatchedAt)
 	}
 }
-
-// TestSetResumeRaw_missingRow errors rather than silently no-op'ing, so the
-// import's Upsert-before-resume ordering is enforced.
 
 // TestSetResumeRaw_missingRow errors rather than silently no-op'ing, so the
 // import's Upsert-before-resume ordering is enforced.
@@ -392,10 +364,6 @@ func TestSetWatched_manualTrue_setsWatchedAt(t *testing.T) {
 // TestSetWatched_manualTrue_resetsResumePosition covers the manual
 // mark-watched rule: pressing the button means "done", so any stored resume
 // position is cleared and reopening the video starts at 0:00.
-
-// TestSetWatched_manualTrue_resetsResumePosition covers the manual
-// mark-watched rule: pressing the button means "done", so any stored resume
-// position is cleared and reopening the video starts at 0:00.
 func TestSetWatched_manualTrue_resetsResumePosition(t *testing.T) {
 	s := New(openTestDB(t))
 	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
@@ -418,11 +386,6 @@ func TestSetWatched_manualTrue_resetsResumePosition(t *testing.T) {
 		t.Fatalf("resume_position_seconds = %v, want 0", got.ResumePositionSeconds)
 	}
 }
-
-// TestSetResume_autoWatched_keepsResumePosition guards the deliberate
-// asymmetry with the test above: a video that crossed the 90% threshold by
-// actually playing keeps its position, so the last few minutes stay
-// resumable. Only the manual button means "done".
 
 // TestSetResume_autoWatched_keepsResumePosition guards the deliberate
 // asymmetry with the test above: a video that crossed the 90% threshold by
@@ -498,8 +461,3 @@ func TestSetResume_negativePositionClampedToZero(t *testing.T) {
 		t.Fatalf("watched = true, want false for a clamped-to-0 position")
 	}
 }
-
-// TestSweepCandidates_filtersByWatchedFavoriteTombstoneAndCutoff exercises
-// the retention sweeper's underlying query directly: only a watched,
-// non-favorite, non-tombstoned video whose watched_at is strictly before
-// cutoff comes back.
