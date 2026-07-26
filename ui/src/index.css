@@ -1207,6 +1207,19 @@ button.srow:not(:disabled):hover {
   color: inherit;
   cursor: pointer;
 }
+/* `.card` is also the Player/Share panel (border + panel fill + clip, further
+   down this file), and that rule comes later, so a video card was inheriting a
+   framed panel: a hairline box drawn from the thumbnail's edges around the title
+   and the row under it. On a grid of cards the frame is pure noise — it fences
+   off text that the thumbnail above it already groups — and the fill lifts the
+   text off the page background for no reason. `.card.video-card` out-specifies
+   the panel rule wherever it sits, so the card goes back to being just a stack:
+   full-bleed thumbnail, text on the page's own ground. */
+.card.video-card {
+  border: none;
+  background: none;
+  overflow: visible;
+}
 .thumb {
   position: relative;
   aspect-ratio: 16 / 9;
@@ -1425,15 +1438,11 @@ button.srow:not(:disabled):hover {
   background: color-mix(in srgb, var(--color-kept) 14%, transparent);
 }
 
-/* The text rows sit slightly inside the thumbnail's edges instead of flush
-   against them — title, channel line, and the lifecycle row (which carries
-   the category pill). The thumbnail itself stays full-bleed, so the inset
-   reads as breathing room around the text rather than a narrower card. */
-.card > h3,
-.card > .by,
-.card > .life {
-  padding-inline: 4px;
-}
+/* No inset on the text rows: the title, the channel line and the lifecycle row
+   all start on the thumbnail's left edge. They used to be held 4px inside it,
+   which was breathing room away from the card's own frame — with the frame gone
+   there is nothing to keep clear of, and a shared edge with the thumbnail gives
+   the column a single straight margin to read down. */
 .card h3 {
   margin: 0;
   /* Sans. A video title and a channel name are the two things you scan a list
@@ -1483,11 +1492,30 @@ button.srow:not(:disabled):hover {
 }
 /* The title is the card's headline and now the only thing under the eyebrow,
    so it takes back the room the category row used to occupy. Scoped to
-   .video-card: `.card h3` is shared with Inbox and the channel pages, which
-   keep the smaller setting. min-height is em-relative, so the reserved two
-   lines grow with it. */
+   .video-card, which is Library AND Inbox — both grids use the same card, so
+   both get the same headline. min-height is em-relative, so the reserved lines
+   grow with the size.
+
+   Three settings that were fighting the reader, fixed together: leading of 1.26
+   was chosen to make the reserved two-line box tidy, not to be read — at that
+   size the descenders of line one crowd the caps of line two and the block
+   reads as a slab. Weight 500 in near-paper-white on the warm dark ground
+   optically fattens the strokes (halation), so they look faintly smeared; 450
+   in ink-dim still clears 12:1 and reads sharper. And a two-line clamp cut most
+   YouTube titles mid-thought, so the clamp is three lines — the reserved block
+   grows to match, keeping every row in the grid aligned. */
 .card.video-card h3 {
-  font-size: 18px;
+  font-size: 16.5px;
+  line-height: 1.4;
+  font-weight: 450;
+  color: var(--color-ink-dim);
+  min-height: calc(3 * 1.4em);
+}
+/* The clamp lives on whichever element wraps the text — the button on Library,
+   the bare heading on Inbox — so both branches move to three lines. */
+.card.video-card h3 .title-btn,
+.card.video-card h3:not(:has(.title-btn)) {
+  -webkit-line-clamp: 3;
 }
 .card .by {
   font-size: 12.5px;
@@ -1709,11 +1737,6 @@ button.catpick.unset:hover {
    of being pushed to opposite edges. */
 .card-foot.acts-row {
   justify-content: flex-start;
-  /* The rule above only insets `.card > h3/.by/.life`, and this footer is a
-     `.card-foot`, so it would sit 4px proud of the title on every inbox card.
-     Match the inset here rather than widening that selector, which would also
-     move Library's (rare) download-failed footer. */
-  padding-inline: 4px;
 }
 
 /* ── Add (Task 14): paste box + preview. ─────────────────────────────────── */
@@ -2021,13 +2044,20 @@ button.catpick.unset:hover {
 .playtitle h1 {
   margin-bottom: 0;
 }
+/* The card's title recipe at headline size: leading 1.40, weight 450 and
+   ink-dim, so a video title is set the same way here as it is in the grid — the
+   size is the only thing that changes, because this one is the page's headline
+   and has a wide column to fill. Weight 500 in full ink halates on the dark
+   ground at any size (see .card.video-card h3), and 1.2 was too tight for a
+   title that wraps to two or three lines on a narrow stage. */
 .playmeta h1 {
   margin: 0 0 8px;
   font-family: var(--font-sans);
   font-size: 26px;
-  font-weight: 500;
+  font-weight: 450;
+  color: var(--color-ink-dim);
   letter-spacing: -0.01em;
-  line-height: 1.2;
+  line-height: 1.4;
 }
 /* The eyebrow above the title: channel, aired, added. Deliberately the same
    shape as the library card's kicker (.card.video-card .by) so a video reads
@@ -4289,13 +4319,17 @@ details.tomb-sect[open] > summary svg {
 .sharepage-meta {
   margin-top: 28px;
 }
+/* Same recipe as the player's title and the card's (leading 1.40, weight 450,
+   ink-dim) at this page's own headline size — a shared video is the first thing
+   a stranger reads, so it gets the largest step of the three. */
 .sharepage-meta h1 {
   margin: 0 0 12px;
   font-family: var(--font-sans);
   font-size: 31px;
-  font-weight: 500;
+  font-weight: 450;
+  color: var(--color-ink-dim);
   letter-spacing: -0.015em;
-  line-height: 1.18;
+  line-height: 1.4;
   text-wrap: balance;
 }
 .sharepage-sub {
