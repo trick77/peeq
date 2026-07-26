@@ -252,9 +252,16 @@ export function Inbox({
               ))}
             </select>
             {visible.length > 1 ? (
+              /* ghost, not secondary: this is the only listbar on the app with
+                 a button beside the sort control, and a filled ink-dim button
+                 next to a muted-grey dropdown made the pair read as two
+                 different tiers of the same row. Ghost is the same
+                 --color-muted the sort control uses, so the toolbar's
+                 right-hand end reads as one quiet group. The confirm step still
+                 goes primary — that one is meant to be loud. */
               <Button
                 type="button"
-                variant={confirmBulk ? "primary" : "secondary"}
+                variant={confirmBulk ? "primary" : "ghost"}
                 busy={bulkBusy}
                 onClick={handleDownloadAll}
                 onBlur={() => setConfirmBulk(false)}
@@ -265,7 +272,7 @@ export function Inbox({
             ) : null}
           </div>
           {channels.length > 1 ? (
-            <div className="catchips">
+            <div className="catchips lead">
               <button
                 type="button"
                 className={`catchip${channel === "all" ? " on" : ""}`}
