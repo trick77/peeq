@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -21,9 +23,13 @@ func playbackTestDeps(t *testing.T) Deps {
 }
 
 // playbackTestDepsDB also returns the backing *sql.DB, so a test can drop a
-// table and force a store-level error out of an otherwise normal handler flow
-// (Videos/Playback are concrete stores, not interfaces). Same trick as
-// videosTestDepsDB.
+// table and force a store-level error out of an otherwise normal handler flow.
+// Same trick as videosTestDepsDB.
+//
+// Only Videos still needs it: Playback is an interface now (see PlaybackStore),
+// so its error branches use failingPlayback instead and no longer care what the
+// schema looks like. When Videos gets the same treatment this helper can return
+// Deps alone.
 func playbackTestDepsDB(t *testing.T) (Deps, *sql.DB) {
 	t.Helper()
 	db := openTestDB(t)
@@ -226,20 +232,40 @@ func TestPlayback_requiresAuth(t *testing.T) {
 	}
 }
 
-// The error paths below all go through the same door: drop the table the store
-// reads and every query fails, which is the only way to reach these branches
-// from a handler test (Playback and Videos are concrete stores, not interfaces).
-// They matter because the two fail-OPEN cases in this file are deliberate and
-// narrow — a MISSING store is a no-op, a BROKEN one is a 500, and nothing should
-// quietly conflate the two.
+// failingPlayback is a PlaybackStore whose chosen method returns err. It is
+// what the Playback interface bought: the error branches below used to be
+// reachable only by dropping playback_state out from under a real store, which
+// coupled this file to the schema and failed every one of these tests on an
+// unrelated column rename.
+//
+// Each field is nil-checked so a test names exactly the one call it wants to
+// break; the rest behave. That precision is the second thing the fake buys — a
+// dropped table breaks every query at once, so "Set failed" and "the Get that
+// follows Set failed" were previously indistinguishable.
+type failingPlayback struct {
+	get          error
+	set          error
+	clear        error
+	clearIfVideo error
+	state        playback.State
+}
+
+func (f *failingPlayback) Get(context.Context) (playback.State, error) {
+	return f.state, f.get
+}
+func (f *failingPlayback) Set(context.Context, string) error          { return f.set }
+func (f *failingPlayback) Clear(context.Context) error                { return f.clear }
+func (f *failingPlayback) ClearIfVideo(context.Context, string) error { return f.clearIfVideo }
+
+// The error paths below matter because the two fail-OPEN cases in this file are
+// deliberate and narrow — a MISSING store is a no-op, a BROKEN one is a 500, and
+// nothing should quietly conflate the two.
 
 func TestPlaybackGet_storeError_500(t *testing.T) {
-	deps, db := playbackTestDepsDB(t)
+	deps, _ := playbackTestDepsDB(t)
+	deps.Playback = &failingPlayback{get: errors.New("boom")}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
-	if _, err := db.Exec(`DROP TABLE playback_state`); err != nil {
-		t.Fatalf("drop table: %v", err)
-	}
 	rec := doReq(t, h, cookie, http.MethodGet, "/api/playback", nil)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("GET playback status = %d, want 500, body = %s", rec.Code, rec.Body.String())
@@ -248,13 +274,26 @@ func TestPlaybackGet_storeError_500(t *testing.T) {
 
 func TestPlaybackPut_storeErrors_500(t *testing.T) {
 	t.Run("setFails", func(t *testing.T) {
-		deps, db := playbackTestDepsDB(t)
+		deps, _ := playbackTestDepsDB(t)
 		seedPlayable(t, deps.Videos, "v1")
+		deps.Playback = &failingPlayback{set: errors.New("boom")}
 		h := New(deps)
 		cookie := loginAndGetCookie(t, h)
-		if _, err := db.Exec(`DROP TABLE playback_state`); err != nil {
-			t.Fatalf("drop table: %v", err)
+		body, _ := json.Marshal(map[string]string{"video_id": "v1"})
+		rec := doReq(t, h, cookie, http.MethodPut, "/api/playback", body)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("PUT playback status = %d, want 500, body = %s", rec.Code, rec.Body.String())
 		}
+	})
+
+	// Distinct from setFails, and only separable with a fake: the write lands,
+	// then the read-back the handler does to return the new state fails.
+	t.Run("getAfterSetFails", func(t *testing.T) {
+		deps, _ := playbackTestDepsDB(t)
+		seedPlayable(t, deps.Videos, "v1")
+		deps.Playback = &failingPlayback{get: errors.New("boom")}
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
 		body, _ := json.Marshal(map[string]string{"video_id": "v1"})
 		rec := doReq(t, h, cookie, http.MethodPut, "/api/playback", body)
 		if rec.Code != http.StatusInternalServerError {
@@ -263,12 +302,10 @@ func TestPlaybackPut_storeErrors_500(t *testing.T) {
 	})
 
 	t.Run("clearFails", func(t *testing.T) {
-		deps, db := playbackTestDepsDB(t)
+		deps, _ := playbackTestDepsDB(t)
+		deps.Playback = &failingPlayback{clear: errors.New("boom")}
 		h := New(deps)
 		cookie := loginAndGetCookie(t, h)
-		if _, err := db.Exec(`DROP TABLE playback_state`); err != nil {
-			t.Fatalf("drop table: %v", err)
-		}
 		body, _ := json.Marshal(map[string]string{"video_id": ""})
 		rec := doReq(t, h, cookie, http.MethodPut, "/api/playback", body)
 		if rec.Code != http.StatusInternalServerError {
@@ -276,6 +313,8 @@ func TestPlaybackPut_storeErrors_500(t *testing.T) {
 		}
 	})
 
+	// Still on the drop-a-table trick: Videos is a concrete *videos.Store until
+	// its own conversion, so this is the only way to fail the lookup.
 	t.Run("videoLookupFails", func(t *testing.T) {
 		deps, db := playbackTestDepsDB(t)
 		h := New(deps)

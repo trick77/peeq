@@ -13,7 +13,6 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
-	"github.com/trick77/peeq/internal/playback"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/sharelink"
@@ -44,8 +43,9 @@ type Deps struct {
 	// Playback is the singleton "now playing" pointer store. Optional: when nil,
 	// GET /api/playback reports an empty pointer and PUT is a no-op 200, so the
 	// rail simply falls back to its in-memory behaviour rather than surfacing an
-	// error for a convenience feature (see playback_handlers.go).
-	Playback *playback.Store
+	// error for a convenience feature (see playback_handlers.go). Satisfied by
+	// *playback.Store; see PlaybackStore for why a typed nil is not "nil" here.
+	Playback PlaybackStore
 	// DevAuthClaims, when Subject is non-empty, makes /api/auth/login create a
 	// session directly from these claims instead of redirecting to OIDC. Only
 	// ever set when BACKEND_AUTH_MODE=dev (see config's loopback-only guard).
@@ -181,7 +181,7 @@ type server struct {
 	authMW        *auth.Middleware
 	tokenMW       *auth.TokenMiddleware
 	settings      *settings.Store
-	playback      *playback.Store
+	playback      PlaybackStore
 	devAuthClaims auth.Claims
 
 	jobs       *jobs.Store
