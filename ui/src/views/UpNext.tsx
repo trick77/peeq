@@ -236,7 +236,11 @@ export function UpNext({
   const grouped = useMemo(() => {
     const by = new Map<string, UpcomingItem[]>();
     for (const item of scheduled) {
-      if (!matches(q, item.subject, item.summary)) continue;
+      // Subject only. The row used to carry the summary as a second line and
+      // no longer does — the node says the kind now — so matching on it would
+      // surface scheduled rows with nothing on them that matches what you
+      // typed. A search box may only find what the page can show.
+      if (!matches(q, item.subject)) continue;
       const b = bucketOf(item.at as string, now);
       const list = by.get(b);
       if (list) list.push(item);

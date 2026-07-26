@@ -482,6 +482,36 @@ describe("UpNext", () => {
       expect(screen.queryByText("Within the hour")).not.toBeInTheDocument();
     });
 
+    // The scheduled row shows a channel name and nothing else — its kind is
+    // the node glyph now, not a sentence. Matching text the row cannot show
+    // would return rows with no visible reason to be there.
+    it("does not match scheduled text the row no longer shows", async () => {
+      vi.mocked(listUpcoming).mockResolvedValue({
+        items: [
+          {
+            kind: "scan",
+            approx: false,
+            at: soon(20),
+            subject: "Veritasium",
+            summary: "channel scan",
+          },
+        ],
+        truncated: 0,
+      });
+      render(
+        <UpNext
+          jobs={[]}
+          summaries={[]}
+          onCancel={noop}
+          search="channel scan"
+        />,
+      );
+      expect(
+        await screen.findByText(/Nothing queued or scheduled matches/),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Veritasium")).toBeNull();
+    });
+
     it("matches a channel name, not only a title", () => {
       render(
         <UpNext

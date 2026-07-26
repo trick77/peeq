@@ -515,6 +515,74 @@ describe("History", () => {
       expect(await screen.findByText("A clip")).toBeInTheDocument();
       expect(screen.getByText("Fresh one")).toBeInTheDocument();
     });
+
+    // The box is the only control that can change the query, and the query is
+    // the only thing that re-fires the fetch. Losing it to an error line means
+    // the search that failed can never be cleared.
+    it("keeps the search box when the fetch fails", async () => {
+      vi.mocked(listActivity).mockRejectedValue(new Error("boom"));
+      render(<History live={[]} search="clip" />);
+      expect(await screen.findByText("boom")).toBeInTheDocument();
+      expect(
+        screen.getByRole("searchbox", { name: "Search history" }),
+      ).toBeInTheDocument();
+    });
+
+    // A page-back answers the query that was in the box when it was clicked.
+    // Clearing the box mid-flight replaces the rows with the unfiltered newest
+    // page; appending the filtered older ones on top of that would jump from
+    // the newest rows straight to far older ones with everything between
+    // missing, and take the wrong query's has_more with it.
+    it("drops a page-back whose query was cleared while it was in flight", async () => {
+      let resolveMore!: (p: {
+        events: ActivityEvent[];
+        has_more: boolean;
+        retained_max: number;
+      }) => void;
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 40, subject: "A clip" })],
+        has_more: true,
+        retained_max: 2000,
+      });
+      const user = userEvent.setup();
+      const { rerender } = render(<History live={[]} search="clip" />);
+      await screen.findByText("A clip");
+      await waitFor(
+        () =>
+          expect(listActivity).toHaveBeenLastCalledWith(undefined, 20, "clip"),
+        { timeout: 2000 },
+      );
+
+      // Page back, but hold the response.
+      vi.mocked(listActivity).mockReturnValue(
+        new Promise((r) => {
+          resolveMore = r;
+        }),
+      );
+      await user.click(screen.getByRole("button", { name: LOAD_MORE }));
+
+      // Box cleared: the unfiltered newest page lands first.
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 90, subject: "Unfiltered newest" })],
+        has_more: true,
+        retained_max: 2000,
+      });
+      rerender(<History live={[]} search="" />);
+      await screen.findByText("Unfiltered newest");
+
+      resolveMore({
+        events: [ev({ id: 5, subject: "Stale filtered older" })],
+        has_more: false,
+        retained_max: 2000,
+      });
+      await waitFor(() =>
+        expect(screen.queryByText("Stale filtered older")).toBeNull(),
+      );
+      // The new query's own has_more survives, so the edge is still there.
+      expect(
+        screen.getByRole("button", { name: LOAD_MORE }),
+      ).toBeInTheDocument();
+    });
   });
 });
 

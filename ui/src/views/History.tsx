@@ -232,8 +232,12 @@ export function History({
         setRetainedMax(page.retained_max);
         setLoaded(true);
         // A successful refetch clears a previous failure, or a page that
-        // recovered would still be showing the error that replaced it.
+        // recovered would still be showing the error that replaced it. The
+        // page-back message goes with it: it belongs to the query whose rows
+        // have just been replaced, so leaving it would blame this query's edge
+        // for the last one's failure.
         setError(null);
+        setMoreError(null);
       })
       .catch((e: Error) => {
         if (active) setError(e.message);
@@ -268,8 +272,16 @@ export function History({
     // Clear last attempt's message, or a failure followed by a successful retry
     // would append the older rows and still sit beside a stale error.
     setMoreError(null);
+    // The query this page-back is an answer to. The box can change while the
+    // request is in flight — clear it mid-fetch and the newest-page effect
+    // replaces `past` with the unfiltered log, after which appending these
+    // filtered older rows would jump straight from the newest 20 to rows far
+    // older with everything between missing, and adopt the wrong query's
+    // has_more into the bargain.
+    const forQuery = debouncedSearch;
     listActivity(oldest.id, PAGE_SIZE, debouncedSearch || undefined)
       .then((page) => {
+        if (answeredQuery.current !== forQuery) return;
         setPast((prev) => {
           const seen = new Set(prev.map((e) => e.id));
           return [...prev, ...page.events.filter((e) => !seen.has(e.id))];
@@ -311,14 +323,13 @@ export function History({
     return out;
   }, [filtered]);
 
-  if (error) {
-    return <div className="errline">{error}</div>;
-  }
-  if (!loaded) {
-    return <p className="agenda-empty">Loading…</p>;
-  }
-
-  return (
+  // The toolbar renders on EVERY branch below, the failed and the not-yet-loaded
+  // ones included — the same rule Up next follows. The box is what re-fires the
+  // fetch: it is the only control that can change `debouncedSearch`, and the
+  // effect has no other trigger. An early return that dropped it would strand
+  // anyone whose search happened to hit a transient failure, with the query
+  // still applied, nothing on screen, and no way back short of leaving the page.
+  const header = (
     <>
       {/* Same toolbar as the Library and the Channels list: search leads the
           page, above the chips. The box searches the whole retained log on the
@@ -352,6 +363,29 @@ export function History({
           </span>
         ) : null}
       </div>
+    </>
+  );
+
+  if (error) {
+    return (
+      <>
+        {header}
+        <div className="errline">{error}</div>
+      </>
+    );
+  }
+  if (!loaded) {
+    return (
+      <>
+        {header}
+        <p className="agenda-empty">Loading…</p>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {header}
 
       {days.length === 0 ? (
         <p className="agenda-empty">
