@@ -538,10 +538,12 @@ export function UpNext({
   );
 }
 
-// DownloadRow is one download, running or queued. The gutter carries yt-dlp's
-// ETA when it has one and stays empty otherwise — a download that has started
-// but can't say when it will finish is better served by the bar below than by a
-// guess in the gutter.
+// DownloadRow is one download, running or queued. The gutter answers WHEN, on
+// every row: yt-dlp's ETA where it has one, else the bare tense — "now" for
+// what is running, "then" for what is waiting. It is never left blank. History
+// leans on this column to place a row in its day, and a gutter that came up
+// empty on half the rows is the one thing that would stop the two pages reading
+// as the same component.
 function DownloadRow({
   job,
   progress,
@@ -560,9 +562,7 @@ function DownloadRow({
   const title = job.title || job.video_id;
   return (
     <div className={`ag-row${live ? " live" : ""}`}>
-      <span className="ag-clock">
-        {live && progress?.eta ? progress.eta : ""}
-      </span>
+      <span className="ag-clock">{live ? progress?.eta || "now" : "then"}</span>
       <span className="ag-node">
         <Icon name="download" size="12px" />
       </span>
@@ -622,9 +622,9 @@ function DownloadRow({
   );
 }
 
-// SummaryRow is one summary, running or queued. There is no ETA to put in the
-// gutter — the LLM does not offer one — so it stays empty and the right column
-// carries the step instead.
+// SummaryRow is one summary, running or queued. The LLM offers no ETA, so the
+// gutter carries the bare tense — "now" or "then" — and the right column
+// carries the step it has reached.
 function SummaryRow({
   job,
   phase,
@@ -643,7 +643,7 @@ function SummaryRow({
   const title = job.title || job.video_id;
   return (
     <div className={`ag-row${live ? " live" : ""}`}>
-      <span className="ag-clock" />
+      <span className="ag-clock">{live ? "now" : "then"}</span>
       <span className="ag-node">
         <Icon name="alignLeft" size="12px" />
       </span>

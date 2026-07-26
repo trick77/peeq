@@ -76,14 +76,14 @@ export function Rail({
   onNavigate: (view: ViewId) => void;
   /**
    * Badge count for "Inbox" — new uploads awaiting a keep/ignore decision.
-   * Deliberately not defaulted to 0: `undefined` means "not loaded yet", and
-   * only a real 0 dims the item (see `idle` below). A default would grey the
-   * rail on every cold paint until the first fetch lands.
+   * Deliberately not defaulted to 0: `undefined` means "not loaded yet", which
+   * is not the same claim as "there are none". A default would have the pill
+   * assert an empty inbox on every cold paint until the first fetch lands.
    */
   pendingCount?: number;
   /**
    * Work in "Up next" — running plus waiting, across both lanes. Same
-   * undefined-means-unloaded rule as pendingCount. Housekeeping (scans,
+   * undefined-is-not-zero rule as pendingCount. Housekeeping (scans,
    * metadata refreshes, retention) is never counted: it is scheduled work peeq
    * does on its own, not a backlog anyone is waiting on.
    */
@@ -92,9 +92,8 @@ export function Rail({
    * Whether a download or a summary is actually RUNNING. The pill needs both:
    * a count says how much there is, this says it is moving. Waiting-but-frozen
    * work — everything paused, YouTube blocked — shows no pill, because a number
-   * that never falls reads as progress when nothing is happening. The item
-   * still doesn't dim (the count is non-zero), and the pause banner above the
-   * page is the louder signal about why.
+   * that never falls reads as progress when nothing is happening. The pause
+   * banner above the page is the louder signal about why.
    */
   upNextLive?: boolean;
   cookieStatus?: string;

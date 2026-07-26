@@ -291,7 +291,11 @@ export function Inbox({
         </>
       ) : null}
 
-      {items.length > 0 && visible.length === 0 ? (
+      {/* Only when a query was actually typed. The channel chip can also empty
+          the grid for a frame — its last item was just downloaded, and the
+          auto-reset to "all" lands a tick later — and reporting that as a
+          failed search would print “matches ””. */}
+      {items.length > 0 && visible.length === 0 && search.trim() !== "" ? (
         <p className="un-empty">
           Nothing in the inbox matches “{search.trim()}”.
         </p>

@@ -154,9 +154,9 @@ describe("UpNext", () => {
       .closest(".ag-row") as HTMLElement;
     const details = row.querySelectorAll(".ag-detail");
     expect(details[details.length - 1].textContent).toBe("3%");
-    // The gutter answers WHEN. With bytes moving but no ETA yet there is no
-    // honest answer, so it stays empty rather than guessing.
-    expect(row.querySelector(".ag-clock")?.textContent).toBe("");
+    // The gutter answers WHEN on every row. With bytes moving but no ETA yet
+    // the honest answer is the bare tense, not a blank.
+    expect(row.querySelector(".ag-clock")?.textContent).toBe("now");
   });
 
   // Before yt-dlp has said anything at all, the row says what it is waiting on
@@ -171,7 +171,7 @@ describe("UpNext", () => {
     );
     const row = screen.getByText("Not begun").closest(".ag-row") as HTMLElement;
     expect(within(row).getByText("Contacting YouTube")).toBeInTheDocument();
-    expect(row.querySelector(".ag-clock")?.textContent).toBe("");
+    expect(row.querySelector(".ag-clock")?.textContent).toBe("now");
   });
 
   // Replaces Queue's "no bar" assertion: the bar is always in the slot now, so
@@ -209,7 +209,7 @@ describe("UpNext", () => {
       .closest(".ag-row") as HTMLElement;
     expect(row).not.toHaveClass("live");
     expect(row.querySelector(".un-bar")).toBeNull();
-    expect(row.querySelector(".ag-clock")?.textContent).toBe("");
+    expect(row.querySelector(".ag-clock")?.textContent).toBe("then");
   });
 
   it("cancels a download by its job id", async () => {

@@ -114,7 +114,9 @@ type Page struct {
 // renders against.
 //
 // A non-empty search narrows to rows whose subject, summary or detail contains
-// it, case-insensitively. It runs HERE rather than in the browser because the
+// it, case-insensitively for ASCII (SQLite's LIKE does not case-fold beyond it,
+// so "uber" will not find "Über" — not worth an FTS index or a collation to
+// fix). It runs HERE rather than in the browser because the
 // client holds only the page it has scrolled to: a box that quietly searched
 // twenty rows out of two thousand would answer "nothing" for something the log
 // plainly contains. Search and keyset paging compose — a filtered page still
