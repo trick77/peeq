@@ -1001,7 +1001,7 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	e, err := s.ledger.Get(id)
-	if err != nil || e == nil || e.State != "pending" {
+	if err != nil || e == nil || e.State != channelvideos.StatePending {
 		writeJSONError(w, http.StatusNotFound, "pending item not found")
 		return
 	}
@@ -1015,8 +1015,8 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	// list (e.g. added manually via the video URL), do NOT re-enqueue a
 	// duplicate: just clear it from Pending and report it back as already
 	// downloaded.
-	if v, verr := s.videos.Get(e.VideoID); verr == nil && v != nil && v.Status == "downloaded" {
-		if err := s.ledger.SetState(e.VideoID, "queued"); err != nil {
+	if v, verr := s.videos.Get(e.VideoID); verr == nil && v != nil && v.Status == videos.StatusDownloaded {
+		if err := s.ledger.SetState(e.VideoID, channelvideos.StateQueued); err != nil {
 			serverError(w, r, err, "update pending failed")
 			return
 		}
@@ -1038,7 +1038,7 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "save video failed")
 		return
 	}
-	if err := s.videos.SetStatus(e.VideoID, "queued", ""); err != nil {
+	if err := s.videos.SetStatus(e.VideoID, videos.StatusQueued, ""); err != nil {
 		serverError(w, r, err, "save video failed")
 		return
 	}
@@ -1046,7 +1046,7 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "enqueue failed")
 		return
 	}
-	if err := s.ledger.SetState(e.VideoID, "queued"); err != nil {
+	if err := s.ledger.SetState(e.VideoID, channelvideos.StateQueued); err != nil {
 		serverError(w, r, err, "update pending failed")
 		return
 	}
@@ -1067,7 +1067,7 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "pending item not found")
 		return
 	}
-	if err := s.ledger.SetState(id, "ignored"); err != nil {
+	if err := s.ledger.SetState(id, channelvideos.StateIgnored); err != nil {
 		serverError(w, r, err, "ignore failed")
 		return
 	}

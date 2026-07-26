@@ -525,7 +525,7 @@ func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if v.Status != "error" && v.Status != "tombstoned" {
+	if v.Status != videos.StatusError && v.Status != videos.StatusTombstoned {
 		writeJSONError(w, http.StatusConflict, "only failed or removed videos can be re-downloaded")
 		return
 	}
@@ -542,7 +542,7 @@ func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "reset watched state failed")
 		return
 	}
-	if err := s.videos.SetStatus(v.ID, "queued", ""); err != nil {
+	if err := s.videos.SetStatus(v.ID, videos.StatusQueued, ""); err != nil {
 		serverError(w, r, err, "requeue failed")
 		return
 	}

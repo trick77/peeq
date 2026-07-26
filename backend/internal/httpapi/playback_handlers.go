@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/trick77/peeq/internal/playback"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // PlaybackStore is the slice of playback.Store these handlers use — declared
@@ -92,7 +93,7 @@ func (s *server) handlePutPlaybackState(w http.ResponseWriter, r *http.Request) 
 		serverError(w, r, err, "failed to look up video")
 		return
 	}
-	if v == nil || v.Status != "downloaded" {
+	if v == nil || v.Status != videos.StatusDownloaded {
 		writeJSONError(w, http.StatusNotFound, "video not found")
 		return
 	}

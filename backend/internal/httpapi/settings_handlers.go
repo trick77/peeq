@@ -140,7 +140,7 @@ func (s *server) applyCookie(w http.ResponseWriter, r *http.Request, minimalAck 
 		writeJSONError(w, http.StatusBadRequest, "cookie is required")
 		return
 	}
-	if err := s.settings.SetCookie(r.Context(), req.Cookie, "valid"); err != nil {
+	if err := s.settings.SetCookie(r.Context(), req.Cookie, settings.CookieValid); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid cookie: "+err.Error())
 		return
 	}
@@ -186,6 +186,6 @@ func (s *server) handleCookieHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, cookieHealthResponse{
 		Status:    got.CookieStatus,
 		UpdatedAt: got.CookieUpdatedAt,
-		Present:   got.CookieStatus != "absent",
+		Present:   got.CookieStatus != settings.CookieAbsent,
 	})
 }
