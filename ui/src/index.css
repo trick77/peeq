@@ -1438,22 +1438,11 @@ button.srow:not(:disabled):hover {
   background: color-mix(in srgb, var(--color-kept) 14%, transparent);
 }
 
-/* The text rows sit slightly inside the thumbnail's edges instead of flush
-   against them — title, channel line, and the lifecycle row (which carries
-   the category pill). The thumbnail itself stays full-bleed, so the inset
-   reads as breathing room around the text rather than a narrower card. */
-.card > h3,
-.card > .by,
-.card > .life {
-  padding-inline: 4px;
-}
-/* The title gets a deeper inset than the rows around it: it is the one block
-   that runs to the full column width and wraps, so it needs room on both sides
-   before the text meets the card's edge. The channel line and lifecycle row
-   keep the 4px above — only the headline moves. */
-.card.video-card > h3 {
-  padding-inline: 8px;
-}
+/* No inset on the text rows: the title, the channel line and the lifecycle row
+   all start on the thumbnail's left edge. They used to be held 4px inside it,
+   which was breathing room away from the card's own frame — with the frame gone
+   there is nothing to keep clear of, and a shared edge with the thumbnail gives
+   the column a single straight margin to read down. */
 .card h3 {
   margin: 0;
   /* Sans. A video title and a channel name are the two things you scan a list
@@ -1748,13 +1737,6 @@ button.catpick.unset:hover {
    of being pushed to opposite edges. */
 .card-foot.acts-row {
   justify-content: flex-start;
-  /* The rule above only insets `.card > h3/.by/.life`, and this footer is a
-     `.card-foot`, so it would sit 4px proud of the channel line on every inbox
-     card. Match that inset here rather than widening that selector, which would
-     also move Library's (rare) download-failed footer. The title's deeper 8px
-     inset is the headline's alone — the footer lines up with the channel line
-     above the title, not with the title. */
-  padding-inline: 4px;
 }
 
 /* ── Add (Task 14): paste box + preview. ─────────────────────────────────── */
