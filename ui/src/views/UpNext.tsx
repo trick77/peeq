@@ -107,11 +107,23 @@ const SCHED_KINDS = new Set(["scan", "channel_meta"]);
 // History's log, everything Up next can show is already in memory — two short
 // job lists and a capped projection — so there is nothing off-screen for a
 // server query to reach. It matches the same fields the rows display: the
-// title/subject and the channel name.
+// title/subject, the channel name, and — on a scheduled row — the line naming
+// the work, which is passed in as the string the row actually renders rather
+// than as the raw summary, so display and search cannot drift apart.
 function matches(search: string, ...fields: (string | undefined)[]): boolean {
   if (!search) return true;
   const q = search.toLowerCase();
   return fields.some((f) => (f ?? "").toLowerCase().includes(q));
+}
+
+// planOf is the line a scheduled row puts under its subject: the worker's own
+// wording for the work ("channel scan"), capitalised, or the kind's label when
+// the worker sent none — an older backend, or a kind added there before it is
+// given a phrase. ONE function so the search predicate filters on the exact
+// string the row displays; computing it twice is how a row ends up showing
+// "Metadata" that a search for "metadata" refuses to find.
+function planOf(item: UpcomingItem): string {
+  return leadCap(item.summary?.trim() || "") || kindOf(item.kind).label;
 }
 
 export function UpNext({
@@ -243,12 +255,13 @@ export function UpNext({
   const grouped = useMemo(() => {
     const by = new Map<string, UpcomingItem[]>();
     for (const item of scheduled) {
-      // Subject AND summary, because the row shows both: the channel name on
+      // Subject AND plan line, because the row shows both: the channel name on
       // top and the work itself ("Channel scan") beneath. The rule is that a
       // search box may only find what the page can show — which cuts both
-      // ways, so a field the row displays has to be searchable. While the
-      // summary was off the row this matched the subject alone.
-      if (!matches(q, item.subject, item.summary)) continue;
+      // ways, so a field the row displays has to be searchable, including the
+      // kind label the plan line falls back to. While the summary was off the
+      // row this matched the subject alone.
+      if (!matches(q, item.subject, planOf(item))) continue;
       const b = bucketOf(item.at as string, now);
       const list = by.get(b);
       if (list) list.push(item);
@@ -536,9 +549,7 @@ export function UpNext({
                       {/* .ag-plan drops it to the same grey as the relative
                           label across from it — see the rule in index.css. */}
                       <div className="ag-detail ag-plan">
-                        <span className="ag-kind">
-                          {leadCap(item.summary?.trim() || "") || k.label}
-                        </span>
+                        <span className="ag-kind">{planOf(item)}</span>
                       </div>
                     </div>
                     <span className="ag-when">{plannedWhen(item.at, now)}</span>

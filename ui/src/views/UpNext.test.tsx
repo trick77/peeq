@@ -512,6 +512,30 @@ describe("UpNext", () => {
       ).toBeNull();
     });
 
+    // The fallback line is displayed text like any other, so the same promise
+    // covers it: with no summary the row reads "Metadata", and a search for
+    // that word has to keep the row rather than hide the very thing it names.
+    it("matches a scheduled row's fallback kind label", async () => {
+      vi.mocked(listUpcoming).mockResolvedValue({
+        items: [
+          {
+            kind: "channel_meta",
+            approx: false,
+            at: soon(20),
+            subject: "Veritasium",
+          },
+        ],
+        truncated: 0,
+      });
+      render(
+        <UpNext jobs={[]} summaries={[]} onCancel={noop} search="metadata" />,
+      );
+      expect(await screen.findByText("Veritasium")).toBeInTheDocument();
+      expect(
+        screen.queryByText(/Nothing queued or scheduled matches/),
+      ).toBeNull();
+    });
+
     it("matches a channel name, not only a title", () => {
       render(
         <UpNext
