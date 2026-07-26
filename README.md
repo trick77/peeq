@@ -1,9 +1,6 @@
 # peeq
 
-Self-hosted YouTube watch pipeline — not an archiver. Videos flow *through* peeq rather than
-accumulate in it: new uploads are triaged, downloaded, summarized, watched, and then reclaimed.
-A Go backend serving a JSON API and an embedded React SPA, with a single SQLite file for state —
-no database server, no queue, no external services beyond the two AI endpoints described below.
+Self-hosted YouTube watch pipeline: triage, download, summarize, watch.
 
 ## What it does
 
@@ -23,15 +20,14 @@ the embeddings endpoint is unreachable, search degrades to keyword-only with a l
 rather than failing.
 
 **Categories.** Each video is classified into one of twenty-two categories (AI, Science, Gaming,
-History, …) on a best-effort basis, with `uncategorized` as the fallback. The Library has a
-category filter that composes with the other filters.
+History, …) on a best-effort basis. The Library has a category filter that composes with the other
+filters.
 
-**Retention.** Media is transient by design. An hourly sweeper deletes the files of any video that
-is watched, not marked favorite, and whose watch date is older than the retention window
-(`retention_days`, 14 by default), skipping anything currently playing. The row survives as a
-tombstone, so the summary, categories and the transcript stay listed and searchable after the media
-is gone, and the video can be pulled down again on demand. Marking a video favorite exempts it from
-the sweep — that is how you keep something permanently.
+**Retention.** Watched videos clear themselves out after a window you choose — two weeks by
+default — so the library stays what you still mean to watch rather than everything you ever
+downloaded. Mark a video favorite and it stays for good. Nothing is really lost either way: a
+cleared video keeps its summary, category and transcript, stays searchable, and can be pulled down
+again whenever you want it back.
 
 **Recovery.** A failed download can be retried per video from the Library, the player, or a video
 card, without re-adding it.
