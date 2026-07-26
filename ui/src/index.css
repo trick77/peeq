@@ -556,6 +556,22 @@ button.srow:not(:disabled):hover {
   grid-column: 2;
   min-width: 0;
 }
+/* A scheduled row is three columns, not two: when, which kind, which channel.
+   The kind is a glyph in a fixed column so the channel names still line up down
+   the page — the whole point of dropping the repeated "Channel scan" line. */
+.un-row.planned {
+  grid-template-columns: 72px 18px 1fr;
+}
+.un-row.planned .un-body {
+  grid-column: 3;
+}
+.un-kind {
+  grid-column: 2;
+  display: grid;
+  place-items: center;
+  color: var(--color-faint);
+  padding-top: 2px;
+}
 .un-title {
   font-size: 15px;
   color: var(--color-ink);
@@ -578,10 +594,6 @@ button.srow:not(:disabled):hover {
   font-size: 13px;
   color: var(--color-muted);
   margin-top: 5px;
-}
-.un-row.planned .un-detail {
-  font-style: italic;
-  color: var(--color-faint);
 }
 .un-row.planned .un-title {
   color: var(--color-ink-dim);
