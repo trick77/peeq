@@ -2241,8 +2241,9 @@ button.catpick.unset:hover {
 .toc.toc-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  /* The shorthand re-declares the row gap, so it has to track .toc above —
-     the Player's chapters are toc-grid, the share page's are plain .toc. */
+  /* The shorthand re-declares the row gap, so it has to track .toc above.
+     Both the Player's Contents card and the share page's Chapters card use
+     toc-grid — they are the same card in the same place on both pages. */
   gap: 1px 14px;
 }
 @media (max-width: 620px) {
@@ -4319,10 +4320,12 @@ details.tomb-sect[open] > summary svg {
   flex-direction: column;
   gap: 20px;
 }
-/* The collapsible Transcript card under the video. It reuses the Player's
-   global .tsearch/.transcript/.cue rules verbatim; only its placement in this
-   column is share-specific, so only that is scoped here. .sharepage-primary
-   spaces its children with margins (see .sharepage-meta), not a flex gap. */
+/* The Chapters and Transcript cards under the video. Both reuse the Player's
+   global rules verbatim (.toc/.toc-grid, .tsearch/.transcript/.cue); only their
+   placement in this column is share-specific, so only that is scoped here.
+   .sharepage-primary spaces its children with margins (see .sharepage-meta),
+   not a flex gap. */
+.sharepage-chapters,
 .sharepage-transcript {
   margin-top: 20px;
 }

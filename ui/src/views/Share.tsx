@@ -346,6 +346,42 @@ export function Share({ token }: { token: string | null }) {
             </div>
           </div>
 
+          {/* Chapters, where the Player puts them: a full-width card in this
+              column between the video and the Transcript, two columns wide, NOT
+              a sidebar panel. The sidebar keeps Summary and Highlights, which is
+              exactly the Player's split.
+
+              Two things still differ from the Player's Contents card, both
+              because this page is public: no empty state (it shouldn't
+              advertise a panel it has nothing for) and no yt-dlp/MiMo source
+              tag (internal trivia the recipient has no use for). */}
+          {chapters.length > 0 && (
+            <div className="card sharepage-chapters">
+              <div className="hd">
+                <Icon name="listTree" size="16px" />
+                <span className="lbl">Chapters</span>
+                <span className="meta">{chapters.length} chapters</span>
+              </div>
+              <div className="tabbody">
+                <div className="toc toc-grid">
+                  {chapters.map((c, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="row"
+                      onClick={() => seek(c.ts)}
+                    >
+                      <span className="ts mono">{fmt(c.ts)}</span>
+                      <span>
+                        <span className="ttl">{c.title}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {video.has_subtitles && (
             <div className="card sharepage-transcript">
               <button
@@ -482,45 +518,9 @@ export function Share({ token }: { token: string | null }) {
             </div>
           ) : null}
 
-          {/* Chapters sit ABOVE Highlights, matching the Player, where Contents
-              comes before the highlight list. They are the video's own
-              structure and the coarser way in; highlights are peeq's reading of
-              it. The share page had them last only because they were added to
-              this aside after the other two cards existed.
-
-              Unlike the Player's Contents card there is no empty state — a
-              public page shouldn't advertise a panel it has nothing for — and
-              no yt-dlp/MiMo source tag, which is internal trivia the recipient
-              has no use for. */}
-          {chapters.length > 0 && (
-            <div className="card">
-              <div className="hd">
-                <Icon name="listTree" size="16px" />
-                <span className="lbl">Chapters</span>
-                <span className="meta">{chapters.length} chapters</span>
-              </div>
-              <div className="tabbody">
-                {/* Plain .toc, not the Player's two-column .toc-grid — the
-                    share aside is a single narrow column. */}
-                <div className="toc">
-                  {chapters.map((c, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      className="row"
-                      onClick={() => seek(c.ts)}
-                    >
-                      <span className="ts mono">{fmt(c.ts)}</span>
-                      <span>
-                        <span className="ttl">{c.title}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
+          {/* Chapters are NOT here — they are a full-width card in the primary
+              column, above the Transcript, exactly as the Player has them. This
+              aside carries Summary and Highlights, which is the Player's split. */}
           {highlights.length > 0 && (
             <div className="card">
               <div className="hd">
