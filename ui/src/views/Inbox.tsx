@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SearchField } from "../components/SearchField";
 import { Icon } from "../icons";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
@@ -66,7 +66,14 @@ export function Inbox({
   onSearchChange,
   onQueued,
 }: {
-  onCountChange?: (n: number) => void;
+  /**
+   * Reports the inbox's size to App, which feeds the rail's badge. `undefined`
+   * means the count is not known — the rail draws no pill for it, and that is
+   * deliberately not the same claim as "the inbox is empty". A failed fetch
+   * sends undefined rather than leaving the last good number in place, because
+   * a stale badge asserts a count nobody can vouch for any more.
+   */
+  onCountChange?: (n: number | undefined) => void;
   onOpenChannel?: (id: string) => void;
   /**
    * The search box's text, owned by App so it survives navigating away and
@@ -106,18 +113,43 @@ export function Inbox({
   const [bulkBusy, setBulkBusy] = useState(false);
   const [confirmBulk, setConfirmBulk] = useState(false);
 
+  // `alive` is false once this view has unmounted. Navigating away mid-fetch
+  // used to land the response on a component that is gone: React 18 no longer
+  // warns about it, so it was silent, but the writes are still pointless and
+  // onCountChange would push a count from a page the user has already left.
+  // A ref, not a local — `load` is called from the effect below and could be
+  // called again later, and every call must see the same flag.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
   function load() {
     setError(null);
     listPending()
       .then((list) => {
+        if (!alive.current) return;
         setItems(list);
         onCountChange?.(list.length);
       })
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => {
+        if (!alive.current) return;
+        setError(e.message);
+        // The count is no longer known — say so rather than leaving the rail
+        // showing the last number that happened to arrive. undefined draws no
+        // pill; a stale 5 claims five items are waiting, which is exactly what
+        // the failed request could not confirm.
+        onCountChange?.(undefined);
+      })
       // Settled, not succeeded: a failed fetch has also finished telling us what
       // it can, and leaving the page on "Loading…" under its own error message
       // would claim the request is still running.
-      .finally(() => setLoaded(true));
+      .finally(() => {
+        if (alive.current) setLoaded(true);
+      });
   }
 
   useEffect(() => {

@@ -240,6 +240,51 @@ describe("Inbox", () => {
     });
   });
 
+  describe("the rail's count", () => {
+    // The rail draws no pill for undefined, and that is not the same claim as
+    // "the inbox is empty". A failed refetch that left the last good number in
+    // place had the badge asserting a count nothing could vouch for.
+    it("goes unknown when the fetch fails, rather than staying stale", async () => {
+      // Given: a good load, so there is a number to go stale.
+      const onCountChange = vi.fn();
+      const { unmount } = render(<Inbox onCountChange={onCountChange} />);
+      await screen.findByText("First pending video");
+      expect(onCountChange).toHaveBeenLastCalledWith(2);
+      unmount();
+
+      // When: the next visit's fetch fails.
+      vi.mocked(listPending).mockRejectedValue(new Error("pending is down"));
+      render(<Inbox onCountChange={onCountChange} />);
+      await screen.findByText("pending is down");
+
+      // Then: unknown, not two.
+      expect(onCountChange).toHaveBeenLastCalledWith(undefined);
+    });
+
+    // Navigating away mid-fetch used to land the response on a component that
+    // is gone — React 18 stopped warning about it, so it was silent, but the
+    // count still got pushed from a page the user had already left.
+    it("says nothing once the view has unmounted mid-fetch", async () => {
+      // Given: a request that has not answered yet.
+      const onCountChange = vi.fn();
+      let settle: (items: PendingItem[]) => void = () => {};
+      vi.mocked(listPending).mockReturnValue(
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+      );
+      const { unmount } = render(<Inbox onCountChange={onCountChange} />);
+
+      // When: the user leaves, and only then does the answer land.
+      unmount();
+      settle([itemA, itemB]);
+      await Promise.resolve();
+
+      // Then
+      expect(onCountChange).not.toHaveBeenCalled();
+    });
+  });
+
   it("filters the grid to a single channel via its chip", async () => {
     const user = userEvent.setup();
     render(<Inbox />);
