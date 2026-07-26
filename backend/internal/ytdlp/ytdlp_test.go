@@ -1035,3 +1035,72 @@ func TestThrottle_backgroundQueuesBehindAnInteractiveJump(t *testing.T) {
 			got, jumper+20*time.Second)
 	}
 }
+
+// --- Start hook -------------------------------------------------------------
+
+// The hook exists so a caller can time out a RUNNING yt-dlp rather than a
+// queueing one, which means the ordering is the whole contract: it must not
+// have fired while the pacer is still sleeping, and it must have fired by the
+// time the process runs. Both halves are asserted, because a hook that fires
+// too early is the bug it was added to fix.
+func TestStartHook_firesAfterTheThrottleWait(t *testing.T) {
+	var firedDuringSleep, fired bool
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep: func(_ context.Context, _ time.Duration) error {
+			firedDuringSleep = fired
+			return nil
+		},
+	})
+	t.Setenv("FAKE_YTDLP_JSON", `{"id":"dQw4w9WgXcQ","title":"t"}`)
+
+	ctx := WithStartHook(context.Background(), func() { fired = true })
+	if _, err := r.Metadata(ctx, "https://youtu.be/dQw4w9WgXcQ"); err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	if firedDuringSleep {
+		t.Fatal("start hook fired before the throttle wait finished — that is the bug it exists to prevent")
+	}
+	if !fired {
+		t.Fatal("start hook never fired, so a caller arming a timer on it would never bound the process")
+	}
+}
+
+// A call that never reaches the process must not signal a start: there is
+// nothing to bound, and a timer armed here would fire against no yt-dlp at all.
+func TestStartHook_doesNotFireWhenTheWaitIsCancelled(t *testing.T) {
+	fired := false
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(ctx context.Context, _ time.Duration) error { return context.Canceled },
+	})
+
+	ctx := WithStartHook(context.Background(), func() { fired = true })
+	if _, err := r.Metadata(ctx, "https://youtu.be/dQw4w9WgXcQ"); err == nil {
+		t.Fatal("Metadata succeeded, want the cancelled wait to surface")
+	}
+	if fired {
+		t.Fatal("start hook fired for a call that never started a process")
+	}
+}
+
+// The pause gate is checked before the throttle, so it is the other early
+// return: a kill-switch trip must not look like a started process either.
+func TestStartHook_doesNotFireWhenPaused(t *testing.T) {
+	fired := false
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		PauseProvider:  func() (bool, string) { return true, "kill switch" },
+	})
+
+	ctx := WithStartHook(context.Background(), func() { fired = true })
+	if _, err := r.Metadata(ctx, "https://youtu.be/dQw4w9WgXcQ"); !errors.Is(err, ErrPaused) {
+		t.Fatalf("Metadata error = %v, want ErrPaused", err)
+	}
+	if fired {
+		t.Fatal("start hook fired while paused, so no process ever ran")
+	}
+}
