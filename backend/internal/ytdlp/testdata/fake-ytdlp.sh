@@ -98,6 +98,12 @@ if [ -n "${FAKE_YTDLP_STDERR:-}" ]; then
   exit "${FAKE_YTDLP_EXIT:-1}"
 fi
 
+# Warnings on a SUCCEEDING metadata call, the non-download half of the same
+# case FAKE_YTDLP_WARNINGS covers above.
+if [ -n "${FAKE_YTDLP_WARNINGS:-}" ]; then
+  printf '%b\n' "$FAKE_YTDLP_WARNINGS" 1>&2
+fi
+
 if [ -n "${FAKE_YTDLP_JSON:-}" ]; then
   echo "$FAKE_YTDLP_JSON"
   exit 0
