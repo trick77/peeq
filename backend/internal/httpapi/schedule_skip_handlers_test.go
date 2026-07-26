@@ -362,3 +362,32 @@ func TestSkip_reportsAStoreFailure(t *testing.T) {
 		}
 	}
 }
+
+// skipAnchor measures from the later of now and the stored instant, so a skip
+// always pushes an occurrence forward. The stored value is not trusted: an
+// unparseable column falls back to now rather than making the row unskippable,
+// which is the one branch the HTTP tests above cannot reach — they can only
+// seed instants the store itself wrote.
+func TestSkipAnchor_choosesTheLaterInstantAndToleratesJunk(t *testing.T) {
+	now := time.Date(2026, 7, 26, 9, 0, 0, 0, time.UTC)
+
+	// A future instant wins: measuring from now instead would pull the next
+	// occurrence in rather than push it out.
+	future := now.Add(3 * time.Hour)
+	if got := skipAnchor(now, future.Format(skipTimeLayout)); !got.Equal(future) {
+		t.Errorf("future stored instant: got %v, want %v", got, future)
+	}
+
+	// A past instant loses — an overdue row must not skip to a moment that has
+	// already been and gone.
+	past := now.Add(-3 * time.Hour).Format(skipTimeLayout)
+	if got := skipAnchor(now, past); !got.Equal(now) {
+		t.Errorf("past stored instant: got %v, want %v", got, now)
+	}
+
+	for _, junk := range []string{"", "not a time", "2026-07-26T09:00:00Z"} {
+		if got := skipAnchor(now, junk); !got.Equal(now) {
+			t.Errorf("skipAnchor(%q) = %v, want %v", junk, got, now)
+		}
+	}
+}
