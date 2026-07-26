@@ -28,22 +28,33 @@ func searchTestDeps(t *testing.T) Deps {
 // handle — e.g. to install a trigger that blocks one specific column write.
 func searchTestDepsWithDB(t *testing.T) (Deps, *sql.DB) {
 	t.Helper()
+	deps, db, _ := searchTestDepsWithStores(t)
+	return deps, db
+}
+
+// searchTestDepsWithStores also hands back the concrete *rag.Store. Deps.Rag is
+// the RagStore interface, which is deliberately just the two read methods the
+// search endpoint calls — seeding chunks goes through ReplaceVideoChunks, which
+// is not on it and should not be.
+func searchTestDepsWithStores(t *testing.T) (Deps, *sql.DB, *rag.Store) {
+	t.Helper()
 	db := openTestDB(t)
 	sessions := auth.NewSessionStore(db, false)
 	users := auth.NewUserStore(db)
+	ragStore := rag.NewStore(db)
 	return Deps{
 		AuthService:    auth.NewService(nil, sessions, users),
 		AuthMiddleware: auth.NewMiddleware(sessions, users),
 		Settings:       settings.New(db),
 		Videos:         videos.New(db),
-		Rag:            rag.NewStore(db),
+		Rag:            ragStore,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
 			Email:             "dev@example.local",
 			Name:              "Dev Tester",
 		},
-	}, db
+	}, db, ragStore
 }
 
 // fakeEmbedder is a stub SearchEmbedder that returns a fixed vector (or
@@ -93,13 +104,13 @@ func dim1536(near float32) []float32 {
 // have something to find. The vectors themselves are irrelevant to the FTS
 // path; a fixed dummy vector satisfies ReplaceVideoChunks' equal-length
 // rows/vectors requirement.
-func seedChunks(t *testing.T, deps Deps, videoID string, rows []rag.ChunkRow) {
+func seedChunks(t *testing.T, rs *rag.Store, videoID string, rows []rag.ChunkRow) {
 	t.Helper()
 	vecs := make([][]float32, len(rows))
 	for i := range rows {
 		vecs[i] = dim1536(1.0)
 	}
-	if err := deps.Rag.ReplaceVideoChunks(context.Background(), videoID, "test-model", 1536, rows, vecs); err != nil {
+	if err := rs.ReplaceVideoChunks(context.Background(), videoID, "test-model", 1536, rows, vecs); err != nil {
 		t.Fatalf("seedChunks(%s): %v", videoID, err)
 	}
 }
@@ -108,7 +119,7 @@ func seedChunks(t *testing.T, deps Deps, videoID string, rows []rag.ChunkRow) {
 // query whose embedding is nearest v1's chunk, and asserts the response
 // groups hits by video with match details.
 func TestSearchGroupsByVideo(t *testing.T) {
-	deps := searchTestDeps(t)
+	deps, _, ragStore := searchTestDepsWithStores(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "iPhone review"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
@@ -119,12 +130,12 @@ func TestSearchGroupsByVideo(t *testing.T) {
 	ctx := context.Background()
 	v1Vec := dim1536(1.0)
 	v2Vec := dim1536(-1.0)
-	if err := deps.Rag.ReplaceVideoChunks(ctx, "v1", "test-model", 1536,
+	if err := ragStore.ReplaceVideoChunks(ctx, "v1", "test-model", 1536,
 		[]rag.ChunkRow{{Ordinal: 0, Text: "talking about the new iphone camera", StartSeconds: 10, TokenCount: 5}},
 		[][]float32{v1Vec}); err != nil {
 		t.Fatalf("seed v1 chunks: %v", err)
 	}
-	if err := deps.Rag.ReplaceVideoChunks(ctx, "v2", "test-model", 1536,
+	if err := ragStore.ReplaceVideoChunks(ctx, "v2", "test-model", 1536,
 		[]rag.ChunkRow{{Ordinal: 0, Text: "something else entirely", StartSeconds: 20, TokenCount: 5}},
 		[][]float32{v2Vec}); err != nil {
 		t.Fatalf("seed v2 chunks: %v", err)
@@ -214,11 +225,11 @@ func TestSearchBlankQueryReturnsEmpty(t *testing.T) {
 // longer 502s the whole search: FTS is the floor and keeps working, so a
 // transcript-kind keyword hit still comes back with 200.
 func TestSearchDegradesToFTSWhenEmbedFails(t *testing.T) {
-	deps := searchTestDeps(t)
+	deps, _, ragStore := searchTestDepsWithStores(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "physics talk"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
-	seedChunks(t, deps, "v1", []rag.ChunkRow{
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
 		{Ordinal: 0, Text: "quantum entanglement basics", Kind: "transcript", StartSeconds: 5},
 		{Ordinal: 1, Text: "a summary of the whole talk", Kind: "summary", StartSeconds: 0},
 	})
@@ -242,11 +253,11 @@ func TestSearchDegradesToFTSWhenEmbedFails(t *testing.T) {
 // TestSearchSummaryHitHasKindAndZeroTs asserts a summary chunk that matches
 // is tagged kind "summary" (rather than defaulting to "transcript").
 func TestSearchSummaryHitHasKindAndZeroTs(t *testing.T) {
-	deps := searchTestDeps(t)
+	deps, _, ragStore := searchTestDepsWithStores(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "wildlife doc"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
-	seedChunks(t, deps, "v1", []rag.ChunkRow{
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
 		{Ordinal: 0, Text: "a summary mentioning platypus", Kind: "summary", StartSeconds: 0},
 	})
 	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
@@ -656,4 +667,80 @@ func TestReprocess_sponsorblockResetFailureIs500(t *testing.T) {
 	if spy.lastID != "" {
 		t.Fatalf("enqueued %q, want no job after the reset failed", spy.lastID)
 	}
+}
+
+// failingRag is a RagStore whose chosen read fails; the other delegates to the
+// real store. It is what the interface bought: the search handler's two
+// degraded paths are deliberately fail-SOFT — a broken FTS or a broken semantic
+// retrieve logs and falls through to whatever the other lane returned, rather
+// than failing the request. Before the interface there was no way to reach
+// either branch from a handler test, and neither was covered.
+type failingRag struct {
+	real      RagStore
+	searchFTS error
+	retrieve  error
+}
+
+func (f *failingRag) SearchFTS(ctx context.Context, match string, n int) ([]rag.Hit, error) {
+	if f.searchFTS != nil {
+		return nil, f.searchFTS
+	}
+	return f.real.SearchFTS(ctx, match, n)
+}
+
+func (f *failingRag) Retrieve(ctx context.Context, q []float32, k int) ([]rag.Hit, error) {
+	if f.retrieve != nil {
+		return nil, f.retrieve
+	}
+	return f.real.Retrieve(ctx, q, k)
+}
+
+// TestSearch_ragDegradedStillServes pins the fail-soft contract from both
+// sides: whichever lane breaks, the other one's hits still come back 200.
+func TestSearch_ragDegradedStillServes(t *testing.T) {
+	t.Run("ftsBroken_semanticStillAnswers", func(t *testing.T) {
+		deps, _, ragStore := searchTestDepsWithStores(t)
+		if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "physics talk"}); err != nil {
+			t.Fatalf("seed v1: %v", err)
+		}
+		seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+			{Ordinal: 0, Text: "a chunk about entropy", StartSeconds: 5},
+		})
+		deps.Rag = &failingRag{real: deps.Rag, searchFTS: errors.New("fts exploded")}
+		deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=entropy", nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("search with broken FTS = %d, want 200 (fail-soft), body = %s",
+				rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "v1") {
+			t.Fatalf("semantic lane should still have answered: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("semanticBroken_ftsStillAnswers", func(t *testing.T) {
+		deps, _, ragStore := searchTestDepsWithStores(t)
+		if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "physics talk"}); err != nil {
+			t.Fatalf("seed v1: %v", err)
+		}
+		seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+			{Ordinal: 0, Text: "a chunk about entropy", StartSeconds: 5},
+		})
+		deps.Rag = &failingRag{real: deps.Rag, retrieve: errors.New("vec index gone")}
+		deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=entropy", nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("search with broken semantic = %d, want 200 (fail-soft), body = %s",
+				rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "v1") {
+			t.Fatalf("FTS lane should still have answered: %s", rec.Body.String())
+		}
+	})
 }

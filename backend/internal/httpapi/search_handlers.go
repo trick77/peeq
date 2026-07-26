@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -9,6 +10,26 @@ import (
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
 )
+
+// RagStore is the slice of rag.Store the search endpoint uses — declared here
+// at the consumer, following DownloadsRunner, PlaybackStore and ShareLinkStore.
+// *rag.Store satisfies it. Unlike those two this is a genuine subset: the store
+// also owns the chunk write/delete path, which the summarize worker drives and
+// no handler touches.
+//
+// Note this does NOT let httpapi drop its rag import. rag.Hit is the return
+// type, and rag.BuildFTSMatch is a package-level FUNCTION passed as an argument
+// below — an interface cannot capture either. The gain here is testability: the
+// search endpoint's degraded-path branches can now be driven by a fake instead
+// of by a real sqlite-vec store.
+//
+// Same typed-nil caveat as the other two: the handler nil-checks the INTERFACE,
+// so a (*rag.Store)(nil) placed in it would panic rather than return the
+// documented 503.
+type RagStore interface {
+	SearchFTS(ctx context.Context, match string, n int) ([]rag.Hit, error)
+	Retrieve(ctx context.Context, queryEmbedding []float32, k int) ([]rag.Hit, error)
+}
 
 // searchMatch is one hit within a search result's video, in the shape the
 // frontend player uses to jump to a timestamp.

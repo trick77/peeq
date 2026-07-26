@@ -13,7 +13,6 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
-	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
@@ -104,10 +103,13 @@ type Deps struct {
 	// pending API. Optional: when nil, the pending endpoints return 503.
 	Ledger *channelvideos.Store
 
-	// Rag is the transcript-chunk/embedding store backing semantic search
-	// and the delete-purge path. Optional: when nil, /api/search returns
-	// 503.
-	Rag *rag.Store
+	// Rag is the transcript-chunk/embedding store backing semantic search.
+	// Optional: when nil, /api/search returns 503.
+	//
+	// It used to claim the delete-purge path too. That runs in the summarize
+	// worker, and DeleteVideoChunks is deliberately absent from RagStore, so
+	// the type now makes the old claim impossible rather than merely untrue.
+	Rag RagStore
 	// Embedder turns search query text into an embedding vector to match
 	// against Rag. Optional: when nil, /api/search returns 503.
 	Embedder SearchEmbedder
@@ -201,7 +203,7 @@ type server struct {
 
 	ledger *channelvideos.Store
 
-	rag         *rag.Store
+	rag         RagStore
 	embedder    SearchEmbedder
 	summaryJobs SummaryEnqueuer
 	summaryList SummaryLister
