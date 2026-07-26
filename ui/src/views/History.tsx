@@ -374,7 +374,14 @@ export function History({
             className={`chip${filter === f.id ? " on" : ""}`}
             onClick={() => setFilter(f.id)}
           >
-            {f.label} <span className="n">{counts[f.id] ?? 0}</span>
+            {f.label}{" "}
+            {/* The number waits for the fetch, the chip does not. `header`
+                renders on the failed and not-yet-loaded branches too (see
+                above), where `past` is still empty — so an unconditional count
+                printed a full row of zeros beside "couldn't load the log",
+                stating that the log is empty when it had only failed to
+                arrive. */}
+            {loaded ? <span className="n">{counts[f.id] ?? 0}</span> : null}
           </button>
         ))}
       </div>

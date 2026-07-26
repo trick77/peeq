@@ -222,6 +222,28 @@ describe("Inbox", () => {
     });
   });
 
+  // Ghost has no fill and no border, and `busy` disables the button — which
+  // .ui-btn:disabled fades to 0.6. Left ghost, the in-flight batch would be
+  // faint grey text and a spinner floating in the toolbar, at the moment the
+  // control most needs to be visible.
+  it("Download all takes a fill back while the batch is in flight", async () => {
+    // Given: a download that never settles, so the busy state can be read.
+    const user = userEvent.setup();
+    vi.mocked(downloadPending).mockReturnValue(new Promise(() => {}));
+    render(<Inbox />);
+    await screen.findByText("First pending video");
+    const button = screen.getByRole("button", { name: /^download all$/i });
+    expect(button).toHaveClass("ui-btn--ghost");
+
+    // When
+    await user.click(button);
+
+    // Then: quiet at rest, filled while it works.
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(button).toHaveClass("ui-btn--secondary");
+    expect(button).not.toHaveClass("ui-btn--ghost");
+  });
+
   it("Download all confirms before a large batch", async () => {
     const user = userEvent.setup();
     const many = Array.from({ length: 12 }, (_, i) =>
