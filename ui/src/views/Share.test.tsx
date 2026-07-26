@@ -186,6 +186,34 @@ describe("Share (public page)", () => {
       document.querySelector(".sharepage-chapters .toc-grid"),
     ).toBeTruthy();
   });
+
+  // Same workaround the Player carries: iPadOS 27 (public beta 1) Safari
+  // refuses to load the media at all when a <track> child is present during
+  // resource selection, leaving the page on the poster. See
+  // tubearchivist/tubearchivist#1196.
+  it("mounts the subtitle track only after loadedmetadata", async () => {
+    vi.mocked(getSharedVideo).mockResolvedValue({
+      ...mockVideo,
+      has_subtitles: true,
+    });
+    render(<Share token="3xK9raPb" />);
+
+    await screen.findByRole("heading", {
+      name: /how the cia writes a threat assessment/i,
+    });
+    expect(document.querySelector("video track")).toBeNull();
+
+    fireEvent.loadedMetadata(
+      document.querySelector("video") as HTMLVideoElement,
+    );
+    await waitFor(() =>
+      expect(document.querySelector("video track")).not.toBeNull(),
+    );
+    expect(document.querySelector("video track")).toHaveAttribute(
+      "src",
+      "/api/s/3xK9raPb/subtitles",
+    );
+  });
 });
 
 // The shared player skips exactly what the owner's player skips. A recipient has

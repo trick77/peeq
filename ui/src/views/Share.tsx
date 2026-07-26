@@ -85,6 +85,18 @@ export function Share({ token }: { token: string | null }) {
   // back, so they exist purely to draw the bar.
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  // subtitlesReadyFor holds the token whose media metadata has loaded, gating
+  // the <track> below — the same workaround the Player carries. On iPadOS 27
+  // (public beta 1) a <track> child present while the video loads makes Safari
+  // fail resource selection outright — networkState 3 (NETWORK_NO_SOURCE),
+  // readyState 0, video.error stays null — so the page sits on the poster at
+  // 0:00 forever with nothing detectable from JS. Mounting the track only after
+  // loadedmetadata loads the media fine and keeps captions working. Keyed on
+  // the token rather than a boolean so a different share opened without a
+  // remount starts track-free again. See tubearchivist/tubearchivist#1196.
+  const [subtitlesReadyFor, setSubtitlesReadyFor] = useState<string | null>(
+    null,
+  );
   // The transient "Skipped ad · 0:45" notice over the stage.
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | undefined>(undefined);
@@ -252,6 +264,9 @@ export function Share({ token }: { token: string | null }) {
 
   function handleLoadedMetadata() {
     const el = videoRef.current;
+    // Open the subtitle gate first, ahead of everything else, so it still
+    // opens if this fires more than once on the same media.
+    if (token) setSubtitlesReadyFor(token);
     // NaN until real media metadata loads (and always NaN under jsdom); the
     // scrubber falls back to the DTO's duration_seconds while it is unknown.
     if (el && Number.isFinite(el.duration)) setDuration(el.duration);
@@ -307,7 +322,7 @@ export function Share({ token }: { token: string | null }) {
               onLoadedMetadata={handleLoadedMetadata}
               onTimeUpdate={handleTimeUpdate}
             >
-              {video.has_subtitles && (
+              {video.has_subtitles && subtitlesReadyFor === token && (
                 <track
                   kind="subtitles"
                   srcLang={video.audio_language || "en"}
