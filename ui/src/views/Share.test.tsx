@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { Share } from "./Share";
 import type { PublicVideo } from "../api/share";
 
@@ -142,6 +148,159 @@ describe("Share (public page)", () => {
     // No empty-state placeholder on a public page — the card simply isn't there.
     expect(screen.queryByText("Chapters")).not.toBeInTheDocument();
     expect(screen.queryByText(/no chapters/i)).not.toBeInTheDocument();
+  });
+
+  it("renders no top bar — the page opens on the video", async () => {
+    vi.mocked(getSharedVideo).mockResolvedValue(mockVideo);
+    render(<Share token="3xK9raPb" />);
+
+    await screen.findByText("Summary");
+    expect(document.querySelector(".sharepage-top")).toBeNull();
+    expect(screen.queryByText("Shared with you")).not.toBeInTheDocument();
+    // The attribution lives in the footer instead, not nowhere.
+    expect(screen.getByText(/shared via/i)).toBeInTheDocument();
+  });
+
+  it("orders the aside Summary, Chapters, Highlights — the Player's order", async () => {
+    vi.mocked(getSharedVideo).mockResolvedValue({
+      ...mockVideo,
+      chapters: [{ ts: 0, title: "Cold open", source: "yt-dlp" }],
+    });
+    render(<Share token="3xK9raPb" />);
+
+    await screen.findByText("Chapters");
+    const labels = [...document.querySelectorAll(".sharepage-side .lbl")].map(
+      (el) => el.textContent,
+    );
+    expect(labels).toEqual(["Summary", "Chapters", "Highlights"]);
+  });
+});
+
+// The shared player skips exactly what the owner's player skips. A recipient has
+// no account and no settings, so unless the segments ride along on the public
+// payload there is no way to skip an ad on a shared video at all.
+describe("Share SponsorBlock", () => {
+  function renderWithSegments(
+    segments: NonNullable<PublicVideo["sponsorblock_segments"]>,
+  ) {
+    vi.mocked(getSharedVideo).mockResolvedValue({
+      ...mockVideo,
+      duration_seconds: 100,
+      sponsorblock_segments: segments,
+    });
+    render(<Share token="3xK9raPb" />);
+    return waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+  }
+
+  it("skips an ad segment and announces the skip", async () => {
+    const videoEl = await renderWithSegments([
+      { category: "sponsor", start_time: 10, end_time: 25 },
+    ]);
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 12,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+
+    expect(videoEl.currentTime).toBe(25);
+    expect(await screen.findByText(/Skipped ad/)).toBeInTheDocument();
+  });
+
+  it("plays through a marked segment and skips only the ad", async () => {
+    const videoEl = await renderWithSegments([
+      { category: "intro", start_time: 0, end_time: 8 },
+      { category: "sponsor", start_time: 10, end_time: 25 },
+    ]);
+    Object.defineProperty(videoEl, "currentTime", { value: 3, writable: true });
+    fireEvent.timeUpdate(videoEl);
+    // Inside the intro and untouched: cutting it would remove video unasked.
+    expect(videoEl.currentTime).toBe(3);
+
+    videoEl.currentTime = 11;
+    fireEvent.timeUpdate(videoEl);
+    expect(videoEl.currentTime).toBe(25);
+  });
+
+  it("draws both band styles on the scrubber", async () => {
+    await renderWithSegments([
+      { category: "intro", start_time: 0, end_time: 8 },
+      { category: "sponsor", start_time: 10, end_time: 25 },
+    ]);
+    expect(
+      document.querySelector('[title="Skipped automatically: ad"]'),
+    ).toBeTruthy();
+    expect(document.querySelector('[title="Marked: intro"]')).toBeTruthy();
+  });
+
+  it("seeks from the scrubber without starting playback", async () => {
+    // Clicking a chapter or a transcript line means "take me there and play";
+    // moving the bar of a paused video must not start it.
+    const videoEl = await renderWithSegments([
+      { category: "sponsor", start_time: 10, end_time: 25 },
+    ]);
+    Object.defineProperty(videoEl, "currentTime", { value: 0, writable: true });
+    const playSpy = vi
+      .spyOn(window.HTMLMediaElement.prototype, "play")
+      .mockResolvedValue(undefined);
+
+    // jsdom lays nothing out, so the bar needs a rect before a click position
+    // means anything: 400px wide, clicked at 300 → 75% of a 100s video.
+    const bar = screen.getByRole("slider", { name: "Seek" });
+    bar.getBoundingClientRect = () => ({ left: 0, width: 400 }) as DOMRect;
+    fireEvent.click(bar, { clientX: 300 });
+
+    expect(videoEl.currentTime).toBe(75);
+    expect(playSpy).not.toHaveBeenCalled();
+  });
+
+  it("prefers the real media duration once metadata loads", async () => {
+    // duration_seconds off the DTO is the fallback; the file itself wins as
+    // soon as it can be read, so the bar's end matches the media.
+    const videoEl = await renderWithSegments([
+      { category: "sponsor", start_time: 10, end_time: 25 },
+    ]);
+    Object.defineProperty(videoEl, "duration", { value: 240, writable: true });
+    fireEvent.loadedMetadata(videoEl);
+
+    await waitFor(() => expect(screen.getByText("4:00")).toBeInTheDocument());
+  });
+
+  it("clears the skip notice after its timeout", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const videoEl = await renderWithSegments([
+        { category: "sponsor", start_time: 10, end_time: 25 },
+      ]);
+      Object.defineProperty(videoEl, "currentTime", {
+        value: 12,
+        writable: true,
+      });
+      fireEvent.timeUpdate(videoEl);
+      expect(await screen.findByText(/Skipped ad/)).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+      });
+      expect(screen.queryByText(/Skipped ad/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders no scrubber at all when the video has no segments", async () => {
+    vi.mocked(getSharedVideo).mockResolvedValue(mockVideo);
+    render(<Share token="3xK9raPb" />);
+
+    expect(await screen.findByText("Summary")).toBeInTheDocument();
+    // The native <video> controls already seek; an empty second bar would be
+    // two seek bars stacked for no gain.
+    expect(
+      screen.queryByRole("slider", { name: "Seek" }),
+    ).not.toBeInTheDocument();
   });
 });
 
