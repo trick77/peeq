@@ -17,7 +17,7 @@ import { INBOX_SORT_OPTIONS } from "./Library";
 // same channel-eyebrow-above-clamped-title order, same `.card-foot` action
 // row. Two honest differences remain — the thumbnail is the remote
 // `thumbnail_url` (no local media exists yet, an item here has never been
-// downloaded) and the actions are Download now / Ignore rather than
+// downloaded) and the actions are Download / Ignore rather than
 // favorite/watched.
 
 // sortKey is the date an item orders by: its publish date when known, else
@@ -352,7 +352,7 @@ export function Inbox({
                 onClick={() => handleDownload(item)}
               >
                 <Icon name="download" size="15px" />
-                Download now
+                Download
               </Button>
               <Button
                 type="button"

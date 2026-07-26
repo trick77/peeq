@@ -743,7 +743,7 @@ function ViewSwitch({
       return <Add onQueued={onQueued} />;
     case "inbox":
       // onCountChange keeps the rail badge in sync while the user acts on
-      // items (Download now/Ignore) without leaving this view — the
+      // items (Download/Ignore) without leaving this view — the
       // nav-refetch effect above only covers count changes that happen
       // while the user is elsewhere. onQueued seeds the download poll the
       // moment an item is approved (mirroring Add), so a video queued while
