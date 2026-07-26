@@ -581,6 +581,31 @@ describe("UpNext schedule rows", () => {
     expect(within(row).getByText("Channel scan")).toHaveClass("ag-kind");
     expect(within(row).getByLabelText("Scan")).toBeInTheDocument();
   });
+
+  // The wording is the worker's, so the row has to cope with the worker not
+  // supplying it — an older backend, or a kind added there before it is given a
+  // phrase here. The kind's own label stands in, which is what the glyph
+  // already means, rather than leaving the line blank and the row silent about
+  // what it is for.
+  it("falls back to the kind label when the item carries no summary", async () => {
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          kind: "channel_meta",
+          approx: false,
+          at: soon(30),
+          subject: "Kurzgesagt",
+        },
+      ],
+      truncated: 0,
+    });
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+    await screen.findByText("Kurzgesagt");
+    const row = screen
+      .getByText("Kurzgesagt")
+      .closest(".ag-row") as HTMLElement;
+    expect(within(row).getByText("Metadata")).toHaveClass("ag-kind");
+  });
 });
 
 describe("UpNext filters", () => {
