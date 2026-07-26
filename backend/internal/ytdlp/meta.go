@@ -88,6 +88,16 @@ func (r *Runner) Metadata(ctx context.Context, rawURL string) (*Meta, error) {
 		return nil, err
 	}
 
+	return parseMeta(out)
+}
+
+// parseMeta turns one -J response into a Meta. Split out from Metadata so it
+// is testable without shelling out, the same way parseChannelInfo is split out
+// of ResolveChannel.
+//
+// This is where a manually added video's title is normalised (see
+// NormalizeTitle) — the download worker fills a title-less row from here.
+func parseMeta(out []byte) (*Meta, error) {
 	var raw ytdlpJSON
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("ytdlp: parse metadata json: %w", err)
@@ -95,7 +105,7 @@ func (r *Runner) Metadata(ctx context.Context, rawURL string) (*Meta, error) {
 
 	return &Meta{
 		ID:              raw.ID,
-		Title:           raw.Title,
+		Title:           NormalizeTitle(raw.Title),
 		ChannelID:       raw.ChannelID,
 		Channel:         raw.Channel,
 		DurationSeconds: int(raw.Duration),
