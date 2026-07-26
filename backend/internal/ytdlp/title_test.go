@@ -14,7 +14,10 @@ func TestNormalizeTitle_emDashesOnlySpacedHyphens(t *testing.T) {
 		{"-Foo Bar-", "-Foo Bar-"},
 		{"A - B - C", "A — B — C"},
 		{"Router  -  Part 3", "Router — Part 3"},
-		{"Router - Part 3", "Router — Part 3"},
+		// Escaped so the no-break spaces are visible in source: without the
+		// mapping in collapseSpace they would survive and the separator rule
+		// would never match.
+		{"Router\u00a0-\u00a0Part 3", "Router \u2014 Part 3"},
 	}
 	for _, tc := range cases {
 		if got := NormalizeTitle(tc.in); got != tc.want {
@@ -56,7 +59,10 @@ func TestNormalizeTitle_collapsesWhitespaceLeftBehind(t *testing.T) {
 		{"🔥", ""},
 		{"🔥 🚀", ""},
 		{"tabs\tand\nnewlines", "tabs and newlines"},
-		{"　ideographic spaces here", "ideographic spaces here"},
+		// All three space-likes sit INSIDE the string on purpose: TrimSpace
+		// already eats a leading one, so a leading case would pass even
+		// without the mapping branch.
+		{"\u3000ideographic\u202fspaces\u00a0here", "ideographic spaces here"},
 	}
 	for _, tc := range cases {
 		if got := NormalizeTitle(tc.in); got != tc.want {
