@@ -31,70 +31,6 @@ import (
 // starves the rest of the queue.
 const metadataPreflightTimeout = 2 * time.Minute
 
-// deferredTimer is a one-shot timer that is not started when it is created, but
-// when the work it bounds actually begins — see ytdlp.WithStartHook, which is
-// what calls start.
-//
-// It exists because every timeout in this file bounds a yt-dlp process, and
-// entering a Runner call is not the same instant as that process running: the
-// shared pacer makes the call wait its turn first. A timer armed on entry counts
-// that deliberate wait against the process, so a busy queue turns patience into
-// a reported failure.
-//
-// A non-positive duration disables it: start does nothing, and the timer never
-// fires. That keeps "watchdog off" expressible (Deps.Watchdog < 0, which the
-// tests rely on) without every caller re-checking.
-//
-// Once stopped it stays stopped, so a start hook firing late — a retry inside
-// the Runner, a fake in a test — cannot resurrect a timer whose call already
-// returned. The mutex guards against exactly that: in production all three
-// methods run on the goroutine making the Runner call, but that is ytdlp's
-// internal detail rather than a promise this type should depend on.
-type deferredTimer struct {
-	mu      sync.Mutex
-	d       time.Duration
-	fire    func()
-	t       *time.Timer
-	stopped bool
-}
-
-func newDeferredTimer(d time.Duration, fire func()) *deferredTimer {
-	return &deferredTimer{d: d, fire: fire}
-}
-
-// start arms the timer. Called when the process being bounded has begun.
-func (dt *deferredTimer) start() {
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
-	if dt.d <= 0 || dt.stopped || dt.t != nil {
-		return
-	}
-	dt.t = time.AfterFunc(dt.d, dt.fire)
-}
-
-// reset restarts the countdown — the "something happened" signal. A no-op
-// before start, so activity that somehow precedes the process cannot arm it.
-func (dt *deferredTimer) reset() {
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
-	if dt.t != nil && !dt.stopped {
-		dt.t.Reset(dt.d)
-	}
-}
-
-// stop disarms permanently. Reports whether the timer had been armed and had
-// not yet fired, so a caller can tell "the call returned in time" from "the
-// timer already fired and cancelled it".
-func (dt *deferredTimer) stop() bool {
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
-	dt.stopped = true
-	if dt.t == nil {
-		return false
-	}
-	return dt.t.Stop()
-}
-
 // autoDownloadPriority is the priority the scan scheduler enqueues with — work
 // nobody is sitting in front of. Anything above it was asked for by a person
 // (the Inbox approve, the re-download button, the channel handler all use 10),
@@ -274,7 +210,7 @@ func New(deps Deps) *Worker {
 		deps.MetadataTimeout = metadataPreflightTimeout
 	case deps.MetadataTimeout < 0:
 		// Same normalization as Watchdog: negative means "no cap", and
-		// deferredTimer reads a non-positive duration as disabled.
+		// ytdlp.DeferredTimer reads a non-positive duration as disabled.
 		deps.MetadataTimeout = 0
 	}
 	if deps.Backoff == nil {
@@ -472,8 +408,8 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		// queued probe fail for being patient — and with a shorter fuse than the
 		// download path's ten minutes, so it bit first.
 		metaCtx, metaCancel := context.WithCancel(jobCtx)
-		metaCap := newDeferredTimer(w.deps.MetadataTimeout, metaCancel)
-		meta, merr := w.deps.Runner.Metadata(ytdlp.WithStartHook(metaCtx, metaCap.start), video.URL)
+		metaCap := ytdlp.NewDeferredTimer(w.deps.MetadataTimeout, metaCancel)
+		meta, merr := w.deps.Runner.Metadata(ytdlp.WithStartHook(metaCtx, metaCap.Start), video.URL)
 		// stop() reports false once the timer has fired, which is how the cap is
 		// told apart from any other error: the message the user sees on Activity
 		// should say the probe stalled, not repeat a bare "context canceled".
@@ -482,7 +418,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		// stop is what disarms the timer, so short-circuiting past it on the
 		// success path would leave an AfterFunc holding metaCancel alive for the
 		// rest of the cap.
-		stoppedInTime := metaCap.stop()
+		stoppedInTime := metaCap.Stop()
 		// merr != nil is part of the test because a cap that genuinely fired
 		// killed the process, so Metadata cannot also have succeeded. Without it,
 		// a timer expiring in the sliver between a successful return and stop()
@@ -576,17 +512,17 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	//
 	// A Cancel during the pre-call wait does not need the watchdog and never
 	// did: throttle's own wait is cancellable.
-	watchdog := newDeferredTimer(w.deps.Watchdog, cancel)
+	watchdog := ytdlp.NewDeferredTimer(w.deps.Watchdog, cancel)
 	onProgress := func(p ytdlp.Progress) {
-		watchdog.reset()
+		watchdog.Reset()
 		if w.deps.OnProgress != nil {
 			w.deps.OnProgress(job.ID, p)
 		}
 	}
 
-	res, dlErr := w.deps.Runner.Download(ytdlp.WithStartHook(jobCtx, watchdog.start), req, onProgress)
+	res, dlErr := w.deps.Runner.Download(ytdlp.WithStartHook(jobCtx, watchdog.Start), req, onProgress)
 
-	watchdog.stop()
+	watchdog.Stop()
 	// Capture whether jobCtx was cancelled (by the watchdog or a user
 	// Cancel) BEFORE our own cleanup cancel() below, so the check reflects
 	// only a real interruption, not our teardown.

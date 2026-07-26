@@ -616,3 +616,176 @@ func TestWorker_failedRefreshRecordsActivity(t *testing.T) {
 		t.Fatalf("subject = %q, want the cached channel name", e.Subject)
 	}
 }
+
+// --- The cap measures the process, not the queue (issue #179) ----------------
+
+// pacingResolver stands in for a Runner call that spends time in the shared
+// pacer before yt-dlp starts. It waits `queued` WITHOUT signalling, then fires
+// the context's start hook the way execWithProgress does once the wait is over,
+// then works for `working`.
+//
+// The split is the whole point: only the second half is the process running,
+// and only the second half may be counted against the cap.
+type pacingResolver struct {
+	mu      sync.Mutex
+	urls    []string
+	queued  time.Duration
+	working time.Duration
+	info    ytdlp.ChannelInfo
+}
+
+func (p *pacingResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+	p.mu.Lock()
+	p.urls = append(p.urls, url)
+	p.mu.Unlock()
+
+	// Queueing. Cancellable, exactly as the real throttle is.
+	select {
+	case <-time.After(p.queued):
+	case <-ctx.Done():
+		return ytdlp.ChannelInfo{}, ctx.Err()
+	}
+	// The pacer has released the call; the process is about to run.
+	ytdlp.SignalStart(ctx)
+	select {
+	case <-time.After(p.working):
+	case <-ctx.Done():
+		return ytdlp.ChannelInfo{}, ctx.Err()
+	}
+	return p.info, nil
+}
+
+func (p *pacingResolver) calls() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.urls...)
+}
+
+// runUntilMetaResolved drives the worker until the pacing resolver has been
+// called and the refresh it triggered has settled.
+func runUntilMetaResolved(t *testing.T, w *Worker, p *pacingResolver, within time.Duration) bool {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		w.Run(ctx)
+		close(done)
+	}()
+	deadline := time.After(within)
+	for {
+		if len(p.calls()) > 0 {
+			// Let the refresh finish before tearing the worker down, so the
+			// assertions read a settled row rather than a racing one.
+			time.Sleep(150 * time.Millisecond)
+			cancel()
+			<-done
+			return true
+		}
+		select {
+		case <-deadline:
+			cancel()
+			<-done
+			return false
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+// THE REGRESSION. This worker is on the background lane, so its Runner calls
+// queue behind everything else in flight. A cap armed when Resolve is ENTERED
+// counts that deliberate wait against the process and kills a refresh that had
+// not been allowed to start yet — and the failure path stamps resolve_ok = 0,
+// the one state peeq uses to mean "this needs your attention". A channel got
+// flagged for having been patient.
+//
+// Here the queueing (80ms) is longer than the whole cap (50ms) and the actual
+// work (10ms) is well inside it. Armed on entry this fails; armed on the start
+// hook it succeeds.
+func TestWorker_capDoesNotCountThePacerWait(t *testing.T) {
+	s := newTestStore(t)
+	p := &pacingResolver{
+		queued:  80 * time.Millisecond,
+		working: 10 * time.Millisecond,
+		info:    ytdlp.ChannelInfo{UCID: "UCslow", Name: "New Name"},
+	}
+	w := newTestWorker(t, s, p, Deps{ResolveTimeout: 50 * time.Millisecond})
+	seedDue(t, s, "UCslow")
+
+	if !runUntilMetaResolved(t, w, p, 3*time.Second) {
+		t.Fatal("resolver was never called")
+	}
+
+	got, err := s.Get("UCslow")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Name != "New Name" {
+		t.Fatalf("name = %q, want the refreshed name — the cap counted the queueing wait", got.Name)
+	}
+	if !got.ResolveOk {
+		t.Fatal("resolve_ok = 0: the channel was flagged for having waited its turn")
+	}
+}
+
+// The other half: once yt-dlp IS running, a stall must still be caught. A cap
+// that never fired would be no cap at all, which is the failure mode a fix to
+// the above could easily introduce.
+func TestWorker_capStillCatchesAStallOnceRunning(t *testing.T) {
+	s := newTestStore(t)
+	p := &pacingResolver{
+		queued:  10 * time.Millisecond,
+		working: 2 * time.Second,
+		info:    ytdlp.ChannelInfo{UCID: "UChang", Name: "Never Arrives"},
+	}
+	rec := &fakeMetaRecorder{}
+	w := newTestWorker(t, s, p, Deps{ResolveTimeout: 40 * time.Millisecond, Activity: rec})
+	seedDue(t, s, "UChang")
+
+	if !runUntilMetaResolved(t, w, p, 3*time.Second) {
+		t.Fatal("resolver was never called")
+	}
+
+	got, err := s.Get("UChang")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Name == "Never Arrives" {
+		t.Fatal("a stalled resolve wrote its metadata anyway")
+	}
+
+	// And it is reported as a stall rather than as a bare "context canceled",
+	// which is what the reader would otherwise see on the Activity feed.
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.events) != 1 {
+		t.Fatalf("recorded %d events, want 1", len(rec.events))
+	}
+	if got := rec.events[0].Summary; got != "metadata refresh stalled" {
+		t.Fatalf("summary = %q, want %q", got, "metadata refresh stalled")
+	}
+}
+
+// A resolve that fails on its own — before yt-dlp ever ran — is NOT a stall,
+// and must not be reported as one. This is the case Stop() alone cannot tell
+// apart: it reports false both for a timer that fired and for one never armed.
+func TestWorker_ordinaryFailureIsNotReportedAsAStall(t *testing.T) {
+	s := newTestStore(t)
+	r := &fakeResolver{err: errors.New("channel unavailable")}
+	rec := &fakeMetaRecorder{}
+	w := newTestWorker(t, s, r, Deps{Activity: rec})
+	seedDue(t, s, "UCplain")
+
+	if !runUntilResolved(t, w, r) {
+		t.Fatal("resolver was never called")
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.events) != 1 {
+		t.Fatalf("recorded %d events, want 1", len(rec.events))
+	}
+	if got := rec.events[0].Summary; got != "metadata refresh failed" {
+		t.Fatalf("summary = %q, want %q — an ordinary failure was reported as a stall", got, "metadata refresh failed")
+	}
+}

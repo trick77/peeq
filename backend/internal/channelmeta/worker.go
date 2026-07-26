@@ -8,6 +8,7 @@ import (
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/sched"
+	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // ActivityRecorder records a metadata-refresh outcome for the Activity feed.
@@ -34,8 +35,12 @@ const (
 	// after an import, which trickles at 12 channels/hour rather than
 	// arriving as a burst.
 	pollInterval = 5 * time.Minute
-	// resolveTimeout bounds a single refresh. Generous because the call
-	// waits out the Runner's shared pacer before yt-dlp even starts.
+	// resolveTimeout bounds a single refresh, measured from the moment yt-dlp
+	// actually starts rather than from when Resolve is entered — see the
+	// DeferredTimer in refresh. It no longer has to be generous enough to
+	// absorb the pacer's queueing wait, only long enough for one yt-dlp call
+	// and two image fetches, but it is left where it was: shortening it is a
+	// separate decision from fixing what it measures.
 	resolveTimeout = 5 * time.Minute
 	// sqlTimeLayout is declared in refresher.go.
 )
@@ -58,7 +63,13 @@ type Deps struct {
 	Activity     ActivityRecorder
 	Now          func() time.Time // injectable clock (defaults to time.Now)
 	PollInterval time.Duration    // defaults to pollInterval
-	Logger       *slog.Logger
+	// ResolveTimeout bounds one refresh, measured from the moment yt-dlp starts
+	// rather than from when Resolve is entered. Defaults to resolveTimeout.
+	// Injectable for the same reason download.Deps.Watchdog is: the production
+	// value is minutes long, and the tests that matter are about what the cap
+	// does and does not count.
+	ResolveTimeout time.Duration
+	Logger         *slog.Logger
 }
 
 // Worker keeps stored channel metadata from going stale. Construct with
@@ -81,6 +92,9 @@ func NewWorker(d Deps) *Worker {
 	}
 	if d.PollInterval <= 0 {
 		d.PollInterval = pollInterval
+	}
+	if d.ResolveTimeout == 0 {
+		d.ResolveTimeout = resolveTimeout
 	}
 	if d.Logger == nil {
 		d.Logger = slog.Default()
@@ -183,9 +197,43 @@ func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
 		w.settle(channelID)
 	}()
 
-	rctx, cancel := context.WithTimeout(ctx, resolveTimeout)
+	// The cap runs from when yt-dlp starts, not from when Resolve is entered.
+	// This worker is on the BACKGROUND lane, so it queues behind every other
+	// Runner call in flight; timing from entry counted that wait against the
+	// process and killed a refresh that had not yet been allowed to begin.
+	// The failure path here stamps resolve_ok = 0 — the one state peeq uses to
+	// mean "this needs your attention" — so the channel got flagged for having
+	// been patient.
+	//
+	// Resolve makes exactly one Runner call (Resolver.ResolveChannel), so the
+	// hook fires once and the cap then covers that call plus the two image
+	// fetches after it, which is the work this bound is actually about.
+	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	if err := w.d.Refresher.Resolve(rctx, channelID, cached); err != nil {
+	bound := ytdlp.NewDeferredTimer(w.d.ResolveTimeout, cancel)
+	err := w.d.Refresher.Resolve(ytdlp.WithStartHook(rctx, bound.Start), channelID, cached)
+	// Stop unconditionally, and NOT inside the && below: it is what disarms the
+	// timer, so short-circuiting past it on the success path would leave an
+	// AfterFunc holding cancel alive for the rest of the cap.
+	stoppedInTime := bound.Stop()
+	// A cap that fired means yt-dlp really did stall — the hook only arms the
+	// timer once the process is running — so this says so rather than reporting
+	// the bare "context canceled" it surfaces as.
+	//
+	// Stop() reporting false is NOT enough on its own: it says the same thing
+	// for a timer that fired and for one that was never armed, and never-armed
+	// is the ordinary outcome whenever the call returns before reaching exec —
+	// the pause gate, the cookie gate, or a resolver that failed outright.
+	// rctx.Err() is what separates them, since only the timer cancels it. The
+	// ctx.Err() == nil term keeps an outer shutdown from being read as a stall.
+	stalled := err != nil && !stoppedInTime && rctx.Err() != nil && ctx.Err() == nil
+	if err != nil {
+		summary := "metadata refresh failed"
+		if stalled {
+			summary = "metadata refresh stalled"
+			w.d.Logger.Warn("channel metadata refresh stalled",
+				"channel_id", channelID, "after", w.d.ResolveTimeout)
+		}
 		w.d.Logger.Warn("channel metadata refresh failed", "channel_id", channelID, "err", err)
 		if w.d.Activity != nil {
 			name := cached.Name
@@ -194,7 +242,7 @@ func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
 			}
 			w.d.Activity.Record(activity.Event{
 				Kind: activity.KindChannelMeta, Outcome: activity.OutcomeWarn,
-				SubjectID: channelID, Subject: name, Summary: "metadata refresh failed",
+				SubjectID: channelID, Subject: name, Summary: summary,
 			})
 		}
 		return

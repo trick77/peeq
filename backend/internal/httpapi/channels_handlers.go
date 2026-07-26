@@ -19,6 +19,16 @@ import (
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
+// resolveCap bounds a channel metadata resolve, measured from the moment yt-dlp
+// starts rather than from when the call is entered — both handlers below arm it
+// through ytdlp.WithStartHook. Shared by the two so the same work has the same
+// bound whichever way a person triggered it.
+//
+// A var rather than a const only so the tests can shorten it: the production
+// value is two minutes, and what needs asserting is which side of the start
+// hook the clock runs on, not how long it is.
+var resolveCap = 2 * time.Minute
+
 // ChannelResolver is channelmeta.Resolver: the yt-dlp call that turns a
 // canonicalized channel url into the channel's identity and metadata. It moved
 // to channelmeta when the fetch-and-store step did, since the background
@@ -475,9 +485,25 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 		// carries a deadline, so it must skip the background reservation queue —
 		// starving behind it is what let the 2-minute timeout expire and strand
 		// the channel with resolve_ok=0 (the case #106 is about).
-		ctx, cancel := context.WithTimeout(ytdlp.WithInteractive(context.Background()), 2*time.Minute)
+		//
+		// The lane made that rarer; the cap starting at the wrong moment is
+		// what made it possible at all. WithInteractive skips the background
+		// reservation queue but not the throttle, so an interactive call still
+		// waits — and a cap armed on entry counted that wait as though yt-dlp
+		// were already hung. It runs from the process actually starting now.
+		rctx, cancel := context.WithCancel(ytdlp.WithInteractive(context.Background()))
 		defer cancel()
-		if err := s.metadata.Resolve(ctx, channelID, cached); err != nil {
+		bound := ytdlp.NewDeferredTimer(resolveCap, cancel)
+		err := s.metadata.Resolve(ytdlp.WithStartHook(rctx, bound.Start), channelID, cached)
+		stoppedInTime := bound.Stop()
+		if err != nil {
+			// rctx.Err() alongside stoppedInTime: Stop reports false both for a
+			// timer that fired and for one never armed, and never-armed is the
+			// ordinary case when the call returns before reaching exec. Only
+			// the timer cancels rctx, so that is what tells the two apart.
+			if !stoppedInTime && rctx.Err() != nil {
+				slog.Warn("channel resolve stalled", "channel_id", channelID, "after", resolveCap)
+			}
 			slog.Warn("channel resolve failed", "channel_id", channelID, "err", err)
 		}
 	}()
@@ -532,12 +558,34 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	// refresh failed" — the one state peeq uses to mean "this needs your
 	// attention" — because someone navigated away. The work is worth finishing
 	// either way; only the response is lost.
-	ctx, cancel := context.WithTimeout(
-		ytdlp.WithInteractive(context.WithoutCancel(r.Context())), 2*time.Minute)
+	//
+	// The cap runs from when yt-dlp starts rather than from here, for the same
+	// reason: "yt-dlp's throttle, then two image fetches" says outright that
+	// most of the elapsed time can be wait rather than work, and counting the
+	// wait against the process lands in that same resolve_ok = 0 path.
+	rctx, cancel := context.WithCancel(
+		ytdlp.WithInteractive(context.WithoutCancel(r.Context())))
 	defer cancel()
-	if err := s.metadata.Resolve(ctx, id, c); err != nil {
+	bound := ytdlp.NewDeferredTimer(resolveCap, cancel)
+	err = s.metadata.Resolve(ytdlp.WithStartHook(rctx, bound.Start), id, c)
+	stoppedInTime := bound.Stop()
+	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
 			writeJSONError(w, http.StatusConflict, "cookie required")
+			return
+		}
+		// A fired cap surfaces as a bare "context canceled", which tells the
+		// reader nothing — 504 and a sentence do.
+		//
+		// rctx.Err() alongside stoppedInTime: Stop reports false both for a
+		// timer that fired and for one never armed, and never-armed is the
+		// ordinary case for any resolve that failed before reaching exec. Only
+		// the timer cancels rctx. Without that term every ordinary resolve
+		// failure would be reported as a timeout.
+		if !stoppedInTime && rctx.Err() != nil {
+			slog.Warn("channel refresh stalled", "channel_id", id, "after", resolveCap)
+			writeJSONError(w, http.StatusGatewayTimeout,
+				"refresh timed out: YouTube did not answer in "+resolveCap.String())
 			return
 		}
 		writeJSONError(w, http.StatusBadGateway, "refresh failed: "+err.Error())
