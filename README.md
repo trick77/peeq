@@ -1,8 +1,9 @@
 # peeq
 
-Self-hosted YouTube archiver. A Go backend serving a JSON API and an embedded React SPA, with a
-single SQLite file for state — no database server, no queue, no external services beyond the two
-AI endpoints described below.
+Self-hosted YouTube watch pipeline — not an archiver. Videos flow *through* peeq rather than
+accumulate in it: new uploads are triaged, downloaded, summarized, watched, and then reclaimed.
+A Go backend serving a JSON API and an embedded React SPA, with a single SQLite file for state —
+no database server, no queue, no external services beyond the two AI endpoints described below.
 
 ## What it does
 
@@ -21,9 +22,16 @@ results linking to the timestamp inside the video. Keyword search needs no exter
 the embeddings endpoint is unreachable, search degrades to keyword-only with a logged warning
 rather than failing.
 
-**Categories.** Each video is classified into one of fifteen categories (AI, Science, Gaming,
-History, …) on a best-effort basis. The Library has a category filter that composes with the other
-filters.
+**Categories.** Each video is classified into one of twenty-two categories (AI, Science, Gaming,
+History, …) on a best-effort basis, with `uncategorized` as the fallback. The Library has a
+category filter that composes with the other filters.
+
+**Retention.** Media is transient by design. An hourly sweeper deletes the files of any video that
+is watched, not marked favorite, and whose watch date is older than the retention window
+(`retention_days`, 14 by default), skipping anything currently playing. The row survives as a
+tombstone, so the summary, categories and the transcript stay listed and searchable after the media
+is gone, and the video can be pulled down again on demand. Marking a video favorite exempts it from
+the sweep — that is how you keep something permanently.
 
 **Recovery.** A failed download can be retried per video from the Library, the player, or a video
 card, without re-adding it.

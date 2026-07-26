@@ -1,6 +1,7 @@
 # peeq
 
-Self-hosted YouTube archiver: Go backend serving a JSON API + an embedded React SPA, backed by SQLite.
+Self-hosted YouTube watch pipeline (NOT an archiver — watched non-favorites are swept off disk):
+Go backend serving a JSON API + an embedded React SPA, backed by SQLite.
 
 ## Working conventions
 - Docs, specs, and code comments are **English only**.
