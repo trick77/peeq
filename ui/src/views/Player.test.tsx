@@ -23,7 +23,7 @@ const mockVideo: Video = {
   summary: "",
   chapters: [],
   key_points: [],
-  summary_status: "",
+  summary_status: "pending",
   audio_language: "",
   has_subtitles: false,
   category: "uncategorized",

@@ -1,5 +1,6 @@
 import { api } from "./http";
 import type { Chapter, KeyPoint } from "./types";
+import type { SummaryStatus } from "./enums";
 // The segment shape is owned by the Scrubber, which both players render.
 import type { SponsorblockSegment } from "../components/Scrubber";
 
@@ -28,7 +29,7 @@ export type PublicVideo = {
   channel_name: string;
   duration_seconds?: number;
   summary: string;
-  summary_status: string;
+  summary_status: SummaryStatus;
   chapters?: Chapter[];
   key_points?: KeyPoint[];
   has_thumbnail: boolean;

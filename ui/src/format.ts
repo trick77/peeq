@@ -2,6 +2,8 @@
 // Player (Task 14). Kept framework-free so they're trivially unit-testable
 // alongside the components that use them.
 
+import { SUMMARY_PHASE_NAMES, type SummaryPhase } from "./api/enums";
+
 // formatDuration renders whole seconds as mono "M:SS" (or "H:MM:SS" past an
 // hour), matching the mockup's `.dur`/`.scrub-times` badges.
 export function formatDuration(totalSeconds: number | undefined): string {
@@ -25,16 +27,27 @@ export function formatDuration(totalSeconds: number | undefined): string {
 
 // The summarize worker runs four stages in order (summarize → classify → embed
 // → key points), emitting a live phase for each on the "summary" SSE event.
-// SUMMARY_PHASES is the single source of truth mapping each phase string to its
-// display label and 1-based step, so the Queue can render "Key points 4/4" with
-// a matching progress meter. Anything unrecognised (or absent, before the first
-// event) reads as the first stage, "Summarizing".
-const SUMMARY_PHASES = [
-  { phase: "summarizing", label: "Summarizing" },
-  { phase: "classifying", label: "Classifying" },
-  { phase: "embedding", label: "Embedding" },
-  { phase: "keypoints", label: "Key points" },
-] as const;
+// SUMMARY_PHASES maps each phase string to its display label and 1-based step,
+// so the Queue can render "Key points 4/4" with a matching progress meter.
+// Anything unrecognised (or absent, before the first event) reads as the first
+// stage, "Summarizing".
+//
+// The phase strings themselves come from SUMMARY_PHASE_NAMES, which src/
+// wireenums.test.ts holds to summarize.Phases in Go — order included, which is
+// exactly what the "N/4" step depends on. Only the LABELS live here, as a total
+// Record, so a renamed phase in Go is a compile error rather than a meter that
+// silently falls back to step 1.
+const PHASE_LABELS: Record<SummaryPhase, string> = {
+  summarizing: "Summarizing",
+  classifying: "Classifying",
+  embedding: "Embedding",
+  keypoints: "Key points",
+};
+
+const SUMMARY_PHASES = SUMMARY_PHASE_NAMES.map((phase) => ({
+  phase,
+  label: PHASE_LABELS[phase],
+}));
 
 // SUMMARY_PHASE_COUNT — the "/4" denominator and the number of progress dots.
 export const SUMMARY_PHASE_COUNT = SUMMARY_PHASES.length;

@@ -23,6 +23,7 @@ import { setPlaybackState } from "../api/playback";
 import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareControl } from "../components/ShareControl";
 import type { Video } from "../api/types";
+import type { SummaryStatus } from "../api/enums";
 import { ApiError } from "../api/http";
 import { formatDuration, gradientClassFor } from "../format";
 // The VTT parser and transcript helpers live in ../vtt so the public share page
@@ -317,7 +318,10 @@ export function Player({
     const controller = new AbortController();
     streamDownloads((evt) => {
       if (evt.event !== "summary") return;
-      const payload = evt.data as { video_id?: string; status?: string };
+      const payload = evt.data as {
+        video_id?: string;
+        status?: SummaryStatus;
+      };
       if (payload.video_id !== videoId || !payload.status) return;
       if (payload.status === "done") {
         // Refetch to pull the finished summary/chapters/key-points. Guarded

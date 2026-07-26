@@ -6,8 +6,22 @@
 //     explicit `json:"displayName"`/`json:"role"` tags)
 // Do not "fix" one to match the other — that would just diverge from what
 // the wire actually sends.
+//
+// The enum-valued fields below are typed against ./enums, whose sets are held
+// to the Go constants by src/wireenums.test.ts. Before that they were plain
+// `string`, which is why nothing noticed that the rail's cookie label map had
+// an "expired" case the backend never sends.
+import type {
+  Availability,
+  CookieStatus,
+  JobState,
+  Role,
+  SummaryJobState,
+  SummaryStatus,
+  VideoStatus,
+} from "./enums";
 
-export type Role = string;
+export type { Role };
 
 export type User = {
   id: string;
@@ -55,8 +69,8 @@ export type Video = {
   video_codec?: string;
   video_height?: number;
   audio_codec?: string;
-  availability: string;
-  status: string;
+  availability: Availability;
+  status: VideoStatus;
   error_message?: string;
   watched: boolean;
   watched_at?: string;
@@ -86,7 +100,7 @@ export type Video = {
   summary: string;
   chapters: Chapter[];
   key_points: KeyPoint[];
-  summary_status: string;
+  summary_status: SummaryStatus;
   audio_language: string;
   has_subtitles: boolean;
   // category mirrors the Task 7 classification field — always present,
@@ -155,7 +169,7 @@ export type Job = {
   title?: string;
   channel_name?: string;
   channel_id?: string;
-  state: string;
+  state: JobState;
   priority: number;
   attempts: number;
   last_error?: string;
@@ -171,7 +185,7 @@ export type SummaryJob = {
   title?: string;
   channel_name?: string;
   channel_id?: string;
-  state: string;
+  state: SummaryJobState;
   last_error?: string;
 };
 
@@ -187,7 +201,7 @@ export type DownloadProgressEvent = {
 // Settings mirrors settings.Settings (the non-secret view — the cookie body
 // itself is never present in this shape, only its status/timestamp).
 export type Settings = {
-  cookie_status: string;
+  cookie_status: CookieStatus;
   cookie_updated_at?: string;
   format_preset: string;
   format_custom: string;
@@ -297,7 +311,7 @@ export type PendingItem = {
 // Settings.cookie_status: this is the dedicated health-check shape used by
 // the rail's cookie status indicator.
 export type CookieHealth = {
-  status: string;
+  status: CookieStatus;
   updated_at?: string;
   present: boolean;
 };

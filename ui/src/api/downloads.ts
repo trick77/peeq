@@ -1,5 +1,6 @@
 import { api, ApiError } from "./http";
 import { streamSSE, type SSEEvent } from "./stream";
+import type { JobState } from "./enums";
 import type { Job } from "./types";
 
 // CookieRequiredError signals the 409 the channel add/refresh handlers return
@@ -25,7 +26,7 @@ export async function addDownload(url: string): Promise<Job> {
       video_id: string;
       title?: string;
       channel_name?: string;
-      state: string;
+      state: JobState;
       priority: number;
     }>("/api/downloads", { url }, "failed to add download");
     return { ...created, attempts: 0 };
