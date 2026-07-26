@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -548,9 +547,14 @@ func TestSponsorblockSegmentsFromInfo_dropsWholeVideoLabel(t *testing.T) {
 // process. It now reaches the logger at debug.
 func TestDownload_logsTheLinesThatArentProgress(t *testing.T) {
 	mediaDir := t.TempDir()
+	// A plain buffer, no locking. execWithProgress calls onLine synchronously
+	// inside its own scan loop, on the goroutine that called Download, and this
+	// test reads the buffer only after Download has returned — so there is no
+	// concurrent writer to guard against. An earlier version wrapped this in a
+	// mutex and said the scanner ran on its own goroutine; it does not, and a
+	// lock that protects nothing invites the next reader to believe otherwise.
 	var buf bytes.Buffer
-	var mu sync.Mutex
-	logger := slog.New(slog.NewTextHandler(&syncWriter{w: &buf, mu: &mu}, &slog.HandlerOptions{
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
 
@@ -575,9 +579,7 @@ func TestDownload_logsTheLinesThatArentProgress(t *testing.T) {
 		t.Fatalf("download: %v", err)
 	}
 
-	mu.Lock()
 	out := buf.String()
-	mu.Unlock()
 
 	for _, want := range []string{"Downloading webpage", "Downloading 1 format(s)"} {
 		if !strings.Contains(out, want) {
@@ -594,17 +596,4 @@ func TestDownload_logsTheLinesThatArentProgress(t *testing.T) {
 	if strings.Contains(out, "10.0%") || strings.Contains(out, "[download]") {
 		t.Fatalf("progress lines must not be logged\n%s", out)
 	}
-}
-
-// syncWriter serialises writes from slog, which the download path may call
-// from the scanner goroutine while the test reads the buffer.
-type syncWriter struct {
-	w  *bytes.Buffer
-	mu *sync.Mutex
-}
-
-func (s *syncWriter) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.w.Write(p)
 }
