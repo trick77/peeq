@@ -13,7 +13,6 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
-	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
@@ -107,7 +106,7 @@ type Deps struct {
 	// Rag is the transcript-chunk/embedding store backing semantic search
 	// and the delete-purge path. Optional: when nil, /api/search returns
 	// 503.
-	Rag *rag.Store
+	Rag RagStore
 	// Embedder turns search query text into an embedding vector to match
 	// against Rag. Optional: when nil, /api/search returns 503.
 	Embedder SearchEmbedder
@@ -201,7 +200,7 @@ type server struct {
 
 	ledger *channelvideos.Store
 
-	rag         *rag.Store
+	rag         RagStore
 	embedder    SearchEmbedder
 	summaryJobs SummaryEnqueuer
 	summaryList SummaryLister
