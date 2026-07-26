@@ -191,6 +191,55 @@ describe("Inbox", () => {
     expect(await screen.findByText("Your inbox is empty.")).toBeInTheDocument();
   });
 
+  // The flicker: an empty `items` used to mean both "the inbox is empty" and
+  // "the inbox has not arrived", so the mount paint claimed the first — with no
+  // toolbar — and the response replaced it a moment later with search, chips
+  // and a full grid.
+  describe("first paint", () => {
+    it("claims nothing about the inbox until the fetch settles", async () => {
+      // Given: a request that has not answered yet.
+      let settle: (items: PendingItem[]) => void = () => {};
+      vi.mocked(listPending).mockReturnValue(
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+      );
+
+      // When
+      render(<Inbox />);
+
+      // Then: no verdict on an inbox nobody has heard from — and no toolbar to
+      // pop in behind it either.
+      expect(screen.getByText("Loading…")).toBeInTheDocument();
+      expect(screen.queryByText("Your inbox is empty.")).toBeNull();
+      expect(screen.queryByLabelText("Search the inbox")).toBeNull();
+
+      // When: the answer lands.
+      settle([itemA, itemB]);
+
+      // Then: toolbar and grid arrive in the same paint the "Loading…" leaves.
+      expect(
+        await screen.findByText("First pending video"),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText("Search the inbox")).toBeInTheDocument();
+      expect(screen.queryByText("Loading…")).toBeNull();
+    });
+
+    it("reports a failed load instead of an empty inbox", async () => {
+      // Given
+      vi.mocked(listPending).mockRejectedValue(new Error("pending is down"));
+
+      // When
+      render(<Inbox />);
+
+      // Then: the error replaces the "Loading…" line, and the page does not
+      // also claim the inbox is empty — nothing is known about it.
+      expect(await screen.findByText("pending is down")).toBeInTheDocument();
+      expect(screen.queryByText("Loading…")).toBeNull();
+      expect(screen.queryByText("Your inbox is empty.")).toBeNull();
+    });
+  });
+
   it("filters the grid to a single channel via its chip", async () => {
     const user = userEvent.setup();
     render(<Inbox />);
