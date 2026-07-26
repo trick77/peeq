@@ -77,12 +77,17 @@ type ActivityRecorder interface {
 // Deps are the scheduler's collaborators and tunables. The stores, Lister,
 // and CookieStatus are required; the rest have safe defaults applied in New.
 type Deps struct {
-	Channels     *channels.Store
-	Ledger       *channelvideos.Store
-	Videos       *videos.Store
-	Jobs         JobEnqueuer
-	Settings     *settings.Store
-	Lister       ChannelLister
+	Channels *channels.Store
+	Ledger   *channelvideos.Store
+	Videos   *videos.Store
+	Jobs     JobEnqueuer
+	Settings *settings.Store
+	Lister   ChannelLister
+	// Prober, when set, re-checks whether a video parked as unavailable
+	// (members-only, age-gated, ...) has become reachable. Nil leaves parked
+	// rows moving only on the listing's own availability field, which is
+	// usually absent — see VideoProber. Production always sets it.
+	Prober       VideoProber
 	CookieStatus func(ctx context.Context) string // settings.CookieStatus
 	// AllowAnonymous is the dev-only escape hatch (config.AllowAnonymousYoutube)
 	// mirrored here: when true, a non-"valid" CookieStatus no longer skips the
@@ -408,6 +413,143 @@ func (s *Scheduler) backoff(channelID string) {
 // live → 'seen'), auto-downloaded ('queued' + videos row + job), or left
 // 'pending' for a manual decision. Finally the subscription's scan schedule
 // is stamped (and its baseline recorded on the first pass).
+// unavailableRecheckWindow is how long peeq waits between checks on a parked
+// video before spending a yt-dlp call to ask whether the gate has lifted.
+//
+// A window is needed at all because the cheap signal is unreliable: yt-dlp
+// fills a flat entry's `availability` only when the tab card renders a badge,
+// so most listings say nothing either way. Silence cannot revive a row (every
+// parked video would bounce back into the inbox on the next pass) and cannot
+// bury one either (a members-only upload the channel later made public would
+// never resurface). The probe below is what breaks the tie; this is how often
+// it is allowed to run per video.
+const unavailableRecheckWindow = 14 * 24 * time.Hour
+
+// maxUnavailableProbes caps how many parked videos one scan pass may probe.
+// Each probe is a real per-video yt-dlp call on the shared pacer, and a channel
+// with a large members-only back catalogue could otherwise turn a single pass
+// into dozens of sequential requests. Rows not reached this pass keep their
+// stamps and are simply first in line next time.
+const maxUnavailableProbes = 3
+
+// VideoProber resolves one video's metadata — the reliable source of the
+// availability field, unlike a flat channel listing, which carries it only
+// when the tab card happens to show a badge. *ytdlp.Runner satisfies it.
+//
+// Nil disables probing entirely: parked rows then move only on the listing's
+// own (rare) positive evidence. Tests that do not care leave it nil.
+type VideoProber interface {
+	Metadata(ctx context.Context, rawURL string) (*ytdlp.Meta, error)
+}
+
+// recheckUnavailable decides what to do with a ledger row already parked in
+// StateUnavailable, now that a scan has listed the video again. It reports
+// whether the row was revived — returned to the inbox, or queued outright on
+// an autodownload channel.
+//
+// The rule throughout is that a row moves on EVIDENCE, never on the mere
+// passage of time. That distinction is the whole design: the video that
+// prompted this work reached the inbox precisely BECAUSE its listing carried
+// no badge, so a time-triggered re-offer would have put it back in front of
+// the user every fortnight forever, each time to fail on click.
+//
+//   - listing shows a gate → stay parked, and restamp: fresh evidence the gate
+//     still stands, so the probe clock legitimately resets. A channel scanned
+//     daily therefore never spends a probe on a video it can already see is
+//     gated.
+//   - listing shows an ungated availability → revive now. Positive evidence,
+//     and free.
+//   - listing says nothing → probe, at most once per window per video and at
+//     most maxUnavailableProbes times per pass. The probe's answer is evidence
+//     either way; a probe that produces no answer changes nothing.
+func (s *Scheduler) recheckUnavailable(ctx context.Context, row *channelvideos.Entry, e ytdlp.ChannelEntry, sub *channels.Subscription, probes *int) (bool, error) {
+	if reason := e.GateReason(); reason != "" {
+		return false, s.d.Ledger.SetUnavailable(row.VideoID, reason)
+	}
+	if e.Availability == "" {
+		open, checked := s.probeAvailability(ctx, row, probes)
+		if !checked {
+			return false, nil
+		}
+		if !open {
+			// Confirmed still gated. SetUnavailable restamps, which is what
+			// spaces the next probe a full window out.
+			return false, s.d.Ledger.SetUnavailable(row.VideoID, row.UnavailableReason)
+		}
+	}
+	// Revive. Autodownload is honoured rather than forcing everything through
+	// the inbox: the channel's setting is what the user asked for, and a video
+	// that was only ever withheld because of a gate should land where an
+	// ungated one from the same channel would have.
+	//
+	// Order matches the new-video path for the same reason: enqueue first, so a
+	// half-done revive leaves the row parked (and re-checkable) rather than
+	// pending-but-never-queued.
+	if sub.Autodownload {
+		if err := s.enqueueAuto(e, sub); err != nil {
+			return false, err
+		}
+		return true, s.d.Ledger.SetState(row.VideoID, channelvideos.StateQueued)
+	}
+	return true, s.d.Ledger.SetState(row.VideoID, channelvideos.StatePending)
+}
+
+// probeAvailability asks yt-dlp directly whether a parked video is reachable
+// now. It returns (open, checked): checked is false when no probe was made or
+// it produced no usable answer, and the caller must then leave the row exactly
+// as it found it.
+//
+// Every "no answer" case is deliberately indistinguishable to the caller —
+// probing disabled, budget spent, window not elapsed, yt-dlp errored — because
+// they all mean the same thing: nothing was learned, so nothing may change. In
+// particular a transient failure must NOT restamp, or a run of network trouble
+// would silently push the next real check out by a fortnight each time.
+func (s *Scheduler) probeAvailability(ctx context.Context, row *channelvideos.Entry, probes *int) (open bool, checked bool) {
+	// The URL check is not merely defensive. A row with none can never be
+	// answered, and without this it would fail its probe on every pass without
+	// restamping — eating a slot from the per-pass budget forever and starving
+	// the rows that could actually be answered.
+	if s.d.Prober == nil || row.URL == "" || *probes >= maxUnavailableProbes || !s.recheckDue(row.UnavailableAt) {
+		return false, false
+	}
+	*probes++
+	meta, err := s.d.Prober.Metadata(ctx, row.URL)
+	if err != nil {
+		// A terminal error IS an answer — the video is still walled off — and
+		// it is the same answer as "gated", so it needs no separate branch.
+		// Anything else (network, bot-block, kill-switch) is not an answer at
+		// all, and treating it as one is exactly the silent-burial failure mode
+		// this state exists to prevent.
+		var terminal *ytdlp.TerminalError
+		if errors.As(err, &terminal) {
+			return false, true
+		}
+		s.d.Logger.Warn("scan: availability probe failed", "video_id", row.VideoID, "err", err)
+		return false, false
+	}
+	return videos.NormalizeAvailability(meta.Availability) == videos.AvailabilityAvailable, true
+}
+
+// recheckDue reports whether unavailableRecheckWindow has elapsed since the row
+// was last confirmed unavailable — i.e. whether a probe is allowed yet.
+//
+// Note the two clocks: unavailable_at is written by SQLite's datetime('now')
+// while the comparison uses the injectable Deps.Now. In production both are
+// real UTC and agree; they only diverge under a frozen test clock, which is why
+// the window test backdates the stamp rather than advancing Now.
+//
+// A row with no stamp is treated as due: erring toward one extra probe is much
+// cheaper than erring toward silent burial.
+func (s *Scheduler) recheckDue(unavailableAt string) bool {
+	if unavailableAt == "" {
+		return true
+	}
+	parked, err := time.Parse(sqlTimeLayout, unavailableAt)
+	if err != nil {
+		return true
+	}
+	return s.d.Now().UTC().Sub(parked) >= unavailableRecheckWindow
+}
 func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) error {
 	set, err := s.d.Settings.Get(ctx)
 	if err != nil {
@@ -423,13 +565,20 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	// Tally for the Activity record: how many genuinely-new uploads were queued
 	// automatically vs left for a manual decision, and (on the first pass) how
 	// many the baseline snapshot recorded.
-	var queuedCount, pendingCount, baselineCount, backlogCount int
+	var queuedCount, pendingCount, baselineCount, backlogCount, unavailableCount int
+	// probes is this pass's shared budget for per-video availability re-checks,
+	// threaded through rather than held on the Scheduler so it resets per pass
+	// and stays visible at the one place that spends it.
+	var probes int
 	for _, e := range entries {
-		exists, err := s.d.Ledger.Exists(e.ID)
+		// Read the whole row, not just its existence: an 'unavailable' row is
+		// the one kind of known video a scan must still act on, so the state
+		// has to be in hand here.
+		row, err := s.d.Ledger.Get(e.ID)
 		if err != nil {
 			return err
 		}
-		if exists {
+		if row != nil {
 			// Dedup vs ledger — but heal the row's date first. Rows written
 			// before migration 0008 have none, and a known video is never
 			// revisited anywhere else, so this is the only chance an item
@@ -437,6 +586,20 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 			// no-ops; see Ledger.SetPublishedAt.
 			if err := s.d.Ledger.SetPublishedAt(e.ID, e.PublishedAt); err != nil {
 				return err
+			}
+			if row.State != channelvideos.StateUnavailable {
+				continue
+			}
+			unavailableCount++
+			revived, err := s.recheckUnavailable(ctx, row, e, sub, &probes)
+			if err != nil {
+				return err
+			}
+			switch {
+			case revived && sub.Autodownload:
+				queuedCount++
+			case revived:
+				pendingCount++
 			}
 			continue
 		}
@@ -500,6 +663,25 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 			// today will not grow longer tomorrow, so re-listing it every pass
 			// forever would buy nothing.
 			entry.State = channelvideos.StateSeen
+		case e.GateReason() != "":
+			// The listing itself says peeq cannot fetch this: members-only,
+			// premium, or auth-walled. Park it rather than offering it, so a
+			// gated upload never reaches the inbox only to fail the moment the
+			// user clicks Download.
+			//
+			// Best-effort by nature — yt-dlp only fills `availability` when the
+			// tab card carries a badge, so this branch catches what it can and
+			// the download worker's terminal-error path catches the rest. The
+			// two write the same state and the same reason, so nothing
+			// downstream has to care which one saw it first.
+			//
+			// ORDER: after the duration floor, so a gated video that is also too
+			// short still gets the cheaper terminal 'seen' and is never
+			// re-checked; before Autodownload, so a gated upload on an
+			// autodownload channel is not queued into a guaranteed failure.
+			entry.State = channelvideos.StateUnavailable
+			entry.UnavailableReason = e.GateReason()
+			unavailableCount++
 		case sub.Autodownload:
 			entry.State = channelvideos.StateQueued
 			queuedCount++
@@ -552,9 +734,15 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	// of thing that must never be silent — the one-shot burst when a new source
 	// tab first appears should be readable in the log, not inferred from an
 	// inbox that stayed empty.
+	// unavailable is broken out for the same reason as backlog: items peeq
+	// declines to offer must be readable in the log rather than inferred from
+	// an inbox that stayed empty. It counts every parked row this pass touched
+	// — newly parked, re-confirmed, or revived — so the number answers "how
+	// much of this channel is walled off from me?" rather than only reporting
+	// change.
 	s.d.Logger.Info("scan complete", "channel", sub.ChannelID,
 		"listed", len(entries), "streams", streamCount, "new", newCount,
-		"backlog", backlogCount)
+		"backlog", backlogCount, "unavailable", unavailableCount)
 
 	// Activity record. The silence rule applies: a scan that surfaced nothing new
 	// (the common case) writes nothing, so the agenda is not a wall of "0 new".

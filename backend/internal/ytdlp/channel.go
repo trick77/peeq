@@ -24,6 +24,36 @@ type ChannelEntry struct {
 	ThumbnailURL    string
 	LiveStatus      string
 	PublishedAt     string
+	// Availability is yt-dlp's raw availability string when the flat listing
+	// carries one ("subscriber_only", "needs_auth", "premium_only",
+	// "public", ...), and "" when it does not.
+	//
+	// A flat entry is metadata-poor and this field is BEST-EFFORT: yt-dlp
+	// derives it from the badge on the tab card, so it is present for a
+	// members-only upload on the tabs that render that badge and absent
+	// otherwise. Treat "" as "no opinion", never as "public" — the only safe
+	// reading is that a non-empty gated value is positive evidence, and
+	// silence is nothing at all. GateReason encodes exactly that.
+	Availability string
+}
+
+// GateReason maps a flat entry's best-effort availability onto the same
+// vocabulary TerminalError.Reason uses, so a video kept out of the inbox by
+// the listing and one kept out by a failed download are labelled identically.
+// It returns "" when the listing says nothing, or says something ungated —
+// the caller must treat that as "proceed", since a flat entry omitting the
+// field is the common case, not a signal.
+func (e ChannelEntry) GateReason() string {
+	switch e.Availability {
+	case "subscriber_only":
+		return "members"
+	case "needs_auth":
+		return "private"
+	case "premium_only":
+		return "premium"
+	default:
+		return ""
+	}
 }
 
 // flatEntry mirrors one yt-dlp flat-playlist entry. duration is a float
@@ -36,6 +66,11 @@ type flatEntry struct {
 	Duration   float64 `json:"duration"`
 	LiveStatus string  `json:"live_status"`
 	Timestamp  int64   `json:"timestamp"`
+	// Availability is set by yt-dlp's tab extractor from the card's badge
+	// (members-only, unlisted, ...) and is simply absent when there is no
+	// badge to read. See ChannelEntry.Availability for why "" must never be
+	// read as "public".
+	Availability string `json:"availability"`
 	// ReleaseTimestamp is when a broadcast went live, and is the ONLY date a
 	// /streams entry is guaranteed to carry: approximate_date derives timestamp
 	// from the relative-time text on an upload card, and a stream card carries
@@ -253,6 +288,7 @@ func parseChannelEntries(out []byte) ([]ChannelEntry, error) {
 			ThumbnailURL:    thumb,
 			LiveStatus:      e.LiveStatus,
 			PublishedAt:     unixToDate(firstTimestamp(e.Timestamp, e.ReleaseTimestamp)),
+			Availability:    e.Availability,
 		})
 	}
 	return entries, nil

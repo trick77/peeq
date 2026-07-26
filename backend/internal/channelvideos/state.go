@@ -18,11 +18,22 @@ package channelvideos
 // StatePending is the inbox. StateIgnored is a dismissal that must survive
 // later scans, which is the whole reason the ledger is durable rather than
 // derived.
+//
+// StateUnavailable (added by 0014) is the odd one out: alone among these it is
+// neither terminal nor a user decision. It marks a video peeq knows about but
+// cannot fetch — members-only, age-gated, geo-blocked, private, deleted — and
+// a scan pass revisits it, returning it to StatePending once the gate lifts.
+// That non-terminality is the whole point: Exists matches on video_id with no
+// state predicate, so any state a scan does not revisit buries the video for
+// good, which is the wrong answer for a wall that can come down. See
+// Store.SetUnavailable and Entry.UnavailableAt for how the gate is re-checked
+// when the channel listing cannot be trusted to report it.
 const (
-	StateSeen    = "seen"
-	StatePending = "pending"
-	StateIgnored = "ignored"
-	StateQueued  = "queued"
+	StateSeen        = "seen"
+	StatePending     = "pending"
+	StateIgnored     = "ignored"
+	StateQueued      = "queued"
+	StateUnavailable = "unavailable"
 )
 
 // States is the fixed enum accepted by the channel_videos.state CHECK
@@ -32,4 +43,5 @@ var States = []string{
 	StatePending,
 	StateIgnored,
 	StateQueued,
+	StateUnavailable,
 }
