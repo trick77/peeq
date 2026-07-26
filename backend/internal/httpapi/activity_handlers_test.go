@@ -80,6 +80,54 @@ func TestActivity_listReturnsNewestFirstWithRetainedMax(t *testing.T) {
 	}
 }
 
+// The search box is a server parameter, not a client filter: the page holds
+// only what it has paged in, so filtering there would answer "nothing" for
+// something the log plainly contains.
+func TestActivity_listFiltersByQuery(t *testing.T) {
+	deps, act, _, _, _, _, _ := activityTestDeps(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	act.Record(activity.Event{Kind: activity.KindScan, Outcome: activity.OutcomeOK, Subject: "Veritasium", Summary: "3 new"})
+	act.Record(activity.Event{Kind: activity.KindDownload, Outcome: activity.OutcomeOK, Subject: "A clip", Detail: "412 MiB"})
+
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"matches a subject", "?q=verita", "Veritasium"},
+		{"matches a detail", "?q=412", "A clip"},
+		{"ignores surrounding whitespace", "?q=%20%20clip%20%20", "A clip"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := getActivityJSON(t, h, cookie, "/api/activity"+tc.query)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+			}
+			var resp activityListResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if len(resp.Events) != 1 || resp.Events[0].Subject != tc.want {
+				t.Fatalf("events = %+v, want just %q", resp.Events, tc.want)
+			}
+		})
+	}
+
+	// A query of nothing but spaces is a user typing, not a filter.
+	t.Run("blank query returns everything", func(t *testing.T) {
+		rec := getActivityJSON(t, h, cookie, "/api/activity?q=%20")
+		var resp activityListResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Events) != 2 {
+			t.Fatalf("got %d events, want 2", len(resp.Events))
+		}
+	})
+}
+
 func TestActivity_listEmptyIsArrayNotNull(t *testing.T) {
 	deps, _, _, _, _, _, _ := activityTestDeps(t)
 	h := New(deps)

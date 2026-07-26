@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listActivity, type ActivityEvent } from "../api";
+import { SearchField } from "../components/SearchField";
 import { Icon } from "../icons";
 import { DOT } from "../sep";
-import { kindOf, leadCap, parseUTC, relTime, subjectNode } from "./agenda";
+import {
+  clockOf,
+  kindOf,
+  leadCap,
+  parseUTC,
+  relTime,
+  subjectNode,
+} from "./agenda";
 
 // History — the durable log of what peeq's workers actually did, newest first.
 // A pure record: nothing here is actionable, so the page carries no buttons.
@@ -76,14 +84,6 @@ function detailParts(e: ActivityEvent): { lead: string; rest: string } {
   return { lead, rest: [summary, e.detail].filter(Boolean).join(DOT) };
 }
 
-// clockOf renders the event's wall-clock time in the viewer's zone. The gutter
-// is about placing a row within its day, so it deliberately drops the date --
-// the day separator above already carries it.
-function clockOf(at: string): string {
-  const d = parseUTC(at);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
 // dayKeyOfDate is the local calendar day a Date falls on, as a sortable key.
 // Read in local time, not UTC, so a 01:00 event doesn't get filed under the
 // previous day for anyone east of Greenwich.
@@ -130,14 +130,38 @@ function dayLabel(key: string, now: number): string {
   return stamp;
 }
 
+// matchesSearch is the client-side twin of the store's LIKE filter, applied to
+// LIVE events only. The log itself is searched by the server, but an event that
+// arrives over SSE while a search is active has never been through that query —
+// prepending it unconditionally would drop a non-matching row into a filtered
+// page. Same three fields, same case-insensitive contains.
+function matchesSearch(e: ActivityEvent, search: string): boolean {
+  if (!search) return true;
+  const q = search.toLowerCase();
+  return [e.subject, e.summary, e.detail].some((f) =>
+    (f ?? "").toLowerCase().includes(q),
+  );
+}
+
 export function History({
   live,
+  search = "",
+  onSearchChange,
   onOpenChannel,
+  onOpenVideo,
 }: {
   /** Newest activity events pushed over SSE, appended by App. */
   live: ActivityEvent[];
+  /**
+   * The search box's text. Owned by App so it survives navigating away and
+   * back, the same as the Library's and the Channels list's.
+   */
+  search?: string;
+  onSearchChange?: (value: string) => void;
   /** Opens a channel's page. Optional so a test can render without navigation. */
   onOpenChannel?: (id: string) => void;
+  /** Opens a video in the player. Optional for the same reason. */
+  onOpenVideo?: (id: string) => void;
 }) {
   const [past, setPast] = useState<ActivityEvent[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -150,28 +174,66 @@ export function History({
   const [error, setError] = useState<string | null>(null);
   const [moreError, setMoreError] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
+  // Debounced like the Library's box, and for the same reason: typing "abyss"
+  // should fire one request, not five.
+  const [debouncedSearch, setDebouncedSearch] = useState(search.trim());
+  // The query the rows currently on screen are the answer to. Read in the fetch
+  // below to tell "the same query, fetched again" (mount) from "a new query,
+  // whose answer replaces the old one".
+  const answeredQuery = useRef(debouncedSearch);
   // now is captured once per render pass for the relative-time labels and the
   // day names; it does not tick, which is fine for a log.
   const now = Date.now();
 
   useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => clearTimeout(id);
+  }, [search]);
+
+  // The newest page, refetched whenever the search changes. On a CHANGED query
+  // the rows are replaced rather than merged — the previous query's results,
+  // including the older pages it had scrolled to, are not part of this one's
+  // answer, and keeping them would prepend older rows above the fresh newest
+  // page and split a day into two separators. `loaded` is not reset, because
+  // blanking the page to "Loading…" on every keystroke reads as the log
+  // disappearing.
+  useEffect(() => {
     let active = true;
-    listActivity(undefined, PAGE_SIZE)
+    listActivity(undefined, PAGE_SIZE, debouncedSearch || undefined)
       .then((page) => {
         if (!active) return;
-        // MERGE, not replace: a live "activity" event can arrive between the
-        // server building this snapshot and the fetch resolving. The live effect
-        // prepends it to `past`; replacing here would clobber it (and its ref
-        // wouldn't change, so the live effect won't re-run). Keep any such
-        // live-only rows on top, deduped by id.
+        // MERGE, not replace, when the query is unchanged: a live "activity"
+        // event can arrive between the server building this snapshot and the
+        // fetch resolving. The live effect prepends it to `past`; replacing
+        // here would clobber it (and its ref wouldn't change, so the live
+        // effect won't re-run). Across a query CHANGE only such genuinely
+        // newer arrivals survive — a row newer than every row the server just
+        // sent, which is the one thing this snapshot cannot have contained —
+        // and they must still match the new query.
+        //
+        // Read before setPast, not inside the updater: React runs the updater
+        // after this .then body, by which time the ref would already have been
+        // reassigned and every query would look unchanged.
+        const previousQuery = answeredQuery.current;
+        answeredQuery.current = debouncedSearch;
+        const newest = page.events.length > 0 ? page.events[0].id : null;
         setPast((prev) => {
           const ids = new Set(page.events.map((e) => e.id));
-          const liveOnly = prev.filter((e) => !ids.has(e.id));
+          const liveOnly = prev.filter(
+            (e) =>
+              !ids.has(e.id) &&
+              matchesSearch(e, debouncedSearch) &&
+              (previousQuery === debouncedSearch ||
+                (newest !== null && e.id > newest)),
+          );
           return [...liveOnly, ...page.events];
         });
         setHasMore(page.has_more);
         setRetainedMax(page.retained_max);
         setLoaded(true);
+        // A successful refetch clears a previous failure, or a page that
+        // recovered would still be showing the error that replaced it.
+        setError(null);
       })
       .catch((e: Error) => {
         if (active) setError(e.message);
@@ -179,20 +241,23 @@ export function History({
     return () => {
       active = false;
     };
-  }, []);
+  }, [debouncedSearch]);
 
   // Live-append: prepend any SSE event newer than what we already show. Keyed on
-  // id so a reconnect that replays an event can't double it.
+  // id so a reconnect that replays an event can't double it, and filtered by the
+  // active search so a fresh arrival can't slip past the box.
   useEffect(() => {
     if (live.length === 0) return;
     setPast((prev) => {
       const seen = new Set(prev.map((e) => e.id));
-      const fresh = live.filter((e) => !seen.has(e.id));
+      const fresh = live.filter(
+        (e) => !seen.has(e.id) && matchesSearch(e, debouncedSearch),
+      );
       if (fresh.length === 0) return prev;
       // live is oldest→newest; newest goes on top.
       return [...fresh.reverse(), ...prev];
     });
-  }, [live]);
+  }, [live, debouncedSearch]);
 
   // Page back from the oldest row on screen. Keyset, not offset, so a live
   // event arriving mid-read can't shift the window and duplicate a row.
@@ -203,7 +268,7 @@ export function History({
     // Clear last attempt's message, or a failure followed by a successful retry
     // would append the older rows and still sit beside a stale error.
     setMoreError(null);
-    listActivity(oldest.id, PAGE_SIZE)
+    listActivity(oldest.id, PAGE_SIZE, debouncedSearch || undefined)
       .then((page) => {
         setPast((prev) => {
           const seen = new Set(prev.map((e) => e.id));
@@ -255,6 +320,18 @@ export function History({
 
   return (
     <>
+      {/* Same toolbar as the Library and the Channels list: search leads the
+          page, above the chips. The box searches the whole retained log on the
+          server, not just the rows paged in — a filter that silently ignored
+          everything you hadn't scrolled to would be worse than no filter. */}
+      <div className="listbar">
+        <SearchField
+          value={search}
+          onChange={(v) => onSearchChange?.(v)}
+          placeholder="Search history"
+          label="Search history"
+        />
+      </div>
       <div className="chips">
         {FILTERS.map((f) => (
           <button
@@ -278,9 +355,16 @@ export function History({
 
       {days.length === 0 ? (
         <p className="agenda-empty">
-          {filter === "all"
-            ? "Nothing yet — this fills in as peeq scans channels, downloads videos, and tidies up."
-            : "Nothing matching that filter yet."}
+          {/* The line has to name every control that is currently narrowing the
+              log, or it blames the box for a chip: a search with matches, then
+              a chip with none, would still read "nothing matches your query". */}
+          {debouncedSearch && filter !== "all"
+            ? `Nothing in the log matches “${debouncedSearch}” under that filter.`
+            : debouncedSearch
+              ? `Nothing in the log matches “${debouncedSearch}”.`
+              : filter === "all"
+                ? "Nothing yet — this fills in as peeq scans channels, downloads videos, and tidies up."
+                : "Nothing matching that filter yet."}
         </p>
       ) : (
         <>
@@ -309,6 +393,7 @@ export function History({
                             e.subject_id,
                             e.subject || k.label,
                             onOpenChannel,
+                            onOpenVideo,
                           )}
                         </div>
                         <div className="ag-detail">

@@ -10,6 +10,7 @@ package activity
 import (
 	"database/sql"
 	"log/slog"
+	"strings"
 )
 
 // maxRows caps the retained log. The past half of the agenda is bounded by row
@@ -111,16 +112,44 @@ type Page struct {
 // written in the same second. HasMore reports whether an older row exists beyond
 // this page (fetched via a limit+1 probe), which is what the page's bottom edge
 // renders against.
-func (s *Store) Recent(beforeID int64, limit int) (Page, error) {
+//
+// A non-empty search narrows to rows whose subject, summary or detail contains
+// it, case-insensitively for ASCII (SQLite's LIKE does not case-fold beyond it,
+// so "uber" will not find "Über" — not worth an FTS index or a collation to
+// fix). It runs HERE rather than in the browser because the
+// client holds only the page it has scrolled to: a box that quietly searched
+// twenty rows out of two thousand would answer "nothing" for something the log
+// plainly contains. Search and keyset paging compose — a filtered page still
+// pages back through the filtered set.
+func (s *Store) Recent(beforeID int64, limit int, search string) (Page, error) {
 	if limit <= 0 {
 		limit = 40
 	}
 	q := `SELECT id, at, kind, outcome, subject_id, subject, summary, detail
 	      FROM activity_events`
 	args := []any{}
+	var where []string
 	if beforeID > 0 {
-		q += ` WHERE id < ?`
+		where = append(where, `id < ?`)
 		args = append(args, beforeID)
+	}
+	if search != "" {
+		// LIKE rather than an FTS index: these are short display strings and the
+		// log is capped at 2000 rows, so the scan is cheap and there is no index
+		// to keep in step with the trim. ESCAPE stops a literal %, _ or \ typed
+		// into the box from acting as a wildcard. The pattern is bound three
+		// times because mixing ?N with ? is not portable across drivers.
+		pattern := "%" + likeEscape(search) + "%"
+		where = append(where,
+			`(subject LIKE ? ESCAPE '\' OR summary LIKE ? ESCAPE '\' OR detail LIKE ? ESCAPE '\')`)
+		args = append(args, pattern, pattern, pattern)
+	}
+	for i, cond := range where {
+		if i == 0 {
+			q += ` WHERE ` + cond
+		} else {
+			q += ` AND ` + cond
+		}
 	}
 	q += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, limit+1) // +1 probes for a further page
@@ -154,3 +183,12 @@ func (s *Store) Recent(beforeID int64, limit int) (Page, error) {
 // RetainedMax is the fixed row ceiling, surfaced so the UI can label the log's
 // oldest edge ("the most recent N of up to 2000").
 func (s *Store) RetainedMax() int { return maxRows }
+
+// likeEscape neutralises LIKE's own metacharacters so a query is matched
+// literally. The backslash must be doubled FIRST, or escaping % and _ would
+// then re-escape the backslashes this pass just added.
+func likeEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "%", `\%`)
+	return strings.ReplaceAll(s, "_", `\_`)
+}

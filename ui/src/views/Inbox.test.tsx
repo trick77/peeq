@@ -440,4 +440,48 @@ describe("Inbox", () => {
       expect(titles()).toEqual(["Undated video", "Older video"]);
     });
   });
+  // The inbox arrives whole and unpaged, so the box filters client-side — the
+  // same pipeline the channel chips and the sort already run through.
+  describe("search", () => {
+    it("narrows the grid by title", async () => {
+      render(<Inbox search="second" />);
+      expect(
+        await screen.findByText("Second pending video"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("First pending video")).toBeNull();
+    });
+
+    it("matches a channel name too", async () => {
+      render(<Inbox search="channel one" />);
+      expect(
+        await screen.findByText("First pending video"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Second pending video")).toBeNull();
+    });
+
+    // Download all acts on what search and the chips selected — that is the
+    // point of it — so the confirm label has to count the narrowed set.
+    it("narrows Download all along with the grid", async () => {
+      const { rerender } = render(<Inbox search="pending" />);
+      await screen.findByText("First pending video");
+      expect(
+        screen.getByRole("button", { name: /download all/i }),
+      ).toBeInTheDocument();
+
+      // One match leaves nothing to bulk-download.
+      rerender(<Inbox search="second" />);
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: /download all/i }),
+        ).toBeNull(),
+      );
+    });
+
+    it("says nothing matches rather than showing an empty grid", async () => {
+      render(<Inbox search="zzz" />);
+      expect(
+        await screen.findByText(/Nothing in the inbox matches/),
+      ).toBeInTheDocument();
+    });
+  });
 });

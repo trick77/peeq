@@ -335,19 +335,12 @@ button {
   background: var(--color-accent);
   box-shadow: 0 0 10px var(--glow-accent);
 }
-/* Inbox/Queue with nothing in them. Faded rather than disabled — the item is
-   still clickable and the page shows its own empty state — so hover restores
-   full strength to keep the affordance honest. :focus-visible restores it too,
-   and not only for symmetry: opacity fades the global accent focus ring along
-   with the item, so a keyboard user tabbing onto a dimmed item would otherwise
-   get a 42% focus indicator. */
-.rail-nav-item.idle {
-  opacity: 0.42;
-}
-.rail-nav-item.idle:hover,
-.rail-nav-item.idle:focus-visible {
-  opacity: 1;
-}
+/* Inbox and Up next used to fade to 42% when empty, so the rail read as a
+   to-do list. They no longer do: an empty page is not a lesser page, and a
+   destination whose strength changes under you is harder to aim at than one
+   that always looks the same. Every item now reads at the same weight as
+   Channels, and the count pill is the only thing that says how much is in
+   there. */
 .rail-nav-item .rail-nav-count {
   margin-left: auto;
   font-family:
@@ -494,111 +487,12 @@ button.srow:not(:disabled):hover {
   color: var(--color-faint);
 }
 
-/* Up next — two lanes of work in flight (downloads, summaries) followed by
-   peeq's own timed schedule. Deliberately NOT built on .qrow, which the old
-   Queue page used: its summary-meter rules were anchored as `.qrow .qdot…` and
-   would all have needed re-anchoring, so the new rows get their own class and
-   the old block went with the old page.
-
-   Every row is the same three-column grid — a lead column, the body, an action —
-   so the lanes and the schedule line up down the page even though they are
-   headed differently (by kind above, by time below). */
-.un-lane,
-.un-sched {
-  margin-bottom: 26px;
-}
-.un-lane > h2,
-.un-sched > h2 {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-muted);
-  margin: 0 0 11px;
-  font-weight: 600;
-}
-.un-row {
-  display: grid;
-  grid-template-columns: 72px 1fr auto;
-  align-items: start;
-  gap: 14px;
-  padding: 11px 0;
-  border-bottom: 1px solid var(--color-border-soft);
-  max-width: 760px;
-}
-.un-row:last-child {
-  border-bottom: 0;
-}
-/* The running job leads its lane: a touch more room and full-strength ink,
-   so the eye lands on what is happening now rather than on the backlog. */
-.un-row.hero {
-  padding: 13px 0 15px;
-}
-/* The lead column carries WHEN, not a rank — "3m left" for a running download,
-   "then" for anything waiting. Ranks across two independent lanes would imply a
-   comparison that doesn't exist: a waiting summary does not hold up a download. */
-.un-lead {
-  grid-column: 1;
-  font-size: 13px;
-  color: var(--color-faint);
-  padding-top: 2px;
-  white-space: nowrap;
-}
-.un-row.hero .un-lead {
-  color: var(--color-accent);
-}
-/* Numerals only — never whole phrases. Setting words in mono is most of why the
-   old queue rows read as messy; here it aligns the digits and stops there. */
-.un-lead .num,
-.un-detail .num {
-  font-variant-numeric: tabular-nums;
-}
-.un-body {
-  grid-column: 2;
-  min-width: 0;
-}
-/* A scheduled row is three columns, not two: when, which kind, which channel.
-   The kind is a glyph in a fixed column so the channel names still line up down
-   the page — the whole point of dropping the repeated "Channel scan" line. */
-.un-row.planned {
-  grid-template-columns: 72px 18px 1fr;
-}
-.un-row.planned .un-body {
-  grid-column: 3;
-}
-.un-kind {
-  grid-column: 2;
-  display: grid;
-  place-items: center;
-  color: var(--color-faint);
-  padding-top: 2px;
-}
-.un-title {
-  font-size: 15px;
-  color: var(--color-ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.un-row:not(.hero) .un-title {
-  color: var(--color-ink-dim);
-}
-.un-sub {
-  font-size: 12.5px;
-  color: var(--color-muted);
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.un-detail {
-  font-size: 13px;
-  color: var(--color-muted);
-  margin-top: 5px;
-}
-.un-row.planned .un-title {
-  color: var(--color-ink-dim);
-}
-
+/* Up next's own leftovers. Its rows ARE History's rows now — same grid, same
+   node, same connector; see the .ag-* block below — so the lane, row, lead and
+   title rules that used to live here are gone, along with the one-off glyph
+   column a scheduled row needed (the .ag-node carries the kind for free). What
+   remains is the two progress bars, which History has no use for, and the
+   page's own empty line. */
 /* TWO BAR SHAPES, one slot and one height. A download's progress is continuous,
    so it fills; a summary knows four discrete steps, so it segments. Same
    geometry either way, so the lanes read as siblings rather than as two
@@ -664,14 +558,6 @@ button.srow:not(:disabled):hover {
   .un-step.active {
     animation: none;
   }
-}
-.un-edge {
-  display: flex;
-  justify-content: center;
-  padding: 4px 0 4px;
-  font-size: 13px;
-  color: var(--color-faint);
-  max-width: 760px;
 }
 .un-empty {
   color: var(--color-faint);
@@ -792,6 +678,29 @@ button.srow:not(:disabled):hover {
   );
 }
 
+/* Up next wears this same row one tense forward. Its rows carry no outcome —
+   nothing that hasn't happened can have failed — so instead of the ok/warn/fail
+   rings it lights the node accent while something is actually running, which is
+   the one distinction the page exists to make. */
+.ag-row.live .ag-node {
+  color: var(--color-accent);
+  border-color: var(--color-accent-dim);
+  background: color-mix(
+    in srgb,
+    var(--color-accent) 18%,
+    var(--color-elevated)
+  );
+}
+.ag-row.live .ag-clock {
+  color: var(--color-accent);
+}
+/* The only actionable control either timeline carries: cancelling a download.
+   It takes the same fourth column the relative label does, so a row with a
+   button and a row with a label line up. */
+.ag-row > .ui-btn {
+  grid-column: 4;
+  align-self: start;
+}
 .ag-body {
   grid-column: 3;
   min-width: 0;
@@ -853,6 +762,14 @@ button.srow:not(:disabled):hover {
 .ag-row.warn .ag-kind {
   color: inherit;
 }
+/* Numerals only — never whole phrases, as the old .un-lead/.un-detail rule
+   these replace had it. The detail line is in here because a running download
+   counts 1% → 10% → 100% in place, and proportional digits shove the separator
+   and the speed sideways on every tick. */
+.ag-when .num,
+.ag-detail .num {
+  font-variant-numeric: tabular-nums;
+}
 .ag-when {
   grid-column: 4;
   font-size: 12.5px;
@@ -861,9 +778,9 @@ button.srow:not(:disabled):hover {
   white-space: nowrap;
   padding-top: 4px;
 }
-/* The edge that closes the log — the "load older" control. It sits OUTSIDE
-   .agenda so it gets no rail. (Up next's own edge is .un-edge, which has no
-   rail to avoid.) */
+/* The edge that closes a timeline: History's "load older" control, and Up
+   next's "+N more scheduled" line. It sits OUTSIDE .agenda so it gets no
+   rail. */
 .ag-edge {
   display: flex;
   justify-content: center;
@@ -1428,10 +1345,14 @@ button.srow:not(:disabled):hover {
 }
 .card h3 {
   margin: 0;
-  /* Serif, as the cards started out — #104 flipped this to sans. Only the
-     family goes back: the size, leading and weight below are tuned for the
-     two-line clamp and stay as they are. */
-  font-family: var(--font-serif);
+  /* Sans. A video title and a channel name are the two things you scan a list
+     FOR, and at these sizes the sans reads faster; the serif stays the app's
+     own voice (section headings, brand, modal titles). #104 flipped this to
+     sans, #154 flipped it back to serif — this settles it as sans, applied to
+     every surface a video title or channel name appears on. Only the family
+     changes: the size, leading and weight below are tuned for the two-line
+     clamp and stay as they are. */
+  font-family: var(--font-sans);
   font-size: 16px;
   line-height: 1.26;
   font-weight: 500;
@@ -1801,7 +1722,7 @@ button.catpick.unset:hover {
 }
 .preview h2 {
   margin: 0 0 6px;
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: 20px;
   font-weight: 500;
   letter-spacing: -0.01em;
@@ -2011,7 +1932,7 @@ button.catpick.unset:hover {
 }
 .playmeta h1 {
   margin: 0 0 8px;
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: 26px;
   font-weight: 500;
   letter-spacing: -0.01em;
@@ -2700,7 +2621,7 @@ textarea.cookiebox:focus {
   padding: 16px 20px;
 }
 .channel-info h3 {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
 }
 .channel-actions {
   display: flex;
@@ -2782,7 +2703,7 @@ textarea.cookiebox:focus {
 }
 .chan-nameline h3 {
   margin: 0;
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: 17px;
   font-weight: 500;
   overflow: hidden;
@@ -3119,11 +3040,11 @@ textarea.cookiebox:focus {
    gains .primary for the one accent-filled action (Re-subscribe). ── */
 /* .nm/.dot: the band and tomb rows render the channel name and by-line
    separators as plain divs (not the main list's <h3>), so they need their
-   own rules — matching .channel-info h3's serif/17px/500 exactly. Without
+   own rules — matching .channel-info h3's sans/17px/500 exactly. Without
    this, a channel visibly changes font the moment it moves between the
    band and the main list (dismiss/re-subscribe). */
 .channel-info .nm {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: 17px;
   font-weight: 500;
   margin: 0;
@@ -3390,7 +3311,7 @@ details.tomb-sect[open] > summary svg {
   color: rgba(255, 255, 255, 0.85);
 }
 .rmeta h3 {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-weight: 500;
   font-size: 17px;
   margin: 0 0 3px;
@@ -3717,12 +3638,12 @@ details.tomb-sect[open] > summary svg {
 }
 .chan-id h2 {
   margin: 0 0 2px;
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: var(--text-display);
   font-weight: 500;
   letter-spacing: -0.01em;
   /* flex so the verified check sits on the name's baseline block rather than
-     riding the text baseline, which the serif's descenders would drag it below. */
+     riding the text baseline, which the descenders would drag it below. */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4279,7 +4200,7 @@ details.tomb-sect[open] > summary svg {
 }
 .sharepage-meta h1 {
   margin: 0 0 12px;
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: 31px;
   font-weight: 500;
   letter-spacing: -0.015em;
