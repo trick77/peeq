@@ -518,6 +518,49 @@ describe("Library category chips", () => {
     expect(document.querySelector(".grid .card")).not.toBeNull();
   });
 
+  // A chip's number answers "how many would I see if I clicked this", so with a
+  // query in the search box it has to be scoped to that query too. The counts
+  // come from their own filter:"all" fetch, which therefore has to carry `q` —
+  // otherwise a chip reads 65 above a grid of 3.
+  it("scopes the chip counts to the search query", async () => {
+    vi.mocked(listVideos).mockImplementation((opts) =>
+      Promise.resolve(
+        opts?.q
+          ? [categoryVideo({ id: "v1", title: "matching video" })]
+          : [
+              categoryVideo({ id: "v1", title: "matching video" }),
+              categoryVideo({ id: "v2", title: "other video" }),
+              categoryVideo({ id: "v3", title: "another one" }),
+            ],
+      ),
+    );
+    render(
+      <Library
+        onOpenVideo={() => {}}
+        search="matching"
+        onSearchChange={() => {}}
+      />,
+    );
+    await screen.findByText("matching video");
+
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: "all", q: "matching" }),
+      );
+    });
+    // Every chip reports the searched slice, not the whole library — the watch
+    // chips and the category row both, since both count off the same list.
+    await waitFor(() => {
+      const all = Array.from(document.querySelectorAll(".chips .chip")).find(
+        (c) => c.textContent?.startsWith("All"),
+      );
+      expect(all?.querySelector(".n")?.textContent).toBe("1");
+      expect(document.querySelector(".catchips .catchip .n")?.textContent).toBe(
+        "1",
+      );
+    });
+  });
+
   it("defaults to the Unwatched chip and fetches with the unwatched filter", async () => {
     vi.mocked(listVideos).mockResolvedValue([
       categoryVideo({ id: "v1", title: "fresh video", watched: false }),
