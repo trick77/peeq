@@ -258,10 +258,21 @@ export function Inbox({
                  different tiers of the same row. Ghost is the same
                  --color-muted the sort control uses, so the toolbar's
                  right-hand end reads as one quiet group. The confirm step still
-                 goes primary — that one is meant to be loud. */
+                 goes primary — that one is meant to be loud.
+
+                 Ghost is a REST-only state, though. `busy` disables the button,
+                 and .ui-btn:disabled drops it to opacity 0.6 — on a variant with
+                 no fill and no border that leaves faint grey text and a spinner
+                 floating in the row, at the one moment the control most needs to
+                 be visible. It borrows secondary's fill for the duration, which
+                 is what it looked like before this went quiet. A batch of ten or
+                 fewer skips the confirm step entirely, so without this the only
+                 feedback for the common case would be a fade. */
               <Button
                 type="button"
-                variant={confirmBulk ? "primary" : "ghost"}
+                variant={
+                  confirmBulk ? "primary" : bulkBusy ? "secondary" : "ghost"
+                }
                 busy={bulkBusy}
                 onClick={handleDownloadAll}
                 onBlur={() => setConfirmBulk(false)}

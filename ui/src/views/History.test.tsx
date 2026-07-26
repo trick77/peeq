@@ -323,6 +323,24 @@ describe("History", () => {
       await waitFor(() => expect(countOn("Downloads")).toBe(1));
       expect(countOn("All")).toBe(1);
     });
+
+    // A zero is a claim about the log. On a failed load nothing is known about
+    // it, so the chips carry their labels and no numbers at all.
+    it("prints no number when the log failed to load", async () => {
+      // Given
+      vi.mocked(listActivity).mockRejectedValue(new Error("nope"));
+
+      // When
+      render(<History live={[]} />);
+      await screen.findByText("nope");
+
+      // Then: the chips are still there — they render on every branch — but
+      // none of them asserts a count.
+      expect(
+        screen.getByRole("button", { name: /^All\b/ }),
+      ).toBeInTheDocument();
+      expect(document.querySelector(".chips .chip .n")).toBeNull();
+    });
   });
 
   it("links a channel-kind subject to its page", async () => {

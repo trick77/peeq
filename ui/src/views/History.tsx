@@ -324,6 +324,11 @@ export function History({
   // "All" is past.length rather than the sum of the other chips: `channel_meta`
   // and `ytdlp` rows have no chip of their own but are still entries in the log,
   // and "problems" cuts across kinds rather than partitioning them.
+  //
+  // Every FILTERS id is seeded before the rows are walked, so the render can
+  // index this directly — a `?? 0` at the call site would be a fallback nothing
+  // can reach, and the coverage gate rightly counts an unreachable branch
+  // against the line it sits on.
   const counts = useMemo(() => {
     const out: Record<string, number> = { all: past.length };
     for (const f of FILTERS) if (f.id !== "all") out[f.id] = 0;
@@ -374,7 +379,14 @@ export function History({
             className={`chip${filter === f.id ? " on" : ""}`}
             onClick={() => setFilter(f.id)}
           >
-            {f.label} <span className="n">{counts[f.id] ?? 0}</span>
+            {f.label}{" "}
+            {/* The number waits for the fetch, the chip does not. `header`
+                renders on the failed and not-yet-loaded branches too (see
+                above), where `past` is still empty — so an unconditional count
+                printed a full row of zeros beside "couldn't load the log",
+                stating that the log is empty when it had only failed to
+                arrive. */}
+            {loaded ? <span className="n">{counts[f.id]}</span> : null}
           </button>
         ))}
       </div>
