@@ -1395,3 +1395,66 @@ func TestProcess_scheduledWorkStaysOnTheBackgroundLane(t *testing.T) {
 		t.Fatal("a scheduler-priority job jumped the interactive lane")
 	}
 }
+
+// TestWorker_metadataWriteFailureRetries pins the preflight's save-metadata
+// branch to retry rather than fail. The download itself has not run yet at
+// that point, so a write that could not land says nothing about the video —
+// failing it parked a perfectly good video in "error" and made the user re-add
+// it by hand after a transient SQLITE_BUSY under a concurrent writer.
+//
+// The failure is injected with a trigger rather than a stub because Deps.Videos
+// is a concrete *videos.Store. Aborting only UPDATEs that carry a non-empty
+// title hits exactly the preflight's ON CONFLICT DO UPDATE write and nothing
+// else — reads are untouched, so the retry's Videos.Get at the top of process
+// still succeeds, which is what lets the second attempt get as far as the
+// preflight again.
+func TestWorker_metadataWriteFailureRetries(t *testing.T) {
+	var h *harness
+	runner := &fakeRunner{
+		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+			// Drop the guard on the second probe so the retry can complete;
+			// the first probe leaves it armed and its Upsert aborts.
+			if h.runner.metaCalls() > 1 {
+				if _, err := h.db.Exec(`DROP TRIGGER IF EXISTS test_block_meta_write`); err != nil {
+					t.Errorf("drop trigger: %v", err)
+				}
+			}
+			return &ytdlp.Meta{Title: "Resolved Title", Availability: "public"}, nil
+		},
+		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
+		},
+	}
+	h = newHarness(t, runner, nil)
+	if _, err := h.db.Exec(`
+CREATE TRIGGER test_block_meta_write BEFORE UPDATE ON videos
+WHEN NEW.title != ''
+BEGIN SELECT RAISE(ABORT, 'database is locked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	job := h.enqueue(t, "vid1", 0)
+	runWorker(t, h.worker)
+
+	waitFor(t, "job done", func() bool { return h.jobState(t, job).State == "done" })
+	waitForVideoStatus(t, h, "vid1", "downloaded")
+
+	// Two probes: the first attempt's write aborted and the job was requeued,
+	// so the preflight ran again. One probe would mean it never retried.
+	if got := h.runner.metaCalls(); got != 2 {
+		t.Fatalf("metadata probes = %d, want 2 (one per attempt)", got)
+	}
+	if got := h.jobState(t, job).Attempts; got != 1 {
+		t.Fatalf("attempts = %d, want 1 recorded by the requeue", got)
+	}
+	v, err := h.videos.Get("vid1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.Status == videos.StatusError {
+		t.Fatalf("a failed metadata write parked the video in %q", v.Status)
+	}
+	if v.Title != "Resolved Title" {
+		t.Fatalf("title = %q, want the retry's resolved title", v.Title)
+	}
+}
