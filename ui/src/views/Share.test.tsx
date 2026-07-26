@@ -161,18 +161,30 @@ describe("Share (public page)", () => {
     expect(screen.getByText(/shared via/i)).toBeInTheDocument();
   });
 
-  it("orders the aside Summary, Chapters, Highlights — the Player's order", async () => {
+  it("puts Chapters full-width under the video, not in the aside — the Player's layout", async () => {
     vi.mocked(getSharedVideo).mockResolvedValue({
       ...mockVideo,
+      has_subtitles: true,
       chapters: [{ ts: 0, title: "Cold open", source: "yt-dlp" }],
     });
     render(<Share token="3xK9raPb" />);
 
     await screen.findByText("Chapters");
-    const labels = [...document.querySelectorAll(".sharepage-side .lbl")].map(
-      (el) => el.textContent,
-    );
-    expect(labels).toEqual(["Summary", "Chapters", "Highlights"]);
+    // The aside carries Summary and Highlights only, exactly as the Player's
+    // sidebar does; Chapters sits in the primary column beside them.
+    const asideLabels = [
+      ...document.querySelectorAll(".sharepage-side .lbl"),
+    ].map((el) => el.textContent);
+    expect(asideLabels).toEqual(["Summary", "Highlights"]);
+
+    const primaryLabels = [
+      ...document.querySelectorAll(".sharepage-primary .lbl"),
+    ].map((el) => el.textContent);
+    expect(primaryLabels).toEqual(["Chapters", "Transcript"]);
+    // Two columns, like the Player's Contents card — not the aside's single one.
+    expect(
+      document.querySelector(".sharepage-chapters .toc-grid"),
+    ).toBeTruthy();
   });
 });
 
