@@ -41,6 +41,13 @@ func Handler() http.Handler {
 	})
 }
 
+// IndexHTML returns the embedded index.html shell. The server serves the public
+// share page from it with Open Graph meta injected, so a shared link unfurls
+// into a card instead of a bare title (see httpapi/share_meta.go).
+func IndexHTML() ([]byte, error) {
+	return distFS.ReadFile("dist/index.html")
+}
+
 func trimLeadingSlash(p string) string {
 	if len(p) > 0 && p[0] == '/' {
 		p = p[1:]

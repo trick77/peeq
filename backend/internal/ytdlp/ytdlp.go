@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -92,6 +94,29 @@ type RunnerConfig struct {
 	// value that was itself gated on BACKEND_AUTH_MODE=dev at boot
 	// (config.Load); Runner does not re-derive or re-validate that here.
 	AllowAnonymous bool
+	// Logger receives yt-dlp's own narration during a download: every stdout
+	// line that is NOT a progress update, at debug level. Those lines
+	// ("[youtube] Extracting URL", "[info] Downloading 1 format(s)",
+	// "[Merger] Merging formats into …", "[SponsorBlock] …") already arrived
+	// and were silently discarded, which left what yt-dlp actually did
+	// unobservable from outside the process — peeq could report a percentage
+	// and, when something went wrong, whatever landed on stderr.
+	//
+	// Progress lines are deliberately NOT logged: they are already visible as
+	// progress, and at one line per update they would bury the handful that say
+	// which phase a download is in.
+	//
+	// It also receives stderr from any Runner call that SUCCEEDED, download or
+	// not. (The package-level Version helper is not a Runner call: it reports
+	// its own stderr in the error it returns and never reaches this logger.)
+	// A failing call already surfaces stderr through Classify, which is how the
+	// job's error text is written; a call that exits 0 used to drop it, so a
+	// download that warned about a throttled fragment finished looking clean.
+	//
+	// Defaults to slog.Default(). Only the download path logs STDOUT — Metadata
+	// returns JSON there, and logging that would dump a whole info blob per
+	// call. Stderr never carries the JSON, so it is safe to log for everything.
+	Logger *slog.Logger
 }
 
 // Runner wraps the yt-dlp binary: cookie gate, throttle, and error
@@ -144,6 +169,9 @@ func New(cfg RunnerConfig) *Runner {
 	}
 	if cfg.RandFloat64 == nil {
 		cfg.RandFloat64 = rand.Float64
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
 	}
 	return &Runner{cfg: cfg}
 }
@@ -311,6 +339,24 @@ func (r *Runner) throttle(ctx context.Context) error {
 	return r.cfg.Sleep(ctx, slot.Sub(now))
 }
 
+// callLabelKey carries a short name for what a call is about — a video id —
+// so a log line can be attributed to it. Package-private: it exists for the
+// logger, not as a public API, and unlike WithInteractive it changes no
+// behaviour.
+type callLabelKey struct{}
+
+// withCallLabel names the subject of a call for the logger. Needed because the
+// pacer runs an interactive call alongside a background one, so two yt-dlp
+// processes can be writing at once and an unattributed line is guesswork.
+func withCallLabel(ctx context.Context, label string) context.Context {
+	return context.WithValue(ctx, callLabelKey{}, label)
+}
+
+func callLabel(ctx context.Context) string {
+	v, _ := ctx.Value(callLabelKey{}).(string)
+	return v
+}
+
 // interactiveKey marks a context as belonging to a call a person is waiting on.
 type interactiveKey struct{}
 
@@ -389,6 +435,41 @@ func WithStartHook(ctx context.Context, fn func()) context.Context {
 func SignalStart(ctx context.Context) {
 	if fn, _ := ctx.Value(startKey{}).(func()); fn != nil {
 		fn()
+	}
+}
+
+// logStderr records what yt-dlp wrote to stderr on a call that SUCCEEDED.
+//
+// A failing call already surfaces stderr through Classify, which is how the
+// job's error text and the Activity row get written. A call that exits 0 threw
+// it away entirely — so a download that finished while warning about a
+// throttled fragment retry, or a subtitle language it could not fetch, left no
+// trace of having warned at all. That is the same blind spot the stdout logging
+// closed, on the other stream.
+//
+// Line by line rather than one blob, so the log stays greppable and a long
+// warning cannot swallow the entries around it. Blank lines are skipped.
+func (r *Runner) logStderr(ctx context.Context, stderr string) {
+	if stderr == "" {
+		return
+	}
+	// Ask before splitting. This runs on every successful call, Metadata
+	// included, and Metadata runs on every channel scan — so with debug off
+	// (the production default) the split and the per-line trim below would be
+	// work whose every result is thrown away.
+	if !r.cfg.Logger.Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	label := callLabel(ctx)
+	for _, line := range strings.Split(stderr, "\n") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		if label != "" {
+			r.cfg.Logger.Debug("yt-dlp stderr", "video_id", label, "line", line)
+			continue
+		}
+		r.cfg.Logger.Debug("yt-dlp stderr", "line", line)
 	}
 }
 
@@ -491,6 +572,7 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 		if runErr := cmd.Run(); runErr != nil {
 			return nil, Classify(stderr.String(), runErr)
 		}
+		r.logStderr(ctx, stderr.String())
 		return stdout.Bytes(), nil
 	}
 
@@ -532,6 +614,11 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 	if scanErr != nil {
 		return nil, fmt.Errorf("ytdlp: read stdout: %w", scanErr)
 	}
+	// After the scan error check, not before: a truncated read is a failure of
+	// this call, and logging its warnings as though it had merely succeeded
+	// would put a reassuring entry under a call that is about to return an
+	// error.
+	r.logStderr(ctx, stderr.String())
 	return stdout.Bytes(), nil
 }
 

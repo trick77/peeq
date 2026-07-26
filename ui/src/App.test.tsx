@@ -558,41 +558,23 @@ describe("App queue and summaries", () => {
     vi.mocked(cancelDownload).mockResolvedValue(undefined);
   });
 
-  it("does not grey the rail's Inbox or Up next before their counts load", async () => {
-    // Both counts are 0-ish before their fetches land — pendingCount defaults
-    // to undefined, but jobs/summaries start as empty arrays, which is
-    // indistinguishable from an empty queue. Dimming on that would flash the
-    // rail on every cold load, so App must withhold upNextCount until both
-    // lists have actually loaded. These promises never settle, pinning the
-    // pre-load render.
-    vi.mocked(listDownloads).mockReturnValue(new Promise(() => {}));
-    vi.mocked(listSummaries).mockReturnValue(new Promise(() => {}));
-    vi.mocked(listPending).mockReturnValue(new Promise(() => {}));
-
-    render(<App />);
-    const inbox = await screen.findByRole(
-      "button",
-      { name: "Inbox" },
-      { timeout: 8000 },
-    );
-    expect(inbox.className).not.toContain("idle");
-    expect(
-      screen.getByRole("button", { name: "Up next" }).className,
-    ).not.toContain("idle");
-  }, 20000);
-
-  it("greys Inbox and Up next once both counts load empty", async () => {
+  // The rail used to grey Inbox and Up next out once their counts loaded empty.
+  // It no longer does — every item reads at full strength, and emptiness is
+  // said by the absent count pill and by the page's own empty state.
+  it("never greys the rail's Inbox or Up next, loaded or not", async () => {
     render(<App />);
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
 
+    // Both lists resolve empty in this suite's beforeEach, so this is the state
+    // that used to dim.
     await waitFor(() => {
       expect(
         screen.getByRole("button", { name: "Up next" }).className,
-      ).toContain("idle");
+      ).not.toContain("idle");
     });
-    expect(screen.getByRole("button", { name: "Inbox" }).className).toContain(
-      "idle",
-    );
+    expect(
+      screen.getByRole("button", { name: "Inbox" }).className,
+    ).not.toContain("idle");
   }, 20000);
 
   it("reflects a summary SSE event in the rail and on Up next", async () => {

@@ -121,6 +121,13 @@ func TestShare_publicVideoMetadata(t *testing.T) {
 	if err := deps.Videos.SetSummary("v1", "A short summary.", "[]", `[{"ts":1,"text":"point"}]`); err != nil {
 		t.Fatalf("set summary: %v", err)
 	}
+	// Segments are seeded so the nested third-party shape the checks below have
+	// to tolerate is actually present in the payload under test — without them
+	// the "a segment has a category" reasoning would describe a body that has no
+	// segments in it.
+	if err := deps.Videos.SetSponsorblockSegments("v1", `[{"category":"sponsor","start_time":30,"end_time":75.5}]`); err != nil {
+		t.Fatalf("set segments: %v", err)
+	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 	created := createShare(t, h, cookie, "v1", "never")
@@ -136,10 +143,32 @@ func TestShare_publicVideoMetadata(t *testing.T) {
 	// Owner-only fields must never appear in the public payload. "id" and "url"
 	// are in here for a second reason on top of being owner-shaped: see
 	// TestShare_publicVideoNeverLeaksVideoID.
-	for _, leak := range []string{"media_path", "\"watched\"", "\"favorite\"", "\"category\"", "\"url\"", "\"status\"", "\"id\""} {
-		if strings.Contains(body, leak) {
+	//
+	// Checked TWO ways. Top-level keys catch the field being added to the DTO;
+	// the quoted-substring scan additionally catches it appearing NESTED, inside
+	// chapters/key_points/segments, or under another name. Only "category" is
+	// exempt from the substring scan: the payload nests a third-party shape whose
+	// "category" means the SponsorBlock segment's kind, nothing to do with the
+	// owner's category, so there it is a top-level-key check only.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatalf("decode public DTO: %v", err)
+	}
+	for _, leak := range []string{"watched", "favorite", "category", "url", "status", "id", "media_path", "position_seconds"} {
+		if _, ok := fields[leak]; ok {
 			t.Fatalf("public DTO leaked owner field %q: %s", leak, body)
 		}
+	}
+	for _, leak := range []string{"\"watched\"", "\"favorite\"", "\"url\"", "\"status\"", "\"id\"", "\"position_seconds\""} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("public DTO leaked owner field %s anywhere in the body: %s", leak, body)
+		}
+	}
+	// media_path is additionally checked as a raw substring: it is the one field
+	// whose VALUE leaking anywhere in the body (nested, or under another name)
+	// would be as bad as the key itself.
+	if strings.Contains(body, "media_path") {
+		t.Fatalf("public DTO mentions media_path: %s", body)
 	}
 }
 
@@ -244,6 +273,60 @@ func TestShare_publicVideoCarriesChapters(t *testing.T) {
 	}
 	if string(got.Chapters) != chapters {
 		t.Fatalf("public chapters = %s, want %s", got.Chapters, chapters)
+	}
+}
+
+// TestShare_publicVideoCarriesSponsorblockSegments pins the segment list INTO
+// the public payload. Without it the shared player has no way to skip an ad the
+// owner's player skips, which is the whole point of showing someone a video.
+func TestShare_publicVideoCarriesSponsorblockSegments(t *testing.T) {
+	deps, _, _ := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "Sponsored", ChannelName: "Chan"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	segs := `[{"category":"sponsor","start_time":30,"end_time":75.5},{"category":"intro","start_time":0,"end_time":12}]`
+	if err := deps.Videos.SetSponsorblockSegments("v1", segs); err != nil {
+		t.Fatalf("set segments: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "never")
+
+	rec := getPublic(t, h, "/api/s/"+created.Token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("public GET = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got publicVideoDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode public DTO: %v", err)
+	}
+	if len(got.SponsorblockSegments) != 2 {
+		t.Fatalf("public segments = %+v, want 2", got.SponsorblockSegments)
+	}
+	if got.SponsorblockSegments[0].Category != "sponsor" || got.SponsorblockSegments[0].EndTime != 75.5 {
+		t.Fatalf("first segment = %+v", got.SponsorblockSegments[0])
+	}
+	// The non-skipped category rides along too — the scrubber draws it as a
+	// "marked" band and plays through it.
+	if got.SponsorblockSegments[1].Category != "intro" {
+		t.Fatalf("second segment = %+v", got.SponsorblockSegments[1])
+	}
+}
+
+// TestShare_publicVideoOmitsEmptySponsorblock keeps the field off the wire
+// entirely for the common case, rather than shipping an empty array.
+func TestShare_publicVideoOmitsEmptySponsorblock(t *testing.T) {
+	deps, _, _ := shareTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "Clean", ChannelName: "Chan"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	created := createShare(t, h, cookie, "v1", "never")
+
+	rec := getPublic(t, h, "/api/s/"+created.Token)
+	if strings.Contains(rec.Body.String(), "sponsorblock_segments") {
+		t.Fatalf("empty segment list still on the wire: %s", rec.Body.String())
 	}
 }
 

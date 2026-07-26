@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/trick77/peeq/internal/activity"
 )
@@ -11,7 +12,7 @@ import (
 // Declared here (not server.go) so the activity import stays confined to this
 // file, matching the SummaryLister pattern. The real *activity.Store satisfies it.
 type ActivityReader interface {
-	Recent(beforeID int64, limit int) (activity.Page, error)
+	Recent(beforeID int64, limit int, search string) (activity.Page, error)
 	RetainedMax() int
 }
 
@@ -32,8 +33,9 @@ type activityListResponse struct {
 
 // handleActivityList serves the past half of the agenda: a keyset page of the
 // log, newest first. `before` is the id to page back from (0 = newest);
-// `limit` defaults to 40 and is clamped to 100. Nil store → 503, matching every
-// other optional dependency.
+// `limit` defaults to 40 and is clamped to 100; `q` narrows to rows whose
+// subject, summary or detail contains it. Nil store → 503, matching every other
+// optional dependency.
 func (s *server) handleActivityList(w http.ResponseWriter, r *http.Request) {
 	if s.activity == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "activity is not configured")
@@ -48,7 +50,11 @@ func (s *server) handleActivityList(w http.ResponseWriter, r *http.Request) {
 		limit = activityMaxLimit
 	}
 
-	page, err := s.activity.Recent(before, limit)
+	// Trimmed here rather than in the store: a query of nothing but spaces is a
+	// user typing, not a filter, and the store should not have to know that.
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+
+	page, err := s.activity.Recent(before, limit, search)
 	if err != nil {
 		serverError(w, r, err, "list activity failed")
 		return

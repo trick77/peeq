@@ -1,31 +1,42 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../ui";
-import { Icon } from "../icons";
 import {
   listUpcoming,
   skipScheduledMeta,
   skipScheduledScan,
   type UpcomingItem,
 } from "../api";
+import { SearchField } from "../components/SearchField";
 import { summaryPhaseInfo, SUMMARY_PHASE_COUNT } from "../format";
+import { Icon } from "../icons";
 import type { Job, SummaryJob } from "../api/types";
 import { DOT } from "../sep";
-import { kindOf, parseUTC, plannedWhen, subjectNode } from "./agenda";
+import { clockOf, kindOf, parseUTC, plannedWhen, subjectNode } from "./agenda";
 
 // UpNext — everything peeq is about to do, in the order it will do it. It
 // absorbs the old Queue page and the projection half of the old Activity page,
 // which between them split one question ("what is peeq doing") across two pages
 // in two visual languages.
 //
-// TWO LANES, NOT ONE. Downloads run one at a time on the download worker so
+// THE SAME ROW AS HISTORY, READ FORWARDS. Up next and History describe the same
+// work either side of the moment it happens, so they are now the same timeline:
+// the clock gutter, the kind icon on a ringed node, the connector joining a
+// group, the two-line body whose detail opens with the kind word, and the
+// relative label on the right. Only the tense differs — a gutter clock is when
+// something IS DUE rather than when it happened, the right column says
+// "downloading" or "in 40m" rather than "45m ago", and a running row's node
+// ring lights accent instead of green. Before this the two pages used two
+// unrelated layouts for one subject.
+//
+// TWO LANES, STILL. Downloads run one at a time on the download worker so
 // YouTube doesn't block us; summaries run on a separate worker against the LLM
 // and never touch yt-dlp. So a download and a summary routinely run at the same
-// moment — at most two jobs, one per lane — and the page is built on that. Each
-// lane leads with its running job and lists its own waiting work beneath.
-//
-// The lanes are headed by KIND ("Downloading", "Summarising"); the schedule
-// below is headed by TIME ("Within the hour", "Later today"). That is
-// deliberate: the lanes are about what is happening, the schedule about when.
+// moment — at most two jobs, one per lane. The lanes are no longer two headed
+// sections: what is RUNNING groups under "Now" and what is queued under
+// "Queued", with the node icon and the kind word saying which lane each row
+// belongs to. Grouping by state rather than by kind is what lets the page share
+// History's day-group structure, and it answers the question the page is opened
+// for — what is happening now — in one glance rather than two.
 //
 // Both lanes read from state App already owns — the download jobs plus their
 // live progress SSE, and the summary jobs plus their live phase SSE — so this
@@ -52,34 +63,6 @@ function phaseState(
     return { label: "Key points", step: SUMMARY_PHASE_COUNT };
   }
   return summaryPhaseInfo(phase);
-}
-
-// ChannelSub renders a row's channel line — a link to the channel when we know
-// its id (and have a handler), plain text otherwise. Mirrors the
-// chan-link/chan-name convention VideoCard and Player use; a video added
-// individually may carry no channel id, in which case it stays plain text.
-function ChannelSub({
-  name,
-  id,
-  onOpen,
-}: {
-  name?: string;
-  id?: string;
-  onOpen?: (channelId: string) => void;
-}) {
-  const text = name || id;
-  if (!text) return null;
-  return (
-    <div className="un-sub">
-      {onOpen && id ? (
-        <button type="button" className="chan-link" onClick={() => onOpen(id)}>
-          {text}
-        </button>
-      ) : (
-        text
-      )}
-    </div>
-  );
 }
 
 // BUCKETS group the timed schedule by how far off it is. The boundaries are
@@ -142,13 +125,27 @@ const FILTERS: { id: string; label: string }[] = [
 // housekeeping, which is scans and metadata refreshes and nothing else.
 const SCHED_KINDS = new Set(["scan", "channel_meta"]);
 
+// matches is the search box's filter. Client-side, and honestly so: unlike
+// History's log, everything Up next can show is already in memory — two short
+// job lists and a capped projection — so there is nothing off-screen for a
+// server query to reach. It matches the same fields the rows display: the
+// title/subject and the channel name.
+function matches(search: string, ...fields: (string | undefined)[]): boolean {
+  if (!search) return true;
+  const q = search.toLowerCase();
+  return fields.some((f) => (f ?? "").toLowerCase().includes(q));
+}
+
 export function UpNext({
   jobs,
   progressByJobId,
   summaries,
   summaryPhaseByVideoId,
+  search = "",
+  onSearchChange,
   onCancel,
   onOpenChannel,
+  onOpenVideo,
   stalled,
 }: {
   jobs: Job[];
@@ -158,8 +155,16 @@ export function UpNext({
   >;
   summaries: SummaryJob[];
   summaryPhaseByVideoId?: Record<string, string>;
+  /**
+   * The search box's text. Owned by App so it survives navigating away and
+   * back, the same as the Library's and the Channels list's.
+   */
+  search?: string;
+  onSearchChange?: (value: string) => void;
   onCancel: (jobId: number) => void;
   onOpenChannel?: (channelId: string) => void;
+  /** Opens a video in the player, as History's rows do. Optional for tests. */
+  onOpenVideo?: (videoId: string) => void;
   /**
    * Why YouTube work is stopped, if it is. Only the empty-state wording uses
    * it — the banner above the page is what explains the stall — but silence has
@@ -198,13 +203,24 @@ export function UpNext({
     Record<string, { previousAt: string; busy: boolean }>
   >({});
   const [skipError, setSkipError] = useState<string | null>(null);
-  // "All" by default: the page's job is to answer "what is peeq doing", and a
-  // filter remembered from last time would answer a narrower question without
-  // saying so.
-  const [filter, setFilter] = useState("all");
   // now is captured once per render pass for the relative labels; it does not
   // tick, which is fine for a schedule measured in minutes and hours.
   const now = Date.now();
+  const q = search.trim();
+  // Starts at "all" on every mount rather than persisting: a filter remembered
+  // from last time would answer a narrower question without saying so.
+  const [filter, setFilter] = useState("all");
+
+  // Which sections the current filter admits. The lanes are kinds too, so
+  // "Downloads" hides the summary lane and the whole schedule rather than just
+  // dimming them.
+  const showDownloads = filter === "all" || filter === "download";
+  const showSummaries = filter === "all" || filter === "summary";
+  // Whether the schedule is part of the current view at all. Only scans and
+  // metadata refreshes are ever projected, so under "Downloads" or "Summaries"
+  // the schedule is not merely empty — it is out of scope, and neither its
+  // loading state nor its failure is this page's news to report.
+  const showSched = filter === "all" || SCHED_KINDS.has(filter);
 
   // In-flight downloads only. A terminal job (done/error) is not upcoming work:
   // errors are retried from the Library card, done ones are in the Library.
@@ -325,20 +341,14 @@ export function UpNext({
     [upcoming, filter],
   );
 
-  // Which sections the current filter admits. The lanes are kinds too, so
-  // "Downloads" hides the summary lane and the whole schedule rather than just
-  // dimming them.
-  const showDownloads = filter === "all" || filter === "download";
-  const showSummaries = filter === "all" || filter === "summary";
-  // Whether the schedule is part of the current view at all. Only scans and
-  // metadata refreshes are ever projected, so under "Downloads" or "Summaries"
-  // the schedule is not merely empty — it is out of scope, and neither its
-  // loading state nor its failure is this page's news to report.
-  const showSched = filter === "all" || SCHED_KINDS.has(filter);
-
   const grouped = useMemo(() => {
     const by = new Map<string, UpcomingItem[]>();
     for (const item of scheduled) {
+      // Subject only. The row used to carry the summary as a second line and
+      // no longer does — the node says the kind now — so matching on it would
+      // surface scheduled rows with nothing on them that matches what you
+      // typed. A search box may only find what the page can show.
+      if (!matches(q, item.subject)) continue;
       const b = bucketOf(item.at as string, now);
       const list = by.get(b);
       if (list) list.push(item);
@@ -349,32 +359,94 @@ export function UpNext({
       items: by.get(b) as UpcomingItem[],
     }));
     // now is a render-scoped constant; recomputing per render is the point.
-  }, [scheduled, now]);
+  }, [scheduled, now, q]);
 
-  // Emptiness is measured through the filter, not around it: with "Downloads"
-  // selected, a summary sitting in the other lane is not something this page is
-  // currently showing, so it must not count as "there is work here".
+  // The lanes, split by state rather than by kind, and narrowed by BOTH
+  // controls: the kind chips decide which lanes are on the page at all, the
+  // search box decides which of their rows survive. Downloads lead summaries
+  // within each group — the download worker is the one holding the YouTube
+  // gate, so it is the row you look for first.
+  const liveRows = [
+    ...(showDownloads ? running : [])
+      .filter((j) => matches(q, j.title, j.video_id, j.channel_name))
+      .map((j) => ({ kind: "download" as const, job: j })),
+    ...(showSummaries ? runningSummaries : [])
+      .filter((s) => matches(q, s.title, s.video_id, s.channel_name))
+      .map((s) => ({ kind: "summary" as const, job: s })),
+  ];
+  const queuedRows = [
+    ...(showDownloads ? waiting : [])
+      .filter((j) => matches(q, j.title, j.video_id, j.channel_name))
+      .map((j) => ({ kind: "download" as const, job: j })),
+    ...(showSummaries ? waitingSummaries : [])
+      .filter((s) => matches(q, s.title, s.video_id, s.channel_name))
+      .map((s) => ({ kind: "summary" as const, job: s })),
+  ];
+
+  // ChannelBit is the channel name inside a detail line — a link when we know
+  // the channel's id, plain text otherwise. A video added individually may
+  // carry no channel id.
+  function channelBit(name?: string, id?: string) {
+    const text = name || id;
+    if (!text) return null;
+    return (
+      <>
+        {DOT}
+        {onOpenChannel && id ? (
+          <button
+            type="button"
+            className="ag-link"
+            onClick={() => onOpenChannel(id)}
+          >
+            {text}
+          </button>
+        ) : (
+          text
+        )}
+      </>
+    );
+  }
+
+  // Emptiness is measured through the CHIPS but around the SEARCH BOX. With
+  // "Downloads" selected, a summary in the other lane is not something this page
+  // is currently showing, so it must not count as "there is work here". A search
+  // that matches nothing is the opposite case: the work exists, you just filtered
+  // past it, and answering that with "subscribe to a channel" would be a lie —
+  // so the query is left out here and answered separately below.
   const laneEmpty =
     (!showDownloads || (running.length === 0 && waiting.length === 0)) &&
     (!showSummaries || summaries.length === 0);
   const nothingToShow = laneEmpty && scheduled.length === 0;
 
-  // The chips render on EVERY branch below, including the empty ones. An early
-  // return without them would strand anyone who filtered to a kind with nothing
-  // in it: the page would say "nothing" with no control left to undo it.
-  const chips = (
-    <div className="chips">
-      {FILTERS.map((f) => (
-        <button
-          key={f.id}
-          type="button"
-          className={`chip${filter === f.id ? " on" : ""}`}
-          onClick={() => setFilter(f.id)}
-        >
-          {f.label}
-        </button>
-      ))}
-    </div>
+  // The toolbar renders on EVERY branch below, including the empty ones. An
+  // early return without it would strand anyone who filtered or searched their
+  // way to nothing: the page would say "nothing" with no control left to undo
+  // it.
+  const header = (
+    <>
+      {/* Same toolbar as every other list page: search leads, chips beneath.
+          The search is client-side, over work already wholly in memory. */}
+      <div className="listbar">
+        <SearchField
+          value={search}
+          onChange={(v) => onSearchChange?.(v)}
+          placeholder="Search up next"
+          label="Search up next"
+        />
+      </div>
+      <div className="chips">
+        {FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            className={`chip${filter === f.id ? " on" : ""}`}
+            onClick={() => setFilter(f.id)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+    </>
   );
 
   // Every empty state names what happens next rather than just saying "nothing
@@ -399,7 +471,7 @@ export function UpNext({
   if (nothingToShow && showSched && !schedLoaded) {
     return (
       <>
-        {chips}
+        {header}
         <p className="un-empty">Loading…</p>
       </>
     );
@@ -407,7 +479,7 @@ export function UpNext({
   if (nothingToShow && showSched && schedFailed) {
     return (
       <>
-        {chips}
+        {header}
         <div className="errline">Couldn’t load the schedule.</div>
       </>
     );
@@ -415,7 +487,7 @@ export function UpNext({
   if (nothingToShow) {
     return (
       <>
-        {chips}
+        {header}
         <p className="un-empty">
           {filter !== "all"
             ? "Nothing of that kind is queued or scheduled."
@@ -431,245 +503,378 @@ export function UpNext({
     );
   }
 
+  // There IS work on this page; the search box is what emptied it. Naming the
+  // chip too when both are narrowing, or the message points at the wrong
+  // control.
+  const nothingMatches =
+    q !== "" &&
+    liveRows.length === 0 &&
+    queuedRows.length === 0 &&
+    grouped.length === 0;
+
   return (
     <>
-      {chips}
-      {showDownloads && (running.length > 0 || waiting.length > 0) ? (
-        <section className="un-lane">
-          <h2>Downloading</h2>
-          {running.map((j) => {
-            const p = progressByJobId?.[j.job_id];
-            return (
-              <div key={j.job_id} className="un-row hero">
-                {/* The lead column answers WHEN, and only that. An ETA when
-                    yt-dlp has one; "starting" only while there is no progress
-                    at all, which is the one moment the honest answer is "it
-                    hasn't begun". Once bytes are moving without an ETA yet the
-                    column stays empty rather than saying "starting" over a bar
-                    at 47% — the bar and the detail line already say it is under
-                    way, and a wrong word beats no word only if it is right. */}
-                <span className="un-lead">
-                  {p?.eta ? (
-                    <span className="num">{p.eta}</span>
-                  ) : p ? null : (
-                    "starting"
-                  )}
-                </span>
-                <div className="un-body">
-                  <div className="un-title">{j.title || j.video_id}</div>
-                  <ChannelSub
-                    name={j.channel_name}
-                    id={j.channel_id}
-                    onOpen={onOpenChannel}
-                  />
-                  {/* A download's progress is continuous, so it gets a filling
-                      bar. With no progress event yet the bar is a grey stub
-                      rather than a spinner — the lead column already says
-                      "starting". */}
-                  <div className={`un-bar${p ? "" : " stub"}`}>
-                    <i style={{ width: `${p ? p.percent : 0}%` }} />
-                  </div>
-                  <div className="un-detail">
-                    {p ? (
-                      <>
-                        <span className="num">{Math.round(p.percent)}%</span>
-                        {p.speed ? (
-                          <>
-                            {DOT}
-                            <span className="num">{p.speed}</span>
-                          </>
-                        ) : null}
-                      </>
-                    ) : (
-                      "Contacting YouTube"
-                    )}
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="dangerQuiet"
-                  small
-                  onClick={() => onCancel(j.job_id)}
-                >
-                  Cancel
-                </Button>
-              </div>
-            );
-          })}
-          {/* Waiting rows read "then", never a rank. With two lanes running
-              independently a number would invite a comparison that doesn't
-              exist — a waiting summary does not hold up a download — and row
-              order already carries position. */}
-          {waiting.map((j) => (
-            <div key={j.job_id} className="un-row">
-              <span className="un-lead">then</span>
-              <div className="un-body">
-                <div className="un-title">{j.title || j.video_id}</div>
-                <ChannelSub
-                  name={j.channel_name}
-                  id={j.channel_id}
-                  onOpen={onOpenChannel}
-                />
-              </div>
-              <Button
-                type="button"
-                variant="dangerQuiet"
-                small
-                onClick={() => onCancel(j.job_id)}
-              >
-                Cancel
-              </Button>
-            </div>
-          ))}
-        </section>
-      ) : null}
+      {header}
 
-      {showSummaries && summaries.length > 0 ? (
-        <section className="un-lane">
-          <h2>Summarising</h2>
-          {[...runningSummaries, ...waitingSummaries].map((s) => {
-            const ps = phaseState(summaryPhaseByVideoId?.[s.video_id], s.state);
-            const live = ps.step > 0;
-            return (
-              <div
-                key={s.id}
-                className={`un-row${s.state === "running" ? " hero" : ""}`}
-              >
-                <span className="un-lead">
-                  {live ? (
-                    <>
-                      step <span className="num">{ps.step}</span> of{" "}
-                      <span className="num">{SUMMARY_PHASE_COUNT}</span>
-                    </>
-                  ) : (
-                    "then"
-                  )}
-                </span>
-                <div className="un-body">
-                  <div className="un-title">{s.title || s.video_id}</div>
-                  <ChannelSub
-                    name={s.channel_name}
-                    id={s.channel_id}
-                    onOpen={onOpenChannel}
-                  />
-                  {/* A summary knows four discrete steps rather than a
-                      percentage, so its bar is segmented — same slot and height
-                      as the download bar, a different shape because it is a
-                      different kind of fact. */}
-                  <div className="un-steps" aria-hidden="true">
-                    {Array.from({ length: SUMMARY_PHASE_COUNT }, (_, i) => {
-                      const n = i + 1;
-                      const cls =
-                        n < ps.step
-                          ? "un-step done"
-                          : n === ps.step
-                            ? "un-step active"
-                            : "un-step";
-                      return <i key={n} className={cls} />;
-                    })}
-                  </div>
-                  <div className="un-detail">{ps.label}</div>
-                </div>
-              </div>
-            );
-          })}
-        </section>
-      ) : null}
-
+      {/* Above the timeline rather than on the row that failed: the row it
+          belongs to may have moved or gone by the time the call comes back, and
+          a notice that moves with it would be easy to miss. */}
       {skipError ? (
-        <div className="un-edge un-skip-error" role="status">
+        <div className="ag-edge ag-edge-err" role="status">
           {skipError}
         </div>
       ) : null}
 
-      {/* THE SCHEDULE — peeq's own timed housekeeping, grouped by how far off
-          it is. Skip is the one action a scheduled row carries: it drops this
-          occurrence only, and the next one happens on its normal schedule.
-          A skipped row stays put showing Undo rather than vanishing, so a row
-          hit by accident can be put back. */}
-      {grouped.map((g) => (
-        <section key={g.bucket} className="un-sched">
-          <h2>{g.bucket}</h2>
-          {g.items.map((item) => {
-            const k = kindOf(item.kind);
-            const key = rowKey(item);
-            const skip = skipped[key];
-            const skippable = Boolean(SKIPPABLE[item.kind] && item.subject_id);
-            // A row is "done being skipped" once the call has returned an
-            // instant to restore; until then it is in flight and shows neither
-            // the old lead nor an undo it cannot yet perform.
-            const isSkipped = Boolean(skip && !skip.busy && skip.previousAt);
-            return (
-              <div
-                key={key}
-                className={`un-row planned${isSkipped ? " skipped" : ""}`}
-              >
-                {/* A skipped row says so in the lead column, where its time was.
-                    The row stays put rather than vanishing — a row that
-                    disappeared would take its own Undo with it. */}
-                <span className="un-lead">
-                  {isSkipped ? "Skipped" : plannedWhen(item.at, now)}
-                </span>
-                {/* The kind, as a glyph rather than a sentence — the same one
-                    History uses for it, so both pages name the same work the
-                    same way. This was a second line reading "Channel scan",
-                    which on a real schedule meant that phrase written out
-                    fifteen times under fifteen channel names: the only thing
-                    that varied was the name, and the repetition made a short
-                    list look long. The glyph says it in space the row already
-                    had, and each entry drops from two lines to one. */}
-                <span className="un-kind">
-                  <Icon name={k.icon} size="14px" label={k.label} />
-                </span>
-                <div className="un-body">
-                  <div className="un-title">
-                    {subjectNode(
-                      item.kind,
-                      item.subject_id,
-                      item.subject || k.label,
-                      onOpenChannel,
-                    )}
-                  </div>
-                </div>
-                {skippable ? (
-                  isSkipped ? (
-                    <Button
-                      type="button"
-                      className="un-skip"
-                      variant="ghost"
-                      small
-                      onClick={() => undoSkip(item, skip.previousAt)}
-                    >
-                      Undo
-                    </Button>
-                  ) : (
-                    <Button
-                      type="button"
-                      className="un-skip"
-                      variant="ghost"
-                      small
-                      disabled={Boolean(skip?.busy)}
-                      onClick={() => skipRow(item)}
-                      aria-label={`Skip ${item.summary || k.label} for ${item.subject || k.label}`}
-                    >
-                      Skip
-                    </Button>
-                  )
-                ) : null}
+      {nothingMatches ? (
+        <p className="un-empty">
+          {filter === "all"
+            ? `Nothing queued or scheduled matches “${q}”.`
+            : `Nothing of that kind matches “${q}”.`}
+        </p>
+      ) : (
+        <div className="agenda">
+          {liveRows.length > 0 ? (
+            <div className="ag-day">
+              <div className="ag-daysep">
+                <span>Now</span>
+                <i />
               </div>
-            );
-          })}
-        </section>
-      ))}
+              {liveRows.map((row) =>
+                row.kind === "download" ? (
+                  <DownloadRow
+                    key={`d${row.job.job_id}`}
+                    job={row.job}
+                    progress={progressByJobId?.[row.job.job_id]}
+                    live
+                    onCancel={onCancel}
+                    onOpenVideo={onOpenVideo}
+                    channelBit={channelBit}
+                  />
+                ) : (
+                  <SummaryRow
+                    key={`s${row.job.id}`}
+                    job={row.job}
+                    phase={summaryPhaseByVideoId?.[row.job.video_id]}
+                    live
+                    onOpenVideo={onOpenVideo}
+                    channelBit={channelBit}
+                  />
+                ),
+              )}
+            </div>
+          ) : null}
 
-      {/* Only under "All". The server's count is how many items the merge
-          dropped across every kind at once, so under a narrowed filter it would
-          either count work the page is hiding — "+4 more scheduled" sitting
-          alone beneath a Downloads view with no schedule on screen — or, under
-          Scans, silently include the dropped metadata refreshes. */}
-      {filter === "all" && truncated > 0 ? (
-        <div className="un-edge">+{truncated} more scheduled</div>
+          {queuedRows.length > 0 ? (
+            <div className="ag-day">
+              <div className="ag-daysep">
+                <span>Queued</span>
+                <i />
+              </div>
+              {queuedRows.map((row) =>
+                row.kind === "download" ? (
+                  <DownloadRow
+                    key={`d${row.job.job_id}`}
+                    job={row.job}
+                    progress={undefined}
+                    live={false}
+                    onCancel={onCancel}
+                    onOpenVideo={onOpenVideo}
+                    channelBit={channelBit}
+                  />
+                ) : (
+                  <SummaryRow
+                    key={`s${row.job.id}`}
+                    job={row.job}
+                    phase={summaryPhaseByVideoId?.[row.job.video_id]}
+                    live={false}
+                    onOpenVideo={onOpenVideo}
+                    channelBit={channelBit}
+                  />
+                ),
+              )}
+            </div>
+          ) : null}
+
+          {/* THE SCHEDULE — peeq's own timed housekeeping, grouped by how far
+              off it is. Unlike the lanes above, these rows have an actual
+              instant, so the gutter carries their wall clock exactly as
+              History's does and the right column carries how far off it is.
+
+              Skip is the one action a scheduled row carries: it drops this
+              occurrence only, and the next one happens on its normal schedule.
+              It shares the fourth column with the relative label rather than
+              taking a fifth, so these rows keep History's geometry — the same
+              column a download's Cancel uses. A skipped row stays put showing
+              Undo rather than vanishing, so a row hit by accident can be put
+              back. */}
+          {grouped.map((g) => (
+            <div key={g.bucket} className="ag-day">
+              <div className="ag-daysep">
+                <span>{g.bucket}</span>
+                <i />
+              </div>
+              {g.items.map((item) => {
+                const k = kindOf(item.kind);
+                // Keyed by kind + subject rather than by index: the undo sits on
+                // one specific row, and the list reorders under it every time
+                // the projection is refetched.
+                const key = rowKey(item);
+                const skip = skipped[key];
+                const skippable = Boolean(
+                  SKIPPABLE[item.kind] && item.subject_id,
+                );
+                // A row is "done being skipped" once the call has returned an
+                // instant to restore; until then it is in flight and shows
+                // neither a moved time nor an undo it cannot yet perform.
+                const isSkipped = Boolean(
+                  skip && !skip.busy && skip.previousAt,
+                );
+                return (
+                  <div
+                    key={key}
+                    className={`ag-row planned${isSkipped ? " skipped" : ""}`}
+                  >
+                    <span className="ag-clock">
+                      {clockOf(item.at as string)}
+                    </span>
+                    {/* Labelled, unlike History's nodes: there the detail line
+                        still names the kind in words, so the glyph is a
+                        duplicate. Here it is the only thing saying what this
+                        work is. */}
+                    <span className="ag-node">
+                      <Icon name={k.icon} size="12px" label={k.label} />
+                    </span>
+                    {/* One line, not two. The node beside it already says
+                        which kind of work this is — the same glyph History uses
+                        for it — so a detail line would have read "Scan · Channel
+                        scan" under every channel name on the page, the only
+                        thing varying being the name. Written out fifteen times,
+                        that repetition made a short list look long. */}
+                    <div className="ag-body">
+                      <div className="ag-subject">
+                        {subjectNode(
+                          item.kind,
+                          item.subject_id,
+                          item.subject || k.label,
+                          onOpenChannel,
+                          onOpenVideo,
+                        )}
+                      </div>
+                    </div>
+                    {/* Both live in column four and cross-fade. Rendered
+                        together rather than swapped, so the button stays in the
+                        tab order at rest — a control that only exists on hover
+                        cannot be reached by keyboard. */}
+                    <span className="ag-when">
+                      {isSkipped ? "Skipped" : plannedWhen(item.at, now)}
+                    </span>
+                    {skippable ? (
+                      isSkipped ? (
+                        <Button
+                          type="button"
+                          className="ag-skip"
+                          variant="ghost"
+                          small
+                          onClick={() => undoSkip(item, skip.previousAt)}
+                        >
+                          Undo
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          className="ag-skip"
+                          variant="ghost"
+                          small
+                          disabled={Boolean(skip?.busy)}
+                          onClick={() => skipRow(item)}
+                          aria-label={`Skip ${item.summary || k.label} for ${item.subject || k.label}`}
+                        >
+                          Skip
+                        </Button>
+                      )
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* The server's count is how many items the merge dropped across every
+          kind at once, so it can only be told honestly with BOTH narrowing
+          controls off. Under "Scans" it would silently include the dropped
+          metadata refreshes; under a search it would count work the page is
+          hiding. */}
+      {truncated > 0 && q === "" && filter === "all" ? (
+        <div className="ag-edge">+{truncated} more scheduled</div>
       ) : null}
     </>
+  );
+}
+
+// DownloadRow is one download, running or queued. The gutter answers WHEN, on
+// every row: yt-dlp's ETA where it has one, else the bare tense — "now" for
+// what is running, "then" for what is waiting. It is never left blank. History
+// leans on this column to place a row in its day, and a gutter that came up
+// empty on half the rows is the one thing that would stop the two pages reading
+// as the same component.
+function DownloadRow({
+  job,
+  progress,
+  live,
+  onCancel,
+  onOpenVideo,
+  channelBit,
+}: {
+  job: Job;
+  progress?: { percent: number; speed: string; eta: string };
+  live: boolean;
+  onCancel: (jobId: number) => void;
+  onOpenVideo?: (videoId: string) => void;
+  channelBit: (name?: string, id?: string) => React.ReactNode;
+}) {
+  const title = job.title || job.video_id;
+  return (
+    <div className={`ag-row${live ? " live" : ""}`}>
+      <span className="ag-clock">{live ? progress?.eta || "now" : "then"}</span>
+      <span className="ag-node">
+        <Icon name="download" size="12px" />
+      </span>
+      <div className="ag-body">
+        <div className="ag-subject">
+          {onOpenVideo && job.video_id ? (
+            <button
+              type="button"
+              className="ag-link"
+              onClick={() => onOpenVideo(job.video_id)}
+            >
+              {title}
+            </button>
+          ) : (
+            title
+          )}
+        </div>
+        <div className="ag-detail">
+          <span className="ag-kind">{live ? "Downloading" : "Download"}</span>
+          {channelBit(job.channel_name, job.channel_id)}
+        </div>
+        {live ? (
+          <>
+            {/* A download's progress is continuous, so it gets a filling bar.
+                With no progress event yet the bar is a grey stub rather than a
+                spinner — the detail line below says what it is waiting on. */}
+            <div className={`un-bar${progress ? "" : " stub"}`}>
+              <i style={{ width: `${progress ? progress.percent : 0}%` }} />
+            </div>
+            <div className="ag-detail">
+              {progress ? (
+                <>
+                  <span className="num">{Math.round(progress.percent)}%</span>
+                  {progress.speed ? (
+                    <>
+                      {DOT}
+                      <span className="num">{progress.speed}</span>
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                "Contacting YouTube"
+              )}
+            </div>
+          </>
+        ) : null}
+      </div>
+      <Button
+        type="button"
+        variant="dangerQuiet"
+        small
+        onClick={() => onCancel(job.job_id)}
+      >
+        Cancel
+      </Button>
+    </div>
+  );
+}
+
+// SummaryRow is one summary, running or queued. The LLM offers no ETA, so the
+// gutter carries the bare tense — "now" or "then" — and the right column
+// carries the step it has reached.
+function SummaryRow({
+  job,
+  phase,
+  live,
+  onOpenVideo,
+  channelBit,
+}: {
+  job: SummaryJob;
+  phase?: string;
+  live: boolean;
+  onOpenVideo?: (videoId: string) => void;
+  channelBit: (name?: string, id?: string) => React.ReactNode;
+}) {
+  const ps = phaseState(phase, job.state);
+  const started = ps.step > 0;
+  const title = job.title || job.video_id;
+  return (
+    <div className={`ag-row${live ? " live" : ""}`}>
+      <span className="ag-clock">{live ? "now" : "then"}</span>
+      <span className="ag-node">
+        <Icon name="alignLeft" size="12px" />
+      </span>
+      <div className="ag-body">
+        <div className="ag-subject">
+          {onOpenVideo && job.video_id ? (
+            <button
+              type="button"
+              className="ag-link"
+              onClick={() => onOpenVideo(job.video_id)}
+            >
+              {title}
+            </button>
+          ) : (
+            title
+          )}
+        </div>
+        <div className="ag-detail">
+          <span className="ag-kind">{live ? "Summarising" : "Summary"}</span>
+          {channelBit(job.channel_name, job.channel_id)}
+        </div>
+        {live ? (
+          <>
+            {/* A summary knows four discrete steps rather than a percentage, so
+                its bar is segmented — same slot and height as the download bar,
+                a different shape because it is a different kind of fact. */}
+            <div className="un-steps" aria-hidden="true">
+              {Array.from({ length: SUMMARY_PHASE_COUNT }, (_, i) => {
+                const n = i + 1;
+                const cls =
+                  n < ps.step
+                    ? "un-step done"
+                    : n === ps.step
+                      ? "un-step active"
+                      : "un-step";
+                return <i key={n} className={cls} />;
+              })}
+            </div>
+            <div className="ag-detail">{ps.label}</div>
+          </>
+        ) : null}
+      </div>
+      {/* Waiting rows read "waiting", never a rank. With two lanes running
+          independently a number would invite a comparison that doesn't exist —
+          a waiting summary does not hold up a download — and row order already
+          carries position. */}
+      <span className="ag-when">
+        {started ? (
+          <>
+            step <span className="num">{ps.step}</span> of{" "}
+            <span className="num">{SUMMARY_PHASE_COUNT}</span>
+          </>
+        ) : (
+          "waiting"
+        )}
+      </span>
+    </div>
   );
 }

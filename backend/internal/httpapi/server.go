@@ -27,6 +27,10 @@ type Deps struct {
 	Version string
 	// Static serves the embedded SPA; may be nil in tests.
 	Static http.Handler
+	// Shell is the SPA's index.html. /s/{token} is served from it with Open
+	// Graph meta injected, so a shared link unfurls into a card (share_meta.go).
+	// Optional: when empty, that route delegates to Static like any other path.
+	Shell []byte
 
 	// AuthService drives login/callback/logout and session creation.
 	AuthService *auth.Service
@@ -172,6 +176,7 @@ type StreamAccessRecorder interface {
 type server struct {
 	version       string
 	static        http.Handler
+	shell         []byte
 	authSvc       *auth.Service
 	authMW        *auth.Middleware
 	tokenMW       *auth.TokenMiddleware
@@ -215,6 +220,7 @@ func New(d Deps) http.Handler {
 	s := &server{
 		version:       d.Version,
 		static:        d.Static,
+		shell:         d.Shell,
 		authSvc:       d.AuthService,
 		authMW:        d.AuthMiddleware,
 		tokenMW:       d.TokenMiddleware,
@@ -287,6 +293,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/s/{token}/stream", s.handleShareStream)
 	mux.HandleFunc("GET /api/s/{token}/thumbnail", s.handleShareThumbnail)
 	mux.HandleFunc("GET /api/s/{token}/subtitles", s.handleShareSubtitles)
+	// The og:image behind a shared link's unfurl — same token gate, no video id.
+	mux.HandleFunc("GET /api/s/{token}/card.jpg", s.handleShareCard)
 	// The "now playing" pointer: which video the rail reopens when the URL
 	// carries no id. Session-gated like everything else the SPA reads.
 	mux.Handle("GET /api/playback", s.requireAuth(http.HandlerFunc(s.handleGetPlaybackState)))
@@ -337,6 +345,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
 	mux.Handle("POST /api/videos/{id}/reprocess", s.requireAuth(http.HandlerFunc(s.handleReprocess)))
 	if s.static != nil {
+		// More specific than the SPA catch-all, so the share page (and only it)
+		// is served with link-preview meta injected; /s/ and /s/a/b still fall
+		// through to the SPA unchanged.
+		mux.HandleFunc("GET /s/{token}", s.handleShareShell)
 		mux.Handle("/", s.static)
 	}
 

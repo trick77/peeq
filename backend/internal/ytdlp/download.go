@@ -270,9 +270,29 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		watchURL,
 	)
 
+	// Name this call for the logger, so a warning on stderr can be tied to the
+	// video it belongs to. The pacer deliberately lets an interactive call run
+	// alongside a background one, so two yt-dlp processes really can be writing
+	// at the same time.
+	ctx = withCallLabel(ctx, req.VideoID)
+
 	onLine := func(line string) {
-		if p, ok := parseProgressLine(line); ok && onProgress != nil {
-			onProgress(p)
+		if p, ok := parseProgressLine(line); ok {
+			if onProgress != nil {
+				onProgress(p)
+			}
+			return
+		}
+		// Everything else yt-dlp says about this download. These lines were
+		// dropped here without anything ever reading them, so the only account
+		// peeq could give of a download was its percentage — and a download
+		// spends a visible part of its life outside that percentage: extracting
+		// the URL before the first byte, and merging streams after the last one.
+		//
+		// Trimmed because yt-dlp pads some of them, and skipped when empty so a
+		// blank line between phases doesn't become a log entry.
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			r.cfg.Logger.Debug("yt-dlp", "video_id", req.VideoID, "line", trimmed)
 		}
 	}
 

@@ -10,6 +10,10 @@ import {
 } from "../api/share";
 import { formatDuration } from "../format";
 import { daysUntil } from "../components/ShareControl";
+// The same scrubber the owner's Player draws, and the same skip policy. Like
+// ../vtt, ../components/Scrubber imports nothing from api/, so nothing
+// session-gated reaches this page through it.
+import { AUTO_SKIP, categoryLabel, Scrubber } from "../components/Scrubber";
 // Shared with the Player's Transcript card. ../vtt is deliberately free of any
 // api/ import, so nothing session-gated can reach this page through it.
 import {
@@ -36,8 +40,9 @@ function expiryLabel(video: PublicVideo): string {
   return `This link expires in ${d} days.`;
 }
 
-// PeeqMark is the small brand lockup used in the top bar and footer — the same
-// magnifier logo the rail wears, scaled down for a chromeless page.
+// PeeqMark is the small brand lockup the footer wears (the top bar it also used
+// to sit in is gone) — the same magnifier logo the rail wears, scaled down for a
+// chromeless page.
 function PeeqMark({ size = 26 }: { size?: number }) {
   return (
     <span className="sharepage-logo" style={{ width: size, height: size }}>
@@ -75,6 +80,35 @@ export function Share({ token }: { token: string | null }) {
     copy: copyTranscript,
   } = useCopyTranscript();
   const [find, setFind] = useState("");
+  // Playback position + media duration, for the scrubber. The Player keeps the
+  // same pair; here there is no resume position to restore and nothing to POST
+  // back, so they exist purely to draw the bar.
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  // subtitlesReadyFor holds the token whose media metadata has loaded, gating
+  // the <track> below — the same workaround the Player carries. On iPadOS 27
+  // (public beta 1) a <track> child present while the video loads makes Safari
+  // fail resource selection outright — networkState 3 (NETWORK_NO_SOURCE),
+  // readyState 0, video.error stays null — so the page sits on the poster at
+  // 0:00 forever with nothing detectable from JS. Mounting the track only after
+  // loadedmetadata loads the media fine and keeps captions working. Keyed on
+  // the token rather than a boolean so a different share opened without a
+  // remount starts track-free again. See tubearchivist/tubearchivist#1196.
+  const [subtitlesReadyFor, setSubtitlesReadyFor] = useState<string | null>(
+    null,
+  );
+  // The transient "Skipped ad · 0:45" notice over the stage.
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | undefined>(undefined);
+
+  // Clear a pending toast timer on unmount so it can't fire into a gone tree.
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== undefined) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -155,7 +189,18 @@ export function Share({ token }: { token: string | null }) {
     const el = videoRef.current;
     if (!el) return;
     el.currentTime = ts;
+    setCurrentTime(ts);
     void el.play().catch(() => {});
+  }
+
+  // scrubTo is the scrubber's own seek. It sets the position WITHOUT starting
+  // playback: dragging the bar of a paused video shouldn't start it, whereas
+  // clicking a chapter or a transcript line is a "take me there and play" ask.
+  function scrubTo(seconds: number) {
+    const el = videoRef.current;
+    if (!el) return;
+    el.currentTime = seconds;
+    setCurrentTime(seconds);
   }
 
   // downloadTranscriptTxt saves the transcript as plain text, built from the
@@ -178,12 +223,6 @@ export function Share({ token }: { token: string | null }) {
   if (status === "loading") {
     return (
       <div className="sharepage">
-        <header className="sharepage-top">
-          <PeeqMark />
-          <b>
-            pee<span>q</span>
-          </b>
-        </header>
         <div className="sharepage-load">
           <Spinner size="22px" />
         </div>
@@ -194,12 +233,6 @@ export function Share({ token }: { token: string | null }) {
   if (status === "dead" || !video || !token) {
     return (
       <div className="sharepage">
-        <header className="sharepage-top">
-          <PeeqMark />
-          <b>
-            pee<span>q</span>
-          </b>
-        </header>
         <div className="sharepage-dead">
           <span className="ic">
             <Icon name="clock" size="26px" />
@@ -216,22 +249,68 @@ export function Share({ token }: { token: string | null }) {
 
   const highlights = video.key_points ?? [];
   const chapters = video.chapters ?? [];
+  const segments = video.sponsorblock_segments ?? [];
   const hitCount = cues.filter((c) => matchesFind(c.text, find)).length;
+
+  // showToast puts a message over the stage briefly. A later toast replaces an
+  // earlier one rather than stacking, so the timer is always reset.
+  function showToast(text: string) {
+    setToast(text);
+    if (toastTimerRef.current !== undefined) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 2600);
+  }
+
+  function handleLoadedMetadata() {
+    const el = videoRef.current;
+    // Open the subtitle gate first, ahead of everything else, so it still
+    // opens if this fires more than once on the same media.
+    if (token) setSubtitlesReadyFor(token);
+    // NaN until real media metadata loads (and always NaN under jsdom); the
+    // scrubber falls back to the DTO's duration_seconds while it is unknown.
+    if (el && Number.isFinite(el.duration)) setDuration(el.duration);
+  }
+
+  // handleTimeUpdate drives the scrubber and performs the SponsorBlock skip,
+  // matching the Player's behaviour exactly: jump past whichever AUTO_SKIP
+  // segment the playhead just entered, and play through everything else
+  // (intros, outros, recaps) — those are drawn on the bar but never cut, since
+  // removing them unasked takes away video the viewer may want. A video with no
+  // segments makes the loop a no-op.
+  //
+  // Unlike the Player there is no resume POST here: a share recipient has no
+  // account, and the public routes are read-only by design.
+  function handleTimeUpdate() {
+    const el = videoRef.current;
+    if (!el) return;
+    setCurrentTime(el.currentTime);
+    for (const seg of segments) {
+      if (!AUTO_SKIP.has(seg.category)) continue;
+      if (el.currentTime >= seg.start_time && el.currentTime < seg.end_time) {
+        el.currentTime = seg.end_time;
+        setCurrentTime(seg.end_time);
+        showToast(
+          `Skipped ${categoryLabel(seg.category)}${DOT}${formatDuration(
+            seg.end_time - seg.start_time,
+          )}`,
+        );
+        break;
+      }
+    }
+  }
 
   return (
     <div className="sharepage">
-      <header className="sharepage-top">
-        <PeeqMark />
-        <b>
-          pee<span>q</span>
-        </b>
-        <span className="spacer" />
-        <span className="cta">Shared with you</span>
-      </header>
-
+      {/* No top bar. The peeq lockup and a "Shared with you" label sat here and
+          told the recipient nothing they didn't already know from clicking the
+          link — the footer still carries the attribution. The page now opens on
+          the video itself; .sharepage-main pays the vertical inset the bar used
+          to provide (see its padding). */}
       <main className="sharepage-main">
         <div className="sharepage-primary">
-          <div className="stage">
+          {/* stage-wrap gives the toast below something to position against. */}
+          <div className="stage stage-wrap">
             <video
               ref={videoRef}
               className="sharepage-video"
@@ -240,8 +319,10 @@ export function Share({ token }: { token: string | null }) {
                 video.has_thumbnail ? shareThumbnailUrl(token) : undefined
               }
               src={shareStreamUrl(token)}
+              onLoadedMetadata={handleLoadedMetadata}
+              onTimeUpdate={handleTimeUpdate}
             >
-              {video.has_subtitles && (
+              {video.has_subtitles && subtitlesReadyFor === token && (
                 <track
                   kind="subtitles"
                   srcLang={video.audio_language || "en"}
@@ -250,6 +331,22 @@ export function Share({ token }: { token: string | null }) {
                 />
               )}
             </video>
+            <div className={`stage-toast${toast ? " show" : ""}`} role="status">
+              <Icon name="skipForward" size="15px" />
+              {toast}
+            </div>
+            {/* The scrubber earns its place here only for the SponsorBlock
+                bands — the <video> keeps its native controls, which already
+                seek. It is skipped entirely for a video with no segments, so a
+                clean video shows one seek bar, not two. */}
+            {segments.length > 0 && (
+              <Scrubber
+                currentSeconds={currentTime}
+                durationSeconds={duration || video.duration_seconds || 0}
+                segments={segments}
+                onSeek={scrubTo}
+              />
+            )}
           </div>
 
           <div className="sharepage-meta">
@@ -263,6 +360,42 @@ export function Share({ token }: { token: string | null }) {
               ) : null}
             </div>
           </div>
+
+          {/* Chapters, where the Player puts them: a full-width card in this
+              column between the video and the Transcript, two columns wide, NOT
+              a sidebar panel. The sidebar keeps Summary and Highlights, which is
+              exactly the Player's split.
+
+              Two things still differ from the Player's Contents card, both
+              because this page is public: no empty state (it shouldn't
+              advertise a panel it has nothing for) and no yt-dlp/MiMo source
+              tag (internal trivia the recipient has no use for). */}
+          {chapters.length > 0 && (
+            <div className="card sharepage-chapters">
+              <div className="hd">
+                <Icon name="listTree" size="16px" />
+                <span className="lbl">Chapters</span>
+                <span className="meta">{chapters.length} chapters</span>
+              </div>
+              <div className="tabbody">
+                <div className="toc toc-grid">
+                  {chapters.map((c, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="row"
+                      onClick={() => seek(c.ts)}
+                    >
+                      <span className="ts mono">{fmt(c.ts)}</span>
+                      <span>
+                        <span className="ttl">{c.title}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {video.has_subtitles && (
             <div className="card sharepage-transcript">
@@ -400,6 +533,9 @@ export function Share({ token }: { token: string | null }) {
             </div>
           ) : null}
 
+          {/* Chapters are NOT here — they are a full-width card in the primary
+              column, above the Transcript, exactly as the Player has them. This
+              aside carries Summary and Highlights, which is the Player's split. */}
           {highlights.length > 0 && (
             <div className="card">
               <div className="hd">
@@ -417,39 +553,6 @@ export function Share({ token }: { token: string | null }) {
                     >
                       <span className="ts mono">{fmt(k.ts)}</span>
                       <span className="txt">{k.text}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Chapters. Unlike the Player's Contents card there is no empty
-              state — a public page shouldn't advertise a panel it has nothing
-              for — and no yt-dlp/MiMo source tag, which is internal trivia the
-              recipient has no use for. */}
-          {chapters.length > 0 && (
-            <div className="card">
-              <div className="hd">
-                <Icon name="listTree" size="16px" />
-                <span className="lbl">Chapters</span>
-                <span className="meta">{chapters.length} chapters</span>
-              </div>
-              <div className="tabbody">
-                {/* Plain .toc, not the Player's two-column .toc-grid — the
-                    share aside is a single narrow column. */}
-                <div className="toc">
-                  {chapters.map((c, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      className="row"
-                      onClick={() => seek(c.ts)}
-                    >
-                      <span className="ts mono">{fmt(c.ts)}</span>
-                      <span>
-                        <span className="ttl">{c.title}</span>
-                      </span>
                     </button>
                   ))}
                 </div>

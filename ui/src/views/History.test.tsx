@@ -283,6 +283,307 @@ describe("History", () => {
     render(<History live={[]} />);
     expect(await screen.findByText("boom")).toBeInTheDocument();
   });
+
+  // The names in the log point at the things they name. Channel rows have
+  // always linked; video rows used to be dead text.
+  describe("linking", () => {
+    it("opens a downloaded video in the player from its name", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 30, kind: "download", subject_id: "vid30" })],
+        has_more: false,
+        retained_max: 2000,
+      });
+      const onOpenVideo = vi.fn();
+      const user = userEvent.setup();
+      render(<History live={[]} onOpenVideo={onOpenVideo} />);
+      await user.click(await screen.findByRole("button", { name: "A clip" }));
+      expect(onOpenVideo).toHaveBeenCalledWith("vid30");
+    });
+
+    // A failed download names a video that may never have made it into the
+    // library. It still links: the player says so plainly, which beats a name
+    // that silently refuses to be clicked.
+    it("links a failed download too", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [
+          ev({
+            id: 31,
+            kind: "download",
+            outcome: "fail",
+            subject_id: "vid31",
+            summary: "download failed",
+          }),
+        ],
+        has_more: false,
+        retained_max: 2000,
+      });
+      render(<History live={[]} onOpenVideo={vi.fn()} />);
+      expect(
+        await screen.findByRole("button", { name: "A clip" }),
+      ).toBeInTheDocument();
+    });
+
+    // A scan names a channel, so it must go to the channel page even with a
+    // video handler in scope.
+    it("still sends a scan row to its channel, not the player", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [
+          ev({
+            id: 32,
+            kind: "scan",
+            subject: "Veritasium",
+            subject_id: "UCx",
+          }),
+        ],
+        has_more: false,
+        retained_max: 2000,
+      });
+      const onOpenChannel = vi.fn();
+      const onOpenVideo = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <History
+          live={[]}
+          onOpenChannel={onOpenChannel}
+          onOpenVideo={onOpenVideo}
+        />,
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "Veritasium" }),
+      );
+      expect(onOpenChannel).toHaveBeenCalledWith("UCx");
+      expect(onOpenVideo).not.toHaveBeenCalled();
+    });
+
+    // Cleanup and yt-dlp rows name neither, so they stay plain text.
+    it("leaves a row with no linkable subject as text", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [
+          ev({
+            id: 33,
+            kind: "retention",
+            subject: "Old files",
+            subject_id: "x",
+          }),
+        ],
+        has_more: false,
+        retained_max: 2000,
+      });
+      render(
+        <History live={[]} onOpenChannel={vi.fn()} onOpenVideo={vi.fn()} />,
+      );
+      await screen.findByText("Old files");
+      expect(screen.queryByRole("button", { name: "Old files" })).toBeNull();
+    });
+  });
+
+  // The log is paginated, so the box has to be a SERVER query — a client filter
+  // would search only the rows already paged in and answer "nothing" for
+  // something the log plainly contains.
+  describe("search", () => {
+    it("sends the query to the server, debounced", async () => {
+      const { rerender } = render(<History live={[]} search="" />);
+      await screen.findByText("A clip");
+      expect(listActivity).toHaveBeenLastCalledWith(undefined, 20, undefined);
+
+      rerender(<History live={[]} search="veritasium" />);
+      await waitFor(
+        () =>
+          expect(listActivity).toHaveBeenLastCalledWith(
+            undefined,
+            20,
+            "veritasium",
+          ),
+        { timeout: 2000 },
+      );
+    });
+
+    it("carries the query into the next page back", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 40, subject: "A clip" })],
+        has_more: true,
+        retained_max: 2000,
+      });
+      const user = userEvent.setup();
+      render(<History live={[]} search="clip" />);
+      await screen.findByText("A clip");
+      await waitFor(
+        () =>
+          expect(listActivity).toHaveBeenLastCalledWith(undefined, 20, "clip"),
+        { timeout: 2000 },
+      );
+      await user.click(screen.getByRole("button", { name: LOAD_MORE }));
+      expect(listActivity).toHaveBeenLastCalledWith(40, 20, "clip");
+    });
+
+    // An SSE arrival has never been through the server query, so it must be
+    // held to the same filter or it drops a non-matching row into the results.
+    it("keeps a non-matching live event out of a filtered page", async () => {
+      const { rerender } = render(<History live={[]} search="clip" />);
+      await screen.findByText("A clip");
+      await waitFor(
+        () =>
+          expect(listActivity).toHaveBeenLastCalledWith(undefined, 20, "clip"),
+        { timeout: 2000 },
+      );
+      rerender(
+        <History
+          live={[ev({ id: 50, subject: "Something else", summary: "scanned" })]}
+          search="clip"
+        />,
+      );
+      await waitFor(() =>
+        expect(screen.queryByText("Something else")).toBeNull(),
+      );
+      expect(screen.getByText("A clip")).toBeInTheDocument();
+    });
+
+    it("names the query when nothing matches", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [],
+        has_more: false,
+        retained_max: 2000,
+      });
+      render(<History live={[]} search="nope" />);
+      expect(
+        await screen.findByText(/Nothing in the log matches/),
+      ).toBeInTheDocument();
+      // Not the cold-start line — the log may be full, just not of this.
+      expect(screen.queryByText(/this fills in as peeq scans/)).toBeNull();
+    });
+
+    // A changed query REPLACES the rows. Keeping the previous query's — which
+    // include every older page it had scrolled to — prepends them above the
+    // fresh newest page, so old rows sit on top of new ones and a day the log
+    // already had gets a second separator further down.
+    it("drops the previous query's rows instead of stacking them on top", async () => {
+      const user = userEvent.setup();
+      // The filtered query: one old row, with more behind it.
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 4, at: "2026-07-20 09:00:00", subject: "Old clip" })],
+        has_more: true,
+        retained_max: 2000,
+      });
+      const { rerender } = render(<History live={[]} search="clip" />);
+      await screen.findByText("Old clip");
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [
+          ev({ id: 3, at: "2026-07-20 08:00:00", subject: "Older clip" }),
+        ],
+        has_more: false,
+        retained_max: 2000,
+      });
+      await user.click(screen.getByRole("button", { name: LOAD_MORE }));
+      await screen.findByText("Older clip");
+
+      // Box cleared: the newest page is a later day's rows, and the two old
+      // ones are not part of this query's answer.
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 9, at: "2026-07-23 12:00:00", subject: "New one" })],
+        has_more: true,
+        retained_max: 2000,
+      });
+      rerender(<History live={[]} search="" />);
+      await screen.findByText("New one");
+      await waitFor(() => expect(screen.queryByText("Old clip")).toBeNull());
+      expect(screen.queryByText("Older clip")).toBeNull();
+      // One row, so one day separator — never a stale day above the newest.
+      expect(document.querySelectorAll(".ag-daysep").length).toBe(1);
+    });
+
+    // The mount-time merge the replace must not break: a live event that
+    // arrived while the first page was in flight is newer than everything the
+    // server sent, and stays.
+    it("keeps a live arrival that beat the first fetch", async () => {
+      let resolve!: (p: {
+        events: ActivityEvent[];
+        has_more: boolean;
+        retained_max: number;
+      }) => void;
+      vi.mocked(listActivity).mockReturnValue(
+        new Promise((r) => {
+          resolve = r;
+        }),
+      );
+      const { rerender } = render(<History live={[]} search="" />);
+      rerender(<History live={[ev({ id: 99, subject: "Fresh one" })]} />);
+      resolve({
+        events: [ev({ id: 1, subject: "A clip" })],
+        has_more: false,
+        retained_max: 2000,
+      });
+      expect(await screen.findByText("A clip")).toBeInTheDocument();
+      expect(screen.getByText("Fresh one")).toBeInTheDocument();
+    });
+
+    // The box is the only control that can change the query, and the query is
+    // the only thing that re-fires the fetch. Losing it to an error line means
+    // the search that failed can never be cleared.
+    it("keeps the search box when the fetch fails", async () => {
+      vi.mocked(listActivity).mockRejectedValue(new Error("boom"));
+      render(<History live={[]} search="clip" />);
+      expect(await screen.findByText("boom")).toBeInTheDocument();
+      expect(
+        screen.getByRole("searchbox", { name: "Search history" }),
+      ).toBeInTheDocument();
+    });
+
+    // A page-back answers the query that was in the box when it was clicked.
+    // Clearing the box mid-flight replaces the rows with the unfiltered newest
+    // page; appending the filtered older ones on top of that would jump from
+    // the newest rows straight to far older ones with everything between
+    // missing, and take the wrong query's has_more with it.
+    it("drops a page-back whose query was cleared while it was in flight", async () => {
+      let resolveMore!: (p: {
+        events: ActivityEvent[];
+        has_more: boolean;
+        retained_max: number;
+      }) => void;
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 40, subject: "A clip" })],
+        has_more: true,
+        retained_max: 2000,
+      });
+      const user = userEvent.setup();
+      const { rerender } = render(<History live={[]} search="clip" />);
+      await screen.findByText("A clip");
+      await waitFor(
+        () =>
+          expect(listActivity).toHaveBeenLastCalledWith(undefined, 20, "clip"),
+        { timeout: 2000 },
+      );
+
+      // Page back, but hold the response.
+      vi.mocked(listActivity).mockReturnValue(
+        new Promise((r) => {
+          resolveMore = r;
+        }),
+      );
+      await user.click(screen.getByRole("button", { name: LOAD_MORE }));
+
+      // Box cleared: the unfiltered newest page lands first.
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 90, subject: "Unfiltered newest" })],
+        has_more: true,
+        retained_max: 2000,
+      });
+      rerender(<History live={[]} search="" />);
+      await screen.findByText("Unfiltered newest");
+
+      resolveMore({
+        events: [ev({ id: 5, subject: "Stale filtered older" })],
+        has_more: false,
+        retained_max: 2000,
+      });
+      await waitFor(() =>
+        expect(screen.queryByText("Stale filtered older")).toBeNull(),
+      );
+      // The new query's own has_more survives, so the edge is still there.
+      expect(
+        screen.getByRole("button", { name: LOAD_MORE }),
+      ).toBeInTheDocument();
+    });
+  });
 });
 
 // These two pin the bugs a medium review of #161 turned up.
