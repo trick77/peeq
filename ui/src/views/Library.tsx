@@ -157,6 +157,13 @@ export function Library({
   // stays highlighted. Every filtered fetch claims an epoch; a response that no
   // longer holds the latest one is dropped.
   const filteredEpoch = useRef(0);
+  // The counts have exactly the same problem, and needed their own epoch: two
+  // effects call setAllVideos (the query's own, and the queue's), and the
+  // queue-triggered one carries whatever query was in the box when the download
+  // finished. Type on past it and its late response would repaint every chip
+  // with the older query's numbers — where the grid self-corrects on the next
+  // keystroke, the counts would sit wrong until the query changed again.
+  const countsEpoch = useRef(0);
 
   // Settings (for the "Expires in N days" calc) load once — nothing the user
   // does on this page changes them. The download queue used to be loaded here
@@ -182,9 +189,10 @@ export function Library({
   // decides what matches and the two can never disagree about it.
   useEffect(() => {
     let active = true;
+    const epoch = ++countsEpoch.current;
     listVideos({ filter: "all", q: debouncedQuery })
       .then((v) => {
-        if (active) setAllVideos(v);
+        if (active && epoch === countsEpoch.current) setAllVideos(v);
       })
       .catch(() => {});
     return () => {
@@ -219,7 +227,17 @@ export function Library({
   // If the selected category vanishes when the top chip changes (e.g. no
   // Music among Unwatched), fall back to All categories so the grid isn't
   // stranded on an invisible filter.
+  //
+  // Never while a query is in the box, though. This list is scoped to the search
+  // now, so a query that happens to match no Music video would read as "Music is
+  // gone" and clear the selection — and this effect only ever RESETS, so clearing
+  // the box would not bring it back. A search is a temporary narrowing; it must
+  // not destroy a choice the user made before typing. Under a query the category
+  // chip stays lit and its count is free to read 0, which is the honest answer
+  // for "Music, matching this text": nothing. The chip row keeps the selected
+  // category visible even at 0 (see catChips below) so it can still be undone.
   useEffect(() => {
+    if (debouncedQuery !== "") return;
     if (
       category !== "all" &&
       !allVideos.some(
@@ -228,7 +246,7 @@ export function Library({
     ) {
       setCategory("all");
     }
-  }, [filter, allVideos]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filter, allVideos, debouncedQuery]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A video only enters the Library once its download finishes, so the list
   // has to refresh when one does. App.tsx already owns the single SSE
@@ -247,12 +265,16 @@ export function Library({
     }
     let active = true;
     const epoch = ++filteredEpoch.current;
+    const counts = ++countsEpoch.current;
     // Carries the query for the same reason the counts' own effect does: without
     // it, a download finishing would quietly swap search-scoped counts back for
-    // whole-library ones while the query is still in the box.
+    // whole-library ones while the query is still in the box. `active` alone is
+    // not enough of a guard: this effect only re-runs on queueSignal, so its
+    // cleanup does not fire when the user types — the epoch is what drops this
+    // response once a newer query has claimed the counts.
     listVideos({ filter: "all", q: debouncedQuery })
       .then((v) => {
-        if (active) setAllVideos(v);
+        if (active && counts === countsEpoch.current) setAllVideos(v);
       })
       .catch(() => {});
     listVideos({ filter, category, q: debouncedQuery, sort })
@@ -417,8 +439,13 @@ export function Library({
           >
             All categories <span className="n">{catScope.length}</span>
           </button>
-          {CATEGORIES.filter((c) =>
-            catScope.some((v) => v.category === c.id),
+          {CATEGORIES.filter(
+            (c) =>
+              catScope.some((v) => v.category === c.id) ||
+              // The selected one always stays on the row, even when the current
+              // search leaves it with nothing: it is what the grid is filtered by,
+              // and a lit filter you cannot see is a filter you cannot undo.
+              c.id === category,
           ).map((c) => (
             <button
               key={c.id}
