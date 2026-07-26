@@ -60,6 +60,15 @@ if [ -n "$outtmpl" ]; then
     exit "${FAKE_YTDLP_EXIT:-1}"
   fi
 
+  # FAKE_YTDLP_WARNINGS is stderr on a run that SUCCEEDS -- the case real
+  # yt-dlp produces when it warns about a throttled fragment or a subtitle
+  # language it could not fetch, and still exits 0. Separate from
+  # FAKE_YTDLP_STDERR above, which exists to make the call FAIL; using that one
+  # here would test the error path instead of the silent one.
+  if [ -n "${FAKE_YTDLP_WARNINGS:-}" ]; then
+    printf '%b\n' "$FAKE_YTDLP_WARNINGS" 1>&2
+  fi
+
   echo "[download] 100% of 50.00MiB in 00:05"
 
   echo "dummy video content" > "$outdir/$id.mp4"
