@@ -28,9 +28,10 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const goFile = (rel: string) => resolve(HERE, "../../backend/", rel);
 
-// goSliceValues reads an ordered `var <name> = []string{ ConstA, ConstB }`
-// declaration and resolves each entry through the `ConstA = "value"` constants
-// declared in the same file.
+// goSliceValues reads an ordered `var <name> = []Elem{ ConstA, ConstB }`
+// declaration — `[]string` for most sets, `[]Role` for auth.Roles — and
+// resolves each entry through the `ConstA = "value"` constants declared in the
+// same file.
 //
 // Two steps rather than one because the Go slices list constant NAMES, not
 // literals — scraping the slice alone would compare TypeScript strings against
