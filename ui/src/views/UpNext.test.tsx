@@ -662,7 +662,7 @@ describe("UpNext filters", () => {
     expect(await screen.findByText("Veritasium")).toBeInTheDocument();
     expect(screen.getByText("A download")).toBeInTheDocument();
     expect(screen.getByText("A summary")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "All" })).toHaveClass("on");
+    expect(screen.getByRole("button", { name: /^All\b/ })).toHaveClass("on");
   });
 
   it("narrows to one kind, hiding the other lane and the schedule", async () => {
@@ -675,7 +675,7 @@ describe("UpNext filters", () => {
       />,
     );
     await screen.findByText("Veritasium");
-    await user.click(screen.getByRole("button", { name: "Downloads" }));
+    await user.click(screen.getByRole("button", { name: /^Downloads\b/ }));
     expect(screen.getByText("A download")).toBeInTheDocument();
     expect(screen.queryByText("A summary")).not.toBeInTheDocument();
     expect(screen.queryByText("Veritasium")).not.toBeInTheDocument();
@@ -685,9 +685,9 @@ describe("UpNext filters", () => {
     const user = userEvent.setup();
     render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
     await screen.findByText("Veritasium");
-    await user.click(screen.getByRole("button", { name: "Metadata" }));
+    await user.click(screen.getByRole("button", { name: /^Metadata\b/ }));
     expect(screen.queryByText("Veritasium")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Scans" }));
+    await user.click(screen.getByRole("button", { name: /^Scans\b/ }));
     expect(await screen.findByText("Veritasium")).toBeInTheDocument();
   });
 
@@ -697,11 +697,11 @@ describe("UpNext filters", () => {
     const user = userEvent.setup();
     render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
     await screen.findByText("Veritasium");
-    await user.click(screen.getByRole("button", { name: "Summaries" }));
+    await user.click(screen.getByRole("button", { name: /^Summaries\b/ }));
     expect(screen.getByText(/nothing of that kind/i)).toBeInTheDocument();
     // Still there, so All can be chosen again.
-    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByRole("button", { name: /^All\b/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^All\b/ }));
     expect(await screen.findByText("Veritasium")).toBeInTheDocument();
   });
 
@@ -730,7 +730,7 @@ describe("UpNext filters", () => {
       />,
     );
     expect(await screen.findByText("+4 more scheduled")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Downloads" }));
+    await user.click(screen.getByRole("button", { name: /^Downloads\b/ }));
     expect(screen.queryByText("+4 more scheduled")).not.toBeInTheDocument();
   });
 
@@ -747,12 +747,57 @@ describe("UpNext filters", () => {
       />,
     );
     await screen.findByText(/Couldn’t load the schedule|A download/i);
-    await user.click(screen.getByRole("button", { name: "Summaries" }));
+    await user.click(screen.getByRole("button", { name: /^Summaries\b/ }));
     expect(
       screen.queryByText(/Couldn’t load the schedule/i),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/nothing of that kind/i)).toBeInTheDocument();
   });
+  // Each chip carries what it would show if clicked, counted off the same arrays
+  // and the same predicates the sections render from — so a number can never
+  // disagree with the rows beneath it, search included.
+  it("counts each chip, and narrows the counts to the search box", async () => {
+    const jobsProp = [
+      job({ job_id: 1, title: "A download" }),
+      job({ job_id: 2, title: "Another download", state: "pending" }),
+    ];
+    const summariesProp = [
+      summary({ id: 3, video_id: "s3", title: "A summary" }),
+    ];
+    const { rerender } = render(
+      <UpNext jobs={jobsProp} summaries={summariesProp} onCancel={noop} />,
+    );
+    await screen.findByText("A download");
+
+    const countFor = (label: string) =>
+      Array.from(document.querySelectorAll(".chips .chip"))
+        .find((c) => c.textContent?.startsWith(label))
+        ?.querySelector(".n")?.textContent;
+
+    await waitFor(() => expect(countFor("Downloads")).toBe("2"));
+    expect(countFor("Summaries")).toBe("1");
+    // All is the sum of the other four — the schedule contributes to it too, so
+    // this is asserted as the sum rather than as the lanes' total.
+    const sum = ["Downloads", "Summaries", "Scans", "Metadata"].reduce(
+      (n, label) => n + Number(countFor(label)),
+      0,
+    );
+    expect(countFor("All")).toBe(String(sum));
+
+    // The box narrows the numbers along with the rows.
+    rerender(
+      <UpNext
+        jobs={jobsProp}
+        summaries={summariesProp}
+        onCancel={noop}
+        search="another"
+      />,
+    );
+    await waitFor(() => expect(countFor("Downloads")).toBe("1"));
+    expect(countFor("Summaries")).toBe("0");
+    expect(countFor("All")).toBe("1");
+  });
+
   // Two narrowing controls now sit on this page, and they have to compose: the
   // chips decide which lanes are on it at all, the box which of their rows
   // survive. A search evaluated around the chips would report on work the
@@ -773,14 +818,14 @@ describe("UpNext filters", () => {
 
     // Under Downloads the summary lane is off the page entirely, so the same
     // query now matches nothing — and the message must not blame the box alone.
-    await user.click(screen.getByRole("button", { name: "Downloads" }));
+    await user.click(screen.getByRole("button", { name: /^Downloads\b/ }));
     expect(screen.queryByText("A summary")).not.toBeInTheDocument();
     expect(
       screen.getByText(/nothing of that kind matches/i),
     ).toBeInTheDocument();
 
     // The chips survive it, so there is a way back.
-    await user.click(screen.getByRole("button", { name: "All" }));
+    await user.click(screen.getByRole("button", { name: /^All\b/ }));
     expect(await screen.findByText("A summary")).toBeInTheDocument();
   });
 

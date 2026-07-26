@@ -360,6 +360,16 @@ export function UpNext({
     [upcoming, filter],
   );
 
+  // The two search predicates, named once and used by both the rows and the chip
+  // counts below. A count that searched different fields than the row it counts
+  // is the drift this guards against.
+  const jobMatches = (j: {
+    title?: string;
+    video_id?: string;
+    channel_name?: string;
+  }) => matches(q, j.title, j.video_id, j.channel_name);
+  const schedMatches = (i: UpcomingItem) => matches(q, i.subject, planOf(i));
+
   const grouped = useMemo(() => {
     const by = new Map<string, UpcomingItem[]>();
     for (const item of scheduled) {
@@ -389,20 +399,40 @@ export function UpNext({
   // gate, so it is the row you look for first.
   const liveRows = [
     ...(showDownloads ? running : [])
-      .filter((j) => matches(q, j.title, j.video_id, j.channel_name))
+      .filter(jobMatches)
       .map((j) => ({ kind: "download" as const, job: j })),
     ...(showSummaries ? runningSummaries : [])
-      .filter((s) => matches(q, s.title, s.video_id, s.channel_name))
+      .filter(jobMatches)
       .map((s) => ({ kind: "summary" as const, job: s })),
   ];
   const queuedRows = [
     ...(showDownloads ? waiting : [])
-      .filter((j) => matches(q, j.title, j.video_id, j.channel_name))
+      .filter(jobMatches)
       .map((j) => ({ kind: "download" as const, job: j })),
     ...(showSummaries ? waitingSummaries : [])
-      .filter((s) => matches(q, s.title, s.video_id, s.channel_name))
+      .filter(jobMatches)
       .map((s) => ({ kind: "summary" as const, job: s })),
   ];
+
+  // What each chip would show if you clicked it: the two lanes it admits plus the
+  // schedule rows of its kind, all under the current search. Counted from the same
+  // arrays and the same predicates the sections render from, so a number can never
+  // disagree with the rows beneath it. "All" is the sum of the rest, since every
+  // row belongs to exactly one kind.
+  const countFor = (f: string) => {
+    const lanes =
+      (f === "all" || f === "download"
+        ? [...running, ...waiting].filter(jobMatches).length
+        : 0) +
+      (f === "all" || f === "summary"
+        ? [...runningSummaries, ...waitingSummaries].filter(jobMatches).length
+        : 0);
+    const sched = upcoming.filter(
+      (i) =>
+        i.at && !i.approx && (f === "all" || f === i.kind) && schedMatches(i),
+    ).length;
+    return lanes + sched;
+  };
 
   // ChannelBit is the channel name inside a detail line — a link when we know
   // the channel's id, plain text otherwise. A video added individually may
@@ -463,7 +493,7 @@ export function UpNext({
             className={`chip${filter === f.id ? " on" : ""}`}
             onClick={() => setFilter(f.id)}
           >
-            {f.label}
+            {f.label} <span className="n">{countFor(f.id)}</span>
           </button>
         ))}
       </div>

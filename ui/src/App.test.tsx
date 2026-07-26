@@ -473,6 +473,7 @@ describe("App routing", () => {
         format_override: "",
         pending_count: 0,
         downloaded_count: 3,
+        added: true,
         dormant: false,
       },
     ]);

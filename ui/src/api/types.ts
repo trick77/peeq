@@ -238,6 +238,12 @@ export type Channel = {
   format_override?: string;
   pending_count: number;
   downloaded_count: number;
+  // added is true when the USER added this channel, false for one listed only
+  // because the library holds a video downloaded from it. It is what lets the
+  // filter chips tell "Not subscribed" (added, no subscription) apart from
+  // "From downloads" (never added) off a single unfiltered list — the same
+  // distinction channels.Store.List's ?filter= clauses make.
+  added: boolean;
   // has_avatar/has_banner tell a list row whether channel art exists, so it can
   // point an <img> at /api/channels/{id}/avatar|banner or fall back to a
   // gradient — same presence flags ChannelDetail carries, now on the list too.

@@ -149,12 +149,14 @@ export function Channels({
   const [pendingDelete, setPendingDelete] = useState<Channel | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [tombstones, setTombstones] = useState<AutoUnsubscribedChannel[]>([]);
-  // dormant is deliberately its own list, fetched with filter "all" rather
-  // than derived from `channels`. `channels` follows the active chip (e.g.
-  // "Auto-add"), so a dormant channel with autodownload off would silently
-  // drop out of the review band the moment that chip is selected — the one
-  // alert on the page that should never depend on which chip is lit.
-  const [dormant, setDormant] = useState<Channel[]>([]);
+  // allChannels is the whole list, fetched with filter "all" rather than derived
+  // from `channels`. `channels` follows the active chip (e.g. "Auto-add"), and
+  // two things here must not depend on which chip is lit: the review band (a
+  // dormant channel with autodownload off would silently drop out of the one
+  // alert on the page) and the chip counts (a chip cannot count a slice it was
+  // never sent). Both read this list; nothing else needs it.
+  const [allChannels, setAllChannels] = useState<Channel[]>([]);
+  const dormant = allChannels.filter((c) => c.dormant);
 
   // filterRef mirrors filter so the async handlers below can refetch the
   // filter that is active NOW. Reading `filter` after an await would use the
@@ -200,34 +202,43 @@ export function Channels({
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  // loadDormant refreshes the review band's own list. Called on mount and
-  // again after anything that could add or remove a dormant channel
-  // (dismiss, unsubscribe, resubscribe) — never as a side effect of the
-  // filter chips.
-  function loadDormant() {
+  // loadAll refreshes the unfiltered list behind the review band and the chip
+  // counts. Called on mount and again after anything that could change either —
+  // subscribe, unsubscribe, dismiss, resubscribe, delete — never as a side
+  // effect of the filter chips, which have their own load().
+  function loadAll() {
     listChannels("all")
-      .then((cs) => setDormant(cs.filter((c) => c.dormant)))
+      .then(setAllChannels)
       .catch((e: Error) => setError(e.message));
   }
 
   useEffect(() => {
-    loadDormant();
+    loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Patches both lists: `channels` so the visible row updates, and allChannels so
+  // the chip counts and the review band move with it. A toggle that patched only
+  // the first would leave "Subscribed 12" beside a row that now says otherwise
+  // until the refetch landed.
   function applyLocalUpdate(id: string, patch: Partial<Channel>) {
     setChannels((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+    );
+    setAllChannels((prev) =>
       prev.map((c) => (c.id === id ? { ...c, ...patch } : c)),
     );
   }
 
   async function handleToggleSubscribe(c: Channel) {
     const next = !c.subscribed;
-    applyLocalUpdate(c.id, { subscribed: next });
-    // A dormant channel unsubscribed from the review band itself must leave
-    // the band immediately — it lives in `dormant`, a separate list from
-    // `channels`, so applyLocalUpdate above does not touch it.
-    if (!next) setDormant((prev) => prev.filter((x) => x.id !== c.id));
+    // Unsubscribing clears dormancy in the same breath — a channel can only be
+    // dormant while subscribed — which is also what takes a row out of the review
+    // band immediately when it is unsubscribed from the band itself.
+    applyLocalUpdate(
+      c.id,
+      next ? { subscribed: true } : { subscribed: false, dormant: false },
+    );
     try {
       if (next) {
         await subscribeChannel(c.id);
@@ -235,12 +246,12 @@ export function Channels({
         await unsubscribeChannel(c.id);
       }
       load(filterRef.current);
-      // Unsubscribing (from the main list or the review band itself) always
-      // clears dormancy — a channel can only be dormant while subscribed.
-      loadDormant();
+      loadAll();
     } catch (err) {
-      applyLocalUpdate(c.id, { subscribed: c.subscribed });
-      if (!next) loadDormant();
+      applyLocalUpdate(c.id, {
+        subscribed: c.subscribed,
+        dormant: c.dormant,
+      });
       setError((err as Error).message);
     }
   }
@@ -279,6 +290,9 @@ export function Channels({
     try {
       await deleteChannel(c.id);
       setChannels((prev) => prev.filter((x) => x.id !== c.id));
+      // The counts and the review band read the unfiltered list, so a deleted
+      // channel has to leave that one too or every chip stays one too high.
+      setAllChannels((prev) => prev.filter((x) => x.id !== c.id));
       // A "Check now" notice may be reporting on the row that just vanished;
       // leaving it up promises a check for a channel that no longer exists.
       setNotice(null);
@@ -295,19 +309,14 @@ export function Channels({
   }
 
   // handleKeepDormant dismisses one channel's dormancy flag (the "Keep
-  // subscribed" action in the review band). Applied optimistically against
-  // the band's own `dormant` list — the row leaves the band immediately —
-  // and reverted with an error line on failure. Also patches `channels` in
-  // case the same channel happens to be visible under the active filter.
+  // subscribed" action in the review band). Applied optimistically — the row
+  // leaves the band the moment its dormant flag clears, since the band reads
+  // allChannels — and reverted with an error line on failure.
   async function handleKeepDormant(c: Channel) {
-    setDormant((prev) => prev.filter((x) => x.id !== c.id));
     applyLocalUpdate(c.id, { dormant: false });
     try {
       await dismissDormantChannel(c.id);
     } catch (err) {
-      setDormant((prev) =>
-        prev.some((x) => x.id === c.id) ? prev : [...prev, c],
-      );
       applyLocalUpdate(c.id, { dormant: true });
       setError((err as Error).message);
     }
@@ -327,7 +336,7 @@ export function Channels({
       await resubscribeChannel(c.id);
       setTombstones((prev) => prev.filter((x) => x.id !== c.id));
       load(filterRef.current);
-      loadDormant();
+      loadAll();
     } catch (err) {
       setError((err as Error).message);
     }
@@ -344,17 +353,52 @@ export function Channels({
   // "From downloads" row whose metadata never resolved shows its raw UCID, and
   // searching for the very text on screen must not make the row disappear.
   const q = search.trim().toLowerCase();
+  // One predicate, two uses: the rows below and the chip counts. Written once so
+  // a count can never search different fields than the list it is counting.
+  const listable = (c: Channel) =>
+    !c.dormant &&
+    (q === "" ||
+      c.name.toLowerCase().includes(q) ||
+      (c.handle ?? "").toLowerCase().includes(q) ||
+      displayName(c).toLowerCase().includes(q));
   const visibleChannels = channels
-    .filter(
-      (c) =>
-        !c.dormant &&
-        (q === "" ||
-          c.name.toLowerCase().includes(q) ||
-          (c.handle ?? "").toLowerCase().includes(q) ||
-          displayName(c).toLowerCase().includes(q)),
-    )
+    .filter(listable)
     .sort((a, b) => compareChannels(a, b, sort));
   const hasNonDormant = channels.some((c) => !c.dormant);
+
+  // Chip counts come off allChannels — the same unfiltered list the review band
+  // reads — because `channels` only ever holds the ACTIVE chip's slice and so
+  // could never say what the other four hold. The predicates below mirror
+  // channels.Store.List's ?filter= clauses one for one:
+  //
+  //   subscribed    — has a subscription row
+  //   notsubscribed — added, but no subscription (the added check is what keeps
+  //                   the download-only rows out; they have no subscription
+  //                   either, and they are what the next pill is for)
+  //   downloaded    — never added, listed only via a downloaded video. Inside an
+  //                   "all" list, !added already implies that: the server's base
+  //                   clause admits a row only if it was added OR has downloads.
+  //   autodownload  — autodownload on, which lives on the subscription row and
+  //                   so is already a subset of subscribed
+  //
+  // Counted through `listable` as well, so a query in the search box narrows the
+  // numbers with the list — a chip saying 40 above three rows is the number
+  // lying about what clicking it does.
+  const chipCount = (f: ChannelFilter) =>
+    allChannels.filter(listable).filter((c) => {
+      switch (f) {
+        case "subscribed":
+          return c.subscribed;
+        case "notsubscribed":
+          return c.added && !c.subscribed;
+        case "downloaded":
+          return !c.added;
+        case "autodownload":
+          return c.autodownload;
+        default:
+          return true;
+      }
+    }).length;
 
   return (
     <>
@@ -388,7 +432,7 @@ export function Channels({
             className={`chip${filter === chip.id ? " on" : ""}`}
             onClick={() => setFilter(chip.id)}
           >
-            {chip.label}
+            {chip.label} <span className="n">{chipCount(chip.id)}</span>
           </button>
         ))}
       </div>

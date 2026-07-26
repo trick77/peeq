@@ -1111,6 +1111,15 @@ button.srow:not(:disabled):hover {
   flex-wrap: wrap;
   margin-bottom: 18px;
 }
+/* The sort control states a default you did not choose, so it is set in the same
+   muted grey as the search box's placeholder rather than in full ink — at
+   --color-ink it read as loudly as a typed query. Scoped to .listbar select, NOT
+   to .ui-control, which also backs every text input: dimming that would grey out
+   text the user typed. Only the closed control follows this; the open dropdown is
+   the OS's own menu and takes its colours from the system. */
+.listbar select {
+  color: var(--color-muted);
+}
 
 /* searchfield — the search box in a .listbar: a .ui-control input with a
    leading magnifier and a trailing "/" hint (the key really does focus it).
@@ -1127,6 +1136,14 @@ button.srow:not(:disabled):hover {
   /* Room for the two overlaid affordances. Overrides .ui-control's 0 12px. */
   padding-left: 35px;
   padding-right: 32px;
+}
+/* The right-hand room is the "/" hint's, and the hint hides the moment there is
+   text (see the rule below). What replaces it is the browser's own clear button,
+   which sits inside the padding — so keeping 32px parked the ✕ a third of an
+   inch from the field's edge. Same condition as the hint's, so the space is
+   handed over rather than shared: 12px is .ui-control's own inline padding. */
+.searchfield input:not(:placeholder-shown) {
+  padding-right: 12px;
 }
 .searchfield > svg {
   position: absolute;
@@ -1732,7 +1749,7 @@ button.catpick.unset:hover {
   justify-content: space-between;
   gap: 8px;
 }
-/* Inbox's footer holds two peer actions (Download now / Ignore) rather than
+/* Inbox's footer holds two peer actions (Download / Ignore) rather than
    Library's status-text-plus-button pair, so they group at the start instead
    of being pushed to opposite edges. */
 .card-foot.acts-row {
@@ -2053,7 +2070,11 @@ button.catpick.unset:hover {
 .playmeta h1 {
   margin: 0 0 8px;
   font-family: var(--font-sans);
-  font-size: 26px;
+  /* 22px, down from 26px: the player already tells you what you are watching —
+     the video is playing directly above this line — so the title labels the page
+     rather than headlining it. The share page keeps its larger step, because
+     there the title IS the first thing a stranger reads. */
+  font-size: 22px;
   font-weight: 450;
   color: var(--color-ink-dim);
   letter-spacing: -0.01em;

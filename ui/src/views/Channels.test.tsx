@@ -15,6 +15,7 @@ function baseChannel(overrides: Partial<Channel> = {}): Channel {
     format_override: "",
     pending_count: 3,
     downloaded_count: 0,
+    added: true,
     dormant: false,
     ...overrides,
   };
@@ -166,9 +167,59 @@ describe("Channels", () => {
     await waitFor(() =>
       expect(listChannels).toHaveBeenCalledWith("subscribed"),
     );
-    expect(screen.getByRole("button", { name: "Subscribed" })).toHaveClass(
+    expect(screen.getByRole("button", { name: /^Subscribed\b/ })).toHaveClass(
       "on",
     );
+  });
+
+  // Each chip carries the number of channels it would show. They are counted off
+  // the unfiltered list — the active chip's own list holds one slice and could
+  // never speak for the other four — using the same predicates the server's
+  // ?filter= clauses apply.
+  describe("chip counts", () => {
+    const roster = [
+      // added + subscribed + autodownload on
+      baseChannel({
+        id: "c1",
+        name: "Auto One",
+        subscribed: true,
+        autodownload: true,
+      }),
+      // added + subscribed, autodownload off
+      baseChannel({ id: "c2", name: "Subbed Two", subscribed: true }),
+      // added, never subscribed
+      baseChannel({ id: "c3", name: "Added Three" }),
+      // never added — in the list only because a download came from it
+      baseChannel({ id: "c4", name: "Download Four", added: false }),
+    ];
+    const countFor = (label: string) =>
+      Array.from(document.querySelectorAll(".chips .chip"))
+        .find((c) => c.textContent?.startsWith(label))
+        ?.querySelector(".n")?.textContent;
+
+    it("counts each filter the way the server defines it", async () => {
+      vi.mocked(listChannels).mockResolvedValue(roster);
+      render(<Channels />);
+      await screen.findByText("Auto One");
+
+      await waitFor(() => expect(countFor("All")).toBe("4"));
+      expect(countFor("Subscribed")).toBe("2");
+      // added && !subscribed — the download-only row has no subscription either,
+      // and must not land here.
+      expect(countFor("Not subscribed")).toBe("1");
+      expect(countFor("From downloads")).toBe("1");
+      expect(countFor("Auto-add")).toBe("1");
+    });
+
+    it("narrows every count to the search query", async () => {
+      vi.mocked(listChannels).mockResolvedValue(roster);
+      render(<Channels search="four" />);
+      await screen.findByText("Download Four");
+
+      await waitFor(() => expect(countFor("All")).toBe("1"));
+      expect(countFor("Subscribed")).toBe("0");
+      expect(countFor("From downloads")).toBe("1");
+    });
   });
 
   it("filter chips drive listChannels(filter)", async () => {
@@ -177,12 +228,12 @@ describe("Channels", () => {
     await screen.findByText("Added Channel");
     vi.mocked(listChannels).mockClear();
 
-    await user.click(screen.getByRole("button", { name: "All" }));
+    await user.click(screen.getByRole("button", { name: /^All\b/ }));
     await waitFor(() => expect(listChannels).toHaveBeenCalledWith("all"));
 
     // "Not subscribed" is the label; the filter id is "notsubscribed".
     vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: "Not subscribed" }));
+    await user.click(screen.getByRole("button", { name: /^Not subscribed\b/ }));
     await waitFor(() =>
       expect(listChannels).toHaveBeenCalledWith("notsubscribed"),
     );
@@ -192,19 +243,19 @@ describe("Channels", () => {
     // but not followed), which is a different thing entirely, so the
     // label-to-filter mapping is worth pinning.
     vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: "From downloads" }));
+    await user.click(screen.getByRole("button", { name: /^From downloads\b/ }));
     await waitFor(() =>
       expect(listChannels).toHaveBeenCalledWith("downloaded"),
     );
 
     vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: "Auto-add" }));
+    await user.click(screen.getByRole("button", { name: /^Auto-add\b/ }));
     await waitFor(() =>
       expect(listChannels).toHaveBeenCalledWith("autodownload"),
     );
 
     vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: "Subscribed" }));
+    await user.click(screen.getByRole("button", { name: /^Subscribed\b/ }));
     await waitFor(() =>
       expect(listChannels).toHaveBeenCalledWith("subscribed"),
     );
@@ -229,7 +280,7 @@ describe("Channels", () => {
     render(<Channels />);
     // The initial "subscribed" load is still in flight; switch to
     // "Not subscribed".
-    await user.click(screen.getByRole("button", { name: "Not subscribed" }));
+    await user.click(screen.getByRole("button", { name: /^Not subscribed\b/ }));
     expect(await screen.findByText("Added Channel")).toBeInTheDocument();
     expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
 
@@ -252,10 +303,10 @@ describe("Channels", () => {
       await screen.findByText("No subscribed channels — see All."),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "All" }));
+    await user.click(screen.getByRole("button", { name: /^All\b/ }));
     expect(await screen.findByText("No channels yet.")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Auto-add" }));
+    await user.click(screen.getByRole("button", { name: /^Auto-add\b/ }));
     expect(
       await screen.findByText("No channels match this filter — see All."),
     ).toBeInTheDocument();
@@ -468,7 +519,7 @@ describe("Channels", () => {
         "Added to the check queue — usually done within a minute.",
       );
 
-      await user.click(screen.getByRole("button", { name: "All" }));
+      await user.click(screen.getByRole("button", { name: /^All\b/ }));
       await waitFor(() =>
         expect(
           screen.queryByText(

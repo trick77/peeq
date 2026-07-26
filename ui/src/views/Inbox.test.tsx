@@ -93,16 +93,14 @@ describe("Inbox", () => {
     });
   });
 
-  it("clicking Download now calls downloadPending and removes the row", async () => {
+  it("clicking Download calls downloadPending and removes the row", async () => {
     const user = userEvent.setup();
     render(<Inbox />);
     await screen.findByText("First pending video");
     const row = screen
       .getByText("First pending video")
       .closest(".card") as HTMLElement;
-    await user.click(
-      within(row).getByRole("button", { name: /download now/i }),
-    );
+    await user.click(within(row).getByRole("button", { name: /^download$/i }));
     await waitFor(() => {
       expect(downloadPending).toHaveBeenCalledWith("v1");
     });
@@ -131,7 +129,7 @@ describe("Inbox", () => {
     expect(screen.getByText("First pending video")).toBeInTheDocument();
   });
 
-  it("calls onCountChange with the decremented count after Download now removes a row", async () => {
+  it("calls onCountChange with the decremented count after Download removes a row", async () => {
     const user = userEvent.setup();
     const onCountChange = vi.fn();
     render(<Inbox onCountChange={onCountChange} />);
@@ -140,9 +138,7 @@ describe("Inbox", () => {
     const row = screen
       .getByText("First pending video")
       .closest(".card") as HTMLElement;
-    await user.click(
-      within(row).getByRole("button", { name: /download now/i }),
-    );
+    await user.click(within(row).getByRole("button", { name: /^download$/i }));
     await waitFor(() => {
       expect(onCountChange).toHaveBeenCalledWith(1);
     });
@@ -252,7 +248,7 @@ describe("Inbox", () => {
     });
   });
 
-  it("fires onQueued after a Download now so the queue can seed", async () => {
+  it("fires onQueued after a Download so the queue can seed", async () => {
     const user = userEvent.setup();
     const onQueued = vi.fn();
     render(<Inbox onQueued={onQueued} />);
@@ -260,9 +256,7 @@ describe("Inbox", () => {
     const row = screen
       .getByText("First pending video")
       .closest(".card") as HTMLElement;
-    await user.click(
-      within(row).getByRole("button", { name: /download now/i }),
-    );
+    await user.click(within(row).getByRole("button", { name: /^download$/i }));
     await waitFor(() => expect(onQueued).toHaveBeenCalled());
   });
 
@@ -287,7 +281,7 @@ describe("Inbox", () => {
     expect(onQueued).not.toHaveBeenCalled();
   });
 
-  it("surfaces a failure from Download now and keeps the row", async () => {
+  it("surfaces a failure from Download and keeps the row", async () => {
     const user = userEvent.setup();
     vi.mocked(downloadPending).mockRejectedValue(new Error("disk is full"));
     render(<Inbox />);
@@ -295,9 +289,7 @@ describe("Inbox", () => {
     const row = screen
       .getByText("First pending video")
       .closest(".card") as HTMLElement;
-    await user.click(
-      within(row).getByRole("button", { name: /download now/i }),
-    );
+    await user.click(within(row).getByRole("button", { name: /^download$/i }));
 
     expect(await screen.findByText("disk is full")).toBeInTheDocument();
     // The row stays put — a failed download is still a decision to make.

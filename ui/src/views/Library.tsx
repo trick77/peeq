@@ -152,10 +152,10 @@ export function Library({
   // longer holds the latest one is dropped.
   const filteredEpoch = useRef(0);
 
-  // Unfiltered list (for chip counts) + settings (for the "Expires in N
-  // days" calc) are loaded once. The download queue used to be loaded here
-  // too, purely to map job_id -> video_id for a per-card progress ring;
-  // both are gone with the in-flight cards themselves.
+  // Settings (for the "Expires in N days" calc) load once — nothing the user
+  // does on this page changes them. The download queue used to be loaded here
+  // too, purely to map job_id -> video_id for a per-card progress ring; both are
+  // gone with the in-flight cards themselves.
   useEffect(() => {
     let active = true;
     getSettings()
@@ -163,7 +163,20 @@ export function Library({
         if (active) setSettings(s);
       })
       .catch(() => {});
-    listVideos({ filter: "all" })
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // The list every count is derived from: unfiltered by chip and category, but
+  // NOT by search. A count has to answer "how many would I see if I clicked
+  // this", and with a query in the box the answer is scoped to that query — a
+  // chip reading 65 next to a grid of 3 is the count lying about the click.
+  // Same endpoint and same `q` as the grid's own fetch below, so the server
+  // decides what matches and the two can never disagree about it.
+  useEffect(() => {
+    let active = true;
+    listVideos({ filter: "all", q: debouncedQuery })
       .then((v) => {
         if (active) setAllVideos(v);
       })
@@ -171,7 +184,7 @@ export function Library({
     return () => {
       active = false;
     };
-  }, []);
+  }, [debouncedQuery]);
 
   // Debounce the search box so typing "abyss" fires one request, not five.
   useEffect(() => {
@@ -228,7 +241,10 @@ export function Library({
     }
     let active = true;
     const epoch = ++filteredEpoch.current;
-    listVideos({ filter: "all" })
+    // Carries the query for the same reason the counts' own effect does: without
+    // it, a download finishing would quietly swap search-scoped counts back for
+    // whole-library ones while the query is still in the box.
+    listVideos({ filter: "all", q: debouncedQuery })
       .then((v) => {
         if (active) setAllVideos(v);
       })
