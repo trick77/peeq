@@ -106,4 +106,39 @@ describe("NewTab", () => {
       "1:00",
     );
   });
+
+  it("links each row title to the video on YouTube, in a new tab", async () => {
+    vi.mocked(listPending).mockResolvedValue([
+      {
+        video_id: "p1",
+        channel_id: "UCa",
+        channel_name: "Chan",
+        title: "Linked upload",
+        duration_seconds: 125,
+        url: "https://youtu.be/p1",
+        thumbnail_url: "https://img.example/p1.jpg",
+        discovered_at: "2026-07-24 08:00:00",
+      },
+      // No url on the ledger row — the link is built from the video id.
+      {
+        video_id: "p2",
+        channel_id: "UCa",
+        channel_name: "Chan",
+        title: "Urlless upload",
+        duration_seconds: 60,
+        url: "",
+        thumbnail_url: "https://img.example/p2.jpg",
+        discovered_at: "2026-07-24 08:00:00",
+      },
+    ]);
+    render(<NewTab detail={makeDetail()} onChanged={() => {}} />);
+
+    const linked = await screen.findByRole("link", { name: "Linked upload" });
+    expect(linked).toHaveAttribute("href", "https://youtu.be/p1");
+    expect(linked).toHaveAttribute("target", "_blank");
+    expect(linked).toHaveAttribute("rel", "noopener noreferrer");
+    expect(
+      screen.getByRole("link", { name: "Urlless upload" }),
+    ).toHaveAttribute("href", "https://www.youtube.com/watch?v=p2");
+  });
 });

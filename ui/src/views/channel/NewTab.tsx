@@ -140,7 +140,24 @@ export function NewTab({
                   loading="lazy"
                 />
                 <div className="chan-pt">
-                  <div className="ti">{item.title}</div>
+                  {/* Same rows as the Inbox, so the same rule: a pending
+                      video has no local copy yet, and its title links to the
+                      original on YouTube in a new tab. Falls back to a watch
+                      URL built from the video id when the ledger entry has no
+                      url — the id IS the YouTube id. */}
+                  <div className="ti">
+                    <a
+                      href={
+                        item.url ||
+                        `https://www.youtube.com/watch?v=${item.video_id}`
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Open "${item.title}" on YouTube`}
+                    >
+                      {item.title}
+                    </a>
+                  </div>
                   {/* This tab is a dense row list, not the Inbox's card
                       grid, so the date joins the duration on the sub line
                       rather than a card eyebrow — but it is the same

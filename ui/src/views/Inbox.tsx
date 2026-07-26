@@ -416,7 +416,30 @@ export function Inbox({
                 </>
               ) : null}
             </div>
-            <h3>{item.title}</h3>
+            {/* Nothing in the inbox has been downloaded yet, so there is no
+                local player to open — the only thing behind a pending title is
+                the video on YouTube, and that is where clicking it goes. New
+                tab, same reasoning as the channel header's handle link: peeq
+                is the archive, and losing your place in a triage list to a
+                YouTube page would be the wrong trade.
+
+                The ledger's url is best-effort (a scan can record an entry
+                without one), so it falls back to a watch URL built from the
+                video id — a peeq video id IS the YouTube id, so the fallback
+                is always correct, never a guess. */}
+            <h3>
+              <a
+                className="title-btn"
+                href={
+                  item.url || `https://www.youtube.com/watch?v=${item.video_id}`
+                }
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open "${item.title}" on YouTube`}
+              >
+                {item.title}
+              </a>
+            </h3>
             <div className="card-foot acts-row">
               <Button
                 type="button"

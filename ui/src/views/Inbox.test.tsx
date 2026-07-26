@@ -62,6 +62,25 @@ describe("Inbox", () => {
     );
   });
 
+  it("links the title to the video on YouTube, in a new tab", async () => {
+    render(<Inbox />);
+    const link = await screen.findByRole("link", {
+      name: "First pending video",
+    });
+    expect(link).toHaveAttribute("href", "https://youtube.com/watch?v=v1");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("builds the YouTube link from the video id when the ledger has no url", async () => {
+    vi.mocked(listPending).mockResolvedValue([baseItem({ url: "" })]);
+    render(<Inbox />);
+    const link = await screen.findByRole("link", {
+      name: "First pending video",
+    });
+    expect(link).toHaveAttribute("href", "https://www.youtube.com/watch?v=v1");
+  });
+
   it("renders the channel name, not the raw channel id", async () => {
     render(<Inbox />);
     await screen.findByText("First pending video");
