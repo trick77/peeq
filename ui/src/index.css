@@ -762,7 +762,12 @@ button.srow:not(:disabled):hover {
 .ag-row.warn .ag-kind {
   color: inherit;
 }
-.ag-when .num {
+/* Numerals only — never whole phrases, as the old .un-lead/.un-detail rule
+   these replace had it. The detail line is in here because a running download
+   counts 1% → 10% → 100% in place, and proportional digits shove the separator
+   and the speed sideways on every tick. */
+.ag-when .num,
+.ag-detail .num {
   font-variant-numeric: tabular-nums;
 }
 .ag-when {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listActivity, type ActivityEvent } from "../api";
 import { SearchField } from "../components/SearchField";
 import { Icon } from "../icons";
@@ -176,7 +176,11 @@ export function History({
   const [filter, setFilter] = useState("all");
   // Debounced like the Library's box, and for the same reason: typing "abyss"
   // should fire one request, not five.
-  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  const [debouncedSearch, setDebouncedSearch] = useState(search.trim());
+  // The query the rows currently on screen are the answer to. Read in the fetch
+  // below to tell "the same query, fetched again" (mount) from "a new query,
+  // whose answer replaces the old one".
+  const answeredQuery = useRef(debouncedSearch);
   // now is captured once per render pass for the relative-time labels and the
   // day names; it does not tick, which is fine for a log.
   const now = Date.now();
@@ -186,27 +190,41 @@ export function History({
     return () => clearTimeout(id);
   }, [search]);
 
-  // The newest page, refetched whenever the search changes. The rows are
-  // REPLACED rather than merged on a search change — the previous query's
-  // results are not part of this one's answer — so `past` is cleared first, and
-  // `loaded` is not reset, because blanking the page to "Loading…" on every
-  // keystroke reads as the log disappearing.
+  // The newest page, refetched whenever the search changes. On a CHANGED query
+  // the rows are replaced rather than merged — the previous query's results,
+  // including the older pages it had scrolled to, are not part of this one's
+  // answer, and keeping them would prepend older rows above the fresh newest
+  // page and split a day into two separators. `loaded` is not reset, because
+  // blanking the page to "Loading…" on every keystroke reads as the log
+  // disappearing.
   useEffect(() => {
     let active = true;
     listActivity(undefined, PAGE_SIZE, debouncedSearch || undefined)
       .then((page) => {
         if (!active) return;
-        // MERGE, not replace: a live "activity" event can arrive between the
-        // server building this snapshot and the fetch resolving. The live effect
-        // prepends it to `past`; replacing here would clobber it (and its ref
-        // wouldn't change, so the live effect won't re-run). Keep any such
-        // live-only rows on top, deduped by id — but only the ones that match
-        // the query this page answers, or a search change would carry the
-        // previous query's live arrivals into the new results.
+        // MERGE, not replace, when the query is unchanged: a live "activity"
+        // event can arrive between the server building this snapshot and the
+        // fetch resolving. The live effect prepends it to `past`; replacing
+        // here would clobber it (and its ref wouldn't change, so the live
+        // effect won't re-run). Across a query CHANGE only such genuinely
+        // newer arrivals survive — a row newer than every row the server just
+        // sent, which is the one thing this snapshot cannot have contained —
+        // and they must still match the new query.
+        //
+        // Read before setPast, not inside the updater: React runs the updater
+        // after this .then body, by which time the ref would already have been
+        // reassigned and every query would look unchanged.
+        const previousQuery = answeredQuery.current;
+        answeredQuery.current = debouncedSearch;
+        const newest = page.events.length > 0 ? page.events[0].id : null;
         setPast((prev) => {
           const ids = new Set(page.events.map((e) => e.id));
           const liveOnly = prev.filter(
-            (e) => !ids.has(e.id) && matchesSearch(e, debouncedSearch),
+            (e) =>
+              !ids.has(e.id) &&
+              matchesSearch(e, debouncedSearch) &&
+              (previousQuery === debouncedSearch ||
+                (newest !== null && e.id > newest)),
           );
           return [...liveOnly, ...page.events];
         });
@@ -337,11 +355,16 @@ export function History({
 
       {days.length === 0 ? (
         <p className="agenda-empty">
-          {debouncedSearch
-            ? `Nothing in the log matches “${debouncedSearch}”.`
-            : filter === "all"
-              ? "Nothing yet — this fills in as peeq scans channels, downloads videos, and tidies up."
-              : "Nothing matching that filter yet."}
+          {/* The line has to name every control that is currently narrowing the
+              log, or it blames the box for a chip: a search with matches, then
+              a chip with none, would still read "nothing matches your query". */}
+          {debouncedSearch && filter !== "all"
+            ? `Nothing in the log matches “${debouncedSearch}” under that filter.`
+            : debouncedSearch
+              ? `Nothing in the log matches “${debouncedSearch}”.`
+              : filter === "all"
+                ? "Nothing yet — this fills in as peeq scans channels, downloads videos, and tidies up."
+                : "Nothing matching that filter yet."}
         </p>
       ) : (
         <>

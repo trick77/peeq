@@ -451,6 +451,70 @@ describe("History", () => {
       // Not the cold-start line — the log may be full, just not of this.
       expect(screen.queryByText(/this fills in as peeq scans/)).toBeNull();
     });
+
+    // A changed query REPLACES the rows. Keeping the previous query's — which
+    // include every older page it had scrolled to — prepends them above the
+    // fresh newest page, so old rows sit on top of new ones and a day the log
+    // already had gets a second separator further down.
+    it("drops the previous query's rows instead of stacking them on top", async () => {
+      const user = userEvent.setup();
+      // The filtered query: one old row, with more behind it.
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 4, at: "2026-07-20 09:00:00", subject: "Old clip" })],
+        has_more: true,
+        retained_max: 2000,
+      });
+      const { rerender } = render(<History live={[]} search="clip" />);
+      await screen.findByText("Old clip");
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [
+          ev({ id: 3, at: "2026-07-20 08:00:00", subject: "Older clip" }),
+        ],
+        has_more: false,
+        retained_max: 2000,
+      });
+      await user.click(screen.getByRole("button", { name: LOAD_MORE }));
+      await screen.findByText("Older clip");
+
+      // Box cleared: the newest page is a later day's rows, and the two old
+      // ones are not part of this query's answer.
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 9, at: "2026-07-23 12:00:00", subject: "New one" })],
+        has_more: true,
+        retained_max: 2000,
+      });
+      rerender(<History live={[]} search="" />);
+      await screen.findByText("New one");
+      await waitFor(() => expect(screen.queryByText("Old clip")).toBeNull());
+      expect(screen.queryByText("Older clip")).toBeNull();
+      // One row, so one day separator — never a stale day above the newest.
+      expect(document.querySelectorAll(".ag-daysep").length).toBe(1);
+    });
+
+    // The mount-time merge the replace must not break: a live event that
+    // arrived while the first page was in flight is newer than everything the
+    // server sent, and stays.
+    it("keeps a live arrival that beat the first fetch", async () => {
+      let resolve!: (p: {
+        events: ActivityEvent[];
+        has_more: boolean;
+        retained_max: number;
+      }) => void;
+      vi.mocked(listActivity).mockReturnValue(
+        new Promise((r) => {
+          resolve = r;
+        }),
+      );
+      const { rerender } = render(<History live={[]} search="" />);
+      rerender(<History live={[ev({ id: 99, subject: "Fresh one" })]} />);
+      resolve({
+        events: [ev({ id: 1, subject: "A clip" })],
+        has_more: false,
+        retained_max: 2000,
+      });
+      expect(await screen.findByText("A clip")).toBeInTheDocument();
+      expect(screen.getByText("Fresh one")).toBeInTheDocument();
+    });
   });
 });
 

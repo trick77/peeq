@@ -671,4 +671,51 @@ describe("UpNext filters", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText(/nothing of that kind/i)).toBeInTheDocument();
   });
+  // Two narrowing controls now sit on this page, and they have to compose: the
+  // chips decide which lanes are on it at all, the box which of their rows
+  // survive. A search evaluated around the chips would report on work the
+  // chips are hiding.
+  it("composes with the kind chips, and names both when both are on", async () => {
+    const user = userEvent.setup();
+    render(
+      <UpNext
+        jobs={[job({ job_id: 1, title: "A download" })]}
+        summaries={[summary({ id: 2, video_id: "s2", title: "A summary" })]}
+        onCancel={noop}
+        search="summary"
+      />,
+    );
+    // Under All the query finds the summary.
+    expect(await screen.findByText("A summary")).toBeInTheDocument();
+    expect(screen.queryByText("A download")).not.toBeInTheDocument();
+
+    // Under Downloads the summary lane is off the page entirely, so the same
+    // query now matches nothing — and the message must not blame the box alone.
+    await user.click(screen.getByRole("button", { name: "Downloads" }));
+    expect(screen.queryByText("A summary")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/nothing of that kind matches/i),
+    ).toBeInTheDocument();
+
+    // The chips survive it, so there is a way back.
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(await screen.findByText("A summary")).toBeInTheDocument();
+  });
+
+  // A search that matches nothing is not the same claim as "peeq has nothing to
+  // do" — the work is there, you filtered past it.
+  it("does not offer to subscribe when the box is what emptied the page", async () => {
+    render(
+      <UpNext
+        jobs={[job({ job_id: 1, title: "A download" })]}
+        summaries={[]}
+        onCancel={noop}
+        search="zzz"
+      />,
+    );
+    expect(
+      await screen.findByText(/Nothing queued or scheduled matches/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/subscribe to a channel/i)).toBeNull();
+  });
 });
