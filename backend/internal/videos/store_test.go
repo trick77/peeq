@@ -3,7 +3,6 @@ package videos
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +11,12 @@ import (
 
 	"github.com/trick77/peeq/internal/store"
 )
+
+// Shared test helpers for the whole videos package live here, alongside the
+// tests for the row shape and the two whole-library reads (Upsert, Get, List).
+// The lifecycle-specific tests sit beside the source file they cover:
+// store_download_test.go, store_probe_test.go, store_sponsorblock_test.go,
+// store_summary_test.go and store_watch_test.go.
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -61,6 +66,147 @@ func seedVideo(t *testing.T, s *Store, v Video) {
 			`UPDATE videos SET downloaded_at = ? WHERE id = ?`, v.DownloadedAt, v.ID); err != nil {
 			t.Fatalf("seed video %s downloaded_at: %v", v.ID, err)
 		}
+	}
+}
+
+// idsOf collapses a result list to a set of ids, for assertions that care
+// about membership rather than the sort order List happens to apply.
+func idsOf(vs []Video) map[string]bool {
+	ids := make(map[string]bool, len(vs))
+	for _, v := range vs {
+		ids[v.ID] = true
+	}
+	return ids
+}
+
+// ids is the ordered id list of a result, for comparing against a want slice.
+func ids(vs []Video) []string {
+	out := make([]string, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, v.ID)
+	}
+	return out
+}
+
+// categoryManual reads the flag column, which is deliberately not on the Video
+// struct: nothing outside the store needs it.
+func categoryManual(t *testing.T, s *Store, id string) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT category_manual FROM videos WHERE id = ?`, id).Scan(&n); err != nil {
+		t.Fatalf("read category_manual for %s: %v", id, err)
+	}
+	return n
+}
+
+// minusSet returns the ids in a that are not in b.
+func minusSet(a, b []string) []string {
+	drop := map[string]bool{}
+	for _, s := range b {
+		drop[s] = true
+	}
+	out := []string{}
+	for _, s := range a {
+		if !drop[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// migration0004Update returns the UPDATE statement from the real migration
+// file, so this test cannot pass against a migration that says something else.
+func migration0004Update(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join("..", "store", "migrations", "0004_category_manual.sql")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	// Comments first, THEN split: a semicolon inside the migration's prose
+	// would otherwise cut a statement in half, and the half that survives may
+	// still start with UPDATE — a truncated WHERE that quietly clears more
+	// than the real migration does.
+	for _, stmt := range strings.Split(stripSQLComments(string(body)), ";") {
+		if s := strings.TrimSpace(stmt); strings.HasPrefix(s, "UPDATE") {
+			return s
+		}
+	}
+	t.Fatalf("no UPDATE statement in %s", path)
+	return ""
+}
+
+func stripSQLComments(s string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+func idsWithCategory(t *testing.T, s *Store, category string) []string {
+	t.Helper()
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT id FROM videos WHERE category = ? ORDER BY id`, category)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, s := range a {
+		seen[s]++
+	}
+	for _, s := range b {
+		seen[s]--
+	}
+	for _, n := range seen {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// execTest runs a raw statement against the test database. Used to put a row
+// into a state the store's own API deliberately cannot produce — here, an
+// aged or never-set sponsorblock_refreshed_at.
+func execTest(t *testing.T, s *Store, query string) {
+	t.Helper()
+	if _, err := s.db.ExecContext(context.Background(), query); err != nil {
+		t.Fatalf("exec %q: %v", query, err)
+	}
+}
+
+// seedChannel inserts a channels metadata-cache row directly. The videos
+// package must not import channels (that would cycle), so tests write the row
+// via raw SQL against the shared db.
+func seedChannel(t *testing.T, s *Store, id, name string) {
+	t.Helper()
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO channels (id, name) VALUES (?, ?)`, id, name); err != nil {
+		t.Fatalf("seed channel %s: %v", id, err)
 	}
 }
 
@@ -184,531 +330,6 @@ func TestUpsert_preservesDownloadState(t *testing.T) {
 	if got.MediaPath != "/media/v.mp4" {
 		t.Fatalf("media_path = %q, want preserved", got.MediaPath)
 	}
-}
-
-func TestSetStatus_setsErrorMessage(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u"}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if err := s.SetStatus("v", "error", "video is private"); err != nil {
-		t.Fatalf("set status: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.Status != "error" {
-		t.Fatalf("status = %q, want error", got.Status)
-	}
-	if got.ErrorMessage != "video is private" {
-		t.Fatalf("error_message = %q, want %q", got.ErrorMessage, "video is private")
-	}
-}
-
-func TestSetResume_autoMarksWatchedAtNinetyPercent_noResetOnRewatch(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-
-	// 95/100 = 95% >= 90% threshold: auto-marks watched.
-	if _, _, err := s.SetResume("v", 95, nil); err != nil {
-		t.Fatalf("set resume: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if !got.Watched {
-		t.Fatalf("watched = false, want true after resume >= 90%%")
-	}
-	if got.WatchedAt == "" {
-		t.Fatalf("watched_at not set")
-	}
-	if got.ResumePositionSeconds != 95 {
-		t.Fatalf("resume_position_seconds = %v, want 95", got.ResumePositionSeconds)
-	}
-	firstWatchedAt := got.WatchedAt
-
-	// Re-watching (another SetResume above threshold) must NOT reset
-	// watched_at — no "life extension".
-	if _, _, err := s.SetResume("v", 98, nil); err != nil {
-		t.Fatalf("set resume again: %v", err)
-	}
-	got, err = s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.WatchedAt != firstWatchedAt {
-		t.Fatalf("watched_at changed on re-watch: got %q, want unchanged %q", got.WatchedAt, firstWatchedAt)
-	}
-	if got.ResumePositionSeconds != 98 {
-		t.Fatalf("resume_position_seconds = %v, want 98", got.ResumePositionSeconds)
-	}
-
-	// Manual un-watch clears both watched and watched_at (rescues from the
-	// auto-delete sweep), and ALSO resets resume_position_seconds to 0 so
-	// the rescue is sticky: a subsequent player resume ping can't
-	// immediately re-cross the 90% threshold and undo the un-watch.
-	if _, err := s.SetWatched("v", false); err != nil {
-		t.Fatalf("set watched false: %v", err)
-	}
-	got, err = s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.Watched {
-		t.Fatalf("watched = true, want false after manual un-watch")
-	}
-	if got.WatchedAt != "" {
-		t.Fatalf("watched_at = %q, want cleared after manual un-watch", got.WatchedAt)
-	}
-	if got.ResumePositionSeconds != 0 {
-		t.Fatalf("resume_position_seconds = %v, want reset to 0 after manual un-watch", got.ResumePositionSeconds)
-	}
-}
-
-// TestStateVersion_watchedTogglesBump covers the counter migration 0010 added:
-// either direction of the manual toggle is a watched-state transition, so both
-// must invalidate whatever version other clients are holding.
-func TestStateVersion_watchedTogglesBump(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	// DEFAULT 1, so a never-touched row already has an echoable version.
-	if got.StateVersion != 1 {
-		t.Fatalf("state_version = %d, want 1 on a fresh row", got.StateVersion)
-	}
-
-	for _, watched := range []bool{true, false} {
-		before := got.StateVersion
-		returned, err := s.SetWatched("v", watched)
-		if err != nil {
-			t.Fatalf("set watched %v: %v", watched, err)
-		}
-		if returned != before+1 {
-			t.Fatalf("SetWatched(%v) returned %d, want %d", watched, returned, before+1)
-		}
-		got, err = s.Get("v")
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
-		// The returned value has to be the stored one, not a guess: it is what
-		// the toggling client will echo on its very next resume ping.
-		if got.StateVersion != returned {
-			t.Fatalf("stored state_version = %d, want the returned %d", got.StateVersion, returned)
-		}
-	}
-}
-
-// TestSetResume_staleVersionRefusesWrite is the issue #97 regression test.
-// Asserting only the error would not prove the fix: the whole point is that
-// nothing was written, so the position is checked too.
-func TestSetResume_staleVersionRefusesWrite(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 1000}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	// The version a second client read when it opened the video.
-	stale, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	// Somewhere else, the user marks it watched — zeroing the position.
-	if _, err := s.SetWatched("v", true); err != nil {
-		t.Fatalf("set watched: %v", err)
-	}
-
-	staleVersion := stale.StateVersion
-	if _, _, err := s.SetResume("v", 300, &staleVersion); !errors.Is(err, ErrStaleVersion) {
-		t.Fatalf("set resume with stale version: err = %v, want ErrStaleVersion", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.ResumePositionSeconds != 0 {
-		t.Fatalf("resume_position_seconds = %v, want 0 — the stale write must not land", got.ResumePositionSeconds)
-	}
-	if !got.Watched {
-		t.Fatalf("watched = false, want true — the stale write must not undo the toggle")
-	}
-}
-
-// TestSetResume_versionEchoes covers the three accepting paths: the current
-// version, no version at all (the back-compat escape hatch every non-Player
-// caller uses), and the re-watch flow the #97 issue text calls out as the reason
-// a plain "refuse writes to a watched row" guard would have been wrong.
-func TestSetResume_versionEchoes(t *testing.T) {
-	t.Run("currentVersionAccepted", func(t *testing.T) {
-		s := newTestStore(t)
-		if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 1000}); err != nil {
-			t.Fatalf("upsert: %v", err)
-		}
-		got, err := s.Get("v")
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
-		version, watched, err := s.SetResume("v", 300, &got.StateVersion)
-		if err != nil {
-			t.Fatalf("set resume: %v", err)
-		}
-		if watched {
-			t.Fatalf("watched = true, want false at 30%%")
-		}
-		if version != got.StateVersion {
-			t.Fatalf("state_version = %d, want it unchanged at %d", version, got.StateVersion)
-		}
-		after, err := s.Get("v")
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
-		if after.ResumePositionSeconds != 300 {
-			t.Fatalf("resume_position_seconds = %v, want 300", after.ResumePositionSeconds)
-		}
-	})
-
-	t.Run("nilVersionSkipsCheck", func(t *testing.T) {
-		s := newTestStore(t)
-		if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 1000}); err != nil {
-			t.Fatalf("upsert: %v", err)
-		}
-		// Bump twice, so no caller could plausibly be holding the current
-		// version — a nil echo must still be honoured.
-		if _, err := s.SetWatched("v", true); err != nil {
-			t.Fatalf("set watched: %v", err)
-		}
-		if _, err := s.SetWatched("v", false); err != nil {
-			t.Fatalf("un-watch: %v", err)
-		}
-		if _, _, err := s.SetResume("v", 42, nil); err != nil {
-			t.Fatalf("set resume with nil version: %v", err)
-		}
-		got, err := s.Get("v")
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
-		if got.ResumePositionSeconds != 42 {
-			t.Fatalf("resume_position_seconds = %v, want 42", got.ResumePositionSeconds)
-		}
-	})
-
-	t.Run("rewatchOfWatchedVideoStillSaves", func(t *testing.T) {
-		s := newTestStore(t)
-		if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 1000}); err != nil {
-			t.Fatalf("upsert: %v", err)
-		}
-		if _, err := s.SetWatched("v", true); err != nil {
-			t.Fatalf("set watched: %v", err)
-		}
-		// A client that HAS seen the toggle (it echoes the post-toggle version)
-		// is starting the video again. The guard must not touch it — this is
-		// exactly the flow that ruled out "ignore writes to a watched row".
-		got, err := s.Get("v")
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
-		if _, _, err := s.SetResume("v", 120, &got.StateVersion); err != nil {
-			t.Fatalf("set resume on re-watch: %v", err)
-		}
-		after, err := s.Get("v")
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
-		if after.ResumePositionSeconds != 120 {
-			t.Fatalf("resume_position_seconds = %v, want 120 — a re-watch must still save progress", after.ResumePositionSeconds)
-		}
-	})
-}
-
-// TestSetResume_onlyAutoWatchBumps pins the asymmetry the migration comment
-// depends on. If a plain position write bumped, every 5s ping would invalidate
-// every other client's echo and the guard would degrade into a 409 storm; if
-// auto-watch did NOT bump, crossing 90% in one tab would leave another tab free
-// to write its stale position back — #97 through a different door.
-func TestSetResume_onlyAutoWatchBumps(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	start, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-
-	// 30% — a plain write.
-	version, watched, err := s.SetResume("v", 30, &start.StateVersion)
-	if err != nil {
-		t.Fatalf("set resume below threshold: %v", err)
-	}
-	if watched {
-		t.Fatalf("watched = true, want false at 30%%")
-	}
-	if version != start.StateVersion {
-		t.Fatalf("state_version = %d, want unchanged %d on a plain position write", version, start.StateVersion)
-	}
-
-	// 95% — crosses the threshold, so this IS a watched-state transition.
-	bumped, watched, err := s.SetResume("v", 95, &version)
-	if err != nil {
-		t.Fatalf("set resume above threshold: %v", err)
-	}
-	if !watched {
-		t.Fatalf("watched = false, want true at 95%%")
-	}
-	if bumped != version+1 {
-		t.Fatalf("state_version = %d, want %d after auto-watch", bumped, version+1)
-	}
-
-	// And the self-409 this is all designed to avoid: the same client's next
-	// ping echoes the version the auto-watch handed back, and is accepted.
-	again, watched, err := s.SetResume("v", 96, &bumped)
-	if err != nil {
-		t.Fatalf("next ping after auto-watch: %v, want accepted — a client must never 409 against its own threshold crossing", err)
-	}
-	if !watched {
-		t.Fatalf("watched = false, want true — the row is already watched")
-	}
-	// And it must NOT bump again. Every ping in the last 10% satisfies the
-	// >=90% ratio, so bumping on the ratio rather than on the unwatched->watched
-	// transition would invalidate every other client's echo once per ping — the
-	// 409 storm migration 0010 exists to avoid.
-	if again != bumped {
-		t.Fatalf("state_version = %d, want it unchanged at %d — only the transition bumps", again, bumped)
-	}
-}
-
-// TestSetResumeRaw_doesNotAutoWatch is the discriminator against SetResume: the
-// TubeArchivist import (deleted in PR #125) wrote resume positions with
-// SetResumeRaw so a nearly-finished "continue" video kept its position without
-// being flipped to watched (which would drop it out of the Continue Watching
-// queue).
-func TestSetResumeRaw_doesNotAutoWatch(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	// 95/100 = 95%: SetResume would auto-mark this watched; SetResumeRaw must not.
-	if err := s.SetResumeRaw("v", 95); err != nil {
-		t.Fatalf("set resume raw: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.ResumePositionSeconds != 95 {
-		t.Fatalf("resume_position_seconds = %v, want 95", got.ResumePositionSeconds)
-	}
-	if got.Watched {
-		t.Fatalf("watched = true, want false — SetResumeRaw must not auto-watch")
-	}
-	if got.WatchedAt != "" {
-		t.Fatalf("watched_at = %q, want empty", got.WatchedAt)
-	}
-}
-
-// TestSetResumeRaw_missingRow errors rather than silently no-op'ing, so the
-// import's Upsert-before-resume ordering is enforced.
-func TestSetResumeRaw_missingRow(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.SetResumeRaw("nope", 10); err == nil {
-		t.Fatal("err = nil, want a not-found error for a missing row")
-	}
-}
-
-func TestSetResume_belowThreshold_doesNotMarkWatched(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if _, _, err := s.SetResume("v", 50, nil); err != nil {
-		t.Fatalf("set resume: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.Watched {
-		t.Fatalf("watched = true, want false below 90%% threshold")
-	}
-	if got.WatchedAt != "" {
-		t.Fatalf("watched_at = %q, want empty", got.WatchedAt)
-	}
-}
-
-func TestSetWatched_manualTrue_setsWatchedAt(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if _, err := s.SetWatched("v", true); err != nil {
-		t.Fatalf("set watched: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if !got.Watched || got.WatchedAt == "" {
-		t.Fatalf("watched=%v watched_at=%q, want true/set", got.Watched, got.WatchedAt)
-	}
-}
-
-// TestSetWatched_manualTrue_resetsResumePosition covers the manual
-// mark-watched rule: pressing the button means "done", so any stored resume
-// position is cleared and reopening the video starts at 0:00.
-func TestSetWatched_manualTrue_resetsResumePosition(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if _, _, err := s.SetResume("v", 42, nil); err != nil {
-		t.Fatalf("set resume: %v", err)
-	}
-	if _, err := s.SetWatched("v", true); err != nil {
-		t.Fatalf("set watched: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if !got.Watched {
-		t.Fatalf("watched = false, want true")
-	}
-	if got.ResumePositionSeconds != 0 {
-		t.Fatalf("resume_position_seconds = %v, want 0", got.ResumePositionSeconds)
-	}
-}
-
-// TestSetResume_autoWatched_keepsResumePosition guards the deliberate
-// asymmetry with the test above: a video that crossed the 90% threshold by
-// actually playing keeps its position, so the last few minutes stay
-// resumable. Only the manual button means "done".
-func TestSetResume_autoWatched_keepsResumePosition(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if _, _, err := s.SetResume("v", 95, nil); err != nil {
-		t.Fatalf("set resume: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if !got.Watched {
-		t.Fatalf("watched = false, want true (95 >= 90%% of 100)")
-	}
-	if got.ResumePositionSeconds != 95 {
-		t.Fatalf("resume_position_seconds = %v, want untouched 95", got.ResumePositionSeconds)
-	}
-}
-
-func TestSetFavorite_toggles(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u"}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if err := s.SetFavorite("v", true); err != nil {
-		t.Fatalf("set favorite: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if !got.Favorite {
-		t.Fatalf("favorite = false, want true")
-	}
-	if err := s.SetFavorite("v", false); err != nil {
-		t.Fatalf("set favorite false: %v", err)
-	}
-	got, err = s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.Favorite {
-		t.Fatalf("favorite = true, want false")
-	}
-}
-
-func TestTombstone_clearsMediaPathSetsStatusKeepsRow(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u"}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if err := s.SetDownloaded("v", DownloadedResult{MediaPath: "/media/v.mp4", FilesizeBytes: 10}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-	if err := s.Tombstone("v"); err != nil {
-		t.Fatalf("tombstone: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got == nil {
-		t.Fatal("row was deleted, want kept")
-	}
-	if got.Status != "tombstoned" {
-		t.Fatalf("status = %q, want tombstoned", got.Status)
-	}
-	if got.MediaPath != "" {
-		t.Fatalf("media_path = %q, want cleared", got.MediaPath)
-	}
-}
-
-// TestTombstoneClearsSubtitlePathKeepsSummary guards against a stale
-// subtitle_path (and its .vtt) surviving a tombstone: the DTO derives
-// has_subtitles from subtitle_path, so a leftover value would lie about
-// transcript availability, and a subsequent reprocess must not flip a
-// valid, kept summary to no_transcript.
-func TestTombstoneClearsSubtitlePathKeepsSummary(t *testing.T) {
-	s := New(openTestDB(t))
-	const id = "vid1"
-	if err := s.Upsert(Video{ID: id, URL: "u"}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if err := s.SetDownloaded(id, DownloadedResult{
-		MediaPath:       "/media/vid1.mp4",
-		FilesizeBytes:   10,
-		SubtitleRelPath: "vid1.en.vtt",
-	}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-	if err := s.SetSummary(id, "a summary", `[]`, `[]`); err != nil {
-		t.Fatalf("set summary: %v", err)
-	}
-	if err := s.Tombstone(id); err != nil {
-		t.Fatalf("tombstone: %v", err)
-	}
-	v, err := s.Get(id)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if v.SubtitlePath != "" {
-		t.Errorf("subtitle_path = %q, want empty after tombstone", v.SubtitlePath)
-	}
-	if v.Summary != "a summary" {
-		t.Errorf("summary = %q, want kept after tombstone", v.Summary)
-	}
-	if v.Status != "tombstoned" {
-		t.Errorf("status = %q, want tombstoned", v.Status)
-	}
-}
-
-// idsOf collapses a result list to a set of ids, for assertions that care
-// about membership rather than the sort order List happens to apply.
-func idsOf(vs []Video) map[string]bool {
-	ids := make(map[string]bool, len(vs))
-	for _, v := range vs {
-		ids[v.ID] = true
-	}
-	return ids
 }
 
 func TestList_filters(t *testing.T) {
@@ -951,182 +572,6 @@ func TestList_unwatched_excludesDeadRows(t *testing.T) {
 	}
 }
 
-func TestSetDownloaded_recordsResult(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u"}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	// A prior error should be cleared by a successful download.
-	if err := s.SetStatus("v", "error", "was rate limited"); err != nil {
-		t.Fatalf("set status: %v", err)
-	}
-	if err := s.SetDownloaded("v", DownloadedResult{
-		MediaPath:            "/media/chan/v/v.mp4",
-		ThumbnailPath:        "/media/chan/v/v.jpg",
-		FilesizeBytes:        123456,
-		FormatUsed:           "bv*+ba",
-		SponsorblockSegments: `[{"category":"sponsor"}]`,
-	}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.Status != "downloaded" {
-		t.Fatalf("status = %q, want downloaded", got.Status)
-	}
-	if got.MediaPath != "/media/chan/v/v.mp4" {
-		t.Fatalf("media_path = %q", got.MediaPath)
-	}
-	if got.FilesizeBytes != 123456 {
-		t.Fatalf("filesize = %d, want 123456", got.FilesizeBytes)
-	}
-	if got.FormatUsed != "bv*+ba" {
-		t.Fatalf("format_used = %q", got.FormatUsed)
-	}
-	if got.SponsorblockSegments != `[{"category":"sponsor"}]` {
-		t.Fatalf("sponsorblock = %q", got.SponsorblockSegments)
-	}
-	if got.ErrorMessage != "" {
-		t.Fatalf("error_message = %q, want cleared", got.ErrorMessage)
-	}
-	if got.DownloadedAt == "" {
-		t.Fatalf("downloaded_at not stamped")
-	}
-	if got.ThumbnailPath != "/media/chan/v/v.jpg" {
-		t.Fatalf("thumbnail_path = %q", got.ThumbnailPath)
-	}
-}
-
-// TestSetResume_negativePositionClampedToZero is the store-level
-// defense-in-depth: the HTTP handler already rejects a negative resume
-// position with 400, but the store must never persist one either, in case
-// some other caller (a future internal job, a bug) skips the handler.
-func TestSetResume_negativePositionClampedToZero(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v", URL: "u", DurationSeconds: 100}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if _, _, err := s.SetResume("v", -42, nil); err != nil {
-		t.Fatalf("set resume: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.ResumePositionSeconds != 0 {
-		t.Fatalf("resume_position_seconds = %v, want clamped to 0", got.ResumePositionSeconds)
-	}
-	if got.Watched {
-		t.Fatalf("watched = true, want false for a clamped-to-0 position")
-	}
-}
-
-// TestSweepCandidates_filtersByWatchedFavoriteTombstoneAndCutoff exercises
-// the retention sweeper's underlying query directly: only a watched,
-// non-favorite, non-tombstoned video whose watched_at is strictly before
-// cutoff comes back.
-func TestSweepCandidates_filtersByWatchedFavoriteTombstoneAndCutoff(t *testing.T) {
-	db := openTestDB(t)
-	s := New(db)
-
-	seed := func(id string, watched, favorite bool, watchedAt string, tombstoned bool) {
-		t.Helper()
-		if err := s.Upsert(Video{ID: id, URL: "u-" + id}); err != nil {
-			t.Fatalf("upsert %s: %v", id, err)
-		}
-		status := "downloaded"
-		if tombstoned {
-			status = "tombstoned"
-		}
-		watchedInt := 0
-		if watched {
-			watchedInt = 1
-		}
-		favInt := 0
-		if favorite {
-			favInt = 1
-		}
-		_, err := db.Exec(
-			`UPDATE videos SET watched = ?, favorite = ?, watched_at = ?, status = ? WHERE id = ?`,
-			watchedInt, favInt, nullStr(watchedAt), status, id,
-		)
-		if err != nil {
-			t.Fatalf("seed %s: %v", id, err)
-		}
-	}
-
-	const cutoff = "2026-01-01 00:00:00"
-	seed("old-eligible", true, false, "2025-01-01 00:00:00", false)  // before cutoff, watched, not fav -> candidate
-	seed("old-favorite", true, true, "2025-01-01 00:00:00", false)   // favorite -> excluded
-	seed("unwatched", false, false, "", false)                       // not watched -> excluded
-	seed("old-tombstoned", true, false, "2025-01-01 00:00:00", true) // already gone -> excluded
-	seed("recent", true, false, "2026-06-01 00:00:00", false)        // after cutoff -> excluded
-
-	got, err := s.SweepCandidates(cutoff)
-	if err != nil {
-		t.Fatalf("sweep candidates: %v", err)
-	}
-	if len(got) != 1 || got[0].ID != "old-eligible" {
-		ids := make([]string, len(got))
-		for i, v := range got {
-			ids[i] = v.ID
-		}
-		t.Fatalf("sweep candidates = %v, want [old-eligible]", ids)
-	}
-}
-
-func TestSetCategoryAndListByCategory(t *testing.T) {
-	s := New(openTestDB(t))
-	if err := s.Upsert(Video{ID: "v-ai", URL: "u-v-ai", DurationSeconds: 100}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetDownloaded("v-ai", DownloadedResult{MediaPath: "/m/v-ai.mp4"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Upsert(Video{ID: "v-news", URL: "u-v-news", DurationSeconds: 100}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetDownloaded("v-news", DownloadedResult{MediaPath: "/m/v-news.mp4"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := s.SetCategory("v-ai", "ai"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetCategory("v-news", "news"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Default before SetCategory is uncategorized; verify round-trip.
-	got, err := s.Get("v-ai")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Category != "ai" {
-		t.Fatalf("category = %q, want ai", got.Category)
-	}
-
-	// Category filter, orthogonal to status.
-	ai, err := s.List(ListOptions{Filter: "all", Category: "ai"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ai) != 1 || ai[0].ID != "v-ai" {
-		t.Fatalf("List all/ai = %v, want [v-ai]", ai)
-	}
-
-	// Empty / "all" category => no constraint.
-	all, err := s.List(ListOptions{Filter: "all", Category: ""})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(all) != 2 {
-		t.Fatalf("List all/'' returned %d, want 2", len(all))
-	}
-}
-
 func TestList_statusAndCategoryAreAnded(t *testing.T) {
 	s := New(openTestDB(t))
 
@@ -1268,63 +713,6 @@ func TestList_sort_ordersRows(t *testing.T) {
 	}
 }
 
-// TestSetDownloaded_fillsPublishedAt asserts the download's own info.json
-// supplies the release date for videos seeded from a metadata-poor flat
-// channel listing — without it, everything peeq auto-downloads would sort by
-// download date forever.
-func TestSetDownloaded_fillsPublishedAt(t *testing.T) {
-	// Given: a row seeded the way scan.Scheduler.enqueueAuto seeds one — no
-	// release date.
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "auto", URL: "u"})
-
-	// When: the download completes and reports one.
-	if err := s.SetDownloaded("auto", DownloadedResult{MediaPath: "/m/auto.mp4", PublishedAt: "2025-04-09"}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-
-	// Then: the row carries it.
-	got, err := s.Get("auto")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.PublishedAt != "2025-04-09" {
-		t.Fatalf("published_at = %q, want 2025-04-09", got.PublishedAt)
-	}
-}
-
-// TestSetDownloaded_emptyPublishedAt_keepsExisting asserts a re-download of a
-// video whose release date is already known (the manual-add path fetches it
-// up front) never blanks it out when yt-dlp reports no upload_date.
-func TestSetDownloaded_emptyPublishedAt_keepsExisting(t *testing.T) {
-	// Given: a row that already knows its release date.
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "known", URL: "u", PublishedAt: "2025-04-09"})
-
-	// When: a download completes without one.
-	if err := s.SetDownloaded("known", DownloadedResult{MediaPath: "/m/known.mp4"}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-
-	// Then: the stored date survives.
-	got, err := s.Get("known")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.PublishedAt != "2025-04-09" {
-		t.Fatalf("published_at = %q, want it preserved", got.PublishedAt)
-	}
-}
-
-// ids is the ordered id list of a result, for comparing against a want slice.
-func ids(vs []Video) []string {
-	out := make([]string, 0, len(vs))
-	for _, v := range vs {
-		out = append(out, v.ID)
-	}
-	return out
-}
-
 // TestList_newest_ranksByReleaseDate pins the DEFAULT ordering: release date,
 // newest first, with created_at as the fallback for a row yt-dlp gave no date
 // for.
@@ -1461,47 +849,6 @@ func TestUpsert_neverClearsPublishedAtOrDescription(t *testing.T) {
 	}
 }
 
-// TestSetDownloaded_storesYouTubeMetadata covers the columns migration 0009
-// added: they arrive from the download's own info.json, and an empty value
-// leaves what is stored rather than wiping it (a re-download whose extractor
-// omitted tags must not erase the ones already there).
-func TestSetDownloaded_storesYouTubeMetadata(t *testing.T) {
-	// Given: a fresh row.
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "v1", URL: "u"})
-
-	// When: a download reports the full set.
-	if err := s.SetDownloaded("v1", DownloadedResult{
-		MediaPath: "/m/v1.mp4", Description: "desc", MediaType: "short",
-		LiveStatus: "not_live", YTTags: `["physics","education"]`,
-		YTCategories: `["Science & Technology"]`,
-	}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-	got, err := s.Get("v1")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.Description != "desc" || got.MediaType != "short" || got.LiveStatus != "not_live" {
-		t.Fatalf("got %q/%q/%q, want desc/short/not_live", got.Description, got.MediaType, got.LiveStatus)
-	}
-	if got.YTTags != `["physics","education"]` || got.YTCategories != `["Science & Technology"]` {
-		t.Fatalf("tags/categories = %q/%q", got.YTTags, got.YTCategories)
-	}
-
-	// Then: a later download reporting none of them keeps the stored values.
-	if err := s.SetDownloaded("v1", DownloadedResult{MediaPath: "/m/v1.mp4"}); err != nil {
-		t.Fatalf("re-download: %v", err)
-	}
-	got, err = s.Get("v1")
-	if err != nil {
-		t.Fatalf("get after re-download: %v", err)
-	}
-	if got.YTTags != `["physics","education"]` || got.Description != "desc" || got.MediaType != "short" {
-		t.Fatalf("re-download wiped metadata: %+v", got)
-	}
-}
-
 // TestList_unknownSort_fallsBackToNewest asserts an unrecognized sort value
 // from a hand-edited URL yields the default order rather than a SQL error or
 // an injected ORDER BY clause.
@@ -1592,653 +939,6 @@ func TestList_errorsOnClosedDB(t *testing.T) {
 	}
 }
 
-// TestNextUnclassified_picksAnySummarizedUncategorized covers the two
-// conditions the idle classify sweep depends on: a video is a candidate when it
-// is still uncategorized and actually has a summary to classify from (the
-// no-transcript case must stay out of the sweep).
-//
-// Status is deliberately NOT a condition. Classification reads a title and a
-// summary, never the media file, so a tombstoned video — media reclaimed, row
-// and summary kept, still listed and still filtered by category — is as
-// classifiable as any other and must not be stranded on whatever enum existed
-// when it was archived.
-func TestNextUnclassified_picksAnySummarizedUncategorized(t *testing.T) {
-	s := newTestStore(t)
-
-	// Given: two candidates that differ only in status, plus one disqualified
-	// row per real condition.
-	seed := []struct {
-		id, status, summary, category, createdAt string
-	}{
-		{"v-tombstoned", "tombstoned", "A summary.", "uncategorized", "2026-07-01"},
-		{"v-candidate", "downloaded", "A summary.", "uncategorized", "2026-07-02"},
-		{"v-classified", "downloaded", "A summary.", "ai", "2026-07-03"},
-		{"v-no-summary", "downloaded", "", "uncategorized", "2026-07-04"},
-	}
-	for _, v := range seed {
-		seedVideo(t, s, Video{ID: v.id, URL: "https://youtu.be/" + v.id, Status: v.status, CreatedAt: v.createdAt})
-		if v.summary != "" {
-			if err := s.SetSummaryText(v.id, v.summary); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := s.SetCategory(v.id, v.category); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// When/Then: only the candidate is returned.
-	got, err := s.NextUnclassified(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got == nil || got.ID != "v-candidate" {
-		t.Fatalf("NextUnclassified = %v, want v-candidate", got)
-	}
-	if got.Summary != "A summary." {
-		t.Fatalf("candidate summary = %q, want it loaded for the classify call", got.Summary)
-	}
-
-	// And: skipping it falls through to the tombstoned row — status is not a
-	// filter — and only then does the backlog empty, rather than a
-	// disqualified row being offered.
-	got, err = s.NextUnclassified([]string{"v-candidate"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got == nil || got.ID != "v-tombstoned" {
-		t.Fatalf("NextUnclassified(skip candidate) = %v, want v-tombstoned", got)
-	}
-	got, err = s.NextUnclassified([]string{"v-candidate", "v-tombstoned"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != nil {
-		t.Fatalf("NextUnclassified(skip both) = %v, want nil", got)
-	}
-}
-
-// TestNextUnclassified_newestFirstAndSkipsMany asserts ordering and that the
-// skip list works with more than one entry (the IN-clause placeholder build).
-func TestNextUnclassified_newestFirstAndSkipsMany(t *testing.T) {
-	s := newTestStore(t)
-
-	for _, id := range []struct{ id, createdAt string }{
-		{"v-old", "2026-07-01"}, {"v-mid", "2026-07-02"}, {"v-new", "2026-07-03"},
-	} {
-		seedVideo(t, s, Video{ID: id.id, URL: "https://youtu.be/" + id.id, Status: "downloaded", CreatedAt: id.createdAt})
-		if err := s.SetSummaryText(id.id, "A summary."); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	got, err := s.NextUnclassified(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got == nil || got.ID != "v-new" {
-		t.Fatalf("NextUnclassified = %v, want the newest (v-new)", got)
-	}
-
-	got, err = s.NextUnclassified([]string{"v-new", "v-mid"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got == nil || got.ID != "v-old" {
-		t.Fatalf("NextUnclassified(skip 2) = %v, want v-old", got)
-	}
-}
-
-// TestNextUnclassified_errorsOnClosedDB asserts a query failure is reported to
-// the caller rather than a nil video masquerading as "backlog empty" — which
-// would silently retire the classify sweep for the rest of the process.
-func TestNextUnclassified_errorsOnClosedDB(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.db.Close(); err != nil {
-		t.Fatalf("close db: %v", err)
-	}
-
-	if _, err := s.NextUnclassified(nil); err == nil {
-		t.Fatal("expected an error querying against a closed db")
-	}
-}
-
-// TestSetCategoryIfUnset_guardsAManualPick is the whole reason the guarded
-// write exists: both classifier paths decide to classify from a row read
-// before a slow LLM call, so the write must re-check rather than trust that
-// decision.
-func TestSetCategoryIfUnset_guardsAManualPick(t *testing.T) {
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "v1", URL: "https://youtu.be/v1", Status: "downloaded"})
-
-	// Unset: the classifier's write lands.
-	applied, err := s.SetCategoryIfUnset("v1", "ai")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !applied {
-		t.Fatal("applied = false, want the write to land on an uncategorized row")
-	}
-
-	// Already set — the state a manual pick leaves behind: the write is a
-	// no-op and says so, rather than silently overwriting the human.
-	applied, err = s.SetCategoryIfUnset("v1", "gaming")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if applied {
-		t.Fatal("applied = true, want the guard to refuse an already-set row")
-	}
-	got, err := s.Get("v1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Category != "ai" {
-		t.Fatalf("category = %q, want the existing value kept", got.Category)
-	}
-
-	// SetCategory itself stays unconditional: the user is allowed to overwrite
-	// the model, never the other way round.
-	if err := s.SetCategory("v1", "gaming"); err != nil {
-		t.Fatal(err)
-	}
-	got, _ = s.Get("v1")
-	if got.Category != "gaming" {
-		t.Fatalf("category = %q, want gaming — a manual write must not be guarded", got.Category)
-	}
-}
-
-// categoryManual reads the flag column, which is deliberately not on the Video
-// struct: nothing outside the store needs it.
-func categoryManual(t *testing.T, s *Store, id string) int {
-	t.Helper()
-	var n int
-	if err := s.db.QueryRowContext(context.Background(),
-		`SELECT category_manual FROM videos WHERE id = ?`, id).Scan(&n); err != nil {
-		t.Fatalf("read category_manual for %s: %v", id, err)
-	}
-	return n
-}
-
-// TestSetCategory_maintainsTheManualFlag pins the rule migration 0004 depends
-// on: a real category is the human speaking and survives a bulk reset, while a
-// reset to 'uncategorized' (Re-summarize) hands the video back to the
-// classifier and must therefore clear the flag too.
-func TestSetCategory_maintainsTheManualFlag(t *testing.T) {
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "v1", URL: "https://youtu.be/v1", Status: "downloaded"})
-	if err := s.SetSummaryText("v1", "A cycling video."); err != nil {
-		t.Fatal(err)
-	}
-
-	if got := categoryManual(t, s, "v1"); got != 0 {
-		t.Fatalf("category_manual = %d on a fresh row, want 0", got)
-	}
-	if err := s.SetCategory("v1", "sports"); err != nil {
-		t.Fatal(err)
-	}
-	if got := categoryManual(t, s, "v1"); got != 1 {
-		t.Fatalf("category_manual = %d after a manual pick, want 1", got)
-	}
-
-	// Flagged and uncategorized at once cannot happen through the UI (the
-	// picker has no "clear" entry), but the guard is what makes that a
-	// guarantee rather than a convention, so exercise it directly.
-	if _, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET category = ? WHERE id = 'v1'`, UncategorizedCategory); err != nil {
-		t.Fatal(err)
-	}
-	applied, err := s.SetCategoryIfUnset("v1", "gaming")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if applied {
-		t.Fatal("applied = true, want the classifier refused on a flagged row")
-	}
-
-	// Re-summarize: back to the classifier, flag cleared, and the idle sweep
-	// can see it again.
-	if err := s.SetCategory("v1", UncategorizedCategory); err != nil {
-		t.Fatal(err)
-	}
-	if got := categoryManual(t, s, "v1"); got != 0 {
-		t.Fatalf("category_manual = %d after a reset, want 0", got)
-	}
-	next, err := s.NextUnclassified(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if next == nil || next.ID != "v1" {
-		t.Fatalf("NextUnclassified = %v, want v1 back in the backlog", next)
-	}
-	applied, err = s.SetCategoryIfUnset("v1", "sports")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !applied {
-		t.Fatal("applied = false, want the classifier's write to land once the flag is clear")
-	}
-}
-
-// TestClearSummary_wipesTheAnalysisButNotTheStatus asserts ClearSummary is the
-// exact counterpart of SetSummary: it removes the three artifacts and the error
-// text, and deliberately leaves summary_status for the caller to set, since the
-// resulting state differs (pending for a re-summarize, no_transcript for a
-// track that turned out to carry no speech).
-func TestClearSummary_wipesTheAnalysisButNotTheStatus(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.Upsert(Video{ID: "v1", URL: "u1"}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if err := s.SetSummary("v1", "prose", `[{"ts":0}]`, `[{"ts":1}]`); err != nil {
-		t.Fatalf("set summary: %v", err)
-	}
-	if err := s.SetSummaryStatus("v1", "error", "boom"); err != nil {
-		t.Fatalf("set status: %v", err)
-	}
-
-	if err := s.ClearSummary("v1"); err != nil {
-		t.Fatalf("clear summary: %v", err)
-	}
-
-	got, err := s.Get("v1")
-	if err != nil || got == nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.Summary != "" || got.Chapters != "" || got.KeyPoints != "" {
-		t.Fatalf("expected the artifacts wiped, got summary=%q chapters=%q key_points=%q",
-			got.Summary, got.Chapters, got.KeyPoints)
-	}
-	if got.SummaryError != "" {
-		t.Fatalf("expected the stale error cleared, got %q", got.SummaryError)
-	}
-	if got.SummaryStatus != "error" {
-		t.Fatalf("summary_status = %q, want it left for the caller to set", got.SummaryStatus)
-	}
-}
-
-// TestClearSummary_errorsOnClosedDB asserts a failed wipe is reported rather
-// than swallowed — a caller that thinks it cleared the summary but did not
-// would leave the resumable worker skipping the summary step forever.
-func TestClearSummary_errorsOnClosedDB(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.db.Close(); err != nil {
-		t.Fatalf("close db: %v", err)
-	}
-	if err := s.ClearSummary("v1"); err == nil {
-		t.Fatal("expected an error clearing against a closed db")
-	}
-}
-
-// TestResetSetMatchesTheSweep pins migration 0004's reset to the query that is
-// supposed to undo it. The migration clears categories in bulk on the promise
-// that the summarize worker's idle sweep re-classifies whatever it cleared; if
-// the two predicates ever drift, the difference is not a stale category, it is
-// data erased with no path back — which is exactly the bug this pairing was
-// introduced to prevent.
-//
-// So rather than restate the rule, this reads the real UPDATE out of the real
-// migration file, runs it over a table seeded with every row shape peeq can
-// produce, and asserts the rows it cleared are exactly the rows
-// NextUnclassified will offer. Same trick as ui/src/enumsync.test.ts, which
-// reads category.go instead of mirroring it.
-func TestResetSetMatchesTheSweep(t *testing.T) {
-	s := newTestStore(t)
-
-	// Given: one row per shape. 'category' is the row's category BEFORE the
-	// reset, and 'uncategorized' here is not filler — a no-transcript video
-	// really does sit at the column default in production, and it is the shape
-	// that catches a "cleared" set computed as "uncategorized afterwards".
-	seeds := []struct {
-		id, status, summary, summaryStatus, category string
-		manual                                       bool
-	}{
-		{"downloaded", "downloaded", "a summary", "done", "entertainment", false},
-		{"tombstoned", "tombstoned", "a summary", "done", "history", false},         // media reclaimed, summary kept
-		{"notranscript", "downloaded", "", "no_transcript", "uncategorized", false}, // nothing to classify from
-		{"handpicked", "downloaded", "", "no_transcript", "gaming", true},           // the picker's whole reason to exist
-		{"queued", "queued", "", "pending", "uncategorized", false},
-		{"errored", "error", "a summary", "error", "news", false},
-		{"handpicked-summarized", "downloaded", "a summary", "done", "ai", true},
-	}
-	for _, sd := range seeds {
-		seedVideo(t, s, Video{ID: sd.id, URL: "https://youtu.be/" + sd.id, Status: sd.status})
-		if _, err := s.db.ExecContext(context.Background(),
-			`UPDATE videos SET summary = ?, summary_status = ?, category = ?, category_manual = ? WHERE id = ?`,
-			sd.summary, sd.summaryStatus, sd.category, boolToInt(sd.manual), sd.id); err != nil {
-			t.Fatal(err)
-		}
-	}
-	before := idsWithCategory(t, s, UncategorizedCategory)
-
-	// When: the migration's own UPDATE runs. The test DB is already at 0004,
-	// so replaying just this statement is what an upgrade does to the data.
-	if _, err := s.db.ExecContext(context.Background(), migration0004Update(t)); err != nil {
-		t.Fatalf("replay 0004 reset: %v", err)
-	}
-
-	// Then: the set the reset CHANGED — not the set that reads 'uncategorized'
-	// now, which would also count rows that were already there and could never
-	// be reclassified — equals the set the sweep offers.
-	cleared := minusSet(idsWithCategory(t, s, UncategorizedCategory), before)
-	reachable := []string{}
-	for i := 0; i <= len(seeds); i++ {
-		v, err := s.NextUnclassified(reachable)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if v == nil {
-			break
-		}
-		reachable = append(reachable, v.ID)
-		if i == len(seeds) {
-			// Bounded on purpose: an unbounded drain turns a broken skip clause
-			// into a hung suite instead of a failed assertion.
-			t.Fatalf("NextUnclassified still returning rows after %d turns: %v", i+1, reachable)
-		}
-	}
-	if !sameSet(cleared, reachable) {
-		t.Fatalf("reset cleared %v but the sweep can reach %v — a row in the difference is either\n"+
-			"erased with no way back, or left on the pre-expansion enum forever", cleared, reachable)
-	}
-	// And the rule both sides are meant to encode, stated once so a mutual
-	// drift (both sides wrong the same way) still fails.
-	if !sameSet(cleared, []string{"downloaded", "tombstoned", "errored"}) {
-		t.Fatalf("cleared %v, want every row that has a summary and is not a hand pick, and only those", cleared)
-	}
-	// And the hand picks are untouched — the column's entire purpose.
-	for _, id := range []string{"handpicked", "handpicked-summarized"} {
-		var got string
-		if err := s.db.QueryRowContext(context.Background(),
-			`SELECT category FROM videos WHERE id = ?`, id).Scan(&got); err != nil {
-			t.Fatal(err)
-		}
-		if got == UncategorizedCategory {
-			t.Fatalf("%s was cleared; a flagged row must survive a bulk reset", id)
-		}
-	}
-}
-
-// minusSet returns the ids in a that are not in b.
-func minusSet(a, b []string) []string {
-	drop := map[string]bool{}
-	for _, s := range b {
-		drop[s] = true
-	}
-	out := []string{}
-	for _, s := range a {
-		if !drop[s] {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-// migration0004Update returns the UPDATE statement from the real migration
-// file, so this test cannot pass against a migration that says something else.
-func migration0004Update(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join("..", "store", "migrations", "0004_category_manual.sql")
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	// Comments first, THEN split: a semicolon inside the migration's prose
-	// would otherwise cut a statement in half, and the half that survives may
-	// still start with UPDATE — a truncated WHERE that quietly clears more
-	// than the real migration does.
-	for _, stmt := range strings.Split(stripSQLComments(string(body)), ";") {
-		if s := strings.TrimSpace(stmt); strings.HasPrefix(s, "UPDATE") {
-			return s
-		}
-	}
-	t.Fatalf("no UPDATE statement in %s", path)
-	return ""
-}
-
-func stripSQLComments(s string) string {
-	var b strings.Builder
-	for _, line := range strings.Split(s, "\n") {
-		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
-			b.WriteString(line)
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
-}
-
-func idsWithCategory(t *testing.T, s *Store, category string) []string {
-	t.Helper()
-	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT id FROM videos WHERE category = ? ORDER BY id`, category)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			t.Fatal(err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	return ids
-}
-
-func sameSet(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	seen := map[string]int{}
-	for _, s := range a {
-		seen[s]++
-	}
-	for _, s := range b {
-		seen[s]--
-	}
-	for _, n := range seen {
-		if n != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-// execTest runs a raw statement against the test database. Used to put a row
-// into a state the store's own API deliberately cannot produce — here, an
-// aged or never-set sponsorblock_refreshed_at.
-func execTest(t *testing.T, s *Store, query string) {
-	t.Helper()
-	if _, err := s.db.ExecContext(context.Background(), query); err != nil {
-		t.Fatalf("exec %q: %v", query, err)
-	}
-}
-
-// TestClaimSponsorblockStale_ordersNeverFetchedFirst covers the backfill claim
-// order: a video that has never been looked up (empty
-// sponsorblock_refreshed_at) has to come before one that was merely looked up
-// a long time ago, since the first has no segments at all while the second
-// only has slightly old ones.
-func TestClaimSponsorblockStale_ordersNeverFetchedFirst(t *testing.T) {
-	// Given: three downloaded videos — one fetched recently, one long ago,
-	// one never.
-	s := newTestStore(t)
-	for _, id := range []string{"fresh", "old", "never"} {
-		seedVideo(t, s, Video{ID: id, URL: "u"})
-		if err := s.SetDownloaded(id, DownloadedResult{MediaPath: "/m/" + id + ".mp4"}); err != nil {
-			t.Fatalf("set downloaded %s: %v", id, err)
-		}
-	}
-	execTest(t, s, `UPDATE videos SET sponsorblock_refreshed_at = datetime('now','-90 days') WHERE id='old'`)
-	execTest(t, s, `UPDATE videos SET sponsorblock_refreshed_at = '' WHERE id='never'`)
-
-	// When: the worker claims a batch.
-	got, err := s.ClaimSponsorblockStale(10)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-
-	// Then: the never-fetched one leads, the long-ago one follows, and the
-	// freshly-stamped one is not due at all.
-	if len(got) != 2 {
-		t.Fatalf("claimed %+v, want the never-fetched and the stale one", got)
-	}
-	if got[0].ID != "never" || got[1].ID != "old" {
-		t.Fatalf("claimed %+v, want never then old", got)
-	}
-}
-
-// TestClaimSponsorblockStale_skipsUndownloadedAndRespectsLimit: only videos
-// with media on disk are worth reading segments for, and the claim must stay
-// bounded so a large library isn't pulled into memory at once.
-func TestClaimSponsorblockStale_skipsUndownloadedAndRespectsLimit(t *testing.T) {
-	// Given: two downloaded videos, one queued one, and one tombstoned one.
-	s := newTestStore(t)
-	for _, id := range []string{"d1", "d2", "queued", "gone"} {
-		seedVideo(t, s, Video{ID: id, URL: "u"})
-	}
-	for _, id := range []string{"d1", "d2", "gone"} {
-		if err := s.SetDownloaded(id, DownloadedResult{MediaPath: "/m/" + id + ".mp4"}); err != nil {
-			t.Fatalf("set downloaded %s: %v", id, err)
-		}
-	}
-	execTest(t, s, `UPDATE videos SET sponsorblock_refreshed_at = '' WHERE id IN ('d1','d2','queued','gone')`)
-	if err := s.Tombstone("gone"); err != nil {
-		t.Fatalf("tombstone: %v", err)
-	}
-
-	// When/Then: the queued and tombstoned rows never appear, and the limit
-	// holds.
-	got, err := s.ClaimSponsorblockStale(1)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("claimed %+v, want exactly the limit", got)
-	}
-	all, err := s.ClaimSponsorblockStale(10)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if len(all) != 2 {
-		t.Fatalf("claimed %+v, want only the two downloaded videos", all)
-	}
-	for _, c := range all {
-		if c.ID == "queued" || c.ID == "gone" {
-			t.Fatalf("claimed %+v, want neither the queued nor the tombstoned video", all)
-		}
-	}
-}
-
-// TestClaimSponsorblockStale_carriesDuration: the client needs the duration to
-// reject segments submitted against a different cut of the video, so the claim
-// has to carry it rather than the worker looking it up again.
-func TestClaimSponsorblockStale_carriesDuration(t *testing.T) {
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "v", URL: "u", DurationSeconds: 612})
-	if err := s.SetDownloaded("v", DownloadedResult{MediaPath: "/m/v.mp4"}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-	execTest(t, s, `UPDATE videos SET sponsorblock_refreshed_at = '' WHERE id='v'`)
-
-	got, err := s.ClaimSponsorblockStale(10)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if len(got) != 1 || got[0].DurationSeconds != 612 {
-		t.Fatalf("claimed %+v, want the duration carried through", got)
-	}
-}
-
-// TestSetSponsorblockSegments_stampsEvenWhenEmpty: recording "this video has
-// no segments" is what takes it out of the claim set. Without the stamp the
-// worker would ask about the same video every minute forever.
-func TestSetSponsorblockSegments_stampsEvenWhenEmpty(t *testing.T) {
-	// Given: a downloaded video that has never been looked up.
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "v", URL: "u"})
-	if err := s.SetDownloaded("v", DownloadedResult{MediaPath: "/m/v.mp4"}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-	execTest(t, s, `UPDATE videos SET sponsorblock_refreshed_at = '' WHERE id='v'`)
-
-	// When: the lookup comes back empty.
-	if err := s.SetSponsorblockSegments("v", ""); err != nil {
-		t.Fatalf("set segments: %v", err)
-	}
-
-	// Then: the column holds the documented empty-array shape, and the video
-	// is no longer claimable.
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.SponsorblockSegments != "[]" {
-		t.Fatalf("segments = %q, want %q", got.SponsorblockSegments, "[]")
-	}
-	claimed, err := s.ClaimSponsorblockStale(10)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if len(claimed) != 0 {
-		t.Fatalf("claimed %+v, want none after the stamp", claimed)
-	}
-}
-
-// TestSetSponsorblockSegments_storesJSON is the populated case.
-func TestSetSponsorblockSegments_storesJSON(t *testing.T) {
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "v", URL: "u"})
-	segments := `[{"category":"sponsor","start_time":10,"end_time":25}]`
-	if err := s.SetSponsorblockSegments("v", segments); err != nil {
-		t.Fatalf("set segments: %v", err)
-	}
-	got, err := s.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.SponsorblockSegments != segments {
-		t.Fatalf("segments = %q, want %q", got.SponsorblockSegments, segments)
-	}
-}
-
-// TestSetDownloaded_stampsSponsorblockRefresh: yt-dlp already asked
-// SponsorBlock during the download, so the backfill worker must not
-// immediately ask again for a video whose segments just arrived.
-func TestSetDownloaded_stampsSponsorblockRefresh(t *testing.T) {
-	s := newTestStore(t)
-	seedVideo(t, s, Video{ID: "v", URL: "u"})
-	if err := s.SetDownloaded("v", DownloadedResult{
-		MediaPath:            "/m/v.mp4",
-		SponsorblockSegments: `[{"category":"sponsor","start_time":1,"end_time":2}]`,
-	}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-
-	claimed, err := s.ClaimSponsorblockStale(10)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if len(claimed) != 0 {
-		t.Fatalf("claimed %+v, want a just-downloaded video not to be re-fetched", claimed)
-	}
-}
-
-// seedChannel inserts a channels metadata-cache row directly. The videos
-// package must not import channels (that would cycle), so tests write the row
-// via raw SQL against the shared db.
-func seedChannel(t *testing.T, s *Store, id, name string) {
-	t.Helper()
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO channels (id, name) VALUES (?, ?)`, id, name); err != nil {
-		t.Fatalf("seed channel %s: %v", id, err)
-	}
-}
-
 // TestChannelName_resolvesFromChannelsCache pins the fix for videos that
 // arrive through a channel scan/subscription: their own videos.channel_name
 // is never written, so both Get and List must fall back to the resolved name
@@ -2304,178 +1004,5 @@ func TestChannelName_fallbacks(t *testing.T) {
 		if got.ChannelName != exp {
 			t.Fatalf("Get(%s) ChannelName = %q, want %q", id, got.ChannelName, exp)
 		}
-	}
-}
-
-func TestTombstone_revokesShareLink(t *testing.T) {
-	db := openTestDB(t)
-	s := New(db)
-	if err := s.Upsert(Video{ID: "v1", URL: "u"}); err != nil {
-		t.Fatalf("seed video: %v", err)
-	}
-	// A live share link for the video...
-	if _, err := db.Exec(`INSERT INTO share_links (token, video_id) VALUES (?, ?)`, "tok", "v1"); err != nil {
-		t.Fatalf("seed share link: %v", err)
-	}
-	if err := s.Tombstone("v1"); err != nil {
-		t.Fatalf("Tombstone: %v", err)
-	}
-	// ...must be gone once the video is tombstoned.
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM share_links WHERE video_id = ?`, "v1").Scan(&n); err != nil {
-		t.Fatalf("count: %v", err)
-	}
-	if n != 0 {
-		t.Fatalf("share link survived a tombstone (count=%d)", n)
-	}
-	// The video row itself stays, marked tombstoned.
-	v, err := s.Get("v1")
-	if err != nil || v == nil || v.Status != "tombstoned" {
-		t.Fatalf("Get after tombstone = (%+v, %v), want status tombstoned", v, err)
-	}
-}
-
-func TestTombstone_errorsWhenShareTableMissing(t *testing.T) {
-	db := openTestDB(t)
-	s := New(db)
-	if err := s.Upsert(Video{ID: "v1", URL: "u"}); err != nil {
-		t.Fatalf("seed video: %v", err)
-	}
-	if _, err := db.Exec(`DROP TABLE share_links`); err != nil {
-		t.Fatalf("drop table: %v", err)
-	}
-	if err := s.Tombstone("v1"); err == nil {
-		t.Fatal("Tombstone should surface the revoke-link failure")
-	}
-}
-
-func TestSetProbed_persistsAndStampsTheAttempt(t *testing.T) {
-	testee := newTestStore(t)
-	seedVideo(t, testee, Video{ID: "v", URL: "u", Title: "t", ChannelID: "c"})
-	if err := testee.SetDownloaded("v", DownloadedResult{MediaPath: "/m/v.mp4"}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-
-	if err := testee.SetProbed("v", ProbeResult{
-		Container: "mp4", VideoCodec: "h264", VideoHeight: 1080, AudioCodec: "aac",
-	}); err != nil {
-		t.Fatalf("SetProbed: %v", err)
-	}
-
-	got, err := testee.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.MediaContainer != "mp4" || got.VideoCodec != "h264" || got.VideoHeight != 1080 || got.AudioCodec != "aac" {
-		t.Errorf("probe values not persisted: %+v", got)
-	}
-	if got.ProbedAt == "" {
-		t.Error("probed_at not stamped")
-	}
-}
-
-// A zero result is what the failure path writes. It must still stamp
-// probed_at, or UnprobedDownloaded returns the same unreadable file forever.
-func TestSetProbed_stampsEvenForAZeroResult(t *testing.T) {
-	testee := newTestStore(t)
-	seedVideo(t, testee, Video{ID: "v", URL: "u", Title: "t", ChannelID: "c"})
-	if err := testee.SetDownloaded("v", DownloadedResult{MediaPath: "/m/v.mp4"}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-
-	if err := testee.SetProbed("v", ProbeResult{}); err != nil {
-		t.Fatalf("SetProbed: %v", err)
-	}
-
-	got, err := testee.Get("v")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.ProbedAt == "" {
-		t.Fatal("a failed probe left probed_at empty; the sweep would never converge")
-	}
-
-	left, err := testee.UnprobedDownloaded(10)
-	if err != nil {
-		t.Fatalf("UnprobedDownloaded: %v", err)
-	}
-	if len(left) != 0 {
-		t.Errorf("still claimable after a recorded attempt: %+v", left)
-	}
-}
-
-func TestUnprobedDownloaded_onlyDownloadedFilesNeverProbed(t *testing.T) {
-	testee := newTestStore(t)
-
-	// Downloaded, never probed — the one row that should come back.
-	seedVideo(t, testee, Video{ID: "want", URL: "u", Title: "t", ChannelID: "c"})
-	if err := testee.SetDownloaded("want", DownloadedResult{MediaPath: "/m/want.mp4"}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-	// Downloaded and already probed.
-	seedVideo(t, testee, Video{ID: "done", URL: "u", Title: "t", ChannelID: "c"})
-	if err := testee.SetDownloaded("done", DownloadedResult{MediaPath: "/m/done.mp4"}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-	if err := testee.SetProbed("done", ProbeResult{Container: "mp4"}); err != nil {
-		t.Fatalf("SetProbed: %v", err)
-	}
-	// Never downloaded: no file to probe.
-	seedVideo(t, testee, Video{ID: "queued", URL: "u", Title: "t", ChannelID: "c", Status: "queued"})
-
-	got, err := testee.UnprobedDownloaded(10)
-	if err != nil {
-		t.Fatalf("UnprobedDownloaded: %v", err)
-	}
-	if len(got) != 1 || got[0].ID != "want" {
-		t.Fatalf("claimed %+v, want exactly [want]", got)
-	}
-	if got[0].MediaPath != "/m/want.mp4" {
-		t.Errorf("MediaPath = %q, want /m/want.mp4", got[0].MediaPath)
-	}
-}
-
-func TestUnprobedDownloaded_respectsTheLimit(t *testing.T) {
-	testee := newTestStore(t)
-	for _, id := range []string{"a", "b", "c"} {
-		seedVideo(t, testee, Video{ID: id, URL: "u", Title: "t", ChannelID: "ch"})
-		if err := testee.SetDownloaded(id, DownloadedResult{MediaPath: "/m/" + id + ".mp4"}); err != nil {
-			t.Fatalf("set downloaded %s: %v", id, err)
-		}
-	}
-
-	got, err := testee.UnprobedDownloaded(2)
-	if err != nil {
-		t.Fatalf("UnprobedDownloaded: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("claimed %d rows, want 2", len(got))
-	}
-}
-
-// A write that never landed must be reported. The backfill worker logs the
-// error and leaves the row unprobed for the next pass; a swallowed error would
-// instead look like a successful attempt that wrote nothing.
-func TestSetProbed_errorsOnClosedDB(t *testing.T) {
-	testee := newTestStore(t)
-	if err := testee.db.Close(); err != nil {
-		t.Fatalf("close db: %v", err)
-	}
-
-	if err := testee.SetProbed("v", ProbeResult{Container: "mp4"}); err == nil {
-		t.Fatal("expected an error writing against a closed db")
-	}
-}
-
-// An empty candidate list and a failed query must not look alike: the sweep
-// treats "nothing to do" as done, so a masked error would strand the backlog.
-func TestUnprobedDownloaded_errorsOnClosedDB(t *testing.T) {
-	testee := newTestStore(t)
-	if err := testee.db.Close(); err != nil {
-		t.Fatalf("close db: %v", err)
-	}
-
-	if _, err := testee.UnprobedDownloaded(10); err == nil {
-		t.Fatal("expected an error listing against a closed db")
 	}
 }
