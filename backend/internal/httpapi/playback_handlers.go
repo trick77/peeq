@@ -1,11 +1,30 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	"github.com/trick77/peeq/internal/playback"
 )
+
+// PlaybackStore is the slice of playback.Store these handlers use — declared
+// here, at the consumer, so the endpoints can be tested against a fake that
+// returns an error on demand instead of against a real database with a table
+// dropped out from under it. *playback.Store satisfies it, and in this one case
+// the interface happens to cover the store's entire surface.
+//
+// Note for anyone wiring Deps.Playback: the nil checks in these handlers test
+// the INTERFACE for nil, so a typed nil — a (*playback.Store)(nil) placed in the
+// interface — is NOT nil here and would panic instead of degrading to the no-op
+// behaviour each handler documents. playback.New never returns nil, so this is a
+// trap for future wiring rather than a live one.
+type PlaybackStore interface {
+	Get(ctx context.Context) (playback.State, error)
+	Set(ctx context.Context, videoID string) error
+	Clear(ctx context.Context) error
+	ClearIfVideo(ctx context.Context, videoID string) error
+}
 
 // playbackPutRequest is the request body for PUT /api/playback. An empty or
 // absent video_id clears the pointer, which is how a caller says "nothing is
