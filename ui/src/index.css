@@ -2044,13 +2044,20 @@ button.catpick.unset:hover {
 .playtitle h1 {
   margin-bottom: 0;
 }
+/* The card's title recipe at headline size: leading 1.40, weight 450 and
+   ink-dim, so a video title is set the same way here as it is in the grid — the
+   size is the only thing that changes, because this one is the page's headline
+   and has a wide column to fill. Weight 500 in full ink halates on the dark
+   ground at any size (see .card.video-card h3), and 1.2 was too tight for a
+   title that wraps to two or three lines on a narrow stage. */
 .playmeta h1 {
   margin: 0 0 8px;
   font-family: var(--font-sans);
   font-size: 26px;
-  font-weight: 500;
+  font-weight: 450;
+  color: var(--color-ink-dim);
   letter-spacing: -0.01em;
-  line-height: 1.2;
+  line-height: 1.4;
 }
 /* The eyebrow above the title: channel, aired, added. Deliberately the same
    shape as the library card's kicker (.card.video-card .by) so a video reads
@@ -4312,13 +4319,17 @@ details.tomb-sect[open] > summary svg {
 .sharepage-meta {
   margin-top: 28px;
 }
+/* Same recipe as the player's title and the card's (leading 1.40, weight 450,
+   ink-dim) at this page's own headline size — a shared video is the first thing
+   a stranger reads, so it gets the largest step of the three. */
 .sharepage-meta h1 {
   margin: 0 0 12px;
   font-family: var(--font-sans);
   font-size: 31px;
-  font-weight: 500;
+  font-weight: 450;
+  color: var(--color-ink-dim);
   letter-spacing: -0.015em;
-  line-height: 1.18;
+  line-height: 1.4;
   text-wrap: balance;
 }
 .sharepage-sub {
