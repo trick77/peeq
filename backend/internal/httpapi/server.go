@@ -15,7 +15,6 @@ import (
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
-	"github.com/trick77/peeq/internal/sharelink"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
 )
@@ -59,7 +58,7 @@ type Deps struct {
 	// /api/videos/{id}/share and the public, unauthenticated /api/s/{token}
 	// routes. Optional: when nil, the owner endpoints return 503 and the
 	// public routes 404 (revealing nothing).
-	ShareLinks *sharelink.Store
+	ShareLinks ShareLinkStore
 	// PublicURL is the externally reachable base URL (config.PublicURL). Share
 	// links are built against it; when empty the API returns a relative
 	// /s/<token> path for the browser to resolve against its own origin.
@@ -186,7 +185,7 @@ type server struct {
 
 	jobs       *jobs.Store
 	videos     *videos.Store
-	shareLinks *sharelink.Store
+	shareLinks ShareLinkStore
 	publicURL  string
 	mediaDir   string
 	runner     DownloadsRunner
