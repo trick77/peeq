@@ -70,6 +70,12 @@ export function VideoCard({
       ? categoryMeta(video.category)
       : null;
 
+  // A video added by URL is enqueued before its metadata is known, so its row
+  // carries no title until the download worker's preflight resolves one. Fall
+  // back to the id — the same fallback Up next uses — rather than rendering an
+  // empty <h3> and an "Open " aria-label with nothing after it.
+  const displayTitle = video.title || video.id;
+
   // The card is one big open-the-video target: the thumbnail and title
   // buttons only cover part of it, leaving the eyebrow, the lifecycle row and
   // the gaps between them dead space under a pointer cursor. Two exceptions —
@@ -100,7 +106,7 @@ export function VideoCard({
             cursor: "pointer",
           }}
           onClick={() => onOpen(video.id)}
-          aria-label={`Open ${video.title}`}
+          aria-label={`Open ${displayTitle}`}
         >
           <ThumbFill id={video.id} hasThumbnail={video.has_thumbnail} />
           {/* Dot only: the word "Unwatched" was the loudest thing on the
@@ -204,7 +210,7 @@ export function VideoCard({
           className="title-btn"
           onClick={() => onOpen(video.id)}
         >
-          {video.title}
+          {displayTitle}
         </button>
       </h3>
       <Lifecycle
