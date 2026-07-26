@@ -191,7 +191,7 @@ func (s *Store) recordAccessTransition(old, newStatus string) {
 	}
 	var e activity.Event
 	switch newStatus {
-	case "valid":
+	case CookieValid:
 		e = activity.Event{Kind: activity.KindAccess, Outcome: activity.OutcomeOK,
 			Summary: "YouTube access restored"}
 	case CookieBlocked:

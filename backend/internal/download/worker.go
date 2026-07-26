@@ -708,7 +708,7 @@ func (w *Worker) retry(ctx context.Context, job *jobs.Job, video *videos.Video, 
 // instead of persisting the download, so a canceled job is never resurrected
 // to done.
 func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) {
-	switch err := w.deps.Jobs.Finish(job.ID, "done", "", ""); {
+	switch err := w.deps.Jobs.Finish(job.ID, jobs.StateDone, "", ""); {
 	case errors.Is(err, jobs.ErrNotRunning):
 		w.settleCanceled(job, video)
 		return

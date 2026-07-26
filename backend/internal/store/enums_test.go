@@ -29,35 +29,42 @@ import (
 // there is no constraint to compare it to. That set's only contract is with the
 // SPA, and guarding it is the frontend's job.
 func TestEnumConstantsMatchTheCheckConstraints(t *testing.T) {
-	// Column name as it appears in the migration -> the Go set that mirrors it.
+	// Table + column as they appear in the migration -> the Go set that mirrors
+	// it. The table is part of the key on purpose: three tables carry a column
+	// called "state", and disambiguating by anything other than the table (by
+	// value set, say) lets one enum's constraint vouch for another's Go set —
+	// download_jobs.state losing 'canceled' would then silently match
+	// summary_jobs.state and pass.
 	cases := []struct {
-		name   string
+		table  string
 		column string
 		got    []string
 	}{
-		{"videos.status", "status", videos.Statuses},
-		{"videos.summary_status", "summary_status", videos.SummaryStatuses},
-		{"settings.cookie_status", "cookie_status", settings.CookieStatuses},
-		{"jobs.state", "state", jobs.States},
-		{"summary_jobs.state", "state", summaryjobs.States},
-		{"channel_videos.state", "state", channelvideos.States},
+		{"videos", "status", videos.Statuses},
+		{"videos", "summary_status", videos.SummaryStatuses},
+		{"videos", "availability", videos.Availabilities},
+		{"settings", "cookie_status", settings.CookieStatuses},
+		{"download_jobs", "state", jobs.States},
+		{"summary_jobs", "state", summaryjobs.States},
+		{"channel_videos", "state", channelvideos.States},
 	}
 
 	src := readMigration(t, "0001_init.sql")
 	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			want := checkValues(t, src, c.column, c.got)
+		t.Run(c.table+"."+c.column, func(t *testing.T) {
+			name := c.table + "." + c.column
+			want := checkValues(t, src, c.table, c.column)
 			got := append([]string(nil), c.got...)
 			sort.Strings(got)
 			sort.Strings(want)
 			if len(got) != len(want) {
 				t.Fatalf("%s: %d Go values, %d in the CHECK constraint\n go: %v\nsql: %v",
-					c.name, len(got), len(want), got, want)
+					name, len(got), len(want), got, want)
 			}
 			for i := range got {
 				if got[i] != want[i] {
 					t.Fatalf("%s: Go and the CHECK constraint disagree\n go: %v\nsql: %v",
-						c.name, got, want)
+						name, got, want)
 				}
 			}
 		})
@@ -77,23 +84,34 @@ func readMigration(t *testing.T, name string) string {
 var checkRe = regexp.MustCompile(`CHECK\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)\s*\)`)
 var quotedRe = regexp.MustCompile(`'([^']*)'`)
 
-// checkValues returns the values listed in the CHECK constraint on column.
-//
-// Several tables share a column name ("state" appears on jobs, summary_jobs and
-// channel_videos), so a name alone is ambiguous. want disambiguates: among the
-// constraints on that column, the one whose value set matches is the one meant.
-// That is not circular — it still fails when NO constraint matches, which is
-// exactly the drift this test exists to catch, and it fails loudly by listing
-// every candidate rather than silently passing.
-func checkValues(t *testing.T, src, column string, want []string) []string {
+// tableBlock returns the CREATE TABLE body for table, so a column lookup cannot
+// stray into a neighbouring table. Anchoring on the "CREATE TABLE " prefix (and
+// a word boundary after the name) is what keeps "videos" from matching
+// "channel_videos", and the block ends at the next top-level CREATE.
+func tableBlock(t *testing.T, src, table string) string {
 	t.Helper()
-	wantSet := map[string]bool{}
-	for _, v := range want {
-		wantSet[v] = true
+	start := regexp.MustCompile(`(?im)^CREATE TABLE\s+` + regexp.QuoteMeta(table) + `\s*\(`)
+	loc := start.FindStringIndex(src)
+	if loc == nil {
+		t.Fatalf("no CREATE TABLE %s in the migration — was it renamed or dropped?", table)
 	}
+	rest := src[loc[1]:]
+	if end := regexp.MustCompile(`(?im)^CREATE\s`).FindStringIndex(rest); end != nil {
+		rest = rest[:end[0]]
+	}
+	return rest
+}
 
-	var candidates [][]string
-	for _, m := range checkRe.FindAllStringSubmatch(src, -1) {
+// checkValues returns the values listed in the CHECK constraint on
+// table.column. Exactly one such constraint must exist: zero means the column
+// or its constraint was renamed or dropped, and more than one means the
+// migration is ambiguous and the test would be guessing.
+func checkValues(t *testing.T, src, table, column string) []string {
+	t.Helper()
+	block := tableBlock(t, src, table)
+
+	var found [][]string
+	for _, m := range checkRe.FindAllStringSubmatch(block, -1) {
 		if m[1] != column {
 			continue
 		}
@@ -104,24 +122,15 @@ func checkValues(t *testing.T, src, column string, want []string) []string {
 		if len(vals) == 0 {
 			continue
 		}
-		candidates = append(candidates, vals)
-		if len(vals) == len(want) {
-			same := true
-			for _, v := range vals {
-				if !wantSet[v] {
-					same = false
-					break
-				}
-			}
-			if same {
-				return vals
-			}
-		}
+		found = append(found, vals)
 	}
-	if len(candidates) == 0 {
-		t.Fatalf("no CHECK constraint found on column %q — was it renamed or dropped?", column)
+	switch len(found) {
+	case 1:
+		return found[0]
+	case 0:
+		t.Fatalf("no CHECK constraint on %s.%s — was it renamed or dropped?", table, column)
+	default:
+		t.Fatalf("%d CHECK constraints on %s.%s: %v", len(found), table, column, found)
 	}
-	t.Fatalf("no CHECK constraint on column %q matches the Go set %v; candidates in the migration: %v",
-		column, want, candidates)
 	return nil
 }

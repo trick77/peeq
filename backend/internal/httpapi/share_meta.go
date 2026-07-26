@@ -83,7 +83,7 @@ func shareDescription(v *videos.Video) string {
 		}
 		line += d
 	}
-	if v.SummaryStatus == "done" {
+	if v.SummaryStatus == videos.SummaryDone {
 		if snip := clampWords(plainText(v.Summary), 200); snip != "" {
 			if line != "" {
 				line += " · "

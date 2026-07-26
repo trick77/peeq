@@ -162,7 +162,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 
 	// Announce "running" only for a fresh job; a resumed one (retrying just the
 	// key-points step) already has its summary marked done and must not regress.
-	if video.SummaryStatus != "done" {
+	if video.SummaryStatus != videos.SummaryDone {
 		_ = w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryRunning, "")
 		w.emit(video.ID, videos.SummaryRunning, PhaseSummarizing)
 	}
@@ -281,7 +281,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// of reading the job as finished (the row lives until the job is Finish()ed),
 	// while status "done" — not "running" — is what the Player keys on, so the
 	// two consumers stay correct off one event.
-	if video.SummaryStatus != "done" {
+	if video.SummaryStatus != videos.SummaryDone {
 		_ = w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryDone, "")
 	}
 	w.emit(video.ID, videos.SummaryDone, PhaseKeypoints)
@@ -301,7 +301,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	w.emit(video.ID, videos.SummaryDone, "")
 
 	run.finished("done")
-	_ = w.d.Jobs.Finish(job.ID, "done", "")
+	_ = w.d.Jobs.Finish(job.ID, summaryjobs.StateDone, "")
 	w.recordActivity(activity.Event{
 		Kind: activity.KindSummary, Outcome: activity.OutcomeOK,
 		SubjectID: video.ID, Subject: video.Title, Summary: "summarized",
@@ -362,7 +362,7 @@ func (w *Worker) startRun(ctx context.Context, job *summaryjobs.Job, video *vide
 		"attempt", attemptLabel(job),
 		// A resumed job already has a usable summary and is only redoing the
 		// fragile key-points step.
-		"resumed", video.SummaryStatus == "done")...)
+		"resumed", video.SummaryStatus == videos.SummaryDone)...)
 	return r
 }
 
@@ -493,7 +493,7 @@ func (r *analysisRun) finished(outcome string) {
 func (w *Worker) finishNoTranscript(job *summaryjobs.Job, video *videos.Video, reason string) {
 	_ = w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryNoTranscript, "")
 	w.emit(video.ID, videos.SummaryNoTranscript, "")
-	_ = w.d.Jobs.Finish(job.ID, "done", "")
+	_ = w.d.Jobs.Finish(job.ID, summaryjobs.StateDone, "")
 	w.d.Logger.Info("summarize worker: no transcript", "video_id", video.ID, "title", video.Title,
 		"channel", video.ChannelName, "reason", reason)
 }

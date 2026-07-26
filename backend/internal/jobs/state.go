@@ -1,7 +1,8 @@
 // Package jobs: state.go names the download-queue state enum, matching the
-// jobs.state CHECK constraint in 0001_init.sql exactly. See videos/status.go
-// for why these are named rather than left as literals, and why they are
-// untyped string constants.
+// download_jobs.state CHECK constraint in 0001_init.sql exactly (the package is
+// jobs, the table is download_jobs). See videos/status.go for why these are
+// named rather than left as literals, and why they are untyped string
+// constants.
 package jobs
 
 // Download job state enum values.
@@ -23,7 +24,8 @@ const (
 	StateCanceled = "canceled"
 )
 
-// States is the fixed enum accepted by the jobs.state CHECK constraint.
+// States is the fixed enum accepted by the download_jobs.state CHECK
+// constraint.
 var States = []string{
 	StatePending,
 	StateRunning,
