@@ -712,3 +712,29 @@ func TestDownload_skipsStderrLoggingWhenDebugIsOff(t *testing.T) {
 		t.Fatalf("stderr logged below its level\n%s", buf.String())
 	}
 }
+
+// "Every call that succeeded, download or not" was the headline of #181, and
+// every test covering it drove a download. Metadata takes the buffered branch of
+// execWithProgress rather than the streaming one, so the non-download half was a
+// second call site nobody had exercised — and Metadata runs on every channel
+// scan, which makes it the one that actually runs most.
+func TestMetadata_logsStderrFromASuccessfulRun(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+	t.Setenv("FAKE_YTDLP_WARNINGS", "WARNING: unable to fetch PO token")
+
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		Logger:         logger,
+	})
+	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	if !strings.Contains(buf.String(), "unable to fetch PO token") {
+		t.Fatalf("metadata stderr not logged\n%s", buf.String())
+	}
+}
