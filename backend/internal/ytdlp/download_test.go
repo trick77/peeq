@@ -678,3 +678,37 @@ func TestDownload_doesNotLogStderrWhenTheCallFails(t *testing.T) {
 		t.Fatalf("a failing call must not log stderr as a success\n%s", buf.String())
 	}
 }
+
+// The stderr logging runs on every successful call, Metadata included, and
+// Metadata runs on every channel scan. With debug off — the production default
+// — logStderr must bail before splitting the buffer, so the scan pays nothing
+// for a stream nobody is reading.
+func TestDownload_skipsStderrLoggingWhenDebugIsOff(t *testing.T) {
+	mediaDir := t.TempDir()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+
+	t.Setenv("FAKE_YTDLP_ID", "dQw4w9WgXcQ")
+	t.Setenv("FAKE_YTDLP_WARNINGS", "WARNING: fragment 3 retried")
+
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		MediaDir:       mediaDir,
+		Logger:         logger,
+	})
+	if _, err := r.Download(context.Background(), DownloadReq{
+		URL:     "https://youtu.be/dQw4w9WgXcQ",
+		VideoID: "dQw4w9WgXcQ",
+		Format:  "best-mp4",
+	}, nil); err != nil {
+		t.Fatalf("download: %v", err)
+	}
+
+	if strings.Contains(buf.String(), "fragment 3 retried") {
+		t.Fatalf("stderr logged below its level\n%s", buf.String())
+	}
+}
