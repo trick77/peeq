@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { Share } from "./Share";
 import type { PublicVideo } from "../api/share";
 
@@ -228,6 +234,61 @@ describe("Share SponsorBlock", () => {
       document.querySelector('[title="Skipped automatically: ad"]'),
     ).toBeTruthy();
     expect(document.querySelector('[title="Marked: intro"]')).toBeTruthy();
+  });
+
+  it("seeks from the scrubber without starting playback", async () => {
+    // Clicking a chapter or a transcript line means "take me there and play";
+    // moving the bar of a paused video must not start it.
+    const videoEl = await renderWithSegments([
+      { category: "sponsor", start_time: 10, end_time: 25 },
+    ]);
+    Object.defineProperty(videoEl, "currentTime", { value: 0, writable: true });
+    const playSpy = vi
+      .spyOn(window.HTMLMediaElement.prototype, "play")
+      .mockResolvedValue(undefined);
+
+    // jsdom lays nothing out, so the bar needs a rect before a click position
+    // means anything: 400px wide, clicked at 300 → 75% of a 100s video.
+    const bar = screen.getByRole("slider", { name: "Seek" });
+    bar.getBoundingClientRect = () => ({ left: 0, width: 400 }) as DOMRect;
+    fireEvent.click(bar, { clientX: 300 });
+
+    expect(videoEl.currentTime).toBe(75);
+    expect(playSpy).not.toHaveBeenCalled();
+  });
+
+  it("prefers the real media duration once metadata loads", async () => {
+    // duration_seconds off the DTO is the fallback; the file itself wins as
+    // soon as it can be read, so the bar's end matches the media.
+    const videoEl = await renderWithSegments([
+      { category: "sponsor", start_time: 10, end_time: 25 },
+    ]);
+    Object.defineProperty(videoEl, "duration", { value: 240, writable: true });
+    fireEvent.loadedMetadata(videoEl);
+
+    await waitFor(() => expect(screen.getByText("4:00")).toBeInTheDocument());
+  });
+
+  it("clears the skip notice after its timeout", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const videoEl = await renderWithSegments([
+        { category: "sponsor", start_time: 10, end_time: 25 },
+      ]);
+      Object.defineProperty(videoEl, "currentTime", {
+        value: 12,
+        writable: true,
+      });
+      fireEvent.timeUpdate(videoEl);
+      expect(await screen.findByText(/Skipped ad/)).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+      });
+      expect(screen.queryByText(/Skipped ad/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders no scrubber at all when the video has no segments", async () => {
