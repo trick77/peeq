@@ -620,11 +620,20 @@ button.srow:not(:disabled):hover {
 .ag-day > .ag-row:not(:last-child)::before {
   content: "";
   position: absolute;
-  /* centre of the node column: 46px gutter + 14px gap + half of 22px, less
-     half the rule's own width. */
-  left: 70.25px;
-  top: 33px;
-  bottom: -11px;
+  /* Centre of the node column. An absolutely positioned child is placed
+     against the row's PADDING BOX, so the row's own 2px padding-left is not
+     absorbed and has to be counted here: 2px padding + 46px gutter + 14px gap
+     + half of 22px, less half the rule's own width. Leaving the padding out is
+     what used to pull the whole rail 2px left of the nodes it threads. */
+  left: calc(2px + 46px + 14px + 11px - 0.75px);
+  /* A 4px breather at each end rather than running edge to edge. The node is
+     opaque, so a line that started at its rim was merely hidden BEHIND it and
+     the two touched; the gap makes the nodes read as beads on the thread
+     instead of one unbroken stroke. The node's bottom edge sits 34px down
+     (11px row padding + 1px nudge + 22px), and the next row's node starts 12px
+     past this row's edge — hence 38px and -8px. */
+  top: 38px;
+  bottom: -8px;
   width: 1.5px;
   background: var(--color-border);
 }
@@ -664,13 +673,18 @@ button.srow:not(:disabled):hover {
   /* The ring, not the glyph, is the outcome. The icon still names the kind by
      SHAPE alone, so colour is never the only thing distinguishing two kinds —
      it only ever separates fine from went-wrong, which is a distinction the
-     text repeats anyway. */
+     text repeats anyway.
+
+     And "fine" is this plain grey, on BOTH timelines: an .ok History row now
+     looks exactly like a queued or scheduled Up next row, because both are the
+     same statement — nothing to see here. It used to paint every ok node green,
+     which is most of the log most days: colour spent on the unremarkable case
+     leaves none for the remarkable one, and a rail of green ticks is harder to
+     find a red node in than a rail of grey ones. Green stays where it means
+     something live (the cookie LED, a healthy status pill). */
   background: var(--color-elevated);
   border: 1px solid var(--color-border);
   color: var(--color-muted);
-}
-.ag-row.ok .ag-node {
-  color: var(--color-online);
 }
 .ag-row.warn .ag-node {
   color: var(--color-kept);
@@ -829,6 +843,15 @@ button.srow:not(:disabled):hover {
 .ag-row.fail .ag-kind,
 .ag-row.warn .ag-kind {
   color: inherit;
+}
+/* Up next's SCHEDULED rows only, where the kind word is the whole detail line
+   with no rest to be told apart from — so the weight is doing its job alone and
+   ink-dim only made a plan shout. It drops to the grey of the relative label
+   opposite it: across that row the two say one thing between them — what is
+   about to happen, and how soon — and neither outranks the other. History and
+   the lanes keep ink-dim: there the word leads a line that continues. */
+.ag-plan .ag-kind {
+  color: var(--color-faint);
 }
 /* Numerals only — never whole phrases, as the old .un-lead/.un-detail rule
    these replace had it. The detail line is in here because a running download

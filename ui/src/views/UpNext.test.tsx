@@ -484,10 +484,10 @@ describe("UpNext", () => {
       expect(screen.queryByText("Within the hour")).not.toBeInTheDocument();
     });
 
-    // The scheduled row shows a channel name and nothing else — its kind is
-    // the node glyph now, not a sentence. Matching text the row cannot show
-    // would return rows with no visible reason to be there.
-    it("does not match scheduled text the row no longer shows", async () => {
+    // The scheduled row carries the work in words again, so the box has to
+    // reach them: a field the row displays and the search refuses to find is
+    // the same broken promise as matching text the row cannot show.
+    it("matches a scheduled row's summary, not only its subject", async () => {
       vi.mocked(listUpcoming).mockResolvedValue({
         items: [
           {
@@ -508,10 +508,34 @@ describe("UpNext", () => {
           search="channel scan"
         />,
       );
+      expect(await screen.findByText("Veritasium")).toBeInTheDocument();
       expect(
-        await screen.findByText(/Nothing queued or scheduled matches/),
-      ).toBeInTheDocument();
-      expect(screen.queryByText("Veritasium")).toBeNull();
+        screen.queryByText(/Nothing queued or scheduled matches/),
+      ).toBeNull();
+    });
+
+    // The fallback line is displayed text like any other, so the same promise
+    // covers it: with no summary the row reads "Metadata", and a search for
+    // that word has to keep the row rather than hide the very thing it names.
+    it("matches a scheduled row's fallback kind label", async () => {
+      vi.mocked(listUpcoming).mockResolvedValue({
+        items: [
+          {
+            kind: "channel_meta",
+            approx: false,
+            at: soon(20),
+            subject: "Veritasium",
+          },
+        ],
+        truncated: 0,
+      });
+      render(
+        <UpNext jobs={[]} summaries={[]} onCancel={noop} search="metadata" />,
+      );
+      expect(await screen.findByText("Veritasium")).toBeInTheDocument();
+      expect(
+        screen.queryByText(/Nothing queued or scheduled matches/),
+      ).toBeNull();
     });
 
     it("matches a channel name, not only a title", () => {
@@ -554,10 +578,11 @@ describe("UpNext schedule rows", () => {
     vi.mocked(listUpcoming).mockResolvedValue({ items: [], truncated: 0 });
   });
 
-  // The kind used to be a second line under every channel name, so a real
-  // schedule read as "Channel scan" fifteen times. It is a glyph now, in its
-  // own column, leaving one line per entry.
-  it("names a scheduled row's kind with a glyph, not a repeated sentence", async () => {
+  // The row says what is about to happen, in the worker's own words, on a
+  // second line — History's shape. A glyph alone names a kind, not a deed: a
+  // magnifying glass beside a channel name never said "about to look for new
+  // videos". The glyph stays as the a11y name for the same fact.
+  it("names a scheduled row's work in words, under the subject", async () => {
     vi.mocked(listUpcoming).mockResolvedValue({
       items: [
         {
@@ -577,10 +602,35 @@ describe("UpNext schedule rows", () => {
       .closest(".ag-row") as HTMLElement;
     // The glyph column is History's node now, not a one-off .un-kind span.
     expect(row.querySelector(".ag-node")).toBeTruthy();
-    // The words are gone from the row, but the kind is still named for anyone
-    // not reading it visually.
-    expect(row.textContent).not.toContain("Channel scan");
+    // Capitalised by leadCap, and in the same .ag-kind slot History leads its
+    // detail line with — never a second vocabulary invented in the view.
+    expect(within(row).getByText("Channel scan")).toHaveClass("ag-kind");
     expect(within(row).getByLabelText("Scan")).toBeInTheDocument();
+  });
+
+  // The wording is the worker's, so the row has to cope with the worker not
+  // supplying it — an older backend, or a kind added there before it is given a
+  // phrase here. The kind's own label stands in, which is what the glyph
+  // already means, rather than leaving the line blank and the row silent about
+  // what it is for.
+  it("falls back to the kind label when the item carries no summary", async () => {
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          kind: "channel_meta",
+          approx: false,
+          at: soon(30),
+          subject: "Kurzgesagt",
+        },
+      ],
+      truncated: 0,
+    });
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+    await screen.findByText("Kurzgesagt");
+    const row = screen
+      .getByText("Kurzgesagt")
+      .closest(".ag-row") as HTMLElement;
+    expect(within(row).getByText("Metadata")).toHaveClass("ag-kind");
   });
 });
 

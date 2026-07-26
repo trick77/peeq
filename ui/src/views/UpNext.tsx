@@ -11,7 +11,14 @@ import { summaryPhaseInfo, SUMMARY_PHASE_COUNT } from "../format";
 import { Icon } from "../icons";
 import type { Job, SummaryJob } from "../api/types";
 import { DOT } from "../sep";
-import { clockOf, kindOf, parseUTC, plannedWhen, subjectNode } from "./agenda";
+import {
+  clockOf,
+  kindOf,
+  leadCap,
+  parseUTC,
+  plannedWhen,
+  subjectNode,
+} from "./agenda";
 
 // UpNext — everything peeq is about to do, in the order it will do it. It
 // absorbs the old Queue page and the projection half of the old Activity page,
@@ -129,11 +136,23 @@ const SCHED_KINDS = new Set(["scan", "channel_meta"]);
 // History's log, everything Up next can show is already in memory — two short
 // job lists and a capped projection — so there is nothing off-screen for a
 // server query to reach. It matches the same fields the rows display: the
-// title/subject and the channel name.
+// title/subject, the channel name, and — on a scheduled row — the line naming
+// the work, which is passed in as the string the row actually renders rather
+// than as the raw summary, so display and search cannot drift apart.
 function matches(search: string, ...fields: (string | undefined)[]): boolean {
   if (!search) return true;
   const q = search.toLowerCase();
   return fields.some((f) => (f ?? "").toLowerCase().includes(q));
+}
+
+// planOf is the line a scheduled row puts under its subject: the worker's own
+// wording for the work ("channel scan"), capitalised, or the kind's label when
+// the worker sent none — an older backend, or a kind added there before it is
+// given a phrase. ONE function so the search predicate filters on the exact
+// string the row displays; computing it twice is how a row ends up showing
+// "Metadata" that a search for "metadata" refuses to find.
+function planOf(item: UpcomingItem): string {
+  return leadCap(item.summary?.trim() || "") || kindOf(item.kind).label;
 }
 
 export function UpNext({
@@ -344,11 +363,13 @@ export function UpNext({
   const grouped = useMemo(() => {
     const by = new Map<string, UpcomingItem[]>();
     for (const item of scheduled) {
-      // Subject only. The row used to carry the summary as a second line and
-      // no longer does — the node says the kind now — so matching on it would
-      // surface scheduled rows with nothing on them that matches what you
-      // typed. A search box may only find what the page can show.
-      if (!matches(q, item.subject)) continue;
+      // Subject AND plan line, because the row shows both: the channel name on
+      // top and the work itself ("Channel scan") beneath. The rule is that a
+      // search box may only find what the page can show — which cuts both
+      // ways, so a field the row displays has to be searchable, including the
+      // kind label the plan line falls back to. While the summary was off the
+      // row this matched the subject alone.
+      if (!matches(q, item.subject, planOf(item))) continue;
       const b = bucketOf(item.at as string, now);
       const list = by.get(b);
       if (list) list.push(item);
@@ -637,19 +658,24 @@ export function UpNext({
                     <span className="ag-clock">
                       {clockOf(item.at as string)}
                     </span>
-                    {/* Labelled, unlike History's nodes: there the detail line
-                        still names the kind in words, so the glyph is a
-                        duplicate. Here it is the only thing saying what this
-                        work is. */}
+                    {/* Labelled, unlike History's nodes. Both rows now name
+                        the kind in words below, so on both pages the glyph is
+                        strictly a repeat — but History's node is a coloured
+                        outcome ring a sighted reader reads as meaning, and
+                        this one isn't, so the label is the cheaper of the two
+                        inconsistencies to keep. */}
                     <span className="ag-node">
                       <Icon name={k.icon} size="12px" label={k.label} />
                     </span>
-                    {/* One line, not two. The node beside it already says
-                        which kind of work this is — the same glyph History uses
-                        for it — so a detail line would have read "Scan · Channel
-                        scan" under every channel name on the page, the only
-                        thing varying being the name. Written out fifteen times,
-                        that repetition made a short list look long. */}
+                    {/* Two lines, as History has: the subject, then what is
+                        actually going to happen to it. This row was briefly one
+                        line on the theory that the glyph said it — but a glyph
+                        names a kind, not a deed, and "Veritasium · in 40m" with
+                        a magnifying glass beside it does not tell you peeq is
+                        about to look for new videos. The wording is the
+                        worker's own ("channel scan", "metadata refresh"), never
+                        a second vocabulary here that could drift from it —
+                        the same rule History's detailParts follows. */}
                     <div className="ag-body">
                       <div className="ag-subject">
                         {subjectNode(
@@ -659,6 +685,11 @@ export function UpNext({
                           onOpenChannel,
                           onOpenVideo,
                         )}
+                      </div>
+                      {/* .ag-plan drops it to the same grey as the relative
+                          label across from it — see the rule in index.css. */}
+                      <div className="ag-detail ag-plan">
+                        <span className="ag-kind">{planOf(item)}</span>
                       </div>
                     </div>
                     {/* Both live in column four and cross-fade. Rendered
