@@ -33,7 +33,7 @@ describe("App (static)", () => {
 vi.mock("./api", () => ({
   getMe: vi.fn().mockResolvedValue({ id: "u1", email: "a@b.c" }),
   listDownloads: vi.fn().mockResolvedValue([]),
-  cookieHealth: vi.fn().mockResolvedValue({ status: "active" }),
+  cookieHealth: vi.fn().mockResolvedValue({ status: "valid" }),
   downloadsStatus: vi
     .fn()
     .mockResolvedValue({ paused: false, low_disk: false }),
@@ -78,7 +78,7 @@ const mockVideo = vi.hoisted<Video>(() => ({
   summary: "",
   chapters: [],
   key_points: [],
-  summary_status: "",
+  summary_status: "pending",
   audio_language: "",
   has_subtitles: false,
   category: "uncategorized",
@@ -164,7 +164,7 @@ describe("App dock bootstrap", () => {
     });
     vi.mocked(listPending).mockResolvedValue([]);
     vi.mocked(cookieHealth).mockResolvedValue({
-      status: "active",
+      status: "valid",
       present: true,
     });
     vi.mocked(streamDownloads).mockResolvedValue(undefined);
@@ -246,7 +246,7 @@ describe("App deep links", () => {
     });
     vi.mocked(listPending).mockResolvedValue([]);
     vi.mocked(cookieHealth).mockResolvedValue({
-      status: "active",
+      status: "valid",
       present: true,
     });
     vi.mocked(streamDownloads).mockResolvedValue(undefined);
@@ -550,7 +550,7 @@ describe("App queue and summaries", () => {
     });
     vi.mocked(listPending).mockResolvedValue([]);
     vi.mocked(cookieHealth).mockResolvedValue({
-      status: "active",
+      status: "valid",
       present: true,
     });
     vi.mocked(streamDownloads).mockResolvedValue(undefined);

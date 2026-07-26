@@ -55,7 +55,7 @@ import {
 
 function settings(overrides: Partial<Settings> = {}): Settings {
   return {
-    cookie_status: "active",
+    cookie_status: "valid",
     format_preset: "",
     format_custom: "",
     limit_rate: "",
@@ -92,7 +92,7 @@ function archiveVideo(overrides: Partial<Video> = {}): Video {
     summary: "",
     chapters: [],
     key_points: [],
-    summary_status: "",
+    summary_status: "pending",
     audio_language: "",
     has_subtitles: false,
     category: "uncategorized",
