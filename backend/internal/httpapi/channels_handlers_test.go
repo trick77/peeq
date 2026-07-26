@@ -2968,3 +2968,88 @@ func TestChannelDetail_goneChannel(t *testing.T) {
 		t.Fatalf("want subscribed:false, got %s", body)
 	}
 }
+
+// --- The refresh cap measures the process, not the queue (issue #179) --------
+
+// pacingResolver splits a Runner call into its two halves: the wait in the
+// shared pacer, during which no process exists, and the work after it. Only the
+// second half may be counted against the cap, so only the second half is
+// preceded by the start hook execWithProgress fires.
+type pacingResolver struct {
+	queued  time.Duration
+	working time.Duration
+	info    ytdlp.ChannelInfo
+	calls   int
+}
+
+func (p *pacingResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+	p.calls++
+	select {
+	case <-time.After(p.queued):
+	case <-ctx.Done():
+		return ytdlp.ChannelInfo{}, ctx.Err()
+	}
+	ytdlp.SignalStart(ctx)
+	select {
+	case <-time.After(p.working):
+	case <-ctx.Done():
+		return ytdlp.ChannelInfo{}, ctx.Err()
+	}
+	return p.info, nil
+}
+
+// shortResolveCap shrinks the production two minutes for the duration of one
+// test. Restored on cleanup so ordering between tests cannot matter.
+func shortResolveCap(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := resolveCap
+	resolveCap = d
+	t.Cleanup(func() { resolveCap = prev })
+}
+
+// THE REGRESSION, on the interactive path. WithInteractive skips the background
+// reservation queue but NOT the throttle, so a user-triggered refresh still
+// waits — and a cap armed on entry counted that wait as though yt-dlp were
+// already hung, landing in the failure path that stamps resolve_ok = 0.
+//
+// Queueing (120ms) outlasts the whole cap (60ms); the work (10ms) is well
+// inside it.
+func TestChannelRefresh_capDoesNotCountThePacerWait(t *testing.T) {
+	shortResolveCap(t, 60*time.Millisecond)
+	resolver := &pacingResolver{
+		queued:  120 * time.Millisecond,
+		working: 10 * time.Millisecond,
+		info:    ytdlp.ChannelInfo{UCID: "UCslow", Name: "Refreshed Name"},
+	}
+	deps := channelsTestDeps(t, resolver)
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UCslow", "Slow Channel")
+
+	rec := postJSON(t, h, "/api/channels/UCslow/refresh", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s — the cap counted the queueing wait", rec.Code, rec.Body.String())
+	}
+}
+
+// The other half: a stall once yt-dlp is actually running is still caught, and
+// reported as a timeout rather than as the bare "context canceled" it surfaces
+// as. 504, not 502 — the request did not fail, it ran out of time.
+func TestChannelRefresh_stalledResolve_504(t *testing.T) {
+	shortResolveCap(t, 40*time.Millisecond)
+	resolver := &pacingResolver{
+		queued:  5 * time.Millisecond,
+		working: 3 * time.Second,
+		info:    ytdlp.ChannelInfo{UCID: "UChang", Name: "Never Arrives"},
+	}
+	deps := channelsTestDeps(t, resolver)
+	h := New(deps)
+	seedVideoRow(t, deps, "v1", "UChang", "Hanging Channel")
+
+	rec := postJSON(t, h, "/api/channels/UChang/refresh", nil)
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "timed out") {
+		t.Fatalf("body does not name the timeout: %s", rec.Body.String())
+	}
+}
