@@ -592,11 +592,16 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		// rule does not apply to it: this is a one-off, it explains an otherwise
 		// unexplained burst of work, and staying quiet here is the same invisible
 		// bulk behaviour that made the flood so unwelcome in the first place.
+		// No Detail. It used to read "published before you followed this
+		// channel", which defines the word "older" that the summary already
+		// used. One channel at a time that is a helpful gloss; History shows
+		// many at once, and on a first pass over a subscription list it was the
+		// same sentence down six consecutive rows, crowding out the counts that
+		// actually differed. The word "older" carries it.
 		s.recordActivity(activity.Event{
 			Kind: activity.KindScan, Outcome: activity.OutcomeOK,
 			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
 			Summary: fmt.Sprintf("%d older videos skipped", backlogCount),
-			Detail:  "published before you followed this channel",
 		})
 	case sub.ScanRequestedAt != "":
 		// Requested, and it found nothing. The two cases above already answer a
