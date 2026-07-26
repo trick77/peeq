@@ -1207,6 +1207,19 @@ button.srow:not(:disabled):hover {
   color: inherit;
   cursor: pointer;
 }
+/* `.card` is also the Player/Share panel (border + panel fill + clip, further
+   down this file), and that rule comes later, so a video card was inheriting a
+   framed panel: a hairline box drawn from the thumbnail's edges around the title
+   and the row under it. On a grid of cards the frame is pure noise — it fences
+   off text that the thumbnail above it already groups — and the fill lifts the
+   text off the page background for no reason. `.card.video-card` out-specifies
+   the panel rule wherever it sits, so the card goes back to being just a stack:
+   full-bleed thumbnail, text on the page's own ground. */
+.card.video-card {
+  border: none;
+  background: none;
+  overflow: visible;
+}
 .thumb {
   position: relative;
   aspect-ratio: 16 / 9;
