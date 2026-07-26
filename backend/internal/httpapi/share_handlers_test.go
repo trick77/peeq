@@ -121,6 +121,13 @@ func TestShare_publicVideoMetadata(t *testing.T) {
 	if err := deps.Videos.SetSummary("v1", "A short summary.", "[]", `[{"ts":1,"text":"point"}]`); err != nil {
 		t.Fatalf("set summary: %v", err)
 	}
+	// Segments are seeded so the nested third-party shape the checks below have
+	// to tolerate is actually present in the payload under test — without them
+	// the "a segment has a category" reasoning would describe a body that has no
+	// segments in it.
+	if err := deps.Videos.SetSponsorblockSegments("v1", `[{"category":"sponsor","start_time":30,"end_time":75.5}]`); err != nil {
+		t.Fatalf("set segments: %v", err)
+	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 	created := createShare(t, h, cookie, "v1", "never")
@@ -137,10 +144,12 @@ func TestShare_publicVideoMetadata(t *testing.T) {
 	// are in here for a second reason on top of being owner-shaped: see
 	// TestShare_publicVideoNeverLeaksVideoID.
 	//
-	// Checked as TOP-LEVEL KEYS, not substrings: the payload nests third-party
-	// shapes of its own now (a SponsorBlock segment has a "category", meaning the
-	// segment's kind, nothing to do with the owner's category), and a substring
-	// scan would call that a leak.
+	// Checked TWO ways. Top-level keys catch the field being added to the DTO;
+	// the quoted-substring scan additionally catches it appearing NESTED, inside
+	// chapters/key_points/segments, or under another name. Only "category" is
+	// exempt from the substring scan: the payload nests a third-party shape whose
+	// "category" means the SponsorBlock segment's kind, nothing to do with the
+	// owner's category, so there it is a top-level-key check only.
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
 		t.Fatalf("decode public DTO: %v", err)
@@ -148,6 +157,11 @@ func TestShare_publicVideoMetadata(t *testing.T) {
 	for _, leak := range []string{"watched", "favorite", "category", "url", "status", "id", "media_path", "position_seconds"} {
 		if _, ok := fields[leak]; ok {
 			t.Fatalf("public DTO leaked owner field %q: %s", leak, body)
+		}
+	}
+	for _, leak := range []string{"\"watched\"", "\"favorite\"", "\"url\"", "\"status\"", "\"id\"", "\"position_seconds\""} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("public DTO leaked owner field %s anywhere in the body: %s", leak, body)
 		}
 	}
 	// media_path is additionally checked as a raw substring: it is the one field

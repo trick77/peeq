@@ -40,8 +40,9 @@ function expiryLabel(video: PublicVideo): string {
   return `This link expires in ${d} days.`;
 }
 
-// PeeqMark is the small brand lockup used in the top bar and footer — the same
-// magnifier logo the rail wears, scaled down for a chromeless page.
+// PeeqMark is the small brand lockup the footer wears (the top bar it also used
+// to sit in is gone) — the same magnifier logo the rail wears, scaled down for a
+// chromeless page.
 function PeeqMark({ size = 26 }: { size?: number }) {
   return (
     <span className="sharepage-logo" style={{ width: size, height: size }}>
