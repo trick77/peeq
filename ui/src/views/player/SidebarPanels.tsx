@@ -1,0 +1,103 @@
+import { Icon } from "../../icons";
+import { Spinner } from "../../ui";
+import { formatDuration } from "../../format";
+import type { Video } from "../../api/types";
+
+// DONE_STATUSES is every summary_status the panel below renders explicitly.
+// Anything outside it falls through to "No summary yet." — so a status added
+// on the backend shows a truthful placeholder rather than an empty card.
+const DONE_STATUSES = new Set([
+  "done",
+  "no_transcript",
+  "pending",
+  "running",
+  "error",
+]);
+
+// SummaryCard renders the prose summary and every non-done state it can be in.
+export function SummaryCard({ video }: { video: Video }) {
+  return (
+    <div className="card">
+      <div className="hd">
+        <Icon name="alignLeft" size="16px" />
+        <span className="lbl">Summary</span>
+      </div>
+      <div className="tabbody summ">
+        {video.summary_status === "done" &&
+          (video.summary.trim() ? (
+            video.summary
+              .split("\n\n")
+              .filter((p) => p.trim())
+              .map((p, i) => <p key={i}>{p}</p>)
+          ) : (
+            <p className="placeholder">No summary text.</p>
+          ))}
+        {/* no_transcript covers both "there are no captions" and "the
+            captions turned out to be music/ambience rather than speech",
+            so the copy has to fit both. */}
+        {video.summary_status === "no_transcript" && (
+          <p className="placeholder">No speech in this video.</p>
+        )}
+        {(video.summary_status === "pending" ||
+          video.summary_status === "running") && (
+          <p
+            className="placeholder"
+            style={{ display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <Spinner size="15px" />
+            Summarizing
+          </p>
+        )}
+        {video.summary_status === "error" && (
+          <p className="errline">Summarization failed.</p>
+        )}
+        {!DONE_STATUSES.has(video.summary_status) && (
+          <p className="placeholder">No summary yet.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// HighlightsCard is the key-points list. Each row seeks, so it is the same
+// contract as ContentsCard: presentational, with the Player's seek passed in.
+export function HighlightsCard({
+  video,
+  seek,
+}: {
+  video: Video;
+  seek: (seconds: number) => void;
+}) {
+  return (
+    <div className="card">
+      <div className="hd">
+        <Icon name="star" size="16px" />
+        <span className="lbl">Highlights</span>
+      </div>
+      <div className="tabbody">
+        {video.key_points.length === 0 ? (
+          <p className="placeholder">No highlights.</p>
+        ) : (
+          <div className="hl">
+            {video.key_points.map((k, i) => (
+              <button
+                key={i}
+                type="button"
+                className="row"
+                onClick={() => seek(k.ts)}
+              >
+                <Icon
+                  name="starFilled"
+                  size="15px"
+                  style={{ color: "var(--color-kept)" }}
+                />
+                <span className="ts mono">{formatDuration(k.ts)}</span>
+                <span className="txt">{k.text}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

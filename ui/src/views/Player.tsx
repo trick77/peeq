@@ -21,17 +21,10 @@ import { streamDownloads } from "../api/downloads";
 import { getSettings, updateSettings } from "../api/settings";
 import { setPlaybackState } from "../api/playback";
 import { getShareStatus, type ShareStatus } from "../api/share";
-import { ShareChip, ShareControl } from "../components/ShareControl";
+import { ShareControl } from "../components/ShareControl";
 import type { Video } from "../api/types";
 import { ApiError } from "../api/http";
-import {
-  codecLabel,
-  formatAgo,
-  formatDuration,
-  formatSize,
-  gradientClassFor,
-  resolutionLabel,
-} from "../format";
+import { formatDuration, gradientClassFor } from "../format";
 // The VTT parser and transcript helpers live in ../vtt so the public share page
 // can render the same Transcript card without importing this view.
 import {
@@ -44,6 +37,10 @@ import {
   type Cue,
 } from "../vtt";
 import { DOT } from "../sep";
+import { MediaStats } from "./player/MediaStats";
+import { ContentsCard } from "./player/ContentsCard";
+import { SummaryCard, HighlightsCard } from "./player/SidebarPanels";
+import { MetaHeader } from "./player/MetaHeader";
 
 // RESUME_THROTTLE_MS bounds how often `timeupdate` (which fires ~4x/sec)
 // is allowed to actually POST the resume position — see handleTimeUpdate.
@@ -55,14 +52,6 @@ const RESUME_THROTTLE_MS = 5000;
 // intelligence panels below (chapters/highlights/transcript cues) — kept as
 // its own name to match the brief's `fmt(ts)` calls.
 const fmt = formatDuration;
-
-const DONE_STATUSES = new Set([
-  "done",
-  "no_transcript",
-  "pending",
-  "running",
-  "error",
-]);
 
 // Player — the "Now playing" view: an HTML5 <video> stage with a custom
 // scrubber (SponsorBlock overlay + auto-skip), resume tracking, the
@@ -923,46 +912,11 @@ export function Player({
           />
         </div>
         <div className="playmeta">
-          {/* Who made it and when, above the title — the same eyebrow a
-              library card carries, so a video reads the same way in the grid
-              and on the page it opens.
-
-              Both ages spelled out via formatAgo: the card abbreviates the
-              second one only because its column is narrow, and this one is
-              not. "aired" is conditional because published_at is unknown for
-              some live streams and premieres; "added" is conditional because
-              a row can be listed without ever having finished downloading. */}
-          <div className="by">
-            {onOpenChannel && video.channel_id ? (
-              <button
-                type="button"
-                className="chan-link"
-                onClick={() => onOpenChannel(video.channel_id)}
-              >
-                {video.channel_name || video.channel_id}
-              </button>
-            ) : (
-              <span className="chan-name">
-                {video.channel_name || video.channel_id}
-              </span>
-            )}
-            {video.published_at ? (
-              <>
-                <span className="dot">·</span>
-                aired {formatAgo(video.published_at)}
-              </>
-            ) : null}
-            {video.downloaded_at ? (
-              <>
-                <span className="dot">·</span>
-                added {formatAgo(video.downloaded_at)}
-              </>
-            ) : null}
-          </div>
-          <div className="playtitle">
-            <h1>{video.title}</h1>
-            <ShareChip status={shareStatus} />
-          </div>
+          <MetaHeader
+            video={video}
+            shareStatus={shareStatus}
+            onOpenChannel={onOpenChannel}
+          />
           {/* The action row splits on one rule: a control keeps its label if
               the label reports the current state (Keep forever / Kept
               forever, Mark watched / Mark unwatched). Controls whose label
@@ -1054,41 +1008,7 @@ export function Player({
         </div>
 
         <div className="belowvideo">
-          <div className="card full">
-            <div className="hd">
-              <Icon name="listTree" size="16px" />
-              <span className="lbl">Contents</span>
-              {video.chapters.length > 0 && (
-                <span className="meta">{video.chapters.length} chapters</span>
-              )}
-            </div>
-            <div className="tabbody">
-              {video.chapters.length === 0 ? (
-                <p className="placeholder">No chapters.</p>
-              ) : (
-                <div className="toc toc-grid">
-                  {video.chapters.map((c, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      className="row"
-                      onClick={() => seek(c.ts)}
-                    >
-                      <span className="ts mono">{fmt(c.ts)}</span>
-                      <span>
-                        <span className="ttl">{c.title}</span>
-                      </span>
-                      {c.source === "yt-dlp" && (
-                        <span className="src">yt-dlp</span>
-                      )}
-                      {c.source === "mimo" && <span className="src">MiMo</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
+          <ContentsCard video={video} seek={seek} />
           {video.has_subtitles && (
             <div className="card full">
               <button
@@ -1224,76 +1144,8 @@ export function Player({
       </div>
 
       <aside className="side">
-        <div className="card">
-          <div className="hd">
-            <Icon name="alignLeft" size="16px" />
-            <span className="lbl">Summary</span>
-          </div>
-          <div className="tabbody summ">
-            {video.summary_status === "done" &&
-              (video.summary.trim() ? (
-                video.summary
-                  .split("\n\n")
-                  .filter((p) => p.trim())
-                  .map((p, i) => <p key={i}>{p}</p>)
-              ) : (
-                <p className="placeholder">No summary text.</p>
-              ))}
-            {/* no_transcript covers both "there are no captions" and "the
-                captions turned out to be music/ambience rather than speech",
-                so the copy has to fit both. */}
-            {video.summary_status === "no_transcript" && (
-              <p className="placeholder">No speech in this video.</p>
-            )}
-            {(video.summary_status === "pending" ||
-              video.summary_status === "running") && (
-              <p
-                className="placeholder"
-                style={{ display: "flex", alignItems: "center", gap: 8 }}
-              >
-                <Spinner size="15px" />
-                Summarizing
-              </p>
-            )}
-            {video.summary_status === "error" && (
-              <p className="errline">Summarization failed.</p>
-            )}
-            {!DONE_STATUSES.has(video.summary_status) && (
-              <p className="placeholder">No summary yet.</p>
-            )}
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="hd">
-            <Icon name="star" size="16px" />
-            <span className="lbl">Highlights</span>
-          </div>
-          <div className="tabbody">
-            {video.key_points.length === 0 ? (
-              <p className="placeholder">No highlights.</p>
-            ) : (
-              <div className="hl">
-                {video.key_points.map((k, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    className="row"
-                    onClick={() => seek(k.ts)}
-                  >
-                    <Icon
-                      name="starFilled"
-                      size="15px"
-                      style={{ color: "var(--color-kept)" }}
-                    />
-                    <span className="ts mono">{fmt(k.ts)}</span>
-                    <span className="txt">{k.text}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <SummaryCard video={video} />
+        <HighlightsCard video={video} seek={seek} />
       </aside>
       {video ? (
         <ConfirmDialog
@@ -1309,57 +1161,5 @@ export function Player({
         </ConfirmDialog>
       ) : null}
     </div>
-  );
-}
-
-// MediaStats is the labelled strip of file facts under the action row: what
-// this video is, as opposed to what it is about.
-//
-// It replaced a pill showing format_used — the resolved yt-dlp -f selector,
-// which rendered as
-// "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4". That
-// string describes the request, not the result, and is identical for every
-// video downloaded under one preset. These values come from ffprobe reading
-// the actual file.
-//
-// Every column is dropped when its value is missing, and the whole strip
-// disappears when nothing is left, so a video the probe has not reached yet
-// (or could not read) shows no empty scaffolding. Length and Size come from
-// the download itself and are therefore almost always present; the other
-// three arrive only once the file has been probed.
-function MediaStats({ video }: { video: Video }) {
-  const stats: Array<{ k: string; v: string }> = [
-    // formatDuration renders "--:--" for an unknown length, which is the
-    // right answer under a scrubber and the wrong one here: a labelled stat
-    // reading "--:--" claims the figure exists and is unreadable. Guard so
-    // the column drops out instead.
-    {
-      k: "Length",
-      v: video.duration_seconds ? formatDuration(video.duration_seconds) : "",
-    },
-    { k: "Size", v: formatSize(video.filesize_bytes) },
-    { k: "Format", v: video.media_container?.toUpperCase() ?? "" },
-    {
-      k: "Video",
-      // One column, because "1080p H.264" is how a person says it — two
-      // separate cells would imply the resolution and the codec are
-      // independently interesting, and they are not.
-      v: [resolutionLabel(video.video_height), codecLabel(video.video_codec)]
-        .filter(Boolean)
-        .join(" "),
-    },
-    { k: "Audio", v: codecLabel(video.audio_codec) },
-  ].filter((s) => s.v !== "");
-
-  if (stats.length === 0) return null;
-  return (
-    <dl className="playstats">
-      {stats.map((s) => (
-        <div className="stat" key={s.k}>
-          <dt>{s.k}</dt>
-          <dd>{s.v}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }
