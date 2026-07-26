@@ -79,6 +79,15 @@ export function Inbox({
   onQueued?: () => void;
 } = {}) {
   const [items, setItems] = useState<PendingItem[]>([]);
+  // Whether the first fetch has settled. Without it an empty `items` means two
+  // different things — "the inbox is empty" and "the inbox has not arrived" —
+  // and every branch below read it as the first. The mount paint therefore
+  // announced "Your inbox is empty." with no toolbar, and the response a moment
+  // later replaced that with the search box, the chips and a full grid: the
+  // page appeared to render wrong and then correct itself. Every other list
+  // already carries this flag (History's `loaded`, Up next's `schedLoaded`),
+  // which is why the flicker was the Inbox's alone.
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   // channel filter: "all" or a specific channel_id. For the common case of a
@@ -104,7 +113,11 @@ export function Inbox({
         setItems(list);
         onCountChange?.(list.length);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => setError(e.message))
+      // Settled, not succeeded: a failed fetch has also finished telling us what
+      // it can, and leaving the page on "Loading…" under its own error message
+      // would claim the request is still running.
+      .finally(() => setLoaded(true));
   }
 
   useEffect(() => {
@@ -218,6 +231,17 @@ export function Inbox({
   const bulkLabel = confirmBulk
     ? `Download ${visible.length} — confirm`
     : "Download all";
+
+  // One quiet line until the first fetch settles, then the whole settled page
+  // at once. The alternative — paint the empty state now and correct it on
+  // arrival — is what the flicker was. The toolbar cannot render early the way
+  // History's does, because its channel chips are built from the very items
+  // being fetched, so there is no honest header to show first.
+  //
+  // No error line on this branch: `loaded` is set in the same .finally that
+  // follows the .catch, so React commits the two together and a failed fetch
+  // renders below, never here.
+  if (!loaded) return <p className="agenda-empty">Loading…</p>;
 
   return (
     <>
