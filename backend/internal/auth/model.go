@@ -17,6 +17,19 @@ const (
 	RoleUser  Role = "user"
 )
 
+// Roles is the fixed enum, matching the users.role CHECK constraint in
+// 0001_init.sql.
+//
+// It exists so the TypeScript mirror can be checked against an ordered list the
+// way every other wire enum is (ui/src/wireenums.test.ts). Without it that guard
+// had to scrape `Role*` constants by prefix, which cannot notice a role declared
+// anywhere else in the package — the one set in the whole contract that could
+// still drift silently.
+var Roles = []Role{
+	RoleAdmin,
+	RoleUser,
+}
+
 // User is peeq's app-local user profile, created from a verified OIDC
 // identity (or the dev auto-login identity in BACKEND_AUTH_MODE=dev).
 type User struct {
