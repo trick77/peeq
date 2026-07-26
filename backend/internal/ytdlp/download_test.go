@@ -597,3 +597,84 @@ func TestDownload_logsTheLinesThatArentProgress(t *testing.T) {
 		t.Fatalf("progress lines must not be logged\n%s", out)
 	}
 }
+
+// A download that FAILS surfaces stderr through Classify, which is how the
+// job's error text gets written. One that exits 0 used to drop it entirely, so
+// a download that warned about a throttled fragment or a subtitle it could not
+// fetch finished looking perfectly clean.
+func TestDownload_logsStderrFromASuccessfulRun(t *testing.T) {
+	mediaDir := t.TempDir()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	t.Setenv("FAKE_YTDLP_ID", "dQw4w9WgXcQ")
+	t.Setenv("FAKE_YTDLP_WARNINGS", "WARNING: fragment 3 retried\\nWARNING: no subtitles for de")
+
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		MediaDir:       mediaDir,
+		Logger:         logger,
+	})
+	if _, err := r.Download(context.Background(), DownloadReq{
+		URL:     "https://youtu.be/dQw4w9WgXcQ",
+		VideoID: "dQw4w9WgXcQ",
+		Format:  "best-mp4",
+	}, nil); err != nil {
+		t.Fatalf("download: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"fragment 3 retried", "no subtitles for de"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log missing stderr line %q\n%s", want, out)
+		}
+	}
+	// Attributed, because the pacer lets a background call run alongside an
+	// interactive one — two processes can be writing at the same time.
+	if !strings.Contains(out, "video_id=dQw4w9WgXcQ") {
+		t.Fatalf("stderr line not attributed to its video\n%s", out)
+	}
+	// One entry per line, not a single blob: a long warning must not swallow
+	// the entries around it.
+	if n := strings.Count(out, "yt-dlp stderr"); n != 2 {
+		t.Fatalf("stderr logged as %d entries, want one per line\n%s", n, out)
+	}
+}
+
+// A failing call must not ALSO log its stderr as though nothing was wrong —
+// Classify already carries it into the job's error text, and a debug line
+// saying the same thing under a call that returned an error reads as two
+// separate events.
+func TestDownload_doesNotLogStderrWhenTheCallFails(t *testing.T) {
+	mediaDir := t.TempDir()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	t.Setenv("FAKE_YTDLP_ID", "dQw4w9WgXcQ")
+	t.Setenv("FAKE_YTDLP_STDERR", "ERROR: Video unavailable")
+	t.Setenv("FAKE_YTDLP_EXIT", "1")
+
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		MediaDir:       mediaDir,
+		Logger:         logger,
+	})
+	if _, err := r.Download(context.Background(), DownloadReq{
+		URL:     "https://youtu.be/dQw4w9WgXcQ",
+		VideoID: "dQw4w9WgXcQ",
+		Format:  "best-mp4",
+	}, nil); err == nil {
+		t.Fatal("want an error")
+	}
+	if strings.Contains(buf.String(), "yt-dlp stderr") {
+		t.Fatalf("a failing call must not log stderr as a success\n%s", buf.String())
+	}
+}

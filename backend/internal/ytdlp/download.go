@@ -270,6 +270,12 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		watchURL,
 	)
 
+	// Name this call for the logger, so a warning on stderr can be tied to the
+	// video it belongs to. The pacer deliberately lets an interactive call run
+	// alongside a background one, so two yt-dlp processes really can be writing
+	// at the same time.
+	ctx = withCallLabel(ctx, req.VideoID)
+
 	onLine := func(line string) {
 		if p, ok := parseProgressLine(line); ok {
 			if onProgress != nil {
