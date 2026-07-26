@@ -56,6 +56,12 @@ type Subscription struct {
 	// scan. The scanner reads it to decide whether the pass owes the user a
 	// receipt even when it found nothing new — see migration 0009.
 	ScanRequestedAt string
+	// NextMetaRefreshAt is when the weekly metadata refresh is next due, or ""
+	// when this channel has no rotation slot at all — a subscription predating
+	// migration 0005, or one never scheduled. The column is nullable and is read
+	// as "" here, so callers must treat empty as "not scheduled" rather than as
+	// an instant.
+	NextMetaRefreshAt string
 }
 
 // ListItem is a channel joined with its (optional) subscription state, plus
@@ -630,13 +636,13 @@ func scanDueChannels(rows *sql.Rows) ([]DueChannel, error) {
 // "what is this one channel's schedule", which the channel page needs.
 func (s *Store) GetSubscription(channelID string) (*Subscription, error) {
 	row := s.db.QueryRowContext(context.Background(), `
-SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at, scan_requested_at
+SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at, scan_requested_at, next_meta_refresh_at
 FROM subscriptions WHERE channel_id = ?`, channelID)
 
 	var sub Subscription
-	var baselinedAt, lastScannedAt, scanRequestedAt sql.NullString
+	var baselinedAt, lastScannedAt, scanRequestedAt, nextMetaRefreshAt sql.NullString
 	err := row.Scan(&sub.ChannelID, &sub.Autodownload, &sub.FormatOverride,
-		&baselinedAt, &lastScannedAt, &sub.NextScanAt, &sub.CreatedAt, &scanRequestedAt)
+		&baselinedAt, &lastScannedAt, &sub.NextScanAt, &sub.CreatedAt, &scanRequestedAt, &nextMetaRefreshAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -646,6 +652,7 @@ FROM subscriptions WHERE channel_id = ?`, channelID)
 	sub.BaselinedAt = baselinedAt.String
 	sub.LastScannedAt = lastScannedAt.String
 	sub.ScanRequestedAt = scanRequestedAt.String
+	sub.NextMetaRefreshAt = nextMetaRefreshAt.String
 	return &sub, nil
 }
 

@@ -716,12 +716,72 @@ button.srow:not(:disabled):hover {
 .ag-row.live .ag-clock {
   color: var(--color-accent);
 }
-/* The only actionable control either timeline carries: cancelling a download.
-   It takes the same fourth column the relative label does, so a row with a
-   button and a row with a label line up. */
+/* Two actionable controls now: cancelling a download, and skipping a scheduled
+   item. Both take the same fourth column the relative label does, so a row with
+   a button and a row with a label line up. */
 .ag-row > .ui-btn {
   grid-column: 4;
   align-self: start;
+}
+
+/* SKIP — quiet until wanted, and sharing the label's cell rather than taking a
+   column of its own. The schedule is a list to read, not a list to act on, so a
+   lit button on every row would turn a calm agenda into a wall of controls; and
+   a fifth column would cost these rows the geometry they share with History.
+   So the label and the button stack, and cross-fade.
+
+   Both are always RENDERED — only opacity moves. A button that existed solely
+   on hover could not be reached by keyboard, which :focus-within on the row is
+   what covers. */
+.ag-row.planned > .ui-btn,
+.ag-row.planned .ag-when {
+  grid-area: 1 / 4;
+  justify-self: end;
+  transition: opacity 120ms ease;
+}
+.ag-row.planned > .ui-btn {
+  opacity: 0;
+}
+.ag-row.planned:hover > .ui-btn,
+.ag-row.planned:focus-within > .ui-btn {
+  opacity: 1;
+}
+.ag-row.planned:hover .ag-when,
+.ag-row.planned:focus-within .ag-when {
+  opacity: 0;
+}
+/* Touch has no hover, so there is nothing to reveal and nothing to reveal it
+   with. Rather than leaving the action undiscoverable — or spending the label
+   permanently to show it — these rows alone take a fifth column, where both fit
+   at once. Only the pointerless case pays for it. */
+@media (hover: none) {
+  .ag-row.planned {
+    grid-template-columns: 46px 22px 1fr auto auto;
+  }
+  .ag-row.planned > .ui-btn {
+    grid-area: 1 / 5;
+    opacity: 1;
+  }
+  .ag-row.planned .ag-when {
+    grid-area: 1 / 4;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ag-row.planned > .ui-btn,
+  .ag-row.planned .ag-when {
+    transition: none;
+  }
+}
+/* A skipped row stays in place, struck through, holding its Undo — it does not
+   vanish. A row that disappeared would take the way back with it, which is the
+   trap the undo exists to avoid. */
+.ag-row.planned.skipped .ag-clock,
+.ag-row.planned.skipped .ag-subject {
+  color: var(--color-faint);
+}
+.ag-row.planned.skipped .ag-subject {
+  text-decoration: line-through;
+  text-decoration-color: var(--color-border-soft);
 }
 .ag-body {
   grid-column: 3;

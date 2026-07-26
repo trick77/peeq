@@ -11,6 +11,8 @@ import {
   refreshChannel,
   channelAvatarUrl,
   channelBannerUrl,
+  skipScheduledScan,
+  skipScheduledMeta,
 } from "./channels";
 import { CookieRequiredError } from "./downloads";
 
@@ -152,5 +154,58 @@ describe("channels api", () => {
   it("channelAvatarUrl and channelBannerUrl build encoded per-channel URLs", () => {
     expect(channelAvatarUrl("UC 1")).toBe("/api/channels/UC%201/avatar");
     expect(channelBannerUrl("UC 1")).toBe("/api/channels/UC%201/banner");
+  });
+
+  // A bare skip sends no body at all. An `at` of undefined serialised as
+  // `{"at": ""}` would read to the handler as an explicit instant rather than
+  // "you pick", which is the difference between skipping and pinning.
+  it("skipScheduledScan posts no body when no instant is given", async () => {
+    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: "skipped",
+          at: "2026-08-01 09:00:00",
+          previous_at: "2026-07-26 09:00:00",
+        }),
+        { status: 200 },
+      ),
+    );
+    const res = await skipScheduledScan("UC1");
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("/api/channels/UC1/skip-scan");
+    expect(init!.method).toBe("POST");
+    expect(init!.body).toBeUndefined();
+    expect(res.previous_at).toBe("2026-07-26 09:00:00");
+  });
+
+  // Undo is the same endpoint handed the instant the skip reported back.
+  it("skipScheduledScan sends the instant back when undoing", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ status: "restored", at: "", previous_at: "" }),
+          { status: 200 },
+        ),
+      );
+    await skipScheduledScan("UC1", "2026-07-26 09:00:00");
+    const [, init] = f.mock.calls[0];
+    expect(JSON.parse(init!.body as string)).toEqual({
+      at: "2026-07-26 09:00:00",
+    });
+  });
+
+  it("skipScheduledMeta targets the refresh schedule, not the scan", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ status: "skipped", at: "", previous_at: "" }),
+          { status: 200 },
+        ),
+      );
+    await skipScheduledMeta("UC 1");
+    const [url] = f.mock.calls[0];
+    expect(url).toBe("/api/channels/UC%201/skip-meta");
   });
 });
