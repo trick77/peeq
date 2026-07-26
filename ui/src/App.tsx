@@ -686,7 +686,9 @@ function ViewSwitch({
   onOpenChannel: (id: string) => void;
   onSeekConsumed: () => void;
   setView: (v: ViewId) => void;
-  setPendingCount: (n: number) => void;
+  // undefined = the count is not known (a failed inbox fetch). The rail draws
+  // no pill for it, which is deliberately not the same claim as "empty".
+  setPendingCount: (n: number | undefined) => void;
   onQueued: () => void;
   librarySearch: string;
   channelSearch: string;
