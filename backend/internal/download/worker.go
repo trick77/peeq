@@ -472,8 +472,13 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		video.ThumbnailPath = meta.Thumbnail
 		video.Availability = videos.NormalizeAvailability(meta.Availability)
 		if err := w.deps.Videos.Upsert(*video); err != nil {
+			// Retry, don't fail: a write that could not land is our
+			// infrastructure's problem, not the video's — the same reasoning as
+			// the settings-load requeue above. A transient SQLITE_BUSY under a
+			// concurrent writer must not park the video in 'error' and make the
+			// user re-add it by hand.
 			w.deps.Logger.Error("download worker: save metadata failed", "job_id", job.ID, "err", err)
-			w.fail(job, video, job.Attempts, "save metadata: "+err.Error(), "")
+			w.retry(ctx, job, video, "save metadata: "+err.Error())
 			return
 		}
 		// Cache the channel's identity so the Channels list has a row to join
