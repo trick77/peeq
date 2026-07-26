@@ -28,9 +28,10 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const goFile = (rel: string) => resolve(HERE, "../../backend/", rel);
 
-// goSliceValues reads an ordered `var <name> = []string{ ConstA, ConstB }`
-// declaration and resolves each entry through the `ConstA = "value"` constants
-// declared in the same file.
+// goSliceValues reads an ordered `var <name> = []Elem{ ConstA, ConstB }`
+// declaration — `[]string` for most sets, `[]Role` for auth.Roles — and
+// resolves each entry through the `ConstA = "value"` constants declared in the
+// same file.
 //
 // Two steps rather than one because the Go slices list constant NAMES, not
 // literals — scraping the slice alone would compare TypeScript strings against
@@ -40,8 +41,10 @@ const goFile = (rel: string) => resolve(HERE, "../../backend/", rel);
 function goSliceValues(file: string, sliceName: string): string[] {
   const source = readFileSync(goFile(file), "utf8");
 
+  // The element type is matched loosely (`[]string` or `[]Role`): auth.Roles
+  // is the one set Go gives a defined type, and it is still the same shape.
   const block = source.match(
-    new RegExp(`var ${sliceName} = \\[\\]string\\{([\\s\\S]*?)\\n\\}`),
+    new RegExp(`var ${sliceName} = \\[\\]\\w+\\{([\\s\\S]*?)\\n\\}`),
   );
   if (!block) {
     throw new Error(`could not find "var ${sliceName}" in ${file}`);
@@ -64,21 +67,6 @@ function goSliceValues(file: string, sliceName: string): string[] {
     }
     return decl[1];
   });
-}
-
-// goConstValues reads every `Prefix... = "value"` constant in a file. Used for
-// the one set Go has no ordered slice for.
-function goConstValues(file: string, prefix: string): string[] {
-  const source = readFileSync(goFile(file), "utf8");
-  const found = [
-    ...source.matchAll(
-      new RegExp(`^\\s*${prefix}\\w+\\s+(?:\\w+\\s+)?=\\s*"([^"]*)"`, "gm"),
-    ),
-  ].map((m) => m[1]);
-  if (found.length === 0) {
-    throw new Error(`no ${prefix}* constants found in ${file}`);
-  }
-  return found;
 }
 
 describe("wire enum sync", () => {
@@ -124,7 +112,7 @@ describe("wire enum sync", () => {
     {
       name: "auth.Role",
       ts: ROLES,
-      go: goConstValues("internal/auth/model.go", "Role"),
+      go: goSliceValues("internal/auth/model.go", "Roles"),
     },
   ];
 
@@ -137,15 +125,12 @@ describe("wire enum sync", () => {
     });
   }
 
-  // The scrapers fail loudly rather than returning an empty set, so a renamed
-  // slice or const block can never make a case pass vacuously. Asserted, not
-  // assumed — an empty-set bug would silently disable every case above.
+  // The scraper fails loudly rather than returning an empty set, so a renamed
+  // slice can never make a case pass vacuously. Asserted, not assumed — an
+  // empty-set bug would silently disable every case above.
   it("throws when the Go declaration it reads is missing", () => {
     expect(() =>
       goSliceValues("internal/videos/status.go", "NoSuchSlice"),
     ).toThrow(/could not find/);
-    expect(() =>
-      goConstValues("internal/auth/model.go", "NoSuchPrefix"),
-    ).toThrow(/no NoSuchPrefix\* constants/);
   });
 });
