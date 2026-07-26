@@ -106,7 +106,9 @@ type RunnerConfig struct {
 	// progress, and at one line per update they would bury the handful that say
 	// which phase a download is in.
 	//
-	// It also receives stderr from any call that SUCCEEDED, download or not.
+	// It also receives stderr from any Runner call that SUCCEEDED, download or
+	// not. (The package-level Version helper is not a Runner call: it reports
+	// its own stderr in the error it returns and never reaches this logger.)
 	// A failing call already surfaces stderr through Classify, which is how the
 	// job's error text is written; a call that exits 0 used to drop it, so a
 	// download that warned about a throttled fragment finished looking clean.
@@ -449,6 +451,13 @@ func SignalStart(ctx context.Context) {
 // warning cannot swallow the entries around it. Blank lines are skipped.
 func (r *Runner) logStderr(ctx context.Context, stderr string) {
 	if stderr == "" {
+		return
+	}
+	// Ask before splitting. This runs on every successful call, Metadata
+	// included, and Metadata runs on every channel scan — so with debug off
+	// (the production default) the split and the per-line trim below would be
+	// work whose every result is thrown away.
+	if !r.cfg.Logger.Enabled(ctx, slog.LevelDebug) {
 		return
 	}
 	label := callLabel(ctx)
