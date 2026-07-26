@@ -587,6 +587,46 @@ button.srow:not(:disabled):hover {
   color: var(--color-ink-dim);
 }
 
+/* SKIP — quiet until wanted. The schedule is a list to read, not a list to act
+   on, so an always-lit button on every row would turn a calm agenda into a wall
+   of controls. It appears on hover, and on keyboard focus so it is reachable
+   without a pointer; :focus-within on the row covers the button's own focus. */
+.un-row.planned .un-skip {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.un-row.planned:hover .un-skip,
+.un-row.planned:focus-within .un-skip,
+.un-row.planned.skipped .un-skip {
+  opacity: 1;
+}
+/* Touch has no hover, so there is nothing to reveal: show it outright rather
+   than leaving the action undiscoverable. */
+@media (hover: none) {
+  .un-row.planned .un-skip {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .un-row.planned .un-skip {
+    transition: none;
+  }
+}
+/* A skipped row stays in place, struck through, holding its Undo — it does not
+   vanish. A row that disappeared would take the way back with it, which is the
+   trap the undo exists to avoid. */
+.un-row.planned.skipped .un-lead,
+.un-row.planned.skipped .un-title {
+  color: var(--color-faint);
+}
+.un-row.planned.skipped .un-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--color-border-soft);
+}
+.un-skip-error {
+  color: var(--color-danger);
+}
+
 /* TWO BAR SHAPES, one slot and one height. A download's progress is continuous,
    so it fills; a summary knows four discrete steps, so it segments. Same
    geometry either way, so the lanes read as siblings rather than as two

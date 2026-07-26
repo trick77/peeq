@@ -47,6 +47,10 @@ vi.mock("./api", () => ({
   // rail click away, so the barrel needs them even in tests that never open
   // those pages.
   listUpcoming: vi.fn().mockResolvedValue({ items: [], truncated: 0 }),
+  // Up next's skip action on a scheduled row. App never calls these itself, but
+  // UpNext resolves them at module scope, so the mock has to carry them.
+  skipScheduledScan: vi.fn(),
+  skipScheduledMeta: vi.fn(),
   listActivity: vi
     .fn()
     .mockResolvedValue({ events: [], has_more: false, retained_max: 2000 }),

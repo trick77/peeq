@@ -239,6 +239,20 @@ func (w *Worker) jitteredInterval() time.Duration {
 	return sched.JitteredInterval(refreshInterval, refreshJitter, time.Hour, w.rand)
 }
 
+// NextRefreshAt returns the instant one ordinary refresh interval after now, in
+// the SQLite text form next_meta_refresh_at is stored in. Exported for the same
+// reason scan.NextScanAt is: the "skip this one" action on Up next pushes a
+// refresh out, and it should move by this package's cadence rather than by a
+// week restated in the HTTP layer.
+//
+// rand supplies the jitter; pass sched.PseudoRand()'s closure. The rotation
+// depends on that scatter — migration 0005 seeds it precisely so refreshes do
+// not converge into a weekly batch — so a skip must scatter too.
+func NextRefreshAt(now time.Time, rand func() float64) string {
+	d := sched.JitteredInterval(refreshInterval, refreshJitter, time.Hour, rand)
+	return now.Add(d).UTC().Format(sqlTimeLayout)
+}
+
 // sleep waits d, returning false if ctx was cancelled first.
 func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
 	return sched.Sleep(ctx, d)

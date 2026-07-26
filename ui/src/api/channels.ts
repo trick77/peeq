@@ -107,6 +107,43 @@ export async function scanChannel(id: string): Promise<ScanResult> {
   );
 }
 
+// SkipResult reports where a skipped schedule landed and where it was. The
+// previous instant is what makes undo possible: handed straight back to the
+// same endpoint, it returns the occurrence to exactly where it was.
+export type SkipResult = {
+  status: string;
+  at: string;
+  previous_at: string;
+};
+
+// skipScheduledScan pushes a channel's next scan out by one normal interval, or
+// restores `at` when given one. Skipping does not mark the channel scanned —
+// the backend moves only next_scan_at — so a channel skipped repeatedly still
+// knows how far back it has actually looked, and cannot later arrive as though
+// its whole back catalogue were new.
+export async function skipScheduledScan(
+  id: string,
+  at?: string,
+): Promise<SkipResult> {
+  return api.post<SkipResult>(
+    `/api/channels/${encodeURIComponent(id)}/skip-scan`,
+    at ? { at } : undefined,
+    "failed to skip the scan",
+  );
+}
+
+// skipScheduledMeta is skipScheduledScan for the weekly metadata refresh.
+export async function skipScheduledMeta(
+  id: string,
+  at?: string,
+): Promise<SkipResult> {
+  return api.post<SkipResult>(
+    `/api/channels/${encodeURIComponent(id)}/skip-meta`,
+    at ? { at } : undefined,
+    "failed to skip the refresh",
+  );
+}
+
 // refreshChannel forces an on-demand metadata re-read, the manual way out of a
 // failed resolve that peeq will not retry on its own. The handler's 409 is
 // mapped to the same CookieRequiredError addChannel raises, so the caller can

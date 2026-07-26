@@ -838,6 +838,20 @@ func (s *Scheduler) jitteredInterval() time.Duration {
 	return sched.JitteredInterval(scanInterval, scanJitter, time.Hour, s.rand)
 }
 
+// NextScanAt returns the instant one ordinary scan interval after now, in the
+// SQLite text form next_scan_at is stored in. Exported so a caller that pushes
+// a channel's scan out — the "skip this one" action on Up next — reschedules by
+// the same cadence the scheduler itself uses, instead of restating 24 hours
+// somewhere the constant above would never be checked against.
+//
+// rand supplies the jitter; pass sched.PseudoRand()'s closure. Every scheduled
+// scan is scattered this way, and a skip is no exception: landing skips on an
+// exact interval would gather everything skipped in one sitting into a convoy.
+func NextScanAt(now time.Time, rand func() float64) string {
+	d := sched.JitteredInterval(scanInterval, scanJitter, time.Hour, rand)
+	return now.Add(d).UTC().Format(sqlTimeLayout)
+}
+
 // sleep waits d unless ctx is cancelled first. It returns false if ctx was
 // cancelled (the caller should stop), true if the full wait elapsed.
 func (s *Scheduler) sleep(ctx context.Context, d time.Duration) bool {

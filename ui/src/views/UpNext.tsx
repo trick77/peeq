@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../ui";
-import { listUpcoming, type UpcomingItem } from "../api";
+import {
+  listUpcoming,
+  skipScheduledMeta,
+  skipScheduledScan,
+  type UpcomingItem,
+} from "../api";
 import { summaryPhaseInfo, SUMMARY_PHASE_COUNT } from "../format";
 import type { Job, SummaryJob } from "../api/types";
 import { DOT } from "../sep";
@@ -91,6 +96,30 @@ function bucketOf(at: string, now: number): string {
 }
 const BUCKET_ORDER = ["Within the hour", "Later today", "This week", "Later"];
 
+// SKIPPABLE are the scheduled kinds a row can be skipped on, mapped to the call
+// that skips one. Both endpoints double as their own undo when handed an
+// instant, so one function per kind covers both directions.
+//
+// The retention sweep and the yt-dlp version check are deliberately absent: they
+// are in-memory tickers with no persisted next-run state, so there is no
+// schedule to push out and nothing a skip could write. They do not appear in the
+// projection either, so no row is left without an action.
+const SKIPPABLE: Record<
+  string,
+  (id: string, at?: string) => Promise<{ previous_at: string }>
+> = {
+  scan: skipScheduledScan,
+  channel_meta: skipScheduledMeta,
+};
+
+// rowKey identifies a scheduled occurrence across refetches. kind + subject_id
+// is unique per row — one scan and one metadata refresh per channel — and
+// unlike the array index it survives the list reordering under it, which is
+// what an undo affordance sitting on a specific row needs.
+function rowKey(item: UpcomingItem): string {
+  return `${item.kind}:${item.subject_id ?? ""}`;
+}
+
 export function UpNext({
   jobs,
   progressByJobId,
@@ -128,6 +157,25 @@ export function UpNext({
   // download.
   const [schedLoaded, setSchedLoaded] = useState(false);
   const [schedFailed, setSchedFailed] = useState(false);
+  // scheduleNonce forces a schedule refetch for a reason the lanes cannot
+  // signal. The effect below keys on lane transitions because that is what makes
+  // the projection stale on its own; skipping a row changes the schedule
+  // directly, and nothing in the lanes moves, so without this the skipped row
+  // would sit there until a download happened to start or finish.
+  const [scheduleNonce, setScheduleNonce] = useState(0);
+  // skipped holds the rows this client has just skipped, keyed by rowKey, each
+  // with the instant to restore. A skipped row stays in place showing an Undo
+  // rather than vanishing: the issue's own objection to a skip with no undo is
+  // that it is a trap on a row you might have clicked by accident, and a row
+  // that disappears takes its undo with it.
+  //
+  // Local rather than a toast because peeq has no shared toast component — the
+  // Channels page reaches for an inline notice for the same reason. Keeping it
+  // on the row also means the undo is next to the thing it undoes.
+  const [skipped, setSkipped] = useState<
+    Record<string, { previousAt: string; busy: boolean }>
+  >({});
+  const [skipError, setSkipError] = useState<string | null>(null);
   // now is captured once per render pass for the relative labels; it does not
   // tick, which is fine for a schedule measured in minutes and hours.
   const now = Date.now();
@@ -158,6 +206,9 @@ export function UpNext({
   // snapshot of peeq's own timed work, but it goes stale as the lanes move: a
   // scan whose instant has passed lingers with a past label until something
   // refetches. A lane transition is exactly the signal that something happened.
+  //
+  // scheduleNonce is the second trigger, for the case the lanes cannot see: this
+  // page now WRITES to the schedule (skip, and undo), and neither moves a job.
   useEffect(() => {
     let active = true;
     listUpcoming()
@@ -176,7 +227,64 @@ export function UpNext({
     return () => {
       active = false;
     };
-  }, [laneSignature]);
+  }, [laneSignature, scheduleNonce]);
+
+  // skipRow pushes one scheduled occurrence out and remembers where it was, so
+  // the row can offer an undo. The refetch is deliberately NOT awaited into the
+  // same state update: the server decides the new instant, and re-reading the
+  // projection is what proves the skip landed rather than assuming it did.
+  const skipRow = useCallback((item: UpcomingItem) => {
+    const call = SKIPPABLE[item.kind];
+    if (!call || !item.subject_id) return;
+    const key = rowKey(item);
+    const id = item.subject_id;
+    setSkipError(null);
+    setSkipped((s) => ({ ...s, [key]: { previousAt: "", busy: true } }));
+    call(id)
+      .then((res) => {
+        setSkipped((s) => ({
+          ...s,
+          [key]: { previousAt: res.previous_at, busy: false },
+        }));
+        setScheduleNonce((n) => n + 1);
+      })
+      .catch(() => {
+        // Drop the row back to its normal state: nothing moved, so offering an
+        // undo would be offering to restore a skip that never happened.
+        setSkipped((s) => {
+          const next = { ...s };
+          delete next[key];
+          return next;
+        });
+        setSkipError("That could not be skipped. Nothing was changed.");
+      });
+  }, []);
+
+  // undoSkip hands the previous instant straight back to the same endpoint.
+  const undoSkip = useCallback((item: UpcomingItem, previousAt: string) => {
+    const call = SKIPPABLE[item.kind];
+    if (!call || !item.subject_id) return;
+    const key = rowKey(item);
+    const id = item.subject_id;
+    setSkipError(null);
+    setSkipped((s) => ({ ...s, [key]: { previousAt, busy: true } }));
+    call(id, previousAt)
+      .then(() => {
+        setSkipped((s) => {
+          const next = { ...s };
+          delete next[key];
+          return next;
+        });
+        setScheduleNonce((n) => n + 1);
+      })
+      .catch(() => {
+        // Keep the undo on screen so it can be tried again — the skip itself
+        // did happen, so dropping the affordance would strand the user with no
+        // way back.
+        setSkipped((s) => ({ ...s, [key]: { previousAt, busy: false } }));
+        setSkipError("That could not be undone. The item is still skipped.");
+      });
+  }, []);
 
   // The schedule renders peeq's own timed housekeeping only. Queued downloads
   // and summaries are the lanes' business — they are rendered above with live
@@ -384,17 +492,37 @@ export function UpNext({
         </section>
       ) : null}
 
+      {skipError ? (
+        <div className="un-edge un-skip-error" role="status">
+          {skipError}
+        </div>
+      ) : null}
+
       {/* THE SCHEDULE — peeq's own timed housekeeping, grouped by how far off
-          it is. No cancel button: skipping a scheduled item is a new capability
-          rather than part of this move, and is filed as its own issue. */}
+          it is. Skip is the one action a scheduled row carries: it drops this
+          occurrence only, and the next one happens on its normal schedule.
+          A skipped row stays put showing Undo rather than vanishing, so a row
+          hit by accident can be put back. */}
       {grouped.map((g) => (
         <section key={g.bucket} className="un-sched">
           <h2>{g.bucket}</h2>
-          {g.items.map((item, i) => {
+          {g.items.map((item) => {
             const k = kindOf(item.kind);
+            const key = rowKey(item);
+            const skip = skipped[key];
+            const skippable = Boolean(SKIPPABLE[item.kind] && item.subject_id);
+            // A row is "done being skipped" once the call has returned an
+            // instant to restore; until then it is in flight and shows neither
+            // the old lead nor an undo it cannot yet perform.
+            const isSkipped = Boolean(skip && !skip.busy && skip.previousAt);
             return (
-              <div key={`${g.bucket}-${i}`} className="un-row planned">
-                <span className="un-lead">{plannedWhen(item.at, now)}</span>
+              <div
+                key={key}
+                className={`un-row planned${isSkipped ? " skipped" : ""}`}
+              >
+                <span className="un-lead">
+                  {isSkipped ? "Skipped" : plannedWhen(item.at, now)}
+                </span>
                 <div className="un-body">
                   <div className="un-title">
                     {subjectNode(
@@ -405,9 +533,38 @@ export function UpNext({
                     )}
                   </div>
                   {item.summary ? (
-                    <div className="un-detail">{leadCap(item.summary)}</div>
+                    <div className="un-detail">
+                      {isSkipped
+                        ? `${leadCap(item.summary)}${DOT}not this time`
+                        : leadCap(item.summary)}
+                    </div>
                   ) : null}
                 </div>
+                {skippable ? (
+                  isSkipped ? (
+                    <Button
+                      type="button"
+                      className="un-skip"
+                      variant="ghost"
+                      small
+                      onClick={() => undoSkip(item, skip.previousAt)}
+                    >
+                      Undo
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      className="un-skip"
+                      variant="ghost"
+                      small
+                      disabled={Boolean(skip?.busy)}
+                      onClick={() => skipRow(item)}
+                      aria-label={`Skip ${item.summary || k.label} for ${item.subject || k.label}`}
+                    >
+                      Skip
+                    </Button>
+                  )
+                ) : null}
               </div>
             );
           })}

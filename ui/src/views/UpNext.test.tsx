@@ -6,9 +6,11 @@ import type { Job, SummaryJob } from "../api/types";
 
 vi.mock("../api", () => ({
   listUpcoming: vi.fn(),
+  skipScheduledScan: vi.fn(),
+  skipScheduledMeta: vi.fn(),
 }));
 
-import { listUpcoming } from "../api";
+import { listUpcoming, skipScheduledMeta, skipScheduledScan } from "../api";
 
 function job(overrides: Partial<Job> = {}): Job {
   return {
@@ -44,6 +46,8 @@ describe("UpNext", () => {
   beforeEach(() => {
     vi.mocked(listUpcoming).mockReset();
     vi.mocked(listUpcoming).mockResolvedValue({ items: [], truncated: 0 });
+    vi.mocked(skipScheduledScan).mockReset();
+    vi.mocked(skipScheduledMeta).mockReset();
   });
 
   it("names what happens next when there is no work and no schedule", async () => {
@@ -422,5 +426,144 @@ describe("UpNext", () => {
     });
     render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
     expect(await screen.findByText("+4 more scheduled")).toBeInTheDocument();
+  });
+
+  // --- Skipping a scheduled item (issue #156) --------------------------------
+
+  // A scan row for a channel, which is what every skip test below acts on.
+  function scanRow(at = soon(20)) {
+    return {
+      kind: "scan",
+      approx: false,
+      at,
+      subject_id: "UCx",
+      subject: "Veritasium",
+      summary: "channel scan",
+    };
+  }
+
+  it("skips a scheduled scan and refetches the schedule", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [scanRow()],
+      truncated: 0,
+    });
+    vi.mocked(skipScheduledScan).mockResolvedValue({
+      status: "skipped",
+      at: soon(1500),
+      previous_at: "2026-07-26 09:00:00",
+    });
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+
+    await user.click(await screen.findByRole("button", { name: /^Skip/ }));
+
+    expect(skipScheduledScan).toHaveBeenCalledWith("UCx");
+    // The refetch is the part most likely to be silently broken: nothing in the
+    // lanes moved, so only the page's own nonce can have triggered it.
+    await waitFor(() => expect(listUpcoming).toHaveBeenCalledTimes(2));
+  });
+
+  // A skip with no way back is a trap on a row clicked by accident, so the row
+  // stays put holding an Undo rather than vanishing.
+  it("leaves an undo on the skipped row and restores the exact instant", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [scanRow()],
+      truncated: 0,
+    });
+    vi.mocked(skipScheduledScan).mockResolvedValue({
+      status: "skipped",
+      at: soon(1500),
+      previous_at: "2026-07-26 09:00:00",
+    });
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+
+    await user.click(await screen.findByRole("button", { name: /^Skip/ }));
+
+    const undo = await screen.findByRole("button", { name: "Undo" });
+    expect(screen.getByText("Skipped")).toBeInTheDocument();
+    // The row itself is still there — an undo on a row that vanished would be
+    // an undo nobody can reach.
+    expect(screen.getByText("Veritasium")).toBeInTheDocument();
+
+    await user.click(undo);
+    // Undo must hand back the instant the skip reported, not an approximation:
+    // the schedule is deliberately jittered, and a re-derived time would drift
+    // the channel out of its rotation.
+    expect(skipScheduledScan).toHaveBeenLastCalledWith(
+      "UCx",
+      "2026-07-26 09:00:00",
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Undo" })).toBeNull(),
+    );
+  });
+
+  it("skips a metadata refresh through its own endpoint", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          kind: "channel_meta",
+          approx: false,
+          at: soon(30),
+          subject_id: "UCx",
+          subject: "Veritasium",
+          summary: "metadata refresh",
+        },
+      ],
+      truncated: 0,
+    });
+    vi.mocked(skipScheduledMeta).mockResolvedValue({
+      status: "skipped",
+      at: soon(9000),
+      previous_at: "2026-08-01 12:00:00",
+    });
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+
+    await user.click(await screen.findByRole("button", { name: /^Skip/ }));
+
+    expect(skipScheduledMeta).toHaveBeenCalledWith("UCx");
+    expect(skipScheduledScan).not.toHaveBeenCalled();
+  });
+
+  // A failed skip must not leave an undo behind: nothing moved, so there is
+  // nothing to restore, and offering one would misreport what happened.
+  it("reports a failed skip and keeps the row actionable", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [scanRow()],
+      truncated: 0,
+    });
+    vi.mocked(skipScheduledScan).mockRejectedValue(new Error("nope"));
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+
+    await user.click(await screen.findByRole("button", { name: /^Skip/ }));
+
+    expect(await screen.findByText(/Nothing was changed/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(
+      await screen.findByRole("button", { name: /^Skip/ }),
+    ).toBeInTheDocument();
+  });
+
+  // The retention sweep and the yt-dlp check are in-memory tickers with no
+  // persisted schedule, so there is nothing a skip could write.
+  it("offers no skip on a row with no schedule to move", async () => {
+    vi.mocked(listUpcoming).mockResolvedValue({
+      items: [
+        {
+          kind: "retention",
+          approx: false,
+          at: soon(40),
+          summary: "retention sweep",
+        },
+      ],
+      truncated: 0,
+    });
+    render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+
+    expect(await screen.findByText(/retention sweep/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Skip/ })).toBeNull();
   });
 });

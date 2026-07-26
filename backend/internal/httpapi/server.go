@@ -320,6 +320,11 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/channels/{id}/subscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsSubscribe)))
 	mux.Handle("POST /api/channels/{id}/unsubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsUnsubscribe)))
 	mux.Handle("POST /api/channels/{id}/scan", s.requireAuth(http.HandlerFunc(s.handleChannelScan)))
+	// The Up next page's "not this one" on a scheduled row. Each also serves as
+	// its own undo when given the instant to restore — see
+	// schedule_skip_handlers.go.
+	mux.Handle("POST /api/channels/{id}/skip-scan", s.requireAuth(http.HandlerFunc(s.handleChannelSkipScan)))
+	mux.Handle("POST /api/channels/{id}/skip-meta", s.requireAuth(http.HandlerFunc(s.handleChannelSkipMeta)))
 	mux.Handle("GET /api/channels/{id}/avatar", s.requireAuth(http.HandlerFunc(s.handleChannelAvatar)))
 	mux.Handle("GET /api/channels/{id}/banner", s.requireAuth(http.HandlerFunc(s.handleChannelBanner)))
 	mux.Handle("GET /api/channels/auto-unsubscribed", s.requireAuth(http.HandlerFunc(s.handleChannelsAutoUnsubscribedList)))
