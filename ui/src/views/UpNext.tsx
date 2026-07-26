@@ -6,7 +6,14 @@ import { summaryPhaseInfo, SUMMARY_PHASE_COUNT } from "../format";
 import { Icon } from "../icons";
 import type { Job, SummaryJob } from "../api/types";
 import { DOT } from "../sep";
-import { clockOf, kindOf, parseUTC, plannedWhen, subjectNode } from "./agenda";
+import {
+  clockOf,
+  kindOf,
+  leadCap,
+  parseUTC,
+  plannedWhen,
+  subjectNode,
+} from "./agenda";
 
 // UpNext — everything peeq is about to do, in the order it will do it. It
 // absorbs the old Queue page and the projection half of the old Activity page,
@@ -236,11 +243,12 @@ export function UpNext({
   const grouped = useMemo(() => {
     const by = new Map<string, UpcomingItem[]>();
     for (const item of scheduled) {
-      // Subject only. The row used to carry the summary as a second line and
-      // no longer does — the node says the kind now — so matching on it would
-      // surface scheduled rows with nothing on them that matches what you
-      // typed. A search box may only find what the page can show.
-      if (!matches(q, item.subject)) continue;
+      // Subject AND summary, because the row shows both: the channel name on
+      // top and the work itself ("Channel scan") beneath. The rule is that a
+      // search box may only find what the page can show — which cuts both
+      // ways, so a field the row displays has to be searchable. While the
+      // summary was off the row this matched the subject alone.
+      if (!matches(q, item.subject, item.summary)) continue;
       const b = bucketOf(item.at as string, now);
       const list = by.get(b);
       if (list) list.push(item);
@@ -497,19 +505,24 @@ export function UpNext({
                     <span className="ag-clock">
                       {clockOf(item.at as string)}
                     </span>
-                    {/* Labelled, unlike History's nodes: there the detail line
-                        still names the kind in words, so the glyph is a
-                        duplicate. Here it is the only thing saying what this
-                        work is. */}
+                    {/* Labelled, unlike History's nodes. Both rows now name
+                        the kind in words below, so on both pages the glyph is
+                        strictly a repeat — but History's node is a coloured
+                        outcome ring a sighted reader reads as meaning, and
+                        this one isn't, so the label is the cheaper of the two
+                        inconsistencies to keep. */}
                     <span className="ag-node">
                       <Icon name={k.icon} size="12px" label={k.label} />
                     </span>
-                    {/* One line, not two. The node beside it already says
-                        which kind of work this is — the same glyph History uses
-                        for it — so a detail line would have read "Scan · Channel
-                        scan" under every channel name on the page, the only
-                        thing varying being the name. Written out fifteen times,
-                        that repetition made a short list look long. */}
+                    {/* Two lines, as History has: the subject, then what is
+                        actually going to happen to it. This row was briefly one
+                        line on the theory that the glyph said it — but a glyph
+                        names a kind, not a deed, and "Veritasium · in 40m" with
+                        a magnifying glass beside it does not tell you peeq is
+                        about to look for new videos. The wording is the
+                        worker's own ("channel scan", "metadata refresh"), never
+                        a second vocabulary here that could drift from it —
+                        the same rule History's detailParts follows. */}
                     <div className="ag-body">
                       <div className="ag-subject">
                         {subjectNode(
@@ -519,6 +532,13 @@ export function UpNext({
                           onOpenChannel,
                           onOpenVideo,
                         )}
+                      </div>
+                      {/* .ag-plan drops it to the same grey as the relative
+                          label across from it — see the rule in index.css. */}
+                      <div className="ag-detail ag-plan">
+                        <span className="ag-kind">
+                          {leadCap(item.summary?.trim() || "") || k.label}
+                        </span>
                       </div>
                     </div>
                     <span className="ag-when">{plannedWhen(item.at, now)}</span>
