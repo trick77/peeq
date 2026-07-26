@@ -1,5 +1,7 @@
 import { api } from "./http";
 import type { Chapter, KeyPoint } from "./types";
+// The segment shape is owned by the Scrubber, which both players render.
+import type { SponsorblockSegment } from "../components/Scrubber";
 
 // ShareTTL is the fixed set of link lifetimes the share popover offers. The
 // empty string / "never" mean the link never expires. These strings are the
@@ -33,6 +35,8 @@ export type PublicVideo = {
   has_subtitles: boolean;
   audio_language: string;
   expires_at?: string;
+  /** Absent when the video has no segments — never an empty array. */
+  sponsorblock_segments?: SponsorblockSegment[];
 };
 
 // getShareStatus reports whether a video currently has a live share link, for

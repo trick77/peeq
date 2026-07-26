@@ -48,6 +48,13 @@ type publicVideoDTO struct {
 	HasSubtitles    bool            `json:"has_subtitles"`
 	AudioLanguage   string          `json:"audio_language"`
 	ExpiresAt       string          `json:"expires_at,omitempty"`
+	// SponsorblockSegments carries the same crowd-sourced segment list the owner's
+	// player gets, so the public page can skip ads and draw the bands. It names
+	// nothing about the video — a category, a start and an end — and it is public
+	// data on SponsorBlock's side to begin with, so it does not widen what a
+	// recipient learns. Absent (not []) when the video has none, matching
+	// parseSponsorblockSegments' nil + omitempty contract in videos_handlers.go.
+	SponsorblockSegments []sponsorblockSegmentDTO `json:"sponsorblock_segments,omitempty"`
 }
 
 // shareTTLs maps the fixed set of lifetimes the UI offers to a duration. The
@@ -220,6 +227,8 @@ func (s *server) handleShareVideo(w http.ResponseWriter, r *http.Request) {
 		HasSubtitles:    v.SubtitlePath != "",
 		AudioLanguage:   v.AudioLanguage,
 		ExpiresAt:       expiresAt,
+
+		SponsorblockSegments: parseSponsorblockSegments(v.SponsorblockSegments),
 	})
 }
 

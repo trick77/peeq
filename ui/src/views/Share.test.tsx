@@ -143,6 +143,104 @@ describe("Share (public page)", () => {
     expect(screen.queryByText("Chapters")).not.toBeInTheDocument();
     expect(screen.queryByText(/no chapters/i)).not.toBeInTheDocument();
   });
+
+  it("renders no top bar — the page opens on the video", async () => {
+    vi.mocked(getSharedVideo).mockResolvedValue(mockVideo);
+    render(<Share token="3xK9raPb" />);
+
+    await screen.findByText("Summary");
+    expect(document.querySelector(".sharepage-top")).toBeNull();
+    expect(screen.queryByText("Shared with you")).not.toBeInTheDocument();
+    // The attribution lives in the footer instead, not nowhere.
+    expect(screen.getByText(/shared via/i)).toBeInTheDocument();
+  });
+
+  it("orders the aside Summary, Chapters, Highlights — the Player's order", async () => {
+    vi.mocked(getSharedVideo).mockResolvedValue({
+      ...mockVideo,
+      chapters: [{ ts: 0, title: "Cold open", source: "yt-dlp" }],
+    });
+    render(<Share token="3xK9raPb" />);
+
+    await screen.findByText("Chapters");
+    const labels = [...document.querySelectorAll(".sharepage-side .lbl")].map(
+      (el) => el.textContent,
+    );
+    expect(labels).toEqual(["Summary", "Chapters", "Highlights"]);
+  });
+});
+
+// The shared player skips exactly what the owner's player skips. A recipient has
+// no account and no settings, so unless the segments ride along on the public
+// payload there is no way to skip an ad on a shared video at all.
+describe("Share SponsorBlock", () => {
+  function renderWithSegments(
+    segments: NonNullable<PublicVideo["sponsorblock_segments"]>,
+  ) {
+    vi.mocked(getSharedVideo).mockResolvedValue({
+      ...mockVideo,
+      duration_seconds: 100,
+      sponsorblock_segments: segments,
+    });
+    render(<Share token="3xK9raPb" />);
+    return waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+  }
+
+  it("skips an ad segment and announces the skip", async () => {
+    const videoEl = await renderWithSegments([
+      { category: "sponsor", start_time: 10, end_time: 25 },
+    ]);
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 12,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+
+    expect(videoEl.currentTime).toBe(25);
+    expect(await screen.findByText(/Skipped ad/)).toBeInTheDocument();
+  });
+
+  it("plays through a marked segment and skips only the ad", async () => {
+    const videoEl = await renderWithSegments([
+      { category: "intro", start_time: 0, end_time: 8 },
+      { category: "sponsor", start_time: 10, end_time: 25 },
+    ]);
+    Object.defineProperty(videoEl, "currentTime", { value: 3, writable: true });
+    fireEvent.timeUpdate(videoEl);
+    // Inside the intro and untouched: cutting it would remove video unasked.
+    expect(videoEl.currentTime).toBe(3);
+
+    videoEl.currentTime = 11;
+    fireEvent.timeUpdate(videoEl);
+    expect(videoEl.currentTime).toBe(25);
+  });
+
+  it("draws both band styles on the scrubber", async () => {
+    await renderWithSegments([
+      { category: "intro", start_time: 0, end_time: 8 },
+      { category: "sponsor", start_time: 10, end_time: 25 },
+    ]);
+    expect(
+      document.querySelector('[title="Skipped automatically: ad"]'),
+    ).toBeTruthy();
+    expect(document.querySelector('[title="Marked: intro"]')).toBeTruthy();
+  });
+
+  it("renders no scrubber at all when the video has no segments", async () => {
+    vi.mocked(getSharedVideo).mockResolvedValue(mockVideo);
+    render(<Share token="3xK9raPb" />);
+
+    expect(await screen.findByText("Summary")).toBeInTheDocument();
+    // The native <video> controls already seek; an empty second bar would be
+    // two seek bars stacked for no gain.
+    expect(
+      screen.queryByRole("slider", { name: "Seek" }),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe("Share transcript panel", () => {

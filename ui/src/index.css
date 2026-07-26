@@ -4203,13 +4203,11 @@ details.tomb-sect[open] > summary svg {
     var(--color-bg);
   color: var(--color-ink);
 }
-.sharepage-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 18px 32px;
-  border-bottom: 1px solid var(--color-border-soft);
-}
+/* The .sharepage-top bar that used to sit here — peeq lockup on the left,
+   "Shared with you" on the right — is gone: it repeated what the recipient
+   already knew and pushed the video down a bar's height for it. The footer
+   still carries the attribution. .sharepage-logo stays because the footer's
+   small mark uses it. */
 .sharepage-logo {
   flex: none;
   display: grid;
@@ -4223,30 +4221,25 @@ details.tomb-sect[open] > summary svg {
   box-shadow: 0 6px 16px -6px var(--glow-accent);
   color: var(--color-bg);
 }
-.sharepage-top b {
-  font-family: var(--font-serif);
-  font-size: 17px;
-  font-weight: 600;
-}
-.sharepage-top b span {
-  color: var(--color-accent);
-}
-.sharepage-top .spacer {
-  flex: 1;
-}
-.sharepage-top .cta {
-  font-size: 12.5px;
-  color: var(--color-muted);
-}
 .sharepage-load {
   display: grid;
   place-items: center;
   min-height: 60vh;
 }
+/* 1500px, not the 1020 this shipped with: the share page carries no 248px rail,
+   so at that cap a 16:9 video got ~580px of width on a window where the Player
+   gives it ~1070 — it read as a preview rather than a player. Measured in the
+   browser at a 1728px window: 1500 puts the shared video at ~1060 against the
+   Player's 1068. It stays a cap, not a fixed width — below it the 1fr column
+   shrinks with the window (and, having no rail to pay for, the share page is
+   then the wider of the two), and under 860px the aside drops beneath the video
+   and the video takes the full measure. */
 .sharepage-main {
-  max-width: 1020px;
+  max-width: 1500px;
   margin: 0 auto;
-  padding: 44px 32px 60px;
+  /* 60px on top, not the 44 this had under the old bar: with the bar gone the
+     inset is the only thing keeping the video off the window edge. */
+  padding: 60px 32px 60px;
   display: grid;
   grid-template-columns: 1fr 336px;
   gap: 40px;
