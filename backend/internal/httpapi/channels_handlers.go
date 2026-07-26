@@ -60,6 +60,17 @@ type channelItem struct {
 	FormatOverride  string `json:"format_override,omitempty"`
 	PendingCount    int    `json:"pending_count"`
 	DownloadedCount int    `json:"downloaded_count"`
+	// Added is true when the USER added this channel (added_at is set) and false
+	// for one that is only listed because the library holds a video downloaded
+	// from it. It is the bit the list was missing that the filter pills need:
+	// with it the UI can tell "Not subscribed" (added, no subscription) from
+	// "From downloads" (never added) off one unfiltered list, instead of asking
+	// the server once per pill and getting five snapshots that can disagree.
+	// Same predicate the ?filter= clauses use — see channels.Store.List.
+	//
+	// Named after channelDetail.Added rather than FirstSeenAt below, because it
+	// carries the same meaning as the former: the user's own action.
+	Added bool `json:"added"`
 	// HasAvatar and HasBanner mirror the detail handler's presence flags: the
 	// stored path never reaches the browser, so these tell the list row whether
 	// to point an <img> at /api/channels/{id}/avatar|banner or fall back to a
@@ -259,6 +270,7 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 			FormatOverride:  it.FormatOverride,
 			PendingCount:    it.PendingCount,
 			DownloadedCount: it.DownloadedCount,
+			Added:           it.AddedAt != "",
 			HasAvatar:       it.AvatarPath != "",
 			HasBanner:       it.BannerPath != "",
 			Dormant:         it.Dormant,
