@@ -477,7 +477,17 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		// stop() reports false once the timer has fired, which is how the cap is
 		// told apart from any other error: the message the user sees on Activity
 		// should say the probe stalled, not repeat a bare "context canceled".
-		capFired := !metaCap.stop() && metaCtx.Err() != nil && jobCtx.Err() == nil
+		//
+		// Called unconditionally and BEFORE the && chain rather than inside it:
+		// stop is what disarms the timer, so short-circuiting past it on the
+		// success path would leave an AfterFunc holding metaCancel alive for the
+		// rest of the cap.
+		stoppedInTime := metaCap.stop()
+		// merr != nil is part of the test because a cap that genuinely fired
+		// killed the process, so Metadata cannot also have succeeded. Without it,
+		// a timer expiring in the sliver between a successful return and stop()
+		// would throw away good metadata and retry a job that was already done.
+		capFired := merr != nil && !stoppedInTime && metaCtx.Err() != nil && jobCtx.Err() == nil
 		metaCancel()
 		if w.wasCanceled() {
 			w.settleCanceled(job, video)

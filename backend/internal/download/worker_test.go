@@ -882,17 +882,20 @@ func TestWorker_pacerWaitDoesNotTripPreflightCap(t *testing.T) {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(5 * time.Millisecond):
+			case <-time.After(250 * time.Millisecond):
 			}
 			ytdlp.SignalStart(ctx)
 			return &ytdlp.Meta{Title: "Resolved late", Channel: "Chan"}, nil
 		},
 	}
 	// A cap far shorter than the fake's queueing wait: timed from entry it
-	// would always fire, timed from the start hook it never does.
+	// would always fire, timed from the start hook it never does. The absolute
+	// numbers matter as well as the ratio — the cap has to be comfortably longer
+	// than the sliver between SignalStart and the fake's return, or a scheduling
+	// hiccup in that gap fires it for real and the job retries for no reason.
 	h := newHarness(t, runner, func(d *Deps) {
 		d.Watchdog = -1
-		d.MetadataTimeout = time.Millisecond
+		d.MetadataTimeout = 25 * time.Millisecond
 	})
 	// enqueue seeds the video with no title, which is what puts the job
 	// through the preflight at all.
