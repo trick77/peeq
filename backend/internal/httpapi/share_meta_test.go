@@ -104,6 +104,24 @@ func TestShareShell_deadTokenServesPlainShell(t *testing.T) {
 	}
 }
 
+func TestShareShell_withoutAShellDelegatesToTheSPA(t *testing.T) {
+	// Given a server with no embedded shell (an unbuilt frontend).
+	deps, _ := shareMetaDeps(t)
+	deps.Shell = nil
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "T", ChannelName: "C"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	share := createShare(t, h, loginAndGetCookie(t, h), "v1", "never")
+
+	// When the share page is fetched, the SPA still serves it — the unfurl
+	// degrades, the page does not.
+	rec := getPublic(t, h, "/s/"+share.Token)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `id="root"`) {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestShareShell_neverNamesTheVideoID(t *testing.T) {
 	// Given a shared video whose id IS its YouTube id.
 	deps, _ := shareMetaDeps(t)

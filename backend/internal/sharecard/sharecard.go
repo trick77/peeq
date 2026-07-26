@@ -77,24 +77,26 @@ func Render(thumb image.Image, title, subtitle string) ([]byte, error) {
 	// Lay the thumbnail + text out as one block, vertically centered.
 	const gapThumbText = 66
 	const gapTitleSub = 28
-	blockH := len(titleLines) * titleLead
+	blockH := thumbH + gapThumbText + len(titleLines)*titleLead
 	if len(subLines) > 0 {
 		blockH += gapTitleSub + subtitlePx
 	}
-	if thumb != nil {
-		blockH += thumbH + gapThumbText
-	}
 	y := (canvas - blockH) / 2
 
+	// The 16:9 slot is drawn either way. With no thumbnail it stays an empty well
+	// carrying the wordmark, because a title alone floating in a 1200px square
+	// reads as a broken image rather than as a deliberate text card.
+	slot := image.Rect(margin, y, margin+thumbW, y+thumbH)
+	draw.Draw(img, slot, image.NewUniform(colWell), image.Point{}, draw.Src)
 	if thumb != nil {
-		slot := image.Rect(margin, y, margin+thumbW, y+thumbH)
-		// Fill the 16:9 slot completely: a thumbnail that is not itself 16:9 gets
+		// Fill the slot completely: a thumbnail that is not itself 16:9 gets
 		// center-cropped along its long axis only, which trims edges rather than
 		// letterboxing the card with bars of a slightly different dark.
-		draw.Draw(img, slot, image.NewUniform(colWell), image.Point{}, draw.Src)
 		xdraw.CatmullRom.Scale(img, slot, thumb, coverCrop(thumb.Bounds(), thumbW, thumbH), xdraw.Over, nil)
-		y += thumbH + gapThumbText
+	} else {
+		drawCentered(img, titleFace, colMuted, "peeq", y+(thumbH+titlePx)/2)
 	}
+	y += thumbH + gapThumbText
 
 	for _, line := range titleLines {
 		y += titlePx // advance to this line's baseline
