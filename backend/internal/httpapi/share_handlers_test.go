@@ -1,14 +1,17 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trick77/peeq/internal/sharelink"
 	"github.com/trick77/peeq/internal/videos"
@@ -526,28 +529,96 @@ func TestShare_notConfigured(t *testing.T) {
 	}
 }
 
-func TestShare_storeErrorSurfaces(t *testing.T) {
-	deps, _, db := shareTestDeps(t)
-	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
-		t.Fatalf("seed video: %v", err)
-	}
-	h := New(deps)
-	cookie := loginAndGetCookie(t, h)
-	created := createShare(t, h, cookie, "v1", "never")
+// failingShareLinks is a ShareLinkStore whose chosen method returns err; the
+// rest delegate to the real store underneath, so a test breaks exactly one call
+// and everything around it still behaves. That is what the interface bought:
+// these branches used to be reachable only by dropping share_links out from
+// under a live store, which broke every query at once and coupled the test to
+// the schema.
+type failingShareLinks struct {
+	real       ShareLinkStore
+	upsert     error
+	resolve    error
+	getByVideo error
+	deleteByID error
+}
 
-	// Break the store out from under the live handlers.
-	if _, err := db.Exec(`DROP TABLE share_links`); err != nil {
-		t.Fatalf("drop table: %v", err)
+func (f *failingShareLinks) Upsert(ctx context.Context, videoID string, ttl time.Duration) (sharelink.Link, error) {
+	if f.upsert != nil {
+		return sharelink.Link{}, f.upsert
 	}
-	if rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/share", nil); rec.Code != http.StatusInternalServerError {
-		t.Fatalf("owner GET after store break = %d, want 500", rec.Code)
+	return f.real.Upsert(ctx, videoID, ttl)
+}
+
+func (f *failingShareLinks) Resolve(ctx context.Context, token string) (string, bool, error) {
+	if f.resolve != nil {
+		return "", false, f.resolve
 	}
-	if rec := doReq(t, h, cookie, http.MethodDelete, "/api/videos/v1/share", nil); rec.Code != http.StatusInternalServerError {
-		t.Fatalf("owner DELETE after store break = %d, want 500", rec.Code)
+	return f.real.Resolve(ctx, token)
+}
+
+func (f *failingShareLinks) GetByVideo(ctx context.Context, videoID string) (*sharelink.Link, error) {
+	if f.getByVideo != nil {
+		return nil, f.getByVideo
 	}
-	if rec := getPublic(t, h, "/api/s/"+created.Token); rec.Code != http.StatusInternalServerError {
-		t.Fatalf("public GET after store break = %d, want 500", rec.Code)
+	return f.real.GetByVideo(ctx, videoID)
+}
+
+func (f *failingShareLinks) DeleteByVideo(ctx context.Context, videoID string) error {
+	if f.deleteByID != nil {
+		return f.deleteByID
 	}
+	return f.real.DeleteByVideo(ctx, videoID)
+}
+
+// TestShare_storeErrorSurfaces pins that a BROKEN store is a 500 on every route
+// that touches it — distinct from a MISSING one, which is a 503 on the owner
+// routes and a 404 on the public one (TestShare_unconfigured).
+//
+// One subtest per failing method, which the drop-a-table version could not do:
+// dropping the table failed Resolve, GetByVideo and DeleteByVideo together, so
+// a handler calling the wrong one still went green.
+func TestShare_storeErrorSurfaces(t *testing.T) {
+	setup := func(t *testing.T) (Deps, *failingShareLinks) {
+		t.Helper()
+		deps, _, _ := shareTestDeps(t)
+		if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+			t.Fatalf("seed video: %v", err)
+		}
+		return deps, &failingShareLinks{real: deps.ShareLinks}
+	}
+
+	t.Run("ownerGet_getByVideoFails", func(t *testing.T) {
+		deps, fake := setup(t)
+		fake.getByVideo = errors.New("boom")
+		deps.ShareLinks = fake
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		if rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/share", nil); rec.Code != http.StatusInternalServerError {
+			t.Fatalf("owner GET with failing GetByVideo = %d, want 500", rec.Code)
+		}
+	})
+
+	t.Run("ownerDelete_deleteFails", func(t *testing.T) {
+		deps, fake := setup(t)
+		fake.deleteByID = errors.New("boom")
+		deps.ShareLinks = fake
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		if rec := doReq(t, h, cookie, http.MethodDelete, "/api/videos/v1/share", nil); rec.Code != http.StatusInternalServerError {
+			t.Fatalf("owner DELETE with failing DeleteByVideo = %d, want 500", rec.Code)
+		}
+	})
+
+	t.Run("publicGet_resolveFails", func(t *testing.T) {
+		deps, fake := setup(t)
+		fake.resolve = errors.New("boom")
+		deps.ShareLinks = fake
+		h := New(deps)
+		if rec := getPublic(t, h, "/api/s/sometoken"); rec.Code != http.StatusInternalServerError {
+			t.Fatalf("public GET with failing Resolve = %d, want 500", rec.Code)
+		}
+	})
 }
 
 func TestDeleteVideo_revokesShareLink(t *testing.T) {
@@ -589,15 +660,13 @@ func TestShare_relativeURLWithoutPublicURL(t *testing.T) {
 }
 
 func TestShare_createStoreErrorIs500(t *testing.T) {
-	deps, _, db := shareTestDeps(t)
+	deps, _, _ := shareTestDeps(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
 		t.Fatalf("seed video: %v", err)
 	}
+	deps.ShareLinks = &failingShareLinks{real: deps.ShareLinks, upsert: errors.New("boom")}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
-	if _, err := db.Exec(`DROP TABLE share_links`); err != nil {
-		t.Fatalf("drop table: %v", err)
-	}
 	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/share", []byte(`{"ttl":"7d"}`))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("POST create with broken store = %d, want 500", rec.Code)

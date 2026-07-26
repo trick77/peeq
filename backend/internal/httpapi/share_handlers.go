@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -9,8 +10,26 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/media"
+	"github.com/trick77/peeq/internal/sharelink"
 	"github.com/trick77/peeq/internal/videos"
 )
+
+// ShareLinkStore is the slice of sharelink.Store the share endpoints use —
+// declared here at the consumer, following DownloadsRunner and PlaybackStore, so
+// the error branches can be driven by a fake instead of by dropping share_links
+// out from under a real store mid-test. *sharelink.Store satisfies it, and as
+// with playback the interface happens to cover the store's whole surface.
+//
+// The same typed-nil caveat as PlaybackStore applies: the handlers nil-check the
+// INTERFACE, so a (*sharelink.Store)(nil) placed in it would panic rather than
+// produce the documented 503 (owner routes) or 404 (public routes).
+// sharelink.New never returns nil.
+type ShareLinkStore interface {
+	Upsert(ctx context.Context, videoID string, ttl time.Duration) (sharelink.Link, error)
+	Resolve(ctx context.Context, token string) (videoID string, ok bool, err error)
+	GetByVideo(ctx context.Context, videoID string) (*sharelink.Link, error)
+	DeleteByVideo(ctx context.Context, videoID string) error
+}
 
 // shareStatusResponse is what the owner-facing share endpoints return: whether
 // a live link exists and, if so, the copyable URL, the raw token, and when it
