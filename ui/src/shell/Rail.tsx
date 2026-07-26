@@ -127,17 +127,15 @@ export function Rail({
                   : item.id === "upnext"
                     ? upNextCount
                     : item.count;
-              // Inbox and Up next fade out when there is genuinely nothing in
-              // them, so the rail reads as a to-do list at a glance. They stay
-              // clickable — the page shows its own empty state, and nothing is
-              // ever unreachable. The view you are standing on never dims, so
-              // an empty Up next you navigated to keeps its active marker
-              // legible. History never dims: a log is never "empty to do".
-              const idle =
-                (item.id === "inbox" || item.id === "upnext") &&
-                count === 0 &&
-                item.id !== active;
-              // Up next additionally needs something running before it shows a
+              // Nothing dims. Inbox and Up next used to fade to 42% when empty
+              // so the rail read as a to-do list; they no longer do, because a
+              // nav item whose strength changes under you is harder to aim at
+              // than one that always looks the same, and an empty page is not a
+              // lesser destination. Emptiness is said by the absent count pill
+              // and by the page's own empty state, both of which are honest
+              // without touching the item's weight.
+              //
+              // Up next needs something running before it shows a
               // number — see upNextLive. Every other counted item shows its
               // count whenever it has one.
               const showCount =
@@ -148,7 +146,7 @@ export function Rail({
                 <button
                   key={item.id}
                   type="button"
-                  className={`rail-nav-item${item.id === active ? " active" : ""}${idle ? " idle" : ""}`}
+                  className={`rail-nav-item${item.id === active ? " active" : ""}`}
                   onClick={() => onNavigate(item.id)}
                   aria-current={item.id === active ? "page" : undefined}
                 >

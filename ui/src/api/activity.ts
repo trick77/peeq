@@ -11,14 +11,19 @@ export type ActivityPage = {
 };
 
 // listActivity fetches the past half of the agenda. before is the id to page
-// back from (omit for the newest page); limit defaults server-side to 40.
+// back from (omit for the newest page); limit defaults server-side to 40; q
+// narrows to rows whose subject, summary or detail contains it. The search is a
+// server parameter rather than a client filter because the client only ever
+// holds the pages it has scrolled to.
 export async function listActivity(
   before?: number,
   limit?: number,
+  q?: string,
 ): Promise<ActivityPage> {
   const qs = new URLSearchParams();
   if (before) qs.set("before", String(before));
   if (limit) qs.set("limit", String(limit));
+  if (q) qs.set("q", q);
   const suffix = qs.toString() ? `?${qs}` : "";
   return api.get<ActivityPage>(
     `/api/activity${suffix}`,

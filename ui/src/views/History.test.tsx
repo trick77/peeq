@@ -283,6 +283,175 @@ describe("History", () => {
     render(<History live={[]} />);
     expect(await screen.findByText("boom")).toBeInTheDocument();
   });
+
+  // The names in the log point at the things they name. Channel rows have
+  // always linked; video rows used to be dead text.
+  describe("linking", () => {
+    it("opens a downloaded video in the player from its name", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 30, kind: "download", subject_id: "vid30" })],
+        has_more: false,
+        retained_max: 2000,
+      });
+      const onOpenVideo = vi.fn();
+      const user = userEvent.setup();
+      render(<History live={[]} onOpenVideo={onOpenVideo} />);
+      await user.click(await screen.findByRole("button", { name: "A clip" }));
+      expect(onOpenVideo).toHaveBeenCalledWith("vid30");
+    });
+
+    // A failed download names a video that may never have made it into the
+    // library. It still links: the player says so plainly, which beats a name
+    // that silently refuses to be clicked.
+    it("links a failed download too", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [
+          ev({
+            id: 31,
+            kind: "download",
+            outcome: "fail",
+            subject_id: "vid31",
+            summary: "download failed",
+          }),
+        ],
+        has_more: false,
+        retained_max: 2000,
+      });
+      render(<History live={[]} onOpenVideo={vi.fn()} />);
+      expect(
+        await screen.findByRole("button", { name: "A clip" }),
+      ).toBeInTheDocument();
+    });
+
+    // A scan names a channel, so it must go to the channel page even with a
+    // video handler in scope.
+    it("still sends a scan row to its channel, not the player", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [
+          ev({
+            id: 32,
+            kind: "scan",
+            subject: "Veritasium",
+            subject_id: "UCx",
+          }),
+        ],
+        has_more: false,
+        retained_max: 2000,
+      });
+      const onOpenChannel = vi.fn();
+      const onOpenVideo = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <History
+          live={[]}
+          onOpenChannel={onOpenChannel}
+          onOpenVideo={onOpenVideo}
+        />,
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "Veritasium" }),
+      );
+      expect(onOpenChannel).toHaveBeenCalledWith("UCx");
+      expect(onOpenVideo).not.toHaveBeenCalled();
+    });
+
+    // Cleanup and yt-dlp rows name neither, so they stay plain text.
+    it("leaves a row with no linkable subject as text", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [
+          ev({
+            id: 33,
+            kind: "retention",
+            subject: "Old files",
+            subject_id: "x",
+          }),
+        ],
+        has_more: false,
+        retained_max: 2000,
+      });
+      render(
+        <History live={[]} onOpenChannel={vi.fn()} onOpenVideo={vi.fn()} />,
+      );
+      await screen.findByText("Old files");
+      expect(screen.queryByRole("button", { name: "Old files" })).toBeNull();
+    });
+  });
+
+  // The log is paginated, so the box has to be a SERVER query — a client filter
+  // would search only the rows already paged in and answer "nothing" for
+  // something the log plainly contains.
+  describe("search", () => {
+    it("sends the query to the server, debounced", async () => {
+      const { rerender } = render(<History live={[]} search="" />);
+      await screen.findByText("A clip");
+      expect(listActivity).toHaveBeenLastCalledWith(undefined, 20, undefined);
+
+      rerender(<History live={[]} search="veritasium" />);
+      await waitFor(
+        () =>
+          expect(listActivity).toHaveBeenLastCalledWith(
+            undefined,
+            20,
+            "veritasium",
+          ),
+        { timeout: 2000 },
+      );
+    });
+
+    it("carries the query into the next page back", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [ev({ id: 40, subject: "A clip" })],
+        has_more: true,
+        retained_max: 2000,
+      });
+      const user = userEvent.setup();
+      render(<History live={[]} search="clip" />);
+      await screen.findByText("A clip");
+      await waitFor(
+        () =>
+          expect(listActivity).toHaveBeenLastCalledWith(undefined, 20, "clip"),
+        { timeout: 2000 },
+      );
+      await user.click(screen.getByRole("button", { name: LOAD_MORE }));
+      expect(listActivity).toHaveBeenLastCalledWith(40, 20, "clip");
+    });
+
+    // An SSE arrival has never been through the server query, so it must be
+    // held to the same filter or it drops a non-matching row into the results.
+    it("keeps a non-matching live event out of a filtered page", async () => {
+      const { rerender } = render(<History live={[]} search="clip" />);
+      await screen.findByText("A clip");
+      await waitFor(
+        () =>
+          expect(listActivity).toHaveBeenLastCalledWith(undefined, 20, "clip"),
+        { timeout: 2000 },
+      );
+      rerender(
+        <History
+          live={[ev({ id: 50, subject: "Something else", summary: "scanned" })]}
+          search="clip"
+        />,
+      );
+      await waitFor(() =>
+        expect(screen.queryByText("Something else")).toBeNull(),
+      );
+      expect(screen.getByText("A clip")).toBeInTheDocument();
+    });
+
+    it("names the query when nothing matches", async () => {
+      vi.mocked(listActivity).mockResolvedValue({
+        events: [],
+        has_more: false,
+        retained_max: 2000,
+      });
+      render(<History live={[]} search="nope" />);
+      expect(
+        await screen.findByText(/Nothing in the log matches/),
+      ).toBeInTheDocument();
+      // Not the cold-start line — the log may be full, just not of this.
+      expect(screen.queryByText(/this fills in as peeq scans/)).toBeNull();
+    });
+  });
 });
 
 // These two pin the bugs a medium review of #161 turned up.

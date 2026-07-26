@@ -51,9 +51,9 @@ describe("UpNext", () => {
     expect(
       await screen.findByText(/subscribe to a channel/i),
     ).toBeInTheDocument();
-    // A lane heading must not show for an empty lane.
-    expect(screen.queryByText("Downloading")).not.toBeInTheDocument();
-    expect(screen.queryByText("Summarising")).not.toBeInTheDocument();
+    // A group heading must not show for an empty group.
+    expect(screen.queryByText("Now")).not.toBeInTheDocument();
+    expect(screen.queryByText("Queued")).not.toBeInTheDocument();
   });
 
   // The schedule starts empty, so "nothing scheduled" is only true once the
@@ -110,7 +110,7 @@ describe("UpNext", () => {
     expect(screen.queryByText(/resume it above/i)).not.toBeInTheDocument();
   });
 
-  it("leads the download lane with the running job, its bar and its eta", async () => {
+  it("puts a running download under Now, with its bar and its eta", async () => {
     render(
       <UpNext
         jobs={[job({ job_id: 9, title: "A Long Video", channel_name: "Chan" })]}
@@ -119,16 +119,21 @@ describe("UpNext", () => {
         onCancel={noop}
       />,
     );
-    expect(screen.getByText("Downloading")).toBeInTheDocument();
+    expect(screen.getByText("Now")).toBeInTheDocument();
     const row = screen
       .getByText("A Long Video")
-      .closest(".un-row") as HTMLElement;
-    expect(row).toHaveClass("hero");
-    expect(within(row).getByText("Chan")).toBeInTheDocument();
-    // The eta leads the row; the percent and rate sit in the detail line.
-    expect(row.querySelector(".un-lead")?.textContent).toBe("00:41");
-    expect(row.querySelector(".un-detail")?.textContent).toContain("62%");
-    expect(row.querySelector(".un-detail")?.textContent).toContain("8MiB/s");
+      .closest(".ag-row") as HTMLElement;
+    // `live` is the running ring, History's ok/warn/fail in the future tense.
+    expect(row).toHaveClass("live");
+    expect(within(row).getByText("Downloading")).toBeInTheDocument();
+    // The channel sits beside the kind word on the detail line — plain text
+    // here, a link once onOpenChannel is wired.
+    expect(row.querySelector(".ag-detail")?.textContent).toContain("Chan");
+    // The eta sits in the gutter History puts a wall clock in; the percent and
+    // rate sit in the second detail line, under the bar.
+    expect(row.querySelector(".ag-clock")?.textContent).toBe("00:41");
+    expect(row.textContent).toContain("62%");
+    expect(row.textContent).toContain("8MiB/s");
     expect(row.querySelector(".un-bar > i")).toHaveStyle({ width: "62%" });
   });
 
@@ -146,17 +151,17 @@ describe("UpNext", () => {
     );
     const row = screen
       .getByText("Just started")
-      .closest(".un-row") as HTMLElement;
-    expect(row.querySelector(".un-detail")?.textContent).toBe("3%");
-    // The lead column answers WHEN. With bytes moving but no ETA yet there is
-    // no honest answer, so it stays empty — saying "starting" over a bar that
-    // is already filling would contradict the row's own progress.
-    expect(row.querySelector(".un-lead")?.textContent).toBe("");
+      .closest(".ag-row") as HTMLElement;
+    const details = row.querySelectorAll(".ag-detail");
+    expect(details[details.length - 1].textContent).toBe("3%");
+    // The gutter answers WHEN. With bytes moving but no ETA yet there is no
+    // honest answer, so it stays empty rather than guessing.
+    expect(row.querySelector(".ag-clock")?.textContent).toBe("");
   });
 
-  // "starting" is reserved for the one moment it is true: nothing has come back
-  // from yt-dlp at all.
-  it("says starting only while there is no progress at all", () => {
+  // Before yt-dlp has said anything at all, the row says what it is waiting on
+  // rather than putting a guess in the gutter.
+  it("says what a not-yet-started download is waiting on", () => {
     render(
       <UpNext
         jobs={[job({ job_id: 6, title: "Not begun" })]}
@@ -164,8 +169,9 @@ describe("UpNext", () => {
         onCancel={noop}
       />,
     );
-    const row = screen.getByText("Not begun").closest(".un-row") as HTMLElement;
-    expect(row.querySelector(".un-lead")?.textContent).toBe("starting");
+    const row = screen.getByText("Not begun").closest(".ag-row") as HTMLElement;
+    expect(within(row).getByText("Contacting YouTube")).toBeInTheDocument();
+    expect(row.querySelector(".ag-clock")?.textContent).toBe("");
   });
 
   // Replaces Queue's "no bar" assertion: the bar is always in the slot now, so
@@ -180,14 +186,15 @@ describe("UpNext", () => {
     );
     const row = screen
       .getByText("No ticks yet")
-      .closest(".un-row") as HTMLElement;
+      .closest(".ag-row") as HTMLElement;
     expect(row.querySelector(".un-bar")).toHaveClass("stub");
     expect(row.querySelector(".un-bar > i")).toHaveStyle({ width: "0%" });
   });
 
   // Ranks across two independent lanes would imply a comparison that doesn't
-  // exist — a waiting summary does not hold up a download.
-  it("reads a waiting download as 'then', not as a rank", () => {
+  // exist — a waiting summary does not hold up a download. The group heading
+  // carries position instead, and a queued row shows no progress of its own.
+  it("files a waiting download under Queued, with no bar and no rank", () => {
     render(
       <UpNext
         jobs={[job({ job_id: 2, state: "pending", title: "Waiting one" })]}
@@ -195,12 +202,14 @@ describe("UpNext", () => {
         onCancel={noop}
       />,
     );
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.queryByText("Now")).not.toBeInTheDocument();
     const row = screen
       .getByText("Waiting one")
-      .closest(".un-row") as HTMLElement;
-    expect(row.querySelector(".un-lead")?.textContent).toBe("then");
-    expect(row).not.toHaveClass("hero");
+      .closest(".ag-row") as HTMLElement;
+    expect(row).not.toHaveClass("live");
     expect(row.querySelector(".un-bar")).toBeNull();
+    expect(row.querySelector(".ag-clock")?.textContent).toBe("");
   });
 
   it("cancels a download by its job id", async () => {
@@ -240,15 +249,15 @@ describe("UpNext", () => {
         onCancel={noop}
       />,
     );
-    expect(screen.getByText("Summarising")).toBeInTheDocument();
     const row = screen
       .getByText("Being done")
-      .closest(".un-row") as HTMLElement;
+      .closest(".ag-row") as HTMLElement;
+    expect(within(row).getByText("Summarising")).toBeInTheDocument();
     expect(within(row).getByText("Embedding")).toBeInTheDocument();
     // Four segments in the same slot the download bar uses, and the step is
     // named in words rather than as a bare "3/4".
     expect(row.querySelectorAll(".un-step")).toHaveLength(4);
-    expect(row.querySelector(".un-lead")?.textContent).toBe("step 3 of 4");
+    expect(row.querySelector(".ag-when")?.textContent).toBe("step 3 of 4");
     // The summarize lane offers no cancel — summaries run unattended.
     expect(within(row).queryByRole("button")).toBeNull();
   });
@@ -276,13 +285,13 @@ describe("UpNext", () => {
     );
     const running = screen
       .getByText("Just started")
-      .closest(".un-row") as HTMLElement;
+      .closest(".ag-row") as HTMLElement;
     const pending = screen
       .getByText("Still waiting")
-      .closest(".un-row") as HTMLElement;
-    expect(running.querySelector(".un-lead")?.textContent).toBe("step 1 of 4");
-    expect(within(pending).getByText("Waiting")).toBeInTheDocument();
-    expect(pending.querySelector(".un-lead")?.textContent).toBe("then");
+      .closest(".ag-row") as HTMLElement;
+    expect(running.querySelector(".ag-when")?.textContent).toBe("step 1 of 4");
+    expect(pending.querySelector(".ag-when")?.textContent).toBe("waiting");
+    expect(pending.querySelector(".un-steps")).toBeNull();
   });
 
   it("groups the timed schedule by how far off it is", async () => {
@@ -423,6 +432,88 @@ describe("UpNext", () => {
     render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
     expect(await screen.findByText("+4 more scheduled")).toBeInTheDocument();
   });
+  it("opens a queued video in the player from its title", async () => {
+    const onOpenVideo = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <UpNext
+        jobs={[job({ job_id: 11, video_id: "vid11", title: "Clickable" })]}
+        summaries={[]}
+        onCancel={noop}
+        onOpenVideo={onOpenVideo}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Clickable" }));
+    expect(onOpenVideo).toHaveBeenCalledWith("vid11");
+  });
+
+  // Everything this page can show is already in memory, so the box filters
+  // client-side — across both lanes and the schedule at once.
+  describe("search", () => {
+    const items = [
+      {
+        kind: "scan",
+        approx: false,
+        at: soon(20),
+        subject: "Veritasium",
+        summary: "channel scan",
+      },
+    ];
+
+    it("narrows the lanes and the schedule together", async () => {
+      vi.mocked(listUpcoming).mockResolvedValue({ items, truncated: 0 });
+      render(
+        <UpNext
+          jobs={[
+            job({ job_id: 20, title: "Keep me" }),
+            job({ job_id: 21, state: "pending", title: "Drop me" }),
+          ]}
+          summaries={[]}
+          onCancel={noop}
+          search="keep"
+        />,
+      );
+      await waitFor(() =>
+        expect(screen.getByText("Keep me")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("Drop me")).not.toBeInTheDocument();
+      // The scheduled scan doesn't match either, so its bucket goes with it.
+      expect(screen.queryByText("Veritasium")).not.toBeInTheDocument();
+      expect(screen.queryByText("Within the hour")).not.toBeInTheDocument();
+    });
+
+    it("matches a channel name, not only a title", () => {
+      render(
+        <UpNext
+          jobs={[
+            job({ job_id: 22, title: "Some video", channel_name: "Kurz" }),
+          ]}
+          summaries={[]}
+          onCancel={noop}
+          search="kurz"
+        />,
+      );
+      expect(screen.getByText("Some video")).toBeInTheDocument();
+    });
+
+    // A query that matches nothing must say so — an empty timeline would read
+    // as "peeq has nothing to do", which is a different and alarming claim.
+    it("says nothing matches rather than looking idle", async () => {
+      vi.mocked(listUpcoming).mockResolvedValue({ items, truncated: 0 });
+      render(
+        <UpNext
+          jobs={[job({ job_id: 23, title: "Some video" })]}
+          summaries={[]}
+          onCancel={noop}
+          search="zzz"
+        />,
+      );
+      expect(
+        await screen.findByText(/Nothing queued or scheduled matches/),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/subscribe to a channel/i)).toBeNull();
+    });
+  });
 });
 
 describe("UpNext schedule rows", () => {
@@ -451,8 +542,9 @@ describe("UpNext schedule rows", () => {
     await screen.findByText("Veritasium");
     const row = screen
       .getByText("Veritasium")
-      .closest(".un-row") as HTMLElement;
-    expect(row.querySelector(".un-kind")).toBeTruthy();
+      .closest(".ag-row") as HTMLElement;
+    // The glyph column is History's node now, not a one-off .un-kind span.
+    expect(row.querySelector(".ag-node")).toBeTruthy();
     // The words are gone from the row, but the kind is still named for anyone
     // not reading it visually.
     expect(row.textContent).not.toContain("Channel scan");

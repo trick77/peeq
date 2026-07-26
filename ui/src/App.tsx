@@ -143,6 +143,9 @@ export function App() {
   // page keeps its own separate in-page search.
   const [librarySearch, setLibrarySearch] = useState("");
   const [channelSearch, setChannelSearch] = useState("");
+  const [historySearch, setHistorySearch] = useState("");
+  const [upNextSearch, setUpNextSearch] = useState("");
+  const [inboxSearch, setInboxSearch] = useState("");
   // How many jobs are pending or running. A plain count is what the queue poll
   // and the rail's queue badge want.
   const activeDownloads = jobs.filter(
@@ -544,8 +547,14 @@ export function App() {
             onQueued={refreshQueue}
             librarySearch={librarySearch}
             channelSearch={channelSearch}
+            historySearch={historySearch}
+            upNextSearch={upNextSearch}
+            inboxSearch={inboxSearch}
             onLibrarySearchChange={setLibrarySearch}
             onChannelSearchChange={setChannelSearch}
+            onHistorySearchChange={setHistorySearch}
+            onUpNextSearchChange={setUpNextSearch}
+            onInboxSearchChange={setInboxSearch}
             queueSignal={queueSignal}
             jobs={jobs}
             progressByJobId={progressByJobId}
@@ -651,8 +660,14 @@ function ViewSwitch({
   onQueued,
   librarySearch,
   channelSearch,
+  historySearch,
+  upNextSearch,
+  inboxSearch,
   onLibrarySearchChange,
   onChannelSearchChange,
+  onHistorySearchChange,
+  onUpNextSearchChange,
+  onInboxSearchChange,
   queueSignal,
   jobs,
   progressByJobId,
@@ -675,8 +690,14 @@ function ViewSwitch({
   onQueued: () => void;
   librarySearch: string;
   channelSearch: string;
+  historySearch: string;
+  upNextSearch: string;
+  inboxSearch: string;
   onLibrarySearchChange: (value: string) => void;
   onChannelSearchChange: (value: string) => void;
+  onHistorySearchChange: (value: string) => void;
+  onUpNextSearchChange: (value: string) => void;
+  onInboxSearchChange: (value: string) => void;
   queueSignal: string;
   jobs: Job[];
   progressByJobId: Record<
@@ -732,6 +753,8 @@ function ViewSwitch({
         <Inbox
           onCountChange={setPendingCount}
           onOpenChannel={onOpenChannel}
+          search={inboxSearch}
+          onSearchChange={onInboxSearchChange}
           onQueued={onQueued}
         />
       );
@@ -742,13 +765,24 @@ function ViewSwitch({
           progressByJobId={progressByJobId}
           summaries={summaries}
           summaryPhaseByVideoId={summaryPhaseByVideoId}
+          search={upNextSearch}
+          onSearchChange={onUpNextSearchChange}
           onCancel={onCancelDownload}
           onOpenChannel={onOpenChannel}
+          onOpenVideo={onOpenVideo}
           stalled={stalled}
         />
       );
     case "history":
-      return <History live={liveActivity} onOpenChannel={onOpenChannel} />;
+      return (
+        <History
+          live={liveActivity}
+          search={historySearch}
+          onSearchChange={onHistorySearchChange}
+          onOpenChannel={onOpenChannel}
+          onOpenVideo={onOpenVideo}
+        />
+      );
     case "channels":
       return (
         <Channels

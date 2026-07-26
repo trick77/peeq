@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { SearchField } from "../components/SearchField";
 import { Icon } from "../icons";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
 import type { PendingItem, VideoSort } from "../api/types";
@@ -61,10 +62,18 @@ function compareBy(
 export function Inbox({
   onCountChange,
   onOpenChannel,
+  search = "",
+  onSearchChange,
   onQueued,
 }: {
   onCountChange?: (n: number) => void;
   onOpenChannel?: (id: string) => void;
+  /**
+   * The search box's text, owned by App so it survives navigating away and
+   * back — the same arrangement the Library and the Channels list use.
+   */
+  search?: string;
+  onSearchChange?: (value: string) => void;
   // onQueued — fired after a video is queued for download, so App can seed the
   // queue poll and the item shows on Queue right away (mirrors the Add view).
   onQueued?: () => void;
@@ -115,11 +124,22 @@ export function Inbox({
     return Array.from(seen, ([id, name]) => ({ id, name }));
   }, [items]);
 
+  // The one client-side pipeline: channel chip, then the search box, then the
+  // sort. Client-side because /api/pending returns the whole inbox unpaged, so
+  // there is nothing off-screen a server query could reach. Note that Download
+  // all acts on `visible`, so a search narrows the bulk action too — which is
+  // the point: it is how you download just the three videos you searched for.
   const visible = useMemo(() => {
-    const list =
-      channel === "all" ? items : items.filter((i) => i.channel_id === channel);
+    const q = search.trim().toLowerCase();
+    const list = items.filter(
+      (i) =>
+        (channel === "all" || i.channel_id === channel) &&
+        (q === "" ||
+          i.title.toLowerCase().includes(q) ||
+          (i.channel_name ?? "").toLowerCase().includes(q)),
+    );
     return [...list].sort(compareBy(sort));
-  }, [items, channel, sort]);
+  }, [items, channel, sort, search]);
 
   // If the active channel filter empties out (its last item was downloaded or
   // ignored), fall back to "all" so the user isn't left staring at a blank
@@ -204,17 +224,48 @@ export function Inbox({
       {error ? <div className="errline">{error}</div> : null}
 
       {items.length > 0 ? (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            marginBottom: 14,
-            flexWrap: "wrap",
-          }}
-        >
+        <>
+          {/* Same toolbar as the Library and the Channels list: search leads,
+              sort sits at the far right, chips go beneath. The row used to be
+              chips-then-sort in one ad-hoc flex line; giving the search box its
+              canonical slot meant giving the chips theirs. Download all rides
+              in the toolbar because it acts on exactly what search and sort
+              have selected. */}
+          <div className="listbar">
+            <SearchField
+              value={search}
+              onChange={(v) => onSearchChange?.(v)}
+              placeholder="Search the inbox"
+              label="Search the inbox"
+            />
+            <select
+              className={`${controlClass} push-end`}
+              style={{ maxWidth: 190 }}
+              value={sort}
+              onChange={(e) => setSort(e.target.value as VideoSort)}
+              aria-label="Sort"
+            >
+              {INBOX_SORT_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            {visible.length > 1 ? (
+              <Button
+                type="button"
+                variant={confirmBulk ? "primary" : "secondary"}
+                busy={bulkBusy}
+                onClick={handleDownloadAll}
+                onBlur={() => setConfirmBulk(false)}
+              >
+                <Icon name="download" size="16px" />
+                {bulkLabel}
+              </Button>
+            ) : null}
+          </div>
           {channels.length > 1 ? (
-            <div className="catchips" style={{ margin: 0, flex: 1 }}>
+            <div className="catchips">
               <button
                 type="button"
                 className={`catchip${channel === "all" ? " on" : ""}`}
@@ -236,35 +287,14 @@ export function Inbox({
                 </button>
               ))}
             </div>
-          ) : (
-            <div style={{ flex: 1 }} />
-          )}
-          <select
-            className={controlClass}
-            style={{ maxWidth: 190 }}
-            value={sort}
-            onChange={(e) => setSort(e.target.value as VideoSort)}
-            aria-label="Sort"
-          >
-            {INBOX_SORT_OPTIONS.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          {visible.length > 1 ? (
-            <Button
-              type="button"
-              variant={confirmBulk ? "primary" : "secondary"}
-              busy={bulkBusy}
-              onClick={handleDownloadAll}
-              onBlur={() => setConfirmBulk(false)}
-            >
-              <Icon name="download" size="16px" />
-              {bulkLabel}
-            </Button>
           ) : null}
-        </div>
+        </>
+      ) : null}
+
+      {items.length > 0 && visible.length === 0 ? (
+        <p className="un-empty">
+          Nothing in the inbox matches “{search.trim()}”.
+        </p>
       ) : null}
 
       <div className="grid">

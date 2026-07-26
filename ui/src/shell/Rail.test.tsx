@@ -62,11 +62,11 @@ describe("Rail", () => {
     expect(labels.slice(0, 2)).toEqual(["Library", "Channels"]);
   });
 
-  // The rail greys Inbox/Up next out when there is genuinely nothing in them, so
-  // the counts double as a to-do signal. `undefined` is NOT nothing — it means
-  // the first fetch hasn't landed — or every cold load would flash dim.
-  describe("idle state", () => {
-    it("dims Up next and hides its pill when there is no work", () => {
+  // No rail item ever dims. Emptiness is said by the missing count pill and by
+  // the page's own empty state; the item itself always reads at Channels'
+  // strength, so a destination never changes weight under you.
+  describe("count pill", () => {
+    it("hides Up next's pill when there is no work, without dimming it", () => {
       const props = {
         active: "library" as const,
         onNavigate: () => {},
@@ -75,10 +75,10 @@ describe("Rail", () => {
         upNextLive: false,
       };
       const upnext = navItem(props, "Up next");
-      expect(upnext.classes).toContain("idle");
+      expect(upnext.classes).not.toContain("idle");
       expect(upnext.pill).toBeNull();
-      // Inbox, which has work waiting, is untouched.
-      expect(navItem(props, "Inbox").classes).not.toContain("idle");
+      // Inbox, which has work waiting, keeps its pill.
+      expect(navItem(props, "Inbox").pill?.textContent).toBe("3");
     });
 
     it("gives a running Up next the same accent pill as Inbox", () => {
@@ -100,8 +100,7 @@ describe("Rail", () => {
 
     // The pill is a "something is moving" light. Work that is queued but frozen
     // — everything paused, YouTube blocked — shows no number, because a count
-    // that never falls reads as progress. The item still must not dim: there IS
-    // work, it just isn't going anywhere, and the pause banner says why.
+    // that never falls reads as progress. The pause banner says why.
     it("hides the pill when work is waiting but nothing is running", () => {
       const upnext = navItem(
         {
@@ -117,7 +116,7 @@ describe("Rail", () => {
       expect(upnext.classes).not.toContain("idle");
     });
 
-    it("never dims the view you are already on", () => {
+    it("marks the view you are already on as active", () => {
       const upnext = navItem(
         {
           active: "upnext",
@@ -132,8 +131,8 @@ describe("Rail", () => {
       expect(upnext.classes).not.toContain("idle");
     });
 
-    // History is a log, never a to-do: it has no count and must never dim.
-    it("leaves History undimmed and pill-less", () => {
+    // History is a log, never a to-do: it has no count.
+    it("leaves History pill-less", () => {
       const history = navItem(
         {
           active: "library",
@@ -148,8 +147,14 @@ describe("Rail", () => {
       expect(history.pill).toBeNull();
     });
 
-    it("does not dim counts that have not loaded yet", () => {
-      const items = navItems({ active: "library", onNavigate: () => {} });
+    it("never dims any item, whatever the counts", () => {
+      const items = navItems({
+        active: "library",
+        onNavigate: () => {},
+        pendingCount: 0,
+        upNextCount: 0,
+        upNextLive: false,
+      });
       expect(items.some((i) => i.classes.includes("idle"))).toBe(false);
     });
   });
