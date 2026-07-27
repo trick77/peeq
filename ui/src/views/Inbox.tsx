@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SearchField } from "../components/SearchField";
+import { ThumbFill } from "../components/ThumbFill";
 import { Icon } from "../icons";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
+import { pendingThumbnailUrl } from "../api/videos";
 import type { PendingItem, VideoSort } from "../api/types";
 import { formatAgo, formatDuration } from "../format";
 import { Button, controlClass } from "../ui";
@@ -15,10 +17,12 @@ import { INBOX_SORT_OPTIONS } from "./Library";
 //
 // Cards are the library card (`.card.video-card`): same grid, same thumbnail,
 // same channel-eyebrow-above-clamped-title order, same `.card-foot` action
-// row. Two honest differences remain — the thumbnail is the remote
-// `thumbnail_url` (no local media exists yet, an item here has never been
-// downloaded) and the actions are Download / Ignore rather than
-// favorite/watched.
+// row. The one honest difference remaining is the actions — Download / Ignore
+// rather than favorite/watched. The thumbnail now goes through the same backend
+// proxy the Library uses (`/api/pending/{id}/thumbnail`, which fetches and
+// caches the remote poster server-side), so an inbox card never loads
+// i.ytimg.com in the browser and falls back to the shared gradient placeholder
+// instead of a broken-image glyph when a poster is missing.
 
 // sortKey is the date an item orders by: its publish date when known, else
 // the day the scan discovered it. This mirrors the Library's air_* clauses'
@@ -169,6 +173,22 @@ export function Inbox({
     return Array.from(seen, ([id, name]) => ({ id, name }));
   }, [items]);
 
+  // The search-scoped list the channel chips count from: items narrowed by the
+  // search box but NOT by the channel chip. Each chip's number then answers
+  // "how many would I see if I clicked this under the current search" — the
+  // same thing the Library's query-scoped counts answer. Without it the chips
+  // read the full per-channel totals and sit unchanged beside a grid a search
+  // has emptied. The channel filter is layered on top, in `visible`.
+  const searchScoped = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (q === "") return items;
+    return items.filter(
+      (i) =>
+        i.title.toLowerCase().includes(q) ||
+        (i.channel_name ?? "").toLowerCase().includes(q),
+    );
+  }, [items, search]);
+
   // The one client-side pipeline: channel chip, then the search box, then the
   // sort. Client-side because /api/pending returns the whole inbox unpaged, so
   // there is nothing off-screen a server query could reach. Note that Download
@@ -282,11 +302,15 @@ export function Inbox({
       {items.length > 0 ? (
         <>
           {/* Same toolbar as the Library and the Channels list: search leads,
-              sort sits at the far right, chips go beneath. The row used to be
-              chips-then-sort in one ad-hoc flex line; giving the search box its
-              canonical slot meant giving the chips theirs. Download all rides
-              in the toolbar because it acts on exactly what search and sort
-              have selected. */}
+              chips go beneath. The right-hand end is a quiet control group,
+              anchored to the edge by push-end: Download all sits to the LEFT of
+              the sort control, which stays the rightmost item. Both carry
+              push-end so the sort control keeps its right anchor even on the
+              frame where Download all is absent (a search that matches nothing
+              leaves zero visible). Download all rides here because it acts on
+              exactly what search and sort have selected — it stays available
+              whenever at least one item is on screen, since even a single card
+              is quicker to clear from here than from its own row. */}
           <div className="listbar">
             <SearchField
               value={search}
@@ -294,20 +318,7 @@ export function Inbox({
               placeholder="Search the inbox"
               label="Search the inbox"
             />
-            <select
-              className={`${controlClass} push-end`}
-              style={{ maxWidth: 190 }}
-              value={sort}
-              onChange={(e) => setSort(e.target.value as VideoSort)}
-              aria-label="Sort"
-            >
-              {INBOX_SORT_OPTIONS.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            {visible.length > 1 ? (
+            {visible.length > 0 ? (
               /* ghost, not secondary: this is the only listbar on the app with
                  a button beside the sort control, and a filled ink-dim button
                  next to a muted-grey dropdown made the pair read as two
@@ -326,6 +337,7 @@ export function Inbox({
                  feedback for the common case would be a fade. */
               <Button
                 type="button"
+                className="push-end"
                 variant={
                   confirmBulk ? "primary" : bulkBusy ? "secondary" : "ghost"
                 }
@@ -337,6 +349,19 @@ export function Inbox({
                 {bulkLabel}
               </Button>
             ) : null}
+            <select
+              className={`${controlClass} push-end`}
+              style={{ maxWidth: 190 }}
+              value={sort}
+              onChange={(e) => setSort(e.target.value as VideoSort)}
+              aria-label="Sort"
+            >
+              {INBOX_SORT_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </div>
           {channels.length > 1 ? (
             <div className="catchips lead">
@@ -345,21 +370,33 @@ export function Inbox({
                 className={`catchip${channel === "all" ? " on" : ""}`}
                 onClick={() => setChannel("all")}
               >
-                All channels <span className="n">{items.length}</span>
+                All channels <span className="n">{searchScoped.length}</span>
               </button>
-              {channels.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={`catchip${channel === c.id ? " on" : ""}`}
-                  onClick={() => setChannel(c.id)}
-                >
-                  {c.name}{" "}
-                  <span className="n">
-                    {items.filter((i) => i.channel_id === c.id).length}
-                  </span>
-                </button>
-              ))}
+              {/* Counts are search-scoped so a chip reads how many you'd see if
+                  you clicked it under the current query, like the Library. A
+                  chip whose channel has no match under the search drops off the
+                  row — except the selected one, which stays (at count 0) so you
+                  can always un-select it, mirroring the Library's category
+                  chips. */}
+              {channels
+                .filter(
+                  (c) =>
+                    c.id === channel ||
+                    searchScoped.some((i) => i.channel_id === c.id),
+                )
+                .map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`catchip${channel === c.id ? " on" : ""}`}
+                    onClick={() => setChannel(c.id)}
+                  >
+                    {c.name}{" "}
+                    <span className="n">
+                      {searchScoped.filter((i) => i.channel_id === c.id).length}
+                    </span>
+                  </button>
+                ))}
             </div>
           ) : null}
         </>
@@ -379,11 +416,10 @@ export function Inbox({
         {visible.map((item) => (
           <article key={item.video_id} className="card video-card">
             <div className="thumb">
-              <img
-                className="fill"
-                src={item.thumbnail_url}
-                alt=""
-                loading="lazy"
+              <ThumbFill
+                id={item.video_id}
+                hasThumbnail={!!item.thumbnail_url}
+                src={pendingThumbnailUrl(item.video_id)}
               />
               <span className="dur">
                 {formatDuration(item.duration_seconds)}

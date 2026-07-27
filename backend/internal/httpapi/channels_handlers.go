@@ -1020,6 +1020,7 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 			serverError(w, r, err, "update pending failed")
 			return
 		}
+		s.removePendingThumbnail(e.VideoID)
 		writeJSON(w, map[string]string{"status": "already_downloaded"})
 		return
 	}
@@ -1050,6 +1051,7 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "update pending failed")
 		return
 	}
+	s.removePendingThumbnail(e.VideoID)
 	writeJSON(w, map[string]string{"status": "queued"})
 }
 
@@ -1071,7 +1073,71 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "ignore failed")
 		return
 	}
+	// The item just left the inbox, so its cached thumbnail is dead weight.
+	s.removePendingThumbnail(id)
 	writeJSON(w, map[string]string{"status": "ignored"})
+}
+
+// removePendingThumbnail drops a pending video's cached thumbnail directory
+// (.pending/<id>/). Best-effort: it is called when the item leaves the inbox
+// (ignored, or promoted to a real download that will write its own thumbnail),
+// so leaving the cache behind would only accumulate. A failure here must never
+// fail the request that triggered it.
+func (s *server) removePendingThumbnail(id string) {
+	if s.mediaDir == "" || id == "" {
+		return
+	}
+	if safe, err := media.SafeMediaPath(s.mediaDir, media.PendingThumbDir(id)); err == nil {
+		_ = os.RemoveAll(safe)
+	}
+}
+
+// handlePendingThumbnail serves a pending (inbox) video's thumbnail off local
+// disk, fetching and caching it from YouTube on first request (and re-fetching
+// if it ever vanishes). This is what keeps an inbox card from loading
+// i.ytimg.com directly in the browser, and — via the hqdefault fallback and
+// the UI's gradient placeholder on a 404 — from ever showing a broken-image
+// glyph. See media.EnsurePendingThumbnail.
+func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) {
+	if s.ledger == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		return
+	}
+	id := r.PathValue("id")
+	e, err := s.ledger.Get(id)
+	if err != nil {
+		serverError(w, r, err, "load pending failed")
+		return
+	}
+	if e == nil {
+		http.NotFound(w, r)
+		return
+	}
+	rel, err := media.EnsurePendingThumbnail(r.Context(), s.mediaDir, id, e.ThumbnailURL)
+	if err != nil {
+		// Both candidates failed. The UI renders its gradient placeholder on a
+		// 404, exactly like a downloaded video with no poster.
+		http.NotFound(w, r)
+		return
+	}
+	path, err := media.SafeMediaPath(s.mediaDir, rel)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	http.ServeContent(w, r, filepath.Base(path), fi.ModTime(), f)
 }
 
 // handleChannelAvatar and handleChannelBanner serve a cached channel image

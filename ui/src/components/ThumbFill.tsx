@@ -22,9 +22,17 @@ import { gradientClassFor } from "../format";
 export function ThumbFill({
   id,
   hasThumbnail,
+  src,
 }: {
   id: string;
   hasThumbnail: boolean;
+  // src overrides the default downloaded-video thumbnail endpoint. The Inbox
+  // passes the pending-thumbnail endpoint here: a pending item has no videos
+  // row, so thumbnailUrl(id) (which points at /api/videos/{id}/thumbnail)
+  // wouldn't resolve. Everything else — the id-keyed failure flag, the onError
+  // fallback to the gradient — is shared, so a broken poster degrades the same
+  // way on both.
+  src?: string;
 }) {
   const [failedId, setFailedId] = useState<string | null>(null);
 
@@ -34,7 +42,7 @@ export function ThumbFill({
   return (
     <img
       className="fill"
-      src={thumbnailUrl(id)}
+      src={src ?? thumbnailUrl(id)}
       alt=""
       loading="lazy"
       onError={() => setFailedId(id)}

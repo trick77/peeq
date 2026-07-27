@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,22 @@ import (
 	"strings"
 	"time"
 )
+
+// FetchStatusError is returned when the remote server answers with a non-200
+// status. It carries the code so a caller can tell a permanent 4xx (the
+// variant doesn't exist — don't retry it) from a transient 5xx (worth a
+// retry). Its message keeps the "status <code>" wording earlier code and
+// tests rely on.
+type FetchStatusError struct{ StatusCode int }
+
+func (e *FetchStatusError) Error() string {
+	return fmt.Sprintf("fetch image: status %d", e.StatusCode)
+}
+
+// ErrUnsupportedContentType is returned when the response is a 200 whose body
+// is not one of the image types we store (e.g. an HTML error page). It is a
+// permanent failure for that URL — retrying the same URL cannot fix it.
+var ErrUnsupportedContentType = errors.New("fetch image: unsupported content type")
 
 // maxImageBytes caps a fetched channel image. Avatars and banners are well
 // under this; the cap exists so a hostile or broken server cannot fill the
@@ -74,13 +91,13 @@ func FetchImage(ctx context.Context, url, mediaDir, relBase string) (string, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetch image: status %d", resp.StatusCode)
+		return "", &FetchStatusError{StatusCode: resp.StatusCode}
 	}
 
 	ctype := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
 	ext, ok := imageExts[strings.ToLower(ctype)]
 	if !ok {
-		return "", fmt.Errorf("fetch image: unsupported content type %q", ctype)
+		return "", fmt.Errorf("%w %q", ErrUnsupportedContentType, ctype)
 	}
 
 	// Read one byte past the cap so an exactly-at-limit body still succeeds
