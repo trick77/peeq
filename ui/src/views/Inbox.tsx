@@ -364,7 +364,7 @@ export function Inbox({
               ))}
             </select>
           </div>
-          {channels.length > 1 ? (
+          {channels.length > 0 ? (
             <div className="catchips lead">
               <button
                 type="button"
