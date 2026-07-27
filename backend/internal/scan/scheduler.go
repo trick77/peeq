@@ -19,6 +19,7 @@ import (
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
@@ -33,6 +34,10 @@ const (
 	scanBackoff     = time.Hour
 	autoPriority    = 0                     // below manual (10), matching Phase 1
 	sqlTimeLayout   = "2006-01-02 15:04:05" // SQLite datetime('now') text form (UTC)
+	// pendingThumbPrefetchTimeout bounds the whole best-effort thumbnail
+	// prefetch (across its retries and the hqdefault fallback), so a detached
+	// prefetch goroutine can never linger indefinitely.
+	pendingThumbPrefetchTimeout = 90 * time.Second
 )
 
 // ChannelLister is the subset of *ytdlp.Runner the scheduler needs: a flat
@@ -107,6 +112,13 @@ type Deps struct {
 	PollInterval time.Duration    // idle re-check (default 30s)
 	Logger       *slog.Logger
 
+	// MediaDir is config.MediaDir, used only to prefetch a newly-pending
+	// video's thumbnail to local disk (best-effort, off the scan's critical
+	// path) so the inbox never loads it from YouTube in the browser. Empty
+	// disables prefetch — tests leave it unset, and the serve endpoint fetches
+	// on demand regardless.
+	MediaDir string
+
 	// listSize is a test seam: how many entries to request per channel.
 	// Zero selects defaultListSize.
 	listSize int
@@ -134,6 +146,19 @@ func New(d Deps) *Scheduler {
 		d.listSize = defaultListSize
 	}
 	return &Scheduler{d: d, rand: sched.PseudoRand()}
+}
+
+// prefetchPendingThumbnail fetches and caches a newly-pending video's thumbnail
+// to local disk. It runs detached from the scan pass on its own background
+// context so a slow fetch neither blocks the loop nor is cancelled when the
+// pass ends. Best-effort: a failure is logged and left for the serve endpoint
+// to retry on demand.
+func (s *Scheduler) prefetchPendingThumbnail(videoID, thumbnailURL string) {
+	ctx, cancel := context.WithTimeout(context.Background(), pendingThumbPrefetchTimeout)
+	defer cancel()
+	if _, err := media.EnsurePendingThumbnail(ctx, s.d.MediaDir, videoID, thumbnailURL); err != nil {
+		s.d.Logger.Warn("scan: prefetch pending thumbnail failed", "video", videoID, "err", err)
+	}
 }
 
 // Run is the scan loop; it blocks until ctx is cancelled. Each pass is
@@ -702,6 +727,15 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		}
 		if err := s.d.Ledger.Insert(entry); err != nil {
 			return err
+		}
+		// A newly-pending upload gets its thumbnail pulled to local disk now,
+		// best-effort and off the scan's critical path (a detached goroutine, so
+		// a slow CDN never stalls the loop), so the inbox card renders from peeq
+		// rather than loading i.ytimg.com in the browser. Only 'pending' —
+		// seen/queued/unavailable rows never appear in the inbox. The serve
+		// endpoint self-heals anything this misses.
+		if entry.State == channelvideos.StatePending && s.d.MediaDir != "" {
+			go s.prefetchPendingThumbnail(entry.VideoID, entry.ThumbnailURL)
 		}
 	}
 	next := s.d.Now().Add(s.jitteredInterval()).UTC().Format(sqlTimeLayout)

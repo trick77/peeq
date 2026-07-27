@@ -18,7 +18,7 @@ export function SearchField({
   onChange,
   placeholder,
   label,
-  maxWidth = 300,
+  maxWidth = 600,
 }: {
   value: string;
   onChange: (value: string) => void;

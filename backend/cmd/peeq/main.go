@@ -317,6 +317,7 @@ func run() error {
 		YoutubePaused:  func(ctx context.Context) bool { p, _ := settingsStore.YoutubePaused(ctx); return p },
 		FailMonitor:    failMonitor,
 		Activity:       activityStore,
+		MediaDir:       cfg.MediaDir,
 	})
 
 	summarizeWorker := summarize.NewWorker(summarize.WorkerDeps{

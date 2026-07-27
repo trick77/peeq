@@ -134,3 +134,12 @@ export function streamUrl(id: string): string {
 export function thumbnailUrl(id: string): string {
   return `/api/videos/${encodeURIComponent(id)}/thumbnail`;
 }
+
+// pendingThumbnailUrl points at the inbox thumbnail endpoint, which fetches and
+// caches a pending video's remote thumbnail server-side and serves it locally.
+// It is distinct from thumbnailUrl because a pending item has no videos row: it
+// lives only in the channel_videos ledger, so the /api/videos/{id} route
+// wouldn't find it.
+export function pendingThumbnailUrl(id: string): string {
+  return `/api/pending/${encodeURIComponent(id)}/thumbnail`;
+}

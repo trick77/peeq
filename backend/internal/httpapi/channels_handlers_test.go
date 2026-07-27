@@ -710,6 +710,7 @@ type pendingTestHarness struct {
 	ledger   *channelvideos.Store
 	videos   *videos.Store
 	jobs     *jobs.Store
+	mediaDir string
 }
 
 // seedChannel adds id as a bare channel row, satisfying channel_videos'
@@ -734,6 +735,7 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 	ledgerStore := channelvideos.New(db)
 	videosStore := videos.New(db)
 	jobsStore := jobs.New(db)
+	mediaDir := t.TempDir()
 	deps := Deps{
 		AuthService:    auth.NewService(nil, sessions, users),
 		AuthMiddleware: auth.NewMiddleware(sessions, users),
@@ -742,6 +744,7 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 		Ledger:         ledgerStore,
 		Videos:         videosStore,
 		Jobs:           jobsStore,
+		MediaDir:       mediaDir,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -755,6 +758,7 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 		ledger:   ledgerStore,
 		videos:   videosStore,
 		jobs:     jobsStore,
+		mediaDir: mediaDir,
 	}
 }
 
@@ -1145,6 +1149,7 @@ func TestPending_unconfigured_503(t *testing.T) {
 
 	for _, req := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/api/pending", nil),
+		httptest.NewRequest(http.MethodGet, "/api/pending/p1/thumbnail", nil),
 		httptest.NewRequest(http.MethodPost, "/api/pending/p1/download", nil),
 		httptest.NewRequest(http.MethodPost, "/api/pending/p1/ignore", nil),
 	} {
@@ -3051,5 +3056,102 @@ func TestChannelRefresh_stalledResolve_504(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "timed out") {
 		t.Fatalf("body does not name the timeout: %s", rec.Body.String())
+	}
+}
+
+// seedPendingThumbCache writes a fake cached thumbnail for videoID under the
+// harness media dir, so the serve endpoint can be exercised without any
+// outbound fetch. Returns the bytes written.
+func (h *pendingTestHarness) seedPendingThumbCache(t *testing.T, videoID string) []byte {
+	t.Helper()
+	dir := filepath.Join(h.mediaDir, ".pending", videoID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir cache: %v", err)
+	}
+	body := []byte("\xff\xd8\xff cached jpeg")
+	if err := os.WriteFile(filepath.Join(dir, "thumbnail.jpg"), body, 0o644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	return body
+}
+
+func (h *pendingTestHarness) getRaw(t *testing.T, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestPendingThumbnail_servesCachedFile asserts a pending video with a cached
+// thumbnail on disk is served straight off local disk (no network), so the
+// browser never talks to i.ytimg.com.
+func TestPendingThumbnail_servesCachedFile(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "pt1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=pt1", State: "pending"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	want := h.seedPendingThumbCache(t, "pt1")
+
+	rec := h.getRaw(t, "/api/pending/pt1/thumbnail")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != string(want) {
+		t.Fatalf("body = %q, want the cached bytes", rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc == "" {
+		t.Fatal("no Cache-Control header on a served thumbnail")
+	}
+}
+
+// TestPendingThumbnail_unknownID_404 asserts an id that isn't in the ledger is a
+// clean 404 (the UI then draws its gradient placeholder).
+func TestPendingThumbnail_unknownID_404(t *testing.T) {
+	h := newPendingTestServer(t)
+	rec := h.getRaw(t, "/api/pending/nope/thumbnail")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestPendingIgnore_removesCachedThumbnail asserts ignoring a pending item drops
+// its cached thumbnail directory, so the cache doesn't accumulate for items
+// that left the inbox.
+func TestPendingIgnore_removesCachedThumbnail(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "pt3", ChannelID: "UC1", Title: "C", URL: "https://www.youtube.com/watch?v=pt3", State: "pending"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	h.seedPendingThumbCache(t, "pt3")
+	dir := filepath.Join(h.mediaDir, ".pending", "pt3")
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("cache dir missing before ignore: %v", err)
+	}
+
+	rec := postJSON(t, h, "/api/pending/pt3/ignore", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ignore status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("cache dir still present after ignore (err = %v)", err)
+	}
+}
+
+// TestPendingThumbnail_notPending_404 asserts a ledger row that exists but has
+// already left the inbox (ignored/queued/seen) is a 404: it must not drive an
+// outbound fetch or re-create the cache that leaving the inbox removed.
+func TestPendingThumbnail_notPending_404(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "gone1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=gone1", State: "ignored"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	rec := h.getRaw(t, "/api/pending/gone1/thumbnail")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for a non-pending row", rec.Code)
 	}
 }

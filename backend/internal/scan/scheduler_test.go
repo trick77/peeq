@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -159,6 +162,10 @@ type scanHarness struct {
 	activity     *fakeRecorder
 	sched        *Scheduler
 	cookieStatus string
+	// mediaDir, when set before buildSched, enables the pending-thumbnail
+	// prefetch. Left "" by default so the bulk of the scan tests never spawn a
+	// prefetch goroutine (and never touch the network).
+	mediaDir string
 }
 
 func newScanHarness(t *testing.T) *scanHarness {
@@ -202,6 +209,7 @@ func (h *scanHarness) buildSched(j JobEnqueuer) *Scheduler {
 		Activity:     h.activity,
 		Now:          func() time.Time { return fixedNow },
 		PollInterval: 5 * time.Millisecond,
+		MediaDir:     h.mediaDir,
 	})
 }
 
@@ -361,6 +369,48 @@ func TestScan_subsequentNewVideo_pendingVsAutodownload(t *testing.T) {
 	}
 	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
 		t.Fatalf("non-autodownload must not enqueue; got %d jobs", len(jobsList))
+	}
+}
+
+// TestScan_prefetchesPendingThumbnail asserts a newly-pending upload has its
+// thumbnail fetched and cached to local disk when MediaDir is configured, so
+// the inbox never loads it from YouTube in the browser. The prefetch is a
+// detached goroutine, so the assertion polls for the cached file.
+func TestScan_prefetchesPendingThumbnail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("\xff\xd8\xff jpeg"))
+	}))
+	defer srv.Close()
+
+	h := newScanHarness(t)
+	h.mediaDir = t.TempDir()
+	h.sched = h.buildSched(h.jobs) // rebuild with MediaDir set
+	h.addAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", []string{"old1"})
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "newp", DurationSeconds: 600, LiveStatus: "not_live", ThumbnailURL: srv.URL},
+	})
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+	if h.ledgerState("newp") != "pending" {
+		t.Fatalf("newp state = %q, want pending", h.ledgerState("newp"))
+	}
+
+	want := filepath.Join(h.mediaDir, ".pending", "newp", "thumbnail.jpg")
+	var found bool
+	for i := 0; i < 200; i++ {
+		if _, err := os.Stat(want); err == nil {
+			found = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !found {
+		t.Fatalf("prefetched thumbnail not written to %s", want)
 	}
 }
 

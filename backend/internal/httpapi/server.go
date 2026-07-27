@@ -343,6 +343,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/channels/{id}/resubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsResubscribe)))
 	mux.Handle("POST /api/channels/{id}/refresh", s.requireAuth(http.HandlerFunc(s.handleChannelRefresh)))
 	mux.Handle("GET /api/pending", s.requireAuth(http.HandlerFunc(s.handlePendingList)))
+	mux.Handle("GET /api/pending/{id}/thumbnail", s.requireAuth(http.HandlerFunc(s.handlePendingThumbnail)))
 	mux.Handle("POST /api/pending/{id}/download", s.requireAuth(http.HandlerFunc(s.handlePendingDownload)))
 	mux.Handle("POST /api/pending/{id}/ignore", s.requireAuth(http.HandlerFunc(s.handlePendingIgnore)))
 	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))

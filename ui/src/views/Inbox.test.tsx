@@ -46,7 +46,7 @@ describe("Inbox", () => {
     vi.mocked(ignorePending).mockResolvedValue(undefined);
   });
 
-  it("lists pending items with title and remote thumbnail", async () => {
+  it("lists pending items with the thumbnail proxied through the backend", async () => {
     render(<Inbox />);
     expect(await screen.findByText("First pending video")).toBeInTheDocument();
     expect(screen.getByText("Second pending video")).toBeInTheDocument();
@@ -54,10 +54,13 @@ describe("Inbox", () => {
       "img",
     ) as NodeListOf<HTMLImageElement>;
     expect(imgs).toHaveLength(2);
-    expect(Array.from(imgs).map((i) => i.src)).toEqual(
+    // The card loads /api/pending/{id}/thumbnail, not the raw i.ytimg.com URL:
+    // peeq fetches and caches the poster server-side so the browser never talks
+    // to YouTube's CDN.
+    expect(Array.from(imgs).map((i) => i.getAttribute("src"))).toEqual(
       expect.arrayContaining([
-        "https://img.example/v1.jpg",
-        "https://img.example/v2.jpg",
+        "/api/pending/v1/thumbnail",
+        "/api/pending/v2/thumbnail",
       ]),
     );
   });
@@ -388,6 +391,24 @@ describe("Inbox", () => {
     expect(screen.queryByText("First pending video")).not.toBeInTheDocument();
   });
 
+  it("scopes the channel chip counts to the search, like the Library", async () => {
+    // "second" matches only itemB (Channel Two). The counts must answer "how
+    // many would I see if I clicked this under the current search", and a
+    // channel with no match drops off the row entirely.
+    render(<Inbox search="second" />);
+    await screen.findByText("Second pending video");
+
+    // All channels reads the search-filtered total (1), not the full 2.
+    expect(
+      screen.getByRole("button", { name: /All channels\s*1/ }),
+    ).toBeInTheDocument();
+    // The matching channel stays with its scoped count; the other is gone.
+    expect(
+      screen.getByRole("button", { name: /Channel Two\s*1/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Channel One/ })).toBeNull();
+  });
+
   it("Download all queues every visible item one at a time", async () => {
     const user = userEvent.setup();
     render(<Inbox />);
@@ -658,17 +679,26 @@ describe("Inbox", () => {
       expect(screen.queryByText("Second pending video")).toBeNull();
     });
 
-    // Download all acts on what search and the chips selected — that is the
-    // point of it — so the confirm label has to count the narrowed set.
-    it("narrows Download all along with the grid", async () => {
+    // Download all acts on what search and the chips selected, and stays
+    // available whenever at least one item is on screen — even a single card is
+    // quicker to clear from the toolbar than from its own row. It leaves only
+    // when the result is empty.
+    it("keeps Download all down to one item, gone only at zero", async () => {
       const { rerender } = render(<Inbox search="pending" />);
       await screen.findByText("First pending video");
       expect(
         screen.getByRole("button", { name: /download all/i }),
       ).toBeInTheDocument();
 
-      // One match leaves nothing to bulk-download.
+      // A single match still offers Download all.
       rerender(<Inbox search="second" />);
+      await screen.findByText("Second pending video");
+      expect(
+        screen.getByRole("button", { name: /download all/i }),
+      ).toBeInTheDocument();
+
+      // Only an empty result removes it.
+      rerender(<Inbox search="zzz" />);
       await waitFor(() =>
         expect(
           screen.queryByRole("button", { name: /download all/i }),
