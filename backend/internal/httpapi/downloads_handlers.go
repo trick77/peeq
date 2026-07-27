@@ -79,7 +79,7 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	// as "url is required" — same 400 the inline decode used to produce.
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	item, _, ee := s.enqueueDownloadByURL(r.Context(), req.URL, true)
+	item, _, ee := s.enqueueDownloadByURL(req.URL, true)
 	if ee != nil {
 		s.writeEnqueueError(w, r, ee)
 		return
@@ -99,7 +99,7 @@ func (s *server) handleMachineDownloadsPost(w http.ResponseWriter, r *http.Reque
 	var req downloadsPostRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	item, duplicate, ee := s.enqueueDownloadByURL(r.Context(), req.URL, false)
+	item, duplicate, ee := s.enqueueDownloadByURL(req.URL, false)
 	if ee != nil {
 		s.writeEnqueueError(w, r, ee)
 		return
@@ -160,7 +160,7 @@ func alreadyInQueue(status string) bool {
 // back in the queue" behavior. false (machine route) returns an existing
 // in-pipeline video untouched, with duplicate=true, so a stray button tap can't
 // resurrect an already-downloaded video.
-func (s *server) enqueueDownloadByURL(ctx context.Context, rawURL string, requeueExisting bool) (item downloadItem, duplicate bool, ee *enqueueError) {
+func (s *server) enqueueDownloadByURL(rawURL string, requeueExisting bool) (item downloadItem, duplicate bool, ee *enqueueError) {
 	if s.jobs == nil || s.videos == nil || s.runner == nil {
 		return downloadItem{}, false, &enqueueError{status: http.StatusServiceUnavailable, message: "downloads are not configured"}
 	}
