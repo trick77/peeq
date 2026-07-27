@@ -565,6 +565,23 @@ button.srow:not(:disabled):hover {
   max-width: 60ch;
 }
 
+/* Inbox hover lock. Downloading or ignoring a card removes it, the grid
+   reflows, and the next card lands under a cursor that never moved — Chrome
+   re-hit-tests and paints :hover on its Download button, which reads as the
+   button you just pressed still being lit, on a video you have not touched.
+   (Focus is not the culprit: it drops to <body> when the card unmounts.)
+   While the lock is on — Inbox.tsx clears it on the first real pointermove —
+   these two are pinned to their resting look. Both are named rather than
+   neutralising .ui-btn wholesale, so a variant added to a card later keeps
+   its hover until someone decides otherwise; their resting values are
+   identical, which is why one block covers the pair. */
+.inbox-grid.is-hover-locked .ui-btn--secondary:hover:not(:disabled),
+.inbox-grid.is-hover-locked .ui-btn--dangerQuiet:hover:not(:disabled) {
+  background: var(--color-active);
+  color: var(--color-ink-dim);
+  border-color: var(--color-border);
+}
+
 /* History — a grouped timeline on a left optical rail (loom's trace-rail
    pattern). Four columns: a clock gutter, the node, the body, and how long ago.
    The kind icon IS the node — its shape says what the work was — while the ring
