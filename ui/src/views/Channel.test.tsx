@@ -1265,13 +1265,65 @@ describe("Channel YouTube metadata", () => {
     expect(screen.getByLabelText("Verified by YouTube")).toBeInTheDocument();
     expect(screen.getByText("Active on YouTube")).toBeInTheDocument();
     expect(
-      screen.getByText(`Refreshed ${formatStamp("2026-07-21 06:00:00")}`),
+      screen.getByText(
+        `Last metadata refresh ${formatStamp("2026-07-21 06:00:00")}`,
+      ),
     ).toBeInTheDocument();
+  });
+
+  // The two dates are on different schedules — metadata weekly, scans daily —
+  // so they are routinely days apart. One stamp labelled "Refreshed" got read
+  // as the daily scan, which made a healthy weekly refresh look like a broken
+  // scanner. Both are named, in the backend's own words, or neither is useful.
+  it("names the metadata refresh and the channel scan as separate dates", async () => {
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({
+        resolved_at: "2026-07-21 06:00:00",
+        last_scanned_at: "2026-07-26 08:00:00",
+      }),
+    );
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    expect(
+      screen.getByText(
+        `Last metadata refresh ${formatStamp("2026-07-21 06:00:00")}`,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `Last channel scan ${formatStamp("2026-07-26 08:00:00")}`,
+      ),
+    ).toBeInTheDocument();
+    // The bare label is what caused the confusion; it must not come back.
+    expect(screen.queryByText(/^Refreshed /)).not.toBeInTheDocument();
+  });
+
+  // An added-but-unsubscribed channel has no subscriptions row, so no scan
+  // schedule and no last_scanned_at. The segment drops out rather than
+  // inventing a date or saying "never" — scheduleLine owns that sentence.
+  it("omits the scan date when the channel has no scan schedule", async () => {
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({ subscribed: false, last_scanned_at: undefined }),
+    );
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+
+    await screen.findByText("Uncanny Expeditions");
+    expect(
+      screen.getByText(
+        `Last metadata refresh ${formatStamp("2026-07-21 06:00:00")}`,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Last channel scan /)).not.toBeInTheDocument();
   });
 
   // The stuck channel: resolved_at is stamped (so peeq will never retry on
   // its own) but the attempt failed, which is why the header has no artwork.
-  // Saying "Refreshed <date>" here would be a confident lie.
+  // Saying "Last metadata refresh <date>" here would be a confident lie.
   it("reports a failed refresh instead of claiming the metadata is current", async () => {
     vi.mocked(getChannel).mockResolvedValue(
       detail({
@@ -1290,10 +1342,14 @@ describe("Channel YouTube metadata", () => {
     await screen.findByText("Uncanny Expeditions");
     expect(
       screen.getByText(
-        `Last refresh failed ${formatStamp("2026-07-21 06:00:00")}`,
+        `Metadata refresh failed ${formatStamp("2026-07-21 06:00:00")}`,
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/^Refreshed /)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/^Last metadata refresh /),
+    ).not.toBeInTheDocument();
+    // The failed branch is about metadata only; it reports no scan date.
+    expect(screen.queryByText(/^Last channel scan /)).not.toBeInTheDocument();
     expect(screen.queryByText("Active on YouTube")).not.toBeInTheDocument();
     // An unknown count is a dash, never a number.
     expect(screen.getByText("—")).toBeInTheDocument();

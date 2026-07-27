@@ -87,6 +87,24 @@ export function formatStamp(stored: string | undefined): string {
 //
 // A channel with no resolved_at at all has simply never been read, and says
 // so plainly rather than claiming anything about YouTube.
+//
+// The active reading carries TWO dates, and naming them apart is the point.
+// They are separate schedules over separate columns, and they are far apart on
+// purpose: the metadata refresh (channels.resolved_at) runs weekly, seeded at a
+// random minute per subscription so channels do not refresh in a convoy, while
+// the channel scan that finds new videos (subscriptions.last_scanned_at) runs
+// daily. A single stamp labelled "Refreshed" read as the daily one and made a
+// perfectly healthy 5-day-old metadata refresh look like a broken scan.
+//
+// The wording is the backend's own — "channel scan" and "metadata refresh" are
+// the phrases handleActivityUpcoming attaches to these two units of work, so a
+// row queued in Up next and the stamp here name the same thing. "Last " is the
+// one addition: Up next lists the next occurrence, this reports the previous.
+//
+// last_scanned_at is absent for an added-but-unsubscribed channel, which has no
+// subscriptions row and so no scan schedule; that segment simply drops out.
+// "Never checked" is not said here — scheduleLine on the New and Settings tabs
+// is where a channel's schedule is spelled out in full.
 export function ChannelState({ detail }: { detail: ChannelDetail }) {
   if (detail.gone) {
     return (
@@ -116,7 +134,7 @@ export function ChannelState({ detail }: { detail: ChannelDetail }) {
         <span className="sep">·</span>
         <span className="chan-state stale">
           <span className="led unknown" />
-          Last refresh failed {formatStamp(detail.resolved_at)}
+          Metadata refresh failed {formatStamp(detail.resolved_at)}
         </span>
       </>
     );
@@ -129,7 +147,13 @@ export function ChannelState({ detail }: { detail: ChannelDetail }) {
         Active on YouTube
       </span>
       <span className="sep">·</span>
-      <span>Refreshed {formatStamp(detail.resolved_at)}</span>
+      <span>Last metadata refresh {formatStamp(detail.resolved_at)}</span>
+      {detail.last_scanned_at && (
+        <>
+          <span className="sep">·</span>
+          <span>Last channel scan {formatStamp(detail.last_scanned_at)}</span>
+        </>
+      )}
     </>
   );
 }
