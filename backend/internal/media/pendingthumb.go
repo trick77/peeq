@@ -109,9 +109,8 @@ func EnsurePendingThumbnail(ctx context.Context, mediaDir, videoID, recordedURL 
 		}
 	}
 
-	if lastErr == nil {
-		lastErr = errors.New("no candidate url")
-	}
+	// candidates always holds at least the hqdefault url (videoID is non-empty
+	// past the guard above), so the loop ran and lastErr is set.
 	return "", fmt.Errorf("pending thumbnail %s: %w", videoID, lastErr)
 }
 

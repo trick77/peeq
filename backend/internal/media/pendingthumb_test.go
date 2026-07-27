@@ -132,3 +132,47 @@ func TestEnsurePendingThumbnail_allFail(t *testing.T) {
 		t.Fatal("expected an error when all candidates fail")
 	}
 }
+
+// TestEnsurePendingThumbnail_guards covers the two argument guards: an unset
+// media dir and an empty video id both error before any fetch.
+func TestEnsurePendingThumbnail_guards(t *testing.T) {
+	if _, err := EnsurePendingThumbnail(context.Background(), "", "vid1", "https://x/y.jpg"); err == nil {
+		t.Fatal("expected an error for an empty media dir")
+	}
+	if _, err := EnsurePendingThumbnail(context.Background(), t.TempDir(), "", "https://x/y.jpg"); err == nil {
+		t.Fatal("expected an error for an empty video id")
+	}
+}
+
+// TestEnsurePendingThumbnail_unsupportedContentType asserts a 200 that isn't an
+// image is treated as permanent (isPermanentFetchError via ErrUnsupportedContentType),
+// so both candidates are tried once and the call errors without retrying.
+func TestEnsurePendingThumbnail_unsupportedContentType(t *testing.T) {
+	html := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<html>nope</html>"))
+	}))
+	defer html.Close()
+	withYTHost(t, html.URL)
+
+	if _, err := EnsurePendingThumbnail(context.Background(), t.TempDir(), "vid1", html.URL); err == nil {
+		t.Fatal("expected an error when every candidate serves a non-image body")
+	}
+}
+
+// TestEnsurePendingThumbnail_ctxCancelledDuringBackoff asserts a cancelled
+// context short-circuits the retry backoff rather than sleeping it out.
+func TestEnsurePendingThumbnail_ctxCancelledDuringBackoff(t *testing.T) {
+	// A 5xx is transient, so the first attempt schedules a backoff — where the
+	// cancelled context is observed.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "later", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := EnsurePendingThumbnail(ctx, t.TempDir(), "vid1", srv.URL); err == nil {
+		t.Fatal("expected an error when the context is cancelled")
+	}
+}

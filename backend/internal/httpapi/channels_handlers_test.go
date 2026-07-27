@@ -1149,6 +1149,7 @@ func TestPending_unconfigured_503(t *testing.T) {
 
 	for _, req := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/api/pending", nil),
+		httptest.NewRequest(http.MethodGet, "/api/pending/p1/thumbnail", nil),
 		httptest.NewRequest(http.MethodPost, "/api/pending/p1/download", nil),
 		httptest.NewRequest(http.MethodPost, "/api/pending/p1/ignore", nil),
 	} {
@@ -3137,5 +3138,20 @@ func TestPendingIgnore_removesCachedThumbnail(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("cache dir still present after ignore (err = %v)", err)
+	}
+}
+
+// TestPendingThumbnail_notPending_404 asserts a ledger row that exists but has
+// already left the inbox (ignored/queued/seen) is a 404: it must not drive an
+// outbound fetch or re-create the cache that leaving the inbox removed.
+func TestPendingThumbnail_notPending_404(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "gone1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=gone1", State: "ignored"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	rec := h.getRaw(t, "/api/pending/gone1/thumbnail")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for a non-pending row", rec.Code)
 	}
 }
