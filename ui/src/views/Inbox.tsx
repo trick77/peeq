@@ -112,6 +112,14 @@ export function Inbox({
   // click to fire by accident).
   const [bulkBusy, setBulkBusy] = useState(false);
   const [confirmBulk, setConfirmBulk] = useState(false);
+  // Hover lock. Acting on a card removes it, and the pointer has not moved —
+  // but Chrome re-runs its hit test after the reflow, so the card that slides
+  // into the gone one's slot comes up with :hover painted on whichever control
+  // is now under the cursor. The Download you just pressed appears to still be
+  // lit, on a video you have not touched. (Verified: focus is NOT the culprit,
+  // it drops to <body> when the card unmounts.) So suppress the hover paint
+  // from the removal until the pointer genuinely moves again.
+  const [hoverLocked, setHoverLocked] = useState(false);
 
   // `alive` is false once this view has unmounted. Navigating away mid-fetch
   // used to land the response on a component that is gone: React 18 no longer
@@ -195,7 +203,10 @@ export function Inbox({
     }
   }, [items, channel]);
 
+  // Every card removal goes through here — single Download, Ignore and each
+  // step of Download all — so the hover lock is armed in one place.
   function remove(videoID: string) {
+    setHoverLocked(true);
     setItems((prev) => {
       const next = prev.filter((i) => i.video_id !== videoID);
       onCountChange?.(next.length);
@@ -375,7 +386,15 @@ export function Inbox({
         </p>
       ) : null}
 
-      <div className="grid">
+      {/* The listener is attached only while locked: the common case is an
+          unlocked grid, and a pointermove handler on it would otherwise fire
+          on every mouse twitch for nothing. A real move is the only thing
+          that clears the lock — a click without one would be the accidental
+          second press this exists to prevent. */}
+      <div
+        className={`grid inbox-grid${hoverLocked ? " is-hover-locked" : ""}`}
+        onPointerMove={hoverLocked ? () => setHoverLocked(false) : undefined}
+      >
         {visible.map((item) => (
           <article key={item.video_id} className="card video-card">
             <div className="thumb">

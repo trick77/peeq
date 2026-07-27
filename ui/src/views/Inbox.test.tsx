@@ -204,6 +204,78 @@ describe("Inbox", () => {
     });
   });
 
+  // Removing a card reflows the grid under a cursor that never moved, and the
+  // browser then paints :hover on whatever control lands beneath it — the next
+  // card's Download comes up lit as if it were the one just pressed. The lock
+  // suppresses that paint; only a real pointer move lifts it, because a click
+  // without one is the accidental second download this guards against.
+  describe("hover lock", () => {
+    it("locks the grid's hover paint after Download removes a card", async () => {
+      const user = userEvent.setup();
+      render(<Inbox />);
+      await screen.findByText("First pending video");
+      const grid = document.querySelector(".inbox-grid") as HTMLElement;
+      expect(grid.classList.contains("is-hover-locked")).toBe(false);
+
+      const card = screen
+        .getByText("First pending video")
+        .closest(".card") as HTMLElement;
+      await user.click(within(card).getByRole("button", { name: /download/i }));
+
+      await waitFor(() => {
+        expect(grid.classList.contains("is-hover-locked")).toBe(true);
+      });
+    });
+
+    it("locks it after Ignore too — the card goes the same way", async () => {
+      const user = userEvent.setup();
+      render(<Inbox />);
+      await screen.findByText("First pending video");
+      const card = screen
+        .getByText("First pending video")
+        .closest(".card") as HTMLElement;
+      await user.click(within(card).getByRole("button", { name: /ignore/i }));
+
+      await waitFor(() => {
+        const grid = document.querySelector(".inbox-grid") as HTMLElement;
+        expect(grid.classList.contains("is-hover-locked")).toBe(true);
+      });
+    });
+
+    it("lifts the lock once the pointer actually moves", async () => {
+      const user = userEvent.setup();
+      render(<Inbox />);
+      await screen.findByText("First pending video");
+      const card = screen
+        .getByText("First pending video")
+        .closest(".card") as HTMLElement;
+      await user.click(within(card).getByRole("button", { name: /download/i }));
+      const grid = document.querySelector(".inbox-grid") as HTMLElement;
+      await waitFor(() => {
+        expect(grid.classList.contains("is-hover-locked")).toBe(true);
+      });
+
+      await user.pointer({ target: grid, coords: { x: 10, y: 10 } });
+
+      await waitFor(() => {
+        expect(grid.classList.contains("is-hover-locked")).toBe(false);
+      });
+    });
+
+    it("keeps the lock through a Download all batch", async () => {
+      const user = userEvent.setup();
+      render(<Inbox />);
+      await screen.findByText("First pending video");
+      await user.click(screen.getByRole("button", { name: /download all/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByText("Second pending video")).toBeNull();
+      });
+      const grid = document.querySelector(".inbox-grid") as HTMLElement;
+      expect(grid.classList.contains("is-hover-locked")).toBe(true);
+    });
+  });
+
   it("shows an empty-state line when the inbox is empty", async () => {
     vi.mocked(listPending).mockResolvedValue([]);
     render(<Inbox />);
