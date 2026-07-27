@@ -115,26 +115,52 @@ func minusSet(a, b []string) []string {
 	return out
 }
 
-// migration0004Update returns the UPDATE statement from the real migration
-// file, so this test cannot pass against a migration that says something else.
-func migration0004Update(t *testing.T) string {
+// categoryResets returns the bulk-reclassification UPDATE from every migration
+// that carries one, keyed by filename, read out of the real files so a test
+// cannot pass against a migration that says something else.
+//
+// It scans the whole directory rather than naming 0004: a reset is written
+// every time the enum or the classify prompt changes enough to invalidate past
+// answers (0004 for the enum growing, 0015 for the category hints), and a
+// helper that names one file silently stops covering the next one. Finding
+// none is a failure — the caller's whole assertion would otherwise vacuously
+// pass if the scan ever broke.
+func categoryResets(t *testing.T) map[string]string {
 	t.Helper()
-	path := filepath.Join("..", "store", "migrations", "0004_category_manual.sql")
-	body, err := os.ReadFile(path)
+	dir := filepath.Join("..", "store", "migrations")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+		t.Fatalf("read %s: %v", dir, err)
 	}
-	// Comments first, THEN split: a semicolon inside the migration's prose
-	// would otherwise cut a statement in half, and the half that survives may
-	// still start with UPDATE — a truncated WHERE that quietly clears more
-	// than the real migration does.
-	for _, stmt := range strings.Split(stripSQLComments(string(body)), ";") {
-		if s := strings.TrimSpace(stmt); strings.HasPrefix(s, "UPDATE") {
-			return s
+	found := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		// Comments first, THEN split: a semicolon inside the migration's prose
+		// would otherwise cut a statement in half, and the half that survives
+		// may still start with UPDATE — a truncated WHERE that quietly clears
+		// more than the real migration does.
+		for _, stmt := range strings.Split(stripSQLComments(string(body)), ";") {
+			s := strings.TrimSpace(stmt)
+			if !strings.HasPrefix(s, "UPDATE") || !strings.Contains(s, UncategorizedCategory) {
+				continue
+			}
+			if prev, dup := found[e.Name()]; dup {
+				t.Fatalf("%s has two category resets:\n%s\n%s", e.Name(), prev, s)
+			}
+			found[e.Name()] = s
 		}
 	}
-	t.Fatalf("no UPDATE statement in %s", path)
-	return ""
+	if len(found) == 0 {
+		t.Fatalf("no category reset found in any migration under %s", dir)
+	}
+	return found
 }
 
 func stripSQLComments(s string) string {

@@ -1,0 +1,38 @@
+-- Reclassify everything the classifier decided, because the option list it
+-- decided from has changed.
+--
+-- ai, tech, software, science and history shipped with no Hint while politics
+-- carried a long one, and the classify prompt forces a choice: an unhinted
+-- option is one line of prompt against a hinted one's three, so every loose fit
+-- went to politics. A video about who built the smallest nuclear bomb was
+-- filed under Politics & Society, as was UFO/UAP material — the summaries are
+-- dense with Pentagon and Cold War vocabulary, and nothing else in the list
+-- claimed it. Those five categories now stake their own claim, politics is
+-- narrowed to politics-as-subject, and the prompt gained a tie-break line
+-- telling the model to classify by topic and not by the institutions a summary
+-- mentions. See videos.Categories and summarize.Summarizer.Classify.
+--
+-- The reset below is the whole point of this migration. Neither classify path
+-- would otherwise touch an existing row: the inline one runs only when the
+-- category is empty or 'uncategorized' (summarize.Worker), and the idle sweep
+-- selects on the same (videos.Store.NextUnclassified). Without this statement
+-- the new hints change nothing anyone can see, and every video already sitting
+-- in the wrong bucket stays there permanently.
+--
+-- The WHERE clause is load-bearing and must keep matching NextUnclassified,
+-- which is what the sweep selects on: a row may only be cleared if the sweep
+-- can hand it back. Both sides say "has a summary and is not a hand pick", and
+-- videos.TestResetSetMatchesTheSweep reads this file — every migration with a
+-- reset, not just 0004 — to pin them together. A no-transcript video has no
+-- summary and so is spared: nothing could ever reclassify it, and a hand pick
+-- on the Player is the ONLY way its category could have been set, so clearing
+-- it would not reclassify it, it would erase it permanently.
+--
+-- category_manual = 0 is doing real work here, unlike in 0004 where the same
+-- statement ran against a column the migration had just created. Every hand
+-- pick made on the Player since 0004 carries the flag, and those survive.
+--
+-- Expect the Library to read Uncategorized until the sweep drains: it is one
+-- LLM call per video, and it only runs when the summary job queue is empty. So
+-- deploy this while the queue is idle.
+UPDATE videos SET category = 'uncategorized' WHERE summary <> '' AND category_manual = 0;
