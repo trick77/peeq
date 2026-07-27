@@ -195,16 +195,13 @@ export function Inbox({
   // all acts on `visible`, so a search narrows the bulk action too — which is
   // the point: it is how you download just the three videos you searched for.
   const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const list = items.filter(
-      (i) =>
-        (channel === "all" || i.channel_id === channel) &&
-        (q === "" ||
-          i.title.toLowerCase().includes(q) ||
-          (i.channel_name ?? "").toLowerCase().includes(q)),
+    // The channel chip layered on top of the same search-scoped list the chip
+    // counts read, so the grid and the counts can never disagree.
+    const list = searchScoped.filter(
+      (i) => channel === "all" || i.channel_id === channel,
     );
     return [...list].sort(compareBy(sort));
-  }, [items, channel, sort, search]);
+  }, [searchScoped, channel, sort]);
 
   // If the active channel filter empties out (its last item was downloaded or
   // ignored), fall back to "all" so the user isn't left staring at a blank
@@ -418,7 +415,11 @@ export function Inbox({
             <div className="thumb">
               <ThumbFill
                 id={item.video_id}
-                hasThumbnail={!!item.thumbnail_url}
+                // Always attempt the proxy: the backend falls back to the
+                // hqdefault variant YouTube generates for every video, so an
+                // empty recorded thumbnail_url still gets a real poster. A true
+                // 404 still degrades to the shared gradient via onError.
+                hasThumbnail={true}
                 src={pendingThumbnailUrl(item.video_id)}
               />
               <span className="dur">

@@ -1087,6 +1087,13 @@ func (s *server) removePendingThumbnail(id string) {
 	if s.mediaDir == "" || id == "" {
 		return
 	}
+	// Guard against a traversal id: PendingThumbDir("..") cleans to the media
+	// dir itself, which SafeMediaPath accepts (rel == "."), so a bare RemoveAll
+	// would wipe the whole media tree. A real video id is always a single path
+	// segment.
+	if filepath.Base(id) != id || id == "." || id == ".." {
+		return
+	}
 	if safe, err := media.SafeMediaPath(s.mediaDir, media.PendingThumbDir(id)); err == nil {
 		_ = os.RemoveAll(safe)
 	}
@@ -1110,6 +1117,14 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if e == nil {
+		http.NotFound(w, r)
+		return
+	}
+	// Only 'pending' items appear in the inbox and use this endpoint. Gating on
+	// state stops a request for a decided item (ignored/queued/seen) from
+	// driving an outbound fetch and re-creating the cache directory that
+	// removePendingThumbnail just deleted when it left the inbox.
+	if e.State != channelvideos.StatePending {
 		http.NotFound(w, r)
 		return
 	}
