@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { App } from "./App";
 import {
   downloadsStatus,
@@ -205,10 +211,13 @@ describe("App dock bootstrap", () => {
       } as Job,
     ]);
 
-    fireEvent.change(screen.getByLabelText("Video or channel URL"), {
+    const urlField = screen.getByLabelText("Video or channel URL");
+    fireEvent.change(urlField, {
       target: { value: "https://www.youtube.com/watch?v=vynCRZwkWhE&t=68s" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Add to queue/ }));
+    // The submit button now just reads "Add", which the rail's Add nav item
+    // also matches — scope the click to the paste form.
+    fireEvent.click(within(urlField.closest("form")!).getByRole("button"));
 
     fireEvent.click(screen.getByRole("button", { name: /Up next/ }));
     await waitFor(() => {

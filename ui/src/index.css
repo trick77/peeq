@@ -1766,27 +1766,40 @@ button.catpick.unset:hover {
   max-width: 720px;
   margin: 8px auto 0;
 }
+/* One control, not two: the input and its Add chip share a single bordered
+   pill so the button can never look bigger than the field it submits. The
+   border/focus ring lives on .paste; the chip is a compact ui-btn--sm inset
+   against the right edge. */
 .paste {
   display: flex;
+  align-items: center;
   gap: 10px;
   margin-bottom: 8px;
-}
-.paste .field {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 11px;
   background: var(--color-panel);
   border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 15px 18px;
+  border-radius: var(--radius-ui-lg);
+  padding: 7px 7px 7px 16px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
-.paste .field:focus-within {
+.paste:focus-within {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent);
 }
+.paste .field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.paste .ui-btn {
+  flex: none;
+}
 .paste input {
   flex: 1;
+  min-width: 0;
   background: none;
   border: none;
   outline: none;
@@ -1796,6 +1809,11 @@ button.catpick.unset:hover {
 }
 .paste input::placeholder {
   color: var(--color-faint);
+}
+.addkbd {
+  font-size: 12px;
+  opacity: 0.55;
+  margin-left: 1px;
 }
 .hint {
   font-size: 12.5px;
@@ -1827,45 +1845,26 @@ button.catpick.unset:hover {
   margin-bottom: 16px;
 }
 
-.preview {
-  background: var(--color-panel);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-ui);
-  padding: 18px;
-  display: grid;
-  grid-template-columns: 200px 1fr;
-  gap: 20px;
-  box-shadow: var(--shadow-panel);
-}
-.preview .pt {
-  aspect-ratio: 16 / 9;
-  border-radius: 10px;
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-}
-.preview .pt .dur {
-  position: absolute;
-  right: 7px;
-  bottom: 7px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  background: rgba(5, 8, 11, 0.82);
-  padding: 2px 6px;
-  border-radius: 5px;
-  color: var(--color-ink);
-}
-.preview h2 {
-  margin: 0 0 6px;
-  font-family: var(--font-sans);
-  font-size: 20px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-.preview .by {
-  color: var(--color-muted);
-  font-size: 13.5px;
+/* Submit feedback is a single quiet line that fades on its own — no preview
+   box, since the video's title and thumbnail aren't known until it starts. */
+.addok {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-online);
   margin-bottom: 16px;
+  animation: addok-in 0.18s ease-out;
+}
+@keyframes addok-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .field-row {
   display: flex;
