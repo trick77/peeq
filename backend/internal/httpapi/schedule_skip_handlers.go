@@ -9,7 +9,6 @@ import (
 
 	"github.com/trick77/peeq/internal/channelmeta"
 	"github.com/trick77/peeq/internal/scan"
-	"github.com/trick77/peeq/internal/sched"
 )
 
 // The Up next page lists peeq's own timed housekeeping — the channel scans and
@@ -50,14 +49,18 @@ const skipTimeLayout = "2006-01-02 15:04:05"
 // skipAnchor is the instant a skip measures its next slot from: the later of
 // now and the occurrence being skipped.
 //
-// Measuring from now alone is not enough to make a skip a skip. Both cadences
-// are jittered — scans land 21–27h out, refreshes 6.5–7.5 days — and neither
-// due-soon query has a horizon, so Up next lists occurrences right up to the far
-// end of that spread. Skipping a scan already scheduled 26h out would then have
-// rolled a fresh 21–27h and could land it EARLIER, making Skip advance the very
-// thing it was asked to drop; a refresh sitting 6.9 days out was close to a coin
-// flip. Anchoring on the stored instant makes "strictly later" structural
-// instead of probabilistic, since JitteredInterval has a one-hour floor.
+// Measuring from now alone is not enough to make a skip a skip. Neither
+// due-soon query has a horizon, so Up next lists occurrences right up to a full
+// cycle out; a scan already scheduled 20h away, rescheduled from now, would come
+// back at the same slot only ~12h out — making Skip advance the very thing it
+// was asked to drop. Anchoring on the stored instant makes "strictly later"
+// structural: both packages search strictly forward from the anchor, so the
+// answer is always at least one interval past the occurrence being skipped.
+//
+// It is also what keeps a skipped channel on its slot. The stored instant sits
+// on the slot, so the next occurrence after it is exactly one cycle later —
+// tomorrow at the same time for a scan, next week for a refresh — however many
+// times in a row the row is skipped.
 //
 // A stored value that will not parse falls back to now rather than failing the
 // request: a bogus column should not make the row unskippable.
@@ -130,7 +133,12 @@ func (s *server) handleChannelSkipScan(w http.ResponseWriter, r *http.Request) {
 
 	next := at
 	if next == "" {
-		next = scan.NextScanAt(skipAnchor(time.Now(), sub.NextScanAt), sched.PseudoRand())
+		rank, count, err := s.channels.SubscriptionRank(id)
+		if err != nil {
+			serverError(w, r, err, "skip scan failed")
+			return
+		}
+		next = scan.NextScanAt(skipAnchor(time.Now(), sub.NextScanAt), rank, count)
 	}
 	if err := s.channels.Backoff(id, next); err != nil {
 		serverError(w, r, err, "skip scan failed")
@@ -181,7 +189,12 @@ func (s *server) handleChannelSkipMeta(w http.ResponseWriter, r *http.Request) {
 
 	next := at
 	if next == "" {
-		next = channelmeta.NextRefreshAt(skipAnchor(time.Now(), sub.NextMetaRefreshAt), sched.PseudoRand())
+		rank, count, err := s.channels.SubscriptionRank(id)
+		if err != nil {
+			serverError(w, r, err, "skip metadata refresh failed")
+			return
+		}
+		next = channelmeta.NextRefreshAt(skipAnchor(time.Now(), sub.NextMetaRefreshAt), rank, count)
 	}
 	if err := s.channels.MarkMetaRefreshed(id, next); err != nil {
 		serverError(w, r, err, "skip metadata refresh failed")

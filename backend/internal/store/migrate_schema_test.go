@@ -290,15 +290,19 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 	}
 }
 
-// TestMigrate_spreadsMetadataRefreshAcrossTheWeek guards 0005's backfill, which
-// is the entire anti-batch mechanism. A DB that already has subscriptions gets
-// them all seeded at once, and if they were all seeded to the SAME time they
-// would refresh together, come due together a week later, and stay a convoy
-// forever — a weekly stampede of yt-dlp calls on whatever day the migration ran.
+// TestMigrate_spreadsMetadataRefreshAcrossTheWeek guards the backfills that are
+// the entire anti-batch mechanism: 0005 introduced next_meta_refresh_at with a
+// random spread, and 0016 moves both schedules onto their computed slots. A DB
+// that already has subscriptions gets them all seeded at once, and if they were
+// all seeded to the SAME time they would run together, come due together an
+// interval later, and stay a convoy forever — a stampede of yt-dlp calls on
+// whatever day the migration happened to run.
 //
-// The assertion is on the SPREAD, not merely on non-null: a plain
+// The assertions are on the SPREAD, not merely on non-null: a plain
 // datetime('now','+7 days') backfill would pass a null check and still be the
-// bug this test exists to catch.
+// bug this test exists to catch. Since 0016 the spread is exact rather than
+// random, so this asserts the precise spacing — a convoy could no longer hide
+// inside a "scattered enough" tolerance.
 func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "spread.db"))
 	if err != nil {
@@ -344,23 +348,46 @@ func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	// Then: every subscription has a due time, all of them inside the coming
-	// week, and they are genuinely scattered rather than stacked on one moment.
-	var seeded, inWindow, distinctDays int
-	if err := db.QueryRow(`
-SELECT COUNT(next_meta_refresh_at),
-       SUM(next_meta_refresh_at BETWEEN datetime('now', '-1 minute') AND datetime('now', '+7 days')),
-       COUNT(DISTINCT date(next_meta_refresh_at))
-FROM subscriptions`).Scan(&seeded, &inWindow, &distinctDays); err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	if seeded != channelCount || inWindow != channelCount {
-		t.Fatalf("seeded = %d, inside the week = %d; want %d for both", seeded, inWindow, channelCount)
-	}
-	// 40 uniformly random points across 8 calendar days landing on fewer than 5
-	// distinct days is not a spread; it is a convoy.
-	if distinctDays < 5 {
-		t.Fatalf("refreshes land on only %d distinct days; the backfill is not spreading them", distinctDays)
+	// Then: both schedules are seeded, each inside its own cycle, and spaced
+	// exactly evenly. The windows are half an interval to one-and-a-half, which
+	// is what the half-interval floor in 0016 costs on the one cycle that moves
+	// a fleet onto its slots; every cycle after that is exact.
+	for _, c := range []struct {
+		column  string
+		window  string // SQLite modifiers bounding the seeded instant
+		upper   string
+		spacing int // seconds between neighbours
+	}{
+		{"next_scan_at", "+12 hours", "+36 hours", 86400 / channelCount},
+		{"next_meta_refresh_at", "+3.5 days", "+10.5 days", 604800 / channelCount},
+	} {
+		var seeded, inWindow int
+		if err := db.QueryRow(`
+SELECT COUNT(`+c.column+`),
+       SUM(`+c.column+` BETWEEN datetime('now', '`+c.window+`') AND datetime('now', '`+c.upper+`'))
+FROM subscriptions`).Scan(&seeded, &inWindow); err != nil {
+			t.Fatalf("read back %s: %v", c.column, err)
+		}
+		if seeded != channelCount || inWindow != channelCount {
+			t.Fatalf("%s: seeded = %d, inside the cycle = %d; want %d for both", c.column, seeded, inWindow, channelCount)
+		}
+
+		// The spread itself: consecutive due times must sit exactly one slot
+		// apart. A convoy — the bug — collapses these gaps to zero.
+		var minGap, maxGap int
+		if err := db.QueryRow(`
+WITH ordered AS (
+    SELECT strftime('%s', `+c.column+`) AS t,
+           LAG(strftime('%s', `+c.column+`)) OVER (ORDER BY `+c.column+`) AS prev
+      FROM subscriptions
+)
+SELECT MIN(t - prev), MAX(t - prev) FROM ordered WHERE prev IS NOT NULL`).Scan(&minGap, &maxGap); err != nil {
+			t.Fatalf("gaps for %s: %v", c.column, err)
+		}
+		if minGap != c.spacing || maxGap != c.spacing {
+			t.Fatalf("%s gaps between %ds and %ds; want every neighbour exactly %ds apart",
+				c.column, minGap, maxGap, c.spacing)
+		}
 	}
 }
 

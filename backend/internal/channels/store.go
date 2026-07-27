@@ -499,6 +499,31 @@ ON CONFLICT(channel_id) DO NOTHING`,
 	return nil
 }
 
+// SubscriptionRank returns channelID's position in the subscription list
+// ordered by channel_id, and how many subscriptions there are — the two numbers
+// sched.Slot needs to work out which part of the cycle this channel owns.
+//
+// Rank is derived, never stored, and that is the point. A stored slot is frozen
+// at the moment it is written: unsubscribe a channel and it leaves a permanent
+// hole, subscribe one and it crowds whoever is next, with nothing to re-balance
+// either. Counting the neighbours at reschedule time means the spacing follows
+// the membership for free.
+//
+// Ordering by channel_id is arbitrary but stable, which is all a slot
+// assignment needs. Both halves are counts over the primary key, so neither
+// touches a row. An unsubscribed channelID counts the ids below it and is
+// simply where it WOULD sit; callers reschedule subscriptions, so that case
+// does not arise in practice and is not worth an error.
+func (s *Store) SubscriptionRank(channelID string) (rank, count int, err error) {
+	row := s.db.QueryRowContext(context.Background(), `
+SELECT (SELECT COUNT(*) FROM subscriptions WHERE channel_id < ?),
+       (SELECT COUNT(*) FROM subscriptions)`, channelID)
+	if err := row.Scan(&rank, &count); err != nil {
+		return 0, 0, fmt.Errorf("subscription rank %s: %w", channelID, err)
+	}
+	return rank, count, nil
+}
+
 // Unsubscribe removes channelID's subscription, leaving the channel added.
 // Returns whether a subscription actually existed.
 func (s *Store) Unsubscribe(channelID string) (bool, error) {

@@ -2040,3 +2040,134 @@ func TestScan_backCatalogue_firstPassStillBaselines(t *testing.T) {
 		t.Fatal("baselined_at must be stamped by the first pass")
 	}
 }
+
+// nextScanAtOf reads a subscription's stored next_scan_at.
+func (h *scanHarness) nextScanAtOf(ucid string) time.Time {
+	h.t.Helper()
+	var raw string
+	if err := h.db.QueryRow(
+		`SELECT next_scan_at FROM subscriptions WHERE channel_id = ?`, ucid).Scan(&raw); err != nil {
+		h.t.Fatalf("read next_scan_at for %s: %v", ucid, err)
+	}
+	at, err := time.ParseInLocation(sqlTimeLayout, raw, time.UTC)
+	if err != nil {
+		h.t.Fatalf("next_scan_at for %s is %q, which will not parse: %v", ucid, raw, err)
+	}
+	return at
+}
+
+// TestScan_reschedulesOntoItsSlotNotOntoNow is the fix for the convoy: a
+// completed scan must land on the channel's own slot in the 24-hour cycle, not
+// one interval after whenever this pass happened to run. Only a schedule
+// anchored to the cycle can recover from an outage that makes the whole fleet
+// due at once — a "now + 24h" schedule re-anchors every channel to the burst
+// that drained it and keeps the clump forever.
+func TestScan_reschedulesOntoItsSlotNotOntoNow(t *testing.T) {
+	h := newScanHarness(t)
+	h.addAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+	h.sched.scanChannel(context.Background(), sub)
+
+	// Sole subscription: rank 0 of 1, so its slot is the top of the cycle —
+	// midnight UTC — regardless of the 12:00 the scan itself ran at.
+	next := h.nextScanAtOf("UC1")
+	if next.Hour() != 0 || next.Minute() != 0 || next.Second() != 0 {
+		t.Fatalf("next scan at %v; want the channel's slot (00:00 UTC), not an offset from the scan", next)
+	}
+	// The half-interval floor: never sooner than 12h (which would let a channel
+	// scanned early out of a backlog re-scan almost at once), never beyond one
+	// cycle past it.
+	if gap := next.Sub(fixedNow); gap <= 12*time.Hour || gap > 36*time.Hour {
+		t.Fatalf("next scan is %v away; want inside (12h, 36h]", gap)
+	}
+}
+
+// TestScan_alreadyOnItsSlotStaysOnIt is the steady state the fleet converges
+// to: once a channel is scanned at its slot, the next one is exactly a day
+// later. If this drifted, the spread would decay a little every cycle.
+func TestScan_alreadyOnItsSlotStaysOnIt(t *testing.T) {
+	h := newScanHarness(t)
+	h.addAndSubscribe("UC1", false, "")
+	h.markBaselined("UC1", nil)
+	// Sole subscription → slot 0, so run the scan exactly at midnight UTC.
+	onSlot := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	h.sched.d.Now = func() time.Time { return onSlot }
+
+	sub, _ := h.channels.ClaimDue(onSlot.Format(sqlTimeLayout))
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+	h.sched.scanChannel(context.Background(), sub)
+
+	if got, want := h.nextScanAtOf("UC1"), onSlot.Add(24*time.Hour); !got.Equal(want) {
+		t.Fatalf("next scan at %v, want exactly one day later (%v)", got, want)
+	}
+}
+
+// TestScan_spreadsTheFleetEvenlyAcrossTheDay is the user-visible property: with
+// N subscriptions, consecutive scans are 24h/N apart. Production showed 44
+// channels scanning inside three minutes of each other instead of one every 33.
+//
+// The channels are deliberately scanned back-to-back at one frozen instant —
+// the burst-drain shape that used to CAUSE the convoy — so this asserts the
+// fleet spreads even when every scan completes at the same moment.
+func TestScan_spreadsTheFleetEvenlyAcrossTheDay(t *testing.T) {
+	h := newScanHarness(t)
+	const fleet = 4
+	for i := 0; i < fleet; i++ {
+		ucid := fmt.Sprintf("UC%d", i)
+		h.addAndSubscribe(ucid, false, "")
+		h.markBaselined(ucid, nil)
+	}
+	for i := 0; i < fleet; i++ {
+		sub, err := h.channels.ClaimDue(h.nowStr())
+		if err != nil || sub == nil {
+			t.Fatalf("claim %d: sub=%+v err=%v", i, sub, err)
+		}
+		h.sched.scanChannel(context.Background(), sub)
+	}
+
+	// Compare slots of day, not absolute instants: the cycle that moves a fleet
+	// onto its slots lands some channels on the next day and some on the one
+	// after, which says nothing about the spacing.
+	seen := map[time.Duration]bool{}
+	for i := 0; i < fleet; i++ {
+		at := h.nextScanAtOf(fmt.Sprintf("UC%d", i))
+		slot := time.Duration(at.UTC().Sub(at.UTC().Truncate(24 * time.Hour)))
+		if seen[slot] {
+			t.Fatalf("two channels share the slot %v — that is the convoy, not a spread", slot)
+		}
+		seen[slot] = true
+		if slot%(24*time.Hour/fleet) != 0 {
+			t.Fatalf("channel UC%d sits at %v, which is not a multiple of the %v slot width",
+				i, slot, 24*time.Hour/fleet)
+		}
+	}
+}
+
+// TestScan_backoffScattersTheRetry: a failure that hits every channel at once
+// (an expired cookie is the usual one) must not re-queue the whole fleet on the
+// same instant, or the error path rebuilds the very convoy the slot schedule
+// removes. The retry stays about an hour — it is a retry, not a reschedule.
+func TestScan_backoffScattersTheRetry(t *testing.T) {
+	h := newScanHarness(t)
+	h.addAndSubscribe("UC1", false, "")
+
+	seen := map[time.Time]bool{}
+	for i := 0; i < 20; i++ {
+		h.sched.backoff("UC1")
+		at := h.nextScanAtOf("UC1")
+		if gap := at.Sub(fixedNow); gap < 45*time.Minute || gap > 75*time.Minute {
+			t.Fatalf("backoff put the retry %v out; want roughly an hour", gap)
+		}
+		seen[at] = true
+	}
+	if len(seen) < 2 {
+		t.Fatal("every backoff landed on the same instant; a fleet failing together would still retry together")
+	}
+}

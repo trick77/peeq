@@ -391,3 +391,36 @@ func TestSkipAnchor_choosesTheLaterInstantAndToleratesJunk(t *testing.T) {
 		}
 	}
 }
+
+// TestSkipScan_landsExactlyOneCycleLater is what keeps a skipped channel in the
+// rotation it belongs to. Both schedules put each subscription on a slot, and a
+// skip that pushed "one interval from now" would knock the channel off that slot
+// permanently — so a user who skips regularly would re-clump the fleet by hand,
+// the exact failure the slots removed.
+//
+// Anchoring on the occurrence being skipped makes the answer exactly one cycle
+// later, which is also the only reading of "skip this one" that leaves the rest
+// of the schedule alone.
+func TestSkipScan_landsExactlyOneCycleLater(t *testing.T) {
+	deps, _, ch, _, _, _, _ := activityTestDeps(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// The only subscription, so its slot is the top of each cycle: midnight UTC
+	// for the daily scan, and for the weekly refresh the epoch's own weekday.
+	// Both are seeded far enough ahead that the anchor is the stored instant
+	// rather than the wall clock.
+	scanSlot := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	metaSlot := time.Unix(scanSlot.Unix()/604800*604800, 0).UTC()
+	const layout = skipTimeLayout
+	seedSkippableChannel(t, ch, "UCx", scanSlot.Format(layout), metaSlot.Format(layout))
+
+	scan := decodeSkip(t, postSkip(t, h, cookie, "/api/channels/UCx/skip-scan", ""))
+	if want := scanSlot.Add(24 * time.Hour).Format(layout); scan.At != want {
+		t.Fatalf("skipped scan landed at %q, want exactly one day later (%q)", scan.At, want)
+	}
+	meta := decodeSkip(t, postSkip(t, h, cookie, "/api/channels/UCx/skip-meta", ""))
+	if want := metaSlot.Add(7 * 24 * time.Hour).Format(layout); meta.At != want {
+		t.Fatalf("skipped refresh landed at %q, want exactly one week later (%q)", meta.At, want)
+	}
+}

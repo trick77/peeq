@@ -916,8 +916,8 @@ describe("UpNext skip", () => {
 
     await user.click(undo);
     // Undo must hand back the instant the skip reported, not an approximation:
-    // the schedule is deliberately jittered, and a re-derived time would drift
-    // the channel out of its rotation.
+    // each channel sits on its own slot in the cycle, and a re-derived time
+    // would drift it out of that rotation.
     expect(skipScheduledScan).toHaveBeenLastCalledWith(
       "UCx",
       "2026-07-26 09:00:00",

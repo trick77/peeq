@@ -23,12 +23,6 @@ const (
 	// to stand before it is re-read. A week: names, artwork and subscriber
 	// counts move slowly, and every refresh is a yt-dlp call against YouTube.
 	refreshInterval = 7 * 24 * time.Hour
-	// refreshJitter is the symmetric random window applied to every
-	// reschedule. Without it, channels refreshed in the same pass would stay
-	// exactly one week apart forever and slowly converge into the weekly
-	// batch this feature exists to avoid; with it, the schedule keeps
-	// scattering on its own. Migration 0004 seeds the initial spread.
-	refreshJitter = 12 * time.Hour
 	// pollInterval is how often the worker looks for something to do. One
 	// channel is claimed per pass, so this doubles as the spacing between
 	// refreshes — including when draining a large never-resolved backlog
@@ -80,9 +74,11 @@ type Deps struct {
 // urgent: it claims at most one channel per poll, it never runs without a
 // valid cookie, it stops entirely while the kill-switch is on, and its claim
 // queries keep it away from the same channel's video scan.
+//
+// It holds no random source: the rotation is a fixed slot per channel, not a
+// jittered interval, so there is nothing here to scatter.
 type Worker struct {
-	d    Deps
-	rand func() float64
+	d Deps
 }
 
 // NewWorker builds a Worker, filling in defaults for the optional Deps.
@@ -99,7 +95,7 @@ func NewWorker(d Deps) *Worker {
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}
-	return &Worker{d: d, rand: sched.PseudoRand()}
+	return &Worker{d: d}
 }
 
 // Run is the refresh loop; it blocks until ctx is cancelled. Each pass is
@@ -254,8 +250,8 @@ func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
 // This is the loop-breaker, and it has to cover BOTH claim queries, because
 // each is held off by a different column:
 //
-//   - the weekly rotation is held off by next_meta_refresh_at, pushed out by a
-//     jittered interval;
+//   - the weekly rotation is held off by next_meta_refresh_at, pushed out to
+//     the channel's own slot in the 7-day cycle;
 //   - the never-read backlog is held off by channels.resolved_at, stamped only
 //     if nothing else stamped it already.
 //
@@ -267,7 +263,7 @@ func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
 // The conditional stamp closes that path without ever overwriting a real
 // outcome.
 func (w *Worker) settle(channelID string) {
-	next := w.d.Now().Add(w.jitteredInterval()).UTC().Format(sqlTimeLayout)
+	next := w.nextRefreshAt(channelID)
 	if err := w.d.Refresher.Channels.MarkMetaRefreshed(channelID, next); err != nil {
 		w.d.Logger.Error("channel metadata: reschedule failed", "channel_id", channelID, "err", err)
 	}
@@ -277,28 +273,40 @@ func (w *Worker) settle(channelID string) {
 	}
 }
 
-// jitteredInterval returns refreshInterval plus a symmetric random jitter in
-// [-refreshJitter, +refreshJitter), clamped to at least an hour so no rounding
-// or configuration mistake can turn the rotation into a tight loop. Mirrors
-// the scan scheduler's jitteredInterval; the small duplication is deliberate,
-// since importing the scan package for fifteen lines would tie two unrelated
-// schedulers together.
-func (w *Worker) jitteredInterval() time.Duration {
-	return sched.JitteredInterval(refreshInterval, refreshJitter, time.Hour, w.rand)
+// nextRefreshAt is the worker's own slot lookup: it reads the channel's rank
+// among current subscriptions and returns the instant its next refresh belongs
+// on. A failed rank query falls back to a plain interval — losing the even
+// spacing for one cycle is cosmetic, whereas failing to reschedule would leave
+// the channel claimable on every poll.
+//
+// A channel with no subscriptions row (the never-resolved backlog is mostly
+// unsubscribed) ranks as 0-of-0, which sched.Slot answers with slot zero. That
+// costs nothing: MarkMetaRefreshed matches no row for it, so the value is
+// discarded — the backlog is held off by channels.resolved_at instead.
+func (w *Worker) nextRefreshAt(channelID string) string {
+	rank, count, err := w.d.Refresher.Channels.SubscriptionRank(channelID)
+	if err != nil {
+		w.d.Logger.Error("channel metadata: subscription rank failed", "channel_id", channelID, "err", err)
+		return w.d.Now().Add(refreshInterval).UTC().Format(sqlTimeLayout)
+	}
+	return NextRefreshAt(w.d.Now(), rank, count)
 }
 
-// NextRefreshAt returns the instant one ordinary refresh interval after now, in
-// the SQLite text form next_meta_refresh_at is stored in. Exported for the same
-// reason scan.NextScanAt is: the "skip this one" action on Up next pushes a
-// refresh out, and it should move by this package's cadence rather than by a
-// week restated in the HTTP layer.
+// NextRefreshAt returns the instant the channel ranked rank-of-count should
+// next be refreshed, in the SQLite text form next_meta_refresh_at is stored in.
 //
-// rand supplies the jitter; pass sched.PseudoRand()'s closure. The rotation
-// depends on that scatter — migration 0005 seeds it precisely so refreshes do
-// not converge into a weekly batch — so a skip must scatter too.
-func NextRefreshAt(now time.Time, rand func() float64) string {
-	d := sched.JitteredInterval(refreshInterval, refreshJitter, time.Hour, rand)
-	return now.Add(d).UTC().Format(sqlTimeLayout)
+// The weekly rotation is spread exactly like the daily scan and for exactly the
+// same reason — see scan.NextScanAt for the argument in full. Each subscription
+// owns a slot in the 7-day cycle (44 channels land 3.8 hours apart), and the
+// search starts half a cycle out so a refresh pulled forward cannot immediately
+// repeat. Migration 0005 scattered these rows once; a slot keeps them scattered
+// through the restarts and cookie expiries that used to re-gather them.
+//
+// The small duplication with the scan package stays deliberate: importing it
+// for twenty lines would tie two schedulers together that share only an idea.
+func NextRefreshAt(now time.Time, rank, count int) string {
+	slot := sched.Slot(rank, count, refreshInterval)
+	return sched.NextSlotAfter(now.Add(refreshInterval/2), refreshInterval, slot).Format(sqlTimeLayout)
 }
 
 // sleep waits d, returning false if ctx was cancelled first.

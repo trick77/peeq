@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -148,6 +149,23 @@ func nextMetaRefreshAt(t *testing.T, s *channels.Store, channelID string) string
 	return next.String
 }
 
+// assertRescheduled checks a channel left the due set and landed on a slot in
+// the coming cycle. The window is half an interval to one and a half, not "~7
+// days": a refresh is scheduled to the channel's own slot in the 7-day cycle,
+// and the search starts half a cycle out so a refresh pulled forward cannot
+// repeat immediately. What matters to every caller here is the same thing —
+// the channel is no longer claimable, and it is not parked past its cycle.
+func assertRescheduled(t *testing.T, s *channels.Store, channelID, whatHappened string) {
+	t.Helper()
+	// testClockNow + 3.5d and + 10.5d.
+	const earliest, latest = "2026-07-26 00:00:00", "2026-08-02 00:00:00"
+	next := nextMetaRefreshAt(t, s, channelID)
+	if next <= earliest || next > latest {
+		t.Fatalf("%s left next_meta_refresh_at = %q; want a slot inside (%s, %s]",
+			whatHappened, next, earliest, latest)
+	}
+}
+
 func TestWorker_refreshesADueChannelAndReschedulesIt(t *testing.T) {
 	s := newTestStore(t)
 	seedDue(t, s, "UCa")
@@ -171,10 +189,7 @@ func TestWorker_refreshesADueChannelAndReschedulesIt(t *testing.T) {
 	if !c.ResolveOk {
 		t.Fatal("a successful refresh did not set resolve_ok")
 	}
-	// Rescheduled roughly a week out (7d ± 12h), so it is no longer due.
-	if next := nextMetaRefreshAt(t, s, "UCa"); next < "2026-07-28" || next > "2026-07-30" {
-		t.Fatalf("next_meta_refresh_at = %q; want ~7 days out", next)
-	}
+	assertRescheduled(t, s, "UCa", "a successful refresh")
 }
 
 // TestWorker_failedRefreshIsStillRescheduled is the anti-hammering invariant:
@@ -190,9 +205,7 @@ func TestWorker_failedRefreshIsStillRescheduled(t *testing.T) {
 		t.Fatal("worker never attempted the due channel")
 	}
 
-	if next := nextMetaRefreshAt(t, s, "UCa"); next < "2026-07-28" || next > "2026-07-30" {
-		t.Fatalf("a failed refresh left next_meta_refresh_at = %q", next)
-	}
+	assertRescheduled(t, s, "UCa", "a failed refresh")
 	// The stored metadata survives a failed attempt; only the freshness claim
 	// changes.
 	c, err := s.Get("UCa")
@@ -244,9 +257,7 @@ func TestWorker_panicIsContainedAndRescheduled(t *testing.T) {
 		t.Fatal("worker never attempted the due channel")
 	}
 
-	if next := nextMetaRefreshAt(t, s, "UCa"); next < "2026-07-28" || next > "2026-07-30" {
-		t.Fatalf("a panicking refresh left next_meta_refresh_at = %q", next)
-	}
+	assertRescheduled(t, s, "UCa", "a panicking refresh")
 }
 
 // TestWorker_cookieGate: refreshing without a valid cookie only burns failed
@@ -787,5 +798,44 @@ func TestWorker_ordinaryFailureIsNotReportedAsAStall(t *testing.T) {
 	}
 	if got := rec.events[0].Summary; got != "metadata refresh failed" {
 		t.Fatalf("summary = %q, want %q — an ordinary failure was reported as a stall", got, "metadata refresh failed")
+	}
+}
+
+// TestWorker_spreadsTheFleetAcrossTheWeek is the metadata half of the anti-convoy
+// property: with N subscriptions, consecutive refreshes sit 7 days / N apart.
+// The worker settles each channel at the same frozen instant here — the shape a
+// backlog drain has, and the one that used to gather the whole fleet onto one
+// day — so this asserts the spread survives exactly the case that broke it.
+func TestWorker_spreadsTheFleetAcrossTheWeek(t *testing.T) {
+	s := newTestStore(t)
+	const fleet = 4
+	for i := 0; i < fleet; i++ {
+		seedDue(t, s, fmt.Sprintf("UC%d", i))
+	}
+	w := newTestWorker(t, s, &fakeResolver{}, Deps{})
+
+	for i := 0; i < fleet; i++ {
+		w.settle(fmt.Sprintf("UC%d", i))
+	}
+
+	// Compare positions in the 7-day cycle, not absolute instants: the cycle
+	// that moves a fleet onto its slots spans two weeks, which says nothing
+	// about the spacing.
+	const week = 7 * 24 * time.Hour
+	seen := map[time.Duration]bool{}
+	for i := 0; i < fleet; i++ {
+		id := fmt.Sprintf("UC%d", i)
+		at, err := time.ParseInLocation(sqlTimeLayout, nextMetaRefreshAt(t, s, id), time.UTC)
+		if err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		slot := time.Duration(at.Unix()%int64(week/time.Second)) * time.Second
+		if seen[slot] {
+			t.Fatalf("two channels share the slot %v — that is the convoy, not a spread", slot)
+		}
+		seen[slot] = true
+		if slot%(week/fleet) != 0 {
+			t.Fatalf("%s sits at %v, not a multiple of the %v slot width", id, slot, week/fleet)
+		}
 	}
 }
