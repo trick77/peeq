@@ -6,6 +6,10 @@
 // once buys nothing and risks a throttle. It is cookie-gated (no scanning
 // without a valid cookie) and spaces consecutive channel scans by at least
 // betweenChannels.
+//
+// Each subscription owns a slot in the 24-hour cycle, and every reschedule
+// targets that slot — see NextScanAt for why the schedule is anchored to the
+// cycle rather than to when the previous scan finished.
 package scan
 
 import (
@@ -28,12 +32,19 @@ import (
 
 const (
 	scanInterval    = 24 * time.Hour
-	scanJitter      = 3 * time.Hour
 	betweenChannels = 60 * time.Second
 	defaultListSize = 50
 	scanBackoff     = time.Hour
-	autoPriority    = 0                     // below manual (10), matching Phase 1
-	sqlTimeLayout   = "2006-01-02 15:04:05" // SQLite datetime('now') text form (UTC)
+	// scanBackoffJitter scatters the retry after a failed scan. The retry
+	// itself is a fixed hour, but a failure that hits every channel at once
+	// (an expired cookie is the common one) would otherwise re-queue the whole
+	// fleet on the same instant and drain it back-to-back an hour later — the
+	// convoy the slot schedule below exists to prevent, rebuilt by the error
+	// path. Small next to the hour it scatters: this is a retry, not a place
+	// to re-spread the fleet, which the next successful scan does anyway.
+	scanBackoffJitter = 15 * time.Minute
+	autoPriority      = 0                     // below manual (10), matching Phase 1
+	sqlTimeLayout     = "2006-01-02 15:04:05" // SQLite datetime('now') text form (UTC)
 	// pendingThumbPrefetchTimeout bounds the whole best-effort thumbnail
 	// prefetch (across its retries and the hqdefault fallback), so a detached
 	// prefetch goroutine can never linger indefinitely.
@@ -422,10 +433,16 @@ func (s *Scheduler) channelName(channelID string) string {
 	return channelID
 }
 
-// backoff pushes a subscription's next_scan_at out by scanBackoff, leaving
-// baselined_at and last_scanned_at untouched.
+// backoff pushes a subscription's next_scan_at out by roughly scanBackoff,
+// leaving baselined_at and last_scanned_at untouched.
+//
+// Roughly, not exactly: the retry is scattered by scanBackoffJitter so a fleet
+// that failed together does not come back together. It deliberately does NOT go
+// to the channel's slot — a failure should be retried in an hour, not tomorrow —
+// and the scan that finally succeeds is what puts the channel back on its slot.
 func (s *Scheduler) backoff(channelID string) {
-	next := s.d.Now().Add(scanBackoff).UTC().Format(sqlTimeLayout)
+	d := sched.JitteredInterval(scanBackoff, scanBackoffJitter, time.Minute, s.rand)
+	next := s.d.Now().Add(d).UTC().Format(sqlTimeLayout)
 	if err := s.d.Channels.Backoff(channelID, next); err != nil {
 		s.d.Logger.Error("scan: backoff failed", "channel", channelID, "err", err)
 	}
@@ -738,7 +755,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 			go s.prefetchPendingThumbnail(entry.VideoID, entry.ThumbnailURL)
 		}
 	}
-	next := s.d.Now().Add(s.jitteredInterval()).UTC().Format(sqlTimeLayout)
+	next := s.nextScanAt(sub.ChannelID)
 	lastScanned := s.d.Now().UTC().Format(sqlTimeLayout)
 	if err := s.d.Channels.MarkScanned(sub.ChannelID, baseline, lastScanned, next, sub.ScanRequestedAt); err != nil {
 		return err
@@ -1058,25 +1075,47 @@ func (s *Scheduler) enqueueAuto(e ytdlp.ChannelEntry, sub *channels.Subscription
 	return nil
 }
 
-// jitteredInterval returns the base scan interval plus a symmetric random
-// jitter in [-scanJitter, +scanJitter], clamped to at least one hour so a
-// pathological rand value can never schedule a near-immediate re-scan.
-func (s *Scheduler) jitteredInterval() time.Duration {
-	return sched.JitteredInterval(scanInterval, scanJitter, time.Hour, s.rand)
+// nextScanAt is the scheduler's own slot lookup: it reads the channel's rank
+// among current subscriptions and returns the instant its next scan belongs on.
+//
+// A failed rank query falls back to a plain interval rather than propagating.
+// Losing the even spacing for one cycle is a cosmetic problem; failing to
+// reschedule at all would leave next_scan_at in the past and the loop would
+// re-claim that channel on every pass, hammering YouTube.
+func (s *Scheduler) nextScanAt(channelID string) string {
+	rank, count, err := s.d.Channels.SubscriptionRank(channelID)
+	if err != nil {
+		s.d.Logger.Error("scan: subscription rank failed", "channel", channelID, "err", err)
+		return s.d.Now().Add(scanInterval).UTC().Format(sqlTimeLayout)
+	}
+	return NextScanAt(s.d.Now(), rank, count)
 }
 
-// NextScanAt returns the instant one ordinary scan interval after now, in the
-// SQLite text form next_scan_at is stored in. Exported so a caller that pushes
-// a channel's scan out — the "skip this one" action on Up next — reschedules by
-// the same cadence the scheduler itself uses, instead of restating 24 hours
-// somewhere the constant above would never be checked against.
+// NextScanAt returns the instant the channel ranked rank-of-count should next
+// be scanned, in the SQLite text form next_scan_at is stored in.
 //
-// rand supplies the jitter; pass sched.PseudoRand()'s closure. Every scheduled
-// scan is scattered this way, and a skip is no exception: landing skips on an
-// exact interval would gather everything skipped in one sitting into a convoy.
-func NextScanAt(now time.Time, rand func() float64) string {
-	d := sched.JitteredInterval(scanInterval, scanJitter, time.Hour, rand)
-	return now.Add(d).UTC().Format(sqlTimeLayout)
+// Each subscription owns one slot in the 24-hour cycle — rank * 24h / count, so
+// 44 channels sit 32.7 minutes apart — and every reschedule targets that slot
+// rather than "one interval after this scan happened to finish". That
+// distinction is the whole fix: a completion-anchored schedule has no way back
+// once a cookie expiry or a restart makes the whole fleet due at once and it
+// drains back-to-back, because each channel then re-anchors to the burst. A
+// slot is a fixed point the fleet returns to on its own, one cycle later.
+//
+// The half-interval floor is the trap this has to avoid. A channel scanned
+// early out of a backlog can be sitting minutes BEFORE its own slot instant,
+// and the next occurrence after now would then be a re-scan within the hour.
+// Starting the search half a cycle out makes that impossible; the cost is that
+// a scan lands anywhere in 12–36h while a channel is moving onto its slot. Once
+// there, it is exactly 24h, every day, forever.
+//
+// Exported so the "skip this one" action on Up next reschedules onto the same
+// grid the scheduler uses. A skip anchored on the occurrence being skipped
+// therefore lands exactly one cycle later, keeping the channel on its slot no
+// matter how often it is skipped.
+func NextScanAt(now time.Time, rank, count int) string {
+	slot := sched.Slot(rank, count, scanInterval)
+	return sched.NextSlotAfter(now.Add(scanInterval/2), scanInterval, slot).Format(sqlTimeLayout)
 }
 
 // sleep waits d unless ctx is cancelled first. It returns false if ctx was

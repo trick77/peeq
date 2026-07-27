@@ -290,15 +290,19 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 	}
 }
 
-// TestMigrate_spreadsMetadataRefreshAcrossTheWeek guards 0005's backfill, which
-// is the entire anti-batch mechanism. A DB that already has subscriptions gets
-// them all seeded at once, and if they were all seeded to the SAME time they
-// would refresh together, come due together a week later, and stay a convoy
-// forever — a weekly stampede of yt-dlp calls on whatever day the migration ran.
+// TestMigrate_spreadsMetadataRefreshAcrossTheWeek guards the backfills that are
+// the entire anti-batch mechanism: 0005 introduced next_meta_refresh_at with a
+// random spread, and 0016 moves both schedules onto their computed slots. A DB
+// that already has subscriptions gets them all seeded at once, and if they were
+// all seeded to the SAME time they would run together, come due together an
+// interval later, and stay a convoy forever — a stampede of yt-dlp calls on
+// whatever day the migration happened to run.
 //
-// The assertion is on the SPREAD, not merely on non-null: a plain
+// The assertions are on the SPREAD, not merely on non-null: a plain
 // datetime('now','+7 days') backfill would pass a null check and still be the
-// bug this test exists to catch.
+// bug this test exists to catch. Since 0016 the spread is exact rather than
+// random, so this asserts the precise spacing — a convoy could no longer hide
+// inside a "scattered enough" tolerance.
 func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "spread.db"))
 	if err != nil {
@@ -344,23 +348,109 @@ func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	// Then: every subscription has a due time, all of them inside the coming
-	// week, and they are genuinely scattered rather than stacked on one moment.
-	var seeded, inWindow, distinctDays int
+	// Then: both schedules are seeded, each inside its own cycle, and spaced
+	// exactly evenly. The windows are half an interval to one-and-a-half, which
+	// is what the half-interval floor in 0016 costs on the one cycle that moves
+	// a fleet onto its slots; every cycle after that is exact.
+	for _, c := range []struct {
+		column  string
+		window  string // SQLite modifiers bounding the seeded instant
+		upper   string
+		spacing int // seconds between neighbours
+	}{
+		{"next_scan_at", "+12 hours", "+36 hours", 86400 / channelCount},
+		{"next_meta_refresh_at", "+3.5 days", "+10.5 days", 604800 / channelCount},
+	} {
+		var seeded, inWindow int
+		if err := db.QueryRow(`
+SELECT COUNT(`+c.column+`),
+       SUM(`+c.column+` BETWEEN datetime('now', '`+c.window+`') AND datetime('now', '`+c.upper+`'))
+FROM subscriptions`).Scan(&seeded, &inWindow); err != nil {
+			t.Fatalf("read back %s: %v", c.column, err)
+		}
+		if seeded != channelCount || inWindow != channelCount {
+			t.Fatalf("%s: seeded = %d, inside the cycle = %d; want %d for both", c.column, seeded, inWindow, channelCount)
+		}
+
+		// The spread itself: consecutive due times must sit exactly one slot
+		// apart. A convoy — the bug — collapses these gaps to zero.
+		var minGap, maxGap int
+		if err := db.QueryRow(`
+WITH ordered AS (
+    SELECT strftime('%s', `+c.column+`) AS t,
+           LAG(strftime('%s', `+c.column+`)) OVER (ORDER BY `+c.column+`) AS prev
+      FROM subscriptions
+)
+SELECT MIN(t - prev), MAX(t - prev) FROM ordered WHERE prev IS NOT NULL`).Scan(&minGap, &maxGap); err != nil {
+			t.Fatalf("gaps for %s: %v", c.column, err)
+		}
+		// A second of slack: integer division only divides evenly when the
+		// fleet size divides the cycle — 40 does, production's 44 does not,
+		// and there consecutive gaps alternate by a second. That is not the
+		// bug this guards; a collapsed gap is.
+		if minGap < c.spacing-1 || maxGap > c.spacing+1 {
+			t.Fatalf("%s gaps between %ds and %ds; want every neighbour ~%ds apart",
+				c.column, minGap, maxGap, c.spacing)
+		}
+	}
+}
+
+// TestMigrate_slotBackfillLeavesAPendingScanRequestAlone: 0016 spreads the fleet
+// across the cycle, but a channel with an outstanding "Check now" is waiting on
+// a next_scan_at already in the past, and moving it 12–36h out would silently
+// drop the user's request while Activity still showed it as pending. That is not
+// a narrow race: Migrate runs before the workers, and the way a request survives
+// to migration time is exactly this PR's outage — cookie expires, scheduler is
+// gated, user clicks Check now, cookie is fixed, container is redeployed.
+//
+// The metadata half is spread for those rows all the same; a pending scan
+// request says nothing about the weekly rotation.
+func TestMigrate_slotBackfillLeavesAPendingScanRequestAlone(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "pending.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	applyThrough(t, db, "0015_reclassify_hints.sql")
+
+	// Given: two subscriptions overdue for a scan, one of them requested by hand.
+	for _, id := range []string{"UCa", "UCb"} {
+		if _, err := db.Exec(`INSERT INTO channels (id, name, added_at) VALUES (?, ?, datetime('now'))`, id, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(
+			`INSERT INTO subscriptions (channel_id, next_scan_at) VALUES (?, '2020-01-01 00:00:00')`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(
+		`UPDATE subscriptions SET scan_requested_at = '2020-01-01 00:00:00' WHERE channel_id = 'UCa'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: peeq starts and migrates.
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Then: the requested channel is still due, the other one is on its slot,
+	// and both got a metadata slot.
+	var requested, ordinary, metas int
 	if err := db.QueryRow(`
-SELECT COUNT(next_meta_refresh_at),
-       SUM(next_meta_refresh_at BETWEEN datetime('now', '-1 minute') AND datetime('now', '+7 days')),
-       COUNT(DISTINCT date(next_meta_refresh_at))
-FROM subscriptions`).Scan(&seeded, &inWindow, &distinctDays); err != nil {
+SELECT SUM(channel_id = 'UCa' AND next_scan_at = '2020-01-01 00:00:00'),
+       SUM(channel_id = 'UCb' AND next_scan_at > datetime('now')),
+       COUNT(next_meta_refresh_at)
+FROM subscriptions`).Scan(&requested, &ordinary, &metas); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	if seeded != channelCount || inWindow != channelCount {
-		t.Fatalf("seeded = %d, inside the week = %d; want %d for both", seeded, inWindow, channelCount)
+	if requested != 1 {
+		t.Fatal("the backfill moved a channel with a pending Check now; its request is now 12-36h away")
 	}
-	// 40 uniformly random points across 8 calendar days landing on fewer than 5
-	// distinct days is not a spread; it is a convoy.
-	if distinctDays < 5 {
-		t.Fatalf("refreshes land on only %d distinct days; the backfill is not spreading them", distinctDays)
+	if ordinary != 1 {
+		t.Fatal("the backfill left an ordinary overdue subscription un-slotted")
+	}
+	if metas != 2 {
+		t.Fatalf("next_meta_refresh_at seeded on %d rows, want both — the scan guard must not skip the metadata half", metas)
 	}
 }
 
