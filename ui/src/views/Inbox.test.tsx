@@ -99,7 +99,7 @@ describe("Inbox", () => {
   it("falls back to channel_id when channel_name is empty", async () => {
     vi.mocked(listPending).mockResolvedValue([baseItem({ channel_name: "" })]);
     render(<Inbox />);
-    // One channel → no chips row; the id shows on the card byline.
+    // Scope to the card byline (the chip row also shows the fallback id now).
     const card = (await screen.findByText("First pending video")).closest(
       ".card",
     ) as HTMLElement;
@@ -389,6 +389,18 @@ describe("Inbox", () => {
 
     expect(screen.getByText("Second pending video")).toBeInTheDocument();
     expect(screen.queryByText("First pending video")).not.toBeInTheDocument();
+  });
+
+  it("shows the channel pills even with a single channel", async () => {
+    vi.mocked(listPending).mockResolvedValue([itemA]);
+    render(<Inbox />);
+    await screen.findByText("First pending video");
+    expect(
+      screen.getByRole("button", { name: /All channels\s*1/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Channel One\s*1/ }),
+    ).toBeInTheDocument();
   });
 
   it("scopes the channel chip counts to the search, like the Library", async () => {
