@@ -154,17 +154,21 @@ export function ArchiveTab({
 
       {error ? <div className="errline">{error}</div> : null}
 
-      <div className="grid">
-        {videos.map((v) => (
-          <VideoCard
-            key={v.id}
-            video={v}
-            retentionDays={retentionDays}
-            onOpen={onOpenVideo}
-            onToggleFavorite={handleToggleFavorite}
-            onToggleWatched={handleToggleWatched}
-          />
-        ))}
+      {/* .gridwrap is the size-query container — see the note in Library.tsx
+          for why it is a wrapper and not .page. */}
+      <div className="gridwrap">
+        <div className="grid">
+          {videos.map((v) => (
+            <VideoCard
+              key={v.id}
+              video={v}
+              retentionDays={retentionDays}
+              onOpen={onOpenVideo}
+              onToggleFavorite={handleToggleFavorite}
+              onToggleWatched={handleToggleWatched}
+            />
+          ))}
+        </div>
       </div>
       {videos.length === 0 && !error ? (
         <p style={{ color: "var(--color-faint)" }}>

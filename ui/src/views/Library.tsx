@@ -463,7 +463,15 @@ export function Library({
         </div>
       </PillStrip>
       {error ? <div className="errline">{error}</div> : null}
-      <div className="grid">{visible.map(renderCard)}</div>
+      {/* .gridwrap is the size-query container the grid steps its column count
+          off (see .gridwrap/.grid in index.css). It has to be a wrapper rather
+          than .page: container-type implies contain: layout, which would make
+          the element a containing block for fixed-position descendants, and
+          ConfirmDialog's .modal-overlay renders inside the view rather than
+          through a portal — it would stop covering the viewport. */}
+      <div className="gridwrap">
+        <div className="grid">{visible.map(renderCard)}</div>
+      </div>
       {visible.length === 0 && !error ? (
         <p style={{ color: "var(--color-faint)" }}>{emptyMessage(filter)}</p>
       ) : null}

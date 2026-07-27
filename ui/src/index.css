@@ -1211,21 +1211,46 @@ button.srow:not(:disabled):hover {
 }
 
 /* Up to three cards across, growing to fill the width rather than auto-filling
-   more fixed-width columns; steps down to 2 then 1 at the app's shared
-   breakpoints so cards never get cramped on narrow screens. */
+   more fixed-width columns; steps down to 2 then 1 so cards never get cramped.
+   Two things make that hold that a plain `repeat(3, 1fr)` + viewport media
+   queries did not.
+
+   `minmax(0, 1fr)`, not `1fr`. A bare `1fr` is `minmax(auto, 1fr)`, and that
+   `auto` floor is the item's min-content width — which for a video card is set
+   by `.card.video-card .by`, a `white-space: nowrap` row. So each column grew
+   to fit its OWN byline: three columns measured 313/251/294px on an iPad,
+   giving three different thumbnail sizes in one row and titles that started at
+   three different heights, and once the bylines outgrew the space the grid
+   overflowed the page instead of stepping down. Clamping the floor to 0 makes
+   the tracks genuinely equal and lets them shrink, so the thumbnails are always
+   identical and the rows always line up.
+
+   @container, not @media. The grid never gets the viewport — the 248px rail
+   and .page's 34px padding take 316px of it before the grid sees a pixel — so
+   viewport breakpoints step down at the wrong moment: at a 1194px viewport the
+   old `max-width: 1040px` rule did not fire, and three cards fought over 878px.
+   Querying .gridwrap asks the only question that matters, how much room the
+   grid actually has, and keeps working if the rail's width ever changes.
+
+   The thresholds are the widths at which the next step down stops being an
+   improvement: 940px is 3 × 300 + 2 gaps, 620px is 2 × 300 + 1 gap. */
+.gridwrap {
+  container-type: inline-size;
+  container-name: gridwrap;
+}
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 22px 20px;
 }
-@media (max-width: 1040px) {
+@container gridwrap (max-width: 939px) {
   .grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
-@media (max-width: 620px) {
+@container gridwrap (max-width: 619px) {
   .grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1239,6 +1264,11 @@ button.srow:not(:disabled):hover {
   text-align: left;
   color: inherit;
   cursor: pointer;
+  /* The grid track is clamped with minmax(0, 1fr), so the card has to be
+     willing to shrink below its own min-content width or it just overflows the
+     track it was supposed to fit — the nowrap byline would push straight back
+     out through the column it no longer sizes. */
+  min-width: 0;
 }
 /* `.card` is also the Player/Share panel (border + panel fill + clip, further
    down this file), and that rule comes later, so a video card was inheriting a
@@ -1576,6 +1606,10 @@ button.srow:not(:disabled):hover {
   white-space: nowrap;
   min-width: 0;
   margin-bottom: 4px;
+  /* The channel name ellipsizes first (it is the only shrinkable item below),
+     but on the narrowest card even the fixed dates can outrun the width. Clip
+     there rather than let the row spill past the thumbnail's edge. */
+  overflow: hidden;
 }
 /* Only the channel name is set in caps; the date stays sentence case. The name
    is also the only part allowed to shrink — the dot and date keep their width
