@@ -220,7 +220,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 // bounded to roughly one attempt per hour rather than being re-claimed every
 // betweenChannels forever.
 func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription) {
-	// requested = a user pressed "Check now" and is owed an answer for THIS pass.
+	// requested = a user pressed "Scan now" and is owed an answer for THIS pass.
 	// Read once, up front: the row is rewritten below (MarkScanned clears the
 	// marker), so consulting it again later would report the wrong thing.
 	requested := sub.ScanRequestedAt != ""
@@ -384,7 +384,7 @@ func (s *Scheduler) recordActivity(e activity.Event) {
 // NOT come here — a pause is not a failure, and staleUnsubscribe records its own
 // warn — so a failure row always means "this channel's scan actually broke".
 //
-// requested only changes the wording: a user who pressed "Check now" is reading
+// requested only changes the wording: a user who pressed "Scan now" is reading
 // the answer to their click, so the row says "check failed" rather than naming a
 // background scan they never asked about.
 func (s *Scheduler) recordScanFail(channelID string, requested bool, reason string) {

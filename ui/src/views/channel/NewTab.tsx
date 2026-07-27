@@ -4,7 +4,7 @@ import { Icon } from "../../icons";
 import { listPending, downloadPending, ignorePending } from "../../api/pending";
 import { scanChannel } from "../../api/channels";
 import { formatAgo, formatDuration } from "../../format";
-import { isCheckQueued, scanNotice, scheduleLine } from "./schedule";
+import { isScanQueued, scanNotice, scheduleLine } from "./schedule";
 import type { ChannelDetail, PendingItem } from "../../api/types";
 import { DOT } from "../../sep";
 
@@ -77,8 +77,8 @@ export function NewTab({
   // Disabling would leave the user staring at "Queued" forever with no way to
   // find out why; pressing again is idempotent on the server and surfaces the
   // blocked reason that explains it.
-  const queued = isCheckQueued(detail);
-  const checkNow = (
+  const queued = isScanQueued(detail);
+  const scanNow = (
     <Button
       type="button"
       variant="secondary"
@@ -86,11 +86,11 @@ export function NewTab({
       onClick={handleScan}
       title={
         queued
-          ? "Waiting for the next scan pass — press to check again"
+          ? "Waiting for the next scan pass — press to scan again"
           : undefined
       }
     >
-      <Icon name="clock" size="16px" /> {queued ? "Queued" : "Check now"}
+      <Icon name="clock" size="16px" /> {queued ? "Queued" : "Scan now"}
     </Button>
   );
 
@@ -105,10 +105,10 @@ export function NewTab({
           <div className="sub">{scheduleLine(detail)}</div>
           <div style={{ marginTop: 14 }}>
             {detail.subscribed ? (
-              checkNow
+              scanNow
             ) : (
               <span className="hint">
-                Subscribe to this channel to check for new videos.
+                Subscribe to this channel to scan for new videos.
               </span>
             )}
           </div>
@@ -126,7 +126,7 @@ export function NewTab({
             </span>
             {detail.subscribed ? (
               <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                {checkNow}
+                {scanNow}
               </span>
             ) : null}
           </div>

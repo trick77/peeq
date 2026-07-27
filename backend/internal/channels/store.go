@@ -51,7 +51,7 @@ type Subscription struct {
 	LastScannedAt  string
 	NextScanAt     string
 	CreatedAt      string
-	// ScanRequestedAt is set while a user-pressed "Check now" is still waiting
+	// ScanRequestedAt is set while a user-pressed "Scan now" is still waiting
 	// for the scan loop to reach this channel, and "" for an ordinary automatic
 	// scan. The scanner reads it to decide whether the pass owes the user a
 	// receipt even when it found nothing new — see migration 0009.
@@ -718,7 +718,7 @@ func (s *Store) NameFromVideos(channelID string) (name string, found bool, err e
 // the marker are only written when the column STILL holds that value — a
 // compare-and-set, not a blind overwrite.
 //
-// That guard exists for a specific race: a user can press "Check now" while a
+// That guard exists for a specific race: a user can press "Scan now" while a
 // scan of the same channel is already running. Clearing unconditionally would
 // consume their request (no receipt is owed, since this pass never saw it) AND
 // push next_scan_at a day out, silently swallowing the click — reproducing the
@@ -766,7 +766,7 @@ func (s *Store) Backoff(channelID, nextScanAt string) error {
 	return nil
 }
 
-// RequestScan is "Check now": it pulls next_scan_at into the past so the scan
+// RequestScan is "Scan now": it pulls next_scan_at into the past so the scan
 // loop claims this channel on its next poll, and marks the channel as having
 // someone waiting on the result. It is deliberately not Backoff — that name (and
 // its "push the schedule out" contract) says the opposite of what this does, even

@@ -84,7 +84,7 @@ export function formatStamp(stored: string | undefined): string {
 //
 // last_scanned_at is absent for an added-but-unsubscribed channel, whose
 // subscriptions row is DELETED on unsubscribe, so there is no scan schedule and
-// no stamp to show; that segment simply drops out. "Never checked" is not said
+// no stamp to show; that segment simply drops out. "Never scanned" is not said
 // here — scheduleLine on the New and Settings tabs is where a channel's
 // schedule is spelled out in full.
 //
@@ -189,7 +189,7 @@ export function Channel({
   onBack: () => void;
   /**
    * Newest activity events pushed over SSE, the same stream the Activity page
-   * reads. The channel page needs them because "Check now" is asynchronous: the
+   * reads. The channel page needs them because "Scan now" is asynchronous: the
    * scan happens up to a minute later on the scan loop, and without a signal the
    * button would sit at "Queued" until the user reloaded by hand. A scan event
    * for this channel is exactly that signal.
@@ -260,7 +260,7 @@ export function Channel({
   const handledScanID = useRef(0);
 
   // Refetch when a scan for THIS channel lands, so last_scanned_at and
-  // next_scan_at move on their own and the Check now button leaves its "Queued"
+  // next_scan_at move on their own and the Scan now button leaves its "Queued"
   // state without a reload. Filtered by subject id — another channel's scan says
   // nothing about this page.
   useEffect(() => {

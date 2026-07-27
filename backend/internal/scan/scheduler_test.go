@@ -1628,7 +1628,7 @@ func TestScan_autodownloadDoesNotSeedVideoPublishedAt(t *testing.T) {
 }
 
 // requestScan marks the subscription as having a user waiting on it, exactly as
-// the "Check now" endpoint does, and leaves next_scan_at due.
+// the "Scan now" endpoint does, and leaves next_scan_at due.
 func (h *scanHarness) requestScan(ucid string) {
 	h.t.Helper()
 	if err := h.channels.RequestScan(ucid, h.nowStr()); err != nil {
@@ -1650,7 +1650,7 @@ func (h *scanHarness) scanRequestedAt(ucid string) string {
 }
 
 func TestScan_requestedScan_reportsNothingNew(t *testing.T) {
-	// The bug this fixes: a user pressed "Check now", the pass found nothing, and
+	// The bug this fixes: a user pressed "Scan now", the pass found nothing, and
 	// the silence rule left them with no evidence the check ever happened.
 	h := newScanHarness(t)
 	h.addAndSubscribe("UC1", false, "")

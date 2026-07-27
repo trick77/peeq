@@ -118,7 +118,7 @@ function compareChannels(a: Channel, b: Channel, sort: ChannelSort): number {
 // Channels — added/subscribed channel management: a search + sort bar, filter
 // chips, and one row per channel showing its banner-and-avatar art, its counts,
 // an auto-add marker when autodownload is on, a clickable subscription star,
-// and a ⋮ actions menu (Open, Check now, Delete).
+// and a ⋮ actions menu (Open, Scan now, Delete).
 // Adding a channel lives on the Add page; auto-add and the format override live
 // on the channel's own Settings tab, not here. Mirrors Library's toolbar/chip
 // pattern for visual consistency.
@@ -140,7 +140,7 @@ export function Channels({
   const [sort, setSort] = useState<ChannelSort>("name");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [error, setError] = useState<string | null>(null);
-  // notice carries the outcome of the ⋮ menu's "Check now" — an inline banner
+  // notice carries the outcome of the ⋮ menu's "Scan now" — an inline banner
   // under the chips, matching the channel tabs' own scan feedback. There is no
   // shared toast component in the app.
   const [notice, setNotice] = useState<string | null>(null);
@@ -186,7 +186,7 @@ export function Channels({
   }
 
   useEffect(() => {
-    // Drop any "Check now" notice: it reports on one row the user clicked, and
+    // Drop any "Scan now" notice: it reports on one row the user clicked, and
     // that row may not even be in the list the new chip is about to show.
     setNotice(null);
     load(filter);
@@ -256,8 +256,8 @@ export function Channels({
     }
   }
 
-  // handleScan is the ⋮ menu's "Check now" — the same action the channel's own
-  // New and Settings tabs offer, so a check no longer means opening the channel
+  // handleScan is the ⋮ menu's "Scan now" — the same action the channel's own
+  // New and Settings tabs offer, so a scan no longer means opening the channel
   // first. Wording is kept identical to those two on purpose: three surfaces
   // reporting the same backend outcome must not describe it differently.
   async function handleScan(c: Channel) {
@@ -293,8 +293,8 @@ export function Channels({
       // The counts and the review band read the unfiltered list, so a deleted
       // channel has to leave that one too or every chip stays one too high.
       setAllChannels((prev) => prev.filter((x) => x.id !== c.id));
-      // A "Check now" notice may be reporting on the row that just vanished;
-      // leaving it up promises a check for a channel that no longer exists.
+      // A "Scan now" notice may be reporting on the row that just vanished;
+      // leaving it up promises a scan for a channel that no longer exists.
       setNotice(null);
       setPendingDelete(null);
     } catch (err) {
@@ -534,11 +534,11 @@ export function Channels({
                     : []),
                   // Subscribed channels only: the endpoint answers 400
                   // "channel is not subscribed" otherwise, which is why the
-                  // channel page hides its own Check now the same way.
+                  // channel page hides its own Scan now the same way.
                   ...(c.subscribed
                     ? [
                         {
-                          label: "Check now",
+                          label: "Scan now",
                           icon: "clock" as const,
                           onClick: () => handleScan(c),
                         },

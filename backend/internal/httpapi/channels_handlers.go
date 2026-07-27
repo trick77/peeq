@@ -831,7 +831,7 @@ func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
 		if status := s.settings.CookieStatus(r.Context()); status != "valid" && !s.allowAnonymous {
 			writeJSON(w, map[string]string{
 				"status": "blocked",
-				"reason": "Your YouTube cookie needs refreshing before peeq can check this channel.",
+				"reason": "Your YouTube cookie needs refreshing before peeq can scan this channel.",
 			})
 			return
 		}

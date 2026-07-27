@@ -40,7 +40,7 @@ import (
 // guard's only effect would be to make undo fail silently in exactly the case
 // it is needed, when a scheduler pass has moved the column while the undo
 // affordance was on screen. A client-supplied instant can only shift when peeq
-// looks at a channel the user is already subscribed to, which "Check now" and
+// looks at a channel the user is already subscribed to, which "Scan now" and
 // skipping twice can do anyway.
 
 // skipTimeLayout is the SQLite datetime text form the schedule columns are
@@ -136,7 +136,7 @@ func (s *server) handleChannelSkipScan(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "skip scan failed")
 		return
 	}
-	// Clear any outstanding "Check now" marker. A user who asked for a scan and
+	// Clear any outstanding "Scan now" marker. A user who asked for a scan and
 	// then skipped the row it produced is no longer waiting for it, and leaving
 	// the marker set would make some later automatic pass announce itself on
 	// Activity as the answer to a request that was called off.

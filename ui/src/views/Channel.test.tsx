@@ -102,7 +102,7 @@ function archiveVideo(overrides: Partial<Video> = {}): Video {
 
 // sqlUTC formats an instant the way the backend stores one ("2026-07-25
 // 06:11:14", UTC, no zone suffix). next_scan_at has to be RELATIVE to now: the
-// UI derives "check queued" from whether that instant has passed, so a hardcoded
+// UI derives "scan queued" from whether that instant has passed, so a hardcoded
 // date would silently flip the default state the moment it went stale.
 function sqlUTC(offsetMs: number): string {
   return new Date(Date.now() + offsetMs)
@@ -236,7 +236,7 @@ describe("Channel", () => {
     });
   });
 
-  it("the New tab's empty state says when the next check is due", async () => {
+  it("the New tab's empty state says when the next scan is due", async () => {
     const user = userEvent.setup();
     vi.mocked(listPending).mockResolvedValue([]);
     render(
@@ -248,7 +248,7 @@ describe("Channel", () => {
 
     expect(await screen.findByText(/nothing new/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /check now/i }),
+      screen.getByRole("button", { name: /scan now/i }),
     ).toBeInTheDocument();
   });
 
@@ -257,7 +257,7 @@ describe("Channel", () => {
     vi.mocked(scanChannel).mockResolvedValue({
       status: "blocked",
       reason:
-        "Your YouTube cookie needs refreshing before peeq can check this channel.",
+        "Your YouTube cookie needs refreshing before peeq can scan this channel.",
     });
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
@@ -265,14 +265,14 @@ describe("Channel", () => {
     await screen.findByText("Uncanny Expeditions");
     await user.click(screen.getByRole("tab", { name: /new/i }));
 
-    await user.click(await screen.findByRole("button", { name: /check now/i }));
+    await user.click(await screen.findByRole("button", { name: /scan now/i }));
 
     expect(
       await screen.findByText(/cookie needs refreshing/i),
     ).toBeInTheDocument();
   });
 
-  it("the New tab reports 'Never checked' when the channel has no last_scanned_at", async () => {
+  it("the New tab reports 'Never scanned' when the channel has no last_scanned_at", async () => {
     const user = userEvent.setup();
     vi.mocked(getChannel).mockResolvedValue(
       detail({ last_scanned_at: undefined }),
@@ -285,7 +285,7 @@ describe("Channel", () => {
 
     await user.click(screen.getByRole("tab", { name: /new/i }));
 
-    expect(await screen.findByText(/never checked/i)).toBeInTheDocument();
+    expect(await screen.findByText(/never scanned/i)).toBeInTheDocument();
   });
 
   it("shows an error when loading the New tab's pending list fails", async () => {
@@ -308,7 +308,7 @@ describe("Channel", () => {
   it("shows an error when the New tab's scan request itself fails", async () => {
     const user = userEvent.setup();
     vi.mocked(scanChannel).mockRejectedValue(
-      new Error("failed to schedule a check"),
+      new Error("failed to schedule a scan"),
     );
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
@@ -316,10 +316,10 @@ describe("Channel", () => {
     await screen.findByText("Uncanny Expeditions");
     await user.click(screen.getByRole("tab", { name: /new/i }));
 
-    await user.click(await screen.findByRole("button", { name: /check now/i }));
+    await user.click(await screen.findByRole("button", { name: /scan now/i }));
 
     expect(
-      await screen.findByText("failed to schedule a check"),
+      await screen.findByText("failed to schedule a scan"),
     ).toBeInTheDocument();
   });
 
@@ -405,7 +405,7 @@ describe("Channel", () => {
     });
   });
 
-  it("the Settings tab's Check now button is disabled while the scan request is in flight", async () => {
+  it("the Settings tab's Scan now button is disabled while the scan request is in flight", async () => {
     const user = userEvent.setup();
     let resolveScan: (v: { status: "scheduled" }) => void;
     vi.mocked(scanChannel).mockReturnValue(
@@ -421,7 +421,7 @@ describe("Channel", () => {
     await user.click(screen.getByRole("tab", { name: /settings/i }));
 
     const checkNowButton = await screen.findByRole("button", {
-      name: /check now/i,
+      name: /scan now/i,
     });
 
     await user.click(checkNowButton);
@@ -828,7 +828,7 @@ describe("Channel", () => {
     vi.mocked(scanChannel).mockResolvedValue({
       status: "blocked",
       reason:
-        "Your YouTube cookie needs refreshing before peeq can check this channel.",
+        "Your YouTube cookie needs refreshing before peeq can scan this channel.",
     });
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
@@ -836,7 +836,7 @@ describe("Channel", () => {
     await screen.findByText("Uncanny Expeditions");
     await user.click(screen.getByRole("tab", { name: /settings/i }));
 
-    await user.click(await screen.findByRole("button", { name: /check now/i }));
+    await user.click(await screen.findByRole("button", { name: /scan now/i }));
 
     expect(
       await screen.findByText(/cookie needs refreshing/i),
@@ -846,7 +846,7 @@ describe("Channel", () => {
   it("a scan failure on the Settings tab shows the error", async () => {
     const user = userEvent.setup();
     vi.mocked(scanChannel).mockRejectedValue(
-      new Error("failed to schedule a check"),
+      new Error("failed to schedule a scan"),
     );
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
@@ -854,10 +854,10 @@ describe("Channel", () => {
     await screen.findByText("Uncanny Expeditions");
     await user.click(screen.getByRole("tab", { name: /settings/i }));
 
-    await user.click(await screen.findByRole("button", { name: /check now/i }));
+    await user.click(await screen.findByRole("button", { name: /scan now/i }));
 
     expect(
-      await screen.findByText("failed to schedule a check"),
+      await screen.findByText("failed to schedule a scan"),
     ).toBeInTheDocument();
   });
 
@@ -1043,18 +1043,18 @@ describe("Channel", () => {
 
     await user.click(screen.getByRole("tab", { name: /new/i }));
 
-    expect(await screen.findByText(/check queued/i)).toBeInTheDocument();
+    expect(await screen.findByText(/scan queued/i)).toBeInTheDocument();
     // Still clickable: an overdue schedule also describes a channel the scan
     // loop cannot reach (dead cookie, kill-switch), and disabling would strand
     // the user on "Queued" with no way to learn why.
     const btn = screen.getByRole("button", { name: /queued/i });
     expect(btn).toBeEnabled();
     expect(
-      screen.queryByRole("button", { name: /check now/i }),
+      screen.queryByRole("button", { name: /scan now/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("pressing Check now says the check was queued, never that it ran", async () => {
+  it("pressing Scan now says the scan was queued, never that it ran", async () => {
     const user = userEvent.setup();
     vi.mocked(scanChannel).mockResolvedValue({ status: "scheduled" });
     vi.mocked(listPending).mockResolvedValue([]);
@@ -1064,16 +1064,16 @@ describe("Channel", () => {
     await screen.findByText("Uncanny Expeditions");
     await user.click(screen.getByRole("tab", { name: /new/i }));
 
-    await user.click(await screen.findByRole("button", { name: /check now/i }));
+    await user.click(await screen.findByRole("button", { name: /scan now/i }));
 
     expect(
-      await screen.findByText(/added to the check queue/i),
+      await screen.findByText(/added to the scan queue/i),
     ).toBeInTheDocument();
   });
 
   it("the Settings tab reports a queued check the same way the New tab does", async () => {
     // These two lines are rendered by one shared helper; before it existed
-    // Settings printed a raw next_scan_at and so announced a next check that
+    // Settings printed a raw next_scan_at and so announced a next scan that
     // had already happened.
     const user = userEvent.setup();
     vi.mocked(getChannel).mockResolvedValue(
@@ -1086,12 +1086,12 @@ describe("Channel", () => {
 
     await user.click(screen.getByRole("tab", { name: /settings/i }));
 
-    expect(await screen.findByText(/check queued/i)).toBeInTheDocument();
+    expect(await screen.findByText(/scan queued/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /queued/i })).toBeEnabled();
   });
 
   it("refetches the channel when a scan for it lands over SSE", async () => {
-    // "Check now" is asynchronous: without this the button would sit at Queued
+    // "Scan now" is asynchronous: without this the button would sit at Queued
     // until the user reloaded by hand.
     const { rerender } = render(
       <Channel
