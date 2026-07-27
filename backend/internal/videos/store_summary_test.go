@@ -2,6 +2,7 @@ package videos
 
 import (
 	"context"
+	"sort"
 	"testing"
 )
 
@@ -324,91 +325,111 @@ func TestClearSummary_errorsOnClosedDB(t *testing.T) {
 	}
 }
 
-// TestResetSetMatchesTheSweep pins migration 0004's reset to the query that is
-// supposed to undo it. The migration clears categories in bulk on the promise
-// that the summarize worker's idle sweep re-classifies whatever it cleared; if
-// the two predicates ever drift, the difference is not a stale category, it is
-// data erased with no path back — which is exactly the bug this pairing was
-// introduced to prevent.
+// TestResetSetMatchesTheSweep pins every bulk-reclassification migration to the
+// query that is supposed to undo it. Such a migration clears categories in bulk
+// on the promise that the summarize worker's idle sweep re-classifies whatever
+// it cleared; if the two predicates ever drift, the difference is not a stale
+// category, it is data erased with no path back — which is exactly the bug this
+// pairing was introduced to prevent.
 //
 // So rather than restate the rule, this reads the real UPDATE out of the real
-// migration file, runs it over a table seeded with every row shape peeq can
+// migration files, runs each over a table seeded with every row shape peeq can
 // produce, and asserts the rows it cleared are exactly the rows
 // NextUnclassified will offer. Same trick as ui/src/enumsync.test.ts, which
 // reads category.go instead of mirroring it.
+//
+// It covers every migration carrying a reset, not just 0004, because a second
+// one exists (0015, for the category hints) and a third will follow the next
+// time the enum or the classify prompt changes enough to invalidate past
+// answers. Copying a reset into a new file must not silently opt it out of the
+// only check that says the reset is reversible.
 func TestResetSetMatchesTheSweep(t *testing.T) {
-	s := newTestStore(t)
+	resets := categoryResets(t)
+	names := make([]string, 0, len(resets))
+	for name := range resets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 
-	// Given: one row per shape. 'category' is the row's category BEFORE the
-	// reset, and 'uncategorized' here is not filler — a no-transcript video
-	// really does sit at the column default in production, and it is the shape
-	// that catches a "cleared" set computed as "uncategorized afterwards".
-	seeds := []struct {
-		id, status, summary, summaryStatus, category string
-		manual                                       bool
-	}{
-		{"downloaded", "downloaded", "a summary", "done", "entertainment", false},
-		{"tombstoned", "tombstoned", "a summary", "done", "history", false},         // media reclaimed, summary kept
-		{"notranscript", "downloaded", "", "no_transcript", "uncategorized", false}, // nothing to classify from
-		{"handpicked", "downloaded", "", "no_transcript", "gaming", true},           // the picker's whole reason to exist
-		{"queued", "queued", "", "pending", "uncategorized", false},
-		{"errored", "error", "a summary", "error", "news", false},
-		{"handpicked-summarized", "downloaded", "a summary", "done", "ai", true},
-	}
-	for _, sd := range seeds {
-		seedVideo(t, s, Video{ID: sd.id, URL: "https://youtu.be/" + sd.id, Status: sd.status})
-		if _, err := s.db.ExecContext(context.Background(),
-			`UPDATE videos SET summary = ?, summary_status = ?, category = ?, category_manual = ? WHERE id = ?`,
-			sd.summary, sd.summaryStatus, sd.category, boolToInt(sd.manual), sd.id); err != nil {
-			t.Fatal(err)
-		}
-	}
-	before := idsWithCategory(t, s, UncategorizedCategory)
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			s := newTestStore(t)
 
-	// When: the migration's own UPDATE runs. The test DB is already at 0004,
-	// so replaying just this statement is what an upgrade does to the data.
-	if _, err := s.db.ExecContext(context.Background(), migration0004Update(t)); err != nil {
-		t.Fatalf("replay 0004 reset: %v", err)
-	}
+			// Given: one row per shape. 'category' is the row's category BEFORE
+			// the reset, and 'uncategorized' here is not filler — a
+			// no-transcript video really does sit at the column default in
+			// production, and it is the shape that catches a "cleared" set
+			// computed as "uncategorized afterwards".
+			seeds := []struct {
+				id, status, summary, summaryStatus, category string
+				manual                                       bool
+			}{
+				{"downloaded", "downloaded", "a summary", "done", "entertainment", false},
+				{"tombstoned", "tombstoned", "a summary", "done", "history", false},         // media reclaimed, summary kept
+				{"notranscript", "downloaded", "", "no_transcript", "uncategorized", false}, // nothing to classify from
+				{"handpicked", "downloaded", "", "no_transcript", "gaming", true},           // the picker's whole reason to exist
+				{"queued", "queued", "", "pending", "uncategorized", false},
+				{"errored", "error", "a summary", "error", "news", false},
+				{"handpicked-summarized", "downloaded", "a summary", "done", "ai", true},
+			}
+			for _, sd := range seeds {
+				seedVideo(t, s, Video{ID: sd.id, URL: "https://youtu.be/" + sd.id, Status: sd.status})
+				if _, err := s.db.ExecContext(context.Background(),
+					`UPDATE videos SET summary = ?, summary_status = ?, category = ?, category_manual = ? WHERE id = ?`,
+					sd.summary, sd.summaryStatus, sd.category, boolToInt(sd.manual), sd.id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := idsWithCategory(t, s, UncategorizedCategory)
 
-	// Then: the set the reset CHANGED — not the set that reads 'uncategorized'
-	// now, which would also count rows that were already there and could never
-	// be reclassified — equals the set the sweep offers.
-	cleared := minusSet(idsWithCategory(t, s, UncategorizedCategory), before)
-	reachable := []string{}
-	for i := 0; i <= len(seeds); i++ {
-		v, err := s.NextUnclassified(reachable)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if v == nil {
-			break
-		}
-		reachable = append(reachable, v.ID)
-		if i == len(seeds) {
-			// Bounded on purpose: an unbounded drain turns a broken skip clause
-			// into a hung suite instead of a failed assertion.
-			t.Fatalf("NextUnclassified still returning rows after %d turns: %v", i+1, reachable)
-		}
-	}
-	if !sameSet(cleared, reachable) {
-		t.Fatalf("reset cleared %v but the sweep can reach %v — a row in the difference is either\n"+
-			"erased with no way back, or left on the pre-expansion enum forever", cleared, reachable)
-	}
-	// And the rule both sides are meant to encode, stated once so a mutual
-	// drift (both sides wrong the same way) still fails.
-	if !sameSet(cleared, []string{"downloaded", "tombstoned", "errored"}) {
-		t.Fatalf("cleared %v, want every row that has a summary and is not a hand pick, and only those", cleared)
-	}
-	// And the hand picks are untouched — the column's entire purpose.
-	for _, id := range []string{"handpicked", "handpicked-summarized"} {
-		var got string
-		if err := s.db.QueryRowContext(context.Background(),
-			`SELECT category FROM videos WHERE id = ?`, id).Scan(&got); err != nil {
-			t.Fatal(err)
-		}
-		if got == UncategorizedCategory {
-			t.Fatalf("%s was cleared; a flagged row must survive a bulk reset", id)
-		}
+			// When: the migration's own UPDATE runs. The test DB is already
+			// migrated, so replaying just this statement is what an upgrade
+			// does to the data.
+			if _, err := s.db.ExecContext(context.Background(), resets[name]); err != nil {
+				t.Fatalf("replay %s reset: %v", name, err)
+			}
+
+			// Then: the set the reset CHANGED — not the set that reads
+			// 'uncategorized' now, which would also count rows that were
+			// already there and could never be reclassified — equals the set
+			// the sweep offers.
+			cleared := minusSet(idsWithCategory(t, s, UncategorizedCategory), before)
+			reachable := []string{}
+			for i := 0; i <= len(seeds); i++ {
+				v, err := s.NextUnclassified(reachable)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if v == nil {
+					break
+				}
+				reachable = append(reachable, v.ID)
+				if i == len(seeds) {
+					// Bounded on purpose: an unbounded drain turns a broken skip
+					// clause into a hung suite instead of a failed assertion.
+					t.Fatalf("NextUnclassified still returning rows after %d turns: %v", i+1, reachable)
+				}
+			}
+			if !sameSet(cleared, reachable) {
+				t.Fatalf("reset cleared %v but the sweep can reach %v — a row in the difference is either\n"+
+					"erased with no way back, or left on the pre-expansion enum forever", cleared, reachable)
+			}
+			// And the rule both sides are meant to encode, stated once so a
+			// mutual drift (both sides wrong the same way) still fails.
+			if !sameSet(cleared, []string{"downloaded", "tombstoned", "errored"}) {
+				t.Fatalf("cleared %v, want every row that has a summary and is not a hand pick, and only those", cleared)
+			}
+			// And the hand picks are untouched — the column's entire purpose.
+			for _, id := range []string{"handpicked", "handpicked-summarized"} {
+				var got string
+				if err := s.db.QueryRowContext(context.Background(),
+					`SELECT category FROM videos WHERE id = ?`, id).Scan(&got); err != nil {
+					t.Fatal(err)
+				}
+				if got == UncategorizedCategory {
+					t.Fatalf("%s was cleared; a flagged row must survive a bulk reset", id)
+				}
+			}
+		})
 	}
 }

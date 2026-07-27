@@ -17,6 +17,13 @@ import (
 // is automotive, not tech; a workshop build is engineering, a kitchen
 // renovation is home). It is deliberately NOT mirrored into the TS enum, and
 // nothing in the UI may show it. Only ambiguous categories carry one.
+//
+// A hint is also what stops a category losing by default. An unhinted option is
+// one line of prompt against a hinted one's three, so when the fit is loose the
+// hinted bucket wins — which is how a video about who built the smallest nuclear
+// bomb landed in politics rather than science. Any category that can be
+// described in political, institutional or military vocabulary needs its own
+// claim staked, or 'politics' absorbs it.
 type Category struct {
 	ID    string
 	Label string
@@ -36,16 +43,16 @@ const UncategorizedCategory = "uncategorized"
 // entertainment: the classify prompt forces a choice, so a missing category
 // does not produce 'uncategorized', it produces a confidently wrong one.
 var Categories = []Category{
-	{"ai", "Artificial Intelligence", ""},
-	{"tech", "Technology & Gadgets", ""},
-	{"software", "Software Engineering", ""},
-	{"science", "Science & Research", ""},
+	{"ai", "Artificial Intelligence", "machine learning, LLMs, model research, AI products and their effects"},
+	{"tech", "Technology & Gadgets", "consumer electronics, devices, hardware reviews, the tech industry"},
+	{"software", "Software Engineering", "programming, developer tools, systems, security"},
+	{"science", "Science & Research", "physics, chemistry, biology, mathematics, nuclear and weapons science, and the investigation of unexplained phenomena; the subject stays scientific even when governments or the military are the setting"},
 	{"space", "Space & Astronomy", ""},
 	{"engineering", "Engineering & Making", "workshop builds, machining, robotics, infrastructure"},
 	{"business", "Business & Finance", ""},
 	{"news", "News & Current Events", "reported events"},
-	{"politics", "Politics & Society", "politics, geopolitics, social commentary and analysis, as opposed to reported events"},
-	{"history", "History & Culture", ""},
+	{"politics", "Politics & Society", "elections, policy, government, geopolitics and social commentary, where politics itself is the subject rather than the setting of a scientific, technical, military or historical one; analysis, as opposed to reported events"},
+	{"history", "History & Culture", "past events, wars, civilizations, biography, declassified programs"},
 	{"health", "Health & Medicine", ""},
 	{"sports", "Sports & Fitness", "athletics, cycling, running, gym, training and race coverage"},
 	{"food", "Food & Cooking", "recipes, technique, restaurants, coffee, brewing"},

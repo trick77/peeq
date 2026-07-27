@@ -77,6 +77,13 @@ func New(c Completer, opts ...Option) *Summarizer {
 // The list is rendered one category per line rather than comma-joined: the
 // hints contain commas of their own, and a 20-plus entry inline list reads as
 // one run-on sentence.
+//
+// "Classify by what the video is about, not by the institutions ... it mentions"
+// is a tie-break, not decoration. A summary of a nuclear-weapons history or a
+// UFO-investigation video is dense with Pentagon, Cold War and congressional
+// vocabulary, and without this line the model reads that vocabulary as the
+// topic and answers 'politics'. It sits before the output-format sentences so
+// the last thing the model reads is still how to reply.
 func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowed []videos.Category) (string, error) {
 	labelled := make([]string, len(allowed))
 	for i, c := range allowed {
@@ -87,7 +94,9 @@ func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowe
 	}
 	sys := "You classify a video into exactly one category. The categories are:\n" +
 		strings.Join(labelled, "\n") +
-		"\nReply with a single category id from that list and nothing else — no punctuation, " +
+		"\nClassify by what the video is about, not by the institutions, agencies, countries " +
+		"or eras it mentions. " +
+		"Reply with a single category id from that list and nothing else — no punctuation, " +
 		"no explanation. Always choose the closest match even when the fit is imperfect. " +
 		"Never invent an id and never refuse to choose."
 	// No thinking: the answer is one id picked from a list the prompt already
