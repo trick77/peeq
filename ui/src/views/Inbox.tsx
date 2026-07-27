@@ -429,54 +429,60 @@ export function Inbox({
           on every mouse twitch for nothing. A real move is the only thing
           that clears the lock — a click without one would be the accidental
           second press this exists to prevent. */}
-      <div
-        className={`grid inbox-grid${hoverLocked ? " is-hover-locked" : ""}`}
-        onPointerMove={hoverLocked ? () => setHoverLocked(false) : undefined}
-      >
-        {visible.map((item) => (
-          <article key={item.video_id} className="card video-card">
-            <div className="thumb">
-              <ThumbFill
-                id={item.video_id}
-                // Always attempt the proxy: the backend falls back to the
-                // hqdefault variant YouTube generates for every video, so an
-                // empty recorded thumbnail_url still gets a real poster. A true
-                // 404 still degrades to the shared gradient via onError.
-                hasThumbnail={true}
-                src={pendingThumbnailUrl(item.video_id)}
-              />
-              <span className="dur">
-                {formatDuration(item.duration_seconds)}
-              </span>
-            </div>
-            {/* Kicker line above the title, exactly like the library card:
+      {/* .gridwrap is the size-query container the grid steps its column count
+          off — see the note in Library.tsx for why it is a wrapper and not
+          .page. It has to be here too: the @container rules are named, so a
+          .grid with no .gridwrap ancestor never matches one and would sit at
+          three columns at every width, down to a 375px phone. */}
+      <div className="gridwrap">
+        <div
+          className={`grid inbox-grid${hoverLocked ? " is-hover-locked" : ""}`}
+          onPointerMove={hoverLocked ? () => setHoverLocked(false) : undefined}
+        >
+          {visible.map((item) => (
+            <article key={item.video_id} className="card video-card">
+              <div className="thumb">
+                <ThumbFill
+                  id={item.video_id}
+                  // Always attempt the proxy: the backend falls back to the
+                  // hqdefault variant YouTube generates for every video, so an
+                  // empty recorded thumbnail_url still gets a real poster. A true
+                  // 404 still degrades to the shared gradient via onError.
+                  hasThumbnail={true}
+                  src={pendingThumbnailUrl(item.video_id)}
+                />
+                <span className="dur">
+                  {formatDuration(item.duration_seconds)}
+                </span>
+              </div>
+              {/* Kicker line above the title, exactly like the library card:
                 channel · relative publish date, same markup, same helper. The
                 scan's date is APPROXIMATE, so it can sit a day off the exact
                 one Library shows post-download — identical wording either way.
                 Omitted when unknown; only a real publish date belongs here,
                 never discovered_at. */}
-            <div className="by">
-              {onOpenChannel && item.channel_id ? (
-                <button
-                  type="button"
-                  className="chan-link"
-                  onClick={() => onOpenChannel(item.channel_id)}
-                >
-                  {item.channel_name || item.channel_id}
-                </button>
-              ) : (
-                <span className="chan-name">
-                  {item.channel_name || item.channel_id}
-                </span>
-              )}
-              {item.published_at ? (
-                <>
-                  <span className="dot">·</span>
-                  {formatAgo(item.published_at)}
-                </>
-              ) : null}
-            </div>
-            {/* Nothing in the inbox has been downloaded yet, so there is no
+              <div className="by">
+                {onOpenChannel && item.channel_id ? (
+                  <button
+                    type="button"
+                    className="chan-link"
+                    onClick={() => onOpenChannel(item.channel_id)}
+                  >
+                    {item.channel_name || item.channel_id}
+                  </button>
+                ) : (
+                  <span className="chan-name">
+                    {item.channel_name || item.channel_id}
+                  </span>
+                )}
+                {item.published_at ? (
+                  <>
+                    <span className="dot">·</span>
+                    {formatAgo(item.published_at)}
+                  </>
+                ) : null}
+              </div>
+              {/* Nothing in the inbox has been downloaded yet, so there is no
                 local player to open — the only thing behind a pending title is
                 the video on YouTube, and that is where clicking it goes. New
                 tab, same reasoning as the channel header's handle link: peeq
@@ -487,43 +493,45 @@ export function Inbox({
                 without one), so it falls back to a watch URL built from the
                 video id — a peeq video id IS the YouTube id, so the fallback
                 is always correct, never a guess. */}
-            <h3>
-              <a
-                className="title-btn"
-                href={
-                  item.url || `https://www.youtube.com/watch?v=${item.video_id}`
-                }
-                target="_blank"
-                rel="noopener noreferrer"
-                title={`Open "${item.title}" on YouTube`}
-              >
-                {item.title}
-              </a>
-            </h3>
-            <div className="card-foot acts-row">
-              <Button
-                type="button"
-                variant="secondary"
-                small
-                disabled={busyId === item.video_id || bulkBusy}
-                onClick={() => handleDownload(item)}
-              >
-                <Icon name="download" size="15px" />
-                Download
-              </Button>
-              <Button
-                type="button"
-                variant="dangerQuiet"
-                small
-                disabled={busyId === item.video_id || bulkBusy}
-                onClick={() => handleIgnore(item)}
-              >
-                <Icon name="trash" size="15px" />
-                Ignore
-              </Button>
-            </div>
-          </article>
-        ))}
+              <h3>
+                <a
+                  className="title-btn"
+                  href={
+                    item.url ||
+                    `https://www.youtube.com/watch?v=${item.video_id}`
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`Open "${item.title}" on YouTube`}
+                >
+                  {item.title}
+                </a>
+              </h3>
+              <div className="card-foot acts-row">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  small
+                  disabled={busyId === item.video_id || bulkBusy}
+                  onClick={() => handleDownload(item)}
+                >
+                  <Icon name="download" size="15px" />
+                  Download
+                </Button>
+                <Button
+                  type="button"
+                  variant="dangerQuiet"
+                  small
+                  disabled={busyId === item.video_id || bulkBusy}
+                  onClick={() => handleIgnore(item)}
+                >
+                  <Icon name="trash" size="15px" />
+                  Ignore
+                </Button>
+              </div>
+            </article>
+          ))}
+        </div>
       </div>
       {items.length === 0 && !error ? (
         <p style={{ color: "var(--color-faint)" }}>Your inbox is empty.</p>

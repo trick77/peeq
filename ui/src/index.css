@@ -1218,7 +1218,7 @@ button.srow:not(:disabled):hover {
    `minmax(0, 1fr)`, not `1fr`. A bare `1fr` is `minmax(auto, 1fr)`, and that
    `auto` floor is the item's min-content width — which for a video card is set
    by `.card.video-card .by`, a `white-space: nowrap` row. So each column grew
-   to fit its OWN byline: three columns measured 313/251/294px on an iPad,
+   to fit its OWN byline: three columns measured 303/332/282px on an iPad,
    giving three different thumbnail sizes in one row and titles that started at
    three different heights, and once the bylines outgrew the space the grid
    overflowed the page instead of stepping down. Clamping the floor to 0 makes
@@ -1233,7 +1233,11 @@ button.srow:not(:disabled):hover {
    grid actually has, and keeps working if the rail's width ever changes.
 
    The thresholds are the widths at which the next step down stops being an
-   improvement: 940px is 3 × 300 + 2 gaps, 620px is 2 × 300 + 1 gap. */
+   improvement: 940px is 3 × 300 + 2 gaps, 620px is 2 × 300 + 1 gap.
+
+   Because the queries are NAMED, every `.grid` must sit inside a `.gridwrap`:
+   one that does not matches neither step-down and stays three columns wide at
+   every width, phone included. gridlayout.test.ts pins that. */
 .gridwrap {
   container-type: inline-size;
   container-name: gridwrap;
