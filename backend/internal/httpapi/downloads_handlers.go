@@ -67,65 +67,152 @@ type downloadItem struct {
 	EnqueuedAt  string `json:"enqueued_at,omitempty"`
 }
 
-// handleDownloadsPost is the only entry point that adds a video to the
-// download queue. It schedules instantly and never waits on a network call:
-// canonicalize the pasted url (rejecting playlists and live/premiere content
-// up front, all network-free) → upsert a minimal video row (id + url only) if
-// the video is new → mark it 'queued' → enqueue a download job at the standard
-// priority. The worker fetches metadata (title/channel) in a preflight step
-// and surfaces any missing/invalid cookie or unavailable video as a
-// paused/failed job on the Activity page, so the user is never blocked here.
+// handleDownloadsPost is the session-authenticated entry point that adds a
+// video to the download queue (the peeq web UI's "Add" view). It schedules
+// instantly and never waits on a network call; see enqueueDownloadByURL for
+// the shared mechanics. A human deliberately pasting a link may re-add a video
+// they already have, so this route always re-queues (requeueExisting=true) —
+// unchanged from before the machine route was extracted out of it.
 func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
-	if s.jobs == nil || s.videos == nil || s.runner == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "downloads are not configured")
-		return
-	}
-
 	var req downloadsPostRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.URL) == "" {
-		writeJSONError(w, http.StatusBadRequest, "url is required")
+	// A malformed body leaves req.URL empty, which enqueueDownloadByURL rejects
+	// as "url is required" — same 400 the inline decode used to produce.
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	item, _, ee := s.enqueueDownloadByURL(r.Context(), req.URL, true)
+	if ee != nil {
+		s.writeEnqueueError(w, r, ee)
 		return
 	}
+	writeJSONStatus(w, http.StatusCreated, item)
+}
 
-	watchURL, id, kind, err := ytdlp.Canonicalize(req.URL)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid url: "+err.Error())
+// handleMachineDownloadsPost is the token-authenticated add-a-video path, used
+// by the peeq browser extension (Safari/Chrome). It mirrors the machine cookie
+// route: token-gated, no session, a narrow surface. It differs from the
+// session route in one way — requeueExisting=false — because a one-click
+// toolbar button invites double-taps: re-adding a video already queued,
+// downloading, or downloaded must NOT reset it to 'queued' and enqueue a second
+// job. Such a request is a no-op that returns 200 with the existing item
+// (duplicate) rather than 201.
+func (s *server) handleMachineDownloadsPost(w http.ResponseWriter, r *http.Request) {
+	var req downloadsPostRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	item, duplicate, ee := s.enqueueDownloadByURL(r.Context(), req.URL, false)
+	if ee != nil {
+		s.writeEnqueueError(w, r, ee)
 		return
+	}
+	status := http.StatusCreated
+	if duplicate {
+		status = http.StatusOK
+	}
+	writeJSONStatus(w, status, item)
+}
+
+// enqueueError carries a failed enqueue's HTTP status and client-facing
+// message. A non-nil cause marks a 500 that must be logged (and its message
+// kept server-side) via serverError, rather than echoed to the client.
+type enqueueError struct {
+	status  int
+	message string
+	cause   error
+}
+
+// writeEnqueueError renders an enqueueError: a 500 (cause != nil) goes through
+// serverError so it is logged with the request; every other status is a
+// client-safe writeJSONError.
+func (s *server) writeEnqueueError(w http.ResponseWriter, r *http.Request, ee *enqueueError) {
+	if ee.cause != nil {
+		serverError(w, r, ee.cause, ee.message)
+		return
+	}
+	writeJSONError(w, ee.status, ee.message)
+}
+
+// alreadyInQueue reports whether a video's status means it is already in peeq's
+// pipeline — queued, actively downloading, or downloaded. The machine route
+// treats these as "nothing to do" (a duplicate) rather than re-queueing. Other
+// states (new, error, tombstoned) are re-queueable: adding them by explicit
+// button click is a legitimate (re)start.
+func alreadyInQueue(status string) bool {
+	switch status {
+	case videos.StatusQueued, videos.StatusDownloading, videos.StatusDownloaded:
+		return true
+	default:
+		return false
+	}
+}
+
+// enqueueDownloadByURL is the shared add-a-video mechanic behind both the
+// session route (handleDownloadsPost) and the machine route
+// (handleMachineDownloadsPost). It canonicalizes the pasted url (rejecting
+// playlists and live/premiere content up front, all network-free) → optionally
+// short-circuits an already-present video → upserts a minimal video row (id +
+// url only) if the video is new → marks it 'queued' → enqueues a download job
+// at the standard priority. It never fetches metadata: the worker's preflight
+// resolves title/channel and surfaces any missing cookie or unavailable video
+// as a paused/failed job on the Activity page, so the caller is never blocked.
+//
+// requeueExisting selects the re-add behavior. true (session route) always
+// re-queues, preserving the web UI's long-standing "paste it again and it goes
+// back in the queue" behavior. false (machine route) returns an existing
+// in-pipeline video untouched, with duplicate=true, so a stray button tap can't
+// resurrect an already-downloaded video.
+func (s *server) enqueueDownloadByURL(ctx context.Context, rawURL string, requeueExisting bool) (item downloadItem, duplicate bool, ee *enqueueError) {
+	if s.jobs == nil || s.videos == nil || s.runner == nil {
+		return downloadItem{}, false, &enqueueError{status: http.StatusServiceUnavailable, message: "downloads are not configured"}
+	}
+	if strings.TrimSpace(rawURL) == "" {
+		return downloadItem{}, false, &enqueueError{status: http.StatusBadRequest, message: "url is required"}
+	}
+
+	watchURL, id, kind, err := ytdlp.Canonicalize(rawURL)
+	if err != nil {
+		return downloadItem{}, false, &enqueueError{status: http.StatusBadRequest, message: "invalid url: " + err.Error()}
 	}
 	switch kind {
 	case "playlist":
-		writeJSONError(w, http.StatusBadRequest, "Paste a single video link, not a playlist")
-		return
+		return downloadItem{}, false, &enqueueError{status: http.StatusBadRequest, message: "Paste a single video link, not a playlist"}
 	case "live":
-		writeJSONError(w, http.StatusBadRequest, "Live videos and premieres aren't supported; paste the link again once it has finished and is a regular video")
-		return
+		return downloadItem{}, false, &enqueueError{status: http.StatusBadRequest, message: "Live videos and premieres aren't supported; paste the link again once it has finished and is a regular video"}
 	case "channel":
-		writeJSONError(w, http.StatusBadRequest, "That's a channel link — add it under Channels, not here")
-		return
+		return downloadItem{}, false, &enqueueError{status: http.StatusBadRequest, message: "That's a channel link — add it under Channels, not here"}
 	}
-	// No metadata fetch here — that is what used to make the user wait. Insert a
-	// minimal row (id + url) for a genuinely new video so the worker has
-	// something to load; the worker's preflight fills in title/channel. Guard
-	// with a Get: Upsert overwrites title/channel/thumbnail with the empty
+
+	// Guard with a Get: Upsert overwrites title/channel/thumbnail with the empty
 	// values we have now, so a blind Upsert would wipe metadata when a known
 	// video is re-added. An existing row keeps its metadata untouched.
 	existing, err := s.videos.Get(id)
 	if err != nil {
-		serverError(w, r, err, "load video failed")
-		return
+		return downloadItem{}, false, &enqueueError{status: http.StatusInternalServerError, message: "load video failed", cause: err}
 	}
+
+	// Machine-route re-queue guard: a video already in the pipeline is returned
+	// as a duplicate no-op, echoing its current state so the caller can tell the
+	// user "already downloaded" vs "already queued". The session route passes
+	// requeueExisting=true and never reaches this branch.
+	if existing != nil && !requeueExisting && alreadyInQueue(existing.Status) {
+		return downloadItem{
+			VideoID:     id,
+			Title:       existing.Title,
+			ChannelName: existing.ChannelName,
+			ChannelID:   existing.ChannelID,
+			State:       existing.Status,
+		}, true, nil
+	}
+
 	if existing == nil {
 		if err := s.videos.Upsert(videos.Video{ID: id, URL: watchURL}); err != nil {
-			serverError(w, r, err, "save video failed")
-			return
+			return downloadItem{}, false, &enqueueError{status: http.StatusInternalServerError, message: "save video failed", cause: err}
 		}
 	}
 	// Upsert deliberately never touches status (so re-running metadata on an
 	// already-downloaded video can't wipe its state); a fresh add must be
 	// marked 'queued' explicitly.
 	if err := s.videos.SetStatus(id, videos.StatusQueued, ""); err != nil {
-		serverError(w, r, err, "save video failed")
-		return
+		return downloadItem{}, false, &enqueueError{status: http.StatusInternalServerError, message: "save video failed", cause: err}
 	}
 
 	// Deliberately NOT adding the video's channel here. Adding one video by
@@ -141,19 +228,18 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 
 	jobID, err := s.jobs.Enqueue(id, downloadPriority)
 	if err != nil {
-		serverError(w, r, err, "enqueue job failed")
-		return
+		return downloadItem{}, false, &enqueueError{status: http.StatusInternalServerError, message: "enqueue job failed", cause: err}
 	}
 
 	// Title/channel are intentionally absent: they are not known until the
 	// worker's metadata preflight runs. The UI shows a generic "added to the
 	// queue" confirmation and the title fills in once the job starts.
-	writeJSONStatus(w, http.StatusCreated, downloadItem{
+	return downloadItem{
 		JobID:    jobID,
 		VideoID:  id,
 		State:    jobs.StatePending,
 		Priority: downloadPriority,
-	})
+	}, false, nil
 }
 
 // handleDownloadsList returns the whole download queue (every state, not
