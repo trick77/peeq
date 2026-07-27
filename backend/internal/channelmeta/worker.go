@@ -302,6 +302,13 @@ func (w *Worker) nextRefreshAt(channelID string) string {
 // repeat. Migration 0005 scattered these rows once; a slot keeps them scattered
 // through the restarts and cookie expiries that used to re-gather them.
 //
+// Both slots derive from the same rank, so for some channels — rank 0 and the
+// one halfway down the list, whose slots land on the top of both cycles — the
+// refresh comes due right beside its own scan and ClaimDueMetadata defers it on
+// ScanQuietWindow every week rather than occasionally. That is the intended
+// behaviour of the quiet window and it clears itself within a poll or two; it is
+// written down because the recurrence looks like a stuck channel and is not.
+//
 // The small duplication with the scan package stays deliberate: importing it
 // for twenty lines would tie two schedulers together that share only an idea.
 func NextRefreshAt(now time.Time, rank, count int) string {

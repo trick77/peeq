@@ -839,3 +839,20 @@ func TestWorker_spreadsTheFleetAcrossTheWeek(t *testing.T) {
 		}
 	}
 }
+
+// TestWorker_rescheduleSurvivesALostRankQuery is the scan scheduler's invariant
+// in this package: a failed slot lookup must still push the channel out of the
+// due set, or the worker re-claims it on every poll forever.
+func TestWorker_rescheduleSurvivesALostRankQuery(t *testing.T) {
+	s := newTestStore(t)
+	seedDue(t, s, "UCa")
+	w := newTestWorker(t, s, &fakeResolver{}, Deps{})
+	if _, err := s.DB().Exec(`ALTER TABLE subscriptions RENAME COLUMN channel_id TO cid`); err != nil {
+		t.Fatalf("break the rank query: %v", err)
+	}
+
+	got := w.nextRefreshAt("UCa")
+	if want := "2026-07-29 12:00:00"; got != want { // the fixed clock + 7 days
+		t.Fatalf("fell back to %q, want a plain interval out (%q)", got, want)
+	}
+}

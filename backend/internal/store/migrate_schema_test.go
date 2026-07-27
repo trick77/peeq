@@ -384,8 +384,13 @@ WITH ordered AS (
 SELECT MIN(t - prev), MAX(t - prev) FROM ordered WHERE prev IS NOT NULL`).Scan(&minGap, &maxGap); err != nil {
 			t.Fatalf("gaps for %s: %v", c.column, err)
 		}
-		if minGap != c.spacing || maxGap != c.spacing {
-			t.Fatalf("%s gaps between %ds and %ds; want every neighbour exactly %ds apart",
+		// A second of slack, for two reasons. Integer division only divides
+		// evenly when the fleet size divides the cycle — 40 does, production's
+		// 44 does not, and there consecutive gaps alternate by a second. And
+		// 'now' is read per row, so a statement crossing a second boundary
+		// shifts one gap by one. Neither is the bug; a collapsed gap is.
+		if minGap < c.spacing-1 || maxGap > c.spacing+1 {
+			t.Fatalf("%s gaps between %ds and %ds; want every neighbour ~%ds apart",
 				c.column, minGap, maxGap, c.spacing)
 		}
 	}

@@ -2171,3 +2171,22 @@ func TestScan_backoffScattersTheRetry(t *testing.T) {
 		t.Fatal("every backoff landed on the same instant; a fleet failing together would still retry together")
 	}
 }
+
+// TestScan_rescheduleSurvivesALostRankQuery: the slot lookup reads the
+// subscription list, and if that read fails the scan must still be rescheduled.
+// Losing the even spacing for one cycle is cosmetic; leaving next_scan_at in the
+// past is not — the loop would re-claim that channel on every single pass and
+// hammer YouTube, which is the one outcome this whole scheduler exists to avoid.
+func TestScan_rescheduleSurvivesALostRankQuery(t *testing.T) {
+	h := newScanHarness(t)
+	h.addAndSubscribe("UC1", false, "")
+	// Break the rank query specifically, leaving the row itself readable.
+	if _, err := h.db.Exec(`ALTER TABLE subscriptions RENAME COLUMN channel_id TO cid`); err != nil {
+		t.Fatalf("break the rank query: %v", err)
+	}
+
+	got := h.sched.nextScanAt("UC1")
+	if want := fixedNow.Add(24 * time.Hour).Format(sqlTimeLayout); got != want {
+		t.Fatalf("fell back to %q, want a plain interval out (%q)", got, want)
+	}
+}
