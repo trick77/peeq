@@ -391,6 +391,15 @@ describe("Inbox", () => {
     expect(screen.queryByText("First pending video")).not.toBeInTheDocument();
   });
 
+  it("renders no channel pills when the items carry no channel", async () => {
+    vi.mocked(listPending).mockResolvedValue([
+      baseItem({ channel_id: "", channel_name: "" }),
+    ]);
+    render(<Inbox />);
+    await screen.findByText("First pending video");
+    expect(screen.queryByRole("button", { name: /All channels/ })).toBeNull();
+  });
+
   it("shows the channel pills even with a single channel", async () => {
     vi.mocked(listPending).mockResolvedValue([itemA]);
     render(<Inbox />);
