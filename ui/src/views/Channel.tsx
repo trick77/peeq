@@ -105,6 +105,25 @@ export function formatStamp(stored: string | undefined): string {
 // subscriptions row and so no scan schedule; that segment simply drops out.
 // "Never checked" is not said here — scheduleLine on the New and Settings tabs
 // is where a channel's schedule is spelled out in full.
+// ScanStamp is the "when did peeq last look for new videos" segment. It is its
+// own component because it belongs to BOTH the healthy reading and the failed
+// metadata one: a channel whose metadata refresh keeps failing is still scanned
+// daily, and the failed reading is exactly where someone is most likely to fear
+// peeq has stopped watching the channel. Showing only the metadata date there
+// would repeat, in miniature, the bug this whole change is about.
+//
+// It is deliberately NOT shown for gone (auto-unsubscribed, so scanning really
+// has stopped) or for a channel never read at all.
+function ScanStamp({ at }: { at?: string }) {
+  if (!at) return null;
+  return (
+    <>
+      <span className="sep">·</span>
+      <span>Last channel scan {formatStamp(at)}</span>
+    </>
+  );
+}
+
 export function ChannelState({ detail }: { detail: ChannelDetail }) {
   if (detail.gone) {
     return (
@@ -136,6 +155,7 @@ export function ChannelState({ detail }: { detail: ChannelDetail }) {
           <span className="led unknown" />
           Metadata refresh failed {formatStamp(detail.resolved_at)}
         </span>
+        <ScanStamp at={detail.last_scanned_at} />
       </>
     );
   }
@@ -148,12 +168,7 @@ export function ChannelState({ detail }: { detail: ChannelDetail }) {
       </span>
       <span className="sep">·</span>
       <span>Last metadata refresh {formatStamp(detail.resolved_at)}</span>
-      {detail.last_scanned_at && (
-        <>
-          <span className="sep">·</span>
-          <span>Last channel scan {formatStamp(detail.last_scanned_at)}</span>
-        </>
-      )}
+      <ScanStamp at={detail.last_scanned_at} />
     </>
   );
 }

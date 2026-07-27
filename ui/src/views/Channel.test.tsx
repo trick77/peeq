@@ -1348,8 +1348,11 @@ describe("Channel YouTube metadata", () => {
     expect(
       screen.queryByText(/^Last metadata refresh /),
     ).not.toBeInTheDocument();
-    // The failed branch is about metadata only; it reports no scan date.
-    expect(screen.queryByText(/^Last channel scan /)).not.toBeInTheDocument();
+    // A stuck metadata refresh does not stop the daily scan, and this is the
+    // reading where someone is most likely to fear it has. The scan date stays.
+    expect(
+      screen.getByText(`Last channel scan ${formatStamp("2026-07-20 08:00:00")}`),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Active on YouTube")).not.toBeInTheDocument();
     // An unknown count is a dash, never a number.
     expect(screen.getByText("—")).toBeInTheDocument();
