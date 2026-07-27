@@ -418,9 +418,10 @@ export function Settings() {
           )}
         </h2>
         <p className="desc">
-          Lets the peeq browser extension send your YouTube cookie
-          automatically, so you never paste it by hand. The token can only write
-          the cookie — it cannot read your library.
+          Lets the peeq browser extension send your YouTube cookie automatically
+          and add videos to your queue, so you never paste a cookie or a link by
+          hand. The token can only write the cookie and enqueue a video — it
+          cannot read your library.
         </p>
 
         {freshToken ? (
