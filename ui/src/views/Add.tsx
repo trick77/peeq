@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Button } from "../ui";
 import {
@@ -9,19 +9,40 @@ import {
 import { addChannel } from "../api/channels";
 import { isChannelURL } from "../youtube";
 
-// Add — the paste-a-URL view. The mockup shows a live metadata preview
-// before the user confirms; Task 14's backend (POST /api/downloads) has no
-// separate "peek at metadata" endpoint, so this queues the download
-// directly on submit and shows the resulting queue entry as confirmation
-// instead of a pre-download preview. Task 13 adds channel-URL routing: a
-// pasted channel link adds the channel (POST /api/channels) instead of
-// queuing a video download — subscribing is left to the Channels view.
+// Add — the paste-a-URL view. The backend (POST /api/downloads) has no
+// separate "peek at metadata" endpoint, so a pasted video link queues the
+// download straight into Up next; the confirmation is a single line that
+// fades on its own — no preview box, since the metadata isn't known yet.
+// A pasted channel link adds the channel (POST /api/channels) instead of
+// queuing a download — subscribing is left to the Channels view.
 export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [queued, setQueued] = useState(false);
-  const [added, setAdded] = useState<{ name: string } | null>(null);
+  const [confirm, setConfirm] = useState<string | null>(null);
+  // `leaving` drives the fade-out: after the line has been up a few seconds we
+  // flip it on to run the exit animation, then unmount a beat later.
+  const [leaving, setLeaving] = useState(false);
+  // Hold the pending timers so a fast second submit resets the countdown
+  // instead of stacking, and so none fire after the view unmounts.
+  const fadeTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  function clearTimers() {
+    fadeTimers.current.forEach(clearTimeout);
+    fadeTimers.current = [];
+  }
+
+  useEffect(() => clearTimers, []);
+
+  function showConfirm(message: string) {
+    clearTimers();
+    setConfirm(message);
+    setLeaving(false);
+    fadeTimers.current.push(
+      setTimeout(() => setLeaving(true), 4000),
+      setTimeout(() => setConfirm(null), 4300),
+    );
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -29,17 +50,20 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
     if (!trimmed || busy) return;
     setBusy(true);
     setError(null);
-    setQueued(false);
-    setAdded(null);
+    clearTimers();
+    setConfirm(null);
+    setLeaving(false);
     try {
       if (isChannelURL(trimmed)) {
         const channel = await addChannel(trimmed, false);
-        setAdded({ name: channel.name });
+        showConfirm(
+          `Added ${channel.name} — new uploads won't auto-download yet`,
+        );
         setUrl("");
       } else {
         const job = await addDownload(trimmed);
-        setQueued(true);
         onQueued(job.video_id);
+        showConfirm("Sent to Up next");
         setUrl("");
       }
     } catch (err) {
@@ -77,53 +101,29 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
             aria-label="Video or channel URL"
           />
         </label>
-        <Button type="submit" busy={busy} disabled={!url.trim()}>
-          {!busy && <Icon name="download" size="18px" />}
-          {busy ? "Adding" : isChannelURL(url) ? "Add channel" : "Add to queue"}
+        <Button type="submit" small busy={busy} disabled={!url.trim()}>
+          {busy ? "Adding" : isChannelURL(url) ? "Add channel" : "Add"}
+          {!busy && !isChannelURL(url) && (
+            <span className="addkbd" aria-hidden="true">
+              ↵
+            </span>
+          )}
         </Button>
       </form>
 
       <div className="hint">
-        Downloads queue immediately using the format preset from Settings —
-        subtitles &amp; a summary are included automatically once later phases
-        add them. A channel link adds the channel instead, downloading nothing —
-        you can also add channels from the Channels page.
+        Goes straight to <strong>Up next</strong> and starts downloading using
+        the format preset from Settings. A channel link adds the channel
+        instead, downloading nothing — you can also add channels from the
+        Channels page.
       </div>
 
       {error ? <div className="errline">{error}</div> : null}
 
-      {queued ? (
-        <div className="preview">
-          <div>
-            <div className="pt g4" />
-          </div>
-          <div>
-            <h2>Added to the queue</h2>
-            <div className="by">
-              The title and channel fill in once it starts.
-            </div>
-            <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)" }}>
-              Watch progress in the download dock or on the Activity page, and
-              open the video from the Library once it's done.
-            </p>
-          </div>
-        </div>
-      ) : null}
-
-      {added ? (
-        <div className="preview">
-          <div>
-            <div className="pt g4" />
-          </div>
-          <div>
-            <h2>Added {added.name}</h2>
-            <div className="by">
-              Not subscribed — new uploads won't auto-download yet.
-            </div>
-            <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)" }}>
-              Subscribe or set an autodownload format from the Channels page.
-            </p>
-          </div>
+      {confirm ? (
+        <div className={`addok${leaving ? " leaving" : ""}`} role="status">
+          <Icon name="check" size="15px" />
+          <span>{confirm}</span>
         </div>
       ) : null}
     </div>
