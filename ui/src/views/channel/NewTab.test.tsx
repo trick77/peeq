@@ -41,18 +41,18 @@ describe("NewTab", () => {
     vi.mocked(listPending).mockResolvedValue([]);
   });
 
-  it("offers Check now when the channel is subscribed", async () => {
+  it("offers Scan now when the channel is subscribed", async () => {
     render(
       <NewTab detail={makeDetail({ subscribed: true })} onChanged={() => {}} />,
     );
     expect(
-      await screen.findByRole("button", { name: /check now/i }),
+      await screen.findByRole("button", { name: /scan now/i }),
     ).toBeInTheDocument();
   });
 
-  it("hides Check now and prompts to subscribe when tracked but not subscribed", async () => {
+  it("hides Scan now and prompts to subscribe when tracked but not subscribed", async () => {
     // A tracked-but-unsubscribed channel still shows the New tab, but the scan
-    // endpoint 400s without a subscription, so Check now must not be offered.
+    // endpoint 400s without a subscription, so Scan now must not be offered.
     render(
       <NewTab
         detail={makeDetail({ subscribed: false })}
@@ -62,7 +62,7 @@ describe("NewTab", () => {
     expect(
       await screen.findByText(/subscribe to this channel/i),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /check now/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /scan now/i })).toBeNull();
   });
 
   it("shows the publish date beside the duration, and omits it when unknown", async () => {

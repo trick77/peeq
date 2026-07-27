@@ -63,12 +63,41 @@ export function formatSubscribers(n: number | undefined): string {
 
 // formatStamp renders one of peeq's stored timestamps as a plain local date.
 // The stored form has no zone marker but is always UTC, so the "Z" is what
-// stops the browser reading it as local time and shifting the date.
+// stops the browser reading it as local time and shifting the date. The space
+// between date and time is swapped for a "T" first, for the reason parseSqlUTC
+// in channel/schedule.ts spells out: "2026-07-26 08:00:00Z" is not ISO 8601 and
+// only parses by engine leniency, so an engine that refuses it would print an
+// empty date here rather than the stamp.
 export function formatStamp(stored: string | undefined): string {
   if (!stored) return "";
-  const d = new Date(stored + "Z");
+  const d = new Date(stored.replace(" ", "T") + "Z");
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString();
+}
+
+// ScanStamp is the "when did peeq last look for new videos" segment. It is its
+// own component because it belongs to BOTH the healthy reading and the failed
+// metadata one: a channel whose metadata refresh keeps failing is still scanned
+// daily, and the failed reading is exactly where someone is most likely to fear
+// peeq has stopped watching the channel. Showing only the metadata date there
+// would repeat, in miniature, the bug this whole change is about.
+//
+// last_scanned_at is absent for an added-but-unsubscribed channel, whose
+// subscriptions row is DELETED on unsubscribe, so there is no scan schedule and
+// no stamp to show; that segment simply drops out. "Never scanned" is not said
+// here — scheduleLine on the New and Settings tabs is where a channel's
+// schedule is spelled out in full.
+//
+// It is deliberately NOT shown for gone (auto-unsubscribed, so scanning really
+// has stopped) or for a channel never read at all.
+function ScanStamp({ at }: { at?: string }) {
+  if (!at) return null;
+  return (
+    <>
+      <span className="sep">·</span>
+      <span>Last channel scan {formatStamp(at)}</span>
+    </>
+  );
 }
 
 // ChannelState is the part of the handle line that reports on YouTube rather
@@ -87,6 +116,19 @@ export function formatStamp(stored: string | undefined): string {
 //
 // A channel with no resolved_at at all has simply never been read, and says
 // so plainly rather than claiming anything about YouTube.
+//
+// The active reading carries TWO dates, and naming them apart is the point.
+// They are separate schedules over separate columns, and they are far apart on
+// purpose: the metadata refresh (channels.resolved_at) runs weekly, seeded at a
+// random minute per subscription so channels do not refresh in a convoy, while
+// the channel scan that finds new videos (subscriptions.last_scanned_at) runs
+// daily. A single stamp labelled "Refreshed" read as the daily one and made a
+// perfectly healthy 5-day-old metadata refresh look like a broken scan.
+//
+// The wording is the backend's own — "channel scan" and "metadata refresh" are
+// the phrases handleActivityUpcoming attaches to these two units of work, so a
+// row queued in Up next and the stamp here name the same thing. "Last " is the
+// one addition: Up next lists the next occurrence, this reports the previous.
 export function ChannelState({ detail }: { detail: ChannelDetail }) {
   if (detail.gone) {
     return (
@@ -116,8 +158,9 @@ export function ChannelState({ detail }: { detail: ChannelDetail }) {
         <span className="sep">·</span>
         <span className="chan-state stale">
           <span className="led unknown" />
-          Last refresh failed {formatStamp(detail.resolved_at)}
+          Metadata refresh failed {formatStamp(detail.resolved_at)}
         </span>
+        <ScanStamp at={detail.last_scanned_at} />
       </>
     );
   }
@@ -129,7 +172,8 @@ export function ChannelState({ detail }: { detail: ChannelDetail }) {
         Active on YouTube
       </span>
       <span className="sep">·</span>
-      <span>Refreshed {formatStamp(detail.resolved_at)}</span>
+      <span>Last metadata refresh {formatStamp(detail.resolved_at)}</span>
+      <ScanStamp at={detail.last_scanned_at} />
     </>
   );
 }
@@ -145,7 +189,7 @@ export function Channel({
   onBack: () => void;
   /**
    * Newest activity events pushed over SSE, the same stream the Activity page
-   * reads. The channel page needs them because "Check now" is asynchronous: the
+   * reads. The channel page needs them because "Scan now" is asynchronous: the
    * scan happens up to a minute later on the scan loop, and without a signal the
    * button would sit at "Queued" until the user reloaded by hand. A scan event
    * for this channel is exactly that signal.
@@ -216,7 +260,7 @@ export function Channel({
   const handledScanID = useRef(0);
 
   // Refetch when a scan for THIS channel lands, so last_scanned_at and
-  // next_scan_at move on their own and the Check now button leaves its "Queued"
+  // next_scan_at move on their own and the Scan now button leaves its "Queued"
   // state without a reload. Filtered by subject id — another channel's scan says
   // nothing about this page.
   useEffect(() => {

@@ -164,7 +164,7 @@ func TestSkipScan_undoRestoresTheExactPreviousInstant(t *testing.T) {
 	}
 }
 
-// A "Check now" that is then skipped is called off. Leaving the marker set
+// A "Scan now" that is then skipped is called off. Leaving the marker set
 // would make a later automatic pass announce itself on Activity as the answer
 // to a request the user withdrew.
 func TestSkipScan_clearsAnOutstandingCheckNow(t *testing.T) {

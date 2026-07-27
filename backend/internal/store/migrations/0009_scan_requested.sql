@@ -1,6 +1,6 @@
--- "Check now" does not scan: the handler only pulls next_scan_at into the past
+-- "Scan now" does not scan on the spot: the handler only pulls next_scan_at into the past
 -- so the serial scan loop claims the channel on its next poll. That makes a
--- requested check indistinguishable from an automatic one by the time the loop
+-- requested scan indistinguishable from an automatic one by the time the loop
 -- runs, and the loop's silence rule writes no activity row when a pass finds
 -- nothing new -- so a user who pressed the button gets no evidence it happened.
 --

@@ -336,13 +336,13 @@ describe("Channels", () => {
     });
   });
 
-  describe("Check now", () => {
+  describe("Scan now", () => {
     beforeEach(() => {
       vi.mocked(scanChannel).mockReset();
       vi.mocked(scanChannel).mockResolvedValue({ status: "scheduled" });
     });
 
-    it("schedules a check and reports it", async () => {
+    it("schedules a scan and reports it", async () => {
       const user = userEvent.setup();
       render(<Channels />);
       await screen.findByText("Subbed Channel");
@@ -351,17 +351,17 @@ describe("Channels", () => {
         .closest(".channel-row") as HTMLElement;
 
       await openRowMenu(user, row);
-      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      await user.click(screen.getByRole("menuitem", { name: /scan now/i }));
 
       await waitFor(() => expect(scanChannel).toHaveBeenCalledWith("c2"));
       expect(
         await screen.findByText(
-          "Added to the check queue — usually done within a minute.",
+          "Added to the scan queue — usually done within a minute.",
         ),
       ).toBeInTheDocument();
     });
 
-    it("reports the backend's reason when the check is blocked", async () => {
+    it("reports the backend's reason when the scan is blocked", async () => {
       const user = userEvent.setup();
       vi.mocked(scanChannel).mockResolvedValue({
         status: "blocked",
@@ -374,7 +374,7 @@ describe("Channels", () => {
         .closest(".channel-row") as HTMLElement;
 
       await openRowMenu(user, row);
-      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      await user.click(screen.getByRole("menuitem", { name: /scan now/i }));
 
       expect(
         await screen.findByText("YouTube access is paused."),
@@ -384,7 +384,7 @@ describe("Channels", () => {
     // The banner never names a channel, so one row's answer must not still be
     // up while the next row's request is in flight — it would read as that
     // row's answer.
-    it("drops the previous row's answer while the next check is in flight", async () => {
+    it("drops the previous row's answer while the next scan is in flight", async () => {
       const user = userEvent.setup();
       const secondSubbed = baseChannel({
         id: "c3",
@@ -414,16 +414,16 @@ describe("Channels", () => {
         .getByText("Subbed Channel")
         .closest(".channel-row") as HTMLElement;
       await openRowMenu(user, first);
-      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      await user.click(screen.getByRole("menuitem", { name: /scan now/i }));
       const scheduled =
-        "Added to the check queue — usually done within a minute.";
+        "Added to the scan queue — usually done within a minute.";
       await screen.findByText(scheduled);
 
       const second = screen
         .getByText("Also Subbed")
         .closest(".channel-row") as HTMLElement;
       await openRowMenu(user, second);
-      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      await user.click(screen.getByRole("menuitem", { name: /scan now/i }));
 
       // c3's request has not resolved yet — the banner must be blank, not
       // still showing the first row's answer.
@@ -434,7 +434,7 @@ describe("Channels", () => {
       expect(await screen.findByText(scheduled)).toBeInTheDocument();
     });
 
-    // Deleting the channel a notice is about leaves it promising a check for a
+    // Deleting the channel a notice is about leaves it promising a scan for a
     // row that no longer exists.
     it("clears the notice when the checked channel is deleted", async () => {
       const user = userEvent.setup();
@@ -445,9 +445,9 @@ describe("Channels", () => {
         .closest(".channel-row") as HTMLElement;
 
       await openRowMenu(user, row);
-      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      await user.click(screen.getByRole("menuitem", { name: /scan now/i }));
       const scheduled =
-        "Added to the check queue — usually done within a minute.";
+        "Added to the scan queue — usually done within a minute.";
       await screen.findByText(scheduled);
 
       await openRowMenu(user, row);
@@ -477,17 +477,17 @@ describe("Channels", () => {
         .closest(".channel-row") as HTMLElement;
 
       await openRowMenu(user, row);
-      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      await user.click(screen.getByRole("menuitem", { name: /scan now/i }));
 
       expect(
-        await screen.findByText("peeq cannot check this channel right now."),
+        await screen.findByText("peeq cannot scan this channel right now."),
       ).toBeInTheDocument();
     });
 
     it("shows an error line when the request fails", async () => {
       const user = userEvent.setup();
       vi.mocked(scanChannel).mockRejectedValue(
-        new Error("failed to schedule a check"),
+        new Error("failed to schedule a scan"),
       );
       render(<Channels />);
       await screen.findByText("Subbed Channel");
@@ -496,10 +496,10 @@ describe("Channels", () => {
         .closest(".channel-row") as HTMLElement;
 
       await openRowMenu(user, row);
-      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      await user.click(screen.getByRole("menuitem", { name: /scan now/i }));
 
       expect(
-        await screen.findByText("failed to schedule a check"),
+        await screen.findByText("failed to schedule a scan"),
       ).toBeInTheDocument();
     });
 
@@ -514,16 +514,16 @@ describe("Channels", () => {
         .closest(".channel-row") as HTMLElement;
 
       await openRowMenu(user, row);
-      await user.click(screen.getByRole("menuitem", { name: /check now/i }));
+      await user.click(screen.getByRole("menuitem", { name: /scan now/i }));
       await screen.findByText(
-        "Added to the check queue — usually done within a minute.",
+        "Added to the scan queue — usually done within a minute.",
       );
 
       await user.click(screen.getByRole("button", { name: /^All\b/ }));
       await waitFor(() =>
         expect(
           screen.queryByText(
-            "Added to the check queue — usually done within a minute.",
+            "Added to the scan queue — usually done within a minute.",
           ),
         ).not.toBeInTheDocument(),
       );
@@ -541,7 +541,7 @@ describe("Channels", () => {
 
       await openRowMenu(user, row);
       expect(
-        screen.queryByRole("menuitem", { name: /check now/i }),
+        screen.queryByRole("menuitem", { name: /scan now/i }),
       ).not.toBeInTheDocument();
       expect(
         screen.getByRole("menuitem", { name: /delete channel/i }),

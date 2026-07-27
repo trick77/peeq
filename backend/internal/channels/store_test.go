@@ -808,7 +808,7 @@ func TestRequestScan_pullsScheduleForwardAndMarksTheWait(t *testing.T) {
 
 func TestMarkScanned_clearsTheScanRequestMarker(t *testing.T) {
 	// Any completed pass has actually looked at the channel, so it satisfies
-	// whatever "Check now" was waiting on.
+	// whatever "Scan now" was waiting on.
 	s, _ := newSubTestStore(t)
 	if err := s.RequestScan("UC1", "2026-07-25 06:11:14"); err != nil {
 		t.Fatal(err)
@@ -840,7 +840,7 @@ func TestClearScanRequest_leavesTheScheduleAlone(t *testing.T) {
 }
 
 func TestMarkScanned_keepsARequestThatArrivedMidScan(t *testing.T) {
-	// The race: a user presses "Check now" while a scan of the same channel is
+	// The race: a user presses "Scan now" while a scan of the same channel is
 	// already running. That pass never saw the request, so consuming it would
 	// swallow the click AND push next_scan_at a day out — the exact "the button
 	// does nothing" bug the receipt mechanism exists to fix.

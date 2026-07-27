@@ -612,7 +612,7 @@ func TestChannelDetail_notAddedChannel_onlyQueuedVideos_200(t *testing.T) {
 }
 
 // TestChannelDetail_subscribed_includesSchedule asserts the page can tell the
-// user when peeq last checked and when it will check next.
+// user when peeq last scanned and when it will scan next.
 func TestChannelDetail_subscribed_includesSchedule(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "Subbed"}})
 	h := New(deps)
@@ -1622,7 +1622,7 @@ func seedChannelAndPending(t *testing.T, deps Deps, channelID, videoID string) {
 	}
 }
 
-// TestChannelScan_setsNextScanAt asserts "check now" is exactly one update:
+// TestChannelScan_setsNextScanAt asserts "scan now" is exactly one update:
 // the scheduler polls ClaimDue(now), so moving next_scan_at into the past is
 // the whole mechanism.
 func TestChannelScan_setsNextScanAt(t *testing.T) {

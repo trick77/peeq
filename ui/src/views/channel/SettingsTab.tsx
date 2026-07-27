@@ -10,7 +10,7 @@ import {
   subscribeChannel,
   unsubscribeChannel,
 } from "../../api/channels";
-import { isCheckQueued, scanNotice, scheduleLine } from "./schedule";
+import { isScanQueued, scanNotice, scheduleLine } from "./schedule";
 import type { ChannelDetail } from "../../api/types";
 
 export function SettingsTab({
@@ -158,9 +158,9 @@ export function SettingsTab({
 
             <div className="chan-srow">
               <div>
-                <div className="lab">Checking for new videos</div>
+                <div className="lab">Scanning for new videos</div>
                 <div className="hint">
-                  {scheduleLine(detail, "Last checked")}
+                  {scheduleLine(detail, "Last scanned")}
                 </div>
               </div>
               <Button
@@ -169,12 +169,12 @@ export function SettingsTab({
                 busy={scanning}
                 onClick={handleScan}
                 title={
-                  isCheckQueued(detail)
-                    ? "Waiting for the next scan pass — press to check again"
+                  isScanQueued(detail)
+                    ? "Waiting for the next scan pass — press to scan again"
                     : undefined
                 }
               >
-                {isCheckQueued(detail) ? "Queued" : "Check now"}
+                {isScanQueued(detail) ? "Queued" : "Scan now"}
               </Button>
             </div>
           </>
