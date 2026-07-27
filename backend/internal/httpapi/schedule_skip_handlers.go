@@ -54,8 +54,10 @@ const skipTimeLayout = "2006-01-02 15:04:05"
 // cycle out; a scan already scheduled 20h away, rescheduled from now, would come
 // back at the same slot only ~12h out — making Skip advance the very thing it
 // was asked to drop. Anchoring on the stored instant makes "strictly later"
-// structural: both packages search strictly forward from the anchor, so the
-// answer is always at least one interval past the occurrence being skipped.
+// structural: both packages start their search half an interval past the anchor
+// and then move strictly forward, so the answer is never earlier than the
+// occurrence being skipped — by at least half a cycle, and by a full one
+// whenever the stored instant is already on the channel's slot.
 //
 // It is also what keeps a skipped channel on its slot. The stored instant sits
 // on the slot, so the next occurrence after it is exactly one cycle later —

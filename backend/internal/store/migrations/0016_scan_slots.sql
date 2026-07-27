@@ -66,8 +66,22 @@ due AS (
                 + 604800 * ((meta_base - meta_slot) % 604800 < 0)) AS meta_at
       FROM slotted
 )
+-- A pending "Check now" is the one thing this must not move. Its marker sits in
+-- scan_requested_at with next_scan_at already in the past, waiting for the next
+-- poll — and the realistic way a request is still pending at migration time is
+-- exactly the outage this PR is about: the cookie expires, the scheduler is
+-- gated, the user clicks Check now, the cookie is fixed and the container is
+-- redeployed. Migrate runs before the workers, so an unconditional write would
+-- push that request 12-36h out while Activity still shows it as requested.
+-- Those rows keep their past next_scan_at, get scanned promptly, and that scan
+-- puts them on their slot — the same self-healing every other path relies on.
+--
+-- Only the scan column is guarded: a pending scan request says nothing about
+-- the metadata rotation, which is spread here for every row.
 UPDATE subscriptions
-   SET next_scan_at         = datetime(due.scan_at, 'unixepoch'),
+   SET next_scan_at         = CASE WHEN subscriptions.scan_requested_at IS NULL
+                                   THEN datetime(due.scan_at, 'unixepoch')
+                                   ELSE subscriptions.next_scan_at END,
        next_meta_refresh_at = datetime(due.meta_at, 'unixepoch')
   FROM due
  WHERE due.channel_id = subscriptions.channel_id;

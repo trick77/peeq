@@ -384,15 +384,73 @@ WITH ordered AS (
 SELECT MIN(t - prev), MAX(t - prev) FROM ordered WHERE prev IS NOT NULL`).Scan(&minGap, &maxGap); err != nil {
 			t.Fatalf("gaps for %s: %v", c.column, err)
 		}
-		// A second of slack, for two reasons. Integer division only divides
-		// evenly when the fleet size divides the cycle — 40 does, production's
-		// 44 does not, and there consecutive gaps alternate by a second. And
-		// 'now' is read per row, so a statement crossing a second boundary
-		// shifts one gap by one. Neither is the bug; a collapsed gap is.
+		// A second of slack: integer division only divides evenly when the
+		// fleet size divides the cycle — 40 does, production's 44 does not,
+		// and there consecutive gaps alternate by a second. That is not the
+		// bug this guards; a collapsed gap is.
 		if minGap < c.spacing-1 || maxGap > c.spacing+1 {
 			t.Fatalf("%s gaps between %ds and %ds; want every neighbour ~%ds apart",
 				c.column, minGap, maxGap, c.spacing)
 		}
+	}
+}
+
+// TestMigrate_slotBackfillLeavesAPendingScanRequestAlone: 0016 spreads the fleet
+// across the cycle, but a channel with an outstanding "Check now" is waiting on
+// a next_scan_at already in the past, and moving it 12–36h out would silently
+// drop the user's request while Activity still showed it as pending. That is not
+// a narrow race: Migrate runs before the workers, and the way a request survives
+// to migration time is exactly this PR's outage — cookie expires, scheduler is
+// gated, user clicks Check now, cookie is fixed, container is redeployed.
+//
+// The metadata half is spread for those rows all the same; a pending scan
+// request says nothing about the weekly rotation.
+func TestMigrate_slotBackfillLeavesAPendingScanRequestAlone(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "pending.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	applyThrough(t, db, "0015_reclassify_hints.sql")
+
+	// Given: two subscriptions overdue for a scan, one of them requested by hand.
+	for _, id := range []string{"UCa", "UCb"} {
+		if _, err := db.Exec(`INSERT INTO channels (id, name, added_at) VALUES (?, ?, datetime('now'))`, id, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(
+			`INSERT INTO subscriptions (channel_id, next_scan_at) VALUES (?, '2020-01-01 00:00:00')`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(
+		`UPDATE subscriptions SET scan_requested_at = '2020-01-01 00:00:00' WHERE channel_id = 'UCa'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: peeq starts and migrates.
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Then: the requested channel is still due, the other one is on its slot,
+	// and both got a metadata slot.
+	var requested, ordinary, metas int
+	if err := db.QueryRow(`
+SELECT SUM(channel_id = 'UCa' AND next_scan_at = '2020-01-01 00:00:00'),
+       SUM(channel_id = 'UCb' AND next_scan_at > datetime('now')),
+       COUNT(next_meta_refresh_at)
+FROM subscriptions`).Scan(&requested, &ordinary, &metas); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if requested != 1 {
+		t.Fatal("the backfill moved a channel with a pending Check now; its request is now 12-36h away")
+	}
+	if ordinary != 1 {
+		t.Fatal("the backfill left an ordinary overdue subscription un-slotted")
+	}
+	if metas != 2 {
+		t.Fatalf("next_meta_refresh_at seeded on %d rows, want both — the scan guard must not skip the metadata half", metas)
 	}
 }
 

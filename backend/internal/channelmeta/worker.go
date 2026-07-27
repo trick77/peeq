@@ -280,9 +280,10 @@ func (w *Worker) settle(channelID string) {
 // the channel claimable on every poll.
 //
 // A channel with no subscriptions row (the never-resolved backlog is mostly
-// unsubscribed) ranks as 0-of-0, which sched.Slot answers with slot zero. That
-// costs nothing: MarkMetaRefreshed matches no row for it, so the value is
-// discarded — the backlog is held off by channels.resolved_at instead.
+// unsubscribed) still gets an answer — SubscriptionRank counts the ids below it
+// and reports where it WOULD sit — and the answer is simply thrown away:
+// MarkMetaRefreshed matches no row for it, so nothing is written. The backlog is
+// held off by channels.resolved_at instead.
 func (w *Worker) nextRefreshAt(channelID string) string {
 	rank, count, err := w.d.Refresher.Channels.SubscriptionRank(channelID)
 	if err != nil {
@@ -302,10 +303,12 @@ func (w *Worker) nextRefreshAt(channelID string) string {
 // repeat. Migration 0005 scattered these rows once; a slot keeps them scattered
 // through the restarts and cookie expiries that used to re-gather them.
 //
-// Both slots derive from the same rank, so for some channels — rank 0 and the
-// one halfway down the list, whose slots land on the top of both cycles — the
-// refresh comes due right beside its own scan and ClaimDueMetadata defers it on
-// ScanQuietWindow every week rather than occasionally. That is the intended
+// Both slots derive from the same rank, so for some channels the refresh comes
+// due right beside that channel's own scan and ClaimDueMetadata defers it on
+// ScanQuietWindow every week rather than occasionally. The two coincide when
+// 6*rank is a multiple of the fleet size, which is gcd(6, count) channels —
+// ranks 0 and 22 of production's 44, but six of them in a fleet of 12. That is
+// the intended
 // behaviour of the quiet window and it clears itself within a poll or two; it is
 // written down because the recurrence looks like a stuck channel and is not.
 //
