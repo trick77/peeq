@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -115,6 +116,21 @@ func minusSet(a, b []string) []string {
 	return out
 }
 
+// categoryResetSet matches the assignment that makes an UPDATE a bulk
+// reclassification: SET category = 'uncategorized'.
+//
+// It is deliberately narrower than "mentions uncategorized somewhere". A
+// targeted remap — UPDATE videos SET category = 'science' WHERE category =
+// 'uncategorized' — names the same string but clears nothing, so sweeping it
+// into TestResetSetMatchesTheSweep would fail a migration that is perfectly
+// correct. Only the SET side decides.
+//
+// Whitespace and quoting are loose because SQL is: `category='uncategorized'`
+// and `category  =  'uncategorized'` are the same statement, and a matcher that
+// missed either would silently drop a real reset out of the assertion — the
+// exact failure the whole-directory scan exists to prevent.
+var categoryResetSet = regexp.MustCompile(`(?i)SET\s+category\s*=\s*'` + UncategorizedCategory + `'`)
+
 // categoryResets returns the bulk-reclassification UPDATE from every migration
 // that carries one, keyed by filename, read out of the real files so a test
 // cannot pass against a migration that says something else.
@@ -148,7 +164,7 @@ func categoryResets(t *testing.T) map[string]string {
 		// more than the real migration does.
 		for _, stmt := range strings.Split(stripSQLComments(string(body)), ";") {
 			s := strings.TrimSpace(stmt)
-			if !strings.HasPrefix(s, "UPDATE") || !strings.Contains(s, UncategorizedCategory) {
+			if !strings.HasPrefix(s, "UPDATE") || !categoryResetSet.MatchString(s) {
 				continue
 			}
 			if prev, dup := found[e.Name()]; dup {

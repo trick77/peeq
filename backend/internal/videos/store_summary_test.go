@@ -325,6 +325,36 @@ func TestClearSummary_errorsOnClosedDB(t *testing.T) {
 	}
 }
 
+// TestCategoryResetSetTellsResetsFromRemaps pins what categoryResets counts as
+// a bulk reclassification, because both ways of getting it wrong are silent.
+//
+// Too greedy and a targeted remap — which names 'uncategorized' in its WHERE
+// but clears nothing — gets dragged into TestResetSetMatchesTheSweep and fails
+// a correct migration, which teaches whoever hits it to weaken the scan. Too
+// strict and a real reset written with different spacing drops out of the
+// assertion entirely, and the reset that erases data with no path back is the
+// one nobody checked.
+func TestCategoryResetSetTellsResetsFromRemaps(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stmt string
+		want bool
+	}{
+		{"the real 0004/0015 statement", `UPDATE videos SET category = 'uncategorized' WHERE summary <> '' AND category_manual = 0`, true},
+		{"no spaces around the equals", `UPDATE videos SET category='uncategorized' WHERE summary <> ''`, true},
+		{"lowercased keywords", `update videos set category = 'uncategorized'`, true},
+		{"remap OUT of uncategorized", `UPDATE videos SET category = 'science' WHERE category = 'uncategorized'`, false},
+		{"another column entirely", `UPDATE videos SET summary = '' WHERE category = 'uncategorized'`, false},
+		{"unrelated update", `UPDATE videos SET category_manual = 0`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := categoryResetSet.MatchString(tc.stmt); got != tc.want {
+				t.Fatalf("matched=%v want %v for:\n%s", got, tc.want, tc.stmt)
+			}
+		})
+	}
+}
+
 // TestResetSetMatchesTheSweep pins every bulk-reclassification migration to the
 // query that is supposed to undo it. Such a migration clears categories in bulk
 // on the promise that the summarize worker's idle sweep re-classifies whatever
