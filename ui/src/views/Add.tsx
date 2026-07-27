@@ -20,21 +20,28 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
-  // The confirmation clears itself after a few seconds; hold the timer so a
-  // fast second submit resets the countdown instead of stacking timers, and so
-  // it can't fire after the view unmounts.
-  const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // `leaving` drives the fade-out: after the line has been up a few seconds we
+  // flip it on to run the exit animation, then unmount a beat later.
+  const [leaving, setLeaving] = useState(false);
+  // Hold the pending timers so a fast second submit resets the countdown
+  // instead of stacking, and so none fire after the view unmounts.
+  const fadeTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-  useEffect(() => {
-    return () => {
-      if (fadeTimer.current) clearTimeout(fadeTimer.current);
-    };
-  }, []);
+  function clearTimers() {
+    fadeTimers.current.forEach(clearTimeout);
+    fadeTimers.current = [];
+  }
+
+  useEffect(() => clearTimers, []);
 
   function showConfirm(message: string) {
+    clearTimers();
     setConfirm(message);
-    if (fadeTimer.current) clearTimeout(fadeTimer.current);
-    fadeTimer.current = setTimeout(() => setConfirm(null), 4000);
+    setLeaving(false);
+    fadeTimers.current.push(
+      setTimeout(() => setLeaving(true), 4000),
+      setTimeout(() => setConfirm(null), 4300),
+    );
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -43,7 +50,9 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
     if (!trimmed || busy) return;
     setBusy(true);
     setError(null);
+    clearTimers();
     setConfirm(null);
+    setLeaving(false);
     try {
       if (isChannelURL(trimmed)) {
         const channel = await addChannel(trimmed, false);
@@ -112,7 +121,7 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
       {error ? <div className="errline">{error}</div> : null}
 
       {confirm ? (
-        <div className="addok" role="status">
+        <div className={`addok${leaving ? " leaving" : ""}`} role="status">
           <Icon name="check" size="15px" />
           <span>{confirm}</span>
         </div>

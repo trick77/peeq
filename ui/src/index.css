@@ -1856,6 +1856,10 @@ button.catpick.unset:hover {
   margin-bottom: 16px;
   animation: addok-in 0.18s ease-out;
 }
+/* .leaving runs the exit fade the JS timer schedules before it unmounts. */
+.addok.leaving {
+  animation: addok-out 0.3s ease-in forwards;
+}
 @keyframes addok-in {
   from {
     opacity: 0;
@@ -1864,6 +1868,12 @@ button.catpick.unset:hover {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+@keyframes addok-out {
+  to {
+    opacity: 0;
+    transform: translateY(-2px);
   }
 }
 .field-row {
