@@ -300,14 +300,18 @@ export function Inbox({
         <>
           {/* Same toolbar as the Library and the Channels list: search leads,
               chips go beneath. The right-hand end is a quiet control group,
-              anchored to the edge by push-end: Download all sits to the LEFT of
-              the sort control, which stays the rightmost item. Both carry
-              push-end so the sort control keeps its right anchor even on the
-              frame where Download all is absent (a search that matches nothing
-              leaves zero visible). Download all rides here because it acts on
-              exactly what search and sort have selected — it stays available
-              whenever at least one item is on screen, since even a single card
-              is quicker to clear from here than from its own row. */}
+              anchored to the edge by ONE push-end: Download all sits to the LEFT
+              of the sort control, which stays the rightmost item, and the two
+              sit adjacent. Exactly one auto-margin does the anchoring — putting
+              it on both would split the free space into two gaps and separate
+              the pair. So push-end rides the Download all button when it is
+              shown, and falls to the sort control on the frame where Download
+              all is absent (a search that matches nothing leaves zero visible),
+              keeping the sort control right-anchored either way. Download all
+              rides here because it acts on exactly what search and sort have
+              selected — it stays available whenever at least one item is on
+              screen, since even a single card is quicker to clear from here than
+              from its own row. */}
           <div className="listbar">
             <SearchField
               value={search}
@@ -347,7 +351,7 @@ export function Inbox({
               </Button>
             ) : null}
             <select
-              className={`${controlClass} push-end`}
+              className={`${controlClass}${visible.length > 0 ? "" : " push-end"}`}
               style={{ maxWidth: 190 }}
               value={sort}
               onChange={(e) => setSort(e.target.value as VideoSort)}
