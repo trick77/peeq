@@ -123,10 +123,14 @@ export function Player({
   // no src until we know which kind of URL to use, so it can never mount with
   // the session URL and then swap to a grant, which would reload the media.
   const [directStream, setDirectStream] = useState<boolean | null>(null);
-  // playbackSrc is the URL the <video> actually plays: either the ordinary
-  // session-gated stream, or a grant URL when direct playback is on. null until
-  // resolved, which shows the poster and nothing else.
-  const [playbackSrc, setPlaybackSrc] = useState<string | null>(null);
+  // grant is the minted direct-playback URL, stamped with the video it was
+  // minted for. The id is not decoration: the <video> unmounts and remounts on
+  // every video change, and without it the new video's element would mount
+  // carrying the *previous* video's URL for as long as the next mint takes —
+  // long enough for the old media (already warm in the cache) to fire
+  // loadedmetadata against the new video's state, which sets resumeAppliedRef
+  // and costs the new video its resume position. null until minted.
+  const [grant, setGrant] = useState<{ id: string; url: string } | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [cues, setCues] = useState<Cue[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -377,36 +381,46 @@ export function Player({
     };
   }, []);
 
-  // Decide the <video> src once the preference is known, and re-decide per
-  // video. With direct playback off this is the same session-gated URL peeq has
-  // always used. With it on, mint a grant first: AirPlay hands the src to the
-  // Apple TV, which fetches it with no session cookie, so the src has to already
-  // be auth-free by the time the built-in AirPlay button is pressed — that
-  // button lives inside Safari's native controls and cannot be intercepted.
+  // Mint a grant per video while direct playback is on. AirPlay hands the src
+  // to the Apple TV, which fetches it with no session cookie, so the src has to
+  // already be auth-free by the time the built-in AirPlay button is pressed —
+  // that button lives inside Safari's native controls and cannot be
+  // intercepted.
   //
-  // A failed mint falls back to the session URL rather than failing playback:
-  // the worst case is that AirPlay does not work, which is exactly where the
-  // user was before turning the setting on.
+  // A failed mint stores the session URL rather than failing playback: the
+  // worst case is that AirPlay does not work, which is exactly where the user
+  // was before turning the setting on.
   useEffect(() => {
-    if (!video?.id || directStream === null) return;
+    if (!video?.id || !directStream) return;
     const id = video.id;
-    if (!directStream) {
-      setPlaybackSrc(streamUrl(id));
-      return;
-    }
     let active = true;
-    setPlaybackSrc(null);
     createPlaybackGrant(id)
       .then((g) => {
-        if (active) setPlaybackSrc(g.url);
+        if (active) setGrant({ id, url: g.url });
       })
       .catch(() => {
-        if (active) setPlaybackSrc(streamUrl(id));
+        if (active) setGrant({ id, url: streamUrl(id) });
       });
     return () => {
       active = false;
     };
   }, [video?.id, directStream]);
+
+  // playbackSrc is the URL the <video> actually plays, derived during render
+  // rather than held in state: the element remounts whenever the open video
+  // changes, and a state-held URL would still be the previous video's for the
+  // first commit after that remount. undefined means "no src yet" — either the
+  // preference has not loaded or the grant for *this* video has not landed —
+  // which shows the poster and nothing else. With direct playback off this is
+  // the same session-gated URL peeq has always used.
+  const playbackSrc =
+    !video || directStream === null
+      ? undefined
+      : directStream
+        ? grant?.id === video.id
+          ? grant.url
+          : undefined
+        : streamUrl(video.id);
 
   // Hide Safari's AirPlay button when direct playback is off, rather than
   // leaving a control that would hand the receiver a URL it cannot fetch and
@@ -942,7 +956,7 @@ export function Player({
             className={
               video.has_thumbnail ? undefined : gradientClassFor(video.id)
             }
-            src={playbackSrc ?? undefined}
+            src={playbackSrc}
             poster={video.has_thumbnail ? thumbnailUrl(video.id) : undefined}
             controls
             onLoadedMetadata={handleLoadedMetadata}

@@ -1772,6 +1772,53 @@ describe("Player", () => {
       });
       expect(el.disableRemotePlayback).toBe(false);
     });
+
+    // Switching videos must never leave the new video's <video> carrying the
+    // previous video's URL, however briefly: the old media is warm in the cache
+    // and its loadedmetadata would fire against the new video's state, setting
+    // resumeAppliedRef and costing the new video its resume position.
+    it("never carries the previous video's grant URL while minting the next", async () => {
+      const first = makeVideo({ id: "v1", title: "First Video" });
+      const second = makeVideo({ id: "v2", title: "A Different Video" });
+      vi.mocked(getVideo).mockImplementation(async (id: string) =>
+        id === "v1" ? first : second,
+      );
+      vi.mocked(getSettings).mockResolvedValue(makeSettings(false, true));
+      vi.mocked(createPlaybackGrant)
+        .mockResolvedValueOnce({
+          url: "/api/p/tok-v1/stream",
+          expires_at: "2026-07-29 10:00:00",
+        })
+        // v2's mint never settles, holding the swap window wide open.
+        .mockReturnValueOnce(new Promise(() => {}));
+
+      const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await findVideoSrc()).toBe("/api/p/tok-v1/stream");
+
+      // Sampling the DOM after the swap has settled would prove nothing — the
+      // stale src only exists between the commit that mounts v2's element and
+      // the effect that would replace it. A MutationObserver runs as a
+      // microtask, so it sees every intermediate state that a browser's media
+      // loader would also act on.
+      const seen: (string | null)[] = [];
+      const obs = new MutationObserver(() => {
+        const el = document.querySelector("video");
+        if (el) seen.push(el.getAttribute("src"));
+      });
+      obs.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["src"],
+      });
+
+      rerender(<Player videoId="v2" onDeleted={() => {}} />);
+      await screen.findByText("A Different Video");
+      obs.disconnect();
+
+      expect(seen).not.toContain("/api/p/tok-v1/stream");
+      expect(document.querySelector("video")?.getAttribute("src")).toBeNull();
+    });
   });
 });
 
