@@ -1496,20 +1496,43 @@ button.srow:not(:disabled):hover {
   color: var(--color-ink-dim);
 }
 
+/* Favourite and watched, on the poster's free top-right corner (the unwatched
+   dot owns top-left). These used to be opacity:0 until .thumb:hover, with no
+   touch fallback of any kind — which on a phone or tablet meant a control that
+   could never be reached at all, since there is no hover to reveal it with and
+   nothing else on the card toggles either flag.
+
+   So they rest visible, at a strength short of full: enough to find and press
+   without a pointer, quiet enough that a grid of twenty cards does not read as
+   forty buttons. Hover and keyboard focus still bring them up to full, so the
+   card you are actually on says so. Deliberately NOT a `@media (hover: none)`
+   fallback like .kebab uses — an iPad with a trackpad reports `hover: hover`
+   and would fall through it back to the invisible branch, which is exactly the
+   hole that media query looks like it closes. Resting visibility has no such
+   gap; see .pending-acts on Inbox, which reaches the same conclusion. */
 .thumb .acts {
   position: absolute;
   right: 8px;
   top: 8px;
   display: flex;
   gap: 6px;
-  opacity: 0;
-  transform: translateY(-4px);
-  transition: 0.16s;
+  opacity: 0.62;
+  transition: opacity 0.16s ease;
 }
 .thumb:hover .acts,
 .thumb:focus-within .acts {
   opacity: 1;
-  transform: none;
+}
+/* A lit toggle is state, not decoration — "Kept forever" and the watched
+   countdown are in the card foot, but the star and check are what you look at
+   on the poster. Never dim those. */
+.thumb .acts:has(.iconbtn.on) {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thumb .acts {
+    transition: none;
+  }
 }
 .iconbtn {
   width: 30px;
