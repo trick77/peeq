@@ -457,7 +457,7 @@ export function App() {
       <div
         style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}
       >
-        <b>peeq</b>
+        <b>Peeq</b>
       </div>
     );
   }
@@ -472,7 +472,7 @@ export function App() {
           gap: 12,
         }}
       >
-        <b>peeq</b>
+        <b>Peeq</b>
         {authError ? (
           <p style={{ color: "var(--color-danger)" }}>
             Couldn't reach the server. Try reloading.

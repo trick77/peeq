@@ -19,7 +19,7 @@ import (
 
 // testShell is the SPA shell the share page is served from — the same shape as
 // the tracked dist placeholder and a real Vite build (both carry </title>).
-var testShell = []byte("<!doctype html>\n<html><head><title>peeq</title></head><body><div id=\"root\"></div></body></html>")
+var testShell = []byte("<!doctype html>\n<html><head><title>Peeq</title></head><body><div id=\"root\"></div></body></html>")
 
 // shareMetaDeps is shareTestDeps plus the SPA wiring the /s/{token} route needs:
 // a Static handler (its presence is what registers the route) and the shell.
@@ -61,7 +61,7 @@ func TestShareShell_liveTokenGetsOpenGraphTags(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`<meta property="og:site_name" content="peeq">`,
+		`<meta property="og:site_name" content="Peeq">`,
 		`<meta property="og:title" content="Chasing the Aurora">`,
 		`<meta name="twitter:card" content="summary_large_image">`,
 		`<meta property="og:image" content="https://peeq.example/api/s/` + token + `/card.jpg">`,

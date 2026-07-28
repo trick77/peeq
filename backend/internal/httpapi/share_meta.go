@@ -215,7 +215,7 @@ func buildMeta(ogType, title, desc, img, url string, imgW, imgH int) string {
 	meta := func(attr, key, val string) {
 		b.WriteString(`<meta ` + attr + `="` + key + `" content="` + html.EscapeString(val) + "\">\n")
 	}
-	meta("property", "og:site_name", "peeq")
+	meta("property", "og:site_name", "Peeq")
 	meta("property", "og:type", ogType)
 	meta("property", "og:title", title)
 	meta("property", "og:description", desc)

@@ -303,7 +303,7 @@ export function Settings() {
         </h2>
         <p className="desc">
           Pause all downloads, channel scans, and metadata fetches. Nothing
-          leaves peeq while paused.
+          leaves Peeq while paused.
         </p>
         <label className="channel-toggle">
           <input
@@ -349,7 +349,7 @@ export function Settings() {
           </span>
         </h2>
         <p className="desc">
-          Paste your browser's YouTube cookies (Netscape format). peeq keeps
+          Paste your browser's YouTube cookies (Netscape format). Peeq keeps
           yt-dlp's rotated cookie fresh automatically. The pasted text is never
           shown back to you — only its status is.
         </p>
@@ -396,7 +396,7 @@ export function Settings() {
             style={{ color: "var(--color-danger)" }}
           />
           <span>
-            <b>No cookie, no calls.</b> peeq never touches YouTube without a
+            <b>No cookie, no calls.</b> Peeq never touches YouTube without a
             valid cookie — it pauses the queue and asks you to re-paste instead.
           </span>
         </div>
@@ -418,7 +418,7 @@ export function Settings() {
           )}
         </h2>
         <p className="desc">
-          Lets the peeq browser extension send your YouTube cookie automatically
+          Lets the Peeq browser extension send your YouTube cookie automatically
           and add videos to your queue, so you never paste a cookie or a link by
           hand. The token can only write the cookie and enqueue a video — it
           cannot read your library.
@@ -449,7 +449,7 @@ export function Settings() {
               </div>
             </div>
             <p className="rfoot">
-              peeq stores only a hash of this token, so it can't show it to you
+              Peeq stores only a hash of this token, so it can't show it to you
               again. If you lose it, generate a new one — the old one stops
               working.
             </p>

@@ -26,9 +26,9 @@ import { searchVideos } from "./api/search";
 import type { Job, User, Video } from "./api/types";
 
 describe("App (static)", () => {
-  it("renders peeq", () => {
+  it("renders Peeq", () => {
     const html = renderToStaticMarkup(<App />);
-    expect(html).toContain("peeq");
+    expect(html).toContain("Peeq");
   });
 });
 

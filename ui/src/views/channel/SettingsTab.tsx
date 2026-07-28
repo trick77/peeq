@@ -79,7 +79,7 @@ export function SettingsTab({
           <div>
             <div className="lab">Subscribed</div>
             <div className="hint">
-              peeq checks this channel for new uploads on a schedule.
+              Peeq checks this channel for new uploads on a schedule.
             </div>
           </div>
           <Button

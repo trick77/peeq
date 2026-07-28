@@ -85,11 +85,11 @@ describe("UpNext", () => {
 
   // A stall is a different silence from idle, and saying only "nothing running"
   // would read as healthy while the queue is frozen.
-  it("says peeq is paused, and points at the Resume button that exists", async () => {
+  it("says Peeq is paused, and points at the Resume button that exists", async () => {
     render(
       <UpNext jobs={[]} summaries={[]} onCancel={noop} stalled="youtube" />,
     );
-    expect(await screen.findByText(/peeq is paused/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Peeq is paused/i)).toBeInTheDocument();
     expect(screen.getByText(/resume it above/i)).toBeInTheDocument();
   });
 

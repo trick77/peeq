@@ -424,7 +424,7 @@ export function History({
             : debouncedSearch
               ? `Nothing in the log matches “${debouncedSearch}”.`
               : filter === "all"
-                ? "Nothing yet — this fills in as peeq scans channels, downloads videos, and tidies up."
+                ? "Nothing yet — this fills in as Peeq scans channels, downloads videos, and tidies up."
                 : "Nothing matching that filter yet."}
         </p>
       ) : (
