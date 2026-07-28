@@ -2,11 +2,22 @@ package httpapi
 
 import "net/http"
 
-// ytdlpVersionResponse is the shared response shape for both the version
-// check and the update endpoint (update responds with the post-update
-// version on success).
+// ytdlpVersionResponse is the response shape for the version check.
 type ytdlpVersionResponse struct {
 	Version string `json:"version"`
+}
+
+// ytdlpUpdateResponse reports what the update actually did, so the Settings
+// page can tell "already on the latest build" apart from a real upgrade —
+// with only the resulting version to go on, the two are indistinguishable.
+//
+// Updated describes the VERSION, not the download: UpdateLatest always
+// fetches and reinstalls the latest release, so Updated=false means the
+// version did not change, never that the download was skipped.
+type ytdlpUpdateResponse struct {
+	Version         string `json:"version"`
+	PreviousVersion string `json:"previous_version"`
+	Updated         bool   `json:"updated"`
 }
 
 // handleYTDLPVersion reports the currently installed yt-dlp version, for
@@ -31,10 +42,24 @@ func (s *server) handleYTDLPUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "yt-dlp update not configured")
 		return
 	}
+	// Read the installed version BEFORE replacing it — it is the only way to
+	// know afterwards whether anything moved. A failure here is deliberately
+	// not fatal: the binary may be missing or unrunnable entirely, which is
+	// exactly when an update is most wanted. That case reports no previous
+	// version and counts as an update.
+	previous, err := s.ytdlp.Version(r.Context())
+	if err != nil {
+		previous = ""
+	}
+
 	v, err := s.ytdlp.UpdateLatest(r.Context())
 	if err != nil {
 		serverError(w, r, err, "failed to update yt-dlp")
 		return
 	}
-	writeJSON(w, ytdlpVersionResponse{Version: v})
+	writeJSON(w, ytdlpUpdateResponse{
+		Version:         v,
+		PreviousVersion: previous,
+		Updated:         previous == "" || previous != v,
+	})
 }

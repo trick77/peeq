@@ -13,11 +13,19 @@ export async function getYtdlpVersion(): Promise<string> {
   return res.version;
 }
 
-export async function updateYtdlp(): Promise<string> {
-  const res = await api.post<{ version: string }>(
+// YtdlpUpdate is what the update endpoint reports. `updated` describes the
+// version, not the download: the backend reinstalls the latest release every
+// time, so `updated: false` means the version did not change.
+export type YtdlpUpdate = {
+  version: string;
+  previous_version: string;
+  updated: boolean;
+};
+
+export async function updateYtdlp(): Promise<YtdlpUpdate> {
+  return api.post<YtdlpUpdate>(
     "/api/ytdlp/update",
     undefined,
     "failed to update yt-dlp",
   );
-  return res.version;
 }

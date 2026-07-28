@@ -2750,14 +2750,22 @@ textarea.cookiebox:focus {
   color: var(--color-danger);
 }
 
+/* Every track is minmax(0, …) and every card clears its own min-width, for the
+   same reason spelled out above `.grid`: a bare `1fr` is minmax(auto, 1fr), and
+   that `auto` floor is the item's min-content width. `.preset code` is a
+   `white-space: nowrap` format selector ~60 characters long, so each column grew
+   to fit its OWN untruncated string — the ellipsis below never engaged and the
+   grid pushed out through `.sect`'s border. Both halves are load-bearing: the
+   minmax frees the track, the min-width frees the card inside it. Pinned by
+   gridlayout.test.ts. */
 .presets {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
 }
 @media (max-width: 620px) {
   .presets {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 .preset {
@@ -2766,6 +2774,7 @@ textarea.cookiebox:focus {
   border: 1px solid var(--color-border);
   border-radius: 11px;
   padding: 14px 16px;
+  min-width: 0;
 }
 .preset:hover {
   border-color: var(--color-faint);
@@ -2797,15 +2806,23 @@ textarea.cookiebox:focus {
   text-overflow: ellipsis;
 }
 
+/* Same track/item pairing as `.presets` above — here the min-content floor is a
+   text input's intrinsic width (~170px from its default `size`), which no amount
+   of `width: 100%` can shrink past. */
 .row2 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 22px;
 }
 @media (max-width: 620px) {
   .row2 {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
+}
+/* Scoped to `.row2`'s own children on purpose: `.ctrl` is used all over Settings
+   and this must not become a global rule. */
+.row2 > .ctrl {
+  min-width: 0;
 }
 /* These out-specify .ui-control (0,2,1 vs 0,1,0), so they must carry the same
    values themselves — otherwise a field inside .ctrl silently keeps the old
