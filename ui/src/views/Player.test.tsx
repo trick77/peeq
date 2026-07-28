@@ -1737,6 +1737,12 @@ describe("Player", () => {
 
     // Offering an AirPlay button that hands the TV a URL it cannot fetch would
     // fail with no explanation, so the button is hidden while the setting is off.
+    //
+    // Only the x-webkit-airplay assertion is real coverage. jsdom has no
+    // disableRemotePlayback, so assigning it just creates an expando the test
+    // reads back — it is asserted to pin the intent, not because passing proves
+    // anything about Safari. Whether the button actually disappears needs a
+    // manual pass, like the AirPlay hop itself.
     it("disables remote playback when direct playback is off", async () => {
       vi.mocked(getVideo).mockResolvedValue(makeVideo());
       vi.mocked(getSettings).mockResolvedValue(makeSettings(false, false));
