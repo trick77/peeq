@@ -28,8 +28,11 @@ const CSS = readFileSync(resolve(HERE, "./index.css"), "utf8");
 // @container/@media. Collecting them ALL is the point — a responsive override
 // is the easiest place for a bare `1fr` to survive a fix to the base rule.
 function columnRules(selector: string): string[] {
+  // Escape the whole selector, not just its leading dot: a `.` left raw matches
+  // any character, so a compound selector would silently match the wrong rule.
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(
-    `\\${selector}\\s*\\{[^}]*?grid-template-columns:\\s*([^;]+);`,
+    `${escaped}\\s*\\{[^}]*?grid-template-columns:\\s*([^;]+);`,
     "g",
   );
   return [...CSS.matchAll(re)].map((m) => m[1].trim());
@@ -44,7 +47,17 @@ function gridRules(): string[] {
 function expectClampedTracks(rules: string[]) {
   expect(rules.length).toBeGreaterThan(0);
   for (const rule of rules) {
-    expect(rule).toContain("minmax(0");
+    // Check EVERY track's floor, not just that the declaration contains one
+    // `minmax(0` somewhere: `minmax(0, 1fr) minmax(120px, 1fr)` would satisfy a
+    // whole-declaration check while its second column still sizes to a 120px
+    // floor — the exact defect this guard exists to catch.
+    const floors = [...rule.matchAll(/minmax\(\s*([^,)]+)\s*,/g)].map((m) =>
+      m[1].trim(),
+    );
+    expect(floors.length).toBeGreaterThan(0);
+    for (const floor of floors) {
+      expect(floor).toBe("0");
+    }
     // A `1fr` OUTSIDE a minmax() is the defect — it is shorthand for
     // minmax(auto, 1fr), and that `auto` is the min-content floor. Drop the
     // minmax groups (whose own `1fr` max is correct and required) and assert

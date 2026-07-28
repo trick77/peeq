@@ -1,6 +1,9 @@
 package httpapi
 
-import "net/http"
+import (
+	"log/slog"
+	"net/http"
+)
 
 // ytdlpVersionResponse is the response shape for the version check.
 type ytdlpVersionResponse struct {
@@ -47,8 +50,12 @@ func (s *server) handleYTDLPUpdate(w http.ResponseWriter, r *http.Request) {
 	// not fatal: the binary may be missing or unrunnable entirely, which is
 	// exactly when an update is most wanted. That case reports no previous
 	// version and counts as an update.
+	// Swallowing it silently would change the user-visible copy ("Installed X"
+	// instead of "Updated A → B") with nothing anywhere to say why, so it is
+	// logged the same way the boot-time read is in main.go.
 	previous, err := s.ytdlp.Version(r.Context())
 	if err != nil {
+		slog.Warn("yt-dlp version unreadable before update; reporting no previous version", "err", err)
 		previous = ""
 	}
 
