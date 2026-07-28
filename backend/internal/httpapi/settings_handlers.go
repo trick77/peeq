@@ -18,6 +18,7 @@ type settingsPatchRequest struct {
 	MinFreeGB               *int    `json:"min_free_gb"`
 	MinVideoDurationSeconds *int    `json:"min_video_duration_seconds"`
 	SubtitlesDefault        *bool   `json:"subtitles_default"`
+	DirectStreamEnabled     *bool   `json:"direct_stream_enabled"`
 }
 
 // cookiePutRequest is the request body for PUT /api/settings/cookie.
@@ -82,9 +83,10 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		RetentionDays:           req.RetentionDays,
 		MinFreeGB:               req.MinFreeGB,
 		MinVideoDurationSeconds: req.MinVideoDurationSeconds,
-		// SubtitlesDefault needs no range check — the loop above is *int-only
-		// and a bool cannot be out of range.
-		SubtitlesDefault: req.SubtitlesDefault,
+		// The two bools need no range check — the loop above is *int-only and a
+		// bool cannot be out of range.
+		SubtitlesDefault:    req.SubtitlesDefault,
+		DirectStreamEnabled: req.DirectStreamEnabled,
 	}
 	if err := s.settings.Update(r.Context(), patch); err != nil {
 		serverError(w, r, err, "failed to update settings")

@@ -220,6 +220,10 @@ export type Settings = {
   // preference. Written from both the Settings page and the player's own
   // subtitles toggle, which is what makes that toggle sticky across videos.
   subtitles_default: boolean;
+  // direct_stream_enabled — opt-in to auth-free playback links, which AirPlay
+  // needs: an Apple TV fetches the media URL itself and cannot sign in. Off by
+  // default; turning it off revokes every link already handed out.
+  direct_stream_enabled: boolean;
   ytdlp_version: string;
   // youtube_paused/youtube_pause_reason mirror the Task 10 global kill-switch
   // fields — user-writable, but only via the dedicated POST
@@ -241,7 +245,17 @@ export type SettingsPatch = Partial<{
   min_free_gb: number;
   min_video_duration_seconds: number;
   subtitles_default: boolean;
+  direct_stream_enabled: boolean;
 }>;
+
+// PlaybackGrant is what POST /api/videos/{id}/playback-grant returns: an
+// auth-free URL for one video and when it stops working. There is no token
+// field — unlike a share link there is nothing for the owner to copy, so the
+// URL is the only useful form.
+export type PlaybackGrant = {
+  url: string;
+  expires_at: string;
+};
 
 // Channel mirrors httpapi.channelItem — one listed channel, joined with
 // its (optional) subscription state and video counts.

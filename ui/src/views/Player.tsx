@@ -15,6 +15,7 @@ import {
   redownload,
   streamUrl,
   thumbnailUrl,
+  createPlaybackGrant,
 } from "../api/videos";
 import { reprocess, subtitlesUrl } from "../api/search";
 import { streamDownloads } from "../api/downloads";
@@ -116,6 +117,16 @@ export function Player({
   const [subtitlesDefault, setSubtitlesDefault] = useState<boolean | null>(
     null,
   );
+  // directStream is the global "allow direct playback links" preference
+  // (settings.direct_stream_enabled). Like subtitlesDefault, null means "not
+  // loaded yet" — and here that distinction is load-bearing: the <video> gets
+  // no src until we know which kind of URL to use, so it can never mount with
+  // the session URL and then swap to a grant, which would reload the media.
+  const [directStream, setDirectStream] = useState<boolean | null>(null);
+  // playbackSrc is the URL the <video> actually plays: either the ordinary
+  // session-gated stream, or a grant URL when direct playback is on. null until
+  // resolved, which shows the poster and nothing else.
+  const [playbackSrc, setPlaybackSrc] = useState<string | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [cues, setCues] = useState<Cue[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -352,15 +363,62 @@ export function Player({
     let active = true;
     getSettings()
       .then((s) => {
-        if (active) setSubtitlesDefault(s.subtitles_default);
+        if (!active) return;
+        setSubtitlesDefault(s.subtitles_default);
+        setDirectStream(s.direct_stream_enabled);
       })
       .catch(() => {
-        if (active) setSubtitlesDefault(false);
+        if (!active) return;
+        setSubtitlesDefault(false);
+        setDirectStream(false);
       });
     return () => {
       active = false;
     };
   }, []);
+
+  // Decide the <video> src once the preference is known, and re-decide per
+  // video. With direct playback off this is the same session-gated URL peeq has
+  // always used. With it on, mint a grant first: AirPlay hands the src to the
+  // Apple TV, which fetches it with no session cookie, so the src has to already
+  // be auth-free by the time the built-in AirPlay button is pressed — that
+  // button lives inside Safari's native controls and cannot be intercepted.
+  //
+  // A failed mint falls back to the session URL rather than failing playback:
+  // the worst case is that AirPlay does not work, which is exactly where the
+  // user was before turning the setting on.
+  useEffect(() => {
+    if (!video?.id || directStream === null) return;
+    const id = video.id;
+    if (!directStream) {
+      setPlaybackSrc(streamUrl(id));
+      return;
+    }
+    let active = true;
+    setPlaybackSrc(null);
+    createPlaybackGrant(id)
+      .then((g) => {
+        if (active) setPlaybackSrc(g.url);
+      })
+      .catch(() => {
+        if (active) setPlaybackSrc(streamUrl(id));
+      });
+    return () => {
+      active = false;
+    };
+  }, [video?.id, directStream]);
+
+  // Hide Safari's AirPlay button when direct playback is off, rather than
+  // leaving a control that would hand the receiver a URL it cannot fetch and
+  // fail with no explanation. Set imperatively because disableRemotePlayback is
+  // an IDL property; x-webkit-airplay is the older Safari spelling of the same
+  // intent, and setting both covers the versions that only honour one.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || directStream === null) return;
+    el.disableRemotePlayback = !directStream;
+    el.setAttribute("x-webkit-airplay", directStream ? "allow" : "deny");
+  }, [directStream, playbackSrc]);
 
   // Apply the subtitles preference once per video, whenever both the
   // preference and the <track> are available (either can land first). The
@@ -884,7 +942,7 @@ export function Player({
             className={
               video.has_thumbnail ? undefined : gradientClassFor(video.id)
             }
-            src={streamUrl(video.id)}
+            src={playbackSrc ?? undefined}
             poster={video.has_thumbnail ? thumbnailUrl(video.id) : undefined}
             controls
             onLoadedMetadata={handleLoadedMetadata}
