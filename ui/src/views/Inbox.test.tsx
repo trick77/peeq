@@ -115,6 +115,40 @@ describe("Inbox", () => {
     });
   });
 
+  // The pair sits ON the poster, not under the title, and is always rendered
+  // — no hover, no focus, no pointer of any kind involved in getting to it.
+  // Library's .acts overlay reveals on hover and is therefore unreachable on a
+  // touch screen; this asserts Inbox did not inherit that.
+  it("puts Download and Ignore on the thumbnail, visible without a pointer", async () => {
+    render(<Inbox />);
+    await screen.findByText("First pending video");
+    const card = screen
+      .getByText("First pending video")
+      .closest(".card") as HTMLElement;
+
+    const download = within(card).getByRole("button", { name: /^download$/i });
+    const ignore = within(card).getByRole("button", { name: /ignore/i });
+
+    expect(download.closest(".thumb")).not.toBeNull();
+    expect(ignore.closest(".thumb")).not.toBeNull();
+    expect(card.querySelector(".card-foot")).toBeNull();
+  });
+
+  // Ignore lost its visible label when it became a 32px square, so the only
+  // thing naming it is aria-label. Without that it is an unlabelled button
+  // that deletes the video.
+  it("keeps Ignore named for assistive tech now that it is icon-only", async () => {
+    render(<Inbox />);
+    await screen.findByText("First pending video");
+    const card = screen
+      .getByText("First pending video")
+      .closest(".card") as HTMLElement;
+
+    const ignore = within(card).getByRole("button", { name: "Ignore" });
+    expect(ignore).toHaveAttribute("aria-label", "Ignore");
+    expect(ignore.textContent?.trim()).toBe("");
+  });
+
   it("clicking Download calls downloadPending and removes the row", async () => {
     const user = userEvent.setup();
     render(<Inbox />);
