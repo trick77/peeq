@@ -257,7 +257,7 @@ describe("Channel", () => {
     vi.mocked(scanChannel).mockResolvedValue({
       status: "blocked",
       reason:
-        "Your YouTube cookie needs refreshing before peeq can scan this channel.",
+        "Your YouTube cookie needs refreshing before Peeq can scan this channel.",
     });
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
@@ -828,7 +828,7 @@ describe("Channel", () => {
     vi.mocked(scanChannel).mockResolvedValue({
       status: "blocked",
       reason:
-        "Your YouTube cookie needs refreshing before peeq can scan this channel.",
+        "Your YouTube cookie needs refreshing before Peeq can scan this channel.",
     });
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,

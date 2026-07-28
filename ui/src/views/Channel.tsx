@@ -345,7 +345,7 @@ export function Channel({
       if (!stillHere()) return;
       setError(
         e instanceof CookieRequiredError
-          ? "peeq needs a fresh YouTube cookie before it can read this channel."
+          ? "Peeq needs a fresh YouTube cookie before it can read this channel."
           : (e as Error).message,
       );
     } finally {

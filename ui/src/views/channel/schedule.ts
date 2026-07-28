@@ -64,7 +64,7 @@ export function scheduleLine(
 // tabs and the channels list's row menu — says the same thing.
 export function scanNotice(res: ScanResult): string {
   if (res.status === "blocked") {
-    return res.reason ?? "peeq cannot scan this channel right now.";
+    return res.reason ?? "Peeq cannot scan this channel right now.";
   }
   return "Added to the scan queue — usually done within a minute.";
 }

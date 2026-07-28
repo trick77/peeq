@@ -134,9 +134,9 @@ export function Share({ token }: { token: string | null }) {
   }, [token]);
 
   useEffect(() => {
-    if (video) document.title = `${video.title} · peeq`;
+    if (video) document.title = `${video.title} · Peeq`;
     return () => {
-      document.title = "peeq";
+      document.title = "Peeq";
     };
   }, [video]);
 
@@ -512,7 +512,7 @@ export function Share({ token }: { token: string | null }) {
             <span>
               Shared via{" "}
               <b>
-                pee<span>q</span>
+                P<span>ee</span>q
               </b>
               {DOT}
               {expiryLabel(video)}

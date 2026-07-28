@@ -743,53 +743,28 @@ button.srow:not(:disabled):hover {
   align-self: start;
 }
 
-/* SKIP — quiet until wanted, and sharing the label's cell rather than taking a
-   column of its own. The schedule is a list to read, not a list to act on, so a
-   lit button on every row would turn a calm agenda into a wall of controls; and
-   a fifth column would cost these rows the geometry they share with History.
-   So the label and the button stack, and cross-fade.
+/* SKIP — always visible, in a fifth column of its own. These rows used to stack
+   the button on the label and cross-fade them on hover, keeping the schedule
+   calm to read; touch, having no hover to reveal with, got this fifth column
+   instead. But an affordance you cannot see is one you cannot use, and the two
+   treatments could not be told apart by the media query that chose between
+   them: an iPad with a trackpad reports `hover: hover`, so it took the hover
+   branch and left Skip permanently invisible to a finger. The column every
+   pointer can see is the one that was right all along, so every row now pays
+   for it. The label keeps the fourth column, the button takes the fifth.
 
-   Both are always RENDERED — only opacity moves. A button that existed solely
-   on hover could not be reached by keyboard, which :focus-within on the row is
-   what covers. */
-.ag-row.planned > .ui-btn,
+   Nothing fades, so nothing needs a reduced-motion escape hatch. */
+.ag-row.planned {
+  grid-template-columns: 46px 22px 1fr auto auto;
+}
+.ag-row.planned > .ui-btn {
+  grid-area: 1 / 5;
+  justify-self: end;
+  align-self: start;
+}
 .ag-row.planned .ag-when {
   grid-area: 1 / 4;
   justify-self: end;
-  transition: opacity 120ms ease;
-}
-.ag-row.planned > .ui-btn {
-  opacity: 0;
-}
-.ag-row.planned:hover > .ui-btn,
-.ag-row.planned:focus-within > .ui-btn {
-  opacity: 1;
-}
-.ag-row.planned:hover .ag-when,
-.ag-row.planned:focus-within .ag-when {
-  opacity: 0;
-}
-/* Touch has no hover, so there is nothing to reveal and nothing to reveal it
-   with. Rather than leaving the action undiscoverable — or spending the label
-   permanently to show it — these rows alone take a fifth column, where both fit
-   at once. Only the pointerless case pays for it. */
-@media (hover: none) {
-  .ag-row.planned {
-    grid-template-columns: 46px 22px 1fr auto auto;
-  }
-  .ag-row.planned > .ui-btn {
-    grid-area: 1 / 5;
-    opacity: 1;
-  }
-  .ag-row.planned .ag-when {
-    grid-area: 1 / 4;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .ag-row.planned > .ui-btn,
-  .ag-row.planned .ag-when {
-    transition: none;
-  }
 }
 /* A skipped row stays in place, struck through, holding its Undo — it does not
    vanish. A row that disappeared would take the way back with it, which is the

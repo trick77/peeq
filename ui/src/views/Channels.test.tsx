@@ -480,7 +480,7 @@ describe("Channels", () => {
       await user.click(screen.getByRole("menuitem", { name: /scan now/i }));
 
       expect(
-        await screen.findByText("peeq cannot scan this channel right now."),
+        await screen.findByText("Peeq cannot scan this channel right now."),
       ).toBeInTheDocument();
     });
 
