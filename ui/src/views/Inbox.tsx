@@ -454,6 +454,46 @@ export function Inbox({
                 <span className="dur">
                   {formatDuration(item.duration_seconds)}
                 </span>
+                {/* Triage happens off the poster, so the two actions sit on it
+                  rather than under the title. They used to end the text column,
+                  which meant they were the last thing in a stack whose height
+                  varies with the title — and since the title reserves two lines
+                  so neighbouring cards line up, a one-line title left a whole
+                  empty line above the buttons. Nothing follows the title now,
+                  so it can hug its own text and that reservation goes away.
+
+                  Always visible, never revealed on hover: this is the same
+                  corner Library's .acts occupy, but not the same behaviour —
+                  an action you cannot see is one a touch screen cannot reach. */}
+                <div className="pending-acts">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    small
+                    disabled={busyId === item.video_id || bulkBusy}
+                    onClick={() => handleDownload(item)}
+                  >
+                    <Icon name="download" size="15px" />
+                    Download
+                  </Button>
+                  {/* Icon-only, and deliberately the smaller of the two: Ignore
+                    is the destructive half and should not read as the equal of
+                    the action you actually came here to press. The label lives
+                    on aria-label, which is what names it for a screen reader
+                    and for the tests. */}
+                  <Button
+                    type="button"
+                    variant="dangerQuiet"
+                    small
+                    icon
+                    aria-label="Ignore"
+                    title="Ignore"
+                    disabled={busyId === item.video_id || bulkBusy}
+                    onClick={() => handleIgnore(item)}
+                  >
+                    <Icon name="trash" size="15px" />
+                  </Button>
+                </div>
               </div>
               {/* Kicker line above the title, exactly like the library card:
                 channel · relative publish date, same markup, same helper. The
@@ -507,28 +547,6 @@ export function Inbox({
                   {item.title}
                 </a>
               </h3>
-              <div className="card-foot acts-row">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  small
-                  disabled={busyId === item.video_id || bulkBusy}
-                  onClick={() => handleDownload(item)}
-                >
-                  <Icon name="download" size="15px" />
-                  Download
-                </Button>
-                <Button
-                  type="button"
-                  variant="dangerQuiet"
-                  small
-                  disabled={busyId === item.video_id || bulkBusy}
-                  onClick={() => handleIgnore(item)}
-                >
-                  <Icon name="trash" size="15px" />
-                  Ignore
-                </Button>
-              </div>
             </article>
           ))}
         </div>
