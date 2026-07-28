@@ -543,12 +543,12 @@ export function UpNext({
           {filter !== "all"
             ? "Nothing of that kind is queued or scheduled."
             : stalled === "youtube"
-              ? "Nothing is running — peeq is paused. Resume it above and queued work starts again."
+              ? "Nothing is running — Peeq is paused. Resume it above and queued work starts again."
               : stalled === "disk"
                 ? "Nothing is running — the disk is full. Free up space and downloads start again."
                 : stalled === "cookie"
                   ? "Nothing is running — YouTube needs a fresh cookie. Replace it in Settings and downloads start again."
-                  : "Nothing scheduled yet — subscribe to a channel and peeq will start checking it for you."}
+                  : "Nothing scheduled yet — subscribe to a channel and Peeq will start checking it for you."}
         </p>
       </>
     );

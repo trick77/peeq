@@ -94,7 +94,7 @@ func Render(thumb image.Image, title, subtitle string) ([]byte, error) {
 		// letterboxing the card with bars of a slightly different dark.
 		xdraw.CatmullRom.Scale(img, slot, thumb, coverCrop(thumb.Bounds(), thumbW, thumbH), xdraw.Over, nil)
 	} else {
-		drawCentered(img, titleFace, colMuted, "peeq", y+(thumbH+titlePx)/2)
+		drawCentered(img, titleFace, colMuted, "Peeq", y+(thumbH+titlePx)/2)
 	}
 	y += thumbH + gapThumbText
 

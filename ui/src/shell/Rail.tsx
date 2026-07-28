@@ -107,7 +107,7 @@ export function Rail({
         </div>
         <div>
           <b>
-            p<span>ee</span>q
+            P<span>ee</span>q
           </b>
         </div>
       </div>
