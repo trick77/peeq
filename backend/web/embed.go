@@ -4,12 +4,21 @@ package web
 import (
 	"embed"
 	"io/fs"
+	"mime"
 	"net/http"
 	"strings"
 )
 
 //go:embed all:dist
 var distFS embed.FS
+
+// Go's built-in MIME table has no .webmanifest entry, so without this
+// http.FileServer falls through to content sniffing and serves the web app
+// manifest as text/plain. .ico needs no entry — net/http's sniffer recognises
+// the ICO signature on its own.
+func init() {
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 // Handler serves the embedded frontend (web/dist) as a SPA: existing regular
 // files are served directly; any other path — unknown client-side routes AND

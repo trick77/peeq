@@ -1,0 +1,29 @@
+<!--
+  Peeq's icon: the play glyph .rail-logo wears, inverted. The rail sets a dark
+  glyph on an orange tile; here the tile is gone and the glyph carries the
+  orange, because a favicon that keeps its tile spends ~43% of a 16px square on
+  background it does not need.
+
+  The glyph is lucide's "play" path (ISC), copied rather than imported — nothing
+  loads lucide-react to draw a static asset. It is scaled off the path's TRUE
+  bbox (x[5,21] y[3.27,20.73], centre 13,12, height 17.46), not its nominal
+  24x24 box, which the path only fills two-thirds of: scaling by the box is what
+  makes the rail's own triangle read as a dot at favicon sizes. Here it spans
+  80% of the tile. The centring carries a +1.0 nudge right — a triangle's visual
+  centre sits left of its bounding-box centre.
+
+  Transparent ON PURPOSE, and only safe here: browsers composite this onto the
+  tab. iOS and Android flatten alpha (onto black and onto the launcher's own
+  fill), so apple-touch-icon.png and icon-maskable-512.png are rendered from the
+  opaque sources in ui/icons/ instead. Regenerate the rasters with
+  hack/gen-icons.sh after touching this file.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
+    <stop offset="0" stop-color="#e08a68"/>
+    <stop offset="1" stop-color="#c25f34"/>
+  </linearGradient>
+  <g transform="translate(-5.09 -3.16) scale(2.93)">
+    <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" fill="url(#og)"/>
+  </g>
+</svg>
