@@ -2851,11 +2851,28 @@ textarea.cookiebox:focus {
 .retain-note {
   font-size: 12.5px;
   color: var(--color-muted);
-  margin-top: 12px;
+  /* Closed shorthand on purpose. A bare margin-top left the UA's
+     margin-block-end live (1em = 12.5px here), which put every note the SAME
+     distance from the control it explains and from whatever came next — so a
+     note between two controls read as belonging to neither. 7px matches
+     .channel-toggle's own gap, so the note reads as attached to its control. */
+  margin: 7px 0 0;
   line-height: 1.55;
 }
 .retain-note b {
   color: var(--color-ink-dim);
+}
+/* A checkbox plus the note explaining it, as one unit. .ctrl is deliberately
+   not reused: that is the input-field wrapper and is already targeted by
+   .row2 > .ctrl, so toggle rules added there would bleed into the grid. */
+.sect .toggle-field + .toggle-field {
+  margin-top: 20px;
+}
+/* Line the note up with the LABEL text, not the checkbox: 15px box + 7px gap.
+   This indent is the ownership signal — it is what says which checkbox the
+   paragraph below belongs to. */
+.toggle-field .retain-note {
+  padding-left: 22px;
 }
 .slider-row {
   display: flex;

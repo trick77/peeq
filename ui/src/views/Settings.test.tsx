@@ -158,6 +158,26 @@ describe("Settings", () => {
     await waitFor(() => expect(toggle).toBeChecked());
   });
 
+  // Each Playback toggle owns its explanation. Flat siblings looked fine until
+  // a second toggle landed underneath the first one's note, at which point the
+  // note sat the same distance from both and read as belonging to neither.
+  it("keeps each playback toggle in one group with its own note", async () => {
+    render(<Settings />);
+
+    for (const [name, phrase] of [
+      [/show subtitles by default/i, /player’s subtitles button/i],
+      [/allow direct playback links/i, /links expire after 12 hours/i],
+    ] as const) {
+      const group = (await screen.findByRole("checkbox", { name })).closest(
+        ".toggle-field",
+      );
+      expect(group).not.toBeNull();
+      // The note must live inside its own toggle's group, not merely somewhere
+      // on the page — that is the difference this test exists to catch.
+      expect(group).toHaveTextContent(phrase);
+    }
+  });
+
   it("toggles direct playback links", async () => {
     const user = userEvent.setup();
     vi.mocked(updateSettings).mockResolvedValue({
