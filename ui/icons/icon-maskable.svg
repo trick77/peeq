@@ -1,0 +1,25 @@
+<!--
+  Source for icon-maskable-512.png only. Not shipped: ui/icons/ is outside
+  Vite's publicDir, so nothing here is copied into the bundle.
+
+  A maskable icon is cropped to whatever shape the Android launcher prefers —
+  circle, squircle, rounded square, teardrop — and only the middle 80% of the
+  square survives that crop. So this differs from icon-tile.svg in exactly one
+  way: the glyph is smaller again (46% vs 60%), which keeps every pixel of it
+  inside that safe circle no matter which mask the launcher picks. The tile has
+  to run edge to edge for the same reason it does on iOS — the launcher fills
+  whatever the icon leaves transparent, and that fill is not ours to choose.
+
+  Same lucide play path and true-bbox centring as the other two; see
+  ui/public/icon.svg for why the nominal 24x24 box is not used.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
+    <stop offset="0" stop-color="#e08a68"/>
+    <stop offset="1" stop-color="#c25f34"/>
+  </linearGradient>
+  <rect width="64" height="64" fill="#1f1f1e"/>
+  <g transform="translate(11.1 11.8) scale(1.685)">
+    <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" fill="url(#og)"/>
+  </g>
+</svg>

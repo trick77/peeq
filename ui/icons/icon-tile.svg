@@ -1,0 +1,27 @@
+<!--
+  Source for apple-touch-icon.png only. Not shipped: ui/icons/ is outside
+  Vite's publicDir, so nothing here is copied into the bundle.
+
+  Two things iOS forces that the transparent ui/public/icon.svg cannot give it:
+
+  1. An opaque ground. iOS composites an apple-touch-icon onto PURE BLACK before
+     masking it, so a transparent one ships as a black square. #1f1f1e is peeq's
+     own color-bg token, which is what that flattening should have produced.
+  2. Square corners. iOS applies its own superellipse mask; rounding the corners
+     here would double-round them.
+
+  The glyph is smaller than in icon.svg (60% vs 80%) because it now sits inside
+  a tile with its own edges to breathe against, rather than being the whole
+  picture. Same lucide play path, same true-bbox centring with the +1.0 optical
+  nudge — see ui/public/icon.svg for why the nominal 24x24 box is not used.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
+    <stop offset="0" stop-color="#e08a68"/>
+    <stop offset="1" stop-color="#c25f34"/>
+  </linearGradient>
+  <rect width="64" height="64" fill="#1f1f1e"/>
+  <g transform="translate(4.4 5.6) scale(2.2)">
+    <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" fill="url(#og)"/>
+  </g>
+</svg>

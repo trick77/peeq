@@ -4,12 +4,21 @@ package web
 import (
 	"embed"
 	"io/fs"
+	"mime"
 	"net/http"
 	"strings"
 )
 
 //go:embed all:dist
 var distFS embed.FS
+
+// Go's built-in MIME table has no .webmanifest entry, so without this
+// http.FileServer falls through to content sniffing and serves the web app
+// manifest as text/plain. .ico needs no entry — net/http's sniffer recognises
+// the ICO signature on its own.
+func init() {
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 // Handler serves the embedded frontend (web/dist) as a SPA: existing regular
 // files are served directly; any other path — unknown client-side routes AND
@@ -32,6 +41,17 @@ func Handler() http.Handler {
 				w.Header().Set("Cache-Control", "no-cache")
 			}
 			fileServer.ServeHTTP(w, r)
+			return
+		}
+		// peeq ships an SVG icon and declares it in <head>; it deliberately has no
+		// favicon.ico, because the clients that probe for one at the domain root
+		// are RSS readers, Windows bookmark thumbnails and old IE. Without this
+		// the probe would reach the SPA fallback and get index.html with a 200 —
+		// an icon request answered with HTML, which is worse than no icon. A 404
+		// is the honest answer, and every browser handles it by falling back to
+		// the declared icon.
+		if r.URL.Path == "/favicon.ico" {
+			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-cache")
