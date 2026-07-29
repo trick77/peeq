@@ -43,6 +43,17 @@ func Handler() http.Handler {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
+		// peeq ships an SVG icon and declares it in <head>; it deliberately has no
+		// favicon.ico, because the clients that probe for one at the domain root
+		// are RSS readers, Windows bookmark thumbnails and old IE. Without this
+		// the probe would reach the SPA fallback and get index.html with a 200 —
+		// an icon request answered with HTML, which is worse than no icon. A 404
+		// is the honest answer, and every browser handles it by falling back to
+		// the declared icon.
+		if r.URL.Path == "/favicon.ico" {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Cache-Control", "no-cache")
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = "/"
