@@ -1,5 +1,5 @@
 import { api } from "./http";
-import type { Video, VideoFilter, VideoSort } from "./types";
+import type { PlaybackGrant, Video, VideoFilter, VideoSort } from "./types";
 
 // ListVideosOptions mirrors the query params handleListVideos understands.
 // Every field is optional; omitting all of them is "everything, newest first".
@@ -126,6 +126,21 @@ export async function redownload(id: string): Promise<void> {
 
 export function streamUrl(id: string): string {
   return `/api/videos/${encodeURIComponent(id)}/stream`;
+}
+
+// createPlaybackGrant mints an auth-free stream URL for one video, for the
+// player to use as its <video> src when direct playback is enabled. AirPlay
+// hands that src to the Apple TV, which fetches it with no session cookie, so
+// streamUrl above simply cannot work over AirPlay — see internal/playbackgrant.
+//
+// Rejects with a 409 when the setting is off, which callers treat as "use
+// streamUrl instead" rather than as an error worth surfacing.
+export async function createPlaybackGrant(id: string): Promise<PlaybackGrant> {
+  return api.post<PlaybackGrant>(
+    `/api/videos/${encodeURIComponent(id)}/playback-grant`,
+    undefined,
+    "failed to create a direct playback link",
+  );
 }
 
 // thumbnailUrl points at the Task 14 thumbnail endpoint. Callers should

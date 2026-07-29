@@ -211,6 +211,15 @@ export function Settings() {
     }
   }
 
+  async function handleToggleDirectStream(next: boolean) {
+    try {
+      const s = await updateSettings({ direct_stream_enabled: next });
+      setSettingsState(s);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   async function handleCreateToken() {
     setTokenBusy(true);
     setTokenError(null);
@@ -656,6 +665,28 @@ export function Settings() {
           Videos that have subtitles start with them switched on. The subtitles
           button in the player still works per video — and flipping it there
           changes this setting too.
+        </p>
+        <label className="channel-toggle">
+          <input
+            type="checkbox"
+            checked={settings.direct_stream_enabled}
+            onChange={(e) => handleToggleDirectStream(e.target.checked)}
+          />
+          Allow direct playback links (needed for AirPlay)
+        </label>
+        <p className="retain-note">
+          AirPlay sends the video&rsquo;s address to your TV, and your TV
+          fetches it on its own — it cannot sign in as you. With this on,
+          opening a video creates a private link that works without signing in.
+          The link is a long random string that stops working after 12 hours,
+          and turning this setting off kills every outstanding link at once.
+          Shared links are not affected either way.
+        </p>
+        <p className="retain-note">
+          Apple TVs only play H.264 or HEVC in an MP4 container, so AirPlay
+          works for videos downloaded with the Apple 1080p or Apple 720p preset
+          above. A video saved in another format still plays here in the
+          browser, but will not start on a TV.
         </p>
       </section>
 

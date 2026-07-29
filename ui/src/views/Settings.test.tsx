@@ -21,6 +21,7 @@ const baseSettings: SettingsType = {
   min_free_gb: 5,
   min_video_duration_seconds: 60,
   subtitles_default: false,
+  direct_stream_enabled: false,
   ytdlp_version: "2026.01.01",
   youtube_paused: false,
   youtube_pause_reason: "",
@@ -152,6 +153,30 @@ describe("Settings", () => {
       expect(updateSettings).toHaveBeenCalledWith({ subtitles_default: true });
     });
     // The checkbox renders straight off the response, not off local state.
+    await waitFor(() => expect(toggle).toBeChecked());
+  });
+
+  it("toggles direct playback links", async () => {
+    const user = userEvent.setup();
+    vi.mocked(updateSettings).mockResolvedValue({
+      ...baseSettings,
+      direct_stream_enabled: true,
+    });
+    render(<Settings />);
+    const toggle = await screen.findByRole("checkbox", {
+      name: /allow direct playback links/i,
+    });
+    // Off by default: an install that never touches this has no auth-free
+    // media route at all.
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalledWith({
+        direct_stream_enabled: true,
+      });
+    });
     await waitFor(() => expect(toggle).toBeChecked());
   });
 

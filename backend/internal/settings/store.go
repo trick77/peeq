@@ -41,6 +41,7 @@ type Settings struct {
 	MinFreeGB               int    `json:"min_free_gb"`
 	MinVideoDurationSeconds int    `json:"min_video_duration_seconds"`
 	SubtitlesDefault        bool   `json:"subtitles_default"`
+	DirectStreamEnabled     bool   `json:"direct_stream_enabled"`
 	YTDLPVersion            string `json:"ytdlp_version"`
 	YoutubePaused           bool   `json:"youtube_paused"`
 	YoutubePauseReason      string `json:"youtube_pause_reason"`
@@ -61,6 +62,11 @@ type Patch struct {
 	// *bool to NULL (so COALESCE leaves the column alone) and a non-nil one
 	// to 0/1, exactly like the *int fields above.
 	SubtitlesDefault *bool
+	// DirectStreamEnabled opts into auth-free playback grant URLs, which AirPlay
+	// needs (see internal/playbackgrant). Off means the grant stream route 404s
+	// and every outstanding grant stops working immediately, so this doubles as
+	// the feature's kill switch.
+	DirectStreamEnabled *bool
 }
 
 // Store persists the settings singleton row.
@@ -86,14 +92,14 @@ func (s *Store) Get(ctx context.Context) (Settings, error) {
 	err := s.db.QueryRowContext(ctx, `
 SELECT cookie_status, cookie_updated_at, format_preset, format_custom, limit_rate,
        throttle_base_seconds, retention_days, min_free_gb, min_video_duration_seconds,
-       subtitles_default, ytdlp_version,
+       subtitles_default, direct_stream_enabled, ytdlp_version,
        youtube_paused, youtube_pause_reason, youtube_paused_at
 FROM settings
 WHERE id = 1`,
 	).Scan(
 		&st.CookieStatus, &cookieUpdatedAt, &st.FormatPreset, &st.FormatCustom, &st.LimitRate,
 		&st.ThrottleBaseSeconds, &st.RetentionDays, &st.MinFreeGB, &st.MinVideoDurationSeconds,
-		&st.SubtitlesDefault, &st.YTDLPVersion,
+		&st.SubtitlesDefault, &st.DirectStreamEnabled, &st.YTDLPVersion,
 		&st.YoutubePaused, &st.YoutubePauseReason, &pausedAt,
 	)
 	if err != nil {
@@ -120,11 +126,12 @@ SET format_preset         = COALESCE(?, format_preset),
     retention_days        = COALESCE(?, retention_days),
     min_free_gb           = COALESCE(?, min_free_gb),
     min_video_duration_seconds = COALESCE(?, min_video_duration_seconds),
-    subtitles_default     = COALESCE(?, subtitles_default)
+    subtitles_default     = COALESCE(?, subtitles_default),
+    direct_stream_enabled = COALESCE(?, direct_stream_enabled)
 WHERE id = 1`,
 		patch.FormatPreset, patch.FormatCustom, patch.LimitRate,
 		patch.ThrottleBaseSeconds, patch.RetentionDays, patch.MinFreeGB, patch.MinVideoDurationSeconds,
-		patch.SubtitlesDefault,
+		patch.SubtitlesDefault, patch.DirectStreamEnabled,
 	)
 	if err != nil {
 		return fmt.Errorf("update settings: %w", err)
@@ -265,6 +272,22 @@ func (s *Store) YoutubePaused(ctx context.Context) (bool, string) {
 		return false, ""
 	}
 	return paused, reason
+}
+
+// DirectStreamEnabled reports whether auth-free playback grant URLs are allowed,
+// without loading the rest of the settings row. The grant stream handler calls
+// this on EVERY request rather than reading the flag once at boot, which is what
+// makes the setting a live kill switch: switching it off stops every outstanding
+// grant immediately, with no restart. Fails safe to false on a read error — a DB
+// blip must never leave media reachable without a session.
+func (s *Store) DirectStreamEnabled(ctx context.Context) bool {
+	var enabled bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT direct_stream_enabled FROM settings WHERE id = 1`).Scan(&enabled)
+	if err != nil {
+		return false
+	}
+	return enabled
 }
 
 // SetAPITokenHash stores the token hash and stamps api_token_created_at,

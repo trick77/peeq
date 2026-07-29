@@ -64,6 +64,7 @@ function settings(overrides: Partial<Settings> = {}): Settings {
     min_free_gb: 0,
     min_video_duration_seconds: 0,
     subtitles_default: false,
+    direct_stream_enabled: false,
     ytdlp_version: "",
     youtube_paused: false,
     youtube_pause_reason: "",

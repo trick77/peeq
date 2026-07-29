@@ -58,6 +58,12 @@ type Deps struct {
 	// routes. Optional: when nil, the owner endpoints return 503 and the
 	// public routes 404 (revealing nothing).
 	ShareLinks ShareLinkStore
+	// PlaybackGrants backs direct playback: the owner endpoint under
+	// /api/videos/{id}/playback-grant and the public, unauthenticated
+	// /api/p/{token}/stream route AirPlay receivers fetch. Optional: when nil,
+	// the owner endpoint returns 503 and the public route 404 (revealing
+	// nothing). Gated additionally by the direct_stream_enabled setting.
+	PlaybackGrants PlaybackGrantStore
 	// PublicURL is the externally reachable base URL (config.PublicURL). Share
 	// links are built against it; when empty the API returns a relative
 	// /s/<token> path for the browser to resolve against its own origin.
@@ -185,14 +191,15 @@ type server struct {
 	playback      PlaybackStore
 	devAuthClaims auth.Claims
 
-	jobs       *jobs.Store
-	videos     *videos.Store
-	shareLinks ShareLinkStore
-	publicURL  string
-	mediaDir   string
-	runner     DownloadsRunner
-	worker     DownloadsWorker
-	sseHub     *sse.Hub
+	jobs           *jobs.Store
+	videos         *videos.Store
+	shareLinks     ShareLinkStore
+	playbackGrants PlaybackGrantStore
+	publicURL      string
+	mediaDir       string
+	runner         DownloadsRunner
+	worker         DownloadsWorker
+	sseHub         *sse.Hub
 
 	streamAccess StreamAccessRecorder
 	ytdlp        YTDLPVersioner
@@ -219,25 +226,26 @@ type server struct {
 // New returns the fully wired HTTP handler.
 func New(d Deps) http.Handler {
 	s := &server{
-		version:       d.Version,
-		static:        d.Static,
-		shell:         d.Shell,
-		authSvc:       d.AuthService,
-		authMW:        d.AuthMiddleware,
-		tokenMW:       d.TokenMiddleware,
-		settings:      d.Settings,
-		playback:      d.Playback,
-		devAuthClaims: d.DevAuthClaims,
-		jobs:          d.Jobs,
-		videos:        d.Videos,
-		shareLinks:    d.ShareLinks,
-		publicURL:     d.PublicURL,
-		mediaDir:      d.MediaDir,
-		runner:        d.Runner,
-		worker:        d.Worker,
-		sseHub:        d.SSEHub,
-		streamAccess:  d.StreamAccess,
-		ytdlp:         d.YTDLP,
+		version:        d.Version,
+		static:         d.Static,
+		shell:          d.Shell,
+		authSvc:        d.AuthService,
+		authMW:         d.AuthMiddleware,
+		tokenMW:        d.TokenMiddleware,
+		settings:       d.Settings,
+		playback:       d.Playback,
+		devAuthClaims:  d.DevAuthClaims,
+		jobs:           d.Jobs,
+		videos:         d.Videos,
+		shareLinks:     d.ShareLinks,
+		playbackGrants: d.PlaybackGrants,
+		publicURL:      d.PublicURL,
+		mediaDir:       d.MediaDir,
+		runner:         d.Runner,
+		worker:         d.Worker,
+		sseHub:         d.SSEHub,
+		streamAccess:   d.StreamAccess,
+		ytdlp:          d.YTDLP,
 
 		channels:        d.Channels,
 		channelResolver: d.ChannelResolver,
@@ -296,6 +304,14 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/s/{token}/subtitles", s.handleShareSubtitles)
 	// The og:image behind a shared link's unfurl — same token gate, no video id.
 	mux.HandleFunc("GET /api/s/{token}/card.jpg", s.handleShareCard)
+	// Direct playback: the owner mints a grant here (session-gated)...
+	mux.Handle("POST /api/videos/{id}/playback-grant", s.requireAuth(http.HandlerFunc(s.handleCreatePlaybackGrant)))
+	// ...and an AirPlay receiver, which sends no cookie, fetches the media here.
+	// A separate token namespace from /api/s/ on purpose: holding one kind of
+	// token must never reveal the other. Additionally gated on the
+	// direct_stream_enabled setting, re-read per request so switching it off
+	// kills every outstanding grant immediately.
+	mux.HandleFunc("GET /api/p/{token}/stream", s.handleGrantStream)
 	// The "now playing" pointer: which video the rail reopens when the URL
 	// carries no id. Session-gated like everything else the SPA reads.
 	mux.Handle("GET /api/playback", s.requireAuth(http.HandlerFunc(s.handleGetPlaybackState)))

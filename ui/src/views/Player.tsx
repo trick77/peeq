@@ -15,6 +15,7 @@ import {
   redownload,
   streamUrl,
   thumbnailUrl,
+  createPlaybackGrant,
 } from "../api/videos";
 import { reprocess, subtitlesUrl } from "../api/search";
 import { streamDownloads } from "../api/downloads";
@@ -116,6 +117,20 @@ export function Player({
   const [subtitlesDefault, setSubtitlesDefault] = useState<boolean | null>(
     null,
   );
+  // directStream is the global "allow direct playback links" preference
+  // (settings.direct_stream_enabled). Like subtitlesDefault, null means "not
+  // loaded yet" — and here that distinction is load-bearing: the <video> gets
+  // no src until we know which kind of URL to use, so it can never mount with
+  // the session URL and then swap to a grant, which would reload the media.
+  const [directStream, setDirectStream] = useState<boolean | null>(null);
+  // grant is the minted direct-playback URL, stamped with the video it was
+  // minted for. The id is not decoration: the <video> unmounts and remounts on
+  // every video change, and without it the new video's element would mount
+  // carrying the *previous* video's URL for as long as the next mint takes —
+  // long enough for the old media (already warm in the cache) to fire
+  // loadedmetadata against the new video's state, which sets resumeAppliedRef
+  // and costs the new video its resume position. null until minted.
+  const [grant, setGrant] = useState<{ id: string; url: string } | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [cues, setCues] = useState<Cue[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -352,15 +367,72 @@ export function Player({
     let active = true;
     getSettings()
       .then((s) => {
-        if (active) setSubtitlesDefault(s.subtitles_default);
+        if (!active) return;
+        setSubtitlesDefault(s.subtitles_default);
+        setDirectStream(s.direct_stream_enabled);
       })
       .catch(() => {
-        if (active) setSubtitlesDefault(false);
+        if (!active) return;
+        setSubtitlesDefault(false);
+        setDirectStream(false);
       });
     return () => {
       active = false;
     };
   }, []);
+
+  // Mint a grant per video while direct playback is on. AirPlay hands the src
+  // to the Apple TV, which fetches it with no session cookie, so the src has to
+  // already be auth-free by the time the built-in AirPlay button is pressed —
+  // that button lives inside Safari's native controls and cannot be
+  // intercepted.
+  //
+  // A failed mint stores the session URL rather than failing playback: the
+  // worst case is that AirPlay does not work, which is exactly where the user
+  // was before turning the setting on.
+  useEffect(() => {
+    if (!video?.id || !directStream) return;
+    const id = video.id;
+    let active = true;
+    createPlaybackGrant(id)
+      .then((g) => {
+        if (active) setGrant({ id, url: g.url });
+      })
+      .catch(() => {
+        if (active) setGrant({ id, url: streamUrl(id) });
+      });
+    return () => {
+      active = false;
+    };
+  }, [video?.id, directStream]);
+
+  // playbackSrc is the URL the <video> actually plays, derived during render
+  // rather than held in state: the element remounts whenever the open video
+  // changes, and a state-held URL would still be the previous video's for the
+  // first commit after that remount. undefined means "no src yet" — either the
+  // preference has not loaded or the grant for *this* video has not landed —
+  // which shows the poster and nothing else. With direct playback off this is
+  // the same session-gated URL peeq has always used.
+  const playbackSrc =
+    !video || directStream === null
+      ? undefined
+      : directStream
+        ? grant?.id === video.id
+          ? grant.url
+          : undefined
+        : streamUrl(video.id);
+
+  // Hide Safari's AirPlay button when direct playback is off, rather than
+  // leaving a control that would hand the receiver a URL it cannot fetch and
+  // fail with no explanation. Set imperatively because disableRemotePlayback is
+  // an IDL property; x-webkit-airplay is the older Safari spelling of the same
+  // intent, and setting both covers the versions that only honour one.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || directStream === null) return;
+    el.disableRemotePlayback = !directStream;
+    el.setAttribute("x-webkit-airplay", directStream ? "allow" : "deny");
+  }, [directStream, playbackSrc]);
 
   // Apply the subtitles preference once per video, whenever both the
   // preference and the <track> are available (either can land first). The
@@ -884,7 +956,7 @@ export function Player({
             className={
               video.has_thumbnail ? undefined : gradientClassFor(video.id)
             }
-            src={streamUrl(video.id)}
+            src={playbackSrc}
             poster={video.has_thumbnail ? thumbnailUrl(video.id) : undefined}
             controls
             onLoadedMetadata={handleLoadedMetadata}

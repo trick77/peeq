@@ -33,6 +33,7 @@ import (
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/playback"
+	"github.com/trick77/peeq/internal/playbackgrant"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/retention"
 	"github.com/trick77/peeq/internal/scan"
@@ -181,6 +182,7 @@ func run() error {
 	jobsStore := jobs.New(db)
 	videosStore := videos.New(db)
 	shareLinksStore := sharelink.New(db)
+	playbackGrantStore := playbackgrant.New(db)
 	channelsStore := channels.New(db)
 	ledgerStore := channelvideos.New(db)
 	summaryJobsStore := summaryjobs.New(db)
@@ -446,6 +448,7 @@ func run() error {
 		Jobs:            jobsStore,
 		Videos:          videosStore,
 		ShareLinks:      shareLinksStore,
+		PlaybackGrants:  playbackGrantStore,
 		PublicURL:       cfg.PublicURL,
 		MediaDir:        cfg.MediaDir,
 		Runner:          runner,

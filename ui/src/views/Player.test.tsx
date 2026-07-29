@@ -41,6 +41,7 @@ vi.mock("../api/videos", () => ({
   redownload: vi.fn().mockResolvedValue(undefined),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
   thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
+  createPlaybackGrant: vi.fn(),
 }));
 
 vi.mock("../api/playback", () => ({
@@ -83,6 +84,7 @@ import {
   redownload,
   deleteVideo,
   setCategory,
+  createPlaybackGrant,
 } from "../api/videos";
 import { reprocess } from "../api/search";
 import { setPlaybackState } from "../api/playback";
@@ -95,10 +97,17 @@ function makeVideo(overrides: Partial<Video> = {}): Video {
   return { ...mockVideo, ...overrides };
 }
 
-// Player only ever reads subtitles_default off Settings, but the mock
-// returns a whole (cast) object so the shape stays honest.
-function makeSettings(subtitlesDefault: boolean): Settings {
-  return { subtitles_default: subtitlesDefault } as Settings;
+// Player reads subtitles_default and direct_stream_enabled off Settings, but
+// the mock returns a whole (cast) object so the shape stays honest. Direct
+// playback defaults to off, matching the server default.
+function makeSettings(
+  subtitlesDefault: boolean,
+  directStream = false,
+): Settings {
+  return {
+    subtitles_default: subtitlesDefault,
+    direct_stream_enabled: directStream,
+  } as Settings;
 }
 
 // openMenu opens the Player's ⋮ actions menu so its items (Reprocess,
@@ -1674,6 +1683,142 @@ describe("Player", () => {
     fireEvent.click(screen.getByRole("menuitemradio", { name: /^AI$/ }));
 
     await screen.findByRole("button", { name: /Category: Gaming/ });
+  });
+
+  describe("direct playback (AirPlay)", () => {
+    // findVideoSrc waits for the <video> to carry a src. It starts without one
+    // — the element mounts before the preference is known — so "has a src" is
+    // the real signal here, not "is mounted".
+    async function findVideoSrc(): Promise<string> {
+      return waitFor(() => {
+        const v = document.querySelector("video");
+        const src = v?.getAttribute("src");
+        if (!src) throw new Error("video has no src yet");
+        return src;
+      });
+    }
+
+    it("plays the session-gated stream when direct playback is off", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo());
+      vi.mocked(getSettings).mockResolvedValue(makeSettings(false, false));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+
+      expect(await findVideoSrc()).toBe("/api/videos/v1/stream");
+      expect(createPlaybackGrant).not.toHaveBeenCalled();
+    });
+
+    // An AirPlay receiver fetches the src itself with no session cookie, so
+    // with the setting on the src has to be the grant URL before playback ever
+    // starts — Safari's AirPlay button is inside the native controls and can't
+    // be intercepted at click time.
+    it("plays a minted grant URL when direct playback is on", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo());
+      vi.mocked(getSettings).mockResolvedValue(makeSettings(false, true));
+      vi.mocked(createPlaybackGrant).mockResolvedValue({
+        url: "/api/p/tok123/stream",
+        expires_at: "2026-07-29 10:00:00",
+      });
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+
+      expect(await findVideoSrc()).toBe("/api/p/tok123/stream");
+      expect(createPlaybackGrant).toHaveBeenCalledWith("v1");
+    });
+
+    // A failed mint must not cost the user playback — the worst case is that
+    // AirPlay doesn't work, which is where they were before turning it on.
+    it("falls back to the session stream when minting fails", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo());
+      vi.mocked(getSettings).mockResolvedValue(makeSettings(false, true));
+      vi.mocked(createPlaybackGrant).mockRejectedValue(new Error("nope"));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+
+      expect(await findVideoSrc()).toBe("/api/videos/v1/stream");
+    });
+
+    // Offering an AirPlay button that hands the TV a URL it cannot fetch would
+    // fail with no explanation, so the button is hidden while the setting is off.
+    //
+    // Only the x-webkit-airplay assertion is real coverage. jsdom has no
+    // disableRemotePlayback, so assigning it just creates an expando the test
+    // reads back — it is asserted to pin the intent, not because passing proves
+    // anything about Safari. Whether the button actually disappears needs a
+    // manual pass, like the AirPlay hop itself.
+    it("disables remote playback when direct playback is off", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo());
+      vi.mocked(getSettings).mockResolvedValue(makeSettings(false, false));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+
+      await findVideoSrc();
+      const el = document.querySelector("video") as HTMLVideoElement;
+      await waitFor(() => {
+        expect(el.getAttribute("x-webkit-airplay")).toBe("deny");
+      });
+      expect(el.disableRemotePlayback).toBe(true);
+    });
+
+    it("allows remote playback when direct playback is on", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo());
+      vi.mocked(getSettings).mockResolvedValue(makeSettings(false, true));
+      vi.mocked(createPlaybackGrant).mockResolvedValue({
+        url: "/api/p/tok123/stream",
+        expires_at: "2026-07-29 10:00:00",
+      });
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+
+      await findVideoSrc();
+      const el = document.querySelector("video") as HTMLVideoElement;
+      await waitFor(() => {
+        expect(el.getAttribute("x-webkit-airplay")).toBe("allow");
+      });
+      expect(el.disableRemotePlayback).toBe(false);
+    });
+
+    // Switching videos must never leave the new video's <video> carrying the
+    // previous video's URL, however briefly: the old media is warm in the cache
+    // and its loadedmetadata would fire against the new video's state, setting
+    // resumeAppliedRef and costing the new video its resume position.
+    it("never carries the previous video's grant URL while minting the next", async () => {
+      const first = makeVideo({ id: "v1", title: "First Video" });
+      const second = makeVideo({ id: "v2", title: "A Different Video" });
+      vi.mocked(getVideo).mockImplementation(async (id: string) =>
+        id === "v1" ? first : second,
+      );
+      vi.mocked(getSettings).mockResolvedValue(makeSettings(false, true));
+      vi.mocked(createPlaybackGrant)
+        .mockResolvedValueOnce({
+          url: "/api/p/tok-v1/stream",
+          expires_at: "2026-07-29 10:00:00",
+        })
+        // v2's mint never settles, holding the swap window wide open.
+        .mockReturnValueOnce(new Promise(() => {}));
+
+      const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await findVideoSrc()).toBe("/api/p/tok-v1/stream");
+
+      // Sampling the DOM after the swap has settled would prove nothing — the
+      // stale src only exists between the commit that mounts v2's element and
+      // the effect that would replace it. A MutationObserver runs as a
+      // microtask, so it sees every intermediate state that a browser's media
+      // loader would also act on.
+      const seen: (string | null)[] = [];
+      const obs = new MutationObserver(() => {
+        const el = document.querySelector("video");
+        if (el) seen.push(el.getAttribute("src"));
+      });
+      obs.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["src"],
+      });
+
+      rerender(<Player videoId="v2" onDeleted={() => {}} />);
+      await screen.findByText("A Different Video");
+      obs.disconnect();
+
+      expect(seen).not.toContain("/api/p/tok-v1/stream");
+      expect(document.querySelector("video")?.getAttribute("src")).toBeNull();
+    });
   });
 });
 
