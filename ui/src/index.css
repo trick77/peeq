@@ -2104,18 +2104,6 @@ button.catpick.unset:hover {
   border-radius: 6px;
   pointer-events: none;
 }
-.scrub .played::after {
-  content: "";
-  position: absolute;
-  right: -6px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  box-shadow: 0 0 10px var(--glow-accent);
-}
 .scrub .sb {
   position: absolute;
   top: 0;
