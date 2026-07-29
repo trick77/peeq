@@ -573,13 +573,13 @@ button.srow:not(:disabled):hover {
    While the lock is on — Inbox.tsx clears it on the first real pointermove —
    the pair is pinned to its resting look.
 
-   The resting look is the poster scrim, not the panel fill it used to be:
-   these buttons moved onto the thumbnail (.pending-acts below), so pinning
-   them to --color-active would flash a light chip over the artwork — the
-   opposite of holding still. One block still covers both, because both
-   rest identically. */
-.inbox-grid.is-hover-locked .pending-acts .ui-btn:hover:not(:disabled) {
-  background: rgba(5, 8, 11, 0.82);
+   The resting look is the panel fill again. The pair spent a release on the
+   poster, where it wore a scrim and pinning it to --color-active would have
+   flashed a light chip over the artwork; back in a bar under the poster
+   (.inbox-actbar below) the stock button fill IS the resting look. One block
+   still covers both, because both rest identically. */
+.inbox-grid.is-hover-locked .inbox-actbar .ui-btn:hover:not(:disabled) {
+  background: var(--color-active);
   color: var(--color-ink-dim);
   border-color: var(--color-border);
 }
@@ -1345,54 +1345,61 @@ button.srow:not(:disabled):hover {
   border-radius: 6px;
 }
 
-/* ── Inbox: Download / Ignore on the poster ──────────────────────────────
-   These two used to close the text column, under the title. That put them
-   last in a stack whose height varies with the title — and because the title
-   reserves two lines so neighbouring cards align, a one-line title left a
-   whole empty line standing between the text and the buttons. Moving them
-   onto the poster empties the column: the title is now the last thing in the
-   card, so it can hug its own text and the reservation is dropped below.
+/* ── Inbox: Download / Ignore in a bar under the poster ──────────────────
+   These two rode the poster itself for one release. That put chrome over the
+   artwork — squarely over the title creators bake into the bottom third of a
+   thumbnail — and pushed .dur out of the corner it keeps on every other card
+   in the app. Under the poster the pair covers nothing and the chip goes home.
 
-   Always visible. This is the corner Library's .acts occupy, but not their
-   behaviour — those reveal on hover, which a touch screen can never do.
-   Same scrim as .dur and .tag so the poster's chips read as one family; the
-   blur is what keeps a 13px label legible over an arbitrary frame of video. */
-.pending-acts {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
+   The bar shares the poster's bottom corners and drops the border between
+   them, so the two read as one object rather than a card with a tray stuck to
+   it. Everything is scoped: .thumb is shared with Library's VideoCard, and an
+   unscoped radius here would square off every poster in the app.
+
+   Position never depends on title length, because the bar sits above the
+   text — every card in a row has its Download in the same place. Always
+   visible, never revealed on hover: an action you cannot see is one a touch
+   screen cannot reach. */
+.inbox-poster {
+  display: flex;
+  flex-direction: column;
+}
+.inbox-poster .thumb {
+  border-bottom: none;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.inbox-actbar {
   display: flex;
   gap: 6px;
+  padding: 7px;
+  border: 1px solid var(--color-border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-ui) var(--radius-ui);
+  background: var(--color-panel);
 }
-.pending-acts .ui-btn {
-  background: rgba(5, 8, 11, 0.82);
-  border-color: var(--color-border);
-  color: var(--color-ink-dim);
-  backdrop-filter: blur(6px);
-}
-/* Download takes the room that is left; Ignore stays a 32px square. The
+/* Download takes the room that is left; Ignore is sized by its label. The
    destructive half should not read as the equal of the action you came to
-   press, and width is the cheapest way to say so. */
-.pending-acts .ui-btn--secondary {
+   press, and width still says so — it is simply no longer a bare glyph. */
+.inbox-actbar .ui-btn--secondary {
   flex: 1;
   min-width: 0;
 }
-.pending-acts .ui-btn:hover:not(:disabled) {
-  border-color: var(--color-faint);
-  color: var(--color-ink);
+/* Ignore never shrinks. .ui-btn sets no white-space, so a button squeezed
+   below its content width would wrap "Ignore" onto a second line and grow the
+   whole bar. Nothing does that at the 300px floor the grid steps down to, but
+   the rule is what makes that a guarantee rather than an observation. */
+.inbox-actbar .ui-btn--dangerQuiet {
+  flex: none;
 }
-.pending-acts .ui-btn--dangerQuiet:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--color-danger) 55%, transparent);
-  color: #e08a7e;
-}
-/* The runtime chip owns the same corner, so it steps up over the row. */
-.inbox-grid .thumb .dur {
-  bottom: 46px;
-}
-/* With nothing under it, the Inbox title has no neighbour to stay level with
-   and the two-line floor is exactly the empty space this change removes. */
-.inbox-grid .card h3 {
+/* Specificity, not source order. The two-line floor below is .card.video-card
+   h3 (0-2-1) and sits AFTER this block, so the .inbox-grid .card h3 this
+   replaced — also 0-2-1 — lost the tie and never took effect. Naming
+   .video-card here makes it 0-3-1, which wins wherever it is written.
+
+   Nothing follows the title in an Inbox card, so it has no neighbour to stay
+   level with and reserving lines for it only buys empty space. */
+.inbox-grid .card.video-card h3 {
   min-height: 0;
 }
 /* The category pill lives in the thumbnail's free bottom-left corner, opposite
@@ -1509,7 +1516,7 @@ button.srow:not(:disabled):hover {
    fallback like .kebab uses — an iPad with a trackpad reports `hover: hover`
    and would fall through it back to the invisible branch, which is exactly the
    hole that media query looks like it closes. Resting visibility has no such
-   gap; see .pending-acts on Inbox, which reaches the same conclusion. */
+   gap; see .inbox-actbar on Inbox, which reaches the same conclusion. */
 .thumb .acts {
   position: absolute;
   right: 8px;
@@ -1860,9 +1867,9 @@ button.catpick.unset:hover {
   gap: 8px;
 }
 /* Inbox's Download / Ignore pair used to be a .card-foot.acts-row here, under
-   the title. It rides the poster now (.pending-acts, in the Inbox block above)
-   — see the note there for why — so the footer rule it needed is gone with it.
-   .card-foot itself stays: Library's cards still wear it. */
+   the title. It lives in a bar above the text now (.inbox-actbar, in the Inbox
+   block above) — see the note there for why — so the footer rule it needed is
+   gone with it. .card-foot itself stays: Library's cards still wear it. */
 
 /* ── Add (Task 14): paste box + preview. ─────────────────────────────────── */
 

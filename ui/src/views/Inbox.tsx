@@ -441,31 +441,39 @@ export function Inbox({
         >
           {visible.map((item) => (
             <article key={item.video_id} className="card video-card">
-              <div className="thumb">
-                <ThumbFill
-                  id={item.video_id}
-                  // Always attempt the proxy: the backend falls back to the
-                  // hqdefault variant YouTube generates for every video, so an
-                  // empty recorded thumbnail_url still gets a real poster. A true
-                  // 404 still degrades to the shared gradient via onError.
-                  hasThumbnail={true}
-                  src={pendingThumbnailUrl(item.video_id)}
-                />
-                <span className="dur">
-                  {formatDuration(item.duration_seconds)}
-                </span>
-                {/* Triage happens off the poster, so the two actions sit on it
-                  rather than under the title. They used to end the text column,
-                  which meant they were the last thing in a stack whose height
-                  varies with the title — and since the title reserves two lines
-                  so neighbouring cards line up, a one-line title left a whole
-                  empty line above the buttons. Nothing follows the title now,
-                  so it can hug its own text and that reservation goes away.
+              {/* Poster and action bar are one object, so they share a wrapper
+                rather than sitting as two children of .card — .card lays its
+                children out with a 10px gap, and the bar has to touch the
+                poster it belongs to. A wrapper says that in the DOM; cancelling
+                the gap with a negative margin would only say it in pixels, and
+                would come undone the day the gap changes. */}
+              <div className="inbox-poster">
+                <div className="thumb">
+                  <ThumbFill
+                    id={item.video_id}
+                    // Always attempt the proxy: the backend falls back to the
+                    // hqdefault variant YouTube generates for every video, so an
+                    // empty recorded thumbnail_url still gets a real poster. A true
+                    // 404 still degrades to the shared gradient via onError.
+                    hasThumbnail={true}
+                    src={pendingThumbnailUrl(item.video_id)}
+                  />
+                  <span className="dur">
+                    {formatDuration(item.duration_seconds)}
+                  </span>
+                </div>
+                {/* The pair rode the poster itself for one release. That put
+                  chrome over the artwork — squarely over the title creators
+                  bake into the bottom of a thumbnail — and pushed the runtime
+                  chip out of the corner it keeps on every other card in the
+                  app. Beneath the poster it covers nothing, and because it
+                  sits above the text its position never depends on how long a
+                  title is: every card in a row has its Download in the same
+                  place, whatever the ones beside it are called.
 
-                  Always visible, never revealed on hover: this is the same
-                  corner Library's .acts occupy, but not the same behaviour —
-                  an action you cannot see is one a touch screen cannot reach. */}
-                <div className="pending-acts">
+                  Always visible, never revealed on hover — an action you
+                  cannot see is one a touch screen cannot reach. */}
+                <div className="inbox-actbar">
                   <Button
                     type="button"
                     variant="secondary"
@@ -476,22 +484,25 @@ export function Inbox({
                     <Icon name="download" size="15px" />
                     Download
                   </Button>
-                  {/* Icon-only, and deliberately the smaller of the two: Ignore
-                    is the destructive half and should not read as the equal of
-                    the action you actually came here to press. The label lives
-                    on aria-label, which is what names it for a screen reader
-                    and for the tests. */}
+                  {/* Named, not a bare trash can. Off the poster the bar has
+                    room for the word, and a lone glyph asks the reader to guess
+                    whether it drops the video from the inbox or deletes
+                    something already downloaded. It stays the smaller of the
+                    two — the destructive half should not read as the equal of
+                    the action you came here to press — but width says that now,
+                    not the absence of a label. The visible text is what names
+                    it for a screen reader and for the tests, so it carries no
+                    aria-label: two sources of truth for one name is one too
+                    many. */}
                   <Button
                     type="button"
                     variant="dangerQuiet"
                     small
-                    icon
-                    aria-label="Ignore"
-                    title="Ignore"
                     disabled={busyId === item.video_id || bulkBusy}
                     onClick={() => handleIgnore(item)}
                   >
                     <Icon name="trash" size="15px" />
+                    Ignore
                   </Button>
                 </div>
               </div>

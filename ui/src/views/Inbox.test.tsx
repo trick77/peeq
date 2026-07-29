@@ -115,11 +115,14 @@ describe("Inbox", () => {
     });
   });
 
-  // The pair sits ON the poster, not under the title, and is always rendered
-  // — no hover, no focus, no pointer of any kind involved in getting to it.
-  // Library's .acts overlay reveals on hover and is therefore unreachable on a
-  // touch screen; this asserts Inbox did not inherit that.
-  it("puts Download and Ignore on the thumbnail, visible without a pointer", async () => {
+  // The pair sits in a bar UNDER the poster, not on it: on the poster it
+  // covered the title creators bake into a thumbnail and displaced .dur. The
+  // bar is a sibling of .thumb inside .inbox-poster, which is what lets the two
+  // touch. Both buttons are always rendered — no hover, no focus, no pointer of
+  // any kind involved in getting to them. Library's .acts overlay reveals on
+  // hover and is therefore unreachable on a touch screen; this asserts Inbox
+  // did not inherit that.
+  it("puts Download and Ignore in a bar below the poster, visible without a pointer", async () => {
     render(<Inbox />);
     await screen.findByText("First pending video");
     const card = screen
@@ -129,15 +132,23 @@ describe("Inbox", () => {
     const download = within(card).getByRole("button", { name: /^download$/i });
     const ignore = within(card).getByRole("button", { name: /ignore/i });
 
-    expect(download.closest(".thumb")).not.toBeNull();
-    expect(ignore.closest(".thumb")).not.toBeNull();
+    expect(download.closest(".thumb")).toBeNull();
+    expect(ignore.closest(".thumb")).toBeNull();
+    expect(download.closest(".inbox-actbar")).not.toBeNull();
+    expect(ignore.closest(".inbox-actbar")).not.toBeNull();
+
+    const poster = card.querySelector(".inbox-poster") as HTMLElement;
+    expect(poster.querySelector(":scope > .thumb")).not.toBeNull();
+    expect(poster.querySelector(":scope > .inbox-actbar")).not.toBeNull();
     expect(card.querySelector(".card-foot")).toBeNull();
   });
 
-  // Ignore lost its visible label when it became a 32px square, so the only
-  // thing naming it is aria-label. Without that it is an unlabelled button
-  // that deletes the video.
-  it("keeps Ignore named for assistive tech now that it is icon-only", async () => {
+  // Ignore carries its name as visible text, not as an aria-label. A bare trash
+  // can asked the reader to guess whether it drops the video from the inbox or
+  // deletes something already downloaded; off the poster there is room to say.
+  // The assertion is that the accessible name comes from the content — an
+  // aria-label would silently override the label a sighted user reads.
+  it("names Ignore with visible text rather than an aria-label", async () => {
     render(<Inbox />);
     await screen.findByText("First pending video");
     const card = screen
@@ -145,8 +156,8 @@ describe("Inbox", () => {
       .closest(".card") as HTMLElement;
 
     const ignore = within(card).getByRole("button", { name: "Ignore" });
-    expect(ignore).toHaveAttribute("aria-label", "Ignore");
-    expect(ignore.textContent?.trim()).toBe("");
+    expect(ignore.textContent?.trim()).toBe("Ignore");
+    expect(ignore).not.toHaveAttribute("aria-label");
   });
 
   it("clicking Download calls downloadPending and removes the row", async () => {
