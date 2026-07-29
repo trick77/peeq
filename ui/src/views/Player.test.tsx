@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { Player } from "./Player";
 import { parseVtt } from "../vtt";
 import type { Video } from "../api/types";
@@ -1526,12 +1532,64 @@ describe("Player", () => {
     expect(await screen.findByText(/fresh summary/i)).toBeInTheDocument();
   });
 
-  it("renders a MiMo tag on a summarizer-generated chapter", async () => {
-    vi.mocked(getVideo).mockResolvedValue(
-      makeVideo({ chapters: [{ ts: 108, title: "Frame", source: "mimo" }] }),
-    );
-    render(<Player videoId="v1" onDeleted={() => {}} />);
-    expect(await screen.findByText(/mimo/i)).toBeInTheDocument();
+  // Where the chapters came from is a per-video fact, so the Contents header
+  // states it once. It used to be stamped on every row, which said one thing
+  // twelve times and crowded the titles.
+  describe("chapter source", () => {
+    const contentsHeader = () =>
+      screen.getByText("Contents").closest(".hd") as HTMLElement;
+
+    it("names MiMo in the header for summarizer-generated chapters", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ chapters: [{ ts: 108, title: "Frame", source: "mimo" }] }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await screen.findByText("Frame")).toBeInTheDocument();
+      expect(within(contentsHeader()).getByText("MiMo")).toBeInTheDocument();
+    });
+
+    it("names one source once however many chapters share it", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          chapters: [0, 60, 120, 180, 240, 300].map((ts, i) => ({
+            ts,
+            title: `Part ${i}`,
+            source: "yt-dlp",
+          })),
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await screen.findByText("Part 0")).toBeInTheDocument();
+      expect(screen.getAllByText("yt-dlp")).toHaveLength(1);
+      expect(within(contentsHeader()).getByText("yt-dlp")).toBeInTheDocument();
+    });
+
+    it("names both sources, first appearance first, when they are mixed", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          chapters: [
+            { ts: 0, title: "Cold open", source: "yt-dlp" },
+            { ts: 60, title: "Middle", source: "mimo" },
+            { ts: 120, title: "End", source: "yt-dlp" },
+          ],
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await screen.findByText("Cold open")).toBeInTheDocument();
+      const pills = within(contentsHeader()).getAllByText(/yt-dlp|MiMo/);
+      expect(pills.map((p) => p.textContent)).toEqual(["yt-dlp", "MiMo"]);
+    });
+
+    it("names no source it does not recognise", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ chapters: [{ ts: 0, title: "Frame", source: "wat" }] }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await screen.findByText("Frame")).toBeInTheDocument();
+      expect(
+        within(contentsHeader()).queryByText(/wat|yt-dlp|MiMo/),
+      ).toBeNull();
+    });
   });
 
   it("shows Re-download in the ⋮ menu for an errored video and queues it", async () => {
