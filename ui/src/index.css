@@ -960,7 +960,8 @@ button.srow:not(:disabled):hover {
    as too loud for the always-present "All" — this keeps the selected pill legible
    without shouting. Add any new pill type's `.on` state to this selector. */
 .chip.on,
-.catchip.on {
+.catchip.on,
+.card .hd .src-pill {
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   color: var(--color-accent-strong);
   border-color: var(--color-accent-dim);
@@ -2387,6 +2388,28 @@ button.catpick.unset:hover {
   font-size: 11px;
   color: var(--color-muted);
 }
+/* hd-wrap lets a header carry a variable number of pills beside its title
+   without pushing the right-aligned .meta out of the card — Contents wears two
+   source pills on the rare video whose chapters come from both generators.
+   Opt-in so every other card header keeps its guaranteed single line. */
+.card .hd.hd-wrap {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+/* The per-generator pill in the Contents header. Colors come from the canonical
+   active-pill selector above; this is shape only. Always "on" — it states a
+   fact rather than a toggle — so it has no off state to style. */
+.card .hd .src-pill {
+  font-size: var(--text-micro);
+  /* longhands, not the `border` shorthand: this rule comes after the canonical
+     pill colors and a shorthand would reset the border-color they set. */
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 999px;
+  padding: 2px 9px;
+  line-height: 1.4;
+  flex: none;
+}
 .card .tabbody {
   padding: 16px;
 }
@@ -2459,16 +2482,6 @@ button.catpick.unset:hover {
   color: var(--color-ink);
   line-height: 1.35;
 }
-.toc .src {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--color-muted);
-  border: 1px solid var(--color-border);
-  border-radius: 5px;
-  padding: 1px 5px;
-  align-self: center;
-}
-
 /* Highlights */
 .hl {
   display: flex;
