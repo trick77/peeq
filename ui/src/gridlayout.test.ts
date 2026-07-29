@@ -23,26 +23,52 @@ import { describe, expect, it } from "vitest";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CSS = readFileSync(resolve(HERE, "./index.css"), "utf8");
 
-// gridRules returns every grid-template-columns declaration that applies to
-// `.grid`, in source order: the base rule first, then the @container step-downs.
+// columnRules returns every grid-template-columns declaration that applies to
+// `selector`, in source order: the base rule first, then any step-downs inside
+// @container/@media. Collecting them ALL is the point — a responsive override
+// is the easiest place for a bare `1fr` to survive a fix to the base rule.
+function columnRules(selector: string): string[] {
+  // Escape the whole selector, not just its leading dot: a `.` left raw matches
+  // any character, so a compound selector would silently match the wrong rule.
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(
+    `${escaped}\\s*\\{[^}]*?grid-template-columns:\\s*([^;]+);`,
+    "g",
+  );
+  return [...CSS.matchAll(re)].map((m) => m[1].trim());
+}
+
 function gridRules(): string[] {
-  return [
-    ...CSS.matchAll(/\.grid\s*\{[^}]*?grid-template-columns:\s*([^;]+);/g),
-  ].map((m) => m[1].trim());
+  return columnRules(".grid");
+}
+
+// expectClampedTracks is the shared assertion: every track's floor is pinned at
+// 0 so no column can size to its own content.
+function expectClampedTracks(rules: string[]) {
+  expect(rules.length).toBeGreaterThan(0);
+  for (const rule of rules) {
+    // Check EVERY track's floor, not just that the declaration contains one
+    // `minmax(0` somewhere: `minmax(0, 1fr) minmax(120px, 1fr)` would satisfy a
+    // whole-declaration check while its second column still sizes to a 120px
+    // floor — the exact defect this guard exists to catch.
+    const floors = [...rule.matchAll(/minmax\(\s*([^,)]+)\s*,/g)].map((m) =>
+      m[1].trim(),
+    );
+    expect(floors.length).toBeGreaterThan(0);
+    for (const floor of floors) {
+      expect(floor).toBe("0");
+    }
+    // A `1fr` OUTSIDE a minmax() is the defect — it is shorthand for
+    // minmax(auto, 1fr), and that `auto` is the min-content floor. Drop the
+    // minmax groups (whose own `1fr` max is correct and required) and assert
+    // nothing bare survives, so `minmax(0, 1fr) 1fr` cannot slip through.
+    expect(rule.replace(/minmax\([^)]*\)/g, "")).not.toContain("1fr");
+  }
 }
 
 describe("library card grid", () => {
   it("clamps every track's floor so the columns cannot size to their own content", () => {
-    const rules = gridRules();
-    expect(rules.length).toBeGreaterThan(0);
-    for (const rule of rules) {
-      expect(rule).toContain("minmax(0");
-      // A `1fr` OUTSIDE a minmax() is the defect — it is shorthand for
-      // minmax(auto, 1fr), and that `auto` is the min-content floor. Drop the
-      // minmax groups (whose own `1fr` max is correct and required) and assert
-      // nothing bare survives, so `minmax(0, 1fr) 1fr` cannot slip through.
-      expect(rule.replace(/minmax\([^)]*\)/g, "")).not.toContain("1fr");
-    }
+    expectClampedTracks(gridRules());
   });
 
   it("steps the column count off the grid's own width, not the viewport", () => {
@@ -140,5 +166,33 @@ describe("library card grid", () => {
     expect(CSS).toMatch(
       /\.card\.video-card\s+\.by\s*\{[^}]*overflow:\s*hidden/,
     );
+  });
+});
+
+// The Settings panels hit the identical defect the card grid already fixed, so
+// they are guarded the same way rather than left to be rediscovered: `.presets`
+// held a `white-space: nowrap` format selector ~60 characters long and `.row2`
+// holds text inputs with a ~170px intrinsic minimum. Both sized their own tracks
+// and pushed out through `.sect`'s border.
+describe("settings panel grids", () => {
+  for (const selector of [".presets", ".row2"]) {
+    it(`clamps every ${selector} track, including the single-column step-down`, () => {
+      const rules = columnRules(selector);
+      // Two rules: the base one and the <=620px override. A bare `1fr` in the
+      // override alone still overflows, just only on a narrow window — which is
+      // exactly the width nobody re-checks after fixing the base rule.
+      expect(rules.length).toBe(2);
+      expectClampedTracks(rules);
+    });
+  }
+
+  it("lets the grid items shrink below their content too", () => {
+    // The minmax above frees the TRACK; each item keeps its own min-width: auto
+    // floor until this clears it, and both are needed before `.preset code`'s
+    // text-overflow: ellipsis can ever engage.
+    expect(CSS).toMatch(/^\.preset\s*\{[^}]*min-width:\s*0/m);
+    // Scoped to .row2's children on purpose — `.ctrl` is used throughout
+    // Settings and must not pick up a global min-width.
+    expect(CSS).toMatch(/\.row2\s*>\s*\.ctrl\s*\{[^}]*min-width:\s*0/);
   });
 });

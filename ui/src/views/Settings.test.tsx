@@ -50,6 +50,7 @@ import {
   getAPITokenStatus,
 } from "../api/settings";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
+import { updateYtdlp } from "../api/ytdlp";
 
 describe("Settings", () => {
   beforeEach(() => {
@@ -59,6 +60,7 @@ describe("Settings", () => {
     vi.mocked(pauseYoutube).mockReset();
     vi.mocked(resumeYoutube).mockReset();
     vi.mocked(getAPITokenStatus).mockReset();
+    vi.mocked(updateYtdlp).mockReset();
     vi.mocked(getSettings).mockResolvedValue(baseSettings);
     vi.mocked(putCookie).mockResolvedValue({
       ...baseSettings,
@@ -192,6 +194,38 @@ describe("Settings", () => {
     });
     fireEvent.click(toggle);
     await waitFor(() => expect(pauseYoutube).toHaveBeenCalled());
+  });
+
+  // The Update button used to report nothing at all on success. When the
+  // installed build was already current the returned version matched the one on
+  // screen, so a working update was indistinguishable from a dead button —
+  // which is exactly how this was reported.
+  it("says so when the yt-dlp update lands on the same version", async () => {
+    vi.mocked(updateYtdlp).mockResolvedValue({
+      version: "2026.01.01",
+      previous_version: "2026.01.01",
+      updated: false,
+    });
+    render(<Settings />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Update$/ }));
+
+    expect(
+      await screen.findByText("Already on the latest version."),
+    ).toBeInTheDocument();
+  });
+
+  it("names both versions when the yt-dlp update moves the version", async () => {
+    vi.mocked(updateYtdlp).mockResolvedValue({
+      version: "2026.08.15",
+      previous_version: "2026.01.01",
+      updated: true,
+    });
+    render(<Settings />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Update$/ }));
+
+    expect(
+      await screen.findByText("Updated 2026.01.01 → 2026.08.15."),
+    ).toBeInTheDocument();
   });
 
   it("shows the auto-pause reason when auto-engaged", async () => {

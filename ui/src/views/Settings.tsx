@@ -70,6 +70,11 @@ export function Settings() {
   const [ytdlpVersion, setYtdlpVersion] = useState<string | null>(null);
   const [ytdlpBusy, setYtdlpBusy] = useState(false);
   const [ytdlpError, setYtdlpError] = useState<string | null>(null);
+  // ytdlpNote is the Update button's receipt. Without it a no-op update — the
+  // common case — leaves the page visually identical to a dead button. It
+  // persists until the next click rather than fading, so the answer is still
+  // there when you look back at it.
+  const [ytdlpNote, setYtdlpNote] = useState<string | null>(null);
 
   const [tokenPresent, setTokenPresent] = useState(false);
   const [tokenCreatedAt, setTokenCreatedAt] = useState("");
@@ -252,9 +257,17 @@ export function Settings() {
   async function handleUpdateYtdlp() {
     setYtdlpBusy(true);
     setYtdlpError(null);
+    setYtdlpNote(null);
     try {
-      const v = await updateYtdlp();
-      setYtdlpVersion(v);
+      const res = await updateYtdlp();
+      setYtdlpVersion(res.version);
+      if (res.updated && res.previous_version) {
+        setYtdlpNote(`Updated ${res.previous_version} → ${res.version}.`);
+      } else if (res.updated) {
+        setYtdlpNote(`Installed ${res.version}.`);
+      } else {
+        setYtdlpNote("Already on the latest version.");
+      }
     } catch (err) {
       setYtdlpError((err as Error).message ?? "Update failed.");
     } finally {
@@ -644,6 +657,7 @@ export function Settings() {
               </Button>
             </div>
             {ytdlpError ? <p className="retain-note">{ytdlpError}</p> : null}
+            {ytdlpNote ? <p className="retain-note">{ytdlpNote}</p> : null}
           </div>
         </div>
       </section>

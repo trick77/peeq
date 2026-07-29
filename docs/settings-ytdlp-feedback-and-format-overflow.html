@@ -1,0 +1,186 @@
+<title>Peeq — Settings: yt-dlp update feedback &amp; format panel overflow</title>
+<style>
+  :root{
+    --bg:#1f1f1e; --panel:#1b1b1a; --border:#323230; --border-soft:#2a2a28;
+    --ink:#faf9f5; --ink-dim:#e4e1d8; --muted:#9c9a92; --faint:#6f6d66;
+    --accent:#c6613f; --accent-strong:#d97757; --accent-dim:#5a3527;
+    --online:#5aa06a; --danger:#c14638; --kept:#d6a15a;
+    --sans:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --r:10px; --r-sm:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(120% 80% at 80% -10%,rgba(198,97,63,.06),transparent 60%),
+                     radial-gradient(90% 70% at 8% 110%,rgba(214,161,90,.03),transparent 55%)}
+  .wrap{max-width:1000px;margin:0 auto;padding:46px 26px 110px}
+  h1{font-family:var(--serif);font-weight:600;font-size:2rem;margin:0 0 10px;letter-spacing:-.01em;text-wrap:balance}
+  h2{font-family:var(--serif);font-weight:600;font-size:1.3rem;margin:0 0 8px;text-wrap:balance}
+  h3{font-size:12.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:26px 0 8px}
+  .eyebrow{font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--faint);margin:0 0 6px}
+  .lede{color:var(--muted);max-width:70ch;margin:0 0 4px}
+  p{max-width:74ch;color:var(--ink-dim)}
+  p.m{color:var(--muted)}
+  section{margin-top:44px;border-top:1px solid var(--border-soft);padding-top:26px}
+  code{font-family:var(--mono);font-size:12.5px;color:var(--ink-dim);background:var(--panel);
+       border:1px solid var(--border-soft);border-radius:4px;padding:1px 5px}
+  pre{margin:14px 0 0;padding:13px 15px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--panel);
+      overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--ink-dim)}
+  pre code{background:none;border:0;padding:0;font-size:inherit}
+  .c{color:var(--faint)} .del{color:#d98b80} .add{color:var(--online)}
+  ul{max-width:74ch;color:var(--ink-dim);padding-left:19px}
+  li{margin:5px 0} li::marker{color:var(--faint)}
+  .piece{border:1px solid var(--border);border-radius:var(--r);background:var(--panel);padding:18px 20px 20px;margin-top:18px}
+  .tag{display:inline-block;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+       border:1px solid var(--border);border-radius:999px;padding:3px 9px;color:var(--muted);margin-bottom:10px}
+  .tag.fix{border-color:var(--accent-dim);color:var(--accent-strong)}
+  .tag.ok{border-color:#2f4a36;color:var(--online)}
+  .tbl{width:100%;overflow-x:auto;margin-top:16px}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
+  th{text-align:left;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);
+     font-weight:600;padding:0 14px 8px 0;border-bottom:1px solid var(--border)}
+  td{padding:9px 14px 9px 0;border-bottom:1px solid var(--border-soft);color:var(--ink-dim);vertical-align:top}
+  td.n{font-family:var(--mono);font-size:12.5px}
+  .was{color:var(--danger)} .now{color:var(--online)}
+  .files{display:grid;gap:0;margin-top:14px;border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+  .frow{display:flex;flex-wrap:wrap;gap:4px 14px;padding:11px 15px;background:var(--panel);
+        border-bottom:1px solid var(--border-soft)}
+  .frow:last-child{border-bottom:0}
+  .frow .p{font-family:var(--mono);font-size:12.5px;color:var(--ink-dim);min-width:0}
+  .frow .w{color:var(--muted);font-size:13px;flex:1 1 240px;min-width:0}
+  a{color:var(--accent-strong)}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Peeq · Settings</p>
+  <h1>Two Settings defects: a silent Update button and a panel that leaks</h1>
+  <p class="lede">Reported together, unrelated in cause. One is a missing distinction the API never
+  carried; the other is a CSS track blowout this codebase has already met once and fixed.</p>
+
+  <section>
+    <h2>Defect 1 — the yt-dlp Update button says nothing</h2>
+    <p>Clicking <b>Update</b> flickers the button label and changes nothing else. When the installed
+    build is already current, the version that comes back equals the one already on screen, so a
+    working update is indistinguishable from a dead button.</p>
+    <p class="m">The API cannot help. <code>handleYTDLPUpdate</code> returns <code>{"version": …}</code>
+    only, and <code>ytdlp.UpdateLatest</code> re-downloads the latest release without ever reading the
+    version it replaces — "already up to date" is not knowable at any layer.</p>
+
+    <div class="piece">
+      <span class="tag fix">Fix</span>
+      <p style="margin-top:0">Read the version <b>before</b> replacing it and report both.
+      <code>YTDLPVersioner</code> already exposes <code>Version</code> alongside
+      <code>UpdateLatest</code>, so no interface or wiring changes.</p>
+<pre><code>type ytdlpUpdateResponse struct {
+    Version         string `json:"version"`
+    PreviousVersion string `json:"previous_version"`
+    Updated         bool   `json:"updated"`
+}</code></pre>
+      <p class="m">Failing to read the previous version is deliberately <b>not</b> fatal: the binary may
+      be missing entirely, which is exactly when an update is most wanted. That case reports no previous
+      version and counts as an update.</p>
+      <p class="m"><code>Updated</code> describes the <b>version</b>, not the download. The binary is
+      reinstalled every time regardless, so <code>updated:false</code> means the version did not move —
+      never that the fetch was skipped. The copy stays honest about that.</p>
+    </div>
+
+    <h3>What the button now says</h3>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Response</th><th>Note under the control</th></tr></thead>
+        <tbody>
+          <tr><td class="n">updated, previous known</td><td>Updated 2026.01.01 → 2026.08.15.</td></tr>
+          <tr><td class="n">updated, no previous</td><td>Installed 2026.08.15.</td></tr>
+          <tr><td class="n">version unchanged</td><td>Already on the latest version.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="m">The note persists until the next click rather than fading, so the answer is still there
+    when you look back at it. It renders through the same <code>.retain-note</code> every other note on
+    the page uses, and rests visible — nothing is revealed on hover.</p>
+  </section>
+
+  <section>
+    <h2>Defect 2 — the Download format cards push out through their panel</h2>
+    <p><code>.presets</code> used <code>grid-template-columns: 1fr 1fr</code>, which is
+    <code>minmax(auto, 1fr)</code>. That <code>auto</code> floor is each item's min-content width, and
+    every card holds a <code>white-space: nowrap</code> format selector around 60 characters long. So each
+    track grew to fit its own untruncated string, the <code>text-overflow: ellipsis</code> below it never
+    engaged, and the grid overran <code>.sect</code>'s padding and border.</p>
+    <p class="m">This is the defect the library card grid already fixed — <code>.grid</code> uses
+    <code>repeat(3, minmax(0, 1fr))</code> and <code>gridlayout.test.ts</code> pins it. That test only
+    scanned <code>.grid</code>, which is how <code>.presets</code> and <code>.row2</code> went unguarded.</p>
+
+    <div class="piece">
+      <span class="tag fix">Fix</span>
+      <p style="margin-top:0">Two halves, both load-bearing: the <code>minmax</code> frees the
+      <b>track</b>, the <code>min-width</code> frees the <b>item</b> sitting in it.</p>
+<pre><code><span class="del">- grid-template-columns: 1fr 1fr;</span>
+<span class="add">+ grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);</span>
+<span class="add">+ .preset { min-width: 0 }</span>
+<span class="add">+ .row2 &gt; .ctrl { min-width: 0 }</span>   <span class="c">/* scoped: .ctrl is used all over Settings */</span></code></pre>
+      <p class="m">The single-column <code>@media (max-width: 620px)</code> overrides convert too. A lone
+      bare <code>1fr</code> is still <code>minmax(auto, 1fr)</code>, so leaving them would fix the wide
+      case and ship the narrow one.</p>
+    </div>
+
+    <h3>Measured in the running app, 700px viewport</h3>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Measurement</th><th>Before</th><th>After</th></tr></thead>
+        <tbody>
+          <tr><td><code>.presets</code> overflow past the panel</td>
+              <td class="n was">367px</td><td class="n now">0px</td></tr>
+          <tr><td>Resolved columns</td>
+              <td class="n was">464px + 458px</td><td class="n now">277px + 277px</td></tr>
+          <tr><td>Format string ellipsized</td>
+              <td class="n was">no — 430px in a 430px box</td><td class="n now">yes — 430px in a 244px box</td></tr>
+          <tr><td><code>.row2</code> overflow</td>
+              <td class="n">0px <span class="c">(latent, not yet biting)</span></td><td class="n now">0px</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="m">Before-numbers taken by re-applying the old rules live in the page, so the cause is
+    measured rather than argued. <code>.row2</code> was not overflowing at this width — its inputs still
+    fit — so that half is a latent fix, applied for consistency.</p>
+  </section>
+
+  <section>
+    <h2>Files</h2>
+    <div class="files">
+      <div class="frow"><span class="p">backend/internal/httpapi/ytdlp_handlers.go</span>
+        <span class="w">Pre-read the version; new update response shape</span></div>
+      <div class="frow"><span class="p">ui/src/api/ytdlp.ts</span>
+        <span class="w">Return the whole object, not just the version string</span></div>
+      <div class="frow"><span class="p">ui/src/views/Settings.tsx</span>
+        <span class="w">The persistent note beside the Update button</span></div>
+      <div class="frow"><span class="p">ui/src/index.css</span>
+        <span class="w">Clamped tracks and item floors for both Settings grids</span></div>
+      <div class="frow"><span class="p">ui/src/gridlayout.test.ts</span>
+        <span class="w">Guard generalised past <code>.grid</code> to the Settings panels</span></div>
+      <div class="frow"><span class="p">…/ytdlp_handlers_test.go · Settings.test.tsx</span>
+        <span class="w">Both note branches; all three backend outcomes</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <p><span class="tag ok" style="margin-bottom:0">All green</span></p>
+    <ul>
+      <li>Backend: <code>go test ./...</code>, <code>go vet</code>, <code>gofmt</code> — clean.</li>
+      <li>UI: 691 tests across 42 files, <code>tsc --noEmit</code>, and <code>npm run format:check</code>
+        (the CI gate — there is no lint script).</li>
+      <li>Driven in the real app: the format panel measured at 700px before and after, and the Update
+        button clicked against a genuine yt-dlp release — first click reported
+        <span class="n">Installed 2026.07.04.</span>, second reported
+        <span class="n">Already on the latest version.</span></li>
+    </ul>
+    <p class="m">One dev-box wrinkle worth knowing: on macOS the self-update writes
+    <code>yt-dlp_macos</code> while <code>resolveYtdlpBin</code> looks for <code>dir/yt-dlp</code>, so
+    <code>GET /api/ytdlp/version</code> 500s locally until a copy exists under the plain name. Production
+    is Linux, where both names agree. Pre-existing, documented at
+    <code>main.go:572-575</code>, and untouched here.</p>
+  </section>
+</div>
