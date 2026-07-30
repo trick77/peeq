@@ -56,6 +56,12 @@ const RESUME_THROTTLE_MS = 5000;
 // gap this large means playback stopped in between (a pause, a stall, a
 // backgrounded tab) — time the viewer spent not watching, which a "stop after
 // 30 minutes" promise has no business spending. See tickSleep.
+//
+// The trade this makes: where a browser throttles `timeupdate` to slower than
+// one event per clamp, the budget drains slower than real time and the timer
+// runs long rather than short. That is the safe direction to miss in — better
+// to stop a few minutes late than to cut off a viewer who is still awake —
+// and the clamp is what makes resuming after a pause correct at all.
 const SLEEP_MAX_TICK_MS = 2000;
 
 // fmt is the Task 17 alias for formatDuration used throughout the

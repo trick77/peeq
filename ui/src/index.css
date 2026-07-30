@@ -1877,12 +1877,6 @@ button.sleeppick {
   gap: 7px;
   border-radius: 15px;
   font-size: var(--text-label);
-  /* The countdown changes width as it ticks (9:59 -> 10:00 and back through
-     every digit); without a floor the pill breathes in and out and drags the
-     ⋮ beside it along. Wide enough for H:MM:SS, which the 60 minute preset
-     shows for its first second. */
-  min-width: 108px;
-  justify-content: center;
   transition:
     background 120ms ease,
     border-color 120ms ease,
@@ -1901,10 +1895,18 @@ button.sleeppick.armed {
   border-color: var(--color-accent-strong);
 }
 /* Mono and tabular, matching .scrub-times below the video — the two are the
-   only running clocks on the page and should read as the same kind of fact. */
+   only running clocks on the page and should read as the same kind of fact.
+
+   The floor is on the readout, not the button: it is only the digits that
+   change width as they tick (9:59 -> 10:00, and the 60 minute preset shows
+   1:00:00 for its first second before dropping to 59:58), and a floor on the
+   button would pad the resting "Sleep" label out to a width it never needs —
+   and, on a wrapping .playacts, cost the row space it does need. */
 .sleeppick .sleepleft {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  min-width: 58px;
+  text-align: center;
 }
 .sleepmenu {
   position: absolute;
