@@ -1693,3 +1693,88 @@ func TestSetKeyPointsInvalidatesTheIndex(t *testing.T) {
 		t.Errorf("embed_rev = %d after writing chapters, want 0 — the stored index predates them", v.EmbedRev)
 	}
 }
+
+// The embedding step runs AFTER summary_status is persisted and emitted as
+// done, so it must not emit "running". Player.tsx sets its local status from
+// any non-done event, which would replace the summary the reader is looking at
+// with the "Summarizing" spinner until embedding finished — a summary that
+// appears, vanishes, and comes back.
+func TestEmbeddingEmitsDoneNotRunning(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedChapterVideo(t, h, "ve1")
+
+	var events []string
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(chapterCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+		OnPhase: func(id, status, phase string) {
+			events = append(events, id+":"+status+":"+phase)
+		},
+	})
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if !contains(events, "ve1:done:embedding") {
+		t.Errorf("embedding did not emit a done status: %v", events)
+	}
+	if contains(events, "ve1:running:embedding") {
+		t.Errorf("embedding emitted running after the summary was already done: %v", events)
+	}
+	// The phase still rides along, so the Queue meter reaches step 4/4.
+	var last string
+	for _, e := range events {
+		last = e
+	}
+	if last != "ve1:done:" {
+		t.Errorf("last event = %q, want the terminal done with no phase", last)
+	}
+}
+
+// Reprocess wipes the summary and clears embed_rev but does NOT delete chunks.
+// embed_model is set once and never cleared, so gating the key-points-failure
+// fallback on it alone would leave the OLD summary chunk indexed and served by
+// search for as long as key points kept failing — with nothing left to repair
+// it now the backfill is gone.
+func TestFallbackReindexesAReprocessedVideoWithStaleRev(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedChapterVideo(t, h, "vr1")
+
+	// The state handleReprocess leaves behind: chunks from a previous run still
+	// indexed, embed_model set, embed_rev cleared, summary wiped.
+	if err := h.rag.ReplaceVideoChunks(context.Background(), "vr1",
+		rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
+		[]rag.ChunkRow{{Ordinal: 0, Text: "the OLD summary", Kind: rag.KindSummary}},
+		[][]float32{make([]float32, 1536)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.videos.ClearEmbedRev("vr1"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(keyPointsFailCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+	// Key points fails, so the fallback is the only thing that can re-index.
+	if _, err := w.processOne(context.Background()); err == nil {
+		t.Fatal("expected the key-points failure to be reported")
+	}
+
+	var stale int
+	if err := h.db.QueryRow(
+		`SELECT COUNT(*) FROM transcript_chunks WHERE video_id='vr1' AND text='the OLD summary'`,
+	).Scan(&stale); err != nil {
+		t.Fatal(err)
+	}
+	if stale != 0 {
+		t.Error("the wiped summary is still indexed and would still be served by search")
+	}
+	if kinds := chunkKindCounts(t, h, "vr1"); kinds[rag.KindTranscript] == 0 {
+		t.Errorf("the video was left unsearchable: %v", kinds)
+	}
+}
