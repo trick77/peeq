@@ -1,72 +1,160 @@
 import { useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Spinner } from "../ui";
-import { searchVideos, type SearchResult } from "../api/search";
+import {
+  searchVideos,
+  type SearchMatch,
+  type SearchMode,
+  type SearchResult,
+} from "../api/search";
 import { ThumbFill } from "../components/ThumbFill";
 import { formatDuration } from "../format";
+import { splitHighlights } from "../highlight";
 import { DOT } from "../sep";
 
-// Search — the global semantic-search view (Task 18), per the mockup's
-// `.gsearch-hero`/`.result`/`.match` blocks: a query box over `searchVideos`
-// (Task 16's sqlite-vec KNN endpoint), results grouped by video, each a
-// video card listing its matched transcript/summary chunks (snippet +
-// timestamp + distance). Clicking a match hands (videoId, startSeconds) up
-// to `onOpen`, which App wires to the Player + a pending-seek (see App.tsx).
+// Search — the global search view, with two modes over one query box.
+//
+// Find is a literal full-text search (FTS5, operators, bm25). Ask searches by
+// meaning as well, using distance-bounded vector similarity. They differ only
+// in how they retrieve: results render through the same cards either way, and
+// the query text survives a mode switch, so coming up short in one mode and
+// retrying in the other costs a single click.
+//
+// Clicking a match hands (videoId, startSeconds) up to `onOpen`, which App
+// wires to the Player + a pending-seek (see App.tsx).
+
+// Copy per mode. Find leads with precision, Ask with the fact that a whole
+// question is allowed — the signal that was missing when one box did both.
+const MODE_COPY: Record<
+  SearchMode,
+  { lead: string; hint: string; placeholder: string }
+> = {
+  find: {
+    lead: "Find the exact words.",
+    hint: "Keyword search across every transcript, summary and chapter in your library.",
+    placeholder: "electrolytes endurance",
+  },
+  ask: {
+    lead: "Ask Peeq anything you've watched.",
+    hint: "Searches by meaning, not just wording — ask a full question and jump straight to the moment.",
+    placeholder: "Did someone ever talk about electrolytes in endurance sport?",
+  },
+};
+
+// The FTS5 operators Find passes through, shown as a resting row rather than a
+// help popover: the whole problem being solved is that the box did not look
+// like a search engine.
+const OPERATORS: { syntax: string; means: string }[] = [
+  { syntax: '"exact phrase"', means: "words together, in order" },
+  { syntax: "sodium OR calcium", means: "either term" },
+  { syntax: "cramp*", means: "starts with" },
+  { syntax: "hydration NOT ad", means: "exclude" },
+];
+
 export function Search({
   onOpen,
 }: {
   onOpen: (videoId: string, startSeconds: number) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [mode, setMode] = useState<SearchMode>("find");
   const [results, setResults] = useState<SearchResult[] | null>(null);
+  const [searched, setSearched] = useState<{
+    q: string;
+    mode: SearchMode;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    const q = query.trim();
-    if (!q) {
+  function runSearch(q: string, m: SearchMode) {
+    const trimmed = q.trim();
+    if (!trimmed) {
       setResults(null);
+      setSearched(null);
       return;
     }
     setLoading(true);
     setError(null);
-    searchVideos(q)
-      .then((r) => setResults(r))
+    searchVideos(trimmed, m)
+      .then((r) => {
+        setResults(r);
+        setSearched({ q: trimmed, mode: m });
+      })
       .catch((err: Error) => {
         setError(err.message);
         // Clear any previous query's results so the error state doesn't
         // render stale result cards underneath the error line.
         setResults(null);
+        setSearched(null);
       })
       .finally(() => setLoading(false));
   }
 
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    runSearch(query, mode);
+  }
+
+  // Switching mode re-runs the query that is already in the box, so "this found
+  // nothing, try the other one" is one click and not a retype.
+  function switchMode(m: SearchMode) {
+    if (m === mode) return;
+    setMode(m);
+    if (results !== null || query.trim()) runSearch(query, m);
+  }
+
+  const copy = MODE_COPY[mode];
   const matchCount = results?.reduce((n, r) => n + r.matches.length, 0) ?? 0;
 
   return (
     <>
       <div className="gsearch-hero">
-        <p className="lead">
-          Search everything you've archived — by keyword and meaning, across
-          transcripts and summaries.
-        </p>
-        <p className="hint">
-          Semantic search over every transcript. Jumps straight to the moment.
-        </p>
+        <div className="modeswitch" role="group" aria-label="Search mode">
+          <button
+            type="button"
+            aria-pressed={mode === "find"}
+            onClick={() => switchMode("find")}
+          >
+            <Icon name="search" size="15px" />
+            Find
+          </button>
+          <button
+            type="button"
+            aria-pressed={mode === "ask"}
+            onClick={() => switchMode("ask")}
+          >
+            <Icon name="sparkles" size="15px" />
+            Ask
+          </button>
+        </div>
+        <p className="lead">{copy.lead}</p>
+        <p className="hint">{copy.hint}</p>
         <form className="bigsearch" role="search" onSubmit={handleSubmit}>
-          <Icon name="search" size="20px" />
+          <Icon name={mode === "ask" ? "sparkles" : "search"} size="20px" />
           <input
-            placeholder="Search everything you've watched…"
+            aria-label={mode === "ask" ? "Ask a question" : "Find words"}
+            placeholder={copy.placeholder}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           <kbd>↵</kbd>
         </form>
+        {mode === "find" ? (
+          <div className="syntax">
+            <span className="cap">Operators</span>
+            {OPERATORS.map((o) => (
+              <code key={o.syntax} title={o.means}>
+                {o.syntax}
+              </code>
+            ))}
+          </div>
+        ) : null}
         {results !== null && !loading ? (
           <p className="semantic-note">
-            <Icon name="search" size="14px" /> Semantic search over every
-            transcript chunk.
+            <Icon name={mode === "ask" ? "sparkles" : "search"} size="14px" />
+            {mode === "ask"
+              ? "Keyword and meaning, across transcripts, summaries and chapters."
+              : "Exact words, across transcripts, summaries and chapters."}
           </p>
         ) : null}
       </div>
@@ -100,9 +188,11 @@ export function Search({
             </span>
           </div>
           {results.length === 0 ? (
-            <p style={{ color: "var(--color-faint)" }}>
-              No matches. Try a different phrase.
-            </p>
+            <EmptyResult
+              mode={searched?.mode ?? mode}
+              query={searched?.q ?? query.trim()}
+              onSwitch={() => switchMode(mode === "find" ? "ask" : "find")}
+            />
           ) : (
             results.map((r) => (
               <div className="result" key={r.video.id}>
@@ -131,15 +221,10 @@ export function Search({
                         className="match"
                         onClick={() => onOpen(r.video.id, m.start_seconds)}
                       >
-                        {m.kind === "summary" ? (
-                          <span className="badge">Summary</span>
-                        ) : (
-                          <span className="ts mono">
-                            {formatDuration(m.start_seconds)}
-                          </span>
-                        )}
-                        <span className="snip">{m.snippet}</span>
-                        <span className="score">{m.distance.toFixed(2)}</span>
+                        <MatchLead match={m} />
+                        <span className="snip">
+                          <Snippet text={m.snippet} />
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -150,5 +235,70 @@ export function Search({
         </>
       )}
     </>
+  );
+}
+
+// MatchLead renders the left of a match row: where the hit came from, and when
+// it happens. A summary describes the whole video and has no timestamp; a
+// chapter and a transcript moment both do.
+//
+// This replaces the raw vector distance that used to sit at the end of the row.
+// That number was retrieval diagnostics — it is meaningless for a bm25-ranked
+// keyword hit, and it told a user nothing they could act on.
+function MatchLead({ match }: { match: SearchMatch }) {
+  if (match.kind === "summary") {
+    return <span className="badge">Summary</span>;
+  }
+  return (
+    <>
+      <span className="ts mono">{formatDuration(match.start_seconds)}</span>
+      {match.kind === "chapter" ? (
+        <span className="badge">Chapter</span>
+      ) : (
+        <span className="src">Transcript</span>
+      )}
+    </>
+  );
+}
+
+// Snippet renders a search preview, marking the terms that matched. The
+// backend delimits them with control characters rather than markup precisely so
+// this can build text nodes and <mark> elements instead of setting innerHTML.
+function Snippet({ text }: { text: string }) {
+  const segments = splitHighlights(text);
+  return (
+    <>
+      {segments.map((s, i) =>
+        s.match ? <mark key={i}>{s.text}</mark> : <span key={i}>{s.text}</span>,
+      )}
+    </>
+  );
+}
+
+// EmptyResult says which mode came up empty and offers the other one. Find can
+// legitimately find nothing — that is what a keyword search is for — and the
+// useful next step is almost always to try meaning instead, or vice versa.
+function EmptyResult({
+  mode,
+  query,
+  onSwitch,
+}: {
+  mode: SearchMode;
+  query: string;
+  onSwitch: () => void;
+}) {
+  return (
+    <div className="noresults">
+      <p>
+        {mode === "find"
+          ? `None of your transcripts contain those words.`
+          : `Nothing in your library covers that.`}
+      </p>
+      <button type="button" className="linkish" onClick={onSwitch}>
+        {mode === "find"
+          ? `Ask about "${query}" by meaning instead`
+          : `Search for the exact words "${query}" instead`}
+      </button>
+    </div>
   );
 }

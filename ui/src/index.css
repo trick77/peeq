@@ -3668,12 +3668,114 @@ details.tomb-sect[open] > summary svg {
   color: var(--color-ink-dim);
   line-height: 1.5;
 }
-.match .score {
-  margin-left: auto;
-  font-size: 10.5px;
-  color: var(--color-muted);
-  align-self: center;
+/* .match .score is deliberately gone: the row used to end with the raw vector
+   distance, which is retrieval diagnostics rather than something a reader can
+   act on (and is meaningless for a bm25-ranked keyword hit). Its far-right
+   slot is not reused — the replacement `.src` label belongs on the left, with
+   the timestamp, because it says what KIND of thing matched. */
+.match .src {
   flex: none;
+  align-self: center;
+  font-size: var(--text-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+/* FTS5 hands back the window around the match with the matched terms
+   delimited; the UI splits those into <mark> elements (see highlight.ts). */
+.match .snip mark {
+  background: var(--color-accent-dim);
+  color: var(--color-ink);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* Mode switch — Find vs Ask. Segmented, both options always visible, so the
+   box announces that it does two different things before anything is typed. */
+.modeswitch {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  margin-bottom: 14px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-ui);
+}
+.modeswitch button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 15px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: var(--text-label);
+  font-weight: 500;
+  cursor: pointer;
+}
+.modeswitch button:hover {
+  color: var(--color-ink-dim);
+}
+.modeswitch button[aria-pressed="true"] {
+  background: var(--color-active);
+  color: var(--color-ink);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+.modeswitch button[aria-pressed="true"] svg {
+  color: var(--color-accent-strong);
+}
+
+/* Operator hints for Find. A resting row, not a popover: the point is that the
+   box should LOOK like a search engine without being interrogated first. */
+.syntax {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+}
+.syntax .cap {
+  margin-right: 2px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.syntax code {
+  padding: 3px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-bg);
+  color: var(--color-ink-dim);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+/* Empty state. A search that finds nothing is a real answer, so it gets a
+   sentence and a way forward rather than a shrug. */
+.noresults {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--color-muted);
+}
+.noresults p {
+  margin: 0;
+}
+.noresults .linkish {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-accent-strong);
+  font: inherit;
+  font-size: var(--text-label);
+  text-align: left;
+  cursor: pointer;
+}
+.noresults .linkish:hover {
+  text-decoration: underline;
 }
 
 @media (max-width: 760px) {

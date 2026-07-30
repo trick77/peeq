@@ -7,6 +7,7 @@ import {
   Inbox,
   Settings,
   Search,
+  Sparkles,
   Star,
   Check,
   Trash2,
@@ -52,6 +53,7 @@ const COMPONENTS = {
   inbox: Inbox,
   settings: Settings,
   search: Search,
+  sparkles: Sparkles,
   star: Star,
   starFilled: Star, // rendered solid via the FILLED set below
   check: Check,

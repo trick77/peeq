@@ -24,7 +24,8 @@ describe("search api", () => {
       );
     const r = await searchVideos("iphone");
     const [url] = f.mock.calls[0];
-    expect(url).toBe("/api/search?q=iphone");
+    // mode rides on every request; find is the default.
+    expect(url).toBe("/api/search?q=iphone&mode=find");
     expect(r[0].video.id).toBe("v1");
   });
 
