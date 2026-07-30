@@ -898,22 +898,24 @@ describe("Inbox summaries", () => {
       (await screen.findByText(title)).closest("article") as HTMLElement;
 
     expect(
-      within(await card("Read already")).getByText("summary"),
+      within(await card("Read already")).getByText("Summary"),
     ).toBeTruthy();
     expect(
-      within(await card("Still reading")).getByText("reading…"),
+      within(await card("Still reading")).getByText("Summarizing…"),
     ).toBeTruthy();
     // A channel that opted out promises nothing, so the card says nothing.
     expect(
-      within(await card("Channel opted out")).queryByText("reading…"),
+      within(await card("Channel opted out")).queryByText("Summarizing…"),
     ).toBeNull();
     expect(
-      within(await card("Channel opted out")).queryByText("summary"),
+      within(await card("Channel opted out")).queryByText("Summary"),
     ).toBeNull();
     // Neither does one whose captions turned out to be music: there is no
     // action behind it and no progress left to report.
-    expect(within(await card("No speech")).queryByText("reading…")).toBeNull();
-    expect(within(await card("No speech")).queryByText("summary")).toBeNull();
+    expect(
+      within(await card("No speech")).queryByText("Summarizing…"),
+    ).toBeNull();
+    expect(within(await card("No speech")).queryByText("Summary")).toBeNull();
   });
 
   // A video the caption fetcher has not reached has no videos row, so its page
@@ -973,5 +975,39 @@ describe("Inbox summaries", () => {
 
     expect(onOpenChannel).toHaveBeenCalledWith("c1");
     expect(onOpen).not.toHaveBeenCalled();
+  });
+});
+
+// The Inbox owns the on-screen order — search, channel chip and sort all shape
+// it — so it is the only thing that can tell a video's page where it sits.
+describe("Inbox order reporting", () => {
+  beforeEach(() => {
+    vi.mocked(listPending).mockReset();
+    vi.mocked(downloadPending).mockReset();
+    vi.mocked(ignorePending).mockReset();
+    vi.mocked(downloadPending).mockResolvedValue(undefined);
+    vi.mocked(ignorePending).mockResolvedValue(undefined);
+  });
+
+  it("reports the visible ids in the order they are shown", async () => {
+    vi.mocked(listPending).mockResolvedValue([itemA, itemB]);
+    const onOrderChange = vi.fn();
+    render(<Inbox onOrderChange={onOrderChange} />);
+
+    await screen.findByText("First pending video");
+    await waitFor(() =>
+      expect(onOrderChange).toHaveBeenCalledWith(["v1", "v2"]),
+    );
+  });
+
+  // A page that re-derived the order from the API would say "2 of 14" while the
+  // grid behind it showed one result. Searching has to narrow it here too.
+  it("reports only what a search leaves visible", async () => {
+    vi.mocked(listPending).mockResolvedValue([itemA, itemB]);
+    const onOrderChange = vi.fn();
+    render(<Inbox onOrderChange={onOrderChange} search="Second" />);
+
+    await screen.findByText("Second pending video");
+    await waitFor(() => expect(onOrderChange).toHaveBeenCalledWith(["v2"]));
   });
 });

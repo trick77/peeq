@@ -115,12 +115,134 @@ describe("UnfetchedVideo", () => {
     expect(screen.getByText(/No speech in this video/)).toBeTruthy();
   });
 
-  it("says it is still reading a video whose captions have not landed", () => {
+  it("says it is still summarizing a video whose captions have not landed", () => {
     render(
       <UnfetchedVideo
         video={video({ summary: "", summary_status: "pending" })}
       />,
     );
-    expect(screen.getByText(/Reading this video/)).toBeTruthy();
+    expect(screen.getByText(/Summarizing this video/)).toBeTruthy();
+  });
+});
+
+// The stepper is what makes reading a backlog bearable: open, read, decide,
+// next, without returning to the grid between each one.
+describe("UnfetchedVideo stepper", () => {
+  beforeEach(() => {
+    vi.mocked(downloadPending).mockReset();
+    vi.mocked(ignorePending).mockReset();
+    vi.mocked(downloadPending).mockResolvedValue(undefined);
+    vi.mocked(ignorePending).mockResolvedValue(undefined);
+  });
+
+  const order = ["a1", "v1", "z9"];
+
+  it("shows the position and steps both ways", async () => {
+    const onOpenInboxVideo = vi.fn();
+    render(
+      <UnfetchedVideo
+        video={video()}
+        inboxOrder={order}
+        onOpenInboxVideo={onOpenInboxVideo}
+      />,
+    );
+
+    expect(screen.getByText("2 of 3")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /Prev/ }));
+    expect(onOpenInboxVideo).toHaveBeenLastCalledWith("a1");
+
+    await userEvent.click(screen.getByRole("button", { name: /Next/ }));
+    expect(onOpenInboxVideo).toHaveBeenLastCalledWith("z9");
+  });
+
+  // An end of the list is a fact, not a failure: the arrow greys out and keeps
+  // its place rather than vanishing and shifting the one beside it.
+  it("disables the arrow at each end rather than hiding it", () => {
+    const { unmount } = render(
+      <UnfetchedVideo
+        video={video({ id: "a1" })}
+        inboxOrder={order}
+        onOpenInboxVideo={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /Prev/ }).hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      screen.getByRole("button", { name: /Next/ }).hasAttribute("disabled"),
+    ).toBe(false);
+    unmount();
+
+    render(
+      <UnfetchedVideo
+        video={video({ id: "z9" })}
+        inboxOrder={order}
+        onOpenInboxVideo={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /Next/ }).hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  // A video reached from the Library or a link has no inbox position, and a
+  // disabled pair of arrows on those pages would just be furniture.
+  it("shows no stepper for a video that is not in the inbox order", () => {
+    render(
+      <UnfetchedVideo
+        video={video({ id: "notInList" })}
+        inboxOrder={order}
+        onOpenInboxVideo={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /Next/ })).toBeNull();
+    expect(screen.queryByText(/of 3/)).toBeNull();
+  });
+
+  it("shows no stepper before the inbox has ever been opened", () => {
+    render(<UnfetchedVideo video={video()} inboxOrder={[]} />);
+    expect(screen.queryByRole("button", { name: /Next/ })).toBeNull();
+  });
+
+  // Deciding moves you on — that is the point of opening these one after
+  // another. Going back to the grid after every decision is precisely the round
+  // trip the stepper exists to avoid.
+  it("advances to the next video after a decision", async () => {
+    const onOpenInboxVideo = vi.fn();
+    const onDismissed = vi.fn();
+    render(
+      <UnfetchedVideo
+        video={video()}
+        inboxOrder={order}
+        onOpenInboxVideo={onOpenInboxVideo}
+        onDismissed={onDismissed}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /Download/ }));
+
+    expect(downloadPending).toHaveBeenCalledWith("v1");
+    expect(onOpenInboxVideo).toHaveBeenCalledWith("z9");
+    expect(onDismissed).not.toHaveBeenCalled();
+  });
+
+  // The last video has nowhere to advance to, so an ignore has to leave: its
+  // row and summary are deleted server-side, and the page's subject is gone.
+  it("leaves when the last video is ignored", async () => {
+    const onDismissed = vi.fn();
+    render(
+      <UnfetchedVideo
+        video={video({ id: "z9" })}
+        inboxOrder={order}
+        onOpenInboxVideo={vi.fn()}
+        onDismissed={onDismissed}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /Ignore/ }));
+
+    expect(ignorePending).toHaveBeenCalledWith("z9");
+    expect(onDismissed).toHaveBeenCalled();
   });
 });

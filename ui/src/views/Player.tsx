@@ -78,6 +78,8 @@ export function Player({
   onOpenChannel,
   onQueued,
   onBackToInbox,
+  inboxOrder,
+  onOpenInboxVideo,
 }: {
   videoId: string | null;
   // seekTo — the Task 18 jump-to-moment target (Search's onOpen, via App's
@@ -105,6 +107,12 @@ export function Player({
   // with it, either by pressing Back or by ignoring it. Only ever used by the
   // UnfetchedVideo branch; a downloaded video has no inbox to return to.
   onBackToInbox?: () => void;
+  // inboxOrder / onOpenInboxVideo drive the Prev / Next stepper, and are only
+  // ever used by the UnfetchedVideo branch. Empty until the Inbox has been
+  // opened at least once, which is why both are optional: a cold deep-link to
+  // a video has no inbox position to step from.
+  inboxOrder?: string[];
+  onOpenInboxVideo?: (id: string) => void;
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -531,6 +539,8 @@ export function Player({
         onBack={onBackToInbox}
         onQueued={onQueued}
         onDismissed={onBackToInbox}
+        inboxOrder={inboxOrder}
+        onOpenInboxVideo={onOpenInboxVideo}
       />
     );
   }

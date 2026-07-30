@@ -30,6 +30,8 @@ export function UnfetchedVideo({
   onBack,
   onQueued,
   onDismissed,
+  inboxOrder,
+  onOpenInboxVideo,
 }: {
   video: Video;
   onBack?: () => void;
@@ -39,6 +41,16 @@ export function UnfetchedVideo({
   // onDismissed fires after Ignore, so the caller can leave a page whose
   // subject no longer exists — the row and its summary are deleted server-side.
   onDismissed?: () => void;
+  // inboxOrder is the ids the Inbox is currently showing, in on-screen order.
+  // It comes from the Inbox rather than being fetched here because that order
+  // is the product of a search box, a channel chip and a sort select — a page
+  // that re-derived it would say "3 of 40" while the grid behind it showed six.
+  //
+  // Empty until the Inbox has been opened at least once, which is the honest
+  // answer for a cold deep-link: there is no inbox position to be at, so there
+  // is no stepper.
+  inboxOrder?: string[];
+  onOpenInboxVideo?: (id: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +65,23 @@ export function UnfetchedVideo({
         onQueued?.();
       } else {
         await ignorePending(video.id);
+      }
+      // Deciding moves you on. That is the whole point of opening these pages
+      // one after another, and it is why Ignore does not simply call
+      // onDismissed: going back to the grid after every decision is exactly the
+      // round trip the stepper exists to avoid.
+      //
+      // The next id is taken from the order as it was when the page opened.
+      // That list is now one item stale — this video is still in it — but the
+      // item AFTER it is unaffected, which is all that is being read.
+      if (nextID && onOpenInboxVideo) {
+        onOpenInboxVideo(nextID);
+        return;
+      }
+      // Nothing left to move to: an ignore has nothing to show, so leave.
+      if (kind === "ignored") {
         onDismissed?.();
+        return;
       }
       setDecided(kind);
     } catch (e) {
@@ -62,6 +90,16 @@ export function UnfetchedVideo({
     }
   }
 
+  // Where this video sits in the inbox, and what is on either side of it.
+  // -1 means it is not in the list at all — opened from the Library, from a
+  // link, or after the Inbox moved on — and everything below then renders
+  // nothing rather than guessing a position.
+  const order = inboxOrder ?? [];
+  const at = order.indexOf(video.id);
+  const prevID = at > 0 ? order[at - 1] : null;
+  const nextID = at >= 0 && at < order.length - 1 ? order[at + 1] : null;
+  const canStep = at >= 0 && order.length > 1 && !!onOpenInboxVideo;
+
   const summary = (video.summary ?? "").trim();
   // The summarizer separates paragraphs with a blank line, the same shape the
   // Player's summary card splits on.
@@ -69,11 +107,42 @@ export function UnfetchedVideo({
 
   return (
     <div className="unfetched">
-      {onBack ? (
-        <button type="button" className="unfetched-back" onClick={onBack}>
-          &larr; Back to inbox
-        </button>
-      ) : null}
+      <div className="unfetched-nav">
+        {onBack ? (
+          <button type="button" className="unfetched-back" onClick={onBack}>
+            &larr; Back to inbox
+          </button>
+        ) : null}
+
+        {/* The stepper is what makes reading a backlog bearable: open, read,
+          decide, next, without returning to the grid between each one. It
+          appears only when there is genuinely somewhere to step — a video
+          opened from the Library or a link has no inbox position, and a
+          disabled pair of arrows on those pages would be furniture. */}
+        {canStep ? (
+          <div className="unfetched-step">
+            <span className="unfetched-count mono">
+              {at + 1} of {order.length}
+            </span>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost"
+              disabled={!prevID}
+              onClick={() => prevID && onOpenInboxVideo?.(prevID)}
+            >
+              &larr; Prev
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost"
+              disabled={!nextID}
+              onClick={() => nextID && onOpenInboxVideo?.(nextID)}
+            >
+              Next &rarr;
+            </button>
+          </div>
+        ) : null}
+      </div>
 
       <div className="unfetched-head">
         {/* A reference image, not a stage: 260px, and it stacks above the text
@@ -160,12 +229,12 @@ export function UnfetchedVideo({
           </p>
         ) : video.summary_status === "error" ? (
           <p className="unfetched-empty">
-            Reading this video failed. It will be tried again.
+            Summarizing this video failed. It will be tried again.
           </p>
         ) : (
           <p className="unfetched-empty">
             <Spinner size="15px" />
-            Reading this video&rsquo;s captions.
+            Summarizing this video.
           </p>
         )}
       </div>

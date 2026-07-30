@@ -72,7 +72,7 @@ function compareBy(
 // defaults to 'pending' the moment the row is created, so a non-empty value and
 // a row that exists are the same thing.
 //
-// Note this is NOT the same set as "shows a pill". A card can read "reading…"
+// Note this is NOT the same set as "shows a pill". A card can read "Summarizing…"
 // on the strength of auto_summary alone, before any row exists — the marker is
 // a promise about the channel, and this is a fact about the video.
 function hasPage(item: PendingItem) {
@@ -84,8 +84,8 @@ function hasPage(item: PendingItem) {
 //
 // Three outcomes, and the third is why the API sends two fields instead of one.
 //
-//   done            → "summary", and the card opens something worth opening
-//   pending/running → "reading…", captions are being fetched or summarized
+//   done            → "Summary", and the card opens something worth opening
+//   pending/running → "Summarizing…", captions are being fetched or read
 //   anything else   → nothing at all
 //
 // The empty-status case splits on auto_summary. On an opted-in channel it means
@@ -96,20 +96,21 @@ function hasPage(item: PendingItem) {
 // is something the user can act on.
 function summaryPill(item: PendingItem) {
   if (item.summary_status === "done") {
-    return <span className="metapill oncover has-summary">summary</span>;
+    return <span className="metapill oncover has-summary">Summary</span>;
   }
   const reading =
     item.summary_status === "pending" ||
     item.summary_status === "running" ||
     (item.summary_status === "" && item.auto_summary);
   if (!reading) return null;
-  return <span className="metapill oncover is-reading">reading…</span>;
+  return <span className="metapill oncover is-reading">Summarizing…</span>;
 }
 
 export function Inbox({
   onCountChange,
   onOpenChannel,
   onOpen,
+  onOrderChange,
   search = "",
   onSearchChange,
   onQueued,
@@ -130,6 +131,17 @@ export function Inbox({
    * URL does not change, it just gains a video.
    */
   onOpen?: (id: string) => void;
+  /**
+   * Reports the ids the grid is currently showing, in the order it shows them.
+   *
+   * This is what lets a video's page offer Prev / Next through the inbox. It
+   * has to come from here rather than being refetched there, because the order
+   * on screen is the product of three things this component owns and the API
+   * knows nothing about: the search box, the channel chip, and the sort select.
+   * A page that re-derived it would say "3 of 40" while the grid behind it
+   * showed six.
+   */
+  onOrderChange?: (ids: string[]) => void;
   /**
    * The search box's text, owned by App so it survives navigating away and
    * back — the same arrangement the Library and the Channels list use.
@@ -277,6 +289,18 @@ export function Inbox({
     );
     return [...list].sort(compareBy(sort));
   }, [searchScoped, channel, sort]);
+
+  // Publish the visible order upward whenever it changes. Keyed on the ids
+  // rather than on `visible` itself: the array identity changes on every
+  // filter recompute, and re-reporting an identical list would loop through
+  // App's state and back.
+  const orderKey = visible.map((i) => i.video_id).join(",");
+  useEffect(() => {
+    onOrderChange?.(orderKey ? orderKey.split(",") : []);
+    // onOrderChange is a setState from App and stable; orderKey is the value
+    // that actually decides whether there is anything new to say.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderKey]);
 
   // handleCardClick opens the video's page from anywhere on the card that is
   // not already something else.

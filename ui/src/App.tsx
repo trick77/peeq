@@ -152,6 +152,16 @@ export function App() {
   const [historySearch, setHistorySearch] = useState("");
   const [upNextSearch, setUpNextSearch] = useState("");
   const [inboxSearch, setInboxSearch] = useState("");
+  // The ids the Inbox grid is currently showing, in the order it shows them,
+  // so a video's page can step through the inbox without going back to it.
+  //
+  // It lives here rather than in the Inbox because the page that consumes it is
+  // a sibling, and it is reported by the Inbox rather than refetched because the
+  // on-screen order is the product of a search box, a channel chip and a sort
+  // select that only that component knows about. Empty until the Inbox has been
+  // opened at least once — a cold deep-link to a video therefore gets no
+  // stepper, which is correct: there is no inbox position to be at.
+  const [inboxOrder, setInboxOrder] = useState<string[]>([]);
   // How many jobs are pending or running. A plain count is what the queue poll
   // and the rail's queue badge want.
   const activeDownloads = jobs.filter(
@@ -546,6 +556,8 @@ export function App() {
             }}
           />
           <ViewSwitch
+            inboxOrder={inboxOrder}
+            setInboxOrder={setInboxOrder}
             view={view}
             selectedVideoId={nowPlayingId}
             selectedChannelId={selectedChannelId}
@@ -688,6 +700,8 @@ function ViewSwitch({
   onCancelDownload,
   liveActivity,
   stalled,
+  inboxOrder,
+  setInboxOrder,
 }: {
   view: ViewId;
   selectedVideoId: string | null;
@@ -724,6 +738,15 @@ function ViewSwitch({
   liveActivity: ActivityEvent[];
   /** Why YouTube work is stopped, if it is — only Up next's empty state uses it. */
   stalled?: "youtube" | "disk" | "cookie";
+  /**
+   * The ids the Inbox is currently showing, in on-screen order, and the setter
+   * it reports them through. Together they let a video's page step to the next
+   * inbox item without going back to the grid — the Inbox owns the order
+   * (search, chip and sort all shape it), the Player consumes it, and they are
+   * siblings, so it goes up and back down.
+   */
+  inboxOrder: string[];
+  setInboxOrder: (ids: string[]) => void;
 }) {
   switch (view) {
     case "library":
@@ -747,6 +770,8 @@ function ViewSwitch({
           onOpenChannel={onOpenChannel}
           onQueued={onQueued}
           onBackToInbox={() => setView("inbox")}
+          inboxOrder={inboxOrder}
+          onOpenInboxVideo={onOpenVideo}
         />
       );
     case "search":
@@ -769,6 +794,7 @@ function ViewSwitch({
           onCountChange={setPendingCount}
           onOpenChannel={onOpenChannel}
           onOpen={onOpenVideo}
+          onOrderChange={setInboxOrder}
           search={inboxSearch}
           onSearchChange={onInboxSearchChange}
           onQueued={onQueued}
