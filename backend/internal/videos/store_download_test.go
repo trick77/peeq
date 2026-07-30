@@ -53,12 +53,12 @@ func TestTombstone_clearsMediaPathSetsStatusKeepsRow(t *testing.T) {
 	}
 }
 
-// TestTombstoneClearsSubtitlePathKeepsSummary guards against a stale
-// subtitle_path (and its .vtt) surviving a tombstone: the DTO derives
-// has_subtitles from subtitle_path, so a leftover value would lie about
-// transcript availability, and a subsequent reprocess must not flip a
-// valid, kept summary to no_transcript.
-func TestTombstoneClearsSubtitlePathKeepsSummary(t *testing.T) {
+// TestTombstoneKeepsSubtitlePathAndSummary pins what a tombstone remembers:
+// only media_path is cleared. subtitle_path stays because the .vtt stays — it
+// is the only source a transcript can be re-chunked or re-embedded from, and
+// the DTO derives has_subtitles from it, so clearing it also hid the transcript
+// view on a video that still had one.
+func TestTombstoneKeepsSubtitlePathAndSummary(t *testing.T) {
 	s := New(openTestDB(t))
 	const id = "vid1"
 	if err := s.Upsert(Video{ID: id, URL: "u"}); err != nil {
@@ -81,8 +81,11 @@ func TestTombstoneClearsSubtitlePathKeepsSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if v.SubtitlePath != "" {
-		t.Errorf("subtitle_path = %q, want empty after tombstone", v.SubtitlePath)
+	if v.SubtitlePath != "vid1.en.vtt" {
+		t.Errorf("subtitle_path = %q, want kept after tombstone", v.SubtitlePath)
+	}
+	if v.MediaPath != "" {
+		t.Errorf("media_path = %q, want empty after tombstone", v.MediaPath)
 	}
 	if v.Summary != "a summary" {
 		t.Errorf("summary = %q, want kept after tombstone", v.Summary)
@@ -140,22 +143,18 @@ func TestSetDownloaded_recordsResult(t *testing.T) {
 	}
 }
 
-// TestSweepCandidates_filtersByWatchedFavoriteTombstoneAndCutoff exercises
-// the retention sweeper's underlying query directly: only a watched,
-// non-favorite, non-tombstoned video whose watched_at is strictly before
-// cutoff comes back.
-func TestSweepCandidates_filtersByWatchedFavoriteTombstoneAndCutoff(t *testing.T) {
+// TestSweepCandidates_filtersByWatchedFavoriteStatusAndCutoff exercises the
+// retention sweeper's underlying query directly: only a downloaded, watched,
+// non-favorite video whose watched_at is strictly before cutoff comes back —
+// there is nothing to reclaim from a video that has no file.
+func TestSweepCandidates_filtersByWatchedFavoriteStatusAndCutoff(t *testing.T) {
 	db := openTestDB(t)
 	s := New(db)
 
-	seed := func(id string, watched, favorite bool, watchedAt string, tombstoned bool) {
+	seed := func(id string, watched, favorite bool, watchedAt, status string) {
 		t.Helper()
 		if err := s.Upsert(Video{ID: id, URL: "u-" + id}); err != nil {
 			t.Fatalf("upsert %s: %v", id, err)
-		}
-		status := "downloaded"
-		if tombstoned {
-			status = "tombstoned"
 		}
 		watchedInt := 0
 		if watched {
@@ -175,11 +174,17 @@ func TestSweepCandidates_filtersByWatchedFavoriteTombstoneAndCutoff(t *testing.T
 	}
 
 	const cutoff = "2026-01-01 00:00:00"
-	seed("old-eligible", true, false, "2025-01-01 00:00:00", false)  // before cutoff, watched, not fav -> candidate
-	seed("old-favorite", true, true, "2025-01-01 00:00:00", false)   // favorite -> excluded
-	seed("unwatched", false, false, "", false)                       // not watched -> excluded
-	seed("old-tombstoned", true, false, "2025-01-01 00:00:00", true) // already gone -> excluded
-	seed("recent", true, false, "2026-06-01 00:00:00", false)        // after cutoff -> excluded
+	seed("old-eligible", true, false, "2025-01-01 00:00:00", "downloaded")   // before cutoff, watched, not fav -> candidate
+	seed("old-favorite", true, true, "2025-01-01 00:00:00", "downloaded")    // favorite -> excluded
+	seed("unwatched", false, false, "", "downloaded")                        // not watched -> excluded
+	seed("old-tombstoned", true, false, "2025-01-01 00:00:00", "tombstoned") // already gone -> excluded
+	seed("recent", true, false, "2026-06-01 00:00:00", "downloaded")         // after cutoff -> excluded
+	// No file to reclaim, so not a candidate however long ago it was watched.
+	// This is the re-download of a long-ago-watched video, mid-flight: the loose
+	// status != 'tombstoned' form used to match it and flip it straight back to
+	// 'tombstoned' while its job was still queued.
+	seed("requeued", true, false, "2025-01-01 00:00:00", "queued")
+	seed("failed", true, false, "2025-01-01 00:00:00", "error")
 
 	got, err := s.SweepCandidates(cutoff)
 	if err != nil {

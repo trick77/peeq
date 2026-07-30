@@ -5,7 +5,6 @@ import { ThumbFill } from "./ThumbFill";
 import type { Video } from "../api/types";
 import { daysSince, formatAge, formatAgo, formatDuration } from "../format";
 import { CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
-import { DOT } from "../sep";
 
 // VideoCard — one grid tile, per the mockup's `.card`/`.thumb`/`.life`
 // blocks. Pure presentational: all data comes in as props, all mutation
@@ -37,7 +36,14 @@ export function VideoCard({
   // video that is still being fetched. Progress lives in the rail's status
   // panel, which is on screen wherever you are.
   const isNew =
-    !video.watched && video.resume_position_seconds === 0 && video.has_media;
+    !video.watched &&
+    video.resume_position_seconds === 0 &&
+    // A tombstoned video counts: watched-ness and whether the file is still
+    // here are two different facts, and hiding the dot on a swept video made an
+    // unwatched one indistinguishable from a watched one. Videos still in the
+    // pipeline (new/queued/downloading) stay dotless — there is nothing to have
+    // watched yet.
+    (video.has_media || video.status === "tombstoned");
   const resuming =
     !video.watched &&
     video.resume_position_seconds > 0 &&
@@ -59,14 +65,13 @@ export function VideoCard({
   // rail still open) a fourth one truncates the channel name to a stub. The
   // thumbnail corner is the same width on every card, so nothing competes.
   //
-  // The condition is unchanged from when Lifecycle rendered it: only a fresh
-  // video (not failed, not tombstoned, not kept, not watched) shows a category,
-  // because for the others the lifecycle row still has something to say.
+  // The condition is otherwise unchanged from when Lifecycle rendered it: a
+  // failed, kept or watched video shows no category, because for those the
+  // lifecycle row still has something to say. Tombstoned is NOT in that list:
+  // losing the file costs a video none of its facts, so a swept video shows its
+  // category on exactly the terms every other video does.
   const thumbCategory =
-    video.status !== "error" &&
-    video.status !== "tombstoned" &&
-    !video.favorite &&
-    !video.watched
+    video.status !== "error" && !video.favorite && !video.watched
       ? categoryMeta(video.category)
       : null;
 
@@ -119,6 +124,12 @@ export function VideoCard({
               aria-label="Unwatched"
               title="Unwatched"
             />
+          ) : null}
+          {/* The one thing a tombstone actually costs, stated where the state
+              of the media belongs — on the poster, beside the runtime — so the
+              rows below keep saying what they say on every other card. */}
+          {video.status === "tombstoned" ? (
+            <span className="tag gone">Deleted</span>
           ) : null}
           <span className="dur">{formatDuration(video.duration_seconds)}</span>
           {/* Decorative inside the button: the button's aria-label already
@@ -231,37 +242,33 @@ function Lifecycle({
   retentionDays: number;
   onRedownload?: (id: string) => void;
 }) {
-  if (video.status === "error" || video.status === "tombstoned") {
+  if (video.status === "error") {
     return (
       <div className="card-foot">
-        <div className={`life ${video.status === "error" ? "err" : "tomb"}`}>
+        <div className="life err">
           <span className="led" />
-          {video.status === "error"
-            ? "Download failed"
-            : `Removed to save space${DOT}summary kept`}
+          Download failed
         </div>
-        {onRedownload && (
-          <Button
-            type="button"
-            variant="tinted"
-            small
-            onClick={() => onRedownload(video.id)}
-          >
-            <Icon name="refresh" size="15px" /> Re-download
-          </Button>
-        )}
+        <Redownload video={video} onRedownload={onRedownload} />
+      </div>
+    );
+  }
+  // A tombstone is a lifecycle state, not a watch state: the card says "Deleted"
+  // on the poster and everything under it reads as it would on any other video.
+  // The one thing not carried over is the expiry countdown a watched video
+  // shows — there is nothing left to expire — so a swept video's row holds
+  // "Kept forever" if it is a favorite (the manual Delete does not spare one,
+  // the sweeper does) and otherwise nothing but the way back.
+  if (video.status === "tombstoned") {
+    return (
+      <div className="card-foot">
+        {video.favorite ? <KeptForever /> : null}
+        <Redownload video={video} onRedownload={onRedownload} />
       </div>
     );
   }
   if (video.favorite) {
-    return (
-      <div className="life kept">
-        <span className="k">
-          <Icon name="starFilled" size="13px" />
-          Kept forever
-        </span>
-      </div>
-    );
+    return <KeptForever />;
   }
   if (video.watched) {
     const expiresIn = Math.max(0, retentionDays - daysSince(video.watched_at));
@@ -279,6 +286,43 @@ function Lifecycle({
   // carry now sits on the thumbnail, so there is nothing left to render —
   // an empty .life would still eat a 10px `.card` flex gap, hence null.
   return null;
+}
+
+// KeptForever is the favorite's lifecycle row. Shared, because a tombstoned
+// favorite shows the same row a downloaded one does — the two branches must not
+// drift into two different-looking "Kept forever"s.
+function KeptForever() {
+  return (
+    <div className="life kept">
+      <span className="k">
+        <Icon name="starFilled" size="13px" />
+        Kept forever
+      </span>
+    </div>
+  );
+}
+
+// Redownload is the way back from a failed download or a tombstone — the only
+// place in the app that offers it, which is why notInFlight keeps both states in
+// the Library grid. Renders nothing when the list did not wire a handler.
+function Redownload({
+  video,
+  onRedownload,
+}: {
+  video: Video;
+  onRedownload?: (id: string) => void;
+}) {
+  if (!onRedownload) return null;
+  return (
+    <Button
+      type="button"
+      variant="tinted"
+      small
+      onClick={() => onRedownload(video.id)}
+    >
+      <Icon name="refresh" size="15px" /> Re-download
+    </Button>
+  );
 }
 
 // categoryMeta resolves the classifier's label/color for a video, or null

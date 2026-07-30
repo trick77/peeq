@@ -880,15 +880,14 @@ export function Player({
       });
     }
     // Reprocess re-runs the whole post-import pipeline (summarize → classify →
-    // embed, plus a SponsorBlock re-fetch). Offered only when the endpoint can
-    // act — media + a subtitle present and not tombstoned — since it 409s
-    // otherwise, and hidden while a summary is already pending/running so a
-    // second click can't enqueue a duplicate job. Flagged "failed" when the
-    // last analysis errored.
+    // embed, plus a SponsorBlock re-fetch). Offered whenever the endpoint can
+    // act, which needs a transcript and nothing else — a tombstoned video keeps
+    // its .vtt, so it can still rebuild its analysis without the file back —
+    // and hidden while a summary is already pending/running so a second click
+    // can't enqueue a duplicate job. Flagged "failed" when the last analysis
+    // errored.
     if (
-      video.has_media &&
       video.has_subtitles &&
-      video.status !== "tombstoned" &&
       video.summary_status !== "pending" &&
       video.summary_status !== "running"
     ) {
@@ -951,26 +950,52 @@ export function Player({
               free from the seek in handleLoadedMetadata). Show the downloaded
               thumbnail there instead, falling back to the same per-id gradient
               the Library cards use when no local thumbnail exists. */}
-          <video
-            ref={videoRef}
-            className={
-              video.has_thumbnail ? undefined : gradientClassFor(video.id)
-            }
-            src={playbackSrc}
-            poster={video.has_thumbnail ? thumbnailUrl(video.id) : undefined}
-            controls
-            onLoadedMetadata={handleLoadedMetadata}
-            onTimeUpdate={handleTimeUpdate}
-          >
-            {video.has_subtitles && subtitlesReadyFor === video.id && (
-              <track
-                kind="subtitles"
-                srcLang={video.audio_language || "en"}
-                src={subtitlesUrl(video.id)}
-                default={false}
-              />
-            )}
-          </video>
+          {/* No media, no player. A tombstoned video still has a page worth
+              opening — title, summary, chapters, transcript, every fact it ever
+              had — but a <video> pointed at a file that was reclaimed offers
+              transport controls that can only fail, so the stage falls back to
+              the poster and says what happened. Re-download lives in the ⋮ menu,
+              where it does for a failed download too. */}
+          {video.has_media ? (
+            <video
+              ref={videoRef}
+              className={
+                video.has_thumbnail ? undefined : gradientClassFor(video.id)
+              }
+              src={playbackSrc}
+              poster={video.has_thumbnail ? thumbnailUrl(video.id) : undefined}
+              controls
+              onLoadedMetadata={handleLoadedMetadata}
+              onTimeUpdate={handleTimeUpdate}
+            >
+              {video.has_subtitles && subtitlesReadyFor === video.id && (
+                <track
+                  kind="subtitles"
+                  srcLang={video.audio_language || "en"}
+                  src={subtitlesUrl(video.id)}
+                  default={false}
+                />
+              )}
+            </video>
+          ) : (
+            <div
+              className={`stage-gone${
+                video.has_thumbnail ? "" : ` ${gradientClassFor(video.id)}`
+              }`}
+              style={
+                video.has_thumbnail
+                  ? { backgroundImage: `url(${thumbnailUrl(video.id)})` }
+                  : undefined
+              }
+            >
+              <p>
+                <Icon name="trash" size="15px" />
+                {video.status === "tombstoned"
+                  ? "The file was deleted to save space. Re-download it to watch again."
+                  : "No file here yet."}
+              </p>
+            </div>
+          )}
           <div
             className={`stage-toast${toast ? " show" : ""}${
               toast?.tone === "warn" ? " warn" : ""
@@ -980,12 +1005,16 @@ export function Player({
             <Icon name={toast?.icon ?? "skipForward"} size="15px" />
             {toast?.text}
           </div>
-          <Scrubber
-            currentSeconds={currentTime}
-            durationSeconds={duration || video.duration_seconds || 0}
-            segments={segments}
-            onSeek={seek}
-          />
+          {/* Nothing to scrub without a file: the bar would render a played
+              fill that can never move and a seek that lands nowhere. */}
+          {video.has_media && (
+            <Scrubber
+              currentSeconds={currentTime}
+              durationSeconds={duration || video.duration_seconds || 0}
+              segments={segments}
+              onSeek={seek}
+            />
+          )}
         </div>
         <div className="playmeta">
           <MetaHeader
@@ -1024,7 +1053,11 @@ export function Player({
               {video.watched ? "Mark unwatched" : "Mark watched"}
             </Button>
             <span className="acts-sep" aria-hidden="true" />
-            {video.has_subtitles && (
+            {/* has_media as well as has_subtitles: a tombstoned video keeps its
+                transcript (read it in the Transcript panel below), but there is
+                no <video> for burned-in captions to appear over, so the toggle
+                would flip nothing. */}
+            {video.has_media && video.has_subtitles && (
               // On is terracotta, off is the same muted grey as the icons
               // beside it — no fill, no dot. aria-pressed + the flipping
               // aria-label carry the state for anyone who can't see colour.

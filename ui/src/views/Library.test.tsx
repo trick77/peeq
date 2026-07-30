@@ -226,10 +226,21 @@ describe("VideoCard lifecycle line", () => {
     expect(onRedownload).toHaveBeenCalledWith("v1");
   });
 
-  it('shows "Removed to save space · summary kept" for a tombstoned video', () => {
+  // A tombstoned video is a video that lost its file and nothing else, so the
+  // card says so on the poster and leaves every other row alone. The watch state
+  // in particular has to keep reading independently: an unwatched video can be
+  // deleted (the manual Delete does not ask), and the two facts used to collapse
+  // into one line that showed neither.
+  it("marks a tombstoned video Deleted on the poster and still shows it as unwatched", () => {
     render(
       <VideoCard
-        video={baseVideo({ id: "v1", status: "tombstoned" })}
+        video={baseVideo({
+          id: "v1",
+          status: "tombstoned",
+          has_media: false,
+          watched: false,
+          category: "science",
+        })}
         retentionDays={14}
         onOpen={noop}
         onToggleFavorite={noop}
@@ -237,9 +248,41 @@ describe("VideoCard lifecycle line", () => {
         onRedownload={noop}
       />,
     );
+    expect(screen.getByText("Deleted")).toBeInTheDocument();
+    expect(screen.getByLabelText("Unwatched")).toBeInTheDocument();
+    // The category pill is a fact about the video, not about the file.
+    expect(screen.getByText("Science")).toBeInTheDocument();
     expect(
-      screen.getByText("Removed to save space · summary kept"),
+      screen.getByRole("button", { name: /re-download/i }),
     ).toBeInTheDocument();
+  });
+
+  it("shows a tombstoned favorite as Kept forever, and never an expiry", () => {
+    render(
+      <VideoCard
+        video={baseVideo({
+          id: "v1",
+          status: "tombstoned",
+          has_media: false,
+          watched: true,
+          watched_at: "2026-01-01T00:00:00Z",
+          favorite: true,
+        })}
+        retentionDays={14}
+        onOpen={noop}
+        onToggleFavorite={noop}
+        onToggleWatched={noop}
+        onRedownload={noop}
+      />,
+    );
+    expect(screen.getByText("Kept forever")).toBeInTheDocument();
+    // Nothing left to expire — the countdown belongs to a video that still has
+    // a file to lose.
+    expect(screen.queryByText(/Expires/)).not.toBeInTheDocument();
+    // Watched, so no unwatched dot: the poster chip is about the file, the dot
+    // is about the watching, and the two move separately.
+    expect(screen.queryByLabelText("Unwatched")).not.toBeInTheDocument();
+    expect(screen.getByText("Deleted")).toBeInTheDocument();
   });
 
   it("shows a category badge when categorized, hides it when uncategorized", () => {

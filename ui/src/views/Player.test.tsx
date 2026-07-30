@@ -344,6 +344,37 @@ describe("Player", () => {
       expect(el).not.toHaveAttribute("poster");
       expect(el.className).toBe(gradientClassFor("v1"));
     });
+
+    // A tombstoned video keeps its whole page — title, summary, chapters,
+    // transcript — and loses only the file. So the stage loses the transport
+    // controls (a <video> pointed at reclaimed media can only fail) while the
+    // transcript the kept .vtt still backs stays on offer.
+    it("replaces the stage with a note when the file is gone, keeping the transcript", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          status: "tombstoned",
+          has_media: false,
+          has_subtitles: true,
+          has_thumbnail: true,
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("heading", { level: 1 });
+
+      expect(document.querySelector("video")).toBeNull();
+      expect(document.querySelector(".stage-gone")).not.toBeNull();
+      expect(screen.getByText(/deleted to save space/i)).toBeInTheDocument();
+      // No scrubber and no captions toggle: both act on a media element that
+      // isn't there.
+      expect(document.querySelector(".scrub-wrap")).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /subtitles/i }),
+      ).not.toBeInTheDocument();
+      // The transcript is a different thing from playback, and it survived.
+      expect(
+        screen.getByRole("button", { name: /transcript/i }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("flushes the latest position to setResume on unmount", async () => {
@@ -1209,6 +1240,26 @@ describe("Player", () => {
       expect(
         screen.queryByRole("menuitem", { name: /Reprocess video/i }),
       ).toBeNull();
+    });
+
+    // The transcript is the only thing the pipeline reads, and a tombstone keeps
+    // it — so rebuilding the analysis (summary, category, embeddings) does not
+    // need the file back, and the endpoint no longer 409s on a swept video.
+    it("is present for a tombstoned video that kept its transcript", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          status: "tombstoned",
+          has_media: false,
+          has_subtitles: true,
+          summary_status: "done",
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("heading", { level: 1 });
+      await openMenu();
+      expect(
+        await screen.findByRole("menuitem", { name: /Reprocess video/i }),
+      ).toBeInTheDocument();
     });
 
     // A failed step marks the ⋮ trigger with an attention dot and flags the

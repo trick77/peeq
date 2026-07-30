@@ -129,7 +129,20 @@ func RemoveMediaAndSidecars(mediaPath string) {
 // thumbnail, or subtitle path is silently skipped rather than treated as
 // an error — there is nothing on disk to remove in that case.
 func RemoveVideoFiles(mediaDir, mediaPath, thumbnailPath, subtitlePath string) {
-	RemoveTombstonedVideoFiles(mediaDir, mediaPath, subtitlePath)
+	// Written out rather than delegating to RemoveTombstonedVideoFiles: that
+	// flavour deliberately spares the .vtt sidecars, and a hard delete that
+	// inherited the sparing would leave orphaned subtitles on disk with no row
+	// left to reference them.
+	if mediaPath != "" {
+		if safe, err := SafeMediaPath(mediaDir, mediaPath); err == nil {
+			RemoveMediaAndSidecars(safe)
+		}
+	}
+	if subtitlePath != "" {
+		if safe, err := SafeMediaPath(mediaDir, subtitlePath); err == nil {
+			_ = os.Remove(safe)
+		}
+	}
 	if thumbnailPath != "" {
 		// A queued-but-not-yet-downloaded video may have a remote thumbnail
 		// URL here instead of a local path; SafeMediaPath rejecting that (or
@@ -141,25 +154,34 @@ func RemoveVideoFiles(mediaDir, mediaPath, thumbnailPath, subtitlePath string) {
 	}
 }
 
-// RemoveTombstonedVideoFiles reclaims what a tombstone is for — the media
-// file (plus sidecars) and the subtitle — and deliberately KEEPS the
-// thumbnail. A tombstoned row survives with its title, summary and watched
-// history, and its card still says "summary kept", so it should still look
-// like the video it remembers; a poster is tens of kilobytes against the
-// megabytes the media file just gave back. Removing it used to leave
-// thumbnail_path pointing at a file that no longer existed, which rendered
-// as a broken image on every tombstoned card.
+// RemoveTombstonedVideoFiles reclaims what a tombstone is for and nothing
+// else: the media file, which is the whole point — megabytes against the
+// kilobytes everything around it costs. It deliberately KEEPS:
+//
+//   - the thumbnail, so the remembered card keeps its poster. Removing it used
+//     to leave thumbnail_path pointing at a file that no longer existed, which
+//     rendered as a broken image on every tombstoned card.
+//   - the subtitle .vtt — both the one subtitle_path names and any .vtt
+//     sidecar sitting next to the media file (yt-dlp writes them as
+//     <videoID>*.vtt beside <videoID>.<ext>, so RemoveMediaAndSidecars would
+//     sweep exactly those). The .vtt is the ONLY source a transcript can be
+//     rebuilt from: transcript_chunks / fts_chunks / vec_chunks serve today's
+//     searches, but re-chunking or re-embedding (a Reprocess, an embedding
+//     model change) reads the file back. Deleting it made a tombstone silently
+//     permanent for search, and cost the transcript view too.
+//
+// The media file therefore goes via a plain unlink, NOT
+// RemoveMediaAndSidecars — see the sidecar note above. A hard delete (the
+// database row going too, e.g. a channel cascade) wants the opposite and calls
+// RemoveVideoFiles.
 //
 // Both tombstone paths — the manual DELETE endpoint and the retention
 // sweeper — go through here, so the two can never diverge.
-func RemoveTombstonedVideoFiles(mediaDir, mediaPath, subtitlePath string) {
+// The subtitle path is not a parameter: there is nothing here to decide about
+// it. A caller with one in hand is meant to leave it alone.
+func RemoveTombstonedVideoFiles(mediaDir, mediaPath string) {
 	if mediaPath != "" {
 		if safe, err := SafeMediaPath(mediaDir, mediaPath); err == nil {
-			RemoveMediaAndSidecars(safe)
-		}
-	}
-	if subtitlePath != "" {
-		if safe, err := SafeMediaPath(mediaDir, subtitlePath); err == nil {
 			_ = os.Remove(safe)
 		}
 	}

@@ -158,11 +158,19 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "video not found")
 		return
 	}
-	// A tombstoned or subtitle-less video has no transcript to (re)summarize;
-	// re-enqueuing would only flip a valid summary to no_transcript. Point the
-	// caller at re-download (Phase 3.1b) instead of corrupting the summary.
-	if v.Status == videos.StatusTombstoned || v.MediaPath == "" || v.SubtitlePath == "" {
-		writeJSONError(w, http.StatusConflict, "media not present; re-download to restore before reprocessing")
+	// The pipeline reads the .vtt and nothing else, so the transcript is the only
+	// precondition: a subtitle-less video has nothing to (re)summarize, and
+	// re-enqueuing would flip a valid summary to no_transcript. Point the caller
+	// at re-download (Phase 3.1b) instead of corrupting the summary.
+	//
+	// Status and media_path are deliberately NOT part of the gate. A tombstone
+	// keeps subtitle_path and the .vtt precisely so its analysis stays
+	// rebuildable; rejecting it here would leave a swept video permanently
+	// unsearchable the moment its chunks needed rebuilding, which is the whole
+	// reason the file is kept. A row tombstoned before that changed has a blank
+	// subtitle_path and still lands here.
+	if v.SubtitlePath == "" {
+		writeJSONError(w, http.StatusConflict, "no transcript present; re-download to restore before reprocessing")
 		return
 	}
 	if s.summaryJobs == nil {
