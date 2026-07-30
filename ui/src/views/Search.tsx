@@ -53,48 +53,71 @@ const OPERATORS: { syntax: string; means: string }[] = [
   { syntax: "hydration NOT ad", means: "exclude" },
 ];
 
+// TabState is everything one mode owns. Find and Ask are tabs, not two settings
+// of one box: each keeps its own text and its own results, so switching shows
+// you what that tab last did rather than reinterpreting the other tab's query.
+type TabState = {
+  query: string;
+  results: SearchResult[] | null;
+  searchedQuery: string | null;
+  loading: boolean;
+  error: string | null;
+};
+
+const EMPTY_TAB: TabState = {
+  query: "",
+  results: null,
+  searchedQuery: null,
+  loading: false,
+  error: null,
+};
+
 export function Search({
   onOpen,
 }: {
   onOpen: (videoId: string, startSeconds: number) => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<SearchMode>("find");
-  const [results, setResults] = useState<SearchResult[] | null>(null);
-  const [searched, setSearched] = useState<{
-    q: string;
-    mode: SearchMode;
-  } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<SearchMode>("ask");
+  const [tabs, setTabs] = useState<Record<SearchMode, TabState>>({
+    find: EMPTY_TAB,
+    ask: EMPTY_TAB,
+  });
+  // The answer belongs to the Ask tab alone, so it lives outside the record.
   const [answer, setAnswer] = useState<AnswerState | null>(null);
-  // Aborts the in-flight answer when a new search starts or the view unmounts,
-  // so a slow generation for an abandoned query stops costing a model call.
+  // Aborts the in-flight answer when a new search starts, the tab is left, or
+  // the view unmounts, so a generation nobody is waiting for stops costing a
+  // model call.
   const answerAbort = useRef<AbortController | null>(null);
-  // Every search takes a ticket; only the newest one may write state. A mode
-  // switch fires a search on a single click, so two quick clicks put two
-  // requests in flight — and without this the slower one could land last and
-  // leave `searched` (which decides the empty-state sentence and which mode the
-  // offer button proposes) describing a search the user has already left.
+  // Every search takes a ticket; only the newest one may write state, so a slow
+  // response for an abandoned query cannot land on top of a newer one.
   const runId = useRef(0);
+
+  const tab = tabs[mode];
+
+  function patchTab(m: SearchMode, patch: Partial<TabState>) {
+    setTabs((prev) => ({ ...prev, [m]: { ...prev[m], ...patch } }));
+  }
 
   function runSearch(q: string, m: SearchMode) {
     const trimmed = q.trim();
     const id = ++runId.current;
-    answerAbort.current?.abort();
-    setAnswer(null);
+    if (m === "ask") {
+      answerAbort.current?.abort();
+      setAnswer(null);
+    }
     if (!trimmed) {
-      setResults(null);
-      setSearched(null);
       // The error line belongs to the query that failed. Emptying the box
       // retires that query, so leaving the error up would strand a complaint
       // about a search that is no longer on screen.
-      setError(null);
-      setLoading(false);
+      patchTab(m, {
+        results: null,
+        searchedQuery: null,
+        error: null,
+        loading: false,
+      });
       return;
     }
-    setLoading(true);
-    setError(null);
+    patchTab(m, { loading: true, error: null });
     // Ask also writes an answer. It is a SEPARATE request on purpose: retrieval
     // returns in a moment and generation takes seconds, so the results paint
     // straight away and the answer fills in above them. Nothing below waits on
@@ -103,19 +126,18 @@ export function Search({
     searchVideos(trimmed, m)
       .then((r) => {
         if (id !== runId.current) return;
-        setResults(r);
-        setSearched({ q: trimmed, mode: m });
+        patchTab(m, { results: r, searchedQuery: trimmed, loading: false });
       })
       .catch((err: Error) => {
         if (id !== runId.current) return;
-        setError(err.message);
         // Clear any previous query's results so the error state doesn't
         // render stale result cards underneath the error line.
-        setResults(null);
-        setSearched(null);
-      })
-      .finally(() => {
-        if (id === runId.current) setLoading(false);
+        patchTab(m, {
+          error: err.message,
+          results: null,
+          searchedQuery: null,
+          loading: false,
+        });
       });
   }
 
@@ -165,20 +187,39 @@ export function Search({
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    runSearch(query, mode);
+    runSearch(tab.query, mode);
   }
 
-  // Switching mode re-runs the query that is already in the box, so "this found
-  // nothing, try the other one" is one click and not a retype.
+  // Switching tabs shows what that tab already held. It does NOT carry the
+  // current text across and it does NOT search: the two modes read a query
+  // differently, so silently re-running Find's keywords as a question (or the
+  // reverse) spends a model call on something nobody asked for.
   function switchMode(m: SearchMode) {
     if (m === mode) return;
+    // Leaving Ask abandons any generation in flight; the text it produced stays
+    // in `answer`, so coming back shows the answer rather than restarting it.
+    if (mode === "ask") answerAbort.current?.abort();
     setMode(m);
-    if (results !== null || query.trim()) runSearch(query, m);
   }
 
-  useEffect(() => () => answerAbort.current?.abort(), []);
+  // The empty-state offer hands the query to the other tab and stops there.
+  // A search only ever starts from the box: nothing that is not a submit should
+  // spend a request, least of all a model call.
+  function askOtherMode(q: string) {
+    const other: SearchMode = mode === "find" ? "ask" : "find";
+    if (mode === "ask") answerAbort.current?.abort();
+    patchTab(other, { query: q });
+    setMode(other);
+  }
 
   const copy = MODE_COPY[mode];
+  const { query, results, loading, error } = tab;
+  // In Ask, everything BELOW the streaming answer waits for it to finish.
+  // Retrieval returns long before generation does, so showing the moments and
+  // the citation list first puts the evidence on screen ahead of the thing that
+  // cites it — which reads backwards, and pulls the eye away from the text
+  // actually being written.
+  const answerStreaming = mode === "ask" && answer?.status === "streaming";
   const matchCount = results?.reduce((n, r) => n + r.matches.length, 0) ?? 0;
 
   return (
@@ -210,7 +251,7 @@ export function Search({
             aria-label={mode === "ask" ? "Ask a question" : "Find words"}
             placeholder={copy.placeholder}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => patchTab(mode, { query: e.target.value })}
           />
           <kbd>↵</kbd>
         </form>
@@ -249,9 +290,11 @@ export function Search({
         </p>
       ) : null}
 
-      {answer ? <AnswerPanel state={answer} onOpen={onOpen} /> : null}
+      {mode === "ask" && answer ? (
+        <AnswerPanel state={answer} onOpen={onOpen} />
+      ) : null}
 
-      {!loading && results !== null && (
+      {!loading && !answerStreaming && results !== null && (
         <>
           <div className="results-head">
             <span style={{ fontFamily: "var(--font-serif)", fontSize: 16 }}>
@@ -266,9 +309,9 @@ export function Search({
           </div>
           {results.length === 0 ? (
             <EmptyResult
-              mode={searched?.mode ?? mode}
-              query={searched?.q ?? query.trim()}
-              onSwitch={() => switchMode(mode === "find" ? "ask" : "find")}
+              mode={mode}
+              query={tab.searchedQuery ?? query.trim()}
+              onSwitch={() => askOtherMode(tab.searchedQuery ?? query.trim())}
             />
           ) : (
             results.map((r) => (
@@ -373,8 +416,8 @@ function EmptyResult({
       </p>
       <button type="button" className="linkish" onClick={onSwitch}>
         {mode === "find"
-          ? `Ask about "${query}" by meaning instead`
-          : `Search for the exact words "${query}" instead`}
+          ? `Put "${query}" in Ask instead`
+          : `Put "${query}" in Find instead`}
       </button>
     </div>
   );
