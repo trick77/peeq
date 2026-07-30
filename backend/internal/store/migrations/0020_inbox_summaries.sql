@@ -46,6 +46,23 @@ ALTER TABLE channel_videos ADD COLUMN next_caption_attempt_at TEXT;
 -- A sentinel rather than a NULL next_caption_attempt_at, because "never try"
 -- and "try as soon as possible" both want that column empty; only the counter
 -- can tell them apart.
+--
+-- HISTORY, and the reason 0021 does not exist: this line was undone once, by a
+-- 0021_backfill_inbox_summaries.sql that reset the counter to 0 for every
+-- 'pending' row with no videos row — that is, every inbox video peeq had never
+-- looked at. It was a deliberate one-off: the feature shipped reading only new
+-- videos, and once it had proven itself the pre-existing inbox was read too.
+--
+-- That migration was deleted after it had run everywhere, so the numbering
+-- skips from here to 0022. The deletion is safe because schema_migrations
+-- records applied migrations by FILENAME (see Migrate) with no checksum and no
+-- count: a database that ran 0021 keeps the row and never notices the file is
+-- gone, and a fresh database skips an UPDATE that would have matched nothing.
+--
+-- The one case it does not cover, stated so nobody has to rediscover it:
+-- restoring a backup taken BEFORE 0021 ran. Such a database is back to being
+-- retired by the line below, with nothing left to undo it, and its old inbox
+-- stays unread. Re-running that one UPDATE by hand is the whole fix.
 UPDATE channel_videos SET caption_attempts = 99;
 
 -- No index for the fetcher's claim query, deliberately.
