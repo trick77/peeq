@@ -5192,6 +5192,27 @@ details.tomb-sect[open] > summary svg {
 
 /* ── inbox summaries ──────────────────────────────────────────────────── */
 
+/* Top-left, not the bottom-left corner the shared `.metapill.oncover` rule
+   places it in. That rule is the Library's category pill, which belongs down
+   there beside the runtime because a category is a fact about a video you
+   already have. This marker is about work in progress, and it reads better in
+   the corner the eye starts from — nothing else in the Inbox card competes for
+   it, since the poster carries only the runtime.
+
+   Scoped by the two state classes rather than by the grid, so the override
+   travels with the pill instead of depending on where it is rendered. The
+   `bottom: auto` is required, not tidiness: an absolutely positioned element
+   with both top and bottom set stretches to span them.
+
+   Note `.thumb .tag` also lives at top-left, for the Library's "New" chip. No
+   Inbox card renders one, so the two never meet — but they would overlap if
+   this pill were ever used on a card that has one. */
+.thumb .metapill.oncover.has-summary,
+.thumb .metapill.oncover.is-reading {
+  top: 8px;
+  bottom: auto;
+}
+
 /* The two states of the Inbox card's summary marker. Both ride the existing
    `.thumb .metapill.oncover` slot — position, scrim and blur are inherited from
    it, so only the colour differs and the marker cannot drift out of the corner
