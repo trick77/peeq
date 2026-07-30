@@ -294,7 +294,16 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		// best-effort pass here with whatever chapters exist (yt-dlp's, or
 		// none). SetKeyPoints zeroes embed_rev, so if key points does eventually
 		// succeed the video is re-indexed properly with its chapters.
-		if video.EmbedModel == "" {
+		//
+		// A stale rev counts as "never indexed" for this purpose. embed_model is
+		// set once and never cleared, so on its own it would let Reprocess —
+		// which wipes the summary and calls ClearEmbedRev, but does not delete
+		// chunks — leave the OLD summary chunk indexed and served by search for
+		// as long as key points keeps failing, with nothing left to repair it.
+		// Reading video.EmbedRev is safe here: the only writer that raises it
+		// mid-attempt is the embed below, and a second attempt that sees the
+		// raised value has genuinely already been indexed from this summary.
+		if video.EmbedModel == "" || video.EmbedRev < rag.ChunkRecipeRev {
 			if eerr := w.embedAndStore(kctx, video.ID, parsed, summary, ytChapters); eerr != nil {
 				w.d.Logger.Warn("summarize worker: fallback embedding failed",
 					append(run.ident(), "err", eerr)...)
@@ -325,7 +334,14 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	//
 	// `chapters` here is the value KeyPoints just returned, not video.Chapters —
 	// that field is stale for the same reason.
-	w.emit(video.ID, videos.SummaryRunning, PhaseEmbedding)
+	// Status "done", not "running": summary_status was persisted as done a few
+	// steps up, so a "running" event here would report a state the row does not
+	// have — and the Player sets its local status from any non-done event, which
+	// would replace the summary it just rendered with the "Summarizing" spinner
+	// until this step finished. Same shape as the keypoints emit above: a
+	// terminal status carrying a live phase, so the Queue meter still advances
+	// to step 4/4 (it reads phase, falling back to status).
+	w.emit(video.ID, videos.SummaryDone, PhaseEmbedding)
 	ectx, edone := run.step("embedding")
 	if err := w.embedAndStore(ectx, video.ID, parsed, summary, chapters); err != nil {
 		return true, w.failJob(job, video, run, err.Error())
