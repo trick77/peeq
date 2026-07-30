@@ -30,6 +30,10 @@ type ChunkRow struct {
 }
 
 // Hit is one retrieved chunk with its cosine/L2 distance (smaller == closer).
+//
+// Snippet is set only by the keyword lane, which knows which part of the chunk
+// actually matched; the vector lane matches a chunk as a whole and leaves it
+// empty for the caller to fall back to Text.
 type Hit struct {
 	VideoID      string
 	Ordinal      int
@@ -37,7 +41,19 @@ type Hit struct {
 	Kind         string
 	StartSeconds int
 	Distance     float64
+	Snippet      string
 }
+
+// Matched terms inside a Snippet are delimited by these two ASCII control
+// characters rather than by markup. FTS5's snippet() requires some start/end
+// marker, and anything HTML-shaped would have to be either escaped downstream
+// or rendered with dangerouslySetInnerHTML. STX/ETX cannot occur in subtitle
+// text, survive JSON transport intact, and let the UI split the string into
+// plain text nodes and <mark> elements — highlighting with no injection surface.
+const (
+	HighlightStart = "\x02"
+	HighlightEnd   = "\x03"
+)
 
 // deleteVideoTx removes a video's rows from all three chunk tables
 // (transcript_chunks, vec_chunks, fts_chunks) within tx. vec_chunks.rowid ==
@@ -134,17 +150,39 @@ func (s *Store) DeleteVideoChunks(ctx context.Context, videoID string) error {
 }
 
 // Retrieve returns up to k chunks nearest to queryEmbedding across all videos.
+//
+// Note this is an unbounded KNN: it returns k rows for ANY query vector, however
+// unrelated, because "nearest" is relative. Callers that surface results to a
+// user want RetrieveWithin so a query the library has nothing to say about comes
+// back empty instead of full of the least-distant noise.
 func (s *Store) Retrieve(ctx context.Context, queryEmbedding []float32, k int) ([]Hit, error) {
+	return s.RetrieveWithin(ctx, queryEmbedding, k, 0)
+}
+
+// RetrieveWithin returns up to k chunks nearest to queryEmbedding whose
+// distance is below maxDistance. A non-positive maxDistance disables the bound.
+//
+// The cutoff sits on the KNN's output, not inside the KNN itself: vec0 still
+// picks its k nearest rows and the bound then drops the far ones, so a query
+// with few close chunks legitimately returns fewer than k. Doing it in SQL
+// rather than in Go only saves shipping those rows' text across the driver — it
+// does not buy back the KNN budget the far rows already consumed.
+func (s *Store) RetrieveWithin(ctx context.Context, queryEmbedding []float32, k int, maxDistance float64) ([]Hit, error) {
 	if k <= 0 {
 		k = 10
 	}
+	// vec0 requires the `k = ?` constraint to sit alongside the MATCH; the
+	// distance bound is an ordinary predicate applied to the KNN output.
 	const q = `
-		SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds, v.distance
-		FROM vec_chunks v
-		JOIN transcript_chunks c ON c.id = v.rowid
-		WHERE v.embedding MATCH ? AND k = ?
-		ORDER BY v.distance`
-	rows, err := s.db.QueryContext(ctx, q, store.VecLiteral(queryEmbedding), k)
+		SELECT video_id, ordinal, text, kind, start_seconds, distance FROM (
+			SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds, v.distance
+			FROM vec_chunks v
+			JOIN transcript_chunks c ON c.id = v.rowid
+			WHERE v.embedding MATCH ? AND k = ?
+		)
+		WHERE ? <= 0 OR distance < ?
+		ORDER BY distance`
+	rows, err := s.db.QueryContext(ctx, q, store.VecLiteral(queryEmbedding), k, maxDistance, maxDistance)
 	if err != nil {
 		return nil, fmt.Errorf("retrieve: %w", err)
 	}
@@ -176,14 +214,21 @@ func (s *Store) SearchFTS(ctx context.Context, match string, n int) ([]Hit, erro
 	if n <= 0 {
 		n = 10
 	}
+	// snippet() returns the window of the chunk AROUND the match, with the
+	// matched terms delimited. Taking the head of the chunk instead — as this
+	// did before — shows a preview that usually does not contain the searched
+	// word at all: a chunk is ~600 tokens and a hit is rarely in its first
+	// line. Column 0 is fts_chunks' only column; 32 is the token budget for the
+	// window (FTS5 caps it at 64).
 	const q = `
-		SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds
+		SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds,
+		       snippet(fts_chunks, 0, ?, ?, '…', 32)
 		FROM fts_chunks f
 		JOIN transcript_chunks c ON c.id = f.rowid
 		WHERE f.text MATCH ?
 		ORDER BY bm25(fts_chunks)
 		LIMIT ?`
-	rows, err := s.db.QueryContext(ctx, q, match, n)
+	rows, err := s.db.QueryContext(ctx, q, HighlightStart, HighlightEnd, match, n)
 	if err != nil {
 		return nil, fmt.Errorf("fts search: %w", err)
 	}
@@ -191,7 +236,7 @@ func (s *Store) SearchFTS(ctx context.Context, match string, n int) ([]Hit, erro
 	var out []Hit
 	for rows.Next() {
 		var h Hit
-		if err := rows.Scan(&h.VideoID, &h.Ordinal, &h.Text, &h.Kind, &h.StartSeconds); err != nil {
+		if err := rows.Scan(&h.VideoID, &h.Ordinal, &h.Text, &h.Kind, &h.StartSeconds, &h.Snippet); err != nil {
 			return nil, err
 		}
 		out = append(out, h)

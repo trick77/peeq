@@ -119,6 +119,9 @@ type Deps struct {
 	// Embedder turns search query text into an embedding vector to match
 	// against Rag. Optional: when nil, /api/search returns 503.
 	Embedder SearchEmbedder
+	// SearchMaxDistance bounds the semantic lane so an unrelated query comes
+	// back empty instead of full of the least-distant noise. 0 disables it.
+	SearchMaxDistance float64
 	// SummaryJobs enqueues a summary job for a video. Optional: when nil,
 	// /api/videos/{id}/reprocess returns 503.
 	SummaryJobs SummaryEnqueuer
@@ -210,11 +213,12 @@ type server struct {
 
 	ledger *channelvideos.Store
 
-	rag         RagStore
-	embedder    SearchEmbedder
-	summaryJobs SummaryEnqueuer
-	summaryList SummaryLister
-	activity    ActivityReader
+	rag               RagStore
+	embedder          SearchEmbedder
+	searchMaxDistance float64
+	summaryJobs       SummaryEnqueuer
+	summaryList       SummaryLister
+	activity          ActivityReader
 
 	allowAnonymous bool
 
@@ -253,11 +257,12 @@ func New(d Deps) http.Handler {
 
 		ledger: d.Ledger,
 
-		rag:         d.Rag,
-		embedder:    d.Embedder,
-		summaryJobs: d.SummaryJobs,
-		summaryList: d.SummaryList,
-		activity:    d.Activity,
+		rag:               d.Rag,
+		embedder:          d.Embedder,
+		searchMaxDistance: d.SearchMaxDistance,
+		summaryJobs:       d.SummaryJobs,
+		summaryList:       d.SummaryList,
+		activity:          d.Activity,
 
 		allowAnonymous: d.AllowAnonymous,
 

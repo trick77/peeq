@@ -3,11 +3,14 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/trick77/peeq/internal/rag"
 )
 
 // AuthMode selects how peeq signs users in.
@@ -32,13 +35,17 @@ type Config struct {
 	Dev           DevUserConfig
 
 	// AI integration: chat + embeddings endpoints (required at boot).
-	ChatBaseURL    string
-	ChatAPIKey     string
-	EmbedBaseURL   string
-	EmbedAPIKey    string
-	EmbedModel     string
-	EmbedDim       int
-	DefaultSubLang string
+	ChatBaseURL  string
+	ChatAPIKey   string
+	EmbedBaseURL string
+	EmbedAPIKey  string
+	EmbedModel   string
+	EmbedDim     int
+	// SearchMaxDistance bounds the semantic lane: hits at or beyond this L2
+	// distance are dropped rather than ranked. Vectors are unit length, so
+	// L2 = sqrt(2-2*cos); see rag.DefaultMaxDistance for the calibration.
+	SearchMaxDistance float64
+	DefaultSubLang    string
 
 	// SummarizeRequestDelay is the minimum gap between chat requests, and
 	// SummarizeVideoDelay the gap between videos, so a rate-limited or slow LLM
@@ -156,12 +163,25 @@ func Load() (Config, error) {
 	cfg.EmbedModel = env("BACKEND_EMBED_MODEL", "")
 	cfg.DefaultSubLang = env("BACKEND_DEFAULT_SUB_LANG", "en")
 	cfg.EmbedDim = 1536
+	cfg.SearchMaxDistance = rag.DefaultMaxDistance
 	if v := env("BACKEND_ALLOW_ANONYMOUS_YOUTUBE", ""); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
 			return Config{}, fmt.Errorf("BACKEND_ALLOW_ANONYMOUS_YOUTUBE must be a boolean")
 		}
 		cfg.AllowAnonymousYoutube = b
+	}
+	if v := env("BACKEND_SEARCH_MAX_DISTANCE", ""); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		// NaN and Inf parse cleanly and survive an `f < 0` test, so they have to
+		// be rejected by name: NaN makes every distance comparison false, which
+		// would silently drop EVERY semantic hit with no error to explain it.
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
+			return Config{}, fmt.Errorf("BACKEND_SEARCH_MAX_DISTANCE must be a finite non-negative number")
+		}
+		// 0 disables the cutoff, restoring the pre-cutoff behaviour of always
+		// returning the k nearest chunks however far away they are.
+		cfg.SearchMaxDistance = f
 	}
 	if v := env("BACKEND_EMBED_DIM", ""); v != "" {
 		n, err := strconv.Atoi(v)

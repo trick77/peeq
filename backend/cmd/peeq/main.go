@@ -463,8 +463,10 @@ func run() error {
 		Metadata:        metaRefresher,
 		Ledger:          ledgerStore,
 
-		Rag:         ragStore,
-		Embedder:    embedClient,
+		Rag:               ragStore,
+		Embedder:          embedClient,
+		SearchMaxDistance: cfg.SearchMaxDistance,
+
 		SummaryJobs: summaryJobsStore,
 		SummaryList: summaryJobsStore,
 		Activity:    activityStore,

@@ -146,7 +146,9 @@ func TestSearchGroupsByVideo(t *testing.T) {
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/search?q=iphone", nil)
+	// mode=ask: the hybrid contract this test pins lives there now. Find mode
+	// is keyword-only and deliberately never calls the embedder.
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=iphone&mode=ask", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -695,6 +697,13 @@ func (f *failingRag) Retrieve(ctx context.Context, q []float32, k int) ([]rag.Hi
 	return f.real.Retrieve(ctx, q, k)
 }
 
+func (f *failingRag) RetrieveWithin(ctx context.Context, q []float32, k int, maxDistance float64) ([]rag.Hit, error) {
+	if f.retrieve != nil {
+		return nil, f.retrieve
+	}
+	return f.real.RetrieveWithin(ctx, q, k, maxDistance)
+}
+
 // TestSearch_ragDegradedStillServes pins the fail-soft contract from both
 // sides: whichever lane breaks, the other one's hits still come back 200.
 func TestSearch_ragDegradedStillServes(t *testing.T) {
@@ -711,7 +720,7 @@ func TestSearch_ragDegradedStillServes(t *testing.T) {
 
 		h := New(deps)
 		cookie := loginAndGetCookie(t, h)
-		rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=entropy", nil)
+		rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=entropy&mode=ask", nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("search with broken FTS = %d, want 200 (fail-soft), body = %s",
 				rec.Code, rec.Body.String())
@@ -734,7 +743,7 @@ func TestSearch_ragDegradedStillServes(t *testing.T) {
 
 		h := New(deps)
 		cookie := loginAndGetCookie(t, h)
-		rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=entropy", nil)
+		rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=entropy&mode=ask", nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("search with broken semantic = %d, want 200 (fail-soft), body = %s",
 				rec.Code, rec.Body.String())
@@ -743,4 +752,207 @@ func TestSearch_ragDegradedStillServes(t *testing.T) {
 			t.Fatalf("FTS lane should still have answered: %s", rec.Body.String())
 		}
 	})
+}
+
+// TestSearchFindModeIsKeywordOnly pins the defining property of Find: it is a
+// real full-text search, so it never reaches for the embedder. That is what
+// makes it instant and free, and what lets it honestly return nothing.
+func TestSearchFindModeIsKeywordOnly(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "physics talk"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "a chunk about entropy and thermodynamics", StartSeconds: 5},
+	})
+	embedder := &fakeEmbedder{vec: dim1536(1.0)}
+	deps.Embedder = embedder
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// Default mode is find; no explicit mode= needed.
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=entropy", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if embedder.called {
+		t.Fatal("find mode must not call the embedder")
+	}
+	if !strings.Contains(rec.Body.String(), "v1") {
+		t.Fatalf("keyword hit missing: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"mode":"find"`) {
+		t.Fatalf("response should echo the mode: %s", rec.Body.String())
+	}
+}
+
+// TestSearchFindModeReturnsNothingWhenWordsAbsent is the honest-empty contract.
+// A vector search cannot do this — KNN always returns its k nearest — which is
+// why a query about something the library never covered used to come back full
+// of unrelated results.
+func TestSearchFindModeReturnsNothingWhenWordsAbsent(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "physics talk"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "a chunk about entropy and thermodynamics", StartSeconds: 5},
+	})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var resp struct {
+		Results []any `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Results) != 0 {
+		t.Fatalf("want no results for a word the library never uses, got %s", rec.Body.String())
+	}
+}
+
+// TestSearchFindModeHonoursOperators asserts the operators a full-text search
+// is expected to support actually reach FTS5 rather than being flattened into
+// ANDed terms.
+func TestSearchFindModeHonoursOperators(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	for _, v := range []struct{ id, title, text string }{
+		{"v1", "sodium", "sodium losses during long efforts"},
+		{"v2", "potassium", "potassium and muscle contraction"},
+	} {
+		if err := deps.Videos.Upsert(videos.Video{ID: v.id, URL: "u", Title: v.title}); err != nil {
+			t.Fatalf("seed %s: %v", v.id, err)
+		}
+		seedChunks(t, ragStore, v.id, []rag.ChunkRow{{Ordinal: 0, Text: v.text, StartSeconds: 1}})
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// ANDing these two would match nothing; OR must reach FTS5 intact.
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=sodium+OR+potassium", nil)
+	body := rec.Body.String()
+	if !strings.Contains(body, "v1") || !strings.Contains(body, "v2") {
+		t.Fatalf("OR should match both videos: %s", body)
+	}
+
+	// NOT must exclude.
+	rec = doReq(t, h, cookie, http.MethodGet, "/api/search?q=contraction+NOT+sodium", nil)
+	body = rec.Body.String()
+	if strings.Contains(body, `"id":"v1"`) {
+		t.Fatalf("NOT should have excluded v1: %s", body)
+	}
+	if !strings.Contains(body, `"id":"v2"`) {
+		t.Fatalf("NOT dropped the video it should have kept: %s", body)
+	}
+
+	// Prefix. This one is worth exercising against real FTS5 rather than only
+	// asserting the emitted string: `"sodi" *` is the one form ParseFTSQuery
+	// produces that nothing else here parses, and a rejection would surface to
+	// the user not as an error but as "none of your transcripts contain those
+	// words" — the failure that looks exactly like a correct empty result.
+	rec = doReq(t, h, cookie, http.MethodGet, "/api/search?q=sodi*", nil)
+	body = rec.Body.String()
+	if !strings.Contains(body, `"id":"v1"`) {
+		t.Fatalf("prefix should have matched sodium: %s", body)
+	}
+
+	// A quoted phrase stays adjacent.
+	rec = doReq(t, h, cookie, http.MethodGet, `/api/search?q=%22muscle+contraction%22`, nil)
+	body = rec.Body.String()
+	if !strings.Contains(body, `"id":"v2"`) {
+		t.Fatalf("phrase should have matched v2: %s", body)
+	}
+	if strings.Contains(body, `"id":"v1"`) {
+		t.Fatalf("phrase should not have matched v1: %s", body)
+	}
+}
+
+// TestSearchSpreadsAcrossVideos pins what maxMatchesPerVideo is for: one chatty
+// video must not consume the whole response. The chunks below are engineered so
+// bm25 ranks every one of v1's above v2's (bm25 favours short documents), so if
+// the retrieval budget were spent before grouping — the candidate list cut to k
+// and only then capped per video — v2 would never appear at all.
+func TestSearchSpreadsAcrossVideos(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	for _, id := range []string{"v1", "v2"} {
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	chatty := make([]rag.ChunkRow, 25)
+	for i := range chatty {
+		chatty[i] = rag.ChunkRow{Ordinal: i, Text: "electrolytes", StartSeconds: i * 10}
+	}
+	seedChunks(t, ragStore, "v1", chatty)
+	seedChunks(t, ragStore, "v2", []rag.ChunkRow{
+		{Ordinal: 0, Text: "electrolytes " + strings.Repeat("filler words here ", 60), StartSeconds: 3},
+	})
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil)
+
+	var resp struct {
+		Results []struct {
+			Video   struct{ ID string } `json:"video"`
+			Matches []struct {
+				StartSeconds int `json:"start_seconds"`
+			} `json:"matches"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v, body = %s", err, rec.Body.String())
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("want both videos represented, got %d: %s", len(resp.Results), rec.Body.String())
+	}
+	for _, r := range resp.Results {
+		if len(r.Matches) > maxMatchesPerVideo {
+			t.Errorf("%s contributed %d matches, cap is %d", r.Video.ID, len(r.Matches), maxMatchesPerVideo)
+		}
+	}
+}
+
+// TestSearchSnippetIsCentredOnTheMatch is the user-visible half of the FTS5
+// snippet() change: the preview must contain the searched word. It previously
+// returned the chunk's first 160 characters, which for a ~600-token chunk
+// usually does not include the match at all.
+func TestSearchSnippetIsCentredOnTheMatch(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "long talk"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	head := strings.Repeat("filler about training and recovery ", 12)
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: head + "the electrolytes you replace matter " + head, StartSeconds: 872},
+	})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil)
+	var resp struct {
+		Results []struct {
+			Matches []struct {
+				Snippet string `json:"snippet"`
+			} `json:"matches"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Results) == 0 || len(resp.Results[0].Matches) == 0 {
+		t.Fatalf("expected a hit: %s", rec.Body.String())
+	}
+	snip := resp.Results[0].Matches[0].Snippet
+	if !strings.Contains(strings.ToLower(snip), "electrolytes") {
+		t.Errorf("snippet lacks the searched term: %q", snip)
+	}
+	if !strings.Contains(snip, rag.HighlightStart) {
+		t.Errorf("snippet is not highlighted: %q", snip)
+	}
 }

@@ -1,8 +1,22 @@
 import { api } from "./http";
 import type { Video } from "./types";
 
-// SearchMatch mirrors one httpapi search-result match — the sqlite-vec
-// nearest-neighbor hit for a transcript/summary chunk within a video.
+// SearchMode selects how the backend retrieves.
+//
+// "find" is a literal full-text search: FTS5 only, operators honoured, no
+// embedding request and no model call. It is instant, free, and can genuinely
+// return nothing — which is the right answer when the words are not there.
+//
+// "ask" adds distance-bounded vector search for meaning-based matches, fused
+// with the keyword lane weighted higher.
+export type SearchMode = "find" | "ask";
+
+// SearchMatch mirrors one httpapi search-result match.
+//
+// `snippet` may contain HIGHLIGHT_START/HIGHLIGHT_END delimiters around the
+// matched terms; render it through splitHighlights (src/highlight.ts) rather
+// than as raw text. `distance` is the vector lane's L2 distance and is 0 for a
+// keyword-only hit — it is retrieval diagnostics, not something to show a user.
 export type SearchMatch = {
   start_seconds: number;
   snippet: string;
@@ -18,13 +32,16 @@ export type SearchResult = {
 };
 
 // searchVideos short-circuits on a blank query (no request at all) since the
-// backend's semantic search has no meaningful empty-string result and the UI
-// shouldn't hit the network on every keystroke of a cleared search box.
-export async function searchVideos(q: string): Promise<SearchResult[]> {
+// backend has no meaningful empty-string result and the UI shouldn't hit the
+// network on every keystroke of a cleared search box.
+export async function searchVideos(
+  q: string,
+  mode: SearchMode = "find",
+): Promise<SearchResult[]> {
   const query = q.trim();
   if (!query) return [];
   const res = await api.get<{ results?: SearchResult[] }>(
-    `/api/search?q=${encodeURIComponent(query)}`,
+    `/api/search?q=${encodeURIComponent(query)}&mode=${mode}`,
     "search failed",
   );
   return res.results ?? [];
