@@ -127,11 +127,20 @@ export function VideoCard({
           ) : null}
           {/* The one thing a tombstone actually costs, stated where the state
               of the media belongs — on the poster, beside the runtime — so the
-              rows below keep saying what they say on every other card. */}
-          {video.status === "tombstoned" ? (
-            <span className="tag gone">Deleted</span>
-          ) : null}
-          <span className="dur">{formatDuration(video.duration_seconds)}</span>
+              rows below keep saying what they say on every other card.
+              Literally beside it, in one bottom-right row: the poster's other
+              three corners are taken (the unwatched dot top-left, the category
+              pill bottom-left) and the top-right one belongs to the
+              favorite/watched buttons in .acts, where a chip would sit
+              underneath them. */}
+          <span className="thumb-br">
+            {video.status === "tombstoned" ? (
+              <span className="tag gone">Deleted</span>
+            ) : null}
+            <span className="dur">
+              {formatDuration(video.duration_seconds)}
+            </span>
+          </span>
           {/* Decorative inside the button: the button's aria-label already
               names the video, so the pill adds no accessible text. */}
           {thumbCategory ? (

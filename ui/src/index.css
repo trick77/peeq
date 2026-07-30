@@ -1438,15 +1438,36 @@ button.srow:not(:disabled):hover {
   left: 8px;
   top: 8px;
 }
-/* .tag.gone marks a tombstoned video: the file is gone, everything else about
-   the video is not. It takes the free top-right corner rather than .tag.new's
-   top-left, because the two appear together on an unwatched video that was
-   deleted — the whole point of showing watch state and lifecycle state
-   separately. Same scrim family as .dur/.tag.new; faint rather than accented,
-   since "the file left" is a fact about the past, not something to act on. */
-.thumb .tag.gone {
-  left: auto;
+/* .thumb-br is the poster's bottom-right row: the runtime, with the "Deleted"
+   chip ahead of it when there is one. A row rather than a fourth corner,
+   because there is no free corner left — .tag.new holds top-left, the category
+   pill bottom-left, and top-right is .acts (favorite / watched), which paints
+   after the thumbnail button and would cover anything parked under it. */
+.thumb .thumb-br {
+  position: absolute;
   right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Both chips are placed by the row now, not by their own corner offsets. */
+.thumb .thumb-br .dur {
+  position: static;
+  right: auto;
+  bottom: auto;
+}
+/* .tag.gone marks a tombstoned video: the file is gone, everything else about
+   the video is not. It sits beside the runtime rather than in a corner of its
+   own, so it never competes with .tag.new's top-left dot — the two appear
+   together on an unwatched video that was deleted, which is the whole point of
+   showing watch state and lifecycle state separately. Same scrim family as
+   .dur/.tag.new; faint rather than accented, since "the file left" is a fact
+   about the past, not something to act on. */
+.thumb .tag.gone {
+  position: static;
+  left: auto;
+  top: auto;
   padding: 4px 9px;
   border-radius: 999px;
   font-size: 10.5px;
@@ -1891,8 +1912,11 @@ button.catpick.unset:hover {
 /* A tombstoned video that is not a favorite has no lifecycle row to pair the
    Re-download button with, and space-between on a lone child parks it on the
    left, under the title. Keep it on the right, where it sits on every other
-   card that has one. */
-.card-foot > :only-child {
+   card that has one. Scoped to the button on purpose: a list that wires no
+   onRedownload handler (the channel Archive tab) leaves the lifecycle row as
+   the lone child instead, and "Download failed" belongs on the left where it
+   reads on every other card. */
+.card-foot > button:only-child {
   margin-left: auto;
 }
 /* Inbox's Download / Ignore pair used to be a .card-foot.acts-row here, under

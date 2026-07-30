@@ -6,7 +6,10 @@
 // watched automatically when its resume position reaches >= 90% of the
 // duration (SetResume), or manually (SetWatched(id, true)). Re-watching
 // never resets watched_at once set — no "life extension" of the retention
-// clock. Manual un-watch (SetWatched(id, false)) clears watched, watched_at,
+// clock — the one exception is RestartRetentionClock, which the re-download
+// path calls precisely to grant one: a restored file needs its full
+// retention_days back, or the next sweep reclaims what was just fetched.
+// Manual un-watch (SetWatched(id, false)) clears watched, watched_at,
 // AND resume_position_seconds, rescuing the video from the retention sweep
 // and making that rescue sticky (a stale near-end resume ping can't
 // immediately re-mark it watched). Manual mark-watched zeroes the resume
@@ -15,7 +18,8 @@
 // the end can still be finished. Tombstone keeps
 // the row (for watched history and a future summary/transcript) but clears
 // media_path and marks status='tombstoned'; the caller is responsible for
-// unlinking the actual media/thumbnail files from disk first.
+// unlinking the actual media file from disk first (the thumbnail and the
+// subtitle stay — see media.RemoveTombstonedVideoFiles).
 //
 // The store's methods are grouped across sibling files by the lifecycle stage
 // they serve, all on the same *Store: this file holds the row shape, the

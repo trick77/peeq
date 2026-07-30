@@ -201,6 +201,11 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	// Force a fresh SponsorBlock fetch: clearing the refresh sentinel makes the
 	// video sort first in the worker's stale-claim query, so its segments are
 	// re-read on the next pass. Independent of the summary job above.
+	//
+	// On a tombstoned video the reset lands but nothing acts on it: that query
+	// claims status='downloaded' rows only. That is right — segments exist to
+	// be skipped during playback, and there is nothing to play — so the fetch
+	// simply waits for a re-download to put the file back.
 	if err := s.videos.ResetSponsorblockRefresh(id); err != nil {
 		serverError(w, r, err, "reset sponsorblock refresh failed")
 		return
