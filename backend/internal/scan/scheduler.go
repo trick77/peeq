@@ -1011,21 +1011,33 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 // maps it to a TerminalError, which IsMissingTab never matches, so
 // auto-unsubscribe still sees it.
 //
-// baseline tightens the streams rule for a first pass only. The baseline
-// snapshot is the one listing that must be COMPLETE: everything it fails to see
-// counts as new on the next pass, so swallowing a transient /streams failure
-// there would dump a channel's whole back catalogue of VODs into the inbox (and,
-// with autodownload on, into the download queue). A genuinely absent tab is
-// still quiet — that case is IsMissingTab, and there is nothing to miss.
+// baseline tightens both rules for a first pass only. The baseline snapshot is
+// the one listing that must be COMPLETE: everything it fails to see counts as
+// new on the next pass, so swallowing a transient /streams failure there would
+// dump a channel's whole back catalogue of VODs into the inbox (and, with
+// autodownload on, into the download queue). A genuinely absent tab is still
+// quiet — that case is IsMissingTab, and there is nothing to miss.
+//
+// The second tightening covers the gap that left: a missing tab was swallowed
+// unconditionally, so a pass where BOTH tabs were refused still handed back a
+// confident empty listing and completed the baseline on it. See the guard
+// below.
 //
 // The returned count is how many entries the /streams tab listed, which is what
 // answers "does this channel publish through livestreams?" — deliberately not
 // the post-dedup number, which would read 0 for a channel whose streams happen
 // to also surface on /videos.
 func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool) ([]ytdlp.ChannelEntry, int, error) {
+	// answered records whether EITHER tab actually returned a listing. A
+	// swallowed missing-tab error is not an answer: it says the tab could not be
+	// read, which on its own is indistinguishable from the tab being empty.
+	// Only the baseline guard below cares about the difference.
+	var answered bool
+
 	uploads, err := s.d.Lister.ChannelVideos(ctx, ucid, s.d.listSize)
 	switch {
 	case err == nil:
+		answered = true
 	case ytdlp.IsMissingTab(err):
 		s.d.Logger.Debug("scan: channel has no videos tab", "channel", ucid)
 		uploads = nil
@@ -1037,6 +1049,7 @@ func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool)
 	streams, serr := s.d.Lister.ChannelStreams(ctx, ucid, s.d.listSize)
 	switch {
 	case serr == nil:
+		answered = true
 	case errors.Is(serr, ytdlp.ErrBlocked), errors.Is(serr, ytdlp.ErrCookieExpired):
 		return nil, 0, fmt.Errorf("scan: list streams %s: %w", ucid, serr)
 	case ytdlp.IsMissingTab(serr):
@@ -1047,6 +1060,31 @@ func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool)
 		s.d.Logger.Warn("scan: listing streams failed, using uploads only",
 			"channel", ucid, "err", serr)
 	}
+
+	// A baseline pass where NEITHER tab could be read learned nothing, and must
+	// not be allowed to finish. Stamping baselined_at on it converts "yt-dlp
+	// could not answer" into the permanent claim "this channel had nothing" —
+	// and every video the channel really had is then judged against that stamp
+	// forever. Undated entries are not back catalogue by definition
+	// (isBackCatalogue is false for an empty PublishedAt), so the channel's
+	// whole history arrives at once as undecided inbox items, or as real
+	// downloads on an autodownload channel.
+	//
+	// The predicate is "no tab answered", NOT "a tab was missing". Most channels
+	// have never gone live and legitimately have no /streams tab, and a channel
+	// that publishes only livestreams has no /videos tab; either alone is a fact
+	// about the channel, and blocking on it would make the very channels this
+	// two-tab listing exists for unbaselineable. A tab that answers with an
+	// EMPTY list is likewise a real answer — a brand-new channel with nothing in
+	// it must still baseline, or its first upload would be judged with no
+	// baseline at all.
+	//
+	// Only the first pass is guarded. Later passes have a baseline to judge
+	// against, so a blind one there costs a delay rather than a wrong verdict.
+	if baseline && !answered {
+		return nil, 0, fmt.Errorf("scan: baseline list %s: neither tab could be read", ucid)
+	}
+
 	if len(streams) == 0 {
 		return uploads, 0, nil
 	}
