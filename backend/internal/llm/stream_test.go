@@ -400,7 +400,7 @@ func TestReadStream_acceptsDataLinesWithoutTheSpace(t *testing.T) {
 
 	body := `data:{"choices":[{"delta":{"content":"tight"},"finish_reason":"stop","index":0}]}` + "\n\n" +
 		"data:[DONE]\n\n"
-	res, err := readStream(strings.NewReader(body), guard, &counters, time.Hour)
+	res, err := readStream(strings.NewReader(body), guard, &counters, time.Hour, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,7 @@ func TestReadStream_countsRunesNotBytes(t *testing.T) {
 	// Five runes, ten bytes in UTF-8.
 	body := `data: {"choices":[{"delta":{"content":"héllö"},"finish_reason":"stop","index":0}]}` + "\n\n" +
 		"data: [DONE]\n\n"
-	res, err := readStream(strings.NewReader(body), guard, &counters, time.Hour)
+	res, err := readStream(strings.NewReader(body), guard, &counters, time.Hour, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestReadStream_reportsAStreamThatEndsWithNothing(t *testing.T) {
 	guard := newStallGuard(func() {}, time.Hour, stallIdle)
 	defer guard.stop()
 
-	_, err := readStream(strings.NewReader(": ping\n\n"), guard, &counters, time.Hour)
+	_, err := readStream(strings.NewReader(": ping\n\n"), guard, &counters, time.Hour, nil)
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -660,4 +660,42 @@ func decodeJSON(t *testing.T, r *http.Request, v any) {
 // output buries the failures that matter.
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// CompleteStream must deliver fragments as they arrive AND return the same
+// whole answer Complete would, so a streaming caller and a buffering caller
+// never see different text.
+func TestReadStreamDeliversDeltasInOrder(t *testing.T) {
+	body := "data: {\"choices\":[{\"delta\":{\"content\":\"Yes — \"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"twice.\"}}]}\n\n" +
+		"data: [DONE]\n\n"
+	var counters streamCounters
+	guard := newStallGuard(func() {}, time.Hour, stallIdle)
+	var got []string
+	res, err := readStream(strings.NewReader(body), guard, &counters, time.Hour, func(d string) {
+		got = append(got, d)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, "|") != "Yes — |twice." {
+		t.Errorf("deltas = %v, want the fragments in arrival order", got)
+	}
+	if res.content != "Yes — twice." {
+		t.Errorf("content = %q, want the concatenation of the deltas", res.content)
+	}
+}
+
+// A nil callback is the buffered path; it must not panic.
+func TestReadStreamNilDeltaCallback(t *testing.T) {
+	body := "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n"
+	var counters streamCounters
+	guard := newStallGuard(func() {}, time.Hour, stallIdle)
+	res, err := readStream(strings.NewReader(body), guard, &counters, time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.content != "hi" {
+		t.Errorf("content = %q", res.content)
+	}
 }

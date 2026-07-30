@@ -91,7 +91,7 @@ func (s *streamCounters) attrs() []any {
 // endpoint proves the socket is alive, which is the only question the idle
 // bound is asking. A malformed data line is skipped rather than fatal: one
 // unparseable keepalive must not discard a summary that otherwise completed.
-func readStream(body io.Reader, guard *stallGuard, counters *streamCounters, idle time.Duration) (streamResult, error) {
+func readStream(body io.Reader, guard *stallGuard, counters *streamCounters, idle time.Duration, onDelta func(string)) (streamResult, error) {
 	var (
 		content strings.Builder
 		res     streamResult
@@ -126,6 +126,11 @@ func readStream(body io.Reader, guard *stallGuard, counters *streamCounters, idl
 		for _, ch := range chunk.Choices {
 			if ch.Delta.Content != "" {
 				content.WriteString(ch.Delta.Content)
+				// Hand the fragment onward as it arrives, for callers streaming
+				// to a browser. Nil for the ordinary buffered callers.
+				if onDelta != nil {
+					onDelta(ch.Delta.Content)
+				}
 				// Runes, not bytes: this endpoint returns non-ASCII routinely,
 				// and a "chars" figure inflated by UTF-8 encoding would misread
 				// as more output than the model produced.

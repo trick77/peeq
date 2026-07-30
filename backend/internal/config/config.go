@@ -52,6 +52,10 @@ type Config struct {
 	// endpoint gets room to breathe. Both are tunable; 0 disables the pacing.
 	SummarizeRequestDelay time.Duration
 	SummarizeVideoDelay   time.Duration
+	// AskCallTimeout bounds one interactive answer. Much shorter than
+	// ChatCallTimeout, which sizes a background summarize of a whole transcript:
+	// here a person is watching an empty panel.
+	AskCallTimeout time.Duration
 
 	// SummaryChunkTokens is the coarse chunk budget for the prose summary. The
 	// chat model has a ~1M-token context window, so a whole transcript fits in a
@@ -201,6 +205,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.SummarizeVideoDelay = vidDelay
+
+	askTimeout, err := envDuration("BACKEND_ASK_CALL_TIMEOUT", 90*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AskCallTimeout = askTimeout
 	idle, err := envDuration("BACKEND_CHAT_STREAM_IDLE_TIMEOUT", 90*time.Second)
 	if err != nil {
 		return Config{}, err
