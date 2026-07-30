@@ -47,16 +47,24 @@ type channelsPostRequest struct {
 type channelsPutRequest struct {
 	Autodownload   *bool   `json:"autodownload"`
 	FormatOverride *string `json:"format_override"`
+	// AutoSummary is the odd one out: it lives on channels, not subscriptions,
+	// so it is settable on a channel that is merely added. See the handler for
+	// why that changes when the "not subscribed" rejection applies.
+	AutoSummary *bool `json:"auto_summary"`
 }
 
 // channelItem is the JSON shape returned by GET /api/channels: one listed
 // channel, joined with its (optional) subscription state and video counts.
 type channelItem struct {
-	ID              string `json:"id"`
-	Handle          string `json:"handle,omitempty"`
-	Name            string `json:"name"`
-	Subscribed      bool   `json:"subscribed"`
-	Autodownload    bool   `json:"autodownload"`
+	ID           string `json:"id"`
+	Handle       string `json:"handle,omitempty"`
+	Name         string `json:"name"`
+	Subscribed   bool   `json:"subscribed"`
+	Autodownload bool   `json:"autodownload"`
+	// AutoSummary is whether peeq reads this channel's new videos before the
+	// user decides on them. Unlike Autodownload it lives on the channel, not
+	// the subscription, so it is meaningful on an unsubscribed row too.
+	AutoSummary     bool   `json:"auto_summary"`
 	FormatOverride  string `json:"format_override,omitempty"`
 	PendingCount    int    `json:"pending_count"`
 	DownloadedCount int    `json:"downloaded_count"`
@@ -267,6 +275,7 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 			Name:            it.Name,
 			Subscribed:      it.Subscribed,
 			Autodownload:    it.Autodownload,
+			AutoSummary:     it.AutoSummary,
 			FormatOverride:  it.FormatOverride,
 			PendingCount:    it.PendingCount,
 			DownloadedCount: it.DownloadedCount,
@@ -711,16 +720,52 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// auto_summary is written first, and against a different table. It is a
+	// property of the CHANNEL — "do I want peeq to read this channel's videos"
+	// — and survives an unsubscribe/resubscribe, so it must not be gated on a
+	// subscription row existing.
+	autoSummary := false
+	if req.AutoSummary != nil {
+		v, found, err := s.channels.SetAutoSummary(id, *req.AutoSummary)
+		if err != nil {
+			serverError(w, r, err, "update config failed")
+			return
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "channel not found")
+			return
+		}
+		autoSummary = v
+	}
+
 	autodownload, formatOverride, ok, err := s.channels.UpdateConfig(id, req.Autodownload, req.FormatOverride)
 	if err != nil {
 		serverError(w, r, err, "update config failed")
 		return
 	}
+	// "Not subscribed" is only an error for the two fields that live on the
+	// subscription. A request that carried nothing but auto_summary has already
+	// done its whole job above, and rejecting it here would make the toggle
+	// unusable on an added-but-unsubscribed channel.
 	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
+		if req.Autodownload != nil || req.FormatOverride != nil {
+			writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
+			return
+		}
+		writeJSON(w, map[string]any{"id": id, "auto_summary": autoSummary})
 		return
 	}
-	writeJSON(w, map[string]any{"id": id, "autodownload": autodownload, "format_override": formatOverride})
+	if req.AutoSummary == nil {
+		// Not sent, so report what is stored rather than the zero value a
+		// caller would otherwise read as "it just got turned off".
+		if c, err := s.channels.Get(id); err == nil && c != nil {
+			autoSummary = c.AutoSummary
+		}
+	}
+	writeJSON(w, map[string]any{
+		"id": id, "autodownload": autodownload,
+		"format_override": formatOverride, "auto_summary": autoSummary,
+	})
 }
 
 // handleChannelsSubscribe subscribes a channel, scheduling its first scan
@@ -948,6 +993,13 @@ type pendingItem struct {
 	// a publish date.
 	PublishedAt  string `json:"published_at,omitempty"`
 	DiscoveredAt string `json:"discovered_at"`
+	// SummaryStatus is the video's summary_status, or "" when peeq has not
+	// created a row for it yet. AutoSummary is whether the channel is opted in
+	// to being read at all. The card needs both: "" means "not read yet" on an
+	// opted-in channel and "never will be" on an opted-out one, and those are
+	// different cards.
+	SummaryStatus string `json:"summary_status"`
+	AutoSummary   bool   `json:"auto_summary"`
 }
 
 // handlePendingList returns every ledger entry in state 'pending'. Mirrors
@@ -982,6 +1034,8 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 			ThumbnailURL:    e.ThumbnailURL,
 			PublishedAt:     e.PublishedAt,
 			DiscoveredAt:    e.DiscoveredAt,
+			SummaryStatus:   e.SummaryStatus,
+			AutoSummary:     e.AutoSummary,
 		})
 	}
 	writeJSON(w, out)
@@ -1056,8 +1110,18 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePendingIgnore marks a pending ledger entry as ignored, removing it
-// from the pending list without ever creating a videos row. 404s if the
-// ledger row doesn't exist.
+// from the pending list. 404s if the ledger row doesn't exist.
+//
+// It also throws away whatever reading the video: the videos row created to
+// hold its summary, and the .vtt under .summaries/. That was the user's
+// explicit choice — ignoring a video means it is gone, not archived — and the
+// ledger row staying 'ignored' is what makes sure it never comes back to be
+// read a second time.
+//
+// The deletion is narrowly guarded (see dropInboxRead): only a row that is
+// still StatusNew AND whose transcript came from a caption fetch is touched.
+// A video the user downloaded and then somehow ignored, or one whose download
+// was cancelled back to 'new', keeps everything.
 func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
@@ -1073,9 +1137,59 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "ignore failed")
 		return
 	}
+	s.dropInboxRead(r, id)
 	// The item just left the inbox, so its cached thumbnail is dead weight.
 	s.removePendingThumbnail(id)
 	writeJSON(w, map[string]string{"status": "ignored"})
+}
+
+// dropInboxRead throws away everything peeq learned by reading a video: the
+// videos row holding the summary, and the caption file under .summaries/.
+// Best-effort — an ignore must succeed whether or not the cleanup does, since
+// the ledger row is already 'ignored' and that is what keeps the video out of
+// the Inbox.
+//
+// The two guards are the point of this function, not incidental to it.
+//
+// StatusNew alone would not do. It is the videos.status column DEFAULT, so any
+// row whose creator has not yet reached its SetStatus reads as 'new', and the
+// download worker deliberately returns a CANCELLED download to 'new'. Deleting
+// on that alone would let an Ignore destroy a real video's row.
+//
+// The subtitle path is the positive evidence. captionfetch is the only writer
+// under ytdlp.SummaryDirName, and the moment a video is downloaded
+// SetDownloaded repoints subtitle_path into the real media directory — so a row
+// that has ever been downloaded cannot match here, whatever its status says.
+func (s *server) dropInboxRead(r *http.Request, id string) {
+	if s.videos == nil || id == "" {
+		return
+	}
+	v, err := s.videos.Get(id)
+	if err != nil || v == nil {
+		return
+	}
+	if v.Status != videos.StatusNew || !isSummaryDirPath(v.SubtitlePath) {
+		return
+	}
+	if err := s.videos.Discard(id); err != nil {
+		slog.WarnContext(r.Context(), "ignore: discard inbox video row failed", "video_id", id, "err", err)
+		return
+	}
+	// The same traversal guard as removePendingThumbnail, for the same reason:
+	// a real video id is always a single path segment, and RemoveAll on a
+	// computed path deserves the check even where SafeMediaPath follows.
+	if s.mediaDir == "" || filepath.Base(id) != id || id == "." || id == ".." {
+		return
+	}
+	if safe, err := media.SafeMediaPath(s.mediaDir, filepath.Join(ytdlp.SummaryDirName, id)); err == nil {
+		_ = os.RemoveAll(safe)
+	}
+}
+
+// isSummaryDirPath reports whether relPath is a caption file the inbox caption
+// fetcher wrote, as opposed to one that arrived with a download.
+func isSummaryDirPath(relPath string) bool {
+	return strings.HasPrefix(filepath.ToSlash(relPath), ytdlp.SummaryDirName+"/")
 }
 
 // removePendingThumbnail drops a pending video's cached thumbnail directory

@@ -734,6 +734,7 @@ function ViewSwitch({
           onDeleted={() => setView("library")}
           onOpenChannel={onOpenChannel}
           onQueued={onQueued}
+          onBackToInbox={() => setView("inbox")}
         />
       );
     case "search":
@@ -755,6 +756,7 @@ function ViewSwitch({
         <Inbox
           onCountChange={setPendingCount}
           onOpenChannel={onOpenChannel}
+          onOpen={onOpenVideo}
           search={inboxSearch}
           onSearchChange={onInboxSearchChange}
           onQueued={onQueued}

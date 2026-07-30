@@ -269,6 +269,11 @@ export type Channel = {
   name: string;
   subscribed: boolean;
   autodownload: boolean;
+  // auto_summary is whether peeq reads this channel's new videos — fetching
+  // their captions and writing a summary — before you decide on them. It lives
+  // on the channel rather than the subscription, so unlike autodownload it is
+  // meaningful on an unsubscribed row.
+  auto_summary: boolean;
   format_override?: string;
   pending_count: number;
   downloaded_count: number;
@@ -325,6 +330,16 @@ export type PendingItem = {
   // discovered_at is when the scan first saw the upload: a sort fallback
   // only, never rendered as a publish date.
   discovered_at: string;
+  // summary_status is the video's summary lifecycle, or "" when peeq has not
+  // created a row for it yet. auto_summary is whether its channel is opted in
+  // to being read at all.
+  //
+  // The card needs both, because "" alone is ambiguous: on an opted-in channel
+  // it means the caption fetcher has not reached this video yet, and on an
+  // opted-out one it means it never will. Those are different cards — a
+  // progress marker versus nothing at all.
+  summary_status: SummaryStatus | "";
+  auto_summary: boolean;
 };
 
 // CookieHealth mirrors httpapi.cookieHealthResponse — distinct from

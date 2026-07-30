@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { PillStrip } from "../components/PillStrip";
 import { SearchField } from "../components/SearchField";
 import { ThumbFill } from "../components/ThumbFill";
@@ -64,9 +64,37 @@ function compareBy(
   }
 }
 
+// summaryPill renders the card's one extra fact: whether peeq has read this
+// video yet.
+//
+// Three outcomes, and the third is why the API sends two fields instead of one.
+//
+//   done            → "summary", and the card opens something worth opening
+//   pending/running → "reading…", captions are being fetched or summarized
+//   anything else   → nothing at all
+//
+// The empty-status case splits on auto_summary. On an opted-in channel it means
+// the fetcher has not reached this video yet, which is progress and deserves
+// the marker; on an opted-out one it means it never will, and a marker would be
+// a promise peeq is not going to keep. no_transcript lands in the same silence:
+// YouTube has no captions for it, or they turned out to be music, and neither
+// is something the user can act on.
+function summaryPill(item: PendingItem) {
+  if (item.summary_status === "done") {
+    return <span className="metapill oncover has-summary">summary</span>;
+  }
+  const reading =
+    item.summary_status === "pending" ||
+    item.summary_status === "running" ||
+    (item.summary_status === "" && item.auto_summary);
+  if (!reading) return null;
+  return <span className="metapill oncover is-reading">reading…</span>;
+}
+
 export function Inbox({
   onCountChange,
   onOpenChannel,
+  onOpen,
   search = "",
   onSearchChange,
   onQueued,
@@ -80,6 +108,13 @@ export function Inbox({
    */
   onCountChange?: (n: number | undefined) => void;
   onOpenChannel?: (id: string) => void;
+  /**
+   * Opens a video's page. An inbox video has no media yet, so that page shows
+   * what peeq read of it — the summary — rather than a player. It is the same
+   * route the Library opens, deliberately: once the video is downloaded the
+   * URL does not change, it just gains a video.
+   */
+  onOpen?: (id: string) => void;
   /**
    * The search box's text, owned by App so it survives navigating away and
    * back — the same arrangement the Library and the Channels list use.
@@ -227,6 +262,25 @@ export function Inbox({
     );
     return [...list].sort(compareBy(sort));
   }, [searchScoped, channel, sort]);
+
+  // handleCardClick opens the video's page from anywhere on the card that is
+  // not already something else.
+  //
+  // The guard is copied verbatim from VideoCard, and both halves earn their
+  // place. The closest() check lets the actbar's Download and Ignore, the
+  // channel link and the title's YouTube link keep their own click — without
+  // it, pressing Ignore would also navigate. The selection check stops a
+  // drag-to-select of the title from ending in a page change.
+  //
+  // Until now the Inbox card carried `.card { cursor: pointer }` from the
+  // shared grid-tile rule and did nothing at all when clicked. This closes that
+  // gap rather than opening one: the card already claimed to be clickable.
+  function handleCardClick(e: MouseEvent<HTMLElement>, item: PendingItem) {
+    if (!onOpen) return;
+    if ((e.target as HTMLElement).closest('button, a, [role="button"]')) return;
+    if (window.getSelection()?.toString()) return;
+    onOpen(item.video_id);
+  }
 
   // If the active channel filter empties out (its last item was downloaded or
   // ignored), fall back to "all" so the user isn't left staring at a blank
@@ -462,7 +516,11 @@ export function Inbox({
           onPointerMove={hoverLocked ? () => setHoverLocked(false) : undefined}
         >
           {visible.map((item) => (
-            <article key={item.video_id} className="card video-card">
+            <article
+              key={item.video_id}
+              className="card video-card"
+              onClick={onOpen ? (e) => handleCardClick(e, item) : undefined}
+            >
               {/* Poster and action bar are one object, so they share a wrapper
                 rather than sitting as two children of .card — .card lays its
                 children out with a 10px gap, and the bar has to touch the
@@ -483,6 +541,14 @@ export function Inbox({
                   <span className="dur">
                     {formatDuration(item.duration_seconds)}
                   </span>
+                  {/* The poster's free bottom-left corner, opposite the
+                    runtime — the same slot the Library card gives its category
+                    pill, so the two lists put their one extra fact in the same
+                    place. A text row would be the wrong home: at the narrowest
+                    card the grid draws, a fourth item on the eyebrow truncates
+                    the channel name, while this corner is the same size on
+                    every card. */}
+                  {summaryPill(item)}
                 </div>
                 {/* The pair rode the poster itself for one release. That put
                   chrome over the artwork — squarely over the title creators
@@ -555,11 +621,15 @@ export function Inbox({
                   </>
                 ) : null}
               </div>
-              {/* Nothing in the inbox has been downloaded yet, so there is no
-                local player to open — the only thing behind a pending title is
-                the video on YouTube, and that is where clicking it goes. New
-                tab, same reasoning as the channel header's handle link: peeq
-                is the archive, and losing your place in a triage list to a
+              {/* The title still goes to YouTube, and deliberately still does
+                now that the card itself opens something. The two are different
+                destinations for different questions: the card answers "what is
+                this about", from what peeq read of it, and the title answers
+                "show me the actual video". Collapsing them would cost the
+                second one, and there is nowhere else on the card to put it.
+
+                New tab, same reasoning as the channel header's handle link:
+                peeq is the archive, and losing your place in a triage list to a
                 YouTube page would be the wrong trade.
 
                 The ledger's url is best-effort (a scan can record an entry

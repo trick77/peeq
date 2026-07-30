@@ -4943,3 +4943,123 @@ details.tomb-sect[open] > summary svg {
   max-width: 42ch;
   line-height: 1.55;
 }
+
+/* ── inbox summaries ──────────────────────────────────────────────────── */
+
+/* The two states of the Inbox card's summary marker. Both ride the existing
+   `.thumb .metapill.oncover` slot — position, scrim and blur are inherited from
+   it, so only the colour differs and the marker cannot drift out of the corner
+   the Library's category pill uses.
+
+   `has-summary` takes the accent because a lit accent is this app's colour for
+   an active choice, and a card with a summary is the one offering you something
+   to read. `is-reading` stays faint: it is a promise, not an invitation. */
+.thumb .metapill.oncover.has-summary {
+  color: var(--color-accent-strong);
+  border-color: var(--color-accent-dim);
+}
+.thumb .metapill.oncover.is-reading {
+  color: var(--color-faint);
+}
+
+/* The page for a video peeq has read but not downloaded. Bounded well below
+   the player's width: the whole content is ~190 words of prose (the summarizer
+   caps it there), and running that to a 1100px measure would be unreadable. */
+.unfetched {
+  max-width: 860px;
+}
+.unfetched-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  cursor: pointer;
+}
+.unfetched-back:hover {
+  color: var(--color-ink-dim);
+}
+
+.unfetched-head {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+/* A reference image, not a stage. flex: none so it keeps its width whatever
+   the title does, and min-width: 0 on the text half so a long unbroken title
+   cannot push the poster out of the row. */
+.unfetched-thumb {
+  width: 260px;
+  flex: none;
+}
+.unfetched-ident {
+  min-width: 0;
+}
+.unfetched-ident h1 {
+  margin: 6px 0 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-title);
+  font-weight: 500;
+  line-height: 1.35;
+  text-wrap: balance;
+}
+.unfetched-acts {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}
+/* Both margins written out. A bare margin-top would leave the user-agent's
+   bottom margin on the <p> in place, and the note would float between the
+   buttons above it and the rule below rather than belonging to either. */
+.unfetched-note,
+.unfetched-decided {
+  margin: 10px 0 0;
+  font-size: var(--text-label);
+  color: var(--color-faint);
+}
+.unfetched-decided {
+  color: var(--color-accent-strong);
+}
+
+/* The summary is the entire page, so it is set for reading rather than packed
+   into a panel: body-size type, generous leading, and a measure that stops at
+   66 characters wherever the window ends up. */
+.unfetched-body {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--color-border-soft);
+}
+.unfetched-body p {
+  margin: 0 0 14px;
+  max-width: 66ch;
+  color: var(--color-ink-dim);
+  font-size: var(--text-body);
+  line-height: 1.65;
+}
+.unfetched-body p:last-child {
+  margin-bottom: 0;
+}
+.unfetched-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-faint);
+}
+
+/* Below this the poster would be squeezed to a stamp beside the title, so it
+   goes full width above it instead — the ordinary phone layout, and the reason
+   this page beats a modal on a small screen. */
+@media (max-width: 700px) {
+  .unfetched-head {
+    flex-direction: column;
+  }
+  .unfetched-thumb {
+    width: 100%;
+  }
+}

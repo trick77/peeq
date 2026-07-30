@@ -42,6 +42,7 @@ import {
 import { DOT } from "../sep";
 import { MediaStats } from "./player/MediaStats";
 import { ContentsCard } from "./player/ContentsCard";
+import { UnfetchedVideo } from "./player/UnfetchedVideo";
 import { SummaryCard, HighlightsCard } from "./player/SidebarPanels";
 import { MetaHeader } from "./player/MetaHeader";
 
@@ -83,6 +84,7 @@ export function Player({
   onDeleted,
   onOpenChannel,
   onQueued,
+  onBackToInbox,
 }: {
   videoId: string | null;
   // seekTo — the Task 18 jump-to-moment target (Search's onOpen, via App's
@@ -106,6 +108,10 @@ export function Player({
   // and poll reflect it at once. Same reason as Library's: the video has just
   // left the ready-only library and the rail is the only thing that will say so.
   onQueued?: () => void;
+  // onBackToInbox — where an inbox video's page goes when the user is done
+  // with it, either by pressing Back or by ignoring it. Only ever used by the
+  // UnfetchedVideo branch; a downloaded video has no inbox to return to.
+  onBackToInbox?: () => void;
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -556,6 +562,27 @@ export function Player({
         <Spinner size="15px" />
         Loading
       </p>
+    );
+  }
+
+  // A video peeq has read but not downloaded takes a different page entirely.
+  //
+  // The branch sits here, after the loading and error returns, because
+  // everything above it is about GETTING the video and applies either way.
+  // Everything below is about playing one, and none of it can run: there is no
+  // media to seek, no position to resume, no stream to grant.
+  //
+  // Same route on purpose. /video/<id> is the video's address whether or not
+  // peeq holds the file, so downloading it changes the page under a URL that
+  // does not move.
+  if (video.status === "new") {
+    return (
+      <UnfetchedVideo
+        video={video}
+        onBack={onBackToInbox}
+        onQueued={onQueued}
+        onDismissed={onBackToInbox}
+      />
     );
   }
 

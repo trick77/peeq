@@ -168,7 +168,16 @@ func (s *Store) SetCategoryIfUnset(id, category string) (bool, error) {
 // reading 'uncategorized' comes back every idle turn and burns a classify call
 // each time, forever.
 //
-// Migration 0004's reset selects on these same two rules; the two must stay in
+// StatusNew is the one status that IS excluded, and it is the exception that
+// proves the paragraph above. An inbox video — captions read, summary written,
+// still awaiting the decision to download — has a summary and is uncategorized,
+// so it matches every other condition here. But its category was skipped on
+// purpose: the summarize worker stops after the prose for exactly these rows,
+// so that a video the user ignores never cost a classify call. This sweep
+// would quietly undo that, spending one call per inbox video, and after any
+// category-reset migration spending it again on every video ever declined.
+//
+// Migration 0004's reset selects on these same rules; the two must stay in
 // step, and TestResetSetMatchesTheSweep pins them together.
 //
 // skip is the caller's in-process set of video ids whose classify call errored,
@@ -176,7 +185,8 @@ func (s *Store) SetCategoryIfUnset(id, category string) (bool, error) {
 // backlog.
 func (s *Store) NextUnclassified(skip []string) (*Video, error) {
 	q := "SELECT " + videoColumns + " " + videoFrom + `
-		WHERE v.category = ? AND v.summary <> '' AND v.category_manual = 0`
+		WHERE v.category = ? AND v.summary <> '' AND v.category_manual = 0
+		  AND v.status <> '` + StatusNew + `'`
 	args := []any{UncategorizedCategory}
 	if len(skip) > 0 {
 		q += " AND v.id NOT IN (?" + strings.Repeat(",?", len(skip)-1) + ")"

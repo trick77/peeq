@@ -22,6 +22,7 @@ import (
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/captionfetch"
 	"github.com/trick77/peeq/internal/channelmeta"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
@@ -341,6 +342,21 @@ func run() error {
 		},
 	})
 
+	// captionWorker reads pending inbox videos: it fetches captions on their own
+	// and hands them to summarizeWorker, so a video can be judged before it is
+	// downloaded. It shares the yt-dlp pacer with the scans, and deliberately
+	// does not mark its calls interactive — nobody is waiting on one.
+	captionWorker := captionfetch.NewWorker(captionfetch.Deps{
+		Fetcher:   runner,
+		Ledger:    ledgerStore,
+		Videos:    videosStore,
+		Summaries: summaryJobsStore,
+		// Must match the download worker's, three declarations up: if the two
+		// ever ask YouTube for different caption languages, the transcript
+		// summarized from the Inbox is not the one the library ends up with.
+		DefaultSubLang: cfg.DefaultSubLang,
+	})
+
 	// metaRefresher is shared: the HTTP layer resolves a channel the first time
 	// someone opens its page, and metaWorker re-reads subscribed channels once
 	// a week. One instance, one implementation of fetch-and-store.
@@ -376,16 +392,16 @@ func run() error {
 		Videos: videosStore,
 	})
 
-	// Bound all eight background goroutines' lifetimes to the process: the
+	// Bound all nine background goroutines' lifetimes to the process: the
 	// download worker, the retention sweeper, the yt-dlp self-update ticker,
 	// the scan scheduler, the summarize worker, the channel-metadata
-	// refresher, the SponsorBlock backfill and the media-probe backfill.
-	// workerWG.Wait() below (after serve returns, i.e. after ctx is
-	// cancelled) blocks until all eight have actually observed ctx.Done() and
-	// returned, rather than exiting the process out from under them. All
-	// eight loops exit promptly on ctx.Done(), so this wait is short.
+	// refresher, the SponsorBlock backfill, the media-probe backfill and the
+	// inbox caption fetcher. workerWG.Wait() below (after serve returns, i.e.
+	// after ctx is cancelled) blocks until all nine have actually observed
+	// ctx.Done() and returned, rather than exiting the process out from under
+	// them. All nine loops exit promptly on ctx.Done(), so this wait is short.
 	var workerWG sync.WaitGroup
-	workerWG.Add(8)
+	workerWG.Add(9)
 	go func() {
 		defer workerWG.Done()
 		slog.Info("download worker started")
@@ -424,6 +440,11 @@ func run() error {
 		defer workerWG.Done()
 		slog.Info("media probe backfill started")
 		mediaprobeWorker.Run(ctx)
+	}()
+	go func() {
+		defer workerWG.Done()
+		slog.Info("inbox caption fetcher started")
+		captionWorker.Run(ctx)
 	}()
 
 	slog.Info("SSE hub ready")

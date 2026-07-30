@@ -38,6 +38,12 @@ type Channel struct {
 	ResolveOk   bool
 	AddedAt     string
 	FirstSeenAt string
+	// AutoSummary is whether peeq reads this channel's new videos — fetching
+	// their captions and writing a summary — before the user decides whether to
+	// download them. Default true (migration 0018); the switch exists for the
+	// channel subscribed to for one video in ten, where the other nine are
+	// summaries nobody asked for.
+	AutoSummary bool
 }
 
 // Subscription mirrors one row of the subscriptions table. BaselinedAt and
@@ -70,6 +76,7 @@ type ListItem struct {
 	Channel
 	Subscribed      bool
 	Autodownload    bool
+	AutoSummary     bool
 	FormatOverride  string
 	PendingCount    int
 	DownloadedCount int
@@ -336,7 +343,8 @@ func (s *Store) Get(id string) (*Channel, error) {
 // from Get's column order, which scanChannel depends on.
 const channelColumns = `c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
        c.subscriber_count, c.verified,
-       COALESCE(c.resolved_at, ''), c.resolve_ok, COALESCE(c.added_at, ''), c.first_seen_at`
+       COALESCE(c.resolved_at, ''), c.resolve_ok, COALESCE(c.added_at, ''), c.first_seen_at,
+       c.auto_summary`
 
 // rowScanner is *sql.Row and *sql.Rows both.
 type rowScanner interface{ Scan(dest ...any) error }
@@ -347,7 +355,7 @@ func scanChannel(row rowScanner) (*Channel, error) {
 	var c Channel
 	if err := row.Scan(&c.ID, &c.Handle, &c.Name, &c.Description,
 		&c.AvatarPath, &c.BannerPath, &c.Subscribers, &c.Verified,
-		&c.ResolvedAt, &c.ResolveOk, &c.AddedAt, &c.FirstSeenAt); err != nil {
+		&c.ResolvedAt, &c.ResolveOk, &c.AddedAt, &c.FirstSeenAt, &c.AutoSummary); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -404,7 +412,7 @@ WITH lv AS (
 SELECT c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
        COALESCE(c.resolved_at, ''), COALESCE(c.added_at, ''), c.first_seen_at,
        s.channel_id IS NOT NULL AS subscribed,
-       COALESCE(s.autodownload, 0), COALESCE(s.format_override, ''),
+       COALESCE(s.autodownload, 0), COALESCE(s.format_override, ''), c.auto_summary,
        (SELECT count(*) FROM channel_videos cv WHERE cv.channel_id = c.id AND cv.state = 'pending'),
        (SELECT count(*) FROM videos v WHERE v.channel_id = c.id AND v.status = 'downloaded'),
        COALESCE(lv.last_video_at, ''),
@@ -458,7 +466,7 @@ WHERE (c.added_at IS NOT NULL OR ` + hasDownloadsPredicate + `)`
 		if err := rows.Scan(
 			&it.ID, &it.Handle, &it.Name, &it.Description, &it.AvatarPath, &it.BannerPath,
 			&it.ResolvedAt, &it.AddedAt, &it.FirstSeenAt,
-			&it.Subscribed, &it.Autodownload, &it.FormatOverride,
+			&it.Subscribed, &it.Autodownload, &it.FormatOverride, &it.AutoSummary,
 			&it.PendingCount, &it.DownloadedCount,
 			&it.LastVideoAt, &it.Dormant,
 		); err != nil {
@@ -567,6 +575,28 @@ RETURNING autodownload, format_override`,
 		return false, "", false, fmt.Errorf("update config %s: %w", channelID, err)
 	}
 	return resultAutodownload, resultFormatOverride, true, nil
+}
+
+// SetAutoSummary turns the per-channel inbox summary on or off, returning the
+// stored value. ok is false (with a nil error) when no such channel exists.
+//
+// Deliberately NOT folded into UpdateConfig, which updates subscriptions in one
+// atomic statement. auto_summary lives on channels, for a reason worth stating:
+// a channel can be unsubscribed and resubscribed, and "do I want peeq to read
+// this channel's videos" is a judgement about the channel that should survive
+// that. Merging the two would mean either a cross-table UPDATE, giving up the
+// no-read-to-race property UpdateConfig's comment is about, or moving the
+// column onto a row that is deleted every time the user unsubscribes.
+func (s *Store) SetAutoSummary(channelID string, on bool) (result bool, ok bool, err error) {
+	row := s.db.QueryRowContext(context.Background(), `
+UPDATE channels SET auto_summary = ? WHERE id = ? RETURNING auto_summary`, on, channelID)
+	if err := row.Scan(&result); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, false, nil
+		}
+		return false, false, fmt.Errorf("set auto summary %s: %w", channelID, err)
+	}
+	return result, true, nil
 }
 
 // ClaimDue returns the subscription with the oldest next_scan_at <= now, or

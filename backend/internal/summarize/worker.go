@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/trick77/peeq/internal/subtitles"
 	"github.com/trick77/peeq/internal/summaryjobs"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // Embedder is the subset of rag.EmbedClient the worker needs. Batched, because
@@ -223,6 +225,30 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		summary = s
 	} else {
 		run.skipped("summary", "already stored")
+	}
+
+	// An inbox video stops here, with the prose and nothing else.
+	//
+	// StatusNew is "recorded, nothing requested yet": peeq read this video's
+	// captions to help decide whether to download it, and the card is still
+	// sitting in the Inbox awaiting that decision. The remaining three steps
+	// are all investments in a video the library keeps — a category to filter
+	// by, embeddings to search, key points to navigate — and this one may well
+	// be ignored, in which case every one of them was thrown away.
+	//
+	// Nothing special is needed to resume. When the video is downloaded, the
+	// download worker enqueues a fresh summary job, and the skip-what-exists
+	// checks around this block mean that job spends nothing on the summary and
+	// runs exactly the three steps deferred here. That is the whole reason
+	// deciding to download never pays for the expensive call twice.
+	if isInboxRead(video) {
+		if err := w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryDone, ""); err != nil {
+			return true, w.failJob(job, video, run, err.Error())
+		}
+		w.emit(video.ID, videos.SummaryDone, "")
+		run.finished("done_inbox")
+		_ = w.d.Jobs.Finish(job.ID, summaryjobs.StateDone, "")
+		return true, nil
 	}
 
 	// Step 2 — category (best-effort). It needs only the title and the summary,
@@ -518,6 +544,29 @@ func (r *analysisRun) finished(outcome string) {
 		"attempt", attemptLabel(r.job),
 		"will_retry", outcome != "done" && r.job.Attempts < r.job.MaxAttempts)
 	r.log.Info("summarize worker: analysis finished", append(attrs, total.LogAttrs()...)...)
+}
+
+// isInboxRead reports whether this video's transcript was fetched to help
+// decide whether to download it, rather than obtained by downloading it.
+//
+// Both halves are load-bearing, and neither is sufficient alone.
+//
+// The status is not, because 'new' is the videos.status COLUMN DEFAULT: any
+// row written by an Upsert whose caller has not yet reached its SetStatus is
+// momentarily 'new', and so is every row in a test that never sets one.
+// Truncating the pipeline on that alone would silently cost real downloads
+// their category, embeddings and key points, and the symptom — analysis that
+// is complete but shallow — is close to invisible.
+//
+// The path is not, because it is only meaningful in combination: it says where
+// the .vtt came from, and captionfetch is the sole writer under
+// ytdlp.SummaryDirName. Once the video is downloaded, SetDownloaded repoints
+// subtitle_path at the real media directory, so the same row stops matching
+// here and its next summary job runs the full pipeline — which is exactly the
+// handover this feature promises.
+func isInboxRead(v *videos.Video) bool {
+	return v.Status == videos.StatusNew &&
+		strings.HasPrefix(filepath.ToSlash(v.SubtitlePath), ytdlp.SummaryDirName+"/")
 }
 
 // finishNoTranscript closes out a video that has nothing to summarize. It is a
