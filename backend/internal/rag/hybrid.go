@@ -18,10 +18,42 @@ const rrfK = 60
 // vector hit at rank 3 scores 1/63, beating an exact term match at FTS rank 5
 // on 1/65. A chunk that literally contains the user's words is the stronger
 // evidence, so the keyword lane is weighted above the semantic one.
+// The keyword lane's weight depends on WHICH tier of BuildFTSQueries answered,
+// because the tiers are not equal evidence. Tier 0 means every word the user
+// typed is in this chunk. Tier 2 — the recall floor an unanswerable question
+// falls through to — means ANY ONE content word is, which for a question like
+// "did someone talk about electrolytes in endurance sport" is satisfied by
+// "talk" or "sport" alone.
+//
+// Flat-weighting them let up to searchCandidates chunks sharing one common word
+// enter at full confidence and outrank passages that are genuinely about the
+// topic. That is the same failure the lane weights exist to prevent, one level
+// down: weak evidence beating strong because the fusion could not tell them
+// apart.
+//
+// WeightKeywordAny sits BELOW WeightSemantic deliberately. A chunk that happens
+// to share a word is worse evidence than one the embedding places near the
+// question.
 const (
-	WeightKeyword  = 1.0
-	WeightSemantic = 0.6
+	WeightKeywordStrict  = 1.0
+	WeightKeywordContent = 0.9
+	WeightKeywordAny     = 0.4
+	WeightSemantic       = 0.6
 )
+
+// WeightForTier maps a BuildFTSQueries tier index to its confidence. Tiers past
+// the ladder clamp to the floor rather than defaulting high — a tier this does
+// not know about is by definition a looser one.
+func WeightForTier(tier int) float64 {
+	switch tier {
+	case 0:
+		return WeightKeywordStrict
+	case 1:
+		return WeightKeywordContent
+	default:
+		return WeightKeywordAny
+	}
+}
 
 // DefaultMaxDistance is the L2 cutoff past which a semantic hit is treated as
 // "not actually about this" and dropped before ranking.

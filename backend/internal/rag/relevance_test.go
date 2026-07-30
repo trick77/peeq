@@ -44,7 +44,7 @@ func TestFuseWeightedKeepsLiteralMatchesOnTop(t *testing.T) {
 
 	// Weighted fusion — a literal match outranks a merely-nearest one.
 	after := FuseWeighted([]Lane{
-		{Hits: keyword, Weight: WeightKeyword},
+		{Hits: keyword, Weight: WeightKeywordStrict},
 		{Hits: semantic, Weight: WeightSemantic},
 	}, 10)
 	if got, want := rankOf(after, "attia", 7), rankOf(after, "ufo", 1); got > want {
@@ -196,7 +196,7 @@ func TestFuseWeightedZeroWeightMutesTheLane(t *testing.T) {
 
 	out := FuseWeighted([]Lane{
 		{Hits: loud, Weight: 0},
-		{Hits: real1, Weight: WeightKeyword},
+		{Hits: real1, Weight: WeightKeywordStrict},
 	}, 10)
 	if len(out) != 1 || out[0].VideoID != "kept" {
 		t.Fatalf("a zero-weight lane contributed hits: %+v", out)
@@ -211,5 +211,52 @@ func TestFuseWeightedZeroWeightMutesTheLane(t *testing.T) {
 	// FuseRRF still treats every list as equal — it builds lanes at weight 1.
 	if got := FuseRRF([][]Hit{loud, real1}, 10); len(got) != 2 {
 		t.Errorf("FuseRRF should keep both lists, got %+v", got)
+	}
+}
+
+func TestWeightForTierDescendsAndFloors(t *testing.T) {
+	if !(WeightForTier(0) > WeightForTier(1) && WeightForTier(1) > WeightForTier(2)) {
+		t.Errorf("tier weights must descend: %v %v %v",
+			WeightForTier(0), WeightForTier(1), WeightForTier(2))
+	}
+	// The floor sits below the semantic lane on purpose: a chunk that happens to
+	// share one word is worse evidence than one the embedding placed near the
+	// question.
+	if WeightForTier(2) >= WeightSemantic {
+		t.Errorf("the OR floor (%v) must weigh less than the semantic lane (%v)",
+			WeightForTier(2), WeightSemantic)
+	}
+	// A tier the ladder does not know is looser still, so it clamps DOWN.
+	if WeightForTier(9) != WeightKeywordAny {
+		t.Errorf("unknown tier = %v, want the floor %v", WeightForTier(9), WeightKeywordAny)
+	}
+	if WeightForTier(0) != WeightKeywordStrict {
+		t.Errorf("tier 0 = %v, want %v", WeightForTier(0), WeightKeywordStrict)
+	}
+}
+
+// The bug in miniature. A question whose strict tiers match nothing falls
+// through to "any one content word", and a chunk matching only that word used
+// to enter at FULL keyword confidence — outranking a passage the embedding
+// placed close to the question.
+func TestOrFloorDoesNotOutrankASemanticHit(t *testing.T) {
+	shared := []Hit{{VideoID: "shares-a-word", Ordinal: 1, Text: "a talk about sport"}}
+	onTopic := []Hit{{VideoID: "on-topic", Ordinal: 1, Text: "electrolyte replacement", Distance: l2(0.55)}}
+
+	// Flat weighting — what this change removes.
+	before := FuseWeighted([]Lane{
+		{Hits: shared, Weight: WeightKeywordStrict},
+		{Hits: onTopic, Weight: WeightSemantic},
+	}, 10)
+	if before[0].VideoID != "shares-a-word" {
+		t.Fatalf("premise broken: flat weighting already ranks the on-topic hit first (%+v)", before)
+	}
+
+	after := FuseWeighted([]Lane{
+		{Hits: shared, Weight: WeightForTier(2)},
+		{Hits: onTopic, Weight: WeightSemantic},
+	}, 10)
+	if after[0].VideoID != "on-topic" {
+		t.Errorf("the OR floor still outranks a genuine semantic hit: %+v", after)
 	}
 }
