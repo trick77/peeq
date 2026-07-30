@@ -49,10 +49,14 @@ export function splitCitations(text: string, known: Set<number>): AnswerPart[] {
     if (/^\d+$/.test(inner) && known.has(n)) {
       flush();
       parts.push({ kind: "cite", n });
-    } else {
-      buf += text.slice(i, close + 1);
+      i = close + 1;
+      continue;
     }
-    i = close + 1;
+    // Not a marker. Consume only the bracket, not the whole span up to that
+    // "]": the "]" may belong to a LATER marker ("[note and [1]"), and
+    // swallowing the span would render a real citation as literal text.
+    buf += text[i];
+    i++;
   }
   flush();
   return parts;

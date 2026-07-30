@@ -62,6 +62,18 @@ describe("splitCitations", () => {
     );
   });
 
+  // A stray "[" earlier in the answer must not consume the "]" that closes a
+  // real marker further along, or the citation renders as literal text.
+  it("still links a citation after an unmatched bracket", () => {
+    const got = splitCitations("an aside [ and so[1] here", known);
+    expect(got.filter((p) => p.kind === "cite")).toEqual([
+      { kind: "cite", n: 1 },
+    ]);
+    expect(got.map((p) => (p.kind === "text" ? p.text : "")).join("")).toBe(
+      "an aside [ and so here",
+    );
+  });
+
   it("handles empty text", () => {
     expect(splitCitations("", known)).toEqual([]);
   });

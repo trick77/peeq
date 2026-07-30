@@ -180,6 +180,25 @@ func TestAnswerMidStreamFailureKeepsEarlierTokens(t *testing.T) {
 	}
 }
 
+// A clean stream that carried no content is the one failure that arrives with
+// err == nil: the endpoint can finish on "length" after spending the whole
+// token budget reasoning. Reporting it is what keeps the panel from rendering a
+// header and a source list with nothing between them.
+func TestAnswerWithEmptyCompletionReportsAnError(t *testing.T) {
+	deps, ask := answerDeps(t)
+	ask.deltas = nil
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := names(events(t, rec.Body.String())); strings.Join(got, ",") != "sources,error,done" {
+		t.Fatalf("frames = %v, want sources,error,done", got)
+	}
+}
+
 func TestAnswerBlankQueryStreamsNothing(t *testing.T) {
 	deps, ask := answerDeps(t)
 	h := New(deps)

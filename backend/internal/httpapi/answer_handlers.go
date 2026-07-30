@@ -47,9 +47,18 @@ const (
 	// the model needs the gist, not every word, and 12 untruncated chunks would
 	// dominate the request.
 	answerExcerptRunes = 1200
-	// answerMaxTokens bounds what the answer can cost. The prompt asks for at
-	// most a few sentences, so this is a ceiling rather than a target.
-	answerMaxTokens = 700
+	// answerMaxTokens bounds what the answer can cost. It is a ceiling, not a
+	// target: the prompt asks for at most six sentences, which is a couple of
+	// hundred tokens.
+	//
+	// It has to be MUCH larger than that anyway, because the cap counts
+	// reasoning tokens (see llm.WithMaxTokens) and this call reasons — thinking
+	// is on by default. Sized too tightly, the model spends the whole budget
+	// thinking, the endpoint ends the stream with finish_reason "length" and no
+	// content, and the caller sees an empty answer with NO error to report:
+	// sources, a spinner, then a blank panel. 8000 is what summarize gives its
+	// one other thinking-on call; this one is far shorter, so half of that.
+	answerMaxTokens = 4000
 )
 
 // handleAnswer answers GET /api/search/answer?q=: it runs the same retrieval
@@ -117,14 +126,24 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 
 	ctx := llm.WithMaxTokens(r.Context(), answerMaxTokens)
 	ctx = llm.WithCall(ctx, llm.CallInfo{Step: "answer"})
-	_, err = s.ask.CompleteStream(ctx, answerMessages(q, excerpts), func(delta string) {
+	answer, err := s.ask.CompleteStream(ctx, answerMessages(q, excerpts), func(delta string) {
 		// A send error means the browser disconnected. Nothing to do about it
 		// here; the request context is already cancelled, which unwinds the
 		// upstream call.
 		send("token", map[string]string{"text": delta})
 	})
-	if err != nil {
+	switch {
+	case err != nil:
 		slog.Warn("answer: chat failed", "err", err)
+		send("error", map[string]string{"error": "answer unavailable"})
+	case strings.TrimSpace(answer) == "":
+		// A clean stream that carried no content is still a failure, and the
+		// only one that arrives without an error: the endpoint can end with
+		// finish_reason "length" after spending the whole token budget on
+		// reasoning. Without this the panel renders a header, a source list and
+		// nothing between them, which reads as a broken page rather than as a
+		// call that did not produce an answer.
+		slog.Warn("answer: chat returned no content")
 		send("error", map[string]string{"error": "answer unavailable"})
 	}
 }
@@ -148,15 +167,23 @@ func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []string) {
 		if perVideo[h.VideoID] >= answerMaxSourcesPerVideo {
 			continue
 		}
+		// A summary chunk describes the whole video and is stored at second 0
+		// (rag.buildRows), so it is exempt from the moment bucket in BOTH
+		// directions: it is never suppressed by an earlier hit, and it must
+		// never claim bucket 0 either — doing so would drop the genuine
+		// transcript hit in the video's first thirty seconds.
+		isSummary := h.Kind == rag.KindSummary
 		key := fmt.Sprintf("%s:%d", h.VideoID, h.StartSeconds/answerMomentBucket)
-		if h.Kind != rag.KindSummary && seen[key] {
+		if !isSummary && seen[key] {
 			continue
 		}
 		v, err := s.videos.Get(h.VideoID)
 		if err != nil || v == nil {
 			continue
 		}
-		seen[key] = true
+		if !isSummary {
+			seen[key] = true
+		}
 		perVideo[h.VideoID]++
 
 		n := len(sources) + 1
