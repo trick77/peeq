@@ -3,7 +3,15 @@ import { Icon } from "../icons";
 import { Button } from "../ui";
 import { ThumbFill } from "./ThumbFill";
 import type { Video } from "../api/types";
-import { daysSince, formatAge, formatAgo, formatDuration } from "../format";
+import {
+  daysSince,
+  formatAge,
+  formatAgo,
+  formatDuration,
+  shortWatchLink,
+  videoLabel,
+  watchURL,
+} from "../format";
 import { CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
 
 // VideoCard — one grid tile, per the mockup's `.card`/`.thumb`/`.life`
@@ -75,11 +83,28 @@ export function VideoCard({
       ? categoryMeta(video.category)
       : null;
 
-  // A video added by URL is enqueued before its metadata is known, so its row
-  // carries no title until the download worker's preflight resolves one. Fall
-  // back to the id — the same fallback Up next uses — rather than rendering an
-  // empty <h3> and an "Open " aria-label with nothing after it.
-  const displayTitle = video.title || video.id;
+  // A video added by URL is enqueued before its metadata is known, so its card
+  // carries no title until the download worker's preflight resolves one. The
+  // title slot says what is happening — the same wording Up next uses, from the
+  // same helper — and the id moves down to the byline as a link to YouTube. On
+  // a card whose download ended in an error no title is coming at all, so the
+  // placeholder there stops implying that one is on its way.
+  const label = videoLabel(
+    video.title,
+    video.status === "error" ? "failed" : "fetching",
+  );
+  // The accessible name of the open button stays the id when there is no title:
+  // "Open Reading details from YouTube" names an action rather than a video,
+  // and a grid of untitled cards would announce every tile identically.
+  const openLabel = video.title?.trim() || video.id;
+  // The heading's own name has one extra constraint the thumbnail's does not:
+  // the heading SHOWS text, and an accessible name that does not contain the
+  // visible text breaks speech control (WCAG 2.5.3) — "click Details
+  // unavailable" would match nothing. So it leads with the words on screen and
+  // appends the id, which is what still tells two untitled tiles apart.
+  const titleLabel = label.placeholder
+    ? `${label.text} — ${video.id}`
+    : undefined;
 
   // The card is one big open-the-video target: the thumbnail and title
   // buttons only cover part of it, leaving the eyebrow, the lifecycle row and
@@ -111,7 +136,7 @@ export function VideoCard({
             cursor: "pointer",
           }}
           onClick={() => onOpen(video.id)}
-          aria-label={`Open ${displayTitle}`}
+          aria-label={`Open ${openLabel}`}
         >
           <ThumbFill id={video.id} hasThumbnail={video.has_thumbnail} />
           {/* Dot only: the word "Unwatched" was the loudest thing on the
@@ -193,7 +218,21 @@ export function VideoCard({
       </div>
 
       <div className="by">
-        {onOpenChannel && video.channel_id ? (
+        {/* With no channel resolved yet the byline would be empty, so the id
+            takes the slot it will later give up — as a link out to YouTube,
+            which is the one thing that can still be checked about this card. */}
+        {label.placeholder && !video.channel_id && !video.channel_name ? (
+          <a
+            className="ag-id"
+            href={watchURL(video.id)}
+            target="_blank"
+            rel="noreferrer"
+            title="Open on YouTube"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {shortWatchLink(video.id)}
+          </a>
+        ) : onOpenChannel && video.channel_id ? (
           <button
             type="button"
             className="chan-link"
@@ -224,13 +263,17 @@ export function VideoCard({
           </>
         ) : null}
       </div>
-      <h3>
+      <h3 className={label.placeholder ? "placeholder" : undefined}>
         <button
           type="button"
           className="title-btn"
           onClick={() => onOpen(video.id)}
+          // Only while the title is a placeholder: every untitled card would
+          // otherwise be announced by the same sentence, and the id is the one
+          // thing that tells them apart. With a real title the text IS the name.
+          aria-label={titleLabel}
         >
-          {displayTitle}
+          {label.text}
         </button>
       </h3>
       <Lifecycle

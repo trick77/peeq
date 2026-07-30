@@ -6,6 +6,9 @@ import {
   formatAgo,
   formatSize,
   resolutionLabel,
+  shortWatchLink,
+  videoLabel,
+  watchURL,
 } from "./format";
 
 // A fixed "now" so the relative output is deterministic. daysSince (which
@@ -233,5 +236,59 @@ describe("formatSize", () => {
   it("renders nothing for a missing size", () => {
     expect(formatSize(undefined)).toBe("");
     expect(formatSize(0)).toBe("");
+  });
+});
+
+// The title slot for a video added by URL, which is queued before anything is
+// known about it. One helper for Up next and the Library card, so the two
+// cannot describe the same wait differently.
+describe("videoLabel", () => {
+  it("uses the video's own title whenever there is one", () => {
+    const label = videoLabel("But what is a neural network?");
+    expect(label.text).toBe("But what is a neural network?");
+    expect(label.placeholder).toBe(false);
+    expect(label.pending).toBe(false);
+  });
+
+  it("ignores the state once a title has arrived", () => {
+    expect(videoLabel("Real title", "failed").text).toBe("Real title");
+  });
+
+  it("treats a whitespace-only title as no title at all", () => {
+    expect(videoLabel("   ").placeholder).toBe(true);
+  });
+
+  it("says the details are being read while the queue is moving", () => {
+    const label = videoLabel("");
+    expect(label.text).toBe("Reading details from YouTube");
+    expect(label.pending).toBe(true);
+    expect(label.placeholder).toBe(true);
+  });
+
+  // Pending drives the pulse, and a pulse means work is happening. With the
+  // download worker stopped nothing is being read, so the wording drops the
+  // claim and the pulse goes with it.
+  it("stops claiming a fetch is happening while the queue is stalled", () => {
+    const label = videoLabel("", "stalled");
+    expect(label.text).toBe("Waiting to read details");
+    expect(label.pending).toBe(false);
+    expect(label.placeholder).toBe(true);
+  });
+
+  it("stops waiting altogether once the download has failed", () => {
+    const label = videoLabel("", "failed");
+    expect(label.text).toBe("Details unavailable");
+    expect(label.pending).toBe(false);
+    expect(label.placeholder).toBe(true);
+  });
+});
+
+// videos.id IS the YouTube id, so both forms are built from the row alone.
+describe("watchURL / shortWatchLink", () => {
+  it("builds a watch URL and its short display form from an id", () => {
+    expect(watchURL("aircAruvnKk")).toBe(
+      "https://www.youtube.com/watch?v=aircAruvnKk",
+    );
+    expect(shortWatchLink("aircAruvnKk")).toBe("youtu.be/aircAruvnKk");
   });
 });

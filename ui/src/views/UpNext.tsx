@@ -7,7 +7,13 @@ import {
   type UpcomingItem,
 } from "../api";
 import { SearchField } from "../components/SearchField";
-import { summaryPhaseInfo, SUMMARY_PHASE_COUNT } from "../format";
+import {
+  shortWatchLink,
+  summaryPhaseInfo,
+  SUMMARY_PHASE_COUNT,
+  videoLabel,
+  watchURL,
+} from "../format";
 import { Icon } from "../icons";
 import type { Job, SummaryJob } from "../api/types";
 import { DOT } from "../sep";
@@ -600,6 +606,7 @@ export function UpNext({
                     onCancel={onCancel}
                     onOpenVideo={onOpenVideo}
                     channelBit={channelBit}
+                    stalled={stalled}
                   />
                 ) : (
                   <SummaryRow
@@ -631,6 +638,7 @@ export function UpNext({
                     onCancel={onCancel}
                     onOpenVideo={onOpenVideo}
                     channelBit={channelBit}
+                    stalled={stalled}
                   />
                 ) : (
                   <SummaryRow
@@ -774,6 +782,32 @@ export function UpNext({
   );
 }
 
+// VideoIdLink stands in for the channel name on a row that has neither a title
+// nor a channel yet: the YouTube id, one size down, linking to the video on
+// YouTube. It is the row's receipt — the only way to check that the link that
+// was pasted is the video that was queued — so it opens in a new tab rather
+// than taking the reader off peeq.
+function VideoIdLink({ id }: { id: string }) {
+  if (!id) return null;
+  return (
+    <>
+      {DOT}
+      <a
+        className="ag-id"
+        href={watchURL(id)}
+        target="_blank"
+        rel="noreferrer"
+        // The row is inside a page where the subject line is normally the link;
+        // spell out what this one does, since "youtu.be/aircAruvnKk" read aloud
+        // is not a destination.
+        title="Open on YouTube"
+      >
+        {shortWatchLink(id)}
+      </a>
+    </>
+  );
+}
+
 // DownloadRow is one download, running or queued. The gutter answers WHEN, on
 // every row: yt-dlp's ETA where it has one, else the bare tense — "now" for
 // what is running, "then" for what is waiting. It is never left blank. History
@@ -787,6 +821,7 @@ function DownloadRow({
   onCancel,
   onOpenVideo,
   channelBit,
+  stalled,
 }: {
   job: Job;
   progress?: { percent: number; speed: string; eta: string };
@@ -794,8 +829,21 @@ function DownloadRow({
   onCancel: (jobId: number) => void;
   onOpenVideo?: (videoId: string) => void;
   channelBit: (name?: string, id?: string) => React.ReactNode;
+  stalled?: "youtube" | "disk" | "cookie";
 }) {
-  const title = job.title || job.video_id;
+  // A row whose video has no title yet is a video that was added by URL and
+  // hasn't reached the front of the queue. Which placeholder it gets depends on
+  // whether the queue is moving at all: with YouTube work stopped, "reading
+  // details" would be a claim about work nobody is doing. A LIVE row is the
+  // exception — the stall flag is global, and a job that is already running
+  // keeps running when the cookie expires or the disk fills under it, so it is
+  // still reading details however stopped the rest of the queue is. Without
+  // this, such a row says "Waiting to read details" over a line that says
+  // "Starting the download".
+  const label = videoLabel(
+    job.title,
+    stalled && !live ? "stalled" : "fetching",
+  );
   return (
     <div className={`ag-row${live ? " live" : ""}`}>
       <span className="ag-clock">{live ? progress?.eta || "now" : "then"}</span>
@@ -803,22 +851,30 @@ function DownloadRow({
         <Icon name="download" size="12px" />
       </span>
       <div className="ag-body">
-        <div className="ag-subject">
-          {onOpenVideo && job.video_id ? (
+        <div
+          className={`ag-subject${label.placeholder ? " placeholder" : ""}${label.pending ? " pending" : ""}`}
+        >
+          {/* A placeholder is not a link: there is nothing in the player to
+              open yet, and the id below is the affordance that IS useful. */}
+          {onOpenVideo && job.video_id && !label.placeholder ? (
             <button
               type="button"
               className="ag-link"
               onClick={() => onOpenVideo(job.video_id)}
             >
-              {title}
+              {label.text}
             </button>
           ) : (
-            title
+            label.text
           )}
         </div>
         <div className="ag-detail">
           <span className="ag-kind">{live ? "Downloading" : "Download"}</span>
-          {channelBit(job.channel_name, job.channel_id)}
+          {label.placeholder ? (
+            <VideoIdLink id={job.video_id} />
+          ) : (
+            channelBit(job.channel_name, job.channel_id)
+          )}
         </div>
         {live ? (
           <>
@@ -839,6 +895,11 @@ function DownloadRow({
                     </>
                   ) : null}
                 </>
+              ) : label.placeholder ? (
+                // The subject line already says peeq is talking to YouTube;
+                // repeating it here would spend the row's second line saying
+                // nothing new.
+                "Starting the download"
               ) : (
                 "Contacting YouTube"
               )}
@@ -876,7 +937,11 @@ function SummaryRow({
 }) {
   const ps = phaseState(phase, job.state);
   const started = ps.step > 0;
-  const title = job.title || job.video_id;
+  // Reached through the same helper as the download row, though it should never
+  // fire here: a summary exists because a download finished, and the metadata
+  // preflight runs long before that. If it ever does, both lanes say the same
+  // thing rather than one of them falling back to a bare id.
+  const label = videoLabel(job.title);
   return (
     <div className={`ag-row${live ? " live" : ""}`}>
       <span className="ag-clock">{live ? "now" : "then"}</span>
@@ -884,22 +949,28 @@ function SummaryRow({
         <Icon name="alignLeft" size="12px" />
       </span>
       <div className="ag-body">
-        <div className="ag-subject">
-          {onOpenVideo && job.video_id ? (
+        <div
+          className={`ag-subject${label.placeholder ? " placeholder" : ""}${label.pending ? " pending" : ""}`}
+        >
+          {onOpenVideo && job.video_id && !label.placeholder ? (
             <button
               type="button"
               className="ag-link"
               onClick={() => onOpenVideo(job.video_id)}
             >
-              {title}
+              {label.text}
             </button>
           ) : (
-            title
+            label.text
           )}
         </div>
         <div className="ag-detail">
           <span className="ag-kind">{live ? "Summarising" : "Summary"}</span>
-          {channelBit(job.channel_name, job.channel_id)}
+          {label.placeholder ? (
+            <VideoIdLink id={job.video_id} />
+          ) : (
+            channelBit(job.channel_name, job.channel_id)
+          )}
         </div>
         {live ? (
           <>
