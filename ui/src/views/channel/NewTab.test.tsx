@@ -82,6 +82,8 @@ describe("NewTab", () => {
         thumbnail_url: "https://img.example/p1.jpg",
         published_at: daysAgoISO(3),
         discovered_at: "2026-07-24 08:00:00",
+        summary_status: "",
+        auto_summary: false,
       },
       {
         video_id: "p2",
@@ -92,6 +94,8 @@ describe("NewTab", () => {
         url: "https://youtu.be/p2",
         thumbnail_url: "https://img.example/p2.jpg",
         discovered_at: "2026-07-24 08:00:00",
+        summary_status: "",
+        auto_summary: false,
       },
     ]);
     render(<NewTab detail={makeDetail()} onChanged={() => {}} />);
@@ -118,6 +122,8 @@ describe("NewTab", () => {
         url: "https://youtu.be/p1",
         thumbnail_url: "https://img.example/p1.jpg",
         discovered_at: "2026-07-24 08:00:00",
+        summary_status: "",
+        auto_summary: false,
       },
       // No url on the ledger row — the link is built from the video id.
       {
@@ -129,6 +135,8 @@ describe("NewTab", () => {
         url: "",
         thumbnail_url: "https://img.example/p2.jpg",
         discovered_at: "2026-07-24 08:00:00",
+        summary_status: "",
+        auto_summary: false,
       },
     ]);
     render(<NewTab detail={makeDetail()} onChanged={() => {}} />);

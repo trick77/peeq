@@ -12,6 +12,7 @@ function baseChannel(overrides: Partial<Channel> = {}): Channel {
     name: "Added Channel",
     subscribed: false,
     autodownload: false,
+    auto_summary: true,
     format_override: "",
     pending_count: 3,
     downloaded_count: 0,
