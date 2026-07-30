@@ -1188,11 +1188,13 @@ func TestSearchAskHonoursTheDistanceBound(t *testing.T) {
 		t.Errorf("an orthogonal chunk survived the bound: %s", body)
 	}
 
-	// 0 restores the unbounded behaviour, which is what the env var documents.
-	deps.SearchMaxDistance = -1 // explicit opt-out
+	// A NEGATIVE value is the explicit opt-out, and it has to still work — this
+	// half also proves the assertion above is not vacuous, since it shows the
+	// far chunk IS reachable when nothing bounds it.
+	deps.SearchMaxDistance = -1
 	body = doReq(t, New(deps), cookie, http.MethodGet, "/api/search?q=zzqqxx&mode=ask", nil).Body.String()
 	if !strings.Contains(body, `"id":"far"`) {
-		t.Errorf("maxDistance 0 should disable the cutoff: %s", body)
+		t.Errorf("a negative maxDistance should disable the cutoff: %s", body)
 	}
 }
 
