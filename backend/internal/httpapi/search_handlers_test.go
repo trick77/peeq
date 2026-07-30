@@ -504,6 +504,50 @@ func TestReprocess_missingSubtitleReturns409(t *testing.T) {
 	}
 }
 
+// TestReprocess_downloadInFlightReturns409 covers the one status that still
+// disqualifies a video with a transcript: a re-download of a tombstoned video
+// keeps the old subtitle_path while yt-dlp fetches a replacement, so
+// summarizing now would read a .vtt being rewritten under it — and the
+// download's own success path enqueues a summary job anyway.
+func TestReprocess_downloadInFlightReturns409(t *testing.T) {
+	for _, status := range []string{videos.StatusQueued, videos.StatusDownloading} {
+		t.Run(status, func(t *testing.T) {
+			deps := searchTestDeps(t)
+			if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+				t.Fatalf("seed v1: %v", err)
+			}
+			if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+				MediaPath:       "/media/v1.mp4",
+				SubtitleRelPath: "v1.en.vtt",
+			}); err != nil {
+				t.Fatalf("seed downloaded: %v", err)
+			}
+			if err := deps.Videos.Tombstone("v1"); err != nil {
+				t.Fatalf("tombstone v1: %v", err)
+			}
+			if err := deps.Videos.SetStatus("v1", status, ""); err != nil {
+				t.Fatalf("seed %s status: %v", status, err)
+			}
+			spy := &spySummaryJobs{}
+			deps.SummaryJobs = spy
+			h := New(deps)
+			cookie := loginAndGetCookie(t, h)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
+			req.AddCookie(cookie)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
+			}
+			if spy.lastID != "" {
+				t.Fatalf("SummaryJobs.Enqueue called with %q, want not called", spy.lastID)
+			}
+		})
+	}
+}
+
 // TestReprocess_tombstonedWithSubtitleReturns202 is the case keeping the .vtt
 // exists for: the file is gone but the transcript is not, so the analysis —
 // summary, category, chunks, embeddings — can still be rebuilt from it. Losing

@@ -163,14 +163,25 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	// re-enqueuing would flip a valid summary to no_transcript. Point the caller
 	// at re-download (Phase 3.1b) instead of corrupting the summary.
 	//
-	// Status and media_path are deliberately NOT part of the gate. A tombstone
-	// keeps subtitle_path and the .vtt precisely so its analysis stays
-	// rebuildable; rejecting it here would leave a swept video permanently
-	// unsearchable the moment its chunks needed rebuilding, which is the whole
-	// reason the file is kept. A row tombstoned before that changed has a blank
-	// subtitle_path and still lands here.
+	// media_path is deliberately NOT part of the gate, and neither is
+	// status='tombstoned'. A tombstone keeps subtitle_path and the .vtt precisely
+	// so its analysis stays rebuildable; rejecting it here would leave a swept
+	// video permanently unsearchable the moment its chunks needed rebuilding,
+	// which is the whole reason the file is kept. A row tombstoned before that
+	// changed has a blank subtitle_path and still lands here.
 	if v.SubtitlePath == "" {
 		writeJSONError(w, http.StatusConflict, "no transcript present; re-download to restore before reprocessing")
+		return
+	}
+	// An in-flight download is the one status that does disqualify: the .vtt
+	// subtitle_path names is about to be rewritten under the summarizer (a
+	// re-download of a tombstoned video keeps the old path while yt-dlp fetches
+	// a new file), and the download's own success path enqueues a summary job of
+	// its own — so reprocessing now risks a summary built from a half-written
+	// transcript, which the second job then skips over because summary <> ''.
+	// Wait for the file to land; the download re-runs the pipeline anyway.
+	if v.Status == videos.StatusQueued || v.Status == videos.StatusDownloading {
+		writeJSONError(w, http.StatusConflict, "download in progress; the transcript is being replaced")
 		return
 	}
 	if s.summaryJobs == nil {

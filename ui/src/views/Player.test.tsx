@@ -1012,6 +1012,20 @@ describe("Player", () => {
     expect(setPlaybackState).toHaveBeenCalledTimes(1);
   });
 
+  it("does not record a video with no file as now playing", async () => {
+    // The pointer is one row the read side joins with status='downloaded', so
+    // writing a tombstoned video into it does not move the rail there — it
+    // empties the rail. Opening a swept video to read its transcript must not
+    // cost the pointer to whatever was actually being watched.
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ status: "tombstoned", has_media: false }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByRole("heading", { level: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setPlaybackState).not.toHaveBeenCalled();
+  });
+
   it("does not clear the pointer on unmount", async () => {
     // Navigating to the Library is not "I stopped watching" — clearing here
     // would defeat the whole point of the pointer.

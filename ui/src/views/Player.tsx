@@ -266,10 +266,17 @@ export function Player({
   // playback, and the worst case is a rail that behaves as it did before this
   // existed. Nothing clears the pointer on unmount either — navigating to the
   // Library does not mean you stopped watching.
+  //
+  // Only for a video with a file, which is why this waits for the fetched video
+  // rather than firing on the id alone. The pointer is a single row the read
+  // side joins with status='downloaded' (playback.Store), so writing a fileless
+  // video into it does not move the rail to that video — it empties the rail.
+  // Opening a tombstoned page to read its transcript is not "you stopped
+  // watching the thing you were watching".
   useEffect(() => {
-    if (!videoId) return;
-    setPlaybackState(videoId).catch(() => {});
-  }, [videoId]);
+    if (!video?.id || !video.has_media) return;
+    setPlaybackState(video.id).catch(() => {});
+  }, [video?.id, video?.has_media]);
 
   // Flush the resume position immediately on tab-hide/unload, so the
   // RESUME_THROTTLE_MS window never costs more than itself worth of
@@ -390,8 +397,11 @@ export function Player({
   // A failed mint stores the session URL rather than failing playback: the
   // worst case is that AirPlay does not work, which is exactly where the user
   // was before turning the setting on.
+  // Nothing to mint a grant for without a file: the endpoint only issues one
+  // for a downloaded video, so a fileless page would spend a request to be
+  // refused and fall back to a stream URL no <video> is going to ask for.
   useEffect(() => {
-    if (!video?.id || !directStream) return;
+    if (!video?.id || !video.has_media || !directStream) return;
     const id = video.id;
     let active = true;
     createPlaybackGrant(id)
@@ -404,7 +414,7 @@ export function Player({
     return () => {
       active = false;
     };
-  }, [video?.id, directStream]);
+  }, [video?.id, video?.has_media, directStream]);
 
   // playbackSrc is the URL the <video> actually plays, derived during render
   // rather than held in state: the element remounts whenever the open video
@@ -886,8 +896,15 @@ export function Player({
     // and hidden while a summary is already pending/running so a second click
     // can't enqueue a duplicate job. Flagged "failed" when the last analysis
     // errored.
+    //
+    // Hidden during a download too: that is the one case where the transcript
+    // named here is about to be replaced by a different file, so the endpoint
+    // 409s rather than summarize half of one — and the download runs the whole
+    // pipeline on its own once it lands.
     if (
       video.has_subtitles &&
+      video.status !== "queued" &&
+      video.status !== "downloading" &&
       video.summary_status !== "pending" &&
       video.summary_status !== "running"
     ) {

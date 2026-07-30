@@ -268,7 +268,13 @@ function Lifecycle({
   // shows — there is nothing left to expire — so a swept video's row holds
   // "Kept forever" if it is a favorite (the manual Delete does not spare one,
   // the sweeper does) and otherwise nothing but the way back.
+  //
+  // Both halves can be absent at once — a non-favorite in a list that wires no
+  // onRedownload handler (the channel Archive tab) — and an empty .card-foot
+  // still eats the .card flex gap, so that case renders nothing at all, exactly
+  // as the fresh-video case at the bottom does.
   if (video.status === "tombstoned") {
+    if (!video.favorite && !onRedownload) return null;
     return (
       <div className="card-foot">
         {video.favorite ? <KeptForever /> : null}
