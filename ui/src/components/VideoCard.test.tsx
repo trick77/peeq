@@ -56,7 +56,12 @@ describe("VideoCard", () => {
   // off as a title, which is what it used to do.
   it("says the details are still coming while a video has no title", () => {
     renderCard({ title: "", channel_id: "", channel_name: "" });
-    const title = screen.getByRole("button", { name: "dQw4w9WgXcQ" });
+    // The heading's name leads with the words on screen — speech control has to
+    // be able to say what it reads (WCAG 2.5.3) — and appends the id, which is
+    // what tells two untitled tiles apart.
+    const title = screen.getByRole("button", {
+      name: "Reading details from YouTube — dQw4w9WgXcQ",
+    });
     expect(title).toHaveTextContent("Reading details from YouTube");
     // The placeholder must reach the visible heading, not just the label.
     expect(title.closest("h3")).not.toBeNull();
@@ -77,7 +82,7 @@ describe("VideoCard", () => {
   it("stops promising details once the download has failed", () => {
     renderCard({ title: "", status: "error" });
     expect(
-      screen.getByRole("button", { name: "dQw4w9WgXcQ" }),
+      screen.getByRole("button", { name: "Details unavailable — dQw4w9WgXcQ" }),
     ).toHaveTextContent("Details unavailable");
   });
 

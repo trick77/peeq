@@ -834,8 +834,16 @@ function DownloadRow({
   // A row whose video has no title yet is a video that was added by URL and
   // hasn't reached the front of the queue. Which placeholder it gets depends on
   // whether the queue is moving at all: with YouTube work stopped, "reading
-  // details" would be a claim about work nobody is doing.
-  const label = videoLabel(job.title, stalled ? "stalled" : "fetching");
+  // details" would be a claim about work nobody is doing. A LIVE row is the
+  // exception — the stall flag is global, and a job that is already running
+  // keeps running when the cookie expires or the disk fills under it, so it is
+  // still reading details however stopped the rest of the queue is. Without
+  // this, such a row says "Waiting to read details" over a line that says
+  // "Starting the download".
+  const label = videoLabel(
+    job.title,
+    stalled && !live ? "stalled" : "fetching",
+  );
   return (
     <div className={`ag-row${live ? " live" : ""}`}>
       <span className="ag-clock">{live ? progress?.eta || "now" : "then"}</span>

@@ -266,6 +266,24 @@ describe("UpNext", () => {
       ).toBeInTheDocument();
     });
 
+    // The stall flag is global, but a job that is already running keeps running
+    // when the cookie expires or the disk fills under it. Such a row IS reading
+    // details, and saying otherwise contradicts its own progress line.
+    it("keeps the fetching claim on a row that is already running", () => {
+      render(
+        <UpNext
+          jobs={[job({ job_id: 34, state: "running", video_id: "abc123" })]}
+          summaries={[]}
+          onCancel={noop}
+          stalled="disk"
+        />,
+      );
+      expect(
+        screen.getByText("Reading details from YouTube"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Waiting to read details")).toBeNull();
+    });
+
     // The id is on screen, so the search box must still reach it.
     it("is still findable by its id", () => {
       render(

@@ -97,6 +97,14 @@ export function VideoCard({
   // "Open Reading details from YouTube" names an action rather than a video,
   // and a grid of untitled cards would announce every tile identically.
   const openLabel = video.title?.trim() || video.id;
+  // The heading's own name has one extra constraint the thumbnail's does not:
+  // the heading SHOWS text, and an accessible name that does not contain the
+  // visible text breaks speech control (WCAG 2.5.3) — "click Details
+  // unavailable" would match nothing. So it leads with the words on screen and
+  // appends the id, which is what still tells two untitled tiles apart.
+  const titleLabel = label.placeholder
+    ? `${label.text} — ${video.id}`
+    : undefined;
 
   // The card is one big open-the-video target: the thumbnail and title
   // buttons only cover part of it, leaving the eyebrow, the lifecycle row and
@@ -263,7 +271,7 @@ export function VideoCard({
           // Only while the title is a placeholder: every untitled card would
           // otherwise be announced by the same sentence, and the id is the one
           // thing that tells them apart. With a real title the text IS the name.
-          aria-label={label.placeholder ? openLabel : undefined}
+          aria-label={titleLabel}
         >
           {label.text}
         </button>
