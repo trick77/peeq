@@ -13,6 +13,7 @@ import {
   resumeYoutube,
 } from "./api";
 import type { DownloadsStatus } from "./api/downloads";
+import { getYtdlpVersion, type YtdlpVersion } from "./api/ytdlp";
 import type { ActivityEvent, Job, SummaryJob, User } from "./api/types";
 import { Library } from "./views/Library";
 import { Add } from "./views/Add";
@@ -128,6 +129,11 @@ export function App() {
   const [cookieStatus, setCookieStatus] = useState<string | undefined>(
     undefined,
   );
+  // Fetched once per session alongside the cookie health, for the same reason:
+  // the backend only asks upstream every few hours, so polling this would just
+  // re-read a cache. undefined until it loads, which the rail reads as "say
+  // nothing".
+  const [ytdlp, setYtdlp] = useState<YtdlpVersion | undefined>(undefined);
   const [downloadStatus, setDownloadStatus] = useState<DownloadsStatus>({
     paused: false,
     low_disk: false,
@@ -221,6 +227,11 @@ export function App() {
     cookieHealth()
       .then((h) => {
         if (active) setCookieStatus(h.status);
+      })
+      .catch(() => {});
+    getYtdlpVersion()
+      .then((v) => {
+        if (active) setYtdlp(v);
       })
       .catch(() => {});
     // Best-effort, like the two beside it: a rail that can't load the pointer
@@ -522,6 +533,7 @@ export function App() {
           summaries.some((s) => s.state === "running")
         }
         cookieStatus={cookieStatus}
+        ytdlp={ytdlp}
       />
       <main className="main">
         <section className="page">

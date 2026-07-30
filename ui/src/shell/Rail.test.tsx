@@ -172,3 +172,53 @@ describe("CookieStatus", () => {
     expect(html).toContain("cookie-status warn");
   });
 });
+
+describe("Rail yt-dlp indicator", () => {
+  function railWith(ytdlp?: Parameters<typeof Rail>[0]["ytdlp"]) {
+    return renderToStaticMarkup(
+      <Rail
+        active="library"
+        onNavigate={() => {}}
+        pendingCount={0}
+        ytdlp={ytdlp}
+      />,
+    );
+  }
+
+  it("names both versions when an update is waiting", () => {
+    const html = railWith({
+      version: "2026.07.01",
+      latest: "2026.08.15",
+      update_available: true,
+    });
+    expect(html).toContain("ytdlp-status warn");
+    expect(html).toContain("update available");
+    // Both halves matter: "an update exists" without saying from what is not
+    // actionable, and the pair is what makes the size of the gap obvious.
+    expect(html).toContain("2026.07.01");
+    expect(html).toContain("2026.08.15");
+  });
+
+  it("stays silent when the installed version is current", () => {
+    const html = railWith({
+      version: "2026.08.15",
+      latest: "2026.08.15",
+      update_available: false,
+    });
+    expect(html).not.toContain("ytdlp-status");
+  });
+
+  // Before the fetch resolves the rail knows nothing, and must not flash an
+  // indicator on every page load the way an optimistic default would.
+  it("stays silent before the version has loaded", () => {
+    expect(railWith(undefined)).not.toContain("ytdlp-status");
+  });
+
+  // update_available with no latest release is a contradiction the row cannot
+  // render honestly — it would print "2026.07.01 → " with a dangling arrow.
+  // Suppress the row rather than show half a comparison.
+  it("stays silent when the latest release is unknown", () => {
+    const html = railWith({ version: "2026.07.01", update_available: true });
+    expect(html).not.toContain("ytdlp-status");
+  });
+});

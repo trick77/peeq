@@ -7,6 +7,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channelmeta"
@@ -134,6 +135,9 @@ type Deps struct {
 	// when nil, that endpoint returns 503. The /api/activity/upcoming projection
 	// is built from Channels/Jobs/SummaryList and needs no separate dependency.
 	Activity ActivityReader
+	// ActivityWrite records the yt-dlp install the Update button performs.
+	// Optional: when nil the update still runs, unrecorded.
+	ActivityWrite ActivityWriter
 
 	// AllowAnonymous mirrors the dev-only "reach YouTube without a cookie" flag
 	// that the scan loop and the yt-dlp runner already honour. The scan endpoint
@@ -169,9 +173,17 @@ type SummaryEnqueuer interface {
 // show/refresh the installed yt-dlp version. Unlike Metadata/Download, these
 // calls never touch YouTube, so implementations should skip the cookie gate
 // and throttle entirely.
+//
+// Latest reports the newest published yt-dlp release, when that answer was
+// last confirmed, and why the last check failed (checkErr is empty when it
+// succeeded). It reads a cache the version-check ticker fills rather than
+// calling GitHub, so it is cheap enough to serve on every page load, and
+// returns zero values before the first check completes. Its types are
+// deliberately plain, so httpapi takes no import on the ytdlp package.
 type YTDLPVersioner interface {
 	Version(ctx context.Context) (string, error)
 	UpdateLatest(ctx context.Context) (string, error)
+	Latest(ctx context.Context) (latest string, checkedAt time.Time, checkErr string)
 }
 
 // StreamAccessRecorder is the narrow interface handleStreamVideo needs to
@@ -219,6 +231,7 @@ type server struct {
 	summaryJobs       SummaryEnqueuer
 	summaryList       SummaryLister
 	activity          ActivityReader
+	activityWrite     ActivityWriter
 
 	allowAnonymous bool
 
@@ -263,6 +276,7 @@ func New(d Deps) http.Handler {
 		summaryJobs:       d.SummaryJobs,
 		summaryList:       d.SummaryList,
 		activity:          d.Activity,
+		activityWrite:     d.ActivityWrite,
 
 		allowAnonymous: d.AllowAnonymous,
 

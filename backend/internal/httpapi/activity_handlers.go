@@ -16,6 +16,19 @@ type ActivityReader interface {
 	RetainedMax() int
 }
 
+// ActivityWriter is the write side, needed by exactly one handler: the yt-dlp
+// Update button, which replaces the binary every download depends on. That
+// install is the one user-triggered event the activity log keeps (see the
+// package doc) — the log is where a later "why did downloads start behaving
+// differently?" gets answered, and it used to be recorded here by a timer
+// until installing became a button.
+//
+// Record never returns an error by design, so a handler can call it without a
+// failure path. The real *activity.Store satisfies it.
+type ActivityWriter interface {
+	Record(activity.Event)
+}
+
 const (
 	activityDefaultLimit = 40
 	activityMaxLimit     = 100
