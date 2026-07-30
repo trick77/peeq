@@ -185,4 +185,19 @@ describe("Search", () => {
     expect(await screen.findByText(/search backend down/i)).toBeInTheDocument();
     expect(screen.queryByText("iPhone 27 review")).not.toBeInTheDocument();
   });
+
+  it("retires the error line when the box is emptied", async () => {
+    mockedSearchVideos.mockRejectedValueOnce(new Error("search backend down"));
+    render(<Search onOpen={vi.fn()} />);
+    submit("iphone");
+    expect(await screen.findByText(/search backend down/i)).toBeInTheDocument();
+
+    // The error belongs to a query that is no longer on screen.
+    submit("");
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/search backend down/i),
+      ).not.toBeInTheDocument(),
+    );
+  });
 });

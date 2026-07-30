@@ -34,28 +34,12 @@ const (
 // BACKEND_SEARCH_MAX_DISTANCE.
 const DefaultMaxDistance = 1.20
 
-// FilterByDistance drops hits at or beyond maxDistance, preserving order.
-// A non-positive maxDistance disables the cutoff.
-//
-// This is what lets a search report that it found nothing. Without it a KNN
-// query cannot fail: it returns k rows for any input whatsoever, so a search
-// for a topic the library has never covered still renders a full page of
-// confident-looking results whose text has nothing to do with the query. Hits
-// carrying no distance — the keyword lane leaves it 0, since bm25 rank is
-// positional — are always kept.
-func FilterByDistance(hits []Hit, maxDistance float64) []Hit {
-	if maxDistance <= 0 {
-		return hits
-	}
-	out := make([]Hit, 0, len(hits))
-	for _, h := range hits {
-		if h.Distance > 0 && h.Distance >= maxDistance {
-			continue
-		}
-		out = append(out, h)
-	}
-	return out
-}
+// The cutoff itself lives in SQL, in Store.RetrieveWithin: a Go-side filter over
+// the fused list would have to guess which hits carry a real distance and which
+// are keyword hits that simply leave it 0, and the two spellings would drift.
+// See RetrieveWithin for why this is what lets a search report that it found
+// nothing at all — without a bound a KNN query cannot fail, it returns k rows
+// for any input whatsoever.
 
 // Lane is one pre-ranked hit list plus the confidence its retrieval method
 // earns. Weight scales that lane's contribution to the fused score.

@@ -14,28 +14,6 @@ import (
 // so the tests below can be written in the units the calibration comment uses.
 func l2(cos float64) float64 { return math.Sqrt(2 - 2*cos) }
 
-func TestFilterByDistanceDropsFarHits(t *testing.T) {
-	hits := []Hit{
-		{VideoID: "near", Distance: l2(0.62)}, // clearly on topic
-		{VideoID: "edge", Distance: l2(0.30)}, // just inside the cutoff
-		{VideoID: "far", Distance: l2(0.05)},  // unrelated
-		{VideoID: "keyword", Distance: 0},     // keyword lane: no distance
-	}
-	got := FilterByDistance(hits, DefaultMaxDistance)
-	var ids []string
-	for _, h := range got {
-		ids = append(ids, h.VideoID)
-	}
-	want := []string{"near", "edge", "keyword"}
-	if strings.Join(ids, ",") != strings.Join(want, ",") {
-		t.Errorf("kept %v, want %v", ids, want)
-	}
-	// A non-positive bound disables the cutoff entirely.
-	if got := FilterByDistance(hits, 0); len(got) != len(hits) {
-		t.Errorf("maxDistance 0 should keep everything, kept %d of %d", len(got), len(hits))
-	}
-}
-
 func TestFuseWeightedKeepsLiteralMatchesOnTop(t *testing.T) {
 	// This is the reported bug in miniature. Searching "electrolytes" returns a
 	// genuinely-matching chunk deep in the keyword lane, and an unrelated chunk

@@ -78,6 +78,10 @@ export function Search({
     if (!trimmed) {
       setResults(null);
       setSearched(null);
+      // The error line belongs to the query that failed. Emptying the box
+      // retires that query, so leaving the error up would strand a complaint
+      // about a search that is no longer on screen.
+      setError(null);
       setLoading(false);
       return;
     }
