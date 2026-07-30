@@ -706,12 +706,12 @@ export function Settings() {
       <section className="sect">
         <h2>Automatic cleanup</h2>
         <p className="desc">
-          Keep the library from filling up — watched videos age out on their
-          own.
+          Keep the disk from filling up — the video file of a watched video is
+          removed on its own once it is old enough.
         </p>
         <div className="slider-row">
           <span className="lab" style={{ margin: 0 }}>
-            Delete watched after
+            Remove file after
           </span>
           <input
             type="range"
@@ -726,8 +726,18 @@ export function Settings() {
           />
           <span className="val">{retentionDays} days</span>
         </div>
+        {/* "Delete" and "expire" both read as "the whole video goes away",
+            which is not what happens: cleanup reclaims the media file and
+            nothing else. Saying so is what makes the setting safe to turn
+            down — the cost of a short retention is a re-download, not a lost
+            summary. */}
         <p className="retain-note">
-          <b>Unwatched videos are never deleted.</b>{" "}
+          <b>Only the video file goes.</b> The summary, transcript, chapters and
+          poster stay, the video keeps turning up in search, and you can
+          re-download it whenever you want.
+        </p>
+        <p className="retain-note">
+          <b>Unwatched videos are never touched.</b>{" "}
           <b>Favorites are kept forever</b>, even after you watch them. Only
           watched, un-favorited videos expire.
         </p>
