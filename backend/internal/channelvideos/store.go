@@ -266,6 +266,45 @@ ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_a
 	return scanPendingEntries(rows)
 }
 
+// ListUnavailableForChannel returns every row for a channel parked as
+// unavailable, oldest re-check first so a bounded per-pass probe budget is
+// spent on the videos that have waited longest rather than on the same few
+// every time.
+//
+// This exists because the scan's re-check otherwise only ever sees videos the
+// channel LISTING returned, and the listing is capped (defaultListSize). A
+// video parked in error — a gate misread, or a stale yt-dlp reporting a
+// working video as unavailable — becomes permanently unrecoverable the moment
+// it falls out of that window, since parking also discards its videos row.
+// Reading the parked rows directly is what unties recovery from recency.
+//
+// No channels JOIN: the caller probes by URL and never displays these.
+func (s *Store) ListUnavailableForChannel(channelID string) ([]Entry, error) {
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT `+selectColumns+`
+FROM channel_videos
+WHERE state = ? AND channel_id = ?
+ORDER BY COALESCE(unavailable_at, discovered_at) ASC, video_id ASC`,
+		StateUnavailable, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("list unavailable for channel %s: %w", channelID, err)
+	}
+	defer rows.Close()
+
+	var out []Entry
+	for rows.Next() {
+		e, err := scanRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan unavailable channel video: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate unavailable channel videos: %w", err)
+	}
+	return out, nil
+}
+
 // scanPendingEntries reads every remaining row from a ListPending-shaped
 // query (pendingColumns + joined channel_name) into a slice. Shared by
 // ListPending and ListPendingForChannel so the two lists can never diverge.

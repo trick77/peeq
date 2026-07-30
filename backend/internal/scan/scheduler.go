@@ -519,21 +519,132 @@ func (s *Scheduler) recheckUnavailable(ctx context.Context, row *channelvideos.E
 			return false, s.d.Ledger.SetUnavailable(row.VideoID, row.UnavailableReason)
 		}
 	}
-	// Revive. Autodownload is honoured rather than forcing everything through
-	// the inbox: the channel's setting is what the user asked for, and a video
-	// that was only ever withheld because of a gate should land where an
-	// ungated one from the same channel would have.
-	//
-	// Order matches the new-video path for the same reason: enqueue first, so a
-	// half-done revive leaves the row parked (and re-checkable) rather than
-	// pending-but-never-queued.
+	return s.revive(row.VideoID, e, sub)
+}
+
+// revive returns a parked video to the inbox (or straight to the queue).
+//
+// Autodownload is honoured rather than forcing everything through the inbox:
+// the channel's setting is what the user asked for, and a video that was only
+// ever withheld because of a gate should land where an ungated one from the
+// same channel would have.
+//
+// Order matches the new-video path for the same reason: enqueue first, so a
+// half-done revive leaves the row parked (and re-checkable) rather than
+// pending-but-never-queued.
+//
+// A video peeq has ALREADY downloaded is never revived. The ledger row can be
+// parked while the videos row is complete: nothing outside the inbox writes
+// the ledger, so a video the user added by hand (URL paste, extension) after a
+// scan parked it leaves that row at 'unavailable' forever — the likeliest
+// reaction, in fact, to the misclassification this re-check exists to undo.
+// Reviving it would flip a finished, watched video back to 'queued', blank its
+// thumbnail_path through enqueueAuto's Upsert and enqueue a duplicate
+// download; without autodownload it would offer a video already in the Library
+// as an undecided inbox item.
+//
+// DownloadedAt is the signal rather than status or media_path, mirroring
+// Worker.park's own "never discard a video that has ever finished downloading"
+// invariant: a row left behind by park's failed-Discard branch has none and
+// must stay revivable. The ledger row is settled at 'queued' (what the inbox's
+// own keep writes) rather than left parked, so the probe budget stops being
+// spent on a question the Library has already answered.
+func (s *Scheduler) revive(videoID string, e ytdlp.ChannelEntry, sub *channels.Subscription) (bool, error) {
+	v, err := s.d.Videos.Get(videoID)
+	if err != nil {
+		return false, err
+	}
+	if v != nil && v.DownloadedAt != "" {
+		return false, s.d.Ledger.SetState(videoID, channelvideos.StateQueued)
+	}
 	if sub.Autodownload {
 		if err := s.enqueueAuto(e, sub); err != nil {
 			return false, err
 		}
-		return true, s.d.Ledger.SetState(row.VideoID, channelvideos.StateQueued)
+		return true, s.d.Ledger.SetState(videoID, channelvideos.StateQueued)
 	}
-	return true, s.d.Ledger.SetState(row.VideoID, channelvideos.StatePending)
+	return true, s.d.Ledger.SetState(videoID, channelvideos.StatePending)
+}
+
+// recheckParkedOffListing probes the channel's parked videos that this pass's
+// listing did NOT return, and revives any that answer as reachable. It reports
+// how many it revived, split by where they landed.
+//
+// Without it, recovery from a wrong "unavailable" verdict is tied to recency:
+// recheckUnavailable only ever sees ids the listing returned, and the listing
+// is capped at defaultListSize. A video parked in error therefore became
+// permanently unrecoverable the moment it aged out of that window — and since
+// parking also discards the videos row (Worker.park), there was nothing left
+// in the Library to re-download either. That matters most exactly when the
+// verdict was never true: a stale yt-dlp reports working videos as
+// unavailable, and the whole batch it condemns ages out together.
+//
+// It spends what is left of the SAME per-pass probe budget, after the listing
+// loop has had first call on it. That ordering is deliberate — a video the
+// channel still lists is the cheaper and more likely revival — and the shared
+// budget is what keeps this from turning one scan into an unbounded number of
+// per-video yt-dlp calls on a channel with a long parked tail.
+func (s *Scheduler) recheckParkedOffListing(
+	ctx context.Context,
+	sub *channels.Subscription,
+	listed map[string]bool,
+	probes *int,
+) (queued, pending, considered int, err error) {
+	// Nothing can be answered without a prober, and an exhausted budget means
+	// the listing loop already spent this pass's probes. Both are cheap to
+	// check before the query, which would otherwise be run for nothing on every
+	// pass of every channel.
+	if s.d.Prober == nil || *probes >= maxUnavailableProbes {
+		return 0, 0, 0, nil
+	}
+	rows, err := s.d.Ledger.ListUnavailableForChannel(sub.ChannelID)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	for i := range rows {
+		if *probes >= maxUnavailableProbes {
+			break
+		}
+		row := &rows[i]
+		if listed[row.VideoID] {
+			continue // already handled by the listing loop, with better evidence
+		}
+		considered++
+		open, checked := s.probeAvailability(ctx, row, probes)
+		if !checked {
+			continue
+		}
+		if !open {
+			// Still walled off. Restamping is what spaces the next probe a full
+			// window out, so a long parked tail cannot monopolise the budget.
+			if err := s.d.Ledger.SetUnavailable(row.VideoID, row.UnavailableReason); err != nil {
+				return queued, pending, considered, err
+			}
+			continue
+		}
+		// The listing never returned this video, so the ledger row is the only
+		// description of it there is — which is precisely what it was written
+		// for. It carries everything enqueueAuto needs.
+		revived, err := s.revive(row.VideoID, ytdlp.ChannelEntry{
+			ID: row.VideoID, URL: row.URL, Title: row.Title,
+			DurationSeconds: row.DurationSeconds,
+			ThumbnailURL:    row.ThumbnailURL, PublishedAt: row.PublishedAt,
+		}, sub)
+		if err != nil {
+			return queued, pending, considered, err
+		}
+		if !revived {
+			continue
+		}
+		s.d.Logger.Info("scan: parked video is reachable again",
+			"channel", sub.ChannelID, "video_id", row.VideoID)
+		if sub.Autodownload {
+			queued++
+		} else {
+			pending++
+		}
+	}
+	return queued, pending, considered, nil
 }
 
 // probeAvailability asks yt-dlp directly whether a parked video is reachable
@@ -610,9 +721,14 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	var queuedCount, pendingCount, baselineCount, backlogCount, unavailableCount int
 	// probes is this pass's shared budget for per-video availability re-checks,
 	// threaded through rather than held on the Scheduler so it resets per pass
-	// and stays visible at the one place that spends it.
+	// and stays visible at the places that spend it: the listing loop below,
+	// and recheckParkedOffListing after it.
 	var probes int
+	// listed records every id this pass's listing returned, so the off-listing
+	// re-check can tell what it has already covered.
+	listed := make(map[string]bool, len(entries))
 	for _, e := range entries {
+		listed[e.ID] = true
 		// Read the whole row, not just its existence: an 'unavailable' row is
 		// the one kind of known video a scan must still act on, so the state
 		// has to be in hand here.
@@ -755,6 +871,23 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 			go s.prefetchPendingThumbnail(entry.VideoID, entry.ThumbnailURL)
 		}
 	}
+
+	// Parked videos the listing no longer reaches get whatever probe budget the
+	// loop above left. A baseline pass is skipped: it is a channel's FIRST pass,
+	// so there is nothing parked from an earlier one, and its job is to snapshot
+	// what already exists rather than to revive anything.
+	if !baseline {
+		offQueued, offPending, offConsidered, err := s.recheckParkedOffListing(ctx, sub, listed, &probes)
+		if err != nil {
+			return err
+		}
+		queuedCount += offQueued
+		pendingCount += offPending
+		// Matches the listing loop's counter: unavailable tallies parked rows
+		// this pass looked at, not just the ones that came back.
+		unavailableCount += offConsidered
+	}
+
 	next := s.nextScanAt(sub.ChannelID)
 	lastScanned := s.d.Now().UTC().Format(sqlTimeLayout)
 	if err := s.d.Channels.MarkScanned(sub.ChannelID, baseline, lastScanned, next, sub.ScanRequestedAt); err != nil {
