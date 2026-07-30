@@ -345,6 +345,53 @@ describe("Player", () => {
       expect(el.className).toBe(gradientClassFor("v1"));
     });
 
+    // Chapter rows, highlight rows and transcript cues all seek. With no
+    // <video> to move, seek() returns early on a null ref, so each of them is a
+    // button that silently does nothing. They stay readable — that is the point
+    // of keeping them — but stop being controls.
+    it("renders chapter and highlight rows as text when there is no file", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          status: "tombstoned",
+          has_media: false,
+          chapters: [{ ts: 30, title: "Intro", source: "yt-dlp" }],
+          key_points: [{ ts: 45, text: "The key point" }],
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("heading", { level: 1 });
+
+      expect(screen.getByText("Intro")).toBeInTheDocument();
+      expect(screen.getByText("The key point")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Intro/ }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /The key point/ }),
+      ).not.toBeInTheDocument();
+      expect(document.querySelectorAll(".row.inert").length).toBe(2);
+    });
+
+    // The counterpart: with a file, every one of those rows is still a button.
+    it("keeps chapter and highlight rows clickable when the file is there", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          chapters: [{ ts: 30, title: "Intro", source: "yt-dlp" }],
+          key_points: [{ ts: 45, text: "The key point" }],
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("heading", { level: 1 });
+
+      expect(
+        await screen.findByRole("button", { name: /Intro/ }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /The key point/ }),
+      ).toBeInTheDocument();
+      expect(document.querySelectorAll(".row.inert").length).toBe(0);
+    });
+
     // A tombstoned video keeps its whole page — title, summary, chapters,
     // transcript — and loses only the file. So the stage loses the transport
     // controls (a <video> pointed at reclaimed media can only fail) while the

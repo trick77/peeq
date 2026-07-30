@@ -28,13 +28,18 @@ function sourceLabels(chapters: Video["chapters"]): string[] {
 // ContentsCard is the chapter list under the stage.
 //
 // Presentational: it owns no state and reaches nothing. seek is the Player's,
-// so clicking a row moves the same <video> element the scrubber does.
+// so clicking a row moves the same <video> element the scrubber does — and
+// omitting seek is how a caller says there is no such element (a tombstoned
+// video, whose chapters are still worth reading). The rows then render as plain
+// text rather than buttons that could only do nothing: no focus stop, no hover
+// affordance, no pointer. The markup is otherwise identical, since every rule
+// involved is element-agnostic.
 export function ContentsCard({
   video,
   seek,
 }: {
   video: Video;
-  seek: (seconds: number) => void;
+  seek?: (seconds: number) => void;
 }) {
   const sources = sourceLabels(video.chapters);
   return (
@@ -56,19 +61,30 @@ export function ContentsCard({
           <p className="placeholder">No chapters.</p>
         ) : (
           <div className="toc toc-grid">
-            {video.chapters.map((c, i) => (
-              <button
-                key={i}
-                type="button"
-                className="row"
-                onClick={() => seek(c.ts)}
-              >
-                <span className="ts mono">{formatDuration(c.ts)}</span>
-                <span>
-                  <span className="ttl">{c.title}</span>
-                </span>
-              </button>
-            ))}
+            {video.chapters.map((c, i) => {
+              const body = (
+                <>
+                  <span className="ts mono">{formatDuration(c.ts)}</span>
+                  <span>
+                    <span className="ttl">{c.title}</span>
+                  </span>
+                </>
+              );
+              return seek ? (
+                <button
+                  key={i}
+                  type="button"
+                  className="row"
+                  onClick={() => seek(c.ts)}
+                >
+                  {body}
+                </button>
+              ) : (
+                <div key={i} className="row inert">
+                  {body}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
