@@ -1,8 +1,8 @@
 // Package retention implements the auto-delete sweep (Task 12): watched,
 // non-favorite videos past settings.RetentionDays are tombstoned
 // automatically, exactly like the manual DELETE endpoint (media file
-// unlinked, row kept for watched history), except a video currently being
-// streamed is protected regardless of age.
+// unlinked; row, thumbnail and subtitle kept), except a video currently
+// being streamed is protected regardless of age.
 package retention
 
 import (
@@ -126,9 +126,9 @@ func (s *Sweeper) sweepAndLog() {
 // queries every watched/non-favorite/non-tombstoned video whose watched_at
 // is older than the cutoff, skips any the NowPlayingGuard reports active,
 // and tombstones the rest — unlinking media from disk first via the same
-// media.RemoveVideoFiles path the manual DELETE endpoint uses, then calling
-// videos.Store.Tombstone to clear media_path and mark the row deleted while
-// keeping it for watched history.
+// media.RemoveTombstonedVideoFiles path the manual DELETE endpoint uses, then
+// calling videos.Store.Tombstone to clear media_path and mark the row deleted
+// while keeping it for watched history.
 func (s *Sweeper) SweepOnce() error {
 	ctx := context.Background()
 	cfg, err := s.deps.Settings.Get(ctx)
@@ -160,7 +160,7 @@ func (s *Sweeper) SweepOnce() error {
 			s.deps.Logger.Info("retention sweep: skipping currently-playing video", "video_id", v.ID)
 			continue
 		}
-		media.RemoveTombstonedVideoFiles(s.deps.MediaDir, v.MediaPath, v.SubtitlePath)
+		media.RemoveTombstonedVideoFiles(s.deps.MediaDir, v.MediaPath)
 		if err := s.deps.Videos.Tombstone(v.ID); err != nil {
 			s.deps.Logger.Error("retention sweep: tombstone failed", "video_id", v.ID, "err", err)
 			continue

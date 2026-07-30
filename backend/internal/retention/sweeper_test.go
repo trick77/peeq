@@ -171,18 +171,24 @@ func TestSweepOnce_deletesOnlyWatchedNonFavoriteAgedAndNotPlaying(t *testing.T) 
 	}
 }
 
-// TestSweepOnce_keepsThumbnailOfTombstonedVideo pins the automatic
-// tombstone to the same rule the manual DELETE endpoint follows: the media
-// file goes, the poster stays. A tombstoned row keeps its title and summary
-// and its card says "summary kept", so it should still look like the video
-// it remembers — and thumbnail_path stays set, so a deleted file would show
-// up as a broken image rather than as no image.
-func TestSweepOnce_keepsThumbnailOfTombstonedVideo(t *testing.T) {
+// TestSweepOnce_keepsThumbnailAndSubtitleOfTombstonedVideo pins the automatic
+// tombstone to the same rule the manual DELETE endpoint follows: the media file
+// goes, everything cheap stays. A tombstoned row keeps its title and summary
+// and its card says "summary kept", so it should still look like the video it
+// remembers — and thumbnail_path stays set, so a deleted file would show up as
+// a broken image rather than as no image. The .vtt stays for a harder reason:
+// it is the only source the transcript, its chunks and its embeddings can be
+// rebuilt from, so a sweep that deleted it made the video permanently
+// unsearchable on the next reprocess.
+func TestSweepOnce_keepsThumbnailAndSubtitleOfTombstonedVideo(t *testing.T) {
 	h := newHarness(t, 30) // retention_days = 30; fixed now is 2026-07-18
 
 	mediaPath := filepath.Join(h.mediaDir, "v1.mp4")
 	thumbPath := filepath.Join(h.mediaDir, "v1.jpg")
-	for _, p := range []string{mediaPath, thumbPath} {
+	// Named as yt-dlp writes it — a sidecar of the media file, so this also
+	// pins that the sweep does not sweep sidecars.
+	vttPath := filepath.Join(h.mediaDir, "v1.en.vtt")
+	for _, p := range []string{mediaPath, thumbPath, vttPath} {
 		if err := os.WriteFile(p, []byte("bytes"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", p, err)
 		}
@@ -190,7 +196,9 @@ func TestSweepOnce_keepsThumbnailOfTombstonedVideo(t *testing.T) {
 	if err := h.vs.Upsert(videos.Video{ID: "v1", URL: "https://youtu.be/v1"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := h.vs.SetDownloaded("v1", videos.DownloadedResult{MediaPath: mediaPath, ThumbnailPath: thumbPath}); err != nil {
+	if err := h.vs.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath: mediaPath, ThumbnailPath: thumbPath, SubtitleRelPath: vttPath,
+	}); err != nil {
 		t.Fatalf("set downloaded: %v", err)
 	}
 	if _, err := h.vs.SetWatched("v1", true); err != nil {
@@ -217,6 +225,12 @@ func TestSweepOnce_keepsThumbnailOfTombstonedVideo(t *testing.T) {
 	}
 	if v.ThumbnailPath != thumbPath {
 		t.Fatalf("thumbnail_path = %q, want kept as %q", v.ThumbnailPath, thumbPath)
+	}
+	if _, err := os.Stat(vttPath); err != nil {
+		t.Fatalf("v1.en.vtt gone after sweep, want kept: %v", err)
+	}
+	if v.SubtitlePath != vttPath {
+		t.Fatalf("subtitle_path = %q, want kept as %q", v.SubtitlePath, vttPath)
 	}
 }
 

@@ -208,18 +208,18 @@ func (s *server) handleGetVideo(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeleteVideo is the manual DELETE endpoint: unconditionally
-// tombstones the video (unlinking its media and subtitle files from disk
-// to reclaim space, keeping the thumbnail so the remembered card still has
-// a poster) while keeping the row for watched history and a future
-// re-download badge. Never-delete-a-playing-video is a Task 12 sweeper
-// concern, not this endpoint's.
+// tombstones the video (unlinking the media file from disk to reclaim space,
+// keeping the thumbnail so the remembered card still has a poster and the
+// subtitle so the transcript survives) while keeping the row for watched
+// history and a future re-download badge. Never-delete-a-playing-video is a
+// Task 12 sweeper concern, not this endpoint's.
 func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.lookupVideo(w, r)
 	if !ok {
 		return
 	}
 
-	media.RemoveTombstonedVideoFiles(s.mediaDir, v.MediaPath, v.SubtitlePath)
+	media.RemoveTombstonedVideoFiles(s.mediaDir, v.MediaPath)
 
 	if err := s.videos.Tombstone(v.ID); err != nil {
 		serverError(w, r, err, "delete video failed")
@@ -533,13 +533,18 @@ func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "downloads are not configured")
 		return
 	}
-	// A tombstoned video is always watched=1 and aged (that's how it got
-	// tombstoned by the retention sweeper); resetting the watched state here
-	// rescues it from SweepCandidates so the sweeper doesn't delete the
-	// freshly re-downloaded media within its next hourly pass. Mirrors the
-	// existing "un-watch rescues from the auto-delete sweep" rule from P1.
-	if _, err := s.videos.SetWatched(v.ID, false); err != nil {
-		serverError(w, r, err, "reset watched state failed")
+	// A video swept for age is watched with an aged watched_at, so simply
+	// re-queueing it would leave it matching SweepCandidates and the next hourly
+	// pass would reclaim the media this download is about to fetch. Restarting the
+	// retention clock rescues it for a full retention_days instead.
+	//
+	// This used to mark the video unwatched, which bought the same rescue by
+	// rewriting history: a tombstoned video is NOT always watched (the manual
+	// Delete tombstones an unwatched video just as happily), and one that was
+	// watched stayed watched in the only sense that matters — you watched it. The
+	// lifecycle state and the watch state move independently.
+	if err := s.videos.RestartRetentionClock(v.ID); err != nil {
+		serverError(w, r, err, "restart retention clock failed")
 		return
 	}
 	if err := s.videos.SetStatus(v.ID, videos.StatusQueued, ""); err != nil {

@@ -198,18 +198,50 @@ func (s *Store) SetResumeRaw(id string, position float64) error {
 	return nil
 }
 
+// RestartRetentionClock stamps watched_at to now on a watched video, leaving
+// watched and resume_position_seconds alone. It exists for the re-download
+// path: a restored video needs its full retention_days again, or the next
+// hourly sweep would reclaim the file it just fetched.
+//
+// The alternative — marking the video unwatched, which is what re-download used
+// to do — bought the same rescue by rewriting history. Watched-ness and whether
+// the file is here are different facts: a video you watched and deleted is still
+// a video you watched, and a video that was NEVER watched can be tombstoned too
+// (the manual Delete does not ask), so there was nothing to un-watch in that
+// case anyway.
+//
+// No state_version bump: watched_at is not part of the playback state clients
+// echo back through SetResume, so nobody's version needs invalidating.
+// Restricted to watched rows, so an unwatched video does not acquire a
+// watched_at it never earned.
+func (s *Store) RestartRetentionClock(id string) error {
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET watched_at = datetime('now') WHERE id = ? AND watched = 1`, id); err != nil {
+		return fmt.Errorf("restart retention clock for video %s: %w", id, err)
+	}
+	return nil
+}
+
 // SweepCandidates returns videos eligible for the retention sweeper
-// (Task 12): watched, not favorited, not already tombstoned, and last
-// watched strictly before cutoff (an absolute point in time, formatted
+// (Task 12): downloaded, watched, not favorited, and last watched strictly
+// before cutoff (an absolute point in time, formatted
 // "2006-01-02 15:04:05" UTC to match the format datetime('now') stores in
 // watched_at — the caller computes cutoff from settings.RetentionDays and
 // its own clock, so the sweeper stays testable without depending on
 // SQLite's notion of "now"). Oldest-watched first, so the sweeper's log
 // order reads chronologically.
+//
+// status = 'downloaded' rather than status != 'tombstoned': there is only ever
+// something to reclaim from a video that HAS a file. The looser form also
+// matched a watched row that was queued, downloading or errored, so a
+// re-download of a long-ago-watched video could be flipped straight back to
+// 'tombstoned' while its job was still in flight — see handleRedownloadVideo,
+// which restarts the retention clock and relies on this to make the restore
+// stick.
 func (s *Store) SweepCandidates(cutoffUTC string) ([]Video, error) {
 	rows, err := s.db.QueryContext(context.Background(),
 		"SELECT "+videoColumns+" "+videoFrom+`
-WHERE v.watched = 1 AND v.favorite = 0 AND v.status != 'tombstoned' AND v.watched_at < ?
+WHERE v.watched = 1 AND v.favorite = 0 AND v.status = 'downloaded' AND v.watched_at < ?
 ORDER BY v.watched_at ASC`, cutoffUTC,
 	)
 	if err != nil {

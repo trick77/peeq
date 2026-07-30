@@ -507,8 +507,12 @@ func (w *Worker) finishNoTranscript(job *summaryjobs.Job, video *videos.Video, r
 // idle classify sweep stops picking it up.
 //
 // This is deliberately NOT called when the subtitle file is simply absent or
-// unreadable: Tombstone() blanks subtitle_path, so a retention-swept video
-// takes that path and must keep the summary it was archived with.
+// unreadable: a video whose transcript cannot be read on this run must keep the
+// summary it already has rather than have it wiped by a run that learned
+// nothing. A tombstone no longer takes that path — it keeps both subtitle_path
+// and the .vtt, precisely so the archived analysis stays rebuildable — but a
+// row tombstoned before that changed still has a blank subtitle_path and relies
+// on this.
 //
 // Best-effort throughout — the caller's path is terminal and a cleanup failure
 // must not turn it into a job failure.

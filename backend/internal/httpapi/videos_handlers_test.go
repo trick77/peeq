@@ -277,10 +277,12 @@ func TestVideosResume_versionEchoAccepted(t *testing.T) {
 }
 
 // TestVideosDelete_tombstonesRowAndUnlinksFile is the central Task 11
-// delete guarantee: DELETE removes the media file from disk but keeps the
-// row, clearing media_path and setting status=tombstoned. The thumbnail is
-// the deliberate exception — file and column both survive, so the
-// remembered card still has a poster instead of a broken image.
+// delete guarantee: DELETE removes the media file from disk — and only the
+// media file — but keeps the row, clearing media_path and setting
+// status=tombstoned. Thumbnail and subtitle are the deliberate exceptions:
+// file and column both survive for each, so the remembered card still has a
+// poster instead of a broken image and the transcript stays readable and
+// re-embeddable.
 func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	deps, mediaDir := videosTestDeps(t)
 	videoDir := filepath.Join(mediaDir, "chan1", "v1")
@@ -303,7 +305,9 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
 		t.Fatalf("seed video: %v", err)
 	}
-	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: mediaPath, ThumbnailPath: thumbPath}); err != nil {
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
+		MediaPath: mediaPath, ThumbnailPath: thumbPath, SubtitleRelPath: vttPath,
+	}); err != nil {
 		t.Fatalf("set downloaded: %v", err)
 	}
 
@@ -321,8 +325,11 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	if _, err := os.Stat(thumbPath); err != nil {
 		t.Fatalf("thumbnail file gone after delete, want kept: err = %v", err)
 	}
-	if _, err := os.Stat(vttPath); !os.IsNotExist(err) {
-		t.Fatalf("vtt file still exists after delete: err = %v", err)
+	// The .vtt sits next to the media file as v1.en.vtt, i.e. exactly the
+	// sidecar shape a hard delete sweeps — so this pins that the tombstone path
+	// spares it, both as the named subtitle and as a sidecar.
+	if _, err := os.Stat(vttPath); err != nil {
+		t.Fatalf("vtt file gone after delete, want kept: err = %v", err)
 	}
 
 	got, err := deps.Videos.Get("v1")
@@ -351,6 +358,15 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	thumbRec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/thumbnail", nil)
 	if thumbRec.Code != http.StatusOK {
 		t.Fatalf("GET thumbnail after delete = %d, want 200 (card would show a broken image)", thumbRec.Code)
+	}
+	// Same reasoning for the transcript: subtitle_path kept and .vtt kept only
+	// mean something if the endpoint the transcript view reads still answers.
+	if got.SubtitlePath != vttPath {
+		t.Fatalf("subtitle_path = %q, want kept as %q", got.SubtitlePath, vttPath)
+	}
+	subRec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/subtitles", nil)
+	if subRec.Code != http.StatusOK {
+		t.Fatalf("GET subtitles after delete = %d, want 200 (transcript would be lost)", subRec.Code)
 	}
 }
 
@@ -1062,13 +1078,13 @@ func TestRedownloadTombstonedVideoEnqueues(t *testing.T) {
 }
 
 // TestRedownloadTombstonedVideoRescuesFromSweep is the regression test for
-// the critical bug the final fix wave addresses: a tombstoned video is
-// always watched=1 with an aged watched_at (that's how the retention
-// sweeper got it there in the first place), so simply flipping its status
-// to 'queued' on re-download left it still matching SweepCandidates — the
-// hourly sweeper would delete the freshly re-downloaded media within about
-// an hour. handleRedownloadVideo must reset the watched state so the video
-// no longer matches SweepCandidates' WHERE clause.
+// the critical bug the final fix wave addresses: a video swept for age is
+// watched=1 with an aged watched_at, so simply flipping its status to 'queued'
+// on re-download left it still matching SweepCandidates — the hourly sweeper
+// would delete the freshly re-downloaded media within about an hour.
+// handleRedownloadVideo must rescue it, and must do so WITHOUT rewriting the
+// watch history: the video stays watched (it was), its retention clock just
+// starts over from the restore.
 func TestRedownloadTombstonedVideoRescuesFromSweep(t *testing.T) {
 	h := newRedownloadTestServer(t)
 	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
@@ -1095,17 +1111,18 @@ func TestRedownloadTombstonedVideoRescuesFromSweep(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("get video: %v", err)
 	}
-	if got.Watched {
-		t.Fatalf("watched = true after redownload, want false (rescued)")
+	if !got.Watched {
+		t.Fatalf("watched = false after redownload, want kept true (you did watch it)")
 	}
-	if got.WatchedAt != "" {
-		t.Fatalf("watched_at = %q after redownload, want cleared", got.WatchedAt)
+	if got.WatchedAt == agedWatchedAt {
+		t.Fatalf("watched_at = %q after redownload, want restamped to now", got.WatchedAt)
 	}
 
-	// The real assertion: a cutoff well after the aged watched_at (and even
-	// after "now") must not return v1 from SweepCandidates any more.
-	const futureCutoff = "2099-01-01 00:00:00"
-	candidates, err := h.videos.SweepCandidates(futureCutoff)
+	// The real assertion: a cutoff the aged watched_at was well behind — the
+	// shape the sweeper actually computes, now minus retention_days — must not
+	// return v1 any more.
+	const cutoff = "2026-01-01 00:00:00"
+	candidates, err := h.videos.SweepCandidates(cutoff)
 	if err != nil {
 		t.Fatalf("sweep candidates: %v", err)
 	}
@@ -1113,6 +1130,42 @@ func TestRedownloadTombstonedVideoRescuesFromSweep(t *testing.T) {
 		if c.ID == "v1" {
 			t.Fatalf("v1 still a sweep candidate after redownload; sweeper would delete the fresh media")
 		}
+	}
+}
+
+// TestRedownloadUnwatchedTombstonedKeepsItUnwatched is the other half of the
+// rescue: an unwatched video can be tombstoned too — the manual Delete does not
+// ask — and re-downloading it must not hand it a watched flag or a watched_at it
+// never earned. Re-download used to call SetWatched(id, false) unconditionally,
+// which happened to be harmless here and destructive on a watched video; the
+// restamp is restricted to watched rows so neither case rewrites history.
+func TestRedownloadUnwatchedTombstonedKeepsItUnwatched(t *testing.T) {
+	h := newRedownloadTestServer(t)
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := h.videos.Tombstone("v1"); err != nil {
+		t.Fatalf("seed tombstoned status: %v", err)
+	}
+
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/redownload", nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := h.videos.Get("v1")
+	if err != nil || got == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.Watched {
+		t.Fatalf("watched = true after redownload, want still false")
+	}
+	if got.WatchedAt != "" {
+		t.Fatalf("watched_at = %q after redownload, want still empty", got.WatchedAt)
+	}
+	if got.Status != "queued" {
+		t.Fatalf("status = %q, want queued", got.Status)
 	}
 }
 
@@ -1704,9 +1757,11 @@ func TestRedownload_jobsNotConfigured_503(t *testing.T) {
 	}
 }
 
-// TestRedownload_setWatchedStoreError_500 covers the s.videos.SetWatched
-// error branch of handleRedownloadVideo (the sweep-rescue step).
-func TestRedownload_setWatchedStoreError_500(t *testing.T) {
+// TestRedownload_restartRetentionClockStoreError_500 covers the
+// s.videos.RestartRetentionClock error branch of handleRedownloadVideo (the
+// sweep-rescue step). The row is seeded watched, since the restamp only touches
+// watched rows and would otherwise update nothing and fire no trigger.
+func TestRedownload_restartRetentionClockStoreError_500(t *testing.T) {
 	h := newRedownloadTestServer(t)
 	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
 		t.Fatalf("seed video: %v", err)
@@ -1714,14 +1769,17 @@ func TestRedownload_setWatchedStoreError_500(t *testing.T) {
 	if err := h.videos.SetStatus("v1", "error", "boom"); err != nil {
 		t.Fatalf("seed error status: %v", err)
 	}
-	if _, err := h.db.Exec(`CREATE TRIGGER block_watched_update BEFORE UPDATE OF watched ON videos BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
+	if _, err := h.db.Exec(`UPDATE videos SET watched = 1, watched_at = '2020-01-01 00:00:00' WHERE id = 'v1'`); err != nil {
+		t.Fatalf("seed watched state: %v", err)
+	}
+	if _, err := h.db.Exec(`CREATE TRIGGER block_watched_at_update BEFORE UPDATE OF watched_at ON videos BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
 		t.Fatalf("create trigger: %v", err)
 	}
 	cookie := loginAndGetCookie(t, h)
 
 	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/redownload", nil)
 	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("POST redownload (set-watched store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+		t.Fatalf("POST redownload (restart-retention-clock store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
 	}
 }
 

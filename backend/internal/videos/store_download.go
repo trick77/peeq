@@ -144,18 +144,18 @@ func (s *Store) Discard(id string) error {
 	return nil
 }
 
-// Tombstone marks a video deleted-but-remembered: media_path and
-// subtitle_path are cleared and status becomes 'tombstoned', but the row
-// (and its watched history) is kept — a future badge can offer
-// re-download. Tombstone only updates the database; the caller must unlink
-// the actual media/subtitle files first (it needs config.MediaDir and
-// path-safety checks the store doesn't have) via
+// Tombstone marks a video deleted-but-remembered: media_path is cleared and
+// status becomes 'tombstoned', but the row (and its watched history) is kept —
+// a future badge can offer re-download. Tombstone only updates the database;
+// the caller must unlink the actual media file first (it needs config.MediaDir
+// and path-safety checks the store doesn't have) via
 // media.RemoveTombstonedVideoFiles.
 //
-// thumbnail_path is deliberately NOT cleared: the thumbnail file survives a
-// tombstone, so the remembered card keeps its poster. The two must stay in
-// step — clearing the column here without keeping the file (or the reverse)
-// is what left tombstoned cards showing a broken image.
+// thumbnail_path and subtitle_path are deliberately NOT cleared: both files
+// survive a tombstone, so the remembered card keeps its poster and the
+// transcript stays readable and re-embeddable. Column and file must stay in
+// step — clearing a column here without keeping the file (or the reverse) is
+// what left tombstoned cards showing a broken image.
 func (s *Store) Tombstone(id string) error {
 	ctx := context.Background()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -165,7 +165,7 @@ func (s *Store) Tombstone(id string) error {
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE videos SET media_path = '', subtitle_path = '', status = 'tombstoned' WHERE id = ?`, id); err != nil {
+		`UPDATE videos SET media_path = '', status = 'tombstoned' WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("tombstone video %s: %w", id, err)
 	}
 	// A tombstoned video is gone from the library, so any public share link

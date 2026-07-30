@@ -344,6 +344,37 @@ describe("Player", () => {
       expect(el).not.toHaveAttribute("poster");
       expect(el.className).toBe(gradientClassFor("v1"));
     });
+
+    // A tombstoned video keeps its whole page — title, summary, chapters,
+    // transcript — and loses only the file. So the stage loses the transport
+    // controls (a <video> pointed at reclaimed media can only fail) while the
+    // transcript the kept .vtt still backs stays on offer.
+    it("replaces the stage with a note when the file is gone, keeping the transcript", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          status: "tombstoned",
+          has_media: false,
+          has_subtitles: true,
+          has_thumbnail: true,
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("heading", { level: 1 });
+
+      expect(document.querySelector("video")).toBeNull();
+      expect(document.querySelector(".stage-gone")).not.toBeNull();
+      expect(screen.getByText(/deleted to save space/i)).toBeInTheDocument();
+      // No scrubber and no captions toggle: both act on a media element that
+      // isn't there.
+      expect(document.querySelector(".scrub-wrap")).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /subtitles/i }),
+      ).not.toBeInTheDocument();
+      // The transcript is a different thing from playback, and it survived.
+      expect(
+        screen.getByRole("button", { name: /transcript/i }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("flushes the latest position to setResume on unmount", async () => {
@@ -981,6 +1012,20 @@ describe("Player", () => {
     expect(setPlaybackState).toHaveBeenCalledTimes(1);
   });
 
+  it("does not record a video with no file as now playing", async () => {
+    // The pointer is one row the read side joins with status='downloaded', so
+    // writing a tombstoned video into it does not move the rail there — it
+    // empties the rail. Opening a swept video to read its transcript must not
+    // cost the pointer to whatever was actually being watched.
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ status: "tombstoned", has_media: false }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByRole("heading", { level: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setPlaybackState).not.toHaveBeenCalled();
+  });
+
   it("does not clear the pointer on unmount", async () => {
     // Navigating to the Library is not "I stopped watching" — clearing here
     // would defeat the whole point of the pointer.
@@ -1209,6 +1254,26 @@ describe("Player", () => {
       expect(
         screen.queryByRole("menuitem", { name: /Reprocess video/i }),
       ).toBeNull();
+    });
+
+    // The transcript is the only thing the pipeline reads, and a tombstone keeps
+    // it — so rebuilding the analysis (summary, category, embeddings) does not
+    // need the file back, and the endpoint no longer 409s on a swept video.
+    it("is present for a tombstoned video that kept its transcript", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          status: "tombstoned",
+          has_media: false,
+          has_subtitles: true,
+          summary_status: "done",
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("heading", { level: 1 });
+      await openMenu();
+      expect(
+        await screen.findByRole("menuitem", { name: /Reprocess video/i }),
+      ).toBeInTheDocument();
     });
 
     // A failed step marks the ⋮ trigger with an attention dot and flags the
