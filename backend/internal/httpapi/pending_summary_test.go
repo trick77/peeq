@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,5 +134,112 @@ func TestPendingList_carriesSummaryState(t *testing.T) {
 	}
 	if !strings.Contains(body, `"auto_summary":true`) {
 		t.Fatalf("pending list is missing the channel opt-in: %s", body)
+	}
+}
+
+// putJSON is putJSONWithCookie with a freshly-minted session, mirroring the
+// postJSON helper these tests already use.
+func putJSON(t *testing.T, h http.Handler, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	return putJSONWithCookie(t, h, loginAndGetCookie(t, h), path, body)
+}
+
+// TestChannelPut_autoSummary covers the per-channel opt-out over HTTP. The
+// interesting case is the last one: auto_summary lives on the channel, not the
+// subscription, so a request carrying only it must not be rejected for a
+// channel that is merely added.
+func TestChannelPut_autoSummary(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+
+	rr := putJSON(t, h, "/api/channels/UC1", map[string]any{"auto_summary": false})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"auto_summary":false`) {
+		t.Fatalf("body = %s, want the stored value echoed back", rr.Body.String())
+	}
+
+	c, err := h.channels.Get("UC1")
+	if err != nil || c == nil {
+		t.Fatalf("get channel: %v", err)
+	}
+	if c.AutoSummary {
+		t.Fatal("auto_summary was not persisted")
+	}
+
+	// And back on again, so the toggle is not one-way.
+	if rr := putJSON(t, h, "/api/channels/UC1", map[string]any{"auto_summary": true}); rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	if c, _ := h.channels.Get("UC1"); c == nil || !c.AutoSummary {
+		t.Fatal("auto_summary did not go back on")
+	}
+}
+
+func TestChannelPut_autoSummary_unknownChannel404s(t *testing.T) {
+	h := newPendingTestServer(t)
+	rr := putJSON(t, h, "/api/channels/UCnope", map[string]any{"auto_summary": false})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rr.Code)
+	}
+}
+
+// The two subscription fields keep their old rejection: they genuinely need a
+// subscription row, and widening that would silently no-op them.
+func TestChannelPut_subscriptionFieldsStillNeedASubscription(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	rr := putJSON(t, h, "/api/channels/UC1", map[string]any{"autodownload": true})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+// A video peeq never got round to reading has a ledger row and no videos row.
+// Ignoring it must be an ordinary success, not a 500 on a missing row.
+func TestPendingIgnore_unreadVideoIsFine(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "p3", ChannelID: "UC1", Title: "Never read",
+		URL: "https://www.youtube.com/watch?v=p3", DurationSeconds: 600, State: "pending",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if rr := postJSON(t, h, "/api/pending/p3/ignore", nil); rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	e, err := h.ledger.Get("p3")
+	if err != nil || e == nil || e.State != channelvideos.StateIgnored {
+		t.Fatalf("ledger row = %+v (err %v), want ignored", e, err)
+	}
+}
+
+// A video whose captions never arrived has a row and no .vtt. Keyed on the
+// subtitle path alone that row would survive every ignore forever, invisible to
+// every list and reachable by nothing.
+func TestPendingIgnore_collectsARowWithNoCaptions(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "p4", ChannelID: "UC1", Title: "No captions ever",
+		URL: "https://www.youtube.com/watch?v=p4", DurationSeconds: 600, State: "pending",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := h.videos.Upsert(videos.Video{ID: "p4", URL: "https://youtu.be/p4"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := h.videos.SetSummaryStatus("p4", videos.SummaryNoTranscript, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	if rr := postJSON(t, h, "/api/pending/p4/ignore", nil); rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	if v, err := h.videos.Get("p4"); err != nil || v != nil {
+		t.Fatalf("row survived: %+v (err %v)", v, err)
 	}
 }

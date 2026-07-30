@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"database/sql"
 
@@ -254,5 +255,106 @@ func mustBeDue(t *testing.T, h *harness) {
 	if _, err := h.db.Exec(
 		`UPDATE channel_videos SET next_caption_attempt_at = NULL WHERE video_id = 'v1'`); err != nil {
 		t.Fatalf("make due: %v", err)
+	}
+}
+
+// failingLedger lets a test drive the error branches that a healthy database
+// never reaches: they are the ones that decide whether a fetch is attempted at
+// all, so silently swallowing one would mean burning YouTube calls with nothing
+// recorded.
+type failingLedger struct {
+	*channelvideos.Store
+	failNext   bool
+	failRecord bool
+}
+
+func (f *failingLedger) NextCaptionCandidate() (*channelvideos.CaptionCandidate, error) {
+	if f.failNext {
+		return nil, errors.New("ledger unavailable")
+	}
+	return f.Store.NextCaptionCandidate()
+}
+
+func (f *failingLedger) RecordCaptionAttempt(videoID string, delaySeconds int) error {
+	if f.failRecord {
+		return errors.New("write failed")
+	}
+	return f.Store.RecordCaptionAttempt(videoID, delaySeconds)
+}
+
+// A ledger read that fails must not be read as "nothing to do" — and must
+// certainly not lead to a fetch with no attempt recorded against it.
+func TestClaimFailureFetchesNothing(t *testing.T) {
+	h := newHarness(t)
+	f := &fetcher{results: []string{"never"}}
+	w := NewWorker(Deps{
+		Fetcher:   f,
+		Ledger:    &failingLedger{Store: h.ledger, failNext: true},
+		Videos:    h.videos,
+		Summaries: h.summary,
+	})
+
+	w.pass(context.Background())
+
+	if f.calls != 0 {
+		t.Fatalf("fetched %d times after a failed claim, want 0", f.calls)
+	}
+}
+
+// The rung is burned before the fetch precisely so a crash cannot loop forever.
+// If that write fails, the fetch must not happen either — otherwise the guard
+// is gone and every tick calls YouTube again.
+func TestAttemptWriteFailureFetchesNothing(t *testing.T) {
+	h := newHarness(t)
+	f := &fetcher{results: []string{"never"}}
+	w := NewWorker(Deps{
+		Fetcher:   f,
+		Ledger:    &failingLedger{Store: h.ledger, failRecord: true},
+		Videos:    h.videos,
+		Summaries: h.summary,
+	})
+
+	w.pass(context.Background())
+
+	if f.calls != 0 {
+		t.Fatalf("fetched %d times after a failed attempt write, want 0", f.calls)
+	}
+	if v, err := h.videos.Get("v1"); err != nil || v != nil {
+		t.Fatalf("a row was created despite no attempt being recorded: %v (err %v)", v, err)
+	}
+}
+
+// An empty inbox is the common state, and it must be silent: no fetch, no row,
+// no summary job.
+func TestNothingDueDoesNothing(t *testing.T) {
+	h := newHarness(t)
+	if err := h.ledger.MarkCaptionSettled("v1"); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	f := &fetcher{results: []string{"never"}}
+
+	h.worker(f).pass(context.Background())
+
+	if f.calls != 0 {
+		t.Fatalf("fetched %d times with nothing due, want 0", f.calls)
+	}
+}
+
+// Run must return on a cancelled context rather than spinning: it is one of ten
+// goroutines the process waits on at shutdown.
+func TestRunStopsOnContextCancel(t *testing.T) {
+	h := newHarness(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		h.worker(&fetcher{}).Run(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return on a cancelled context")
 	}
 }
