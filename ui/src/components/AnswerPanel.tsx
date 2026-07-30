@@ -69,7 +69,9 @@ export function AnswerPanel({
         </p>
       ) : null}
 
-      {sources.length ? (
+      {/* Held back until the answer settles: a citation list above a
+          half-written answer is evidence arriving before the claim. */}
+      {sources.length && !streaming ? (
         <div className="answer-sources">
           <p className="lbl">Sources</p>
           {sources.map((s) => (

@@ -319,6 +319,9 @@ describe("App deep links", () => {
     await screen.findByPlaceholderText("Search titles");
 
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    // Find, not the default Ask tab: this test is about the deep link a match
+    // produces, and Find gets there without an answer stream to mock.
+    fireEvent.click(await screen.findByRole("button", { name: "Find" }));
     // Matched by its accessible name, not its placeholder: the placeholder is
     // mode-dependent copy on the search view now.
     const input = await screen.findByLabelText("Find words");
