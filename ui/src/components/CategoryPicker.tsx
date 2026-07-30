@@ -102,7 +102,7 @@ export function CategoryPicker({ category, onPick }: Props) {
           <span className="dotc" style={{ background: meta.color }} />
         ) : null}
         {meta ? meta.label : "Uncategorized"}
-        <Icon name="chevronDown" size="11px" />
+        <Icon name="chevronDown" size="13px" />
       </button>
       {open ? (
         <div

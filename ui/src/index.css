@@ -1712,18 +1712,34 @@ button.srow:not(:disabled):hover {
 
 /* The Player's category pill is the card's .metapill made operable: same
    shape, plus a caret and a hover state. .catpick keeps its own selectors so
-   the read-only pill on the card is never dragged into button styling. */
+   the read-only pill on the card is never dragged into button styling.
+
+   It is also drawn a size up from the card's pill. On a card the pill is a
+   caption on a thumbnail; here it sits at the end of a row of 32px icon
+   buttons and 40px labelled ones, where the card's 11px/19px chip reads as a
+   crumb rather than a control. The type steps to the row's own --text-label
+   and the box to 30px, so the row has one centreline. */
 .catwrap {
   position: relative;
   display: inline-flex;
 }
 button.catpick {
   cursor: pointer;
-  padding-right: 5px;
+  min-height: 30px;
+  padding: 0 7px 0 11px;
+  gap: 7px;
+  border-radius: 15px;
+  font-size: var(--text-label);
   transition:
     background 120ms ease,
     border-color 120ms ease,
     color 120ms ease;
+}
+/* The colour dot grows with the pill; at 6px it looked like dust on the
+   larger chip. */
+button.catpick .dotc {
+  width: 7px;
+  height: 7px;
 }
 button.catpick:hover,
 button.catpick[aria-expanded="true"] {
@@ -2378,9 +2394,12 @@ button.catpick.unset:hover {
   font-weight: 500;
   font-size: 15px;
 }
+/* The count at the right of a card header ("12 chapters"). Sized to the rows
+   it counts — 13.5px is the chapter title's size — so the header's two halves
+   read as one line; grey is what keeps it a caption rather than a title. */
 .card .hd .meta {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 13.5px;
   color: var(--color-muted);
 }
 /* hd-wrap lets a header carry a variable number of pills beside its title
