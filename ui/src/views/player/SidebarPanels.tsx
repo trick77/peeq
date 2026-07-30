@@ -60,13 +60,15 @@ export function SummaryCard({ video }: { video: Video }) {
 }
 
 // HighlightsCard is the key-points list. Each row seeks, so it is the same
-// contract as ContentsCard: presentational, with the Player's seek passed in.
+// contract as ContentsCard: presentational, with the Player's seek passed in —
+// and an omitted seek meaning there is no <video> to move, which renders the
+// rows as plain text instead of buttons that could only do nothing.
 export function HighlightsCard({
   video,
   seek,
 }: {
   video: Video;
-  seek: (seconds: number) => void;
+  seek?: (seconds: number) => void;
 }) {
   return (
     <div className="card">
@@ -79,22 +81,33 @@ export function HighlightsCard({
           <p className="placeholder">No highlights.</p>
         ) : (
           <div className="hl">
-            {video.key_points.map((k, i) => (
-              <button
-                key={i}
-                type="button"
-                className="row"
-                onClick={() => seek(k.ts)}
-              >
-                <Icon
-                  name="starFilled"
-                  size="15px"
-                  style={{ color: "var(--color-kept)" }}
-                />
-                <span className="ts mono">{formatDuration(k.ts)}</span>
-                <span className="txt">{k.text}</span>
-              </button>
-            ))}
+            {video.key_points.map((k, i) => {
+              const body = (
+                <>
+                  <Icon
+                    name="starFilled"
+                    size="15px"
+                    style={{ color: "var(--color-kept)" }}
+                  />
+                  <span className="ts mono">{formatDuration(k.ts)}</span>
+                  <span className="txt">{k.text}</span>
+                </>
+              );
+              return seek ? (
+                <button
+                  key={i}
+                  type="button"
+                  className="row"
+                  onClick={() => seek(k.ts)}
+                >
+                  {body}
+                </button>
+              ) : (
+                <div key={i} className="row inert">
+                  {body}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

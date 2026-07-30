@@ -2669,6 +2669,16 @@ button.sleeppick.armed {
   background: var(--color-active);
   border-color: var(--color-border);
 }
+/* .inert — a seek row with nothing to seek (a tombstoned video keeps its
+   chapters, highlights and transcript but has no <video>). It renders as a
+   <div> rather than a <button>, so it is already out of the tab order and
+   carries no pointer; these rules take away the last thing that still promised
+   a click. The row rules themselves are element-agnostic, so nothing else about
+   it changes. */
+.toc .row.inert:hover {
+  background: none;
+  border-color: transparent;
+}
 .toc .ts {
   color: var(--color-accent-strong);
   font-size: 12.5px;
@@ -2701,6 +2711,10 @@ button.sleeppick.armed {
 }
 .hl .row:hover {
   border-color: var(--color-accent);
+}
+/* See .toc .row.inert. */
+.hl .row.inert:hover {
+  border-color: var(--color-border);
 }
 .hl .ts {
   color: var(--color-kept);
@@ -2774,6 +2788,14 @@ button.sleeppick.armed {
   background: var(--color-active);
 }
 .transcript .cue.hit {
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+/* See .toc .row.inert. Ordered after .hit so a find match keeps its tint on an
+   inert cue — the highlight is about the search, not about clicking. */
+.transcript .cue.inert:hover {
+  background: none;
+}
+.transcript .cue.inert.hit:hover {
   background: color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 .transcript .ts {

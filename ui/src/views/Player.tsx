@@ -1273,7 +1273,15 @@ export function Player({
         </div>
 
         <div className="belowvideo">
-          <ContentsCard video={video} seek={seek} />
+          {/* seek only when there is something to seek. A tombstoned video keeps
+              its chapters, highlights and transcript, and every row in them
+              would otherwise be a button that silently does nothing — the same
+              dead control the scrubber and the captions toggle are already
+              hidden to avoid. */}
+          <ContentsCard
+            video={video}
+            seek={video.has_media ? seek : undefined}
+          />
           {video.has_subtitles && (
             <div className="card full">
               <button
@@ -1385,19 +1393,34 @@ export function Player({
                       !transcriptError &&
                       cues.length > 0 && (
                         <div className="transcript">
-                          {cues.map((cue, i) => (
-                            <button
-                              key={i}
-                              type="button"
-                              className={`cue${matchesFind(cue.text, find) ? " hit" : ""}`}
-                              onClick={() => seek(cue.ts)}
-                            >
-                              <span className="ts mono">{fmt(cue.ts)}</span>
-                              <span className="line">
-                                {highlightCue(cue.text, find)}
-                              </span>
-                            </button>
-                          ))}
+                          {cues.map((cue, i) => {
+                            const cls = `cue${matchesFind(cue.text, find) ? " hit" : ""}`;
+                            const body = (
+                              <>
+                                <span className="ts mono">{fmt(cue.ts)}</span>
+                                <span className="line">
+                                  {highlightCue(cue.text, find)}
+                                </span>
+                              </>
+                            );
+                            // Same rule as the chapter and highlight rows: with
+                            // no file to seek, a cue is text to read, not a
+                            // control. Find still highlights it either way.
+                            return video.has_media ? (
+                              <button
+                                key={i}
+                                type="button"
+                                className={cls}
+                                onClick={() => seek(cue.ts)}
+                              >
+                                {body}
+                              </button>
+                            ) : (
+                              <div key={i} className={`${cls} inert`}>
+                                {body}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                   </div>
@@ -1410,7 +1433,10 @@ export function Player({
 
       <aside className="side">
         <SummaryCard video={video} />
-        <HighlightsCard video={video} seek={seek} />
+        <HighlightsCard
+          video={video}
+          seek={video.has_media ? seek : undefined}
+        />
       </aside>
       {video ? (
         <ConfirmDialog
