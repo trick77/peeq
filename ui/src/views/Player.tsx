@@ -3,6 +3,7 @@ import { Icon, type IconName } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
 import { AUTO_SKIP, Scrubber, categoryLabel } from "../components/Scrubber";
 import { CategoryPicker } from "../components/CategoryPicker";
+import { SleepTimer } from "../components/SleepTimer";
 import { RowMenu, type RowMenuAction } from "../components/RowMenu";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
@@ -49,6 +50,19 @@ import { MetaHeader } from "./player/MetaHeader";
 // visibilitychange/pagehide bypass this throttle entirely (flushOnHide
 // below), so closing the tab never loses more than this much progress.
 const RESUME_THROTTLE_MS = 5000;
+
+// SLEEP_MAX_TICK_MS caps how much wall-clock time a single sleep-timer tick
+// may charge to the budget. `timeupdate` fires ~4x/sec while playing, so a
+// gap this large means playback stopped in between (a pause, a stall, a
+// backgrounded tab) — time the viewer spent not watching, which a "stop after
+// 30 minutes" promise has no business spending. See tickSleep.
+//
+// The trade this makes: where a browser throttles `timeupdate` to slower than
+// one event per clamp, the budget drains slower than real time and the timer
+// runs long rather than short. That is the safe direction to miss in — better
+// to stop a few minutes late than to cut off a viewer who is still awake —
+// and the clamp is what makes resuming after a pause correct at all.
+const SLEEP_MAX_TICK_MS = 2000;
 
 // fmt is the Task 17 alias for formatDuration used throughout the
 // intelligence panels below (chapters/highlights/transcript cues) — kept as
@@ -209,6 +223,25 @@ export function Player({
   // claiming the old video forever. Anything that touches state, the playhead
   // or the toast *after* an await must compare against this first.
   const openVideoIdRef = useRef<string | null>(null);
+  // Sleep timer — "stop playing in N minutes", for watching in bed.
+  //
+  // It is a budget of milliseconds drained by wall-clock deltas, not a
+  // setTimeout: a long timeout is throttled in a background tab and does not
+  // survive the machine sleeping, whereas a budget re-read on every tick
+  // cannot arrive late by more than one tick. The draining happens inside
+  // handleTimeUpdate, which fires only while the video is actually playing —
+  // so "30 minutes" means 30 minutes of video, and pausing to answer the door
+  // pauses the timer too, with no `paused` check needed anywhere.
+  //
+  // The ref is the authority and is written synchronously; the state exists
+  // only so the pill re-renders, and holds whole seconds so a 4Hz timeupdate
+  // re-renders at most once a second.
+  const sleepRemainingRef = useRef<number | null>(null);
+  const sleepLastTickRef = useRef(0);
+  const [sleepRemaining, setSleepRemaining] = useState<number | null>(null);
+  // Which preset is armed, so the menu's radio state is honest. The budget
+  // alone can't say — a minute in, 30 and 60 look the same shape.
+  const [sleepMinutes, setSleepMinutes] = useState<number | null>(null);
 
   useEffect(() => {
     resumeAppliedRef.current = false;
@@ -227,6 +260,11 @@ export function Player({
     setFind("");
     setConfirmDelete(false);
     setShareStatus({ shared: false });
+    // A sleep timer is a promise about the video in front of you, so opening
+    // another one cancels it rather than quietly carrying over.
+    sleepRemainingRef.current = null;
+    setSleepRemaining(null);
+    setSleepMinutes(null);
     if (!videoId) return;
     let active = true;
     getVideo(videoId)
@@ -571,9 +609,91 @@ export function Player({
     toastTimerRef.current = window.setTimeout(() => setToast(null), 2600);
   }
 
+  // armSleep is the SleepTimer pill's only entry point: minutes to start a
+  // fresh budget, null to call it off. Re-picking the running preset restarts
+  // it rather than adding to it, which is what "set it for 30" means the
+  // second time as much as the first.
+  function armSleep(minutes: number | null) {
+    if (minutes === null) {
+      disarmSleep();
+      showToast("Sleep timer off", "clock", "info");
+      return;
+    }
+    sleepRemainingRef.current = minutes * 60_000;
+    sleepLastTickRef.current = Date.now();
+    setSleepRemaining(minutes * 60);
+    setSleepMinutes(minutes);
+    showToast(`Sleep timer set for ${minutes} min`, "clock", "info");
+  }
+
+  function disarmSleep() {
+    sleepRemainingRef.current = null;
+    setSleepRemaining(null);
+    setSleepMinutes(null);
+  }
+
+  // tickSleep drains the sleep budget by however much wall-clock time has
+  // passed since the last tick, and pauses when it runs out.
+  //
+  // The delta is clamped, and handlePlay re-bases the mark, because
+  // sleepLastTickRef only means anything across *continuous* playback. Pause
+  // for ten minutes with five left on the clock, and an unclamped first tick
+  // after resuming would charge the whole idle gap to the budget and stop the
+  // video the instant it started again — the timer firing at exactly the
+  // moment the user said they wanted to keep watching.
+  function tickSleep(el: HTMLVideoElement) {
+    const left = sleepRemainingRef.current;
+    if (left === null) return;
+    const now = Date.now();
+    // Clamped at both ends. The ceiling is SLEEP_MAX_TICK_MS (see above); the
+    // floor is zero because Date.now() is wall clock and can step backwards —
+    // an NTP correction or a manual clock change mid-playback would otherwise
+    // make the delta negative and *credit* the budget, leaving the pill
+    // showing more time than the preset was ever armed for.
+    const spent = Math.min(
+      Math.max(now - sleepLastTickRef.current, 0),
+      SLEEP_MAX_TICK_MS,
+    );
+    const next = left - spent;
+    sleepLastTickRef.current = now;
+    if (next > 0) {
+      sleepRemainingRef.current = next;
+      const secs = Math.ceil(next / 1000);
+      // Same-value bailout: timeupdate is ~4Hz and the readout is whole
+      // seconds, so three ticks in four have nothing to repaint.
+      setSleepRemaining((cur) => (cur === secs ? cur : secs));
+      return;
+    }
+    disarmSleep();
+    el.pause();
+    // Zeroing lastSentRef makes the throttled resume POST further down this
+    // same handleTimeUpdate fire unthrottled, so the pause point is stored
+    // rather than waiting out a window whose next tick is never coming.
+    // Deliberately not a second flush helper: the block below carries the
+    // openVideoIdRef guard, the state_version adoption and the 409 ->
+    // handleStaleState path that issue #97 exists to protect.
+    lastSentRef.current = 0;
+    showToast("Paused by sleep timer", "clock", "info");
+  }
+
+  // The mark is only valid across continuous playback — see tickSleep.
+  function handlePlay() {
+    sleepLastTickRef.current = Date.now();
+  }
+
+  // A video that runs out on its own ends the session the timer was counting
+  // down: nothing will fire timeupdate again, so leaving it armed would park
+  // a live-looking countdown that can never tick.
+  function handleEnded() {
+    if (sleepRemainingRef.current !== null) disarmSleep();
+  }
+
   function handleTimeUpdate() {
     const el = videoRef.current;
     if (!el || !video) return;
+    // Checked first, and before the SponsorBlock loop below can break out of
+    // the handler: the budget must not skip a tick because a segment did.
+    tickSleep(el);
     setCurrentTime(el.currentTime);
     positionRef.current = el.currentTime;
     positionKnownRef.current = true;
@@ -984,6 +1104,8 @@ export function Player({
               controls
               onLoadedMetadata={handleLoadedMetadata}
               onTimeUpdate={handleTimeUpdate}
+              onPlay={handlePlay}
+              onEnded={handleEnded}
             >
               {video.has_subtitles && subtitlesReadyFor === video.id && (
                 <track
@@ -1088,6 +1210,23 @@ export function Player({
               >
                 <Icon name="captions" size="19px" />
               </button>
+            )}
+            {/* The sleep timer is a pill rather than one of the row's
+                labelled Buttons because it obeys the row's own rule: a
+                control keeps a label when the label reports the state, and
+                this one's label IS the state — "Sleep" when off, the live
+                countdown when armed.
+
+                It sits left of the separator with the playback controls: it
+                acts on this viewing session, not on how the video is filed.
+                has_media alongside the CC toggle for the same reason — a
+                tombstoned video has no <video> element left to pause. */}
+            {video.has_media && (
+              <SleepTimer
+                remainingSeconds={sleepRemaining}
+                armedMinutes={sleepMinutes}
+                onArm={armSleep}
+              />
             )}
             {/* The remaining per-video actions collapse into one ⋮ menu:
                 Share, Reprocess, Re-download, Download file, Watch on YouTube

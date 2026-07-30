@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
   screen,
@@ -1941,6 +1941,213 @@ describe("Player", () => {
 
       expect(seen).not.toContain("/api/p/tok-v1/stream");
       expect(document.querySelector("video")?.getAttribute("src")).toBeNull();
+    });
+  });
+
+  // The sleep timer drains a millisecond budget by wall-clock deltas taken on
+  // `timeupdate`, so these tests need no fake timers at all — a stubbed
+  // Date.now plus dispatched timeupdate events reproduce playback exactly,
+  // and nothing here can leak fake timers into the tests that follow.
+  describe("sleep timer", () => {
+    let now = 1_700_000_000_000;
+    // mountPlayer stubs Date.now, and nothing in the suite restores spies for
+    // it: without this the stub outlives the describe and every test that runs
+    // after it — in this file and in whatever order vitest picks — sees a
+    // clock frozen at 1_700_000_000_000, with ten spy layers stacked on it.
+    let nowSpy: { mockRestore: () => void } | null = null;
+
+    afterEach(() => {
+      nowSpy?.mockRestore();
+      nowSpy = null;
+    });
+
+    // Simulates `ms` of continuous playback: timeupdate fires ~4x/sec in a
+    // real browser, and the drain clamps any single gap to SLEEP_MAX_TICK_MS,
+    // so the clock has to move in steps no larger than that clamp.
+    function play(el: HTMLVideoElement, ms: number) {
+      let left = ms;
+      while (left > 0) {
+        const step = Math.min(2000, left);
+        now += step;
+        fireEvent.timeUpdate(el);
+        left -= step;
+      }
+    }
+
+    async function mountPlayer() {
+      now = 1_700_000_000_000;
+      nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      const el = await waitFor(() => {
+        const found = document.querySelector("video");
+        if (!found) throw new Error("video element not mounted yet");
+        return found;
+      });
+      // jsdom has no playback engine; pause() is the assertion target.
+      const pause = vi.fn();
+      el.pause = pause;
+      Object.defineProperty(el, "currentTime", { value: 120, writable: true });
+      return { el, pause };
+    }
+
+    async function arm(minutes: number) {
+      fireEvent.click(await screen.findByRole("button", { name: /sleep/i }));
+      fireEvent.click(
+        screen.getByRole("menuitemradio", { name: `${minutes} minutes` }),
+      );
+    }
+
+    // The countdown is read off the visible readout, not the accessible name:
+    // the label deliberately names the armed preset instead of the ticking
+    // clock (see SleepTimer), so the pill's name can't change once a second
+    // under a screen reader.
+    function readout() {
+      return document.querySelector(".sleepleft")?.textContent;
+    }
+
+    it("shows the full duration the moment it is armed", async () => {
+      await mountPlayer();
+      await arm(5);
+
+      expect(readout()).toBe("5:00");
+      // The name names the preset, and holds still while the readout ticks.
+      expect(
+        screen.getByRole("button", { name: /sleep timer: 5 minutes/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("counts down as the video plays", async () => {
+      const { el } = await mountPlayer();
+      await arm(5);
+
+      play(el, 60_000);
+
+      expect(readout()).toBe("4:00");
+      // A minute in, the accessible name is still the preset — a name that
+      // changed here would be re-announced on the focused pill every second.
+      expect(
+        screen.getByRole("button", { name: /sleep timer: 5 minutes/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("holds while paused: wall-clock time with no timeupdate does not drain the budget", async () => {
+      const { el, pause } = await mountPlayer();
+      await arm(5);
+      play(el, 60_000);
+
+      // The user pauses and walks away for an hour. No timeupdate fires.
+      now += 60 * 60_000;
+
+      expect(pause).not.toHaveBeenCalled();
+      expect(readout()).toBe("4:00");
+    });
+
+    it("regression: resuming after a long pause does not fire the timer instantly", async () => {
+      // The stale-tick trap. sleepLastTickRef is only meaningful across
+      // continuous playback: without the clamp and the play-event re-base,
+      // the first tick after a long pause charges the whole idle gap to the
+      // budget and stops the video the instant the user restarts it.
+      const { el, pause } = await mountPlayer();
+      await arm(5);
+      play(el, 60_000);
+
+      now += 60 * 60_000;
+      fireEvent.play(el);
+      play(el, 2_000);
+
+      expect(pause).not.toHaveBeenCalled();
+      expect(readout()).toBe("3:58");
+    });
+
+    it("regression: a wall clock that steps backwards does not credit the budget", async () => {
+      // NTP correction (or a manual clock change) mid-playback. An unfloored
+      // delta is negative here, and subtracting it *adds* to the budget —
+      // leaving the pill showing more time than the preset was armed for.
+      const { el } = await mountPlayer();
+      await arm(5);
+      play(el, 60_000);
+
+      now -= 30_000;
+      fireEvent.timeUpdate(el);
+
+      expect(readout()).toBe("4:00");
+    });
+
+    it("pauses the video, stores the position and disarms when the budget runs out", async () => {
+      const { el, pause } = await mountPlayer();
+      vi.mocked(setResume).mockClear();
+      await arm(5);
+
+      play(el, 5 * 60_000);
+
+      expect(pause).toHaveBeenCalledTimes(1);
+      // The pause point is flushed rather than waiting out the resume
+      // throttle whose next tick is never coming.
+      expect(setResume).toHaveBeenCalledWith("v1", 120, 1);
+      // Back to its resting label, so the pill invites a fresh timer.
+      expect(
+        screen.getByRole("button", { name: /sleep timer off/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("fires exactly once: further playback after expiry is not re-paused", async () => {
+      const { el, pause } = await mountPlayer();
+      await arm(5);
+
+      play(el, 5 * 60_000);
+      play(el, 5 * 60_000);
+
+      expect(pause).toHaveBeenCalledTimes(1);
+    });
+
+    it("cancels when Off is picked", async () => {
+      const { el, pause } = await mountPlayer();
+      await arm(30);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: /sleep timer: 30 minutes/i }),
+      );
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Off" }));
+      play(el, 31 * 60_000);
+
+      expect(pause).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole("button", { name: /sleep timer off/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("checks the armed preset, and only that one", async () => {
+      await mountPlayer();
+      await arm(15);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: /sleep timer: 15 minutes/i }),
+      );
+      const checked = screen
+        .getAllByRole("menuitemradio")
+        .filter((b) => b.getAttribute("aria-checked") === "true");
+      expect(checked).toHaveLength(1);
+      expect(checked[0]).toHaveTextContent("15 minutes");
+    });
+
+    it("does nothing while disarmed", async () => {
+      const { el, pause } = await mountPlayer();
+
+      play(el, 90 * 60_000);
+
+      expect(pause).not.toHaveBeenCalled();
+    });
+
+    it("disarms when the video ends, so no dead countdown is left on screen", async () => {
+      const { el } = await mountPlayer();
+      await arm(30);
+      play(el, 60_000);
+
+      fireEvent.ended(el);
+
+      expect(
+        screen.getByRole("button", { name: /sleep timer off/i }),
+      ).toBeInTheDocument();
     });
   });
 });
