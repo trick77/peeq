@@ -711,7 +711,7 @@ export function Settings() {
         </p>
         <div className="slider-row">
           <span className="lab" style={{ margin: 0 }}>
-            Delete watched after
+            Remove file after
           </span>
           <input
             type="range"
