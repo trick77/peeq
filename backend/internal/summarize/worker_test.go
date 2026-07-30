@@ -851,7 +851,12 @@ func TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints(t *
 		t.Errorf("job state = %q, want pending (queued for retry)", state)
 	}
 
-	// Attempt 2: skips summary + embeddings; only key-points reruns, succeeds.
+	// Attempt 2: skips the summary; key-points reruns and succeeds, and
+	// embedding runs a SECOND time behind it. That second pass is the whole
+	// point of the retry: attempt 1's index was the best-effort fallback built
+	// with no chapters, and the chapters key points has now written are exactly
+	// what chapter chunks are built from. Skipping it here would strand the
+	// video on a chapterless index that nothing else would ever repair.
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne retry: %v", err)
 	}
@@ -859,8 +864,11 @@ func TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints(t *
 	if !strings.Contains(v.KeyPoints, "a point") {
 		t.Errorf("key points not set on retry: %q", v.KeyPoints)
 	}
-	if embedder.calls != 1 {
-		t.Errorf("embedder re-called on retry (%d) — resume must skip embedding", embedder.calls)
+	if embedder.calls != 2 {
+		t.Errorf("embedder called %d times, want 2 — the retry must reindex with the chapters key points just wrote", embedder.calls)
+	}
+	if v.EmbedRev != rag.ChunkRecipeRev {
+		t.Errorf("embed_rev = %d, want %d — the retry's index must be marked current", v.EmbedRev, rag.ChunkRecipeRev)
 	}
 	if completer.kpCalls != 2 {
 		t.Errorf("key-points calls = %d, want 2 (failed, then succeeded)", completer.kpCalls)

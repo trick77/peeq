@@ -29,6 +29,26 @@ sodium losses during long efforts
 potassium and muscle contraction
 `
 
+// musicVTT is auto-captions for a music video: [Music] markers plus stray lyric
+// fragments, which subtitles.IsNonSpeech recognizes as not-speech.
+const musicVTT = `WEBVTT
+
+00:00:00.000 --> 00:00:20.000
+[Music] I play games with
+
+00:00:20.000 --> 00:00:40.000
+[Music] you yeah
+
+00:00:40.000 --> 00:01:00.000
+[Music]
+
+00:01:00.000 --> 00:01:20.000
+[Music] [Applause]
+
+00:01:20.000 --> 00:01:40.000
+[Music] oh
+`
+
 type fakeEmbedder struct {
 	calls  int
 	inputs []string
@@ -263,6 +283,39 @@ func TestMissingSubtitleDropsTheStaleIndex(t *testing.T) {
 	}
 	if next, _ := h.jobs.ClaimNext(); next != nil {
 		t.Error("an unrebuildable video should finish, not retry three times")
+	}
+}
+
+// Music-only captions are not speech. The summarize worker refuses to index
+// them and deletes whatever chunks they left behind — but it never clears
+// embed_model, so a video indexed before that rule existed still matches the
+// backfill sweep. Rebuilding it here would resurrect exactly the index that was
+// deliberately thrown away.
+func TestMusicOnlyVideoIsNotReindexed(t *testing.T) {
+	h := newHarness(t)
+	h.seed(t, "v1", `[]`)
+	if err := os.WriteFile(filepath.Join(h.mediaDir, "ch", "v1", "s.vtt"), []byte(musicVTT), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.rag.ReplaceVideoChunks(context.Background(), "v1",
+		rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: 1},
+		[]rag.ChunkRow{{Ordinal: 0, Text: "stale text", Kind: rag.KindTranscript}},
+		[][]float32{make([]float32, 1536)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.jobs.Enqueue("v1"); err != nil {
+		t.Fatal(err)
+	}
+	h.w.processOne(context.Background())
+
+	if h.embedder.calls != 0 {
+		t.Errorf("embedder called %d times for a music-only video", h.embedder.calls)
+	}
+	if n := h.chunkKinds(t, "v1"); len(n) != 0 {
+		t.Errorf("music-only video was indexed: %v", n)
+	}
+	if next, _ := h.jobs.ClaimNext(); next != nil {
+		t.Error("a music-only video should finish, not retry three times")
 	}
 }
 

@@ -129,10 +129,13 @@ func (w *Worker) processOne(ctx context.Context) bool {
 	}
 
 	if err := w.rebuild(ctx, job.VideoID); err != nil {
-		// A cancelled context is a shutdown, not a failure of this video —
-		// requeue it without consuming the error budget's meaning.
+		// A cancelled context is a shutdown, not a failure of this video, so the
+		// job is left exactly as it is: 'running', with its last_error untouched.
+		// Calling Fail here would spend an attempt — ClaimNext already
+		// incremented the counter — and three restarts during a long backfill
+		// would terminally fail the head-of-queue video, which is reclaimed
+		// first every time. ResetOrphans at boot puts it back to 'pending'.
 		if ctx.Err() != nil {
-			_, _ = w.d.Jobs.Fail(job.ID, "interrupted by shutdown")
 			return true
 		}
 		terminal, ferr := w.d.Jobs.Fail(job.ID, err.Error())
@@ -184,6 +187,19 @@ func (w *Worker) rebuild(ctx context.Context, videoID string) error {
 			return nil
 		}
 		return err
+	}
+
+	// Captions that are just music with the odd lyric fragment are not speech.
+	// The summarize worker refuses to index them and deletes any chunks they
+	// left behind — but it does NOT clear embed_model, so a video indexed before
+	// that rule existed still matches the backfill sweep. Rebuilding here would
+	// resurrect exactly the index that was deliberately thrown away.
+	if parsed.IsNonSpeech(int(video.DurationSeconds)) {
+		if derr := w.d.Rag.DeleteVideoChunks(ctx, videoID); derr != nil {
+			return derr
+		}
+		w.d.Logger.Info("reembed: dropped stale index", "video_id", videoID, "reason", "no speech (music only)")
+		return nil
 	}
 
 	rows := rag.BuildVideoChunks(parsed, video.Summary, rag.DecodeChapters(video.Chapters))

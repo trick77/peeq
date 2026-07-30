@@ -311,22 +311,26 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	done("chapters", len(chapters), "key_points", len(keyPoints))
 
 	// Step 4 — embeddings, last so the index is built from the finished
-	// analysis. Gated on the content recipe rather than "is embed_model set":
-	// that older test cannot tell an index built under a previous recipe from a
-	// current one, which is exactly what adding chapter chunks introduced.
+	// analysis.
+	//
+	// Unconditional, and it has to be: the only route here is a successful
+	// SetKeyPoints above, which zeroes embed_rev in the very statement that
+	// writes the chapters — so whatever index exists at this point predates
+	// them by construction. Gating on `video.EmbedRev < rag.ChunkRecipeRev`
+	// would be worse than redundant, because `video` was read at claim time and
+	// is now stale HIGH: a retry that arrives here already at the current rev
+	// (exactly what the key-points fallback embed above leaves behind) would
+	// skip embedding and strand the video on its chapterless index, with
+	// embed_rev=0 in the database and no queue able to repair it.
 	//
 	// `chapters` here is the value KeyPoints just returned, not video.Chapters —
-	// that field was read at claim time and is stale after SetKeyPoints.
-	if video.EmbedRev < rag.ChunkRecipeRev {
-		w.emit(video.ID, videos.SummaryRunning, PhaseEmbedding)
-		ectx, edone := run.step("embedding")
-		if err := w.embedAndStore(ectx, video.ID, parsed, summary, chapters); err != nil {
-			return true, w.failJob(job, video, run, err.Error())
-		}
-		edone("chunks", len(chapters))
-	} else {
-		run.skipped("embedding", "already embedded at current recipe")
+	// that field is stale for the same reason.
+	w.emit(video.ID, videos.SummaryRunning, PhaseEmbedding)
+	ectx, edone := run.step("embedding")
+	if err := w.embedAndStore(ectx, video.ID, parsed, summary, chapters); err != nil {
+		return true, w.failJob(job, video, run, err.Error())
 	}
+	edone("chapters", len(chapters))
 	w.emit(video.ID, videos.SummaryDone, "")
 
 	run.finished("done")

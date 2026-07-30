@@ -993,3 +993,69 @@ func TestReprocessMarksIndexStale(t *testing.T) {
 		t.Errorf("embed_rev = %d after reprocess, want 0 so the index is rebuilt", rev)
 	}
 }
+
+// A chapter chunk contains the transcript of its own span, so the same sentence
+// is indexed twice. Both copies match the same query; showing both would fill a
+// video's four slots with two renderings of one moment instead of four
+// different places the topic came up.
+func TestSearchCollapsesDuplicateMoments(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "long talk"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Two chunks covering the same second, as the transcript window and the
+	// chapter over it would, plus one genuinely elsewhere.
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "electrolytes matter here", Kind: rag.KindTranscript, StartSeconds: 100},
+		{Ordinal: 1, Text: "Chapter: Minerals\nelectrolytes matter here", Kind: rag.KindChapter, StartSeconds: 105},
+		{Ordinal: 2, Text: "electrolytes again much later", Kind: rag.KindTranscript, StartSeconds: 900},
+	})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil)
+	var resp struct {
+		Results []struct {
+			Matches []struct {
+				StartSeconds int `json:"start_seconds"`
+			} `json:"matches"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("want 1 video, got %d", len(resp.Results))
+	}
+	got := resp.Results[0].Matches
+	if len(got) != 2 {
+		t.Fatalf("want 2 distinct moments, got %d: %+v", len(got), got)
+	}
+	if abs(got[0].StartSeconds-got[1].StartSeconds) < minMomentGapSeconds {
+		t.Errorf("moments %d and %d are the same moment twice", got[0].StartSeconds, got[1].StartSeconds)
+	}
+}
+
+// A summary hit describes the whole video rather than a point in it, so it must
+// survive alongside a transcript moment even though it carries no timestamp.
+func TestSearchKeepsSummaryAlongsideAnEarlyMoment(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "talk"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "electrolytes right at the start", Kind: rag.KindTranscript, StartSeconds: 5},
+		{Ordinal: 1, Text: "a summary mentioning electrolytes", Kind: rag.KindSummary, StartSeconds: 0},
+	})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil)
+	body := rec.Body.String()
+	if !strings.Contains(body, `"kind":"summary"`) {
+		t.Errorf("summary hit was suppressed by a nearby transcript moment: %s", body)
+	}
+	if !strings.Contains(body, `"kind":"transcript"`) {
+		t.Errorf("transcript hit missing: %s", body)
+	}
+}
