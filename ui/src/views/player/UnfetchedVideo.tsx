@@ -3,6 +3,9 @@ import { ThumbFill } from "../../components/ThumbFill";
 import { Icon } from "../../icons";
 import { downloadPending, ignorePending } from "../../api/pending";
 import { pendingThumbnailUrl } from "../../api/videos";
+import { subtitlesUrl } from "../../api/search";
+import { TranscriptCard } from "../../components/TranscriptCard";
+import { transcriptFilenameBase } from "../../vtt";
 import type { Video } from "../../api/types";
 import { formatAgo, formatDuration } from "../../format";
 import { Button, Spinner } from "../../ui";
@@ -166,6 +169,26 @@ export function UnfetchedVideo({
           </p>
         )}
       </div>
+
+      {/* The captions are already on disk — reading them is what produced the
+        summary above — and parsing them is client-side, so the panel costs a
+        fetch of a file peeq already has and no model call at all.
+        
+        It earns its place: skimming for one term is often how you settle a
+        maybe that 190 words left open, and the .txt / .vtt / Copy row means you
+        can take the text away without downloading the video.
+
+        No seek prop. There is no media to jump to yet, so the cue rows render
+        as text rather than as buttons that would look identical and do
+        nothing. */}
+      {video.has_subtitles ? (
+        <div className="unfetched-transcript">
+          <TranscriptCard
+            vttUrl={subtitlesUrl(video.id)}
+            filenameBase={transcriptFilenameBase(video.title)}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

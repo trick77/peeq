@@ -4962,6 +4962,30 @@ details.tomb-sect[open] > summary svg {
   color: var(--color-faint);
 }
 
+/* The transcript panel's download row: .txt, .vtt and Copy. Named for what it
+   is now that the Player, the share page and the inbox video page all render
+   the one component — .sharepage-dl below carried these rules while the markup
+   was hand-written twice, and the Player duplicated them as inline styles. */
+.transcript-dl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.transcript-dl .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+/* The transcript sits below the summary and shares its measure's ceiling, not
+   the summary's own 66ch — a transcript is scanned for a word, not read as
+   prose, and a narrow column makes that harder rather than easier. */
+.unfetched-transcript {
+  margin-top: 26px;
+}
+
 /* A card peeq has not read yet has nothing behind it, and `.card`'s shared
    grid-tile rule would otherwise offer a pointer that does nothing — the exact
    gap this feature set out to close, reintroduced one state along. */

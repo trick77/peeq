@@ -22,6 +22,7 @@ function video(overrides: Partial<Video> = {}): Video {
     status: "new",
     summary: "First paragraph about fuse plugs.\n\nSecond paragraph.",
     summary_status: "done",
+    has_subtitles: true,
     ...overrides,
   } as Video;
 }
@@ -71,6 +72,35 @@ describe("UnfetchedVideo", () => {
 
     expect(ignorePending).toHaveBeenCalledWith("v1");
     expect(onDismissed).toHaveBeenCalled();
+  });
+
+  // The captions are already on disk — reading them is what produced the
+  // summary — so the panel costs a fetch of a file peeq already has. The
+  // download and copy controls are the point: you can take the text away
+  // without ever fetching the video.
+  it("offers the transcript with its downloads and copy button", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () =>
+          "WEBVTT\n\n00:00:05.000 --> 00:00:07.000\nA spoken line.\n",
+      }),
+    );
+    render(<UnfetchedVideo video={video()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /Transcript/ }));
+    await screen.findByText("A spoken line.");
+
+    expect(screen.getByRole("button", { name: /\.txt/ })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /\.vtt/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Copy text/ })).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows no transcript panel for a video with no captions", () => {
+    render(<UnfetchedVideo video={video({ has_subtitles: false })} />);
+    expect(screen.queryByRole("button", { name: /Transcript/ })).toBeNull();
   });
 
   // The wording covers both "YouTube has no captions" and "they turned out to

@@ -14,6 +14,7 @@ import { daysUntil } from "../components/ShareControl";
 // ../vtt, ../components/Scrubber imports nothing from api/, so nothing
 // session-gated reaches this page through it.
 import { AUTO_SKIP, categoryLabel, Scrubber } from "../components/Scrubber";
+import { TranscriptCard } from "../components/TranscriptCard";
 // Shared with the Player's Transcript card. ../vtt is deliberately free of any
 // api/ import, so nothing session-gated can reach this page through it.
 import {
@@ -398,113 +399,12 @@ export function Share({ token }: { token: string | null }) {
           )}
 
           {video.has_subtitles && (
-            <div className="card sharepage-transcript">
-              <button
-                type="button"
-                className="hd hd-btn"
-                onClick={() => setTranscriptOpen((v) => !v)}
-                aria-expanded={transcriptOpen}
-              >
-                <Icon
-                  name="chevronRight"
-                  size="16px"
-                  style={{
-                    transition: "transform .15s",
-                    transform: transcriptOpen ? "rotate(90deg)" : "none",
-                  }}
-                />
-                <span className="lbl">Transcript</span>
-              </button>
-              {transcriptOpen && (
-                <>
-                  <div className="tsearch">
-                    <div className="searchbox">
-                      <Icon name="search" size="16px" />
-                      <input
-                        placeholder="Find in transcript…"
-                        value={find}
-                        onChange={(e) => setFind(e.target.value)}
-                      />
-                      <span className="count mono">
-                        {find ? `${hitCount} / ${cues.length}` : "—"}
-                      </span>
-                    </div>
-                    {cues.length > 0 && (
-                      <div className="sharepage-dl">
-                        <span className="meta">Download</span>
-                        <button
-                          type="button"
-                          className="pill"
-                          onClick={downloadTranscriptTxt}
-                        >
-                          <Icon name="download" size="14px" /> .txt
-                        </button>
-                        {/* The captions, not the video: this href is the same
-                            token-gated VTT the <track> above already loads, and
-                            the filename comes from the title alone. */}
-                        <a
-                          className="pill"
-                          href={shareSubtitlesUrl(token)}
-                          download={
-                            transcriptFilenameBase(video.title) + ".vtt"
-                          }
-                        >
-                          <Icon name="download" size="14px" /> .vtt
-                        </a>
-                        <button
-                          type="button"
-                          className="pill transcript-copy"
-                          onClick={() => copyTranscript(cues)}
-                        >
-                          <Icon
-                            name={transcriptCopied ? "check" : "copy"}
-                            size="14px"
-                          />{" "}
-                          {transcriptCopied ? "Copied" : "Copy text"}
-                        </button>
-                      </div>
-                    )}
-                    {copyError && (
-                      <p className="errline" style={{ marginTop: 8 }}>
-                        {copyError}
-                      </p>
-                    )}
-                  </div>
-                  <div className="tabbody transcript-body">
-                    {transcriptLoading && (
-                      <p className="placeholder">Loading transcript…</p>
-                    )}
-                    {transcriptError && (
-                      <p className="errline">{transcriptError}</p>
-                    )}
-                    {!transcriptLoading &&
-                      !transcriptError &&
-                      cues.length === 0 && (
-                        <p className="placeholder">No transcript available.</p>
-                      )}
-                    {!transcriptLoading &&
-                      !transcriptError &&
-                      cues.length > 0 && (
-                        <div className="transcript">
-                          {cues.map((cue, i) => (
-                            <button
-                              key={i}
-                              type="button"
-                              className={`cue${matchesFind(cue.text, find) ? " hit" : ""}`}
-                              onClick={() => seek(cue.ts)}
-                            >
-                              <span className="ts mono">{fmt(cue.ts)}</span>
-                              <span className="line">
-                                {highlightCue(cue.text, find)}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                  </div>
-                </>
-              )}
-            </div>
+            <TranscriptCard
+              vttUrl={shareSubtitlesUrl(token)}
+              filenameBase={transcriptFilenameBase(video.title)}
+              seek={seek}
+              className="sharepage-transcript"
+            />
           )}
 
           <footer className="sharepage-foot">

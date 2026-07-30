@@ -42,6 +42,7 @@ import {
 import { DOT } from "../sep";
 import { MediaStats } from "./player/MediaStats";
 import { ContentsCard } from "./player/ContentsCard";
+import { TranscriptCard } from "../components/TranscriptCard";
 import { UnfetchedVideo } from "./player/UnfetchedVideo";
 import { SummaryCard, HighlightsCard } from "./player/SidebarPanels";
 import { MetaHeader } from "./player/MetaHeader";
@@ -1310,150 +1311,21 @@ export function Player({
             seek={video.has_media ? seek : undefined}
           />
           {video.has_subtitles && (
-            <div className="card full">
-              <button
-                type="button"
-                className="hd hd-btn"
-                onClick={() => setTranscriptOpen((v) => !v)}
-                aria-expanded={transcriptOpen}
-              >
-                <Icon
-                  name="chevronRight"
-                  size="16px"
-                  style={{
-                    transition: "transform .15s",
-                    transform: transcriptOpen ? "rotate(90deg)" : "none",
-                  }}
-                />
-                <span className="lbl">Transcript</span>
-              </button>
-              {transcriptOpen && (
-                <>
-                  <div className="tsearch">
-                    <div className="searchbox">
-                      <Icon name="search" size="16px" />
-                      <input
-                        placeholder="Find in transcript…"
-                        value={find}
-                        onChange={(e) => setFind(e.target.value)}
-                      />
-                      <span className="count mono">
-                        {find ? `${hitCount} / ${cues.length}` : "—"}
-                      </span>
-                    </div>
-                    {cues.length > 0 && (
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          marginTop: 8,
-                        }}
-                      >
-                        <span className="meta">Download</span>
-                        <button
-                          type="button"
-                          className="pill"
-                          onClick={downloadTranscriptTxt}
-                          style={{
-                            cursor: "pointer",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                          }}
-                        >
-                          <Icon name="download" size="14px" /> .txt
-                        </button>
-                        <a
-                          className="pill"
-                          href={subtitlesUrl(video.id)}
-                          download={
-                            transcriptFilenameBase(video.title) + ".vtt"
-                          }
-                          style={{
-                            textDecoration: "none",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                          }}
-                        >
-                          <Icon name="download" size="14px" /> .vtt
-                        </a>
-                        <button
-                          type="button"
-                          className="pill transcript-copy"
-                          onClick={() => copyTranscript(cues)}
-                          style={{
-                            cursor: "pointer",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                          }}
-                        >
-                          <Icon
-                            name={transcriptCopied ? "check" : "copy"}
-                            size="14px"
-                          />{" "}
-                          {transcriptCopied ? "Copied" : "Copy text"}
-                        </button>
-                      </div>
-                    )}
-                    {copyError && (
-                      <p className="errline" style={{ marginTop: 8 }}>
-                        {copyError}
-                      </p>
-                    )}
-                  </div>
-                  <div className="tabbody transcript-body">
-                    {transcriptLoading && (
-                      <p className="placeholder">Loading transcript…</p>
-                    )}
-                    {transcriptError && (
-                      <p className="errline">{transcriptError}</p>
-                    )}
-                    {!transcriptLoading &&
-                      !transcriptError &&
-                      cues.length === 0 && (
-                        <p className="placeholder">No transcript available.</p>
-                      )}
-                    {!transcriptLoading &&
-                      !transcriptError &&
-                      cues.length > 0 && (
-                        <div className="transcript">
-                          {cues.map((cue, i) => {
-                            const cls = `cue${matchesFind(cue.text, find) ? " hit" : ""}`;
-                            const body = (
-                              <>
-                                <span className="ts mono">{fmt(cue.ts)}</span>
-                                <span className="line">
-                                  {highlightCue(cue.text, find)}
-                                </span>
-                              </>
-                            );
-                            // Same rule as the chapter and highlight rows: with
-                            // no file to seek, a cue is text to read, not a
-                            // control. Find still highlights it either way.
-                            return video.has_media ? (
-                              <button
-                                key={i}
-                                type="button"
-                                className={cls}
-                                onClick={() => seek(cue.ts)}
-                              >
-                                {body}
-                              </button>
-                            ) : (
-                              <div key={i} className={`${cls} inert`}>
-                                {body}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                  </div>
-                </>
-              )}
-            </div>
+            /* seek is withheld for a fileless video, exactly as ContentsCard
+               above withholds it: with nothing to seek, a cue is text to read,
+               not a control that silently does nothing. Find still highlights
+               it either way.
+
+               Keyed on the video so navigating between videos remounts the
+               panel — collapsed, with an empty find box. Player is not
+               unmounted between videos, and the open/find state now lives
+               inside the component. */
+            <TranscriptCard
+              key={video.id}
+              vttUrl={subtitlesUrl(video.id)}
+              filenameBase={transcriptFilenameBase(video.title)}
+              seek={video.has_media ? seek : undefined}
+            />
           )}
         </div>
       </div>
