@@ -821,6 +821,76 @@ button.srow:not(:disabled):hover {
   color: var(--color-muted);
   margin-top: 2px;
 }
+/* THE UNTITLED ROW. A video added by URL has no title until the download
+   worker reads its metadata, so the subject line carries a sentence about what
+   peeq is doing instead of the raw id it used to print.
+
+   TWO CLASSES, TWO CLAIMS. `.placeholder` sits on every stand-in line and only
+   quiets it — a sentence about the system should not read as loudly as the real
+   titles around it. `.pending` is added only while the fetch is actually
+   outstanding, and it alone gets the breathing dot: a row whose queue is
+   stopped, or whose title is never coming, must not animate as though work were
+   happening. The dot is deliberately tiny, so a queue of waiting rows does not
+   become a wall of animation.
+
+   The Library card's h3 takes the dimming but NOT the dot: its .title-btn is a
+   -webkit-box carrying the three-line clamp, and a pseudo-element inside one
+   is laid out as a box child rather than as trailing text — the dot would take
+   a line of its own. The card already reads as provisional from the wording
+   and the gradient placeholder poster. */
+.ag-subject.placeholder,
+.card h3.placeholder .title-btn {
+  color: var(--color-faint);
+}
+.ag-subject.pending::after {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  vertical-align: middle;
+  animation: ag-pending 1.6s ease-in-out infinite;
+}
+@keyframes ag-pending {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ag-subject.pending::after {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* The video id, standing in for the channel name on a row that has neither a
+   title nor a channel yet. Mono and one size down: it is a fact to check
+   against the link that was pasted, not a name to read. Also used on the
+   Library card's byline, which is the same fact in the same wait. */
+.ag-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-faint);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: color 0.12s ease;
+}
+.ag-id:hover {
+  color: var(--color-accent-strong);
+  border-bottom-color: var(--color-accent-dim);
+}
+.ag-id:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 .ag-row.fail .ag-detail {
   color: #d98b80;
 }

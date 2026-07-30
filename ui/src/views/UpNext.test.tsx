@@ -214,6 +214,78 @@ describe("UpNext", () => {
     expect(row.querySelector(".ag-clock")?.textContent).toBe("then");
   });
 
+  // A video added by URL is queued before anything is known about it: the
+  // worker reads its title and channel only when it claims the job. The row
+  // used to print the raw YouTube id in the title slot, which asks the reader
+  // to recognise a video by its id.
+  describe("a video whose details haven't arrived", () => {
+    it("says what peeq is doing instead of showing the id as a title", () => {
+      render(
+        <UpNext
+          jobs={[job({ job_id: 30, state: "pending", video_id: "abc123" })]}
+          summaries={[]}
+          onCancel={noop}
+        />,
+      );
+      const row = screen
+        .getByText("Reading details from YouTube")
+        .closest(".ag-row") as HTMLElement;
+      expect(row.querySelector(".ag-subject")).toHaveClass("pending");
+      // Not a link into the player: there is nothing there to open yet.
+      expect(
+        within(row).queryByRole("button", {
+          name: "Reading details from YouTube",
+        }),
+      ).not.toBeInTheDocument();
+      // The id keeps its place one line down, as the receipt for what was
+      // pasted, pointing at the video on YouTube.
+      expect(
+        within(row).getByRole("link", { name: "youtu.be/abc123" }),
+      ).toHaveAttribute("href", "https://www.youtube.com/watch?v=abc123");
+    });
+
+    // The download worker is single-threaded and stops entirely on a missing
+    // cookie, low disk, or the kill-switch. "Reading details" would then be a
+    // claim about work nobody is doing — and a placeholder that pulses forever
+    // is worse than the id it replaced.
+    it("drops the fetching claim while YouTube work is stopped", () => {
+      render(
+        <UpNext
+          jobs={[job({ job_id: 31, state: "pending", video_id: "abc123" })]}
+          summaries={[]}
+          onCancel={noop}
+          stalled="cookie"
+        />,
+      );
+      const row = screen
+        .getByText("Waiting to read details")
+        .closest(".ag-row") as HTMLElement;
+      expect(row.querySelector(".ag-subject")).not.toHaveClass("pending");
+      expect(
+        within(row).getByRole("link", { name: "youtu.be/abc123" }),
+      ).toBeInTheDocument();
+    });
+
+    // The id is on screen, so the search box must still reach it.
+    it("is still findable by its id", () => {
+      render(
+        <UpNext
+          jobs={[
+            job({ job_id: 32, state: "pending", video_id: "abc123" }),
+            job({ job_id: 33, state: "pending", title: "Something else" }),
+          ]}
+          summaries={[]}
+          onCancel={noop}
+          search="abc123"
+        />,
+      );
+      expect(
+        screen.getByText("Reading details from YouTube"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Something else")).not.toBeInTheDocument();
+    });
+  });
+
   it("cancels a download by its job id", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();

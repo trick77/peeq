@@ -50,19 +50,44 @@ describe("VideoCard", () => {
     ).toBeInTheDocument();
   });
 
-  // A video added by URL is enqueued before its metadata is known, so its row
-  // carries no title until the download worker's preflight resolves one. Left
-  // unhandled the card renders an empty <h3> and an "Open " aria-label with
-  // nothing after it — an unlabelled control. The id is the same fallback the
-  // backend uses for a preflight-failed video's Activity subject.
-  it("falls back to the id while a video still has no title", () => {
-    renderCard({ title: "" });
+  // A video added by URL is enqueued before its metadata is known, so its card
+  // carries no title (and no channel) until the download worker's preflight
+  // resolves them. What the heading must NOT do is print the raw id and pass it
+  // off as a title, which is what it used to do.
+  it("says the details are still coming while a video has no title", () => {
+    renderCard({ title: "", channel_id: "", channel_name: "" });
+    const title = screen.getByRole("button", { name: "dQw4w9WgXcQ" });
+    expect(title).toHaveTextContent("Reading details from YouTube");
+    // The placeholder must reach the visible heading, not just the label.
+    expect(title.closest("h3")).not.toBeNull();
+    // The id keeps a place on the card — as a link out to YouTube, the only way
+    // to check that the link that was pasted is the video that was queued.
+    expect(
+      screen.getByRole("link", { name: "youtu.be/dQw4w9WgXcQ" }),
+    ).toHaveAttribute("href", "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+    // Both open-the-video controls stay individually named: a grid of untitled
+    // cards would otherwise announce every tile with the same sentence.
     expect(
       screen.getByRole("button", { name: "Open dQw4w9WgXcQ" }),
     ).toBeInTheDocument();
-    const title = screen.getByRole("button", { name: "dQw4w9WgXcQ" });
-    expect(title).toHaveTextContent("dQw4w9WgXcQ");
-    // The fallback must reach the visible heading, not just the label.
-    expect(title.closest("h3")).not.toBeNull();
+  });
+
+  // A download that ended in an error is not waiting for anything — no title is
+  // ever coming — so the card stops implying one is on its way.
+  it("stops promising details once the download has failed", () => {
+    renderCard({ title: "", status: "error" });
+    expect(
+      screen.getByRole("button", { name: "dQw4w9WgXcQ" }),
+    ).toHaveTextContent("Details unavailable");
+  });
+
+  // The byline swap is only for a card with nothing else to put there: a video
+  // whose channel is already known keeps the channel, title or no title.
+  it("keeps the channel in the byline when one is known", () => {
+    renderCard({ title: "" });
+    expect(screen.getByText("Veritasium")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /youtu\.be/ }),
+    ).not.toBeInTheDocument();
   });
 });

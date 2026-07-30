@@ -244,3 +244,64 @@ export function gradientClassFor(id: string): string {
   const index = Math.abs(hash) % GRADIENT_CLASSES.length;
   return GRADIENT_CLASSES[index];
 }
+
+// THE UNTITLED VIDEO. A video added by URL is enqueued before anything is
+// known about it: httpapi.enqueueDownloadByURL writes an id and a URL, and the
+// title, channel, thumbnail and duration are all read together by the download
+// worker's metadata preflight, which only runs once the worker CLAIMS the job.
+// Until then every row for that video has an empty title.
+//
+// Up next and the Library card both used to print the raw id in the title
+// slot, which asks the reader to recognise "dQw4w9WgXcQ" as a video. The slot
+// now says what the system is doing instead; the id keeps its place one line
+// down as a link out to YouTube (see watchURL/shortWatchLink), because Add has
+// no preview box and that link is the only receipt that the right thing was
+// pasted.
+//
+// Two placeholders, not one. Waiting is not the only outcome: the download
+// worker is single-threaded and can be stopped for a long time (no cookie, low
+// disk, the YouTube kill-switch), and a private or removed video never gets a
+// title at all. So a caller that knows the wait is stalled or over says so, and
+// the row stops implying that something is in flight.
+export const PENDING_TITLE = "Reading details from YouTube";
+export const WAITING_TITLE = "Waiting to read details";
+export const UNRESOLVED_TITLE = "Details unavailable";
+
+export type VideoLabel = {
+  /** What the title slot shows. */
+  text: string;
+  /** True only while the details are actually being fetched — drives the pulse. */
+  pending: boolean;
+  /** True when `text` is a placeholder rather than the video's own title. */
+  placeholder: boolean;
+};
+
+// videoLabel resolves the title slot for one video. `state` says what is
+// happening to an untitled video, and is ignored entirely once there is a real
+// title: "fetching" (the queue is moving), "stalled" (nothing is running, so
+// the pulse would be a lie) or "failed" (no title is coming).
+export function videoLabel(
+  title: string | undefined,
+  state: "fetching" | "stalled" | "failed" = "fetching",
+): VideoLabel {
+  const t = (title ?? "").trim();
+  if (t) return { text: t, pending: false, placeholder: false };
+  if (state === "failed") {
+    return { text: UNRESOLVED_TITLE, pending: false, placeholder: true };
+  }
+  if (state === "stalled") {
+    return { text: WAITING_TITLE, pending: false, placeholder: true };
+  }
+  return { text: PENDING_TITLE, pending: true, placeholder: true };
+}
+
+// watchURL / shortWatchLink — the id as somewhere to go and as something to
+// read. videos.id IS the YouTube id (the share feature leans on the same fact),
+// so no stored URL is needed to build either.
+export function watchURL(id: string): string {
+  return `https://www.youtube.com/watch?v=${id}`;
+}
+
+export function shortWatchLink(id: string): string {
+  return `youtu.be/${id}`;
+}
