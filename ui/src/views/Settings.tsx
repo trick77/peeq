@@ -8,7 +8,8 @@ import {
   getAPITokenStatus,
   createAPIToken,
 } from "../api/settings";
-import { getYtdlpVersion, updateYtdlp } from "../api/ytdlp";
+import { getYtdlpVersion, updateYtdlp, type YtdlpVersion } from "../api/ytdlp";
+import { formatAgo } from "../format";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 import type { Settings as SettingsType } from "../api/types";
 import { DOT } from "../sep";
@@ -48,6 +49,32 @@ function looksLikeNetscapeCookie(text: string): boolean {
     );
 }
 
+// ytdlpCheckNote says what peeq knows about newer yt-dlp releases, and how
+// that knowledge is doing.
+//
+// The rail's update indicator can only appear when a check SUCCEEDED and
+// found something, so on its own it leaves a hole: a check failing forever —
+// no network, a blocked API, a rate limit — looks exactly like being up to
+// date. This line is where that failure is admitted, next to the Update
+// button that can act on it. It always renders, so the absence of a warning
+// here means something.
+function ytdlpCheckNote(v: YtdlpVersion | null): string {
+  if (!v) return "Checking for newer releases.";
+  if (v.check_error) {
+    // The error string itself is a Go network/HTTP error — accurate but not
+    // useful here. What the reader needs is that the answer beside it has
+    // stopped refreshing, and how stale it therefore is.
+    const known = v.latest ? ` Last known release ${v.latest}` : "";
+    const when = v.checked_at ? `, seen ${formatAgo(v.checked_at)}` : "";
+    return `Couldn't reach GitHub to check for newer releases.${known}${when}.`;
+  }
+  if (!v.latest) return "Checking for newer releases.";
+  if (v.update_available) {
+    return `${v.latest} is available ${DOT} checked ${formatAgo(v.checked_at)}.`;
+  }
+  return `Latest release ${v.latest} ${DOT} checked ${formatAgo(v.checked_at)}.`;
+}
+
 // Settings — cookie / format preset / rate-limit / retention / yt-dlp
 // version, per the mockup's `.settings` block. The cookie body is never
 // echoed back by the backend, so this view never pre-fills the textarea —
@@ -67,7 +94,7 @@ export function Settings() {
   const [retentionDays, setRetentionDays] = useState(14);
   const [minVideoDuration, setMinVideoDuration] = useState(0);
 
-  const [ytdlpVersion, setYtdlpVersion] = useState<string | null>(null);
+  const [ytdlp, setYtdlp] = useState<YtdlpVersion | null>(null);
   const [ytdlpBusy, setYtdlpBusy] = useState(false);
   const [ytdlpError, setYtdlpError] = useState<string | null>(null);
   // ytdlpNote is the Update button's receipt. Without it a no-op update — the
@@ -103,7 +130,7 @@ export function Settings() {
   useEffect(() => {
     load();
     getYtdlpVersion()
-      .then(setYtdlpVersion)
+      .then(setYtdlp)
       .catch(() => {});
   }, []);
 
@@ -260,7 +287,16 @@ export function Settings() {
     setYtdlpNote(null);
     try {
       const res = await updateYtdlp();
-      setYtdlpVersion(res.version);
+      // The installed version moved, so whatever the last check concluded about
+      // being behind is now settled — clear it here rather than waiting for the
+      // next scheduled check, or the page would keep offering an update it just
+      // performed. `latest` is left alone: it is still the newest release, and
+      // the note below reads correctly against the new version.
+      setYtdlp((prev) =>
+        prev
+          ? { ...prev, version: res.version, update_available: false }
+          : prev,
+      );
       if (res.updated && res.previous_version) {
         setYtdlpNote(`Updated ${res.previous_version} → ${res.version}.`);
       } else if (res.updated) {
@@ -644,7 +680,7 @@ export function Settings() {
             <span className="lab">yt-dlp version</span>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span className="mono" style={t.label}>
-                {ytdlpVersion ?? "unknown"}
+                {ytdlp?.version ?? "unknown"}
               </span>
               <Button
                 type="button"
@@ -656,6 +692,7 @@ export function Settings() {
                 {ytdlpBusy ? "Updating" : "Update"}
               </Button>
             </div>
+            <p className="retain-note">{ytdlpCheckNote(ytdlp)}</p>
             {ytdlpError ? <p className="retain-note">{ytdlpError}</p> : null}
             {ytdlpNote ? <p className="retain-note">{ytdlpNote}</p> : null}
           </div>

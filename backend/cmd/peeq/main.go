@@ -405,8 +405,13 @@ func run() error {
 		Videos: videosStore,
 	})
 
+	// ytdlpStatus is written by the version-check ticker and read by the
+	// version endpoint, so the Settings page and the nav rail can report an
+	// available yt-dlp update without a GitHub call per request.
+	ytdlpStatus := ytdlp.NewStatusCache()
+
 	// Bound all nine background goroutines' lifetimes to the process: the
-	// download worker, the retention sweeper, the yt-dlp self-update ticker,
+	// download worker, the retention sweeper, the yt-dlp version-check ticker,
 	// the scan scheduler, the summarize worker, the channel-metadata
 	// refresher, the SponsorBlock backfill, the media-probe backfill and the
 	// re-embed backfill. workerWG.Wait() below (after serve returns, i.e. after
@@ -432,7 +437,7 @@ func run() error {
 	}()
 	go func() {
 		defer workerWG.Done()
-		runYtdlpSelfUpdateTicker(ctx, cfg.YtdlpDir, ytdlpSelfUpdateInterval, activityStore)
+		runYtdlpVersionCheckTicker(ctx, cfg.YtdlpDir, ytdlpCheckInterval, ytdlp.LatestVersion, ytdlpStatus, activityStore)
 	}()
 	go func() {
 		defer workerWG.Done()
@@ -489,7 +494,7 @@ func run() error {
 		Worker:          worker,
 		SSEHub:          sseHub,
 		StreamAccess:    streamTracker,
-		YTDLP:           ytdlpVersioner{dir: cfg.YtdlpDir},
+		YTDLP:           ytdlpVersioner{dir: cfg.YtdlpDir, status: ytdlpStatus},
 		OnResumeYoutube: failMonitor.Reset,
 
 		Channels:        channelsStore,
@@ -533,11 +538,16 @@ func run() error {
 // ytdlpVersioner adapts the ytdlp package's free functions (Version,
 // UpdateLatest) to the httpapi.YTDLPVersioner interface the Settings page's
 // version display/Update button need. dir is the yt-dlp install directory:
-// Version resolves the binary from it fresh on every call (so a self-updated
+// Version resolves the binary from it fresh on every call (so an updated
 // binary is reported without a restart), and UpdateLatest downloads the new
 // release into it (see resolveYtdlpBin — dir/yt-dlp).
+//
+// status is the shared cache the version-check ticker fills, so the same
+// endpoint can also report the newest published release without making a
+// GitHub call per request.
 type ytdlpVersioner struct {
-	dir string
+	dir    string
+	status *ytdlp.StatusCache
 }
 
 func (v ytdlpVersioner) Version(ctx context.Context) (string, error) {
@@ -545,34 +555,108 @@ func (v ytdlpVersioner) Version(ctx context.Context) (string, error) {
 }
 
 func (v ytdlpVersioner) UpdateLatest(ctx context.Context) (string, error) {
-	return ytdlp.UpdateLatest(ctx, v.dir)
+	version, err := ytdlp.UpdateLatest(ctx, v.dir)
+	if err != nil {
+		return "", err
+	}
+	// Fold the new version straight into the cache so an "update available"
+	// indicator clears the moment the user acts on it, rather than staying up
+	// for up to a full check interval after the update it was asking for.
+	if v.status != nil {
+		v.status.SetInstalled(version)
+	}
+	return version, nil
 }
 
-// ytdlpSelfUpdateInterval is how often the background ticker refreshes the
-// yt-dlp binary in cfg.YtdlpDir. yt-dlp ships frequent releases that track
-// YouTube's ever-changing player/extraction internals, so a stale binary is
-// the single most common cause of downloads silently starting to fail; a
-// daily check keeps that window small without hammering GitHub's releases
-// endpoint.
-const ytdlpSelfUpdateInterval = 24 * time.Hour
-
-// runYtdlpSelfUpdateTicker logs the yt-dlp version already on disk at boot,
-// then periodically re-runs ytdlp.UpdateLatest to fetch newer releases into
-// dir. It never returns an error to the caller: a failed update (e.g. no
-// network, GitHub rate limit) is logged and retried on the next tick rather
-// than treated as fatal, since the existing binary keeps working in the
-// meantime.
-func runYtdlpSelfUpdateTicker(ctx context.Context, dir string, interval time.Duration, rec *activity.Store) {
-	// Track the running version so the Activity record fires only on a real
-	// change (the silence rule): the daily update is a no-op almost every day,
-	// and a "yt-dlp updated" row every 24h with no version change is noise.
-	var current string
-	if v, err := ytdlp.Version(ctx, resolveYtdlpBin(dir)); err != nil {
-		slog.Warn("yt-dlp not available at boot; downloads will fail until self-update succeeds", "err", err)
-	} else {
-		current = v
-		slog.Info("yt-dlp self-update ticker started", "version", v, "interval", interval)
+func (v ytdlpVersioner) Latest(ctx context.Context) (string, time.Time, string) {
+	if v.status == nil {
+		return "", time.Time{}, ""
 	}
+	got := v.status.Get()
+	return got.Latest, got.CheckedAt, got.CheckErr
+}
+
+// ytdlpCheckInterval is how often the background ticker asks GitHub which
+// yt-dlp release is newest. yt-dlp ships frequent releases that track
+// YouTube's ever-changing player/extraction internals, so a stale binary is
+// the single most common cause of downloads silently starting to fail —
+// noticing a new release within a few hours keeps that window small, while
+// four unauthenticated API calls a day sit far under GitHub's rate limit.
+const ytdlpCheckInterval = 6 * time.Hour
+
+// runYtdlpVersionCheckTicker records the yt-dlp version on disk and the
+// newest published release into status, at boot and on every tick, so the UI
+// can report that an update is available.
+//
+// It deliberately does NOT install anything. peeq used to blind-download the
+// latest release here every 24h, which swapped the extractor underneath the
+// user with no announcement and no way to correlate a behaviour change with
+// the binary that caused it. Installing is now the Settings page's Update
+// button and nothing else; this ticker only ever reports.
+//
+// It never returns an error to the caller: a failed check (no network, GitHub
+// rate limit) is recorded on the cache, logged, and retried on the next tick.
+// The last known release is kept rather than blanked, so a temporary outage
+// does not silently downgrade "an update is waiting" to "you look current".
+func runYtdlpVersionCheckTicker(
+	ctx context.Context,
+	dir string,
+	interval time.Duration,
+	fetchLatest func(context.Context) (string, error),
+	status *ytdlp.StatusCache,
+	rec *activity.Store,
+) {
+	// Track the release last reported so the Activity record fires only on a
+	// real change (the silence rule): most checks find the same version, and a
+	// "new yt-dlp release" row every few hours would be pure noise.
+	var announced string
+
+	check := func(boot bool) {
+		installed, err := ytdlp.Version(ctx, resolveYtdlpBin(dir))
+		if err != nil {
+			installed = ""
+			if boot {
+				slog.Warn("yt-dlp not available at boot; downloads will fail until it is installed", "err", err)
+			} else {
+				slog.Warn("yt-dlp version unreadable", "err", err)
+			}
+		}
+
+		latest, err := fetchLatest(ctx)
+		if err != nil {
+			// ctx cancellation on shutdown is not a check failure worth
+			// recording; it just means we are on our way out.
+			if ctx.Err() != nil {
+				return
+			}
+			status.SetCheckErr(installed, err.Error())
+			slog.Warn("yt-dlp release check failed", "err", err)
+			return
+		}
+		status.SetChecked(installed, latest, time.Now())
+
+		got := status.Get()
+		if boot {
+			slog.Info("yt-dlp version check started",
+				"version", installed, "latest", latest, "interval", interval)
+		}
+		if !got.UpdateAvailable() {
+			return
+		}
+		slog.Info("yt-dlp update available", "version", installed, "latest", latest)
+		if latest != announced {
+			if rec != nil {
+				rec.Record(activity.Event{
+					Kind: activity.KindYtdlp, Outcome: activity.OutcomeWarn,
+					Summary: "yt-dlp " + latest + " available",
+					Detail:  "Installed " + installed + ". Update from Settings.",
+				})
+			}
+			announced = latest
+		}
+	}
+
+	check(true)
 	logJSRuntime(ctx, jsRuntimeBin)
 
 	ticker := time.NewTicker(interval)
@@ -582,21 +666,7 @@ func runYtdlpSelfUpdateTicker(ctx context.Context, dir string, interval time.Dur
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			v, err := ytdlp.UpdateLatest(ctx, dir)
-			if err != nil {
-				slog.Warn("yt-dlp self-update failed", "err", err)
-				continue
-			}
-			slog.Info("yt-dlp self-update succeeded", "version", v)
-			if v != "" && v != current {
-				if rec != nil {
-					rec.Record(activity.Event{
-						Kind: activity.KindYtdlp, Outcome: activity.OutcomeOK,
-						Summary: "Updated to " + v,
-					})
-				}
-				current = v
-			}
+			check(false)
 		}
 	}
 }

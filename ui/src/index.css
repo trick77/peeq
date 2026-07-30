@@ -881,7 +881,13 @@ button.srow:not(:disabled):hover {
   color: #d98b80;
 }
 
-.cookie-status {
+/* The rail-foot status rows: the YouTube cookie's health, and the yt-dlp
+   update when one is waiting. .ytdlp-status joins each selector instead of
+   getting a parallel block, so the two rows cannot drift apart — and because
+   .led is only ever styled as a DESCENDANT of these, a new parent class on
+   its own would have rendered an unstyled dot. */
+.cookie-status,
+.ytdlp-status {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -892,7 +898,8 @@ button.srow:not(:disabled):hover {
   font-size: 12.5px;
   color: var(--color-muted);
 }
-.cookie-status .led {
+.cookie-status .led,
+.ytdlp-status .led {
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -900,15 +907,18 @@ button.srow:not(:disabled):hover {
   background: var(--color-online);
   box-shadow: 0 0 8px var(--color-online);
 }
-.cookie-status.warn .led {
+.cookie-status.warn .led,
+.ytdlp-status.warn .led {
   background: var(--color-danger);
   box-shadow: 0 0 8px var(--color-danger);
 }
-.cookie-status b {
+.cookie-status b,
+.ytdlp-status b {
   color: var(--color-ink-dim);
   font-weight: 600;
 }
-.cookie-status .cookie-detail {
+.cookie-status .cookie-detail,
+.ytdlp-status .ytdlp-detail {
   font-size: 11px;
   color: var(--color-faint);
 }

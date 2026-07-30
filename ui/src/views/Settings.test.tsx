@@ -35,7 +35,7 @@ vi.mock("../api/settings", () => ({
   createAPIToken: vi.fn(),
 }));
 vi.mock("../api/ytdlp", () => ({
-  getYtdlpVersion: vi.fn().mockResolvedValue("2026.01.01"),
+  getYtdlpVersion: vi.fn(),
   updateYtdlp: vi.fn(),
 }));
 vi.mock("../api/downloads", () => ({
@@ -50,7 +50,7 @@ import {
   getAPITokenStatus,
 } from "../api/settings";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
-import { updateYtdlp } from "../api/ytdlp";
+import { getYtdlpVersion, updateYtdlp } from "../api/ytdlp";
 
 describe("Settings", () => {
   beforeEach(() => {
@@ -61,6 +61,13 @@ describe("Settings", () => {
     vi.mocked(resumeYoutube).mockReset();
     vi.mocked(getAPITokenStatus).mockReset();
     vi.mocked(updateYtdlp).mockReset();
+    vi.mocked(getYtdlpVersion).mockReset();
+    vi.mocked(getYtdlpVersion).mockResolvedValue({
+      version: "2026.01.01",
+      latest: "2026.01.01",
+      update_available: false,
+      checked_at: new Date().toISOString(),
+    });
     vi.mocked(getSettings).mockResolvedValue(baseSettings);
     vi.mocked(putCookie).mockResolvedValue({
       ...baseSettings,
@@ -246,6 +253,73 @@ describe("Settings", () => {
     expect(
       await screen.findByText("Updated 2026.01.01 → 2026.08.15."),
     ).toBeInTheDocument();
+  });
+
+  it("reports the installed version and a successful release check", async () => {
+    render(<Settings />);
+    expect(await screen.findByText("2026.01.01")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Latest release 2026\.01\.01/),
+    ).toBeInTheDocument();
+  });
+
+  it("names the newer release when one is waiting", async () => {
+    vi.mocked(getYtdlpVersion).mockResolvedValue({
+      version: "2026.01.01",
+      latest: "2026.08.15",
+      update_available: true,
+      checked_at: new Date().toISOString(),
+    });
+    render(<Settings />);
+    expect(
+      await screen.findByText(/2026\.08\.15 is available/),
+    ).toBeInTheDocument();
+  });
+
+  // The rail indicator can only appear when a check SUCCEEDED, so a check that
+  // keeps failing would otherwise be indistinguishable from being up to date.
+  // This line is the only place that failure is ever admitted.
+  it("admits when the release check cannot reach GitHub", async () => {
+    vi.mocked(getYtdlpVersion).mockResolvedValue({
+      version: "2026.01.01",
+      latest: "2026.08.15",
+      update_available: true,
+      checked_at: "2026-07-01T00:00:00Z",
+      check_error: "dial tcp: lookup api.github.com: no such host",
+    });
+    render(<Settings />);
+
+    expect(
+      await screen.findByText(/Couldn't reach GitHub/),
+    ).toBeInTheDocument();
+    // The stale answer is still worth showing — it is the best available —
+    // so long as its age is shown with it.
+    expect(
+      screen.getByText(/Last known release 2026\.08\.15/),
+    ).toBeInTheDocument();
+  });
+
+  it("clears the pending-update note once the update is installed", async () => {
+    vi.mocked(getYtdlpVersion).mockResolvedValue({
+      version: "2026.01.01",
+      latest: "2026.08.15",
+      update_available: true,
+      checked_at: new Date().toISOString(),
+    });
+    vi.mocked(updateYtdlp).mockResolvedValue({
+      version: "2026.08.15",
+      previous_version: "2026.01.01",
+      updated: true,
+    });
+    render(<Settings />);
+    await screen.findByText(/2026\.08\.15 is available/);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Update$/ }));
+
+    expect(
+      await screen.findByText(/Latest release 2026\.08\.15/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/is available/)).toBeNull();
   });
 
   it("shows the auto-pause reason when auto-engaged", async () => {

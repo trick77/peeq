@@ -1,5 +1,7 @@
+import type { YtdlpVersion } from "../api/ytdlp";
 import { Icon, type IconName } from "../icons";
 import { CookieStatus } from "./CookieStatus";
+import { YtdlpStatus } from "./YtdlpStatus";
 
 // ViewId enumerates the destinations App routes to. App.tsx owns the actual
 // view-state (manual, no router lib — see App.tsx); Rail is purely
@@ -71,6 +73,7 @@ export function Rail({
   upNextLive,
   cookieStatus,
   cookieUpdatedAtLabel,
+  ytdlp,
 }: {
   active: ViewId;
   onNavigate: (view: ViewId) => void;
@@ -98,6 +101,12 @@ export function Rail({
   upNextLive?: boolean;
   cookieStatus?: string;
   cookieUpdatedAtLabel?: string;
+  /**
+   * The yt-dlp version report. The indicator below renders only while this
+   * says an update is waiting — undefined (not yet loaded) and an up-to-date
+   * binary both show nothing.
+   */
+  ytdlp?: YtdlpVersion;
 }) {
   return (
     <aside className="rail">
@@ -173,6 +182,9 @@ export function Rail({
             status={cookieStatus}
             updatedAtLabel={cookieUpdatedAtLabel}
           />
+        ) : null}
+        {ytdlp?.update_available && ytdlp.latest ? (
+          <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
         ) : null}
       </div>
     </aside>
