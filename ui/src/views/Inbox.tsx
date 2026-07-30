@@ -582,13 +582,14 @@ export function Inbox({
                   <span className="dur">
                     {formatDuration(item.duration_seconds)}
                   </span>
-                  {/* The poster's free bottom-left corner, opposite the
-                    runtime — the same slot the Library card gives its category
-                    pill, so the two lists put their one extra fact in the same
-                    place. A text row would be the wrong home: at the narrowest
-                    card the grid draws, a fourth item on the eyebrow truncates
-                    the channel name, while this corner is the same size on
-                    every card. */}
+                  {/* Top-left, where the eye starts, since this says whether
+                    there is anything to open. The poster carries only the
+                    runtime, so the corner is free.
+
+                    A text row would be the wrong home either way: at the
+                    narrowest card the grid draws, a fourth item on the eyebrow
+                    truncates the channel name, while a corner is the same size
+                    on every card. */}
                   {summaryPill(item)}
                 </div>
                 {/* The pair rode the poster itself for one release. That put
