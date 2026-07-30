@@ -28,17 +28,9 @@ import type { Video } from "../api/types";
 import type { SummaryStatus } from "../api/enums";
 import { ApiError } from "../api/http";
 import { formatDuration, gradientClassFor } from "../format";
-// The VTT parser and transcript helpers live in ../vtt so the public share page
-// can render the same Transcript card without importing this view.
-import {
-  highlightCue,
-  matchesFind,
-  parseVtt,
-  transcriptFilenameBase,
-  transcriptToText,
-  useCopyTranscript,
-  type Cue,
-} from "../vtt";
+// Only the download filename helper is needed here now: parsing, finding and
+// copying all moved into components/TranscriptCard with the markup.
+import { transcriptFilenameBase } from "../vtt";
 import { DOT } from "../sep";
 import { MediaStats } from "./player/MediaStats";
 import { ContentsCard } from "./player/ContentsCard";
@@ -152,18 +144,6 @@ export function Player({
   // loadedmetadata against the new video's state, which sets resumeAppliedRef
   // and costs the new video its resume position. null until minted.
   const [grant, setGrant] = useState<{ id: string; url: string } | null>(null);
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const [cues, setCues] = useState<Cue[]>([]);
-  const [transcriptLoading, setTranscriptLoading] = useState(false);
-  const [transcriptError, setTranscriptError] = useState<string | null>(null);
-  // The transcript "Copy text" button's own state — kept apart from
-  // transcriptError so a failed copy never looks like a failed load.
-  const {
-    copied: transcriptCopied,
-    error: copyError,
-    copy: copyTranscript,
-  } = useCopyTranscript();
-  const [find, setFind] = useState("");
   // confirmDelete drives the delete confirmation modal (ConfirmDialog),
   // opened from the ⋮ menu; deleting is its in-flight busy flag.
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -261,10 +241,6 @@ export function Player({
     setCurrentTime(0);
     setDuration(0);
     setCcOn(false);
-    setTranscriptOpen(false);
-    setCues([]);
-    setTranscriptError(null);
-    setFind("");
     setConfirmDelete(false);
     setShareStatus({ shared: false });
     // A sleep timer is a promise about the video in front of you, so opening
@@ -511,34 +487,6 @@ export function Player({
     // preference would silently never apply.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video?.id, video?.has_subtitles, subtitlesDefault, subtitlesReadyFor]);
-
-  // Fetch + client-side parse the VTT transcript the first time the
-  // Transcript card is expanded — not on every render, and not for videos
-  // without subtitles.
-  useEffect(() => {
-    if (!transcriptOpen || !video?.has_subtitles || cues.length > 0) return;
-    let active = true;
-    setTranscriptLoading(true);
-    setTranscriptError(null);
-    fetch(subtitlesUrl(video.id))
-      .then((res) => {
-        if (!res.ok) throw new Error("failed to load transcript");
-        return res.text();
-      })
-      .then((text) => {
-        if (active) setCues(parseVtt(text));
-      })
-      .catch(() => {
-        if (active) setTranscriptError("Failed to load transcript.");
-      })
-      .finally(() => {
-        if (active) setTranscriptLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transcriptOpen, video?.id, video?.has_subtitles]);
 
   if (!videoId) {
     return (
@@ -808,21 +756,6 @@ export function Player({
     setCurrentTime(seconds);
     positionRef.current = seconds;
     positionKnownRef.current = true;
-  }
-
-  // downloadTranscriptTxt saves the transcript as plain text, built from the
-  // cues already parsed for the panel (no extra request). The .vtt download is
-  // a plain link to the subtitle endpoint.
-  function downloadTranscriptTxt() {
-    if (!video) return;
-    const text = transcriptToText(cues);
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = transcriptFilenameBase(video.title) + ".txt";
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
   async function handleToggleFavorite() {
@@ -1101,10 +1034,6 @@ export function Player({
     return actions;
   }
 
-  const hitCount = find
-    ? cues.filter((c) => matchesFind(c.text, find)).length
-    : 0;
-
   return (
     <div className="playgrid">
       <div className="leftcol">
@@ -1316,10 +1245,12 @@ export function Player({
                not a control that silently does nothing. Find still highlights
                it either way.
 
-               Keyed on the video so navigating between videos remounts the
-               panel — collapsed, with an empty find box. Player is not
-               unmounted between videos, and the open/find state now lives
-               inside the component. */
+               Keyed on the video, so navigating from one video to another
+               remounts the panel: collapsed, with an empty find box. Player is
+               not unmounted between videos, and the state that used to be
+               reset per-video (transcriptOpen, find) now lives inside the
+               component — without this key you would land on video B with the
+               panel still expanded and video A's search term still in it. */
             <TranscriptCard
               key={video.id}
               vttUrl={subtitlesUrl(video.id)}
