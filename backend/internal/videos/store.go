@@ -79,7 +79,11 @@ type Video struct {
 	SummaryError  string
 	EmbedModel    string
 	EmbedDim      int
-	Category      string
+	// EmbedRev is the CONTENT recipe the stored chunks follow (which kinds of
+	// chunk exist), as opposed to EmbedModel/EmbedDim which describe the model.
+	// Below rag.ChunkRecipeRev means the index is stale and needs rebuilding.
+	EmbedRev int
+	Category string
 	// MediaContainer, VideoCodec, VideoHeight and AudioCodec are what the
 	// downloaded file actually is, filled in by mediaprobe. They carry
 	// ffprobe's raw values ("mp4", "h264", 1080, "aac"); the UI does the
@@ -180,7 +184,7 @@ const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	v.availability, v.status, v.error_message, v.sponsorblock_segments,
 	v.watched, v.watched_at, v.resume_position_seconds, v.state_version, v.favorite, v.favorited_at,
 	v.created_at, v.downloaded_at,
-	v.audio_language, v.subtitle_path, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.category,
+	v.audio_language, v.subtitle_path, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.embed_rev, v.category,
 	v.media_container, v.video_codec, v.video_height, v.audio_codec, v.probed_at,
 	v.media_type, v.live_status, v.yt_tags, v.yt_categories`
 
@@ -208,7 +212,7 @@ func scanVideo(rs rowScanner) (Video, error) {
 		&watched, &watchedAt, &v.ResumePositionSeconds, &v.StateVersion, &favorite, &favoritedAt,
 		&v.CreatedAt, &downloadedAt,
 		&v.AudioLanguage, &v.SubtitlePath, &v.Summary, &v.Chapters, &v.KeyPoints,
-		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim, &v.Category,
+		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim, &v.EmbedRev, &v.Category,
 		&v.MediaContainer, &v.VideoCodec, &v.VideoHeight, &v.AudioCodec, &probedAt,
 		&v.MediaType, &v.LiveStatus, &v.YTTags, &v.YTCategories,
 	)

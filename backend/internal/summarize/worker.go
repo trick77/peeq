@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/trick77/peeq/internal/activity"
@@ -19,9 +18,11 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 )
 
-// Embedder is the subset of rag.EmbedClient the worker needs.
+// Embedder is the subset of rag.EmbedClient the worker needs. Batched, because
+// chapter chunks roughly doubled how many texts one video contributes and the
+// whole set used to ride in a single request under a one-minute timeout.
 type Embedder interface {
-	Embed(ctx context.Context, inputs []string) ([][]float32, error)
+	EmbedBatched(ctx context.Context, inputs []string, gap time.Duration) ([][]float32, error)
 }
 
 // ActivityRecorder records a summary outcome for the Activity feed. Nil-safe.
@@ -260,24 +261,17 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		run.skipped("classify", "already categorized")
 	}
 
-	// Step 3 — embeddings. Skip if already embedded (embed_model is set).
-	if video.EmbedModel == "" {
-		w.emit(video.ID, videos.SummaryRunning, PhaseEmbedding)
-		ectx, done := run.step("embedding")
-		if err := w.embedAndStore(ectx, video.ID, parsed, summary); err != nil {
-			return true, w.failJob(job, video, run, err.Error())
-		}
-		done()
-	} else {
-		run.skipped("embedding", "already embedded")
-	}
-
-	// Summary + search are usable now. Persist "done" so the Library shows them,
-	// and emit "done" so the live Player fetches them immediately — it refetches
-	// on the "done" event — even though key-points still has to run, and even if
-	// that fragile step later fails and requeues (the emit is unconditional so a
-	// resumed attempt re-signals the open Player). The event's phase rides as
-	// "keypoints", not "": that keeps the Queue meter on the final stage instead
+	// Summary is usable now. Persist "done" so the Library shows it,
+	// and emit "done" so the live Player fetches it immediately — it refetches
+	// on the "done" event — even though key-points and embedding still have to
+	// run, and even if the fragile key-points step later fails and requeues (the
+	// emit is unconditional so a resumed attempt re-signals the open Player).
+	// Note SEARCH is not ready here any more: embedding moved after key points,
+	// because chapter chunks are built from what key points writes. The Player
+	// does not depend on the index, so it can still refetch now; a video is
+	// simply not findable for the few seconds between these two steps.
+	// The event's phase rides as "keypoints", not "": that keeps the Queue meter
+	// on the final stage instead
 	// of reading the job as finished (the row lives until the job is Finish()ed),
 	// while status "done" — not "running" — is what the Player keys on, so the
 	// two consumers stay correct off one event.
@@ -286,18 +280,57 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	}
 	w.emit(video.ID, videos.SummaryDone, PhaseKeypoints)
 
-	// Step 4 — key points (and chapters when yt-dlp didn't supply them). The
-	// fragile call, run last so a failure retries only this and costs nothing.
+	// Step 3 — key points (and chapters when yt-dlp didn't supply them). The
+	// fragile call. It now runs BEFORE embedding rather than last, because the
+	// chapters it writes are what chapter chunks are built from; embedding first
+	// would index every video as though it had no chapters.
 	ytChapters := decodeChapters(video.Chapters)
 	kctx, done := run.step("keypoints")
 	chapters, keyPoints, err := w.d.Summarizer.KeyPoints(kctx, summary, parsed.Cues, ytChapters)
 	if err != nil {
+		// Moving embedding after this step means a video whose key-points call
+		// keeps failing would never be indexed at all — unfindable, with no
+		// sign of why. So a video that has never been embedded gets a
+		// best-effort pass here with whatever chapters exist (yt-dlp's, or
+		// none). SetKeyPoints zeroes embed_rev, so if key points does eventually
+		// succeed the video is re-indexed properly with its chapters.
+		if video.EmbedModel == "" {
+			if eerr := w.embedAndStore(kctx, video.ID, parsed, summary, ytChapters); eerr != nil {
+				w.d.Logger.Warn("summarize worker: fallback embedding failed",
+					append(run.ident(), "err", eerr)...)
+			} else {
+				w.d.Logger.Info("summarize worker: indexed without chapters after key-points failure",
+					run.ident()...)
+			}
+		}
 		return true, w.requeueJob(job, video, run, err.Error())
 	}
 	if err := w.d.Videos.SetKeyPoints(video.ID, encodeChapters(chapters), encodeKeyPoints(keyPoints)); err != nil {
 		return true, w.requeueJob(job, video, run, err.Error())
 	}
 	done("chapters", len(chapters), "key_points", len(keyPoints))
+
+	// Step 4 — embeddings, last so the index is built from the finished
+	// analysis.
+	//
+	// Unconditional, and it has to be: the only route here is a successful
+	// SetKeyPoints above, which zeroes embed_rev in the very statement that
+	// writes the chapters — so whatever index exists at this point predates
+	// them by construction. Gating on `video.EmbedRev < rag.ChunkRecipeRev`
+	// would be worse than redundant, because `video` was read at claim time and
+	// is now stale HIGH: a retry that arrives here already at the current rev
+	// (exactly what the key-points fallback embed above leaves behind) would
+	// skip embedding and strand the video on its chapterless index, with
+	// embed_rev=0 in the database and no queue able to repair it.
+	//
+	// `chapters` here is the value KeyPoints just returned, not video.Chapters —
+	// that field is stale for the same reason.
+	w.emit(video.ID, videos.SummaryRunning, PhaseEmbedding)
+	ectx, edone := run.step("embedding")
+	if err := w.embedAndStore(ectx, video.ID, parsed, summary, chapters); err != nil {
+		return true, w.failJob(job, video, run, err.Error())
+	}
+	edone("chapters", len(chapters))
 	w.emit(video.ID, videos.SummaryDone, "")
 
 	run.finished("done")
@@ -376,7 +409,7 @@ func attemptLabel(job *summaryjobs.Job) string {
 // pipelineStages are the analysis stages in execution order. Their position is
 // what "2/4" in a log line counts against, so a stage a resumed job skips still
 // leaves the others numbered where a reader expects them.
-var pipelineStages = []string{"summary", "classify", "embedding", "keypoints"}
+var pipelineStages = []string{"summary", "classify", "keypoints", "embedding"}
 
 // stageMessage builds a stage line's message: "stage 2/4 done". A stage that
 // is not in pipelineStages is named instead of numbered — a wrong number would
@@ -658,73 +691,37 @@ func (w *Worker) requeueJob(job *summaryjobs.Job, video *videos.Video, run *anal
 	return fmt.Errorf("summarize job %d key-points failed: %s", job.ID, msg)
 }
 
-// embedAndStore chunks the transcript, maps each chunk to its start-second via
-// word-offset lookup against the cue index, embeds, and replaces the video's
-// chunks+vectors.
-func (w *Worker) embedAndStore(ctx context.Context, videoID string, parsed subtitles.Parsed, summaryText string) error {
-	chunks := rag.Chunk(parsed.Transcript, rag.DefaultChunkOptions())
-	if len(chunks) == 0 {
+// embedAndStore rebuilds the video's chunks from the finished analysis and
+// replaces its index. The chunk recipe itself lives in rag.BuildVideoChunks, so
+// this path and the re-embed backfill cannot drift into producing different
+// indexes for the same video.
+func (w *Worker) embedAndStore(ctx context.Context, videoID string, parsed subtitles.Parsed, summaryText string, chapters []Chapter) error {
+	rows := rag.BuildVideoChunks(parsed, summaryText, toRagChapters(chapters))
+	if len(rows) == 0 {
 		return errors.New("no chunks")
 	}
-	cueWordStarts := cueWordStartIndex(parsed.Cues)
-	texts := make([]string, 0, len(chunks)+1)
-	rows := make([]rag.ChunkRow, 0, len(chunks)+1)
-	for _, c := range chunks {
-		texts = append(texts, c.Text)
-		rows = append(rows, rag.ChunkRow{
-			Ordinal:      c.Ordinal,
-			Text:         c.Text,
-			Kind:         "transcript",
-			TokenCount:   c.TokenCount,
-			StartSeconds: cueStartForWordOffset(c.WordOffset, parsed.Cues, cueWordStarts),
-		})
+	texts := make([]string, len(rows))
+	for i, r := range rows {
+		texts[i] = r.Text
 	}
-	// Index the summary as one extra chunk so keyword+semantic search also
-	// matches against it (spec §7). It describes the whole video, so it has no
-	// timestamp (start_seconds = 0); the search UI badges it and opens at 0.
-	if s := strings.TrimSpace(summaryText); s != "" {
-		texts = append(texts, s)
-		rows = append(rows, rag.ChunkRow{
-			Ordinal:      len(chunks),
-			Text:         s,
-			Kind:         "summary",
-			StartSeconds: 0,
-		})
-	}
-	vecs, err := w.d.Embedder.Embed(ctx, texts)
+	vecs, err := w.d.Embedder.EmbedBatched(ctx, texts, 0)
 	if err != nil {
 		return err
 	}
-	return w.d.Rag.ReplaceVideoChunks(ctx, videoID, w.d.EmbedModel, w.d.EmbedDim, rows, vecs)
+	meta := rag.IndexMeta{Model: w.d.EmbedModel, Dim: w.d.EmbedDim, Rev: rag.ChunkRecipeRev}
+	return w.d.Rag.ReplaceVideoChunks(ctx, videoID, meta, rows, vecs)
 }
 
-// cueWordStartIndex returns, for each cue, the cumulative word count of all
-// preceding cues' text — i.e. the word-offset (into subtitles.Parsed.Transcript,
-// which is strings.Join(cueTexts, " ")) at which that cue's text begins. This
-// lets a chunk's WordOffset be mapped back to the cue it actually starts in,
-// which is exact and monotonic, unlike prefix-matching the chunk's (possibly
-// overlap-shifted) leading text against cue text.
-func cueWordStartIndex(cues []subtitles.Cue) []int {
-	starts := make([]int, len(cues))
-	total := 0
-	for i, c := range cues {
-		starts[i] = total
-		total += len(strings.Fields(c.Text))
+// toRagChapters narrows summarize.Chapter to the two fields the chunk builder
+// uses. rag cannot import summarize (summarize imports rag), so the types are
+// deliberately separate.
+func toRagChapters(chapters []Chapter) []rag.Chapter {
+	if len(chapters) == 0 {
+		return nil
 	}
-	return starts
-}
-
-// cueStartForWordOffset returns the StartSeconds of the last cue whose
-// word-start is <= wordOffset, i.e. the cue that word belongs to. Falls back
-// to 0 when cues is empty.
-func cueStartForWordOffset(wordOffset int, cues []subtitles.Cue, cueWordStarts []int) int {
-	best := 0
-	for i, ws := range cueWordStarts {
-		if ws <= wordOffset {
-			best = cues[i].StartSeconds
-		} else {
-			break
-		}
+	out := make([]rag.Chapter, 0, len(chapters))
+	for _, c := range chapters {
+		out = append(out, rag.Chapter{TS: c.TS, Title: c.Title})
 	}
-	return best
+	return out
 }

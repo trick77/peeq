@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/trick77/peeq/internal/rag"
 	"time"
 
 	"github.com/trick77/peeq/internal/llm"
@@ -294,21 +297,25 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	h := newWorkerHarness(t)
 	seedVideo(t, h, "v2")
 	// A job resumed after the key-points step failed: summary, category and
-	// embeddings are already stored, so only key points re-runs.
+	// embeddings are already stored, so summary and classify are skipped. Key
+	// points re-runs — and embedding re-runs behind it, because the chapters
+	// that call writes are what chapter chunks are built from, so the stored
+	// index no longer matches the analysis however current its rev looked at
+	// claim time.
 	if err := h.videos.SetSummaryText("v2", "Existing summary."); err != nil {
 		t.Fatalf("set summary: %v", err)
 	}
 	if err := h.videos.SetCategory("v2", "ai"); err != nil {
 		t.Fatalf("set category: %v", err)
 	}
-	if _, err := h.db.Exec(`UPDATE videos SET embed_model = 'test-model', summary_status = 'done' WHERE id = 'v2'`); err != nil {
+	if _, err := h.db.Exec(fmt.Sprintf(`UPDATE videos SET embed_model = 'test-model', embed_rev = %d, summary_status = 'done' WHERE id = 'v2'`, rag.ChunkRecipeRev)); err != nil {
 		t.Fatalf("mark embedded: %v", err)
 	}
 
 	log, buf := captureLogger()
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
-		Summarizer: New(&usageCompleter{}), Embedder: failEmbedder{t: t},
+		Summarizer: New(&usageCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
 		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536, Logger: log,
 	})
 	if _, err := w.processOne(context.Background()); err != nil {
@@ -322,7 +329,7 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	// A skipped stage keeps its own number, so the stages a resumed job does
 	// run are still numbered where a reader expects them.
 	for _, want := range []struct{ step, stage string }{
-		{"summary", "1/4"}, {"classify", "2/4"}, {"embedding", "3/4"},
+		{"summary", "1/4"}, {"classify", "2/4"},
 	} {
 		rec := findStageRec(recs, want.step, "skipped")
 		if rec == nil {
@@ -336,8 +343,19 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	if kp == nil {
 		t.Fatal("key-points stage did not run on the resumed job")
 	}
-	if got := recStage(kp); got != "4/4" {
-		t.Errorf("keypoints ran as stage %s, want 4/4", got)
+	if got := recStage(kp); got != "3/4" {
+		t.Errorf("keypoints ran as stage %s, want 3/4", got)
+	}
+	// Embedding is NOT skipped here, however current embed_rev looked when the
+	// job was claimed: the key-points call that just ran rewrote the chapters
+	// chunk chunks are built from, and SetKeyPoints zeroed embed_rev in the same
+	// statement. Skipping would leave an index that predates its own chapters.
+	emb := findStep(recs, "embedding")
+	if emb == nil {
+		t.Fatal("embedding stage did not re-run after key points rewrote the chapters")
+	}
+	if got := recStage(emb); got != "4/4" {
+		t.Errorf("embedding ran as stage %s, want 4/4", got)
 	}
 }
 

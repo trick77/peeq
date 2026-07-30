@@ -139,3 +139,49 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 	}
 	return out, nil
 }
+
+// maxEmbedInputs caps how many texts ride in one /embeddings request.
+//
+// A whole video went in a single call before chapter chunks existed, under a
+// one-minute HTTP timeout — already the tightest thing in this package for a
+// long video. Chapter chunks roughly double the count, and the backfill sends
+// every video in the library through here, so the request has to be bounded.
+const maxEmbedInputs = 64
+
+// EmbedBatched is Embed for input sets large enough that one request would be
+// unwise: it splits into requests of at most maxEmbedInputs, concatenates the
+// vectors in input order, and waits `gap` between requests so a library-wide
+// backfill trickles rather than bursting at the endpoint.
+//
+// A non-positive gap disables the wait. Any batch failing fails the whole call:
+// a partial vector set cannot be stored, since ReplaceVideoChunks requires one
+// vector per row.
+func (c *EmbedClient) EmbedBatched(ctx context.Context, inputs []string, gap time.Duration) ([][]float32, error) {
+	if len(inputs) <= maxEmbedInputs {
+		return c.Embed(ctx, inputs)
+	}
+	out := make([][]float32, 0, len(inputs))
+	for start := 0; start < len(inputs); start += maxEmbedInputs {
+		if start > 0 && gap > 0 {
+			// Context-aware: a shutdown mid-backfill should stop here rather
+			// than sleep out the remaining batches.
+			t := time.NewTimer(gap)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return nil, ctx.Err()
+			case <-t.C:
+			}
+		}
+		end := min(start+maxEmbedInputs, len(inputs))
+		vecs, err := c.Embed(ctx, inputs[start:end])
+		if err != nil {
+			return nil, fmt.Errorf("embed batch %d-%d: %w", start, end, err)
+		}
+		if len(vecs) != end-start {
+			return nil, fmt.Errorf("embed batch %d-%d: got %d vectors for %d inputs", start, end, len(vecs), end-start)
+		}
+		out = append(out, vecs...)
+	}
+	return out, nil
+}

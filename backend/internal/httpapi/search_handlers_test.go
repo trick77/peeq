@@ -110,7 +110,7 @@ func seedChunks(t *testing.T, rs *rag.Store, videoID string, rows []rag.ChunkRow
 	for i := range rows {
 		vecs[i] = dim1536(1.0)
 	}
-	if err := rs.ReplaceVideoChunks(context.Background(), videoID, "test-model", 1536, rows, vecs); err != nil {
+	if err := rs.ReplaceVideoChunks(context.Background(), videoID, rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev}, rows, vecs); err != nil {
 		t.Fatalf("seedChunks(%s): %v", videoID, err)
 	}
 }
@@ -130,12 +130,12 @@ func TestSearchGroupsByVideo(t *testing.T) {
 	ctx := context.Background()
 	v1Vec := dim1536(1.0)
 	v2Vec := dim1536(-1.0)
-	if err := ragStore.ReplaceVideoChunks(ctx, "v1", "test-model", 1536,
+	if err := ragStore.ReplaceVideoChunks(ctx, "v1", rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
 		[]rag.ChunkRow{{Ordinal: 0, Text: "talking about the new iphone camera", StartSeconds: 10, TokenCount: 5}},
 		[][]float32{v1Vec}); err != nil {
 		t.Fatalf("seed v1 chunks: %v", err)
 	}
-	if err := ragStore.ReplaceVideoChunks(ctx, "v2", "test-model", 1536,
+	if err := ragStore.ReplaceVideoChunks(ctx, "v2", rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
 		[]rag.ChunkRow{{Ordinal: 0, Text: "something else entirely", StartSeconds: 20, TokenCount: 5}},
 		[][]float32{v2Vec}); err != nil {
 		t.Fatalf("seed v2 chunks: %v", err)
@@ -1037,5 +1037,108 @@ func TestSearchSnippetIsCentredOnTheMatch(t *testing.T) {
 	}
 	if !strings.Contains(snip, rag.HighlightStart) {
 		t.Errorf("snippet is not highlighted: %q", snip)
+	}
+}
+
+// Reprocess throws away the stored analysis the index was built from, so it
+// must also mark the index stale. Embedding is gated on the content recipe now:
+// without this the worker would skip embedding entirely and leave the OLD
+// summary chunk indexed against a video whose summary has been wiped.
+func TestReprocessMarksIndexStale(t *testing.T) {
+	deps, db, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{
+		ID: "v1", URL: "u1", Title: "t", Status: videos.StatusDownloaded,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := db.Exec(
+		`UPDATE videos SET media_path='m.mp4', subtitle_path='s.vtt' WHERE id='v1'`); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{{Ordinal: 0, Text: "old summary", StartSeconds: 0}})
+	if _, err := db.Exec(`UPDATE videos SET embed_rev=? WHERE id='v1'`, rag.ChunkRecipeRev); err != nil {
+		t.Fatal(err)
+	}
+	deps.SummaryJobs = &spySummaryJobs{}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/reprocess", nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("reprocess = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+
+	var rev int
+	if err := db.QueryRow(`SELECT embed_rev FROM videos WHERE id='v1'`).Scan(&rev); err != nil {
+		t.Fatal(err)
+	}
+	if rev != 0 {
+		t.Errorf("embed_rev = %d after reprocess, want 0 so the index is rebuilt", rev)
+	}
+}
+
+// A chapter chunk contains the transcript of its own span, so the same sentence
+// is indexed twice. Both copies match the same query; showing both would fill a
+// video's four slots with two renderings of one moment instead of four
+// different places the topic came up.
+func TestSearchCollapsesDuplicateMoments(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "long talk"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Two chunks covering the same second, as the transcript window and the
+	// chapter over it would, plus one genuinely elsewhere.
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "electrolytes matter here", Kind: rag.KindTranscript, StartSeconds: 100},
+		{Ordinal: 1, Text: "Chapter: Minerals\nelectrolytes matter here", Kind: rag.KindChapter, StartSeconds: 105},
+		{Ordinal: 2, Text: "electrolytes again much later", Kind: rag.KindTranscript, StartSeconds: 900},
+	})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil)
+	var resp struct {
+		Results []struct {
+			Matches []struct {
+				StartSeconds int `json:"start_seconds"`
+			} `json:"matches"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("want 1 video, got %d", len(resp.Results))
+	}
+	got := resp.Results[0].Matches
+	if len(got) != 2 {
+		t.Fatalf("want 2 distinct moments, got %d: %+v", len(got), got)
+	}
+	if abs(got[0].StartSeconds-got[1].StartSeconds) < minMomentGapSeconds {
+		t.Errorf("moments %d and %d are the same moment twice", got[0].StartSeconds, got[1].StartSeconds)
+	}
+}
+
+// A summary hit describes the whole video rather than a point in it, so it must
+// survive alongside a transcript moment even though it carries no timestamp.
+func TestSearchKeepsSummaryAlongsideAnEarlyMoment(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "talk"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "electrolytes right at the start", Kind: rag.KindTranscript, StartSeconds: 5},
+		{Ordinal: 1, Text: "a summary mentioning electrolytes", Kind: rag.KindSummary, StartSeconds: 0},
+	})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil)
+	body := rec.Body.String()
+	if !strings.Contains(body, `"kind":"summary"`) {
+		t.Errorf("summary hit was suppressed by a nearby transcript moment: %s", body)
+	}
+	if !strings.Contains(body, `"kind":"transcript"`) {
+		t.Errorf("transcript hit missing: %s", body)
 	}
 }

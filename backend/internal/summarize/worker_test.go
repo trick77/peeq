@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/llm"
@@ -31,7 +32,7 @@ func (f failCompleter) Complete(ctx context.Context, m []llm.Message) (string, e
 // no_transcript short-circuit never reaches the Embedder.
 type failEmbedder struct{ t *testing.T }
 
-func (f failEmbedder) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
+func (f failEmbedder) EmbedBatched(ctx context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
 	f.t.Fatal("Embedder.Embed should not be called for a no-transcript video")
 	return nil, nil
 }
@@ -79,14 +80,14 @@ func (classifyErrCompleter) Complete(ctx context.Context, m []llm.Message) (stri
 // swallowing it (regression test for the silent summarize-worker error).
 type failingEmbedder struct{}
 
-func (failingEmbedder) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
+func (failingEmbedder) EmbedBatched(ctx context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
 	return nil, errors.New("boom")
 }
 
 // fakeWorkerEmbedder returns a dim-length vector per input.
 type fakeWorkerEmbedder struct{ dim int }
 
-func (f fakeWorkerEmbedder) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
+func (f fakeWorkerEmbedder) EmbedBatched(ctx context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
 	out := make([][]float32, len(inputs))
 	for i := range inputs {
 		v := make([]float32, f.dim)
@@ -768,7 +769,7 @@ type countingEmbedder struct {
 	calls int
 }
 
-func (c *countingEmbedder) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
+func (c *countingEmbedder) EmbedBatched(ctx context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
 	c.calls++
 	out := make([][]float32, len(inputs))
 	for i := range inputs {
@@ -850,7 +851,12 @@ func TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints(t *
 		t.Errorf("job state = %q, want pending (queued for retry)", state)
 	}
 
-	// Attempt 2: skips summary + embeddings; only key-points reruns, succeeds.
+	// Attempt 2: skips the summary; key-points reruns and succeeds, and
+	// embedding runs a SECOND time behind it. That second pass is the whole
+	// point of the retry: attempt 1's index was the best-effort fallback built
+	// with no chapters, and the chapters key points has now written are exactly
+	// what chapter chunks are built from. Skipping it here would strand the
+	// video on a chapterless index that nothing else would ever repair.
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne retry: %v", err)
 	}
@@ -858,8 +864,11 @@ func TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints(t *
 	if !strings.Contains(v.KeyPoints, "a point") {
 		t.Errorf("key points not set on retry: %q", v.KeyPoints)
 	}
-	if embedder.calls != 1 {
-		t.Errorf("embedder re-called on retry (%d) — resume must skip embedding", embedder.calls)
+	if embedder.calls != 2 {
+		t.Errorf("embedder called %d times, want 2 — the retry must reindex with the chapters key points just wrote", embedder.calls)
+	}
+	if v.EmbedRev != rag.ChunkRecipeRev {
+		t.Errorf("embed_rev = %d, want %d — the retry's index must be marked current", v.EmbedRev, rag.ChunkRecipeRev)
 	}
 	if completer.kpCalls != 2 {
 		t.Errorf("key-points calls = %d, want 2 (failed, then succeeded)", completer.kpCalls)
@@ -1302,7 +1311,7 @@ func TestWorkerMusicOnlyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 		`[{"ts":0,"title":"Intro","source":"mimo"}]`, `[{"ts":5,"text":"Invented."}]`); err != nil {
 		t.Fatalf("seed summary: %v", err)
 	}
-	if err := h.rag.ReplaceVideoChunks(context.Background(), "v9", "test-model", 1536,
+	if err := h.rag.ReplaceVideoChunks(context.Background(), "v9", rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
 		[]rag.ChunkRow{{Ordinal: 0, Text: "A thoughtful essay on trust.", Kind: "summary"}},
 		[][]float32{make([]float32, 1536)}); err != nil {
 		t.Fatalf("seed chunks: %v", err)
@@ -1444,7 +1453,7 @@ func TestDiscardStaleAnalysisSkipsTheRowWriteWhenNothingIsStored(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v12", URL: "https://youtu.be/v12"}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.rag.ReplaceVideoChunks(context.Background(), "v12", "test-model", 1536,
+	if err := h.rag.ReplaceVideoChunks(context.Background(), "v12", rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
 		[]rag.ChunkRow{{Ordinal: 0, Text: "orphaned", Kind: "summary"}},
 		[][]float32{make([]float32, 1536)}); err != nil {
 		t.Fatalf("seed chunks: %v", err)
@@ -1516,5 +1525,171 @@ func TestWorkerEmptyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 	if v.SummaryStatus != "no_transcript" || v.Summary != "" {
 		t.Fatalf("expected no_transcript with the stale summary cleared, got status=%q summary=%q",
 			v.SummaryStatus, v.Summary)
+	}
+}
+
+// chapterCompleter answers the key-points call with chapters, so the embedding
+// step downstream has something to build chapter chunks from.
+type chapterCompleter struct{}
+
+func (chapterCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	if len(m) > 0 {
+		sys := m[0].Content
+		if strings.Contains(sys, "cohesive summary") {
+			return "Overall prose summary.", nil
+		}
+		if strings.Contains(sys, "category id") {
+			return "ai", nil
+		}
+		if strings.Contains(sys, "JSON") {
+			return `{"chapters":[{"ts":0,"title":"Opening"},{"ts":2,"title":"Testing"}],` +
+				`"key_points":[{"ts":0,"text":"a point"}]}`, nil
+		}
+	}
+	return "chunk summary", nil
+}
+
+// keyPointsFailCompleter answers summary and classify but always fails the
+// key-points call, which is the fragile step embedding now runs behind.
+type keyPointsFailCompleter struct{}
+
+func (keyPointsFailCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	if len(m) > 0 {
+		sys := m[0].Content
+		if strings.Contains(sys, "cohesive summary") {
+			return "Overall prose summary.", nil
+		}
+		if strings.Contains(sys, "category id") {
+			return "ai", nil
+		}
+		if strings.Contains(sys, "JSON") {
+			return "", errors.New("key points endpoint exploded")
+		}
+	}
+	return "chunk summary", nil
+}
+
+// seedChapterVideo writes a two-cue VTT and a video row pointing at it.
+func seedChapterVideo(t *testing.T, h *workerHarness, id string) {
+	t.Helper()
+	relPath := id + "/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello there, welcome to the video.\n\n" +
+		"00:00:02.000 --> 00:00:04.000\nToday we will talk about testing Go workers.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	if err := h.videos.Upsert(videos.Video{ID: id, URL: "https://youtu.be/" + id}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSubtitle(id, relPath, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+	if _, err := h.jobs.Enqueue(id); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+}
+
+func chunkKindCounts(t *testing.T, h *workerHarness, videoID string) map[string]int {
+	t.Helper()
+	rows, err := h.db.Query(`SELECT kind, COUNT(*) FROM transcript_chunks WHERE video_id=? GROUP BY kind`, videoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var k string
+		var n int
+		if err := rows.Scan(&k, &n); err != nil {
+			t.Fatal(err)
+		}
+		out[k] = n
+	}
+	return out
+}
+
+// Embedding moved after key points precisely so it can see the chapters that
+// step writes. If it ran first, every video would be indexed as though it had
+// no chapters at all.
+func TestWorkerIndexesChaptersFromKeyPointsOutput(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedChapterVideo(t, h, "vc1")
+
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(chapterCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+
+	kinds := chunkKindCounts(t, h, "vc1")
+	if kinds[rag.KindChapter] == 0 {
+		t.Fatalf("no chapter chunks indexed: %v", kinds)
+	}
+	v, err := h.videos.Get("vc1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.EmbedRev != rag.ChunkRecipeRev {
+		t.Errorf("embed_rev = %d, want %d", v.EmbedRev, rag.ChunkRecipeRev)
+	}
+}
+
+// Embedding running behind the fragile step introduces a risk: a video whose
+// key-points call keeps failing would never be indexed at all — unfindable,
+// with nothing to say why. The fallback pass is what prevents that.
+func TestWorkerStillIndexesWhenKeyPointsFails(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedChapterVideo(t, h, "vc2")
+
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(keyPointsFailCompleter{}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		MediaDir:   h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+	})
+	// A key-points failure requeues the job, which surfaces as an error from
+	// processOne — that is the path under test, not a problem with it.
+	if _, err := w.processOne(context.Background()); err == nil {
+		t.Fatal("expected the key-points failure to be reported")
+	}
+
+	kinds := chunkKindCounts(t, h, "vc2")
+	if kinds[rag.KindTranscript] == 0 {
+		t.Fatalf("a key-points failure left the video unsearchable: %v", kinds)
+	}
+	// No chapters existed to index, so none should have been invented.
+	if kinds[rag.KindChapter] != 0 {
+		t.Errorf("chapter chunks = %d, want 0", kinds[rag.KindChapter])
+	}
+}
+
+// SetKeyPoints zeroes embed_rev in the same statement that writes chapters, so
+// a video indexed by the fallback above is re-indexed properly once key points
+// eventually succeeds.
+func TestSetKeyPointsInvalidatesTheIndex(t *testing.T) {
+	h := newWorkerHarness(t)
+	if err := h.videos.Upsert(videos.Video{ID: "vk", URL: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.Exec(`UPDATE videos SET embed_rev=? WHERE id='vk'`, rag.ChunkRecipeRev); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.videos.SetKeyPoints("vk", `[{"ts":0,"title":"New"}]`, `[]`); err != nil {
+		t.Fatal(err)
+	}
+	v, err := h.videos.Get("vk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.EmbedRev != 0 {
+		t.Errorf("embed_rev = %d after writing chapters, want 0 — the stored index predates them", v.EmbedRev)
 	}
 }

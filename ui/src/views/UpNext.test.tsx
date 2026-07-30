@@ -257,9 +257,11 @@ describe("UpNext", () => {
     expect(within(row).getByText("Summarising")).toBeInTheDocument();
     expect(within(row).getByText("Embedding")).toBeInTheDocument();
     // Four segments in the same slot the download bar uses, and the step is
-    // named in words rather than as a bare "3/4".
+    // named in words rather than as a bare "4/4". Embedding is the LAST stage:
+    // it moved after key points so chapter chunks can be built from the
+    // chapters that step writes.
     expect(row.querySelectorAll(".un-step")).toHaveLength(4);
-    expect(row.querySelector(".ag-when")?.textContent).toBe("step 3 of 4");
+    expect(row.querySelector(".ag-when")?.textContent).toBe("step 4 of 4");
     // The summarize lane offers no cancel — summaries run unattended.
     expect(within(row).queryByRole("button")).toBeNull();
   });

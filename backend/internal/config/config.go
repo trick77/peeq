@@ -52,6 +52,13 @@ type Config struct {
 	// endpoint gets room to breathe. Both are tunable; 0 disables the pacing.
 	SummarizeRequestDelay time.Duration
 	SummarizeVideoDelay   time.Duration
+	// Re-embed backfill pacing. The backfill touches every video in the library
+	// at once, so it is deliberately slow: a gap between videos and between the
+	// embedding requests of one video, keeping a one-off reindex from bursting
+	// at the embeddings endpoint. Temporary, alongside the worker (issue #240).
+	ReembedPollInterval time.Duration
+	ReembedVideoDelay   time.Duration
+	ReembedBatchDelay   time.Duration
 
 	// SummaryChunkTokens is the coarse chunk budget for the prose summary. The
 	// chat model has a ~1M-token context window, so a whole transcript fits in a
@@ -201,6 +208,22 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.SummarizeVideoDelay = vidDelay
+
+	reembedPoll, err := envDuration("BACKEND_REEMBED_POLL_INTERVAL", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ReembedPollInterval = reembedPoll
+	reembedVideo, err := envDuration("BACKEND_REEMBED_VIDEO_DELAY", 2*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ReembedVideoDelay = reembedVideo
+	reembedBatch, err := envDuration("BACKEND_REEMBED_BATCH_DELAY", 250*time.Millisecond)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ReembedBatchDelay = reembedBatch
 	idle, err := envDuration("BACKEND_CHAT_STREAM_IDLE_TIMEOUT", 90*time.Second)
 	if err != nil {
 		return Config{}, err

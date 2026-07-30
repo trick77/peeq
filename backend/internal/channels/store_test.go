@@ -376,7 +376,7 @@ func TestDeleteCascade_purgesVecAndFTSChunks(t *testing.T) {
 	ragStore := rag.NewStore(db)
 	vec := make([]float32, 1536)
 	seedChunk := func(videoID string) {
-		if err := ragStore.ReplaceVideoChunks(ctx, videoID, "e5", 1536, []rag.ChunkRow{
+		if err := ragStore.ReplaceVideoChunks(ctx, videoID, rag.IndexMeta{Model: "e5", Dim: 1536, Rev: rag.ChunkRecipeRev}, []rag.ChunkRow{
 			{Ordinal: 0, Text: "x", StartSeconds: 0, TokenCount: 1},
 		}, [][]float32{vec}); err != nil {
 			t.Fatalf("seed chunks for %s: %v", videoID, err)

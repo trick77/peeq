@@ -71,10 +71,27 @@ func (s *Store) SetSummaryText(id, summary string) error {
 // summary, so a failure in that step never discards an already-saved summary
 // and a retry only re-runs the key-points call.
 func (s *Store) SetKeyPoints(id, chaptersJSON, keyPointsJSON string) error {
+	// Writing chapters invalidates the search index: chapter chunks are built
+	// from this column, so whatever is stored was built without these. Zeroing
+	// embed_rev in the SAME statement is what makes the invariant hold — a
+	// separate call could be interrupted between the two, leaving an index that
+	// claims to be current but predates the chapters it should contain.
 	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET chapters=?, key_points=? WHERE id=?`, chaptersJSON, keyPointsJSON, id)
+		`UPDATE videos SET chapters=?, key_points=?, embed_rev=0 WHERE id=?`, chaptersJSON, keyPointsJSON, id)
 	if err != nil {
 		return fmt.Errorf("set video %s key points: %w", id, err)
+	}
+	return nil
+}
+
+// ClearEmbedRev marks a video's search index stale, so the next summarize or
+// re-embed pass rebuilds it. Used by Reprocess, which throws away the stored
+// analysis the index was built from.
+func (s *Store) ClearEmbedRev(id string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET embed_rev=0 WHERE id=?`, id)
+	if err != nil {
+		return fmt.Errorf("clear video %s embed rev: %w", id, err)
 	}
 	return nil
 }

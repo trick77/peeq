@@ -52,6 +52,41 @@ type searchResult struct {
 	Matches []searchMatch `json:"matches"`
 }
 
+// admits reports whether a hit is a different moment from the ones already
+// taken for this video, so the same seconds are not shown twice under two chunk
+// kinds. Hits arrive best-first, so the one already kept is the better-ranked
+// rendering of that moment.
+//
+// A summary hit is exempt: it describes the whole video rather than a point in
+// it, carries no timestamp, and is badged differently — suppressing it because
+// some transcript hit landed near 0s would drop genuinely distinct information.
+func (r *searchResult) admits(h rag.Hit) bool {
+	if h.Kind == rag.KindSummary {
+		for _, m := range r.Matches {
+			if m.Kind == rag.KindSummary {
+				return false
+			}
+		}
+		return true
+	}
+	for _, m := range r.Matches {
+		if m.Kind == rag.KindSummary {
+			continue
+		}
+		if abs(m.StartSeconds-h.StartSeconds) < minMomentGapSeconds {
+			return false
+		}
+	}
+	return true
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
 // Search modes. They differ in what they retrieve with, not in what they
 // retrieve from — both read the same chunks.
 //
@@ -82,6 +117,16 @@ const (
 	// maxMatchesPerVideo caps how many moments one video contributes, so a
 	// long video cannot crowd out the rest of the library.
 	maxMatchesPerVideo = 4
+	// minMomentGapSeconds is how far apart two moments from the same video must
+	// be to count as different moments.
+	//
+	// A chapter chunk contains the transcript of its own span, so the same
+	// sentence is indexed twice: once in a ~600-token transcript window and
+	// again inside the chapter covering it. Both match the same query, and
+	// without this a video's four slots fill with near-duplicate pairs — two
+	// renderings of one moment, crowding out the genuinely different places the
+	// topic came up.
+	minMomentGapSeconds = 30
 )
 
 // handleSearch answers GET /api/search?q=&k=&mode=: blank q short-circuits to
@@ -142,7 +187,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			byVideo[h.VideoID] = g
 			order = append(order, h.VideoID)
 		}
-		if len(g.Matches) >= maxMatchesPerVideo {
+		if len(g.Matches) >= maxMatchesPerVideo || !g.admits(h) {
 			continue
 		}
 		emitted++
@@ -314,6 +359,14 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	// permanent — Reprocess is the only way a user can correct one.
 	if err := s.videos.SetCategory(id, videos.UncategorizedCategory); err != nil {
 		serverError(w, r, err, "reset category failed")
+		return
+	}
+	// Mark the search index stale. Embedding is gated on the content recipe, so
+	// without this a reprocess would clear the summary and then SKIP embedding
+	// entirely — leaving the old summary chunk indexed against a video whose
+	// summary has been thrown away.
+	if err := s.videos.ClearEmbedRev(id); err != nil {
+		serverError(w, r, err, "reset embed rev failed")
 		return
 	}
 	// Force a fresh SponsorBlock fetch: clearing the refresh sentinel makes the
