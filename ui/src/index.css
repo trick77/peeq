@@ -5292,15 +5292,11 @@ details.tomb-sect[open] > summary svg {
   margin-top: 14px;
 }
 /* Both margins written out. A bare margin-top would leave the user-agent's
-   bottom margin on the <p> in place, and the note would float between the
+   bottom margin on the <p> in place, and the line would float between the
    buttons above it and the rule below rather than belonging to either. */
-.unfetched-note,
 .unfetched-decided {
   margin: 10px 0 0;
   font-size: var(--text-label);
-  color: var(--color-faint);
-}
-.unfetched-decided {
   color: var(--color-accent-strong);
 }
 
@@ -5339,4 +5335,35 @@ details.tomb-sect[open] > summary svg {
   .unfetched-thumb {
     width: 100%;
   }
+}
+
+/* The inbox stepper: back on the left, position and arrows pushed to the right
+   of the same row, so the two navigations sit on one line above the video
+   rather than stacking two thin bars. */
+.unfetched-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.unfetched-nav .unfetched-back {
+  margin-bottom: 0;
+}
+.unfetched-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.unfetched-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  color: var(--color-faint);
+  font-variant-numeric: tabular-nums;
+}
+/* An end of the list is a fact, not a failure — the arrow greys out and keeps
+   its place rather than disappearing and shifting the one beside it. */
+.unfetched-step .ui-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
