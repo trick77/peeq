@@ -532,7 +532,31 @@ func (s *Scheduler) recheckUnavailable(ctx context.Context, row *channelvideos.E
 // Order matches the new-video path for the same reason: enqueue first, so a
 // half-done revive leaves the row parked (and re-checkable) rather than
 // pending-but-never-queued.
+//
+// A video peeq has ALREADY downloaded is never revived. The ledger row can be
+// parked while the videos row is complete: nothing outside the inbox writes
+// the ledger, so a video the user added by hand (URL paste, extension) after a
+// scan parked it leaves that row at 'unavailable' forever — the likeliest
+// reaction, in fact, to the misclassification this re-check exists to undo.
+// Reviving it would flip a finished, watched video back to 'queued', blank its
+// thumbnail_path through enqueueAuto's Upsert and enqueue a duplicate
+// download; without autodownload it would offer a video already in the Library
+// as an undecided inbox item.
+//
+// DownloadedAt is the signal rather than status or media_path, mirroring
+// Worker.park's own "never discard a video that has ever finished downloading"
+// invariant: a row left behind by park's failed-Discard branch has none and
+// must stay revivable. The ledger row is settled at 'queued' (what the inbox's
+// own keep writes) rather than left parked, so the probe budget stops being
+// spent on a question the Library has already answered.
 func (s *Scheduler) revive(videoID string, e ytdlp.ChannelEntry, sub *channels.Subscription) (bool, error) {
+	v, err := s.d.Videos.Get(videoID)
+	if err != nil {
+		return false, err
+	}
+	if v != nil && v.DownloadedAt != "" {
+		return false, s.d.Ledger.SetState(videoID, channelvideos.StateQueued)
+	}
 	if sub.Autodownload {
 		if err := s.enqueueAuto(e, sub); err != nil {
 			return false, err
@@ -604,6 +628,7 @@ func (s *Scheduler) recheckParkedOffListing(
 		revived, err := s.revive(row.VideoID, ytdlp.ChannelEntry{
 			ID: row.VideoID, URL: row.URL, Title: row.Title,
 			DurationSeconds: row.DurationSeconds,
+			ThumbnailURL:    row.ThumbnailURL, PublishedAt: row.PublishedAt,
 		}, sub)
 		if err != nil {
 			return queued, pending, considered, err

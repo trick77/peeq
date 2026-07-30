@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
@@ -267,5 +268,73 @@ func TestScan_parkedVideoOffListing_isScopedToTheChannel(t *testing.T) {
 	}
 	if st := h.ledgerState("v1"); st != channelvideos.StateUnavailable {
 		t.Fatalf("v1 state = %q, want it untouched at %q", st, channelvideos.StateUnavailable)
+	}
+}
+
+// downloadRow makes videoID a finished download, the state a manual add (URL
+// paste, extension) leaves behind. Nothing outside the inbox writes the
+// ledger, so the parked row survives that add untouched.
+func downloadRow(t *testing.T, h *scanHarness, videoID string) {
+	t.Helper()
+	if err := h.videos.Upsert(videos.Video{
+		ID: videoID, URL: "https://www.youtube.com/watch?v=" + videoID, Title: videoID,
+		ChannelID: "UC1", DurationSeconds: 600, ThumbnailPath: "thumbs/" + videoID + ".jpg",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.Exec(
+		`UPDATE videos SET status = 'downloaded', downloaded_at = datetime('now'), media_path = ? WHERE id = ?`,
+		"media/"+videoID+".mp4", videoID,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The user's likeliest reaction to a misclassified video is to add it by hand,
+// which leaves the ledger row parked while the videos row is complete. A
+// revive must not undo that: re-queueing a finished video wipes its thumbnail
+// through enqueueAuto's Upsert and downloads it a second time.
+func TestScan_parkedVideoOffListing_alreadyDownloaded_isNotRequeued(t *testing.T) {
+	h := parkedHarness(t, true /*autodownload*/)
+	dropFromListing(t, h)
+	backdate(t, h, "v1")
+	downloadRow(t, h, "v1")
+	useProber(t, h, &fakeProber{availability: "public"})
+
+	scanAgain(t, h)
+
+	v, err := h.videos.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Status != "downloaded" {
+		t.Fatalf("videos status = %q, want it left downloaded", v.Status)
+	}
+	if v.ThumbnailPath == "" {
+		t.Fatal("thumbnail_path was blanked by a re-queue of a finished video")
+	}
+	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
+		t.Fatalf("jobs = %d, want 0 — the video is already on disk", len(jobsList))
+	}
+	// Settled rather than left parked, so the probe budget stops being spent on
+	// a question the Library has already answered.
+	if st := h.ledgerState("v1"); st != channelvideos.StateQueued {
+		t.Fatalf("v1 state = %q, want %q", st, channelvideos.StateQueued)
+	}
+}
+
+// Same row, no autodownload: a video already in the Library must not be
+// offered in the inbox as something still to decide.
+func TestScan_parkedVideoOffListing_alreadyDownloaded_doesNotReachTheInbox(t *testing.T) {
+	h := parkedHarness(t, false)
+	dropFromListing(t, h)
+	backdate(t, h, "v1")
+	downloadRow(t, h, "v1")
+	useProber(t, h, &fakeProber{availability: "public"})
+
+	scanAgain(t, h)
+
+	if pending, _ := h.ledger.ListPending(); len(pending) != 0 {
+		t.Fatalf("pending = %+v, want empty — v1 is already downloaded", pending)
 	}
 }
