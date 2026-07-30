@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -172,8 +173,11 @@ func Load() (Config, error) {
 	}
 	if v := env("BACKEND_SEARCH_MAX_DISTANCE", ""); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
-		if err != nil || f < 0 {
-			return Config{}, fmt.Errorf("BACKEND_SEARCH_MAX_DISTANCE must be a non-negative number")
+		// NaN and Inf parse cleanly and survive an `f < 0` test, so they have to
+		// be rejected by name: NaN makes every distance comparison false, which
+		// would silently drop EVERY semantic hit with no error to explain it.
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
+			return Config{}, fmt.Errorf("BACKEND_SEARCH_MAX_DISTANCE must be a finite non-negative number")
 		}
 		// 0 disables the cutoff, restoring the pre-cutoff behaviour of always
 		// returning the k nearest chunks however far away they are.

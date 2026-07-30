@@ -18,8 +18,9 @@ import (
 // no handler touches.
 //
 // Note this does NOT let httpapi drop its rag import. rag.Hit is the return
-// type, and rag.BuildFTSMatch is a package-level FUNCTION passed as an argument
-// below — an interface cannot capture either. The gain here is testability: the
+// type, and the query builders (rag.ParseFTSQuery, rag.BuildFTSQueries) are
+// package-level FUNCTIONS the handler calls directly — an interface cannot
+// capture either. The gain here is testability: the
 // search endpoint's degraded-path branches can now be driven by a fake instead
 // of by a real sqlite-vec store.
 //
@@ -67,12 +68,16 @@ const (
 )
 
 const (
-	// defaultSearchK caps how many fused chunks are returned.
+	// defaultSearchK caps how many moments the response carries, counted after
+	// the per-video cap below rather than before it — capping the candidate
+	// list instead would let one chatty video consume the whole budget and hide
+	// every other video that mentioned the topic, which is the very thing
+	// maxMatchesPerVideo exists to prevent.
 	defaultSearchK = 20
-	// searchCandidates is how many rows each LANE retrieves before fusion.
-	// Keeping it well above defaultSearchK matters for a corpus-wide question:
-	// with both numbers at 20, a single chatty video could fill the entire
-	// result set and hide every other video that mentioned the topic.
+	// searchCandidates is how many rows each LANE retrieves, and how deep the
+	// fused list runs. It has to sit well above defaultSearchK for the spread
+	// to have anything to work with: 200 chunks from one video still leave room
+	// for other videos below them.
 	searchCandidates = 200
 	// maxMatchesPerVideo caps how many moments one video contributes, so a
 	// long video cannot crowd out the rest of the library.
@@ -112,14 +117,21 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	var hits []rag.Hit
 	if mode == searchModeAsk {
-		hits = s.retrieveAsk(r, q, k)
+		hits = s.retrieveAsk(r, q)
 	} else {
-		hits = s.retrieveFind(r, q, k)
+		hits = s.retrieveFind(r, q)
 	}
 
 	order := make([]string, 0)
 	byVideo := make(map[string]*searchResult)
+	// k budgets the moments actually emitted, so a video that hits
+	// maxMatchesPerVideo yields the rest of the budget to the videos below it
+	// instead of swallowing it.
+	emitted := 0
 	for _, h := range hits {
+		if emitted >= k {
+			break
+		}
 		g, ok := byVideo[h.VideoID]
 		if !ok {
 			v, err := s.videos.Get(h.VideoID)
@@ -133,6 +145,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if len(g.Matches) >= maxMatchesPerVideo {
 			continue
 		}
+		emitted++
 		g.Matches = append(g.Matches, searchMatch{
 			StartSeconds: h.StartSeconds,
 			Snippet:      matchSnippet(h),
@@ -151,12 +164,12 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // retrieveFind runs the keyword lane alone, honouring FTS5 operators. It makes
 // no network call at all, so it cannot degrade — and when the words are not in
 // the library it correctly returns nothing.
-func (s *server) retrieveFind(r *http.Request, q string, k int) []rag.Hit {
+func (s *server) retrieveFind(r *http.Request, q string) []rag.Hit {
 	match := rag.ParseFTSQuery(q)
 	if match == "" {
 		return nil
 	}
-	hits, err := s.rag.SearchFTS(r.Context(), match, k)
+	hits, err := s.rag.SearchFTS(r.Context(), match, searchCandidates)
 	if err != nil {
 		// A malformed expression should be impossible (ParseFTSQuery re-emits
 		// from recognized tokens), so this is a real fault worth logging rather
@@ -171,7 +184,7 @@ func (s *server) retrieveFind(r *http.Request, q string, k int) []rag.Hit {
 // merely-nearest ones. The vector lane is distance-bounded: without that it
 // returns k rows for any query whatsoever, which is why an unrelated question
 // used to come back full of confident nonsense.
-func (s *server) retrieveAsk(r *http.Request, q string, k int) []rag.Hit {
+func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
 	lanes := make([]rag.Lane, 0, 2)
 
 	// Keyword lane, relaxed in steps: a natural question ANDs its function
@@ -206,7 +219,7 @@ func (s *server) retrieveAsk(r *http.Request, q string, k int) []rag.Hit {
 		}
 	}
 
-	return rag.FuseWeighted(lanes, k)
+	return rag.FuseWeighted(lanes, searchCandidates)
 }
 
 // matchSnippet prefers the keyword lane's match-centred window and falls back

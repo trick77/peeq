@@ -162,9 +162,11 @@ func (s *Store) Retrieve(ctx context.Context, queryEmbedding []float32, k int) (
 // RetrieveWithin returns up to k chunks nearest to queryEmbedding whose
 // distance is below maxDistance. A non-positive maxDistance disables the bound.
 //
-// The cutoff is applied in SQL rather than by filtering the returned rows so
-// that the k rows vec0 is asked for are all candidates — filtering afterwards
-// would let far-away rows consume the KNN budget and silently shrink recall.
+// The cutoff sits on the KNN's output, not inside the KNN itself: vec0 still
+// picks its k nearest rows and the bound then drops the far ones, so a query
+// with few close chunks legitimately returns fewer than k. Doing it in SQL
+// rather than in Go only saves shipping those rows' text across the driver — it
+// does not buy back the KNN budget the far rows already consumed.
 func (s *Store) RetrieveWithin(ctx context.Context, queryEmbedding []float32, k int, maxDistance float64) ([]Hit, error) {
 	if k <= 0 {
 		k = 10

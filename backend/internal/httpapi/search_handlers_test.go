@@ -849,6 +849,73 @@ func TestSearchFindModeHonoursOperators(t *testing.T) {
 	if !strings.Contains(body, `"id":"v2"`) {
 		t.Fatalf("NOT dropped the video it should have kept: %s", body)
 	}
+
+	// Prefix. This one is worth exercising against real FTS5 rather than only
+	// asserting the emitted string: `"sodi" *` is the one form ParseFTSQuery
+	// produces that nothing else here parses, and a rejection would surface to
+	// the user not as an error but as "none of your transcripts contain those
+	// words" — the failure that looks exactly like a correct empty result.
+	rec = doReq(t, h, cookie, http.MethodGet, "/api/search?q=sodi*", nil)
+	body = rec.Body.String()
+	if !strings.Contains(body, `"id":"v1"`) {
+		t.Fatalf("prefix should have matched sodium: %s", body)
+	}
+
+	// A quoted phrase stays adjacent.
+	rec = doReq(t, h, cookie, http.MethodGet, `/api/search?q=%22muscle+contraction%22`, nil)
+	body = rec.Body.String()
+	if !strings.Contains(body, `"id":"v2"`) {
+		t.Fatalf("phrase should have matched v2: %s", body)
+	}
+	if strings.Contains(body, `"id":"v1"`) {
+		t.Fatalf("phrase should not have matched v1: %s", body)
+	}
+}
+
+// TestSearchSpreadsAcrossVideos pins what maxMatchesPerVideo is for: one chatty
+// video must not consume the whole response. The chunks below are engineered so
+// bm25 ranks every one of v1's above v2's (bm25 favours short documents), so if
+// the retrieval budget were spent before grouping — the candidate list cut to k
+// and only then capped per video — v2 would never appear at all.
+func TestSearchSpreadsAcrossVideos(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	for _, id := range []string{"v1", "v2"} {
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	chatty := make([]rag.ChunkRow, 25)
+	for i := range chatty {
+		chatty[i] = rag.ChunkRow{Ordinal: i, Text: "electrolytes", StartSeconds: i * 10}
+	}
+	seedChunks(t, ragStore, "v1", chatty)
+	seedChunks(t, ragStore, "v2", []rag.ChunkRow{
+		{Ordinal: 0, Text: "electrolytes " + strings.Repeat("filler words here ", 60), StartSeconds: 3},
+	})
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil)
+
+	var resp struct {
+		Results []struct {
+			Video   struct{ ID string } `json:"video"`
+			Matches []struct {
+				StartSeconds int `json:"start_seconds"`
+			} `json:"matches"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v, body = %s", err, rec.Body.String())
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("want both videos represented, got %d: %s", len(resp.Results), rec.Body.String())
+	}
+	for _, r := range resp.Results {
+		if len(r.Matches) > maxMatchesPerVideo {
+			t.Errorf("%s contributed %d matches, cap is %d", r.Video.ID, len(r.Matches), maxMatchesPerVideo)
+		}
+	}
 }
 
 // TestSearchSnippetIsCentredOnTheMatch is the user-visible half of the FTS5

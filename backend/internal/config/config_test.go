@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/trick77/peeq/internal/rag"
 )
 
 func TestLoad_devAuthRejectsNonLoopback(t *testing.T) {
@@ -292,5 +294,33 @@ func TestLoad_invalidCallTimeoutFails(t *testing.T) {
 	t.Setenv("BACKEND_CHAT_CALL_TIMEOUT", "notaduration")
 	if _, err := Load(); err == nil {
 		t.Fatal("want an error for an unparseable call timeout")
+	}
+}
+
+// TestLoad_searchMaxDistance covers the parse and the values that would
+// otherwise pass silently. NaN and Inf are the dangerous ones: they satisfy
+// ParseFloat and survive an `f < 0` test, and a NaN bound makes every distance
+// comparison false, so the semantic lane would return nothing forever with no
+// error anywhere to explain it.
+func TestLoad_searchMaxDistance(t *testing.T) {
+	baseEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SearchMaxDistance != rag.DefaultMaxDistance {
+		t.Errorf("default = %v, want %v", cfg.SearchMaxDistance, rag.DefaultMaxDistance)
+	}
+
+	t.Setenv("BACKEND_SEARCH_MAX_DISTANCE", "0")
+	if cfg, err := Load(); err != nil || cfg.SearchMaxDistance != 0 {
+		t.Errorf("0 must disable the cutoff, got %v (%v)", cfg.SearchMaxDistance, err)
+	}
+
+	for _, bad := range []string{"notanumber", "-1", "NaN", "Inf", "-Inf"} {
+		t.Setenv("BACKEND_SEARCH_MAX_DISTANCE", bad)
+		if _, err := Load(); err == nil {
+			t.Errorf("want an error for BACKEND_SEARCH_MAX_DISTANCE=%q", bad)
+		}
 	}
 }

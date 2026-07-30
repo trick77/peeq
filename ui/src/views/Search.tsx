@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Spinner } from "../ui";
 import {
@@ -65,29 +65,41 @@ export function Search({
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Every search takes a ticket; only the newest one may write state. A mode
+  // switch fires a search on a single click, so two quick clicks put two
+  // requests in flight — and without this the slower one could land last and
+  // leave `searched` (which decides the empty-state sentence and which mode the
+  // offer button proposes) describing a search the user has already left.
+  const runId = useRef(0);
 
   function runSearch(q: string, m: SearchMode) {
     const trimmed = q.trim();
+    const id = ++runId.current;
     if (!trimmed) {
       setResults(null);
       setSearched(null);
+      setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     searchVideos(trimmed, m)
       .then((r) => {
+        if (id !== runId.current) return;
         setResults(r);
         setSearched({ q: trimmed, mode: m });
       })
       .catch((err: Error) => {
+        if (id !== runId.current) return;
         setError(err.message);
         // Clear any previous query's results so the error state doesn't
         // render stale result cards underneath the error line.
         setResults(null);
         setSearched(null);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (id === runId.current) setLoading(false);
+      });
   }
 
   function handleSubmit(e: FormEvent) {

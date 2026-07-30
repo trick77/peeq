@@ -120,16 +120,20 @@ func BuildFTSQueries(q string) []string {
 	if strict == "" {
 		return nil
 	}
+	// Cap before the tiers are built, not after: capping only the relaxed tiers
+	// would leave the STRICT one — the tier that always runs — carrying every
+	// term of a pasted paragraph.
 	quoted := strings.Fields(strict)
+	if len(quoted) > maxTerms {
+		quoted = quoted[:maxTerms]
+		strict = strings.Join(quoted, " ")
+	}
 	content := make([]string, 0, len(quoted))
 	for _, t := range quoted {
 		if _, stop := stopwords[strings.Trim(t, `"`)]; stop {
 			continue
 		}
 		content = append(content, t)
-	}
-	if len(content) > maxTerms {
-		content = content[:maxTerms]
 	}
 	tiers := []string{strict}
 	// Every term was a stopword ("what is it about") — there is no content
