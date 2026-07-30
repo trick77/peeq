@@ -645,8 +645,16 @@ export function Player({
     const left = sleepRemainingRef.current;
     if (left === null) return;
     const now = Date.now();
-    const next =
-      left - Math.min(now - sleepLastTickRef.current, SLEEP_MAX_TICK_MS);
+    // Clamped at both ends. The ceiling is SLEEP_MAX_TICK_MS (see above); the
+    // floor is zero because Date.now() is wall clock and can step backwards —
+    // an NTP correction or a manual clock change mid-playback would otherwise
+    // make the delta negative and *credit* the budget, leaving the pill
+    // showing more time than the preset was ever armed for.
+    const spent = Math.min(
+      Math.max(now - sleepLastTickRef.current, 0),
+      SLEEP_MAX_TICK_MS,
+    );
+    const next = left - spent;
     sleepLastTickRef.current = now;
     if (next > 0) {
       sleepRemainingRef.current = next;

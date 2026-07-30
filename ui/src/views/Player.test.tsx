@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
   screen,
@@ -1950,6 +1950,16 @@ describe("Player", () => {
   // and nothing here can leak fake timers into the tests that follow.
   describe("sleep timer", () => {
     let now = 1_700_000_000_000;
+    // mountPlayer stubs Date.now, and nothing in the suite restores spies for
+    // it: without this the stub outlives the describe and every test that runs
+    // after it — in this file and in whatever order vitest picks — sees a
+    // clock frozen at 1_700_000_000_000, with ten spy layers stacked on it.
+    let nowSpy: { mockRestore: () => void } | null = null;
+
+    afterEach(() => {
+      nowSpy?.mockRestore();
+      nowSpy = null;
+    });
 
     // Simulates `ms` of continuous playback: timeupdate fires ~4x/sec in a
     // real browser, and the drain clamps any single gap to SLEEP_MAX_TICK_MS,
@@ -1966,7 +1976,7 @@ describe("Player", () => {
 
     async function mountPlayer() {
       now = 1_700_000_000_000;
-      vi.spyOn(Date, "now").mockImplementation(() => now);
+      nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
       render(<Player videoId="v1" onDeleted={() => {}} />);
       const el = await waitFor(() => {
         const found = document.querySelector("video");
@@ -1987,12 +1997,22 @@ describe("Player", () => {
       );
     }
 
+    // The countdown is read off the visible readout, not the accessible name:
+    // the label deliberately names the armed preset instead of the ticking
+    // clock (see SleepTimer), so the pill's name can't change once a second
+    // under a screen reader.
+    function readout() {
+      return document.querySelector(".sleepleft")?.textContent;
+    }
+
     it("shows the full duration the moment it is armed", async () => {
       await mountPlayer();
       await arm(5);
 
+      expect(readout()).toBe("5:00");
+      // The name names the preset, and holds still while the readout ticks.
       expect(
-        screen.getByRole("button", { name: /sleep timer: 5:00 left/i }),
+        screen.getByRole("button", { name: /sleep timer: 5 minutes/i }),
       ).toBeInTheDocument();
     });
 
@@ -2002,8 +2022,11 @@ describe("Player", () => {
 
       play(el, 60_000);
 
+      expect(readout()).toBe("4:00");
+      // A minute in, the accessible name is still the preset — a name that
+      // changed here would be re-announced on the focused pill every second.
       expect(
-        screen.getByRole("button", { name: /sleep timer: 4:00 left/i }),
+        screen.getByRole("button", { name: /sleep timer: 5 minutes/i }),
       ).toBeInTheDocument();
     });
 
@@ -2016,9 +2039,7 @@ describe("Player", () => {
       now += 60 * 60_000;
 
       expect(pause).not.toHaveBeenCalled();
-      expect(
-        screen.getByRole("button", { name: /sleep timer: 4:00 left/i }),
-      ).toBeInTheDocument();
+      expect(readout()).toBe("4:00");
     });
 
     it("regression: resuming after a long pause does not fire the timer instantly", async () => {
@@ -2035,9 +2056,21 @@ describe("Player", () => {
       play(el, 2_000);
 
       expect(pause).not.toHaveBeenCalled();
-      expect(
-        screen.getByRole("button", { name: /sleep timer: 3:58 left/i }),
-      ).toBeInTheDocument();
+      expect(readout()).toBe("3:58");
+    });
+
+    it("regression: a wall clock that steps backwards does not credit the budget", async () => {
+      // NTP correction (or a manual clock change) mid-playback. An unfloored
+      // delta is negative here, and subtracting it *adds* to the budget —
+      // leaving the pill showing more time than the preset was armed for.
+      const { el } = await mountPlayer();
+      await arm(5);
+      play(el, 60_000);
+
+      now -= 30_000;
+      fireEvent.timeUpdate(el);
+
+      expect(readout()).toBe("4:00");
     });
 
     it("pauses the video, stores the position and disarms when the budget runs out", async () => {
@@ -2072,7 +2105,7 @@ describe("Player", () => {
       await arm(30);
 
       fireEvent.click(
-        screen.getByRole("button", { name: /sleep timer: 30:00 left/i }),
+        screen.getByRole("button", { name: /sleep timer: 30 minutes/i }),
       );
       fireEvent.click(screen.getByRole("menuitemradio", { name: "Off" }));
       play(el, 31 * 60_000);
@@ -2088,7 +2121,7 @@ describe("Player", () => {
       await arm(15);
 
       fireEvent.click(
-        screen.getByRole("button", { name: /sleep timer: 15:00 left/i }),
+        screen.getByRole("button", { name: /sleep timer: 15 minutes/i }),
       );
       const checked = screen
         .getAllByRole("menuitemradio")

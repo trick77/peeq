@@ -109,10 +109,18 @@ export function SleepTimer({ remainingSeconds, armedMinutes, onArm }: Props) {
         aria-haspopup="menu"
         aria-expanded={open}
         // The label carries the state without colour, as the captions toggle
-        // beside it does. No aria-live on the countdown: announcing it every
-        // second would be hostile, and the toast already speaks at both ends.
+        // beside it does. It names the armed preset rather than the live
+        // countdown, and that is not cosmetic: pick() returns focus to this
+        // button, and a screen reader re-announces the accessible name of the
+        // focused element whenever it changes — a countdown in here would be
+        // read out once a second, which is exactly what skipping aria-live was
+        // meant to avoid. The preset is stable for as long as the timer runs;
+        // the countdown stays visible and in the title, and the toast speaks
+        // at both ends.
         aria-label={
-          armed ? `Sleep timer: ${left} left. Change it` : "Sleep timer off"
+          armed
+            ? `Sleep timer: ${armedMinutes} minutes. Change it`
+            : "Sleep timer off"
         }
         title={armed ? `Sleep timer: ${left} left` : "Sleep timer"}
         onClick={() => setOpen((v) => !v)}
