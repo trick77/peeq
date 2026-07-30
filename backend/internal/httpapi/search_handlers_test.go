@@ -110,7 +110,7 @@ func seedChunks(t *testing.T, rs *rag.Store, videoID string, rows []rag.ChunkRow
 	for i := range rows {
 		vecs[i] = dim1536(1.0)
 	}
-	if err := rs.ReplaceVideoChunks(context.Background(), videoID, "test-model", 1536, rows, vecs); err != nil {
+	if err := rs.ReplaceVideoChunks(context.Background(), videoID, rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev}, rows, vecs); err != nil {
 		t.Fatalf("seedChunks(%s): %v", videoID, err)
 	}
 }
@@ -130,12 +130,12 @@ func TestSearchGroupsByVideo(t *testing.T) {
 	ctx := context.Background()
 	v1Vec := dim1536(1.0)
 	v2Vec := dim1536(-1.0)
-	if err := ragStore.ReplaceVideoChunks(ctx, "v1", "test-model", 1536,
+	if err := ragStore.ReplaceVideoChunks(ctx, "v1", rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
 		[]rag.ChunkRow{{Ordinal: 0, Text: "talking about the new iphone camera", StartSeconds: 10, TokenCount: 5}},
 		[][]float32{v1Vec}); err != nil {
 		t.Fatalf("seed v1 chunks: %v", err)
 	}
-	if err := ragStore.ReplaceVideoChunks(ctx, "v2", "test-model", 1536,
+	if err := ragStore.ReplaceVideoChunks(ctx, "v2", rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
 		[]rag.ChunkRow{{Ordinal: 0, Text: "something else entirely", StartSeconds: 20, TokenCount: 5}},
 		[][]float32{v2Vec}); err != nil {
 		t.Fatalf("seed v2 chunks: %v", err)
@@ -954,5 +954,42 @@ func TestSearchSnippetIsCentredOnTheMatch(t *testing.T) {
 	}
 	if !strings.Contains(snip, rag.HighlightStart) {
 		t.Errorf("snippet is not highlighted: %q", snip)
+	}
+}
+
+// Reprocess throws away the stored analysis the index was built from, so it
+// must also mark the index stale. Embedding is gated on the content recipe now:
+// without this the worker would skip embedding entirely and leave the OLD
+// summary chunk indexed against a video whose summary has been wiped.
+func TestReprocessMarksIndexStale(t *testing.T) {
+	deps, db, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{
+		ID: "v1", URL: "u1", Title: "t", Status: videos.StatusDownloaded,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := db.Exec(
+		`UPDATE videos SET media_path='m.mp4', subtitle_path='s.vtt' WHERE id='v1'`); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{{Ordinal: 0, Text: "old summary", StartSeconds: 0}})
+	if _, err := db.Exec(`UPDATE videos SET embed_rev=? WHERE id='v1'`, rag.ChunkRecipeRev); err != nil {
+		t.Fatal(err)
+	}
+	deps.SummaryJobs = &spySummaryJobs{}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/reprocess", nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("reprocess = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+
+	var rev int
+	if err := db.QueryRow(`SELECT embed_rev FROM videos WHERE id='v1'`).Scan(&rev); err != nil {
+		t.Fatal(err)
+	}
+	if rev != 0 {
+		t.Errorf("embed_rev = %d after reprocess, want 0 so the index is rebuilt", rev)
 	}
 }

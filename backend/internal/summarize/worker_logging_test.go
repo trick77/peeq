@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/trick77/peeq/internal/rag"
 	"time"
 
 	"github.com/trick77/peeq/internal/llm"
@@ -301,7 +304,7 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	if err := h.videos.SetCategory("v2", "ai"); err != nil {
 		t.Fatalf("set category: %v", err)
 	}
-	if _, err := h.db.Exec(`UPDATE videos SET embed_model = 'test-model', summary_status = 'done' WHERE id = 'v2'`); err != nil {
+	if _, err := h.db.Exec(fmt.Sprintf(`UPDATE videos SET embed_model = 'test-model', embed_rev = %d, summary_status = 'done' WHERE id = 'v2'`, rag.ChunkRecipeRev)); err != nil {
 		t.Fatalf("mark embedded: %v", err)
 	}
 
@@ -322,7 +325,7 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	// A skipped stage keeps its own number, so the stages a resumed job does
 	// run are still numbered where a reader expects them.
 	for _, want := range []struct{ step, stage string }{
-		{"summary", "1/4"}, {"classify", "2/4"}, {"embedding", "3/4"},
+		{"summary", "1/4"}, {"classify", "2/4"}, {"embedding", "4/4"},
 	} {
 		rec := findStageRec(recs, want.step, "skipped")
 		if rec == nil {
@@ -336,8 +339,8 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	if kp == nil {
 		t.Fatal("key-points stage did not run on the resumed job")
 	}
-	if got := recStage(kp); got != "4/4" {
-		t.Errorf("keypoints ran as stage %s, want 4/4", got)
+	if got := recStage(kp); got != "3/4" {
+		t.Errorf("keypoints ran as stage %s, want 3/4", got)
 	}
 }
 

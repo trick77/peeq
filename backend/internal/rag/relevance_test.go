@@ -122,7 +122,7 @@ func TestSearchFTSHighlightsTheMatchNotTheHead(t *testing.T) {
 	vec := make([]float32, 1536)
 	vec[0] = 1
 	rows := []ChunkRow{{Ordinal: 0, Text: text, StartSeconds: 872, TokenCount: 200}}
-	if err := s.ReplaceVideoChunks(ctx, "v1", "e5", 1536, rows, [][]float32{vec}); err != nil {
+	if err := s.ReplaceVideoChunks(ctx, "v1", IndexMeta{Model: "e5", Dim: 1536, Rev: ChunkRecipeRev}, rows, [][]float32{vec}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -171,11 +171,11 @@ func TestRetrieveWithinBoundsDistance(t *testing.T) {
 	}
 	s := NewStore(db)
 	ctx := context.Background()
-	if err := s.ReplaceVideoChunks(ctx, "near", "e5", 1536,
+	if err := s.ReplaceVideoChunks(ctx, "near", IndexMeta{Model: "e5", Dim: 1536, Rev: ChunkRecipeRev},
 		[]ChunkRow{{Ordinal: 0, Text: "electrolytes", StartSeconds: 1}}, [][]float32{unit(0)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceVideoChunks(ctx, "far", "e5", 1536,
+	if err := s.ReplaceVideoChunks(ctx, "far", IndexMeta{Model: "e5", Dim: 1536, Rev: ChunkRecipeRev},
 		[]ChunkRow{{Ordinal: 0, Text: "unidentified aerial phenomena", StartSeconds: 2}}, [][]float32{unit(5)}); err != nil {
 		t.Fatal(err)
 	}

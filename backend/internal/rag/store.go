@@ -92,9 +92,19 @@ func deleteVideoTx(ctx context.Context, tx *sql.Tx, videoID string) error {
 	return nil
 }
 
+// IndexMeta describes the index a write produces: which model and dimension
+// the vectors came from, and which content recipe the chunks follow. Rev
+// travels with the write so a video can never be marked current under a recipe
+// it was not actually built with.
+type IndexMeta struct {
+	Model string
+	Dim   int
+	Rev   int
+}
+
 // ReplaceVideoChunks atomically replaces a video's transcript chunks and
-// embeddings and records the embedding model/dim on the video row.
-func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID, model string, dim int, rows []ChunkRow, vectors [][]float32) error {
+// embeddings and records the index metadata on the video row.
+func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID string, meta IndexMeta, rows []ChunkRow, vectors [][]float32) error {
 	if len(rows) != len(vectors) {
 		return fmt.Errorf("rag: %d rows but %d vectors", len(rows), len(vectors))
 	}
@@ -130,7 +140,9 @@ func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID, model string, d
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE videos SET embed_model = ?, embed_dim = ? WHERE id = ?`, model, dim, videoID); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE videos SET embed_model = ?, embed_dim = ?, embed_rev = ? WHERE id = ?`,
+		meta.Model, meta.Dim, meta.Rev, videoID); err != nil {
 		return err
 	}
 	return tx.Commit()

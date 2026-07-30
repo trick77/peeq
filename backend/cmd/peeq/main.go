@@ -27,6 +27,7 @@ import (
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/config"
 	"github.com/trick77/peeq/internal/download"
+	"github.com/trick77/peeq/internal/embedjobs"
 	"github.com/trick77/peeq/internal/failmonitor"
 	"github.com/trick77/peeq/internal/httpapi"
 	"github.com/trick77/peeq/internal/jobs"
@@ -35,6 +36,7 @@ import (
 	"github.com/trick77/peeq/internal/playback"
 	"github.com/trick77/peeq/internal/playbackgrant"
 	"github.com/trick77/peeq/internal/rag"
+	"github.com/trick77/peeq/internal/reembed"
 	"github.com/trick77/peeq/internal/retention"
 	"github.com/trick77/peeq/internal/scan"
 	"github.com/trick77/peeq/internal/settings"
@@ -322,6 +324,33 @@ func run() error {
 		MediaDir:       cfg.MediaDir,
 	})
 
+	// Re-embed backfill. Rebuilds the search index of any video whose chunks
+	// predate the current content recipe — the boot sweep below is what actually
+	// re-indexes an existing library after a recipe change. It makes no chat
+	// calls: everything a rebuild needs is already stored.
+	//
+	// This is one-shot migration machinery, not permanent infrastructure. Issue
+	// #240 tracks removing it once the drain has completed everywhere.
+	embedJobsStore := embedjobs.New(db)
+	if n, err := embedJobsStore.ResetOrphans(); err != nil {
+		slog.Error("re-embed: reset orphans failed", "err", err)
+	} else if n > 0 {
+		slog.Info("re-embed: reset orphaned jobs", "jobs", n)
+	}
+	if n, err := embedJobsStore.EnqueueStale(rag.ChunkRecipeRev); err != nil {
+		slog.Error("re-embed: backfill sweep failed", "err", err)
+	} else if n > 0 {
+		slog.Info("re-embed: backfill enqueued", "videos", n, "rev", rag.ChunkRecipeRev)
+	}
+	reembedWorker := reembed.New(reembed.Deps{
+		Jobs: embedJobsStore, Videos: videosStore, Rag: ragStore, Embedder: embedClient,
+		MediaDir:   cfg.MediaDir,
+		EmbedModel: cfg.EmbedModel, EmbedDim: cfg.EmbedDim,
+		PollInterval: cfg.ReembedPollInterval,
+		VideoDelay:   cfg.ReembedVideoDelay,
+		BatchDelay:   cfg.ReembedBatchDelay,
+	})
+
 	summarizeWorker := summarize.NewWorker(summarize.WorkerDeps{
 		Jobs: summaryJobsStore, Videos: videosStore, Rag: ragStore,
 		Summarizer: summarizer, Embedder: embedClient, MediaDir: cfg.MediaDir,
@@ -376,16 +405,21 @@ func run() error {
 		Videos: videosStore,
 	})
 
-	// Bound all eight background goroutines' lifetimes to the process: the
+	// Bound all nine background goroutines' lifetimes to the process: the
 	// download worker, the retention sweeper, the yt-dlp self-update ticker,
 	// the scan scheduler, the summarize worker, the channel-metadata
-	// refresher, the SponsorBlock backfill and the media-probe backfill.
-	// workerWG.Wait() below (after serve returns, i.e. after ctx is
-	// cancelled) blocks until all eight have actually observed ctx.Done() and
-	// returned, rather than exiting the process out from under them. All
-	// eight loops exit promptly on ctx.Done(), so this wait is short.
+	// refresher, the SponsorBlock backfill, the media-probe backfill and the
+	// re-embed backfill. workerWG.Wait() below (after serve returns, i.e. after
+	// ctx is cancelled) blocks until all nine have actually observed ctx.Done()
+	// and returned, rather than exiting the process out from under them. All
+	// nine loops exit promptly on ctx.Done(), so this wait is short.
 	var workerWG sync.WaitGroup
-	workerWG.Add(8)
+	workerWG.Add(9)
+	go func() {
+		defer workerWG.Done()
+		slog.Info("re-embed worker started")
+		reembedWorker.Run(ctx)
+	}()
 	go func() {
 		defer workerWG.Done()
 		slog.Info("download worker started")

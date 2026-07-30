@@ -297,6 +297,14 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "reset category failed")
 		return
 	}
+	// Mark the search index stale. Embedding is gated on the content recipe, so
+	// without this a reprocess would clear the summary and then SKIP embedding
+	// entirely — leaving the old summary chunk indexed against a video whose
+	// summary has been thrown away.
+	if err := s.videos.ClearEmbedRev(id); err != nil {
+		serverError(w, r, err, "reset embed rev failed")
+		return
+	}
 	// Force a fresh SponsorBlock fetch: clearing the refresh sentinel makes the
 	// video sort first in the worker's stale-claim query, so its segments are
 	// re-read on the next pass. Independent of the summary job above.

@@ -30,10 +30,10 @@ func TestReplaceRetrieveAndDelete(t *testing.T) {
 	s := NewStore(db)
 	ctx := context.Background()
 	rows := []ChunkRow{{Ordinal: 0, Text: "titanium frame", StartSeconds: 108, TokenCount: 2}}
-	if err := s.ReplaceVideoChunks(ctx, "v1", "e5", dim, rows, [][]float32{mk(0.9)}); err != nil {
+	if err := s.ReplaceVideoChunks(ctx, "v1", IndexMeta{Model: "e5", Dim: dim, Rev: ChunkRecipeRev}, rows, [][]float32{mk(0.9)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceVideoChunks(ctx, "v2", "e5", dim, []ChunkRow{{Ordinal: 0, Text: "battery life", StartSeconds: 303, TokenCount: 2}}, [][]float32{mk(0.1)}); err != nil {
+	if err := s.ReplaceVideoChunks(ctx, "v2", IndexMeta{Model: "e5", Dim: dim, Rev: ChunkRecipeRev}, []ChunkRow{{Ordinal: 0, Text: "battery life", StartSeconds: 303, TokenCount: 2}}, [][]float32{mk(0.1)}); err != nil {
 		t.Fatal(err)
 	}
 	hits, err := s.Retrieve(ctx, mk(0.9), 5)
@@ -99,7 +99,7 @@ func TestReplaceVideoChunksWritesFTSAndKind(t *testing.T) {
 		{Ordinal: 1, Text: "whole video summary", Kind: "summary", StartSeconds: 0},
 	}
 	vecs := [][]float32{seedVec(), seedVec()}
-	if err := st.ReplaceVideoChunks(ctx, "v1", "m", dim, rows, vecs); err != nil {
+	if err := st.ReplaceVideoChunks(ctx, "v1", IndexMeta{Model: "m", Dim: dim, Rev: ChunkRecipeRev}, rows, vecs); err != nil {
 		t.Fatal(err)
 	}
 	// fts_chunks has both rows and MATCH works.
@@ -119,7 +119,7 @@ func TestReplaceVideoChunksWritesFTSAndKind(t *testing.T) {
 		t.Fatalf("kind = %q, want summary", kind)
 	}
 	// Re-index replaces cleanly: no fts orphan.
-	if err := st.ReplaceVideoChunks(ctx, "v1", "m", dim, rows[:1], vecs[:1]); err != nil {
+	if err := st.ReplaceVideoChunks(ctx, "v1", IndexMeta{Model: "m", Dim: dim, Rev: ChunkRecipeRev}, rows[:1], vecs[:1]); err != nil {
 		t.Fatal(err)
 	}
 	var total int
@@ -155,7 +155,7 @@ func TestSearchFTSMatchesKeyword(t *testing.T) {
 	st := NewStore(db)
 	ctx := context.Background()
 	rows := []ChunkRow{{Ordinal: 0, Text: "the Fibonacci sequence explained", Kind: "transcript", StartSeconds: 42}}
-	if err := st.ReplaceVideoChunks(ctx, "v1", "m", dim, rows, [][]float32{seedVec()}); err != nil {
+	if err := st.ReplaceVideoChunks(ctx, "v1", IndexMeta{Model: "m", Dim: dim, Rev: ChunkRecipeRev}, rows, [][]float32{seedVec()}); err != nil {
 		t.Fatal(err)
 	}
 	hits, err := st.SearchFTS(ctx, BuildFTSMatch("fibonacci"), 10)
