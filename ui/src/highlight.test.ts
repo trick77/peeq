@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  HIGHLIGHT_END,
-  HIGHLIGHT_START,
-  hasHighlights,
-  splitHighlights,
-} from "./highlight";
+import { HIGHLIGHT_END, HIGHLIGHT_START, splitHighlights } from "./highlight";
 
 const S = HIGHLIGHT_START;
 const E = HIGHLIGHT_END;
@@ -73,12 +68,5 @@ describe("splitHighlights", () => {
 
   it("returns nothing for an empty snippet", () => {
     expect(splitHighlights("")).toEqual([]);
-  });
-});
-
-describe("hasHighlights", () => {
-  it("detects a delimited snippet", () => {
-    expect(hasHighlights(`a ${S}b${E}`)).toBe(true);
-    expect(hasHighlights("a b")).toBe(false);
   });
 });

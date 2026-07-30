@@ -47,9 +47,3 @@ export function splitHighlights(snippet: string): HighlightSegment[] {
   flush();
   return out;
 }
-
-// hasHighlights reports whether a snippet carries any delimiters at all, so a
-// caller can skip the split for the common vector-lane snippet that has none.
-export function hasHighlights(snippet: string): boolean {
-  return snippet.includes(HIGHLIGHT_START);
-}

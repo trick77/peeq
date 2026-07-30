@@ -1142,3 +1142,56 @@ func TestSearchKeepsSummaryAlongsideAnEarlyMoment(t *testing.T) {
 		t.Errorf("transcript hit missing: %s", body)
 	}
 }
+
+// TestSearchAskHonoursTheDistanceBound is the endpoint-level half of the fix
+// this feature exists for. rag.TestRetrieveWithinBoundsDistance covers the
+// bound in the store; nothing covered it through the handler, and the field
+// that carries it (Deps.SearchMaxDistance) disables the bound at its zero
+// value — so an assembly that simply forgets to set it silently gets the old
+// "KNN cannot fail" behaviour with no test anywhere to notice.
+func TestSearchAskHonoursTheDistanceBound(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	unit := func(i int) []float32 {
+		v := make([]float32, 1536)
+		v[i] = 1
+		return v
+	}
+	for _, v := range []struct {
+		id, text string
+		vec      []float32
+	}{
+		{"near", "aligned with the query vector", unit(0)},
+		{"far", "unidentified aerial phenomena", unit(5)},
+	} {
+		if err := deps.Videos.Upsert(videos.Video{ID: v.id, URL: "u", Title: v.id}); err != nil {
+			t.Fatalf("seed %s: %v", v.id, err)
+		}
+		if err := ragStore.ReplaceVideoChunks(context.Background(), v.id,
+			rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
+			[]rag.ChunkRow{{Ordinal: 0, Text: v.text, Kind: rag.KindTranscript, StartSeconds: 1}},
+			[][]float32{v.vec}); err != nil {
+			t.Fatalf("seed chunks %s: %v", v.id, err)
+		}
+	}
+	// A query word neither chunk contains, so the keyword lane abstains and the
+	// response is the semantic lane alone.
+	deps.Embedder = &fakeEmbedder{vec: unit(0)}
+	deps.SearchMaxDistance = rag.DefaultMaxDistance
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	body := doReq(t, h, cookie, http.MethodGet, "/api/search?q=zzqqxx&mode=ask", nil).Body.String()
+	if !strings.Contains(body, `"id":"near"`) {
+		t.Errorf("the on-topic video was dropped: %s", body)
+	}
+	if strings.Contains(body, `"id":"far"`) {
+		t.Errorf("an orthogonal chunk survived the bound: %s", body)
+	}
+
+	// 0 restores the unbounded behaviour, which is what the env var documents.
+	deps.SearchMaxDistance = 0
+	body = doReq(t, New(deps), cookie, http.MethodGet, "/api/search?q=zzqqxx&mode=ask", nil).Body.String()
+	if !strings.Contains(body, `"id":"far"`) {
+		t.Errorf("maxDistance 0 should disable the cutoff: %s", body)
+	}
+}
