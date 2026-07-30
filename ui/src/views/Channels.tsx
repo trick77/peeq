@@ -9,6 +9,7 @@ import {
   dismissDormantChannel,
   resubscribeChannel,
   scanChannel,
+  updateChannel,
   channelAvatarUrl,
   channelBannerUrl,
   type ChannelFilter,
@@ -279,6 +280,26 @@ export function Channels({
     }
   }
 
+  // Flip whether peeq reads this channel's new videos before you decide on
+  // them. Optimistic on the row rather than refetching the whole list: the
+  // answer is one boolean the server echoes back, and a full reload would jump
+  // the list under a menu the user just used. A failure puts it back.
+  async function handleAutoSummary(c: Channel) {
+    setError(null);
+    const next = !c.auto_summary;
+    setChannels((prev) =>
+      prev.map((x) => (x.id === c.id ? { ...x, auto_summary: next } : x)),
+    );
+    try {
+      await updateChannel(c.id, { auto_summary: next });
+    } catch (err) {
+      setChannels((prev) =>
+        prev.map((x) => (x.id === c.id ? { ...x, auto_summary: !next } : x)),
+      );
+      setError((err as Error).message);
+    }
+  }
+
   // Delete is a two-step: the ⋮ menu's Delete opens the confirm dialog
   // (setPendingDelete), and the dialog's Delete button runs it (confirmDelete).
   // Auto-add and the format override are no longer on the row — they live on
@@ -544,6 +565,18 @@ export function Channels({
                         },
                       ]
                     : []),
+                  // Reading is on by default for every channel, so this entry
+                  // is almost always the "stop" half. It stays available on an
+                  // unsubscribed channel: auto_summary lives on the channel
+                  // row, and a channel resubscribed later should keep the
+                  // answer the user already gave.
+                  {
+                    label: c.auto_summary
+                      ? "Stop summarizing new videos"
+                      : "Summarize new videos",
+                    icon: "sparkles" as const,
+                    onClick: () => handleAutoSummary(c),
+                  },
                   {
                     label: "Delete channel",
                     icon: "trash",

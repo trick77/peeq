@@ -15,6 +15,8 @@ function baseItem(overrides: Partial<PendingItem> = {}): PendingItem {
     thumbnail_url: "https://img.example/v1.jpg",
     published_at: "2026-07-20",
     discovered_at: "2026-07-21 09:00:00",
+    summary_status: "done",
+    auto_summary: true,
     ...overrides,
   };
 }
@@ -851,5 +853,125 @@ describe("Inbox", () => {
         await screen.findByText(/Nothing in the inbox matches/),
       ).toBeInTheDocument();
     });
+  });
+});
+
+// The summary marker and the card's click target — the two things the Inbox
+// gained when peeq started reading videos before you decide on them.
+describe("Inbox summaries", () => {
+  beforeEach(() => {
+    vi.mocked(listPending).mockReset();
+    vi.mocked(downloadPending).mockReset();
+    vi.mocked(ignorePending).mockReset();
+    vi.mocked(downloadPending).mockResolvedValue(undefined);
+    vi.mocked(ignorePending).mockResolvedValue(undefined);
+  });
+
+  // Three states, and the third is why the API sends two fields. An empty
+  // summary_status means "not reached yet" on an opted-in channel and "never
+  // will be" on an opted-out one; only the second should be silent.
+  it("marks a read video, a pending one, and stays silent otherwise", async () => {
+    vi.mocked(listPending).mockResolvedValue([
+      baseItem({ video_id: "done", title: "Read already" }),
+      baseItem({
+        video_id: "wait",
+        title: "Still reading",
+        summary_status: "",
+        auto_summary: true,
+      }),
+      baseItem({
+        video_id: "off",
+        title: "Channel opted out",
+        summary_status: "",
+        auto_summary: false,
+      }),
+      baseItem({
+        video_id: "music",
+        title: "No speech",
+        summary_status: "no_transcript",
+        auto_summary: true,
+      }),
+    ]);
+    render(<Inbox />);
+
+    const card = async (title: string) =>
+      (await screen.findByText(title)).closest("article") as HTMLElement;
+
+    expect(
+      within(await card("Read already")).getByText("summary"),
+    ).toBeTruthy();
+    expect(
+      within(await card("Still reading")).getByText("reading…"),
+    ).toBeTruthy();
+    // A channel that opted out promises nothing, so the card says nothing.
+    expect(
+      within(await card("Channel opted out")).queryByText("reading…"),
+    ).toBeNull();
+    expect(
+      within(await card("Channel opted out")).queryByText("summary"),
+    ).toBeNull();
+    // Neither does one whose captions turned out to be music: there is no
+    // action behind it and no progress left to report.
+    expect(within(await card("No speech")).queryByText("reading…")).toBeNull();
+    expect(within(await card("No speech")).queryByText("summary")).toBeNull();
+  });
+
+  // A video the caption fetcher has not reached has no videos row, so its page
+  // would 404. That is the common case on a fresh inbox, not an edge — and the
+  // card must not offer a pointer to it either.
+  it("does not open a video peeq has not read yet", async () => {
+    vi.mocked(listPending).mockResolvedValue([
+      baseItem({ video_id: "unread", summary_status: "", auto_summary: true }),
+    ]);
+    const onOpen = vi.fn();
+    render(<Inbox onOpen={onOpen} />);
+
+    const title = await screen.findByText("First pending video");
+    const card = title.closest("article") as HTMLElement;
+    await userEvent.click(card.querySelector(".thumb") as HTMLElement);
+
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(card.className).toContain("is-inert");
+  });
+
+  it("opens the video when the card is clicked", async () => {
+    vi.mocked(listPending).mockResolvedValue([itemA]);
+    const onOpen = vi.fn();
+    render(<Inbox onOpen={onOpen} />);
+
+    const title = await screen.findByText("First pending video");
+    const poster = (title.closest("article") as HTMLElement).querySelector(
+      ".thumb",
+    ) as HTMLElement;
+    await userEvent.click(poster);
+
+    expect(onOpen).toHaveBeenCalledWith("v1");
+  });
+
+  // The guard that makes a whole-card click target safe. Without it, pressing
+  // Ignore would also navigate to the page of the video you just dismissed.
+  it("leaves the action bar its own clicks", async () => {
+    vi.mocked(listPending).mockResolvedValue([itemA]);
+    const onOpen = vi.fn();
+    render(<Inbox onOpen={onOpen} />);
+    await screen.findByText("First pending video");
+
+    await userEvent.click(screen.getByRole("button", { name: /Ignore/ }));
+
+    expect(ignorePending).toHaveBeenCalledWith("v1");
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("leaves the channel link its own click", async () => {
+    vi.mocked(listPending).mockResolvedValue([itemA]);
+    const onOpen = vi.fn();
+    const onOpenChannel = vi.fn();
+    render(<Inbox onOpen={onOpen} onOpenChannel={onOpenChannel} />);
+    await screen.findByText("First pending video");
+
+    await userEvent.click(screen.getByRole("button", { name: "Channel One" }));
+
+    expect(onOpenChannel).toHaveBeenCalledWith("c1");
+    expect(onOpen).not.toHaveBeenCalled();
   });
 });

@@ -721,6 +721,8 @@ describe("Channel", () => {
         url: "https://youtu.be/p1",
         thumbnail_url: "https://img.example/p1.jpg",
         discovered_at: "2026-07-21 09:00:00",
+        summary_status: "",
+        auto_summary: false,
       },
     ]);
     render(
@@ -750,6 +752,8 @@ describe("Channel", () => {
         url: "https://youtu.be/p1",
         thumbnail_url: "https://img.example/p1.jpg",
         discovered_at: "2026-07-21 09:00:00",
+        summary_status: "",
+        auto_summary: false,
       },
     ]);
     vi.mocked(downloadPending).mockRejectedValue(
@@ -780,6 +784,8 @@ describe("Channel", () => {
         url: "https://youtu.be/p1",
         thumbnail_url: "https://img.example/p1.jpg",
         discovered_at: "2026-07-21 09:00:00",
+        summary_status: "",
+        auto_summary: false,
       },
     ]);
     render(
@@ -809,6 +815,8 @@ describe("Channel", () => {
         url: "https://youtu.be/p1",
         thumbnail_url: "https://img.example/p1.jpg",
         discovered_at: "2026-07-21 09:00:00",
+        summary_status: "",
+        auto_summary: false,
       },
     ]);
     vi.mocked(ignorePending).mockRejectedValue(new Error("failed to ignore"));

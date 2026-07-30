@@ -479,6 +479,7 @@ describe("App routing", () => {
         handle: "@UncannyExpeditions",
         subscribed: true,
         autodownload: false,
+        auto_summary: true,
         format_override: "",
         pending_count: 0,
         downloaded_count: 3,

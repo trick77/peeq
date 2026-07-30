@@ -14,17 +14,10 @@ import { daysUntil } from "../components/ShareControl";
 // ../vtt, ../components/Scrubber imports nothing from api/, so nothing
 // session-gated reaches this page through it.
 import { AUTO_SKIP, categoryLabel, Scrubber } from "../components/Scrubber";
+import { TranscriptCard } from "../components/TranscriptCard";
 // Shared with the Player's Transcript card. ../vtt is deliberately free of any
 // api/ import, so nothing session-gated can reach this page through it.
-import {
-  highlightCue,
-  matchesFind,
-  parseVtt,
-  transcriptFilenameBase,
-  transcriptToText,
-  useCopyTranscript,
-  type Cue,
-} from "../vtt";
+import { transcriptFilenameBase } from "../vtt";
 import { DOT } from "../sep";
 
 // Highlight timestamps use the same m:ss / h:mm:ss formatter as the rest of the
@@ -67,19 +60,6 @@ export function Share({ token }: { token: string | null }) {
   const [status, setStatus] = useState<"loading" | "ready" | "dead">("loading");
   const [video, setVideo] = useState<PublicVideo | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  // Transcript panel state — mirrors the Player's: collapsed until asked for,
-  // then fetched once and parsed client-side.
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const [cues, setCues] = useState<Cue[]>([]);
-  const [transcriptLoading, setTranscriptLoading] = useState(false);
-  const [transcriptError, setTranscriptError] = useState<string | null>(null);
-  // "Copy text" state, same hook the Player's Transcript card uses.
-  const {
-    copied: transcriptCopied,
-    error: copyError,
-    copy: copyTranscript,
-  } = useCopyTranscript();
-  const [find, setFind] = useState("");
   // Playback position + media duration, for the scrubber. The Player keeps the
   // same pair; here there is no resume position to restore and nothing to POST
   // back, so they exist purely to draw the bar.
@@ -140,50 +120,6 @@ export function Share({ token }: { token: string | null }) {
     };
   }, [video]);
 
-  // Drop any parsed transcript when the token changes, the same way the Player
-  // resets its panel on a new video id. Today every token change is a fresh
-  // mount — /s/<token> is only ever reached by a full page load, never by an
-  // in-app navigation — so this is defensive: without it, a Share instance that
-  // ever did survive a token change would render the previous video's cues
-  // beside the new one's player.
-  useEffect(() => {
-    setTranscriptOpen(false);
-    setCues([]);
-    setTranscriptError(null);
-    setFind("");
-  }, [token]);
-
-  // Fetch + client-side parse the VTT transcript the first time the Transcript
-  // card is expanded — not on page load, and not for videos without subtitles.
-  // The URL is the token-gated share route; this page never knows a video id to
-  // build the authenticated one with.
-  useEffect(() => {
-    if (!token || !transcriptOpen || !video?.has_subtitles || cues.length > 0) {
-      return;
-    }
-    let active = true;
-    setTranscriptLoading(true);
-    setTranscriptError(null);
-    fetch(shareSubtitlesUrl(token))
-      .then((res) => {
-        if (!res.ok) throw new Error("failed to load transcript");
-        return res.text();
-      })
-      .then((text) => {
-        if (active) setCues(parseVtt(text));
-      })
-      .catch(() => {
-        if (active) setTranscriptError("Failed to load transcript.");
-      })
-      .finally(() => {
-        if (active) setTranscriptLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transcriptOpen, token, video?.has_subtitles]);
-
   // seek jumps the player to a chapter, highlight or cue's moment and starts it.
   function seek(ts: number) {
     const el = videoRef.current;
@@ -201,23 +137,6 @@ export function Share({ token }: { token: string | null }) {
     if (!el) return;
     el.currentTime = seconds;
     setCurrentTime(seconds);
-  }
-
-  // downloadTranscriptTxt saves the transcript as plain text, built from the
-  // cues already parsed for the panel (no extra request) — the same client-side
-  // Blob the Player uses. The .vtt download is a plain link to the share
-  // subtitle endpoint, whose bytes this page has already fetched anyway.
-  function downloadTranscriptTxt() {
-    if (!video) return;
-    const blob = new Blob([transcriptToText(cues)], {
-      type: "text/plain;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = transcriptFilenameBase(video.title) + ".txt";
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
   if (status === "loading") {
@@ -250,7 +169,6 @@ export function Share({ token }: { token: string | null }) {
   const highlights = video.key_points ?? [];
   const chapters = video.chapters ?? [];
   const segments = video.sponsorblock_segments ?? [];
-  const hitCount = cues.filter((c) => matchesFind(c.text, find)).length;
 
   // showToast puts a message over the stage briefly. A later toast replaces an
   // earlier one rather than stacking, so the timer is always reset.
@@ -398,113 +316,18 @@ export function Share({ token }: { token: string | null }) {
           )}
 
           {video.has_subtitles && (
-            <div className="card sharepage-transcript">
-              <button
-                type="button"
-                className="hd hd-btn"
-                onClick={() => setTranscriptOpen((v) => !v)}
-                aria-expanded={transcriptOpen}
-              >
-                <Icon
-                  name="chevronRight"
-                  size="16px"
-                  style={{
-                    transition: "transform .15s",
-                    transform: transcriptOpen ? "rotate(90deg)" : "none",
-                  }}
-                />
-                <span className="lbl">Transcript</span>
-              </button>
-              {transcriptOpen && (
-                <>
-                  <div className="tsearch">
-                    <div className="searchbox">
-                      <Icon name="search" size="16px" />
-                      <input
-                        placeholder="Find in transcript…"
-                        value={find}
-                        onChange={(e) => setFind(e.target.value)}
-                      />
-                      <span className="count mono">
-                        {find ? `${hitCount} / ${cues.length}` : "—"}
-                      </span>
-                    </div>
-                    {cues.length > 0 && (
-                      <div className="sharepage-dl">
-                        <span className="meta">Download</span>
-                        <button
-                          type="button"
-                          className="pill"
-                          onClick={downloadTranscriptTxt}
-                        >
-                          <Icon name="download" size="14px" /> .txt
-                        </button>
-                        {/* The captions, not the video: this href is the same
-                            token-gated VTT the <track> above already loads, and
-                            the filename comes from the title alone. */}
-                        <a
-                          className="pill"
-                          href={shareSubtitlesUrl(token)}
-                          download={
-                            transcriptFilenameBase(video.title) + ".vtt"
-                          }
-                        >
-                          <Icon name="download" size="14px" /> .vtt
-                        </a>
-                        <button
-                          type="button"
-                          className="pill transcript-copy"
-                          onClick={() => copyTranscript(cues)}
-                        >
-                          <Icon
-                            name={transcriptCopied ? "check" : "copy"}
-                            size="14px"
-                          />{" "}
-                          {transcriptCopied ? "Copied" : "Copy text"}
-                        </button>
-                      </div>
-                    )}
-                    {copyError && (
-                      <p className="errline" style={{ marginTop: 8 }}>
-                        {copyError}
-                      </p>
-                    )}
-                  </div>
-                  <div className="tabbody transcript-body">
-                    {transcriptLoading && (
-                      <p className="placeholder">Loading transcript…</p>
-                    )}
-                    {transcriptError && (
-                      <p className="errline">{transcriptError}</p>
-                    )}
-                    {!transcriptLoading &&
-                      !transcriptError &&
-                      cues.length === 0 && (
-                        <p className="placeholder">No transcript available.</p>
-                      )}
-                    {!transcriptLoading &&
-                      !transcriptError &&
-                      cues.length > 0 && (
-                        <div className="transcript">
-                          {cues.map((cue, i) => (
-                            <button
-                              key={i}
-                              type="button"
-                              className={`cue${matchesFind(cue.text, find) ? " hit" : ""}`}
-                              onClick={() => seek(cue.ts)}
-                            >
-                              <span className="ts mono">{fmt(cue.ts)}</span>
-                              <span className="line">
-                                {highlightCue(cue.text, find)}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                  </div>
-                </>
-              )}
-            </div>
+            /* Keyed on the token for the same reason the Player is keyed on
+               the video id: this page is not remounted when the token changes,
+               and the panel must not carry one share's open state or search
+               term over to the next. The component's URL-keyed cache already
+               protects the cues themselves. */
+            <TranscriptCard
+              key={token}
+              vttUrl={shareSubtitlesUrl(token)}
+              filenameBase={transcriptFilenameBase(video.title)}
+              seek={seek}
+              className="sharepage-transcript"
+            />
           )}
 
           <footer className="sharepage-foot">

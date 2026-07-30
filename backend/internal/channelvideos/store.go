@@ -39,6 +39,18 @@ type Entry struct {
 	// runs when the channel listing says nothing — see StateUnavailable. It is
 	// not a re-offer timer: nothing moves this row without an answer.
 	UnavailableAt string
+	// SummaryStatus is the videos row's summary_status for this video, and
+	// AutoSummary whether its channel is opted in to being read at all. Both
+	// are populated ONLY by the ListPending queries; Get leaves them zero,
+	// because a ledger row on its own knows nothing about either.
+	//
+	// The Inbox card needs both, and neither alone is enough. A video that has
+	// not been reached yet has no videos row, so its status is "" — which is
+	// also what a video on an opted-out channel looks like. The flag is what
+	// separates "not read yet" from "never will be", and therefore whether the
+	// card shows a progress marker or nothing at all.
+	SummaryStatus string
+	AutoSummary   bool
 }
 
 // Store persists the channel_videos scan ledger.
@@ -222,9 +234,11 @@ func (s *Store) Get(videoID string) (*Entry, error) {
 // than the raw UCID. The join keeps this a single query (no N+1).
 func (s *Store) ListPending() ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name
+		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
+       COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0)
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
+LEFT JOIN videos v ON v.id = cv.video_id
 WHERE cv.state = 'pending'
 ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_at DESC, cv.video_id DESC`)
 	if err != nil {
@@ -238,9 +252,11 @@ ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_a
 // idx_channel_videos_channel index already supports this predicate.
 func (s *Store) ListPendingForChannel(channelID string) ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name
+		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
+       COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0)
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
+LEFT JOIN videos v ON v.id = cv.video_id
 WHERE cv.state = 'pending' AND cv.channel_id = ?
 ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_at DESC, cv.video_id DESC`, channelID)
 	if err != nil {
@@ -269,7 +285,8 @@ func scanPendingEntries(rows *sql.Rows) ([]Entry, error) {
 }
 
 // scanPendingRow scans one ListPending row: the selectColumns set (in Entry
-// field order, minus ChannelName) followed by the joined channel_name.
+// field order, minus ChannelName) followed by the joined channel_name, the
+// video's summary_status and its channel's auto_summary flag.
 func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 	var e Entry
 	var duration sql.NullInt64
@@ -277,7 +294,7 @@ func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 	if err := sc.Scan(
 		&e.VideoID, &e.ChannelID, &e.Title, &duration, &e.URL, &e.ThumbnailURL,
 		&e.State, &e.DiscoveredAt, &decidedAt, &publishedAt, &e.UnavailableReason,
-		&unavailableAt, &e.ChannelName,
+		&unavailableAt, &e.ChannelName, &e.SummaryStatus, &e.AutoSummary,
 	); err != nil {
 		return Entry{}, err
 	}

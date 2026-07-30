@@ -28,20 +28,14 @@ import type { Video } from "../api/types";
 import type { SummaryStatus } from "../api/enums";
 import { ApiError } from "../api/http";
 import { formatDuration, gradientClassFor } from "../format";
-// The VTT parser and transcript helpers live in ../vtt so the public share page
-// can render the same Transcript card without importing this view.
-import {
-  highlightCue,
-  matchesFind,
-  parseVtt,
-  transcriptFilenameBase,
-  transcriptToText,
-  useCopyTranscript,
-  type Cue,
-} from "../vtt";
+// Only the download filename helper is needed here now: parsing, finding and
+// copying all moved into components/TranscriptCard with the markup.
+import { transcriptFilenameBase } from "../vtt";
 import { DOT } from "../sep";
 import { MediaStats } from "./player/MediaStats";
 import { ContentsCard } from "./player/ContentsCard";
+import { TranscriptCard } from "../components/TranscriptCard";
+import { UnfetchedVideo } from "./player/UnfetchedVideo";
 import { SummaryCard, HighlightsCard } from "./player/SidebarPanels";
 import { MetaHeader } from "./player/MetaHeader";
 
@@ -83,6 +77,7 @@ export function Player({
   onDeleted,
   onOpenChannel,
   onQueued,
+  onBackToInbox,
 }: {
   videoId: string | null;
   // seekTo — the Task 18 jump-to-moment target (Search's onOpen, via App's
@@ -106,6 +101,10 @@ export function Player({
   // and poll reflect it at once. Same reason as Library's: the video has just
   // left the ready-only library and the rail is the only thing that will say so.
   onQueued?: () => void;
+  // onBackToInbox — where an inbox video's page goes when the user is done
+  // with it, either by pressing Back or by ignoring it. Only ever used by the
+  // UnfetchedVideo branch; a downloaded video has no inbox to return to.
+  onBackToInbox?: () => void;
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -145,18 +144,6 @@ export function Player({
   // loadedmetadata against the new video's state, which sets resumeAppliedRef
   // and costs the new video its resume position. null until minted.
   const [grant, setGrant] = useState<{ id: string; url: string } | null>(null);
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const [cues, setCues] = useState<Cue[]>([]);
-  const [transcriptLoading, setTranscriptLoading] = useState(false);
-  const [transcriptError, setTranscriptError] = useState<string | null>(null);
-  // The transcript "Copy text" button's own state — kept apart from
-  // transcriptError so a failed copy never looks like a failed load.
-  const {
-    copied: transcriptCopied,
-    error: copyError,
-    copy: copyTranscript,
-  } = useCopyTranscript();
-  const [find, setFind] = useState("");
   // confirmDelete drives the delete confirmation modal (ConfirmDialog),
   // opened from the ⋮ menu; deleting is its in-flight busy flag.
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -254,10 +241,6 @@ export function Player({
     setCurrentTime(0);
     setDuration(0);
     setCcOn(false);
-    setTranscriptOpen(false);
-    setCues([]);
-    setTranscriptError(null);
-    setFind("");
     setConfirmDelete(false);
     setShareStatus({ shared: false });
     // A sleep timer is a promise about the video in front of you, so opening
@@ -505,34 +488,6 @@ export function Player({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video?.id, video?.has_subtitles, subtitlesDefault, subtitlesReadyFor]);
 
-  // Fetch + client-side parse the VTT transcript the first time the
-  // Transcript card is expanded — not on every render, and not for videos
-  // without subtitles.
-  useEffect(() => {
-    if (!transcriptOpen || !video?.has_subtitles || cues.length > 0) return;
-    let active = true;
-    setTranscriptLoading(true);
-    setTranscriptError(null);
-    fetch(subtitlesUrl(video.id))
-      .then((res) => {
-        if (!res.ok) throw new Error("failed to load transcript");
-        return res.text();
-      })
-      .then((text) => {
-        if (active) setCues(parseVtt(text));
-      })
-      .catch(() => {
-        if (active) setTranscriptError("Failed to load transcript.");
-      })
-      .finally(() => {
-        if (active) setTranscriptLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transcriptOpen, video?.id, video?.has_subtitles]);
-
   if (!videoId) {
     return (
       <p style={{ color: "var(--color-faint)" }}>
@@ -556,6 +511,27 @@ export function Player({
         <Spinner size="15px" />
         Loading
       </p>
+    );
+  }
+
+  // A video peeq has read but not downloaded takes a different page entirely.
+  //
+  // The branch sits here, after the loading and error returns, because
+  // everything above it is about GETTING the video and applies either way.
+  // Everything below is about playing one, and none of it can run: there is no
+  // media to seek, no position to resume, no stream to grant.
+  //
+  // Same route on purpose. /video/<id> is the video's address whether or not
+  // peeq holds the file, so downloading it changes the page under a URL that
+  // does not move.
+  if (video.status === "new") {
+    return (
+      <UnfetchedVideo
+        video={video}
+        onBack={onBackToInbox}
+        onQueued={onQueued}
+        onDismissed={onBackToInbox}
+      />
     );
   }
 
@@ -780,21 +756,6 @@ export function Player({
     setCurrentTime(seconds);
     positionRef.current = seconds;
     positionKnownRef.current = true;
-  }
-
-  // downloadTranscriptTxt saves the transcript as plain text, built from the
-  // cues already parsed for the panel (no extra request). The .vtt download is
-  // a plain link to the subtitle endpoint.
-  function downloadTranscriptTxt() {
-    if (!video) return;
-    const text = transcriptToText(cues);
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = transcriptFilenameBase(video.title) + ".txt";
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
   async function handleToggleFavorite() {
@@ -1073,10 +1034,6 @@ export function Player({
     return actions;
   }
 
-  const hitCount = find
-    ? cues.filter((c) => matchesFind(c.text, find)).length
-    : 0;
-
   return (
     <div className="playgrid">
       <div className="leftcol">
@@ -1283,150 +1240,23 @@ export function Player({
             seek={video.has_media ? seek : undefined}
           />
           {video.has_subtitles && (
-            <div className="card full">
-              <button
-                type="button"
-                className="hd hd-btn"
-                onClick={() => setTranscriptOpen((v) => !v)}
-                aria-expanded={transcriptOpen}
-              >
-                <Icon
-                  name="chevronRight"
-                  size="16px"
-                  style={{
-                    transition: "transform .15s",
-                    transform: transcriptOpen ? "rotate(90deg)" : "none",
-                  }}
-                />
-                <span className="lbl">Transcript</span>
-              </button>
-              {transcriptOpen && (
-                <>
-                  <div className="tsearch">
-                    <div className="searchbox">
-                      <Icon name="search" size="16px" />
-                      <input
-                        placeholder="Find in transcript…"
-                        value={find}
-                        onChange={(e) => setFind(e.target.value)}
-                      />
-                      <span className="count mono">
-                        {find ? `${hitCount} / ${cues.length}` : "—"}
-                      </span>
-                    </div>
-                    {cues.length > 0 && (
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          marginTop: 8,
-                        }}
-                      >
-                        <span className="meta">Download</span>
-                        <button
-                          type="button"
-                          className="pill"
-                          onClick={downloadTranscriptTxt}
-                          style={{
-                            cursor: "pointer",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                          }}
-                        >
-                          <Icon name="download" size="14px" /> .txt
-                        </button>
-                        <a
-                          className="pill"
-                          href={subtitlesUrl(video.id)}
-                          download={
-                            transcriptFilenameBase(video.title) + ".vtt"
-                          }
-                          style={{
-                            textDecoration: "none",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                          }}
-                        >
-                          <Icon name="download" size="14px" /> .vtt
-                        </a>
-                        <button
-                          type="button"
-                          className="pill transcript-copy"
-                          onClick={() => copyTranscript(cues)}
-                          style={{
-                            cursor: "pointer",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                          }}
-                        >
-                          <Icon
-                            name={transcriptCopied ? "check" : "copy"}
-                            size="14px"
-                          />{" "}
-                          {transcriptCopied ? "Copied" : "Copy text"}
-                        </button>
-                      </div>
-                    )}
-                    {copyError && (
-                      <p className="errline" style={{ marginTop: 8 }}>
-                        {copyError}
-                      </p>
-                    )}
-                  </div>
-                  <div className="tabbody transcript-body">
-                    {transcriptLoading && (
-                      <p className="placeholder">Loading transcript…</p>
-                    )}
-                    {transcriptError && (
-                      <p className="errline">{transcriptError}</p>
-                    )}
-                    {!transcriptLoading &&
-                      !transcriptError &&
-                      cues.length === 0 && (
-                        <p className="placeholder">No transcript available.</p>
-                      )}
-                    {!transcriptLoading &&
-                      !transcriptError &&
-                      cues.length > 0 && (
-                        <div className="transcript">
-                          {cues.map((cue, i) => {
-                            const cls = `cue${matchesFind(cue.text, find) ? " hit" : ""}`;
-                            const body = (
-                              <>
-                                <span className="ts mono">{fmt(cue.ts)}</span>
-                                <span className="line">
-                                  {highlightCue(cue.text, find)}
-                                </span>
-                              </>
-                            );
-                            // Same rule as the chapter and highlight rows: with
-                            // no file to seek, a cue is text to read, not a
-                            // control. Find still highlights it either way.
-                            return video.has_media ? (
-                              <button
-                                key={i}
-                                type="button"
-                                className={cls}
-                                onClick={() => seek(cue.ts)}
-                              >
-                                {body}
-                              </button>
-                            ) : (
-                              <div key={i} className={`${cls} inert`}>
-                                {body}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                  </div>
-                </>
-              )}
-            </div>
+            /* seek is withheld for a fileless video, exactly as ContentsCard
+               above withholds it: with nothing to seek, a cue is text to read,
+               not a control that silently does nothing. Find still highlights
+               it either way.
+
+               Keyed on the video, so navigating from one video to another
+               remounts the panel: collapsed, with an empty find box. Player is
+               not unmounted between videos, and the state that used to be
+               reset per-video (transcriptOpen, find) now lives inside the
+               component — without this key you would land on video B with the
+               panel still expanded and video A's search term still in it. */
+            <TranscriptCard
+              key={video.id}
+              vttUrl={subtitlesUrl(video.id)}
+              filenameBase={transcriptFilenameBase(video.title)}
+              seek={video.has_media ? seek : undefined}
+            />
           )}
         </div>
       </div>

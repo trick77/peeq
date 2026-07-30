@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
@@ -777,6 +780,21 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 	// Deliberately after SetDownloaded and never gating anything below: the
 	// media facts are decoration, and a missing or broken ffprobe must not
 	// cost the user a summary.
+	// The caption peeq fetched to help decide on this video has been superseded:
+	// SetDownloaded above repointed subtitle_path at the copy that came with the
+	// media, so the .summaries/ one is now referenced by nothing. Nothing else
+	// would ever collect it — retention works from database rows, and no row
+	// points here any more — so it has to go on this path or not at all.
+	//
+	// Best-effort and unconditional: the directory is absent for every video
+	// that was downloaded without being read first, which is the ordinary case,
+	// and RemoveAll is happy either way.
+	if w.deps.MediaDir != "" {
+		if safe, err := media.SafeMediaPath(w.deps.MediaDir, filepath.Join(ytdlp.SummaryDirName, video.ID)); err == nil {
+			_ = os.RemoveAll(safe)
+		}
+	}
+
 	w.probeDownloaded(video.ID, res.MediaPath)
 
 	// Enqueue a summary job as a downstream consequence of every successful
