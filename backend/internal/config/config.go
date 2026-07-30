@@ -9,9 +9,16 @@ import (
 	"os"
 	"strconv"
 	"time"
-
-	"github.com/trick77/peeq/internal/rag"
 )
+
+// defaultSearchMaxDistance mirrors rag.DefaultMaxDistance, deliberately as a
+// local literal rather than an import.
+//
+// config is the first package every binary initialises, and importing rag for
+// one float would drag rag -> store (sqlite, sqlite-vec) and llm in with it.
+// config_test.go asserts the two stay equal, so the coupling lives in the test
+// rather than in the binary.
+const defaultSearchMaxDistance = 1.20
 
 // AuthMode selects how peeq signs users in.
 type AuthMode string
@@ -44,6 +51,8 @@ type Config struct {
 	// SearchMaxDistance bounds the semantic lane: hits at or beyond this L2
 	// distance are dropped rather than ranked. Vectors are unit length, so
 	// L2 = sqrt(2-2*cos); see rag.DefaultMaxDistance for the calibration.
+	//
+	// Zero means "unset, use the default"; a NEGATIVE value disables the bound.
 	SearchMaxDistance float64
 	DefaultSubLang    string
 
@@ -167,7 +176,7 @@ func Load() (Config, error) {
 	cfg.EmbedModel = env("BACKEND_EMBED_MODEL", "")
 	cfg.DefaultSubLang = env("BACKEND_DEFAULT_SUB_LANG", "en")
 	cfg.EmbedDim = 1536
-	cfg.SearchMaxDistance = rag.DefaultMaxDistance
+	cfg.SearchMaxDistance = defaultSearchMaxDistance
 	if v := env("BACKEND_ALLOW_ANONYMOUS_YOUTUBE", ""); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -177,14 +186,15 @@ func Load() (Config, error) {
 	}
 	if v := env("BACKEND_SEARCH_MAX_DISTANCE", ""); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
-		// NaN and Inf parse cleanly and survive an `f < 0` test, so they have to
-		// be rejected by name: NaN makes every distance comparison false, which
-		// would silently drop EVERY semantic hit with no error to explain it.
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
-			return Config{}, fmt.Errorf("BACKEND_SEARCH_MAX_DISTANCE must be a finite non-negative number")
+		// NaN and Inf parse cleanly and survive an ordinary range test, so they
+		// have to be rejected by name: NaN makes every distance comparison false,
+		// which would silently drop EVERY semantic hit with no error to explain it.
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return Config{}, fmt.Errorf("BACKEND_SEARCH_MAX_DISTANCE must be a finite number")
 		}
-		// 0 disables the cutoff, restoring the pre-cutoff behaviour of always
-		// returning the k nearest chunks however far away they are.
+		// A NEGATIVE value disables the cutoff. Zero used to mean that, which put
+		// the dangerous reading on the value a forgotten field takes — see the
+		// resolution in httpapi.New.
 		cfg.SearchMaxDistance = f
 	}
 	if v := env("BACKEND_EMBED_DIM", ""); v != "" {

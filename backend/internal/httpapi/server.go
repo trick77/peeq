@@ -14,6 +14,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
@@ -121,7 +122,12 @@ type Deps struct {
 	// against Rag. Optional: when nil, /api/search returns 503.
 	Embedder SearchEmbedder
 	// SearchMaxDistance bounds the semantic lane so an unrelated query comes
-	// back empty instead of full of the least-distant noise. 0 disables it.
+	// back empty instead of full of the least-distant noise.
+	//
+	// Zero means UNSET and resolves to rag.DefaultMaxDistance; a negative value
+	// disables the bound. That way round on purpose: the zero value is what an
+	// assembly that forgets this field gets, and it must not be the one that
+	// silently restores "a KNN query can never fail".
 	SearchMaxDistance float64
 	// Ask streams the grounded answer for /api/search/answer. Optional: a nil
 	// one degrades that endpoint to citations only, never to an error.
@@ -246,6 +252,15 @@ type server struct {
 
 // New returns the fully wired HTTP handler.
 func New(d Deps) http.Handler {
+	// Resolve the bound once, here, so nothing downstream has to remember which
+	// way the sentinel runs.
+	maxDist := d.SearchMaxDistance
+	switch {
+	case maxDist == 0:
+		maxDist = rag.DefaultMaxDistance
+	case maxDist < 0:
+		maxDist = 0 // explicit opt-out; rag treats non-positive as unbounded
+	}
 	s := &server{
 		version:        d.Version,
 		static:         d.Static,
@@ -276,7 +291,7 @@ func New(d Deps) http.Handler {
 
 		rag:               d.Rag,
 		embedder:          d.Embedder,
-		searchMaxDistance: d.SearchMaxDistance,
+		searchMaxDistance: maxDist,
 		ask:               d.Ask,
 		summaryJobs:       d.SummaryJobs,
 		summaryList:       d.SummaryList,

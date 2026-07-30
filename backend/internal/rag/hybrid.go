@@ -67,6 +67,8 @@ func FuseRRF(lists [][]Hit, k int) []Hit {
 // FuseWeighted is FuseRRF with a per-lane confidence multiplier, so a lane that
 // is merely returning its nearest rows cannot outvote a lane that found a
 // literal match. Scoring is otherwise identical: the sum of weight/(rrfK+rank).
+//
+// A lane whose weight is zero or negative contributes nothing at all.
 func FuseWeighted(lanes []Lane, k int) []Hit {
 	type agg struct {
 		hit   Hit
@@ -75,10 +77,13 @@ func FuseWeighted(lanes []Lane, k int) []Hit {
 	byKey := make(map[string]*agg)
 	order := make([]string, 0)
 	for _, lane := range lanes {
-		w := lane.Weight
-		if w <= 0 {
-			w = 1
+		// A non-positive weight MUTES the lane. It used to be promoted to 1 —
+		// full confidence — which made the one value a caller would reach for to
+		// silence a lane the value that made it shout loudest.
+		if lane.Weight <= 0 {
+			continue
 		}
+		w := lane.Weight
 		for rank, h := range lane.Hits {
 			key := h.VideoID + ":" + strconv.Itoa(h.Ordinal)
 			a, ok := byKey[key]

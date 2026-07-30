@@ -312,12 +312,23 @@ func TestLoad_searchMaxDistance(t *testing.T) {
 		t.Errorf("default = %v, want %v", cfg.SearchMaxDistance, rag.DefaultMaxDistance)
 	}
 
-	t.Setenv("BACKEND_SEARCH_MAX_DISTANCE", "0")
-	if cfg, err := Load(); err != nil || cfg.SearchMaxDistance != 0 {
-		t.Errorf("0 must disable the cutoff, got %v (%v)", cfg.SearchMaxDistance, err)
+	// A NEGATIVE value disables the cutoff. Zero no longer does: it is what an
+	// unset field holds, and that reading must not be the one that silently
+	// restores "a KNN query can never fail" (see httpapi.New).
+	t.Setenv("BACKEND_SEARCH_MAX_DISTANCE", "-1")
+	if cfg, err := Load(); err != nil || cfg.SearchMaxDistance >= 0 {
+		t.Errorf("-1 must disable the cutoff, got %v (%v)", cfg.SearchMaxDistance, err)
 	}
 
-	for _, bad := range []string{"notanumber", "-1", "NaN", "Inf", "-Inf"} {
+	// The local default must not drift from the constant it mirrors. This test
+	// is the ONLY thing importing rag from config's module graph — the binary
+	// itself no longer does.
+	if defaultSearchMaxDistance != rag.DefaultMaxDistance {
+		t.Errorf("config default %v has drifted from rag.DefaultMaxDistance %v",
+			defaultSearchMaxDistance, rag.DefaultMaxDistance)
+	}
+
+	for _, bad := range []string{"notanumber", "NaN", "Inf", "-Inf"} {
 		t.Setenv("BACKEND_SEARCH_MAX_DISTANCE", bad)
 		if _, err := Load(); err == nil {
 			t.Errorf("want an error for BACKEND_SEARCH_MAX_DISTANCE=%q", bad)

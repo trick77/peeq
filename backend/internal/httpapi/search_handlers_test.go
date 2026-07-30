@@ -1146,9 +1146,9 @@ func TestSearchKeepsSummaryAlongsideAnEarlyMoment(t *testing.T) {
 // TestSearchAskHonoursTheDistanceBound is the endpoint-level half of the fix
 // this feature exists for. rag.TestRetrieveWithinBoundsDistance covers the
 // bound in the store; nothing covered it through the handler, and the field
-// that carries it (Deps.SearchMaxDistance) disables the bound at its zero
-// value — so an assembly that simply forgets to set it silently gets the old
-// "KNN cannot fail" behaviour with no test anywhere to notice.
+// that carries it (Deps.SearchMaxDistance) now resolves its zero value to the
+// default rather than to "disabled", so an assembly that forgets the field gets
+// the safe reading; only an explicit negative opts out.
 func TestSearchAskHonoursTheDistanceBound(t *testing.T) {
 	deps, _, ragStore := searchTestDepsWithStores(t)
 	unit := func(i int) []float32 {
@@ -1189,9 +1189,49 @@ func TestSearchAskHonoursTheDistanceBound(t *testing.T) {
 	}
 
 	// 0 restores the unbounded behaviour, which is what the env var documents.
-	deps.SearchMaxDistance = 0
+	deps.SearchMaxDistance = -1 // explicit opt-out
 	body = doReq(t, New(deps), cookie, http.MethodGet, "/api/search?q=zzqqxx&mode=ask", nil).Body.String()
 	if !strings.Contains(body, `"id":"far"`) {
 		t.Errorf("maxDistance 0 should disable the cutoff: %s", body)
+	}
+}
+
+// The whole point of inverting the sentinel: a Deps assembly that never mentions
+// SearchMaxDistance must get the bound, not lose it. This is the exact mistake
+// searchTestDepsWithStores made for the life of #238.
+func TestSearchUnsetDistanceBoundStillBounds(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	unit := func(i int) []float32 {
+		v := make([]float32, 1536)
+		v[i] = 1
+		return v
+	}
+	for _, v := range []struct {
+		id  string
+		vec []float32
+	}{{"near", unit(0)}, {"far", unit(5)}} {
+		if err := deps.Videos.Upsert(videos.Video{ID: v.id, URL: "u", Title: v.id}); err != nil {
+			t.Fatalf("seed %s: %v", v.id, err)
+		}
+		if err := ragStore.ReplaceVideoChunks(context.Background(), v.id,
+			rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
+			[]rag.ChunkRow{{Ordinal: 0, Text: "unrelated wording", Kind: rag.KindTranscript, StartSeconds: 1}},
+			[][]float32{v.vec}); err != nil {
+			t.Fatalf("seed chunks %s: %v", v.id, err)
+		}
+	}
+	// Deliberately NOT setting deps.SearchMaxDistance.
+	deps.Embedder = &fakeEmbedder{vec: unit(0)}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// A query word neither chunk contains, so only the vector lane can answer.
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=zqxjkv&mode=ask", nil)
+	body := rec.Body.String()
+	if strings.Contains(body, `"id":"far"`) {
+		t.Errorf("the orthogonal chunk survived an unset bound: %s", body)
+	}
+	if !strings.Contains(body, `"id":"near"`) {
+		t.Errorf("the aligned chunk should still be returned: %s", body)
 	}
 }

@@ -186,3 +186,30 @@ func TestRetrieveWithinBoundsDistance(t *testing.T) {
 		t.Errorf("query unrelated to every chunk should return no hits, got %+v", none)
 	}
 }
+
+// A non-positive lane weight mutes the lane. It used to be promoted to 1 — full
+// confidence — so the one value a caller would reach for to silence a lane was
+// the value that made it shout loudest.
+func TestFuseWeightedZeroWeightMutesTheLane(t *testing.T) {
+	loud := []Hit{{VideoID: "muted", Ordinal: 1}}
+	real1 := []Hit{{VideoID: "kept", Ordinal: 1}}
+
+	out := FuseWeighted([]Lane{
+		{Hits: loud, Weight: 0},
+		{Hits: real1, Weight: WeightKeyword},
+	}, 10)
+	if len(out) != 1 || out[0].VideoID != "kept" {
+		t.Fatalf("a zero-weight lane contributed hits: %+v", out)
+	}
+
+	// Negative behaves the same way, rather than flipping the ranking.
+	out = FuseWeighted([]Lane{{Hits: loud, Weight: -1}, {Hits: real1, Weight: 1}}, 10)
+	if len(out) != 1 || out[0].VideoID != "kept" {
+		t.Fatalf("a negative-weight lane contributed hits: %+v", out)
+	}
+
+	// FuseRRF still treats every list as equal — it builds lanes at weight 1.
+	if got := FuseRRF([][]Hit{loud, real1}, 10); len(got) != 2 {
+		t.Errorf("FuseRRF should keep both lists, got %+v", got)
+	}
+}
