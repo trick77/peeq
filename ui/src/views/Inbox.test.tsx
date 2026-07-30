@@ -457,6 +457,79 @@ describe("Inbox", () => {
     ).toBeInTheDocument();
   });
 
+  // The row used to follow first-seen order, so it reshuffled as the grid
+  // drained. The Library's category row is the master: a fixed order that does
+  // not depend on what the grid happens to hold.
+  it("orders the channel chips by name, after All channels", async () => {
+    vi.mocked(listPending).mockResolvedValue([
+      baseItem({ video_id: "v3", channel_id: "c3", channel_name: "Zulu" }),
+      itemB, // Channel Two — seen before Channel One
+      // Lowercase, and it must still sort ahead of "Beta": a plain codepoint
+      // comparison would put every capital first and land it after Zulu.
+      baseItem({ video_id: "v4", channel_id: "c4", channel_name: "alpha" }),
+      baseItem({ video_id: "v5", channel_id: "c5", channel_name: "Beta" }),
+      itemA, // Channel One
+    ]);
+    render(<Inbox />);
+    await screen.findByText("Second pending video");
+
+    const labels = Array.from(
+      document.querySelectorAll(".catchips .catchip"),
+    ).map((el) => el.textContent?.replace(/\s*\d+$/, "").trim());
+    expect(labels).toEqual([
+      "All channels",
+      "alpha",
+      "Beta",
+      "Channel One",
+      "Channel Two",
+      "Zulu",
+    ]);
+  });
+
+  // Same name, so the comparator's first arm ties. Without the id tiebreak the
+  // pair falls back to Array.sort's stability — first-seen order, which is what
+  // the sort exists to remove.
+  it("breaks a tie between same-named channels on the id", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listPending).mockResolvedValue([
+      baseItem({
+        video_id: "v6",
+        channel_id: "c9",
+        channel_name: "Twin",
+        title: "Nine video",
+      }),
+      baseItem({
+        video_id: "v7",
+        channel_id: "c8",
+        channel_name: "Twin",
+        title: "Eight video",
+      }),
+    ]);
+    render(<Inbox />);
+    await screen.findByText("Nine video");
+
+    // c8 was seen second, but its chip comes first.
+    const chips =
+      document.querySelectorAll<HTMLButtonElement>(".catchips .catchip");
+    expect(Array.from(chips).length).toBe(3); // All channels + the two twins
+    await user.click(chips[1]);
+    expect(screen.getByText("Eight video")).toBeInTheDocument();
+    expect(screen.queryByText("Nine video")).not.toBeInTheDocument();
+  });
+
+  // Overflow is the Library's: one line that scrolls sideways under chevrons,
+  // never a wrapped block of rows.
+  it("puts the channel chips in a PillStrip rather than letting them wrap", async () => {
+    render(<Inbox />);
+    await screen.findByText("First pending video");
+
+    const strip = document.querySelector(".pillstrip");
+    expect(strip).not.toBeNull();
+    // `lead` drops the negative top margin: this is the page's first chip row.
+    expect(strip).toHaveClass("lead");
+    expect(strip?.querySelector(".pillstrip-scroll .catchips")).not.toBeNull();
+  });
+
   it("scopes the channel chip counts to the search, like the Library", async () => {
     // "second" matches only itemB (Channel Two). The counts must answer "how
     // many would I see if I clicked this under the current search", and a

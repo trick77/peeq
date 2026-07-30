@@ -985,8 +985,11 @@ button.srow:not(:disabled):hover {
    chips above it, only the .listbar — and the pull was closing the gap under the
    search box to 8px, where every other list sits 18px clear of its toolbar. The
    modifier hands the row the spacing .chips has, so the Inbox's toolbar-to-chips
-   gap matches the Library's, the Channels list's and History's. */
-.catchips.lead {
+   gap matches the Library's, the Channels list's and History's. Both the bare
+   row and the .pillstrip wrapper carry it, because inside a strip the wrapper
+   owns the outer margin and the row's own is zeroed. */
+.catchips.lead,
+.pillstrip.lead {
   margin-top: 0;
 }
 .catchip {
