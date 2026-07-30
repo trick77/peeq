@@ -165,16 +165,28 @@ func TestLadderRunsOutAndSettlesAsNoTranscript(t *testing.T) {
 // is on, peeq never talks to YouTube at all — so spending rungs during that
 // window would silently exhaust every video discovered in it, and they would
 // all settle as having no transcript the moment the cookie was fixed.
+//
+// All four sentinels, not just the two gates. ErrCookieExpired and ErrBlocked
+// arrive via stderr classification rather than a gate, which makes them look
+// like this call failing — but during bot detection or an expired cookie they
+// hit every video alike, so counting them would exhaust the whole inbox within
+// five ticks and settle it permanently as no_transcript. That is the half of
+// this failure mode that actually happens: cookies expire far more often than
+// the kill-switch is thrown.
 func TestGatedFetchGivesTheAttemptBack(t *testing.T) {
 	h := newHarness(t)
-	f := &fetcher{errs: []error{ytdlp.ErrNoCookie, ytdlp.ErrPaused}}
+	f := &fetcher{errs: []error{
+		ytdlp.ErrNoCookie, ytdlp.ErrPaused,
+		ytdlp.ErrCookieExpired, ytdlp.ErrBlocked,
+	}}
 	w := h.worker(f)
 
-	w.pass(context.Background())
-	w.pass(context.Background())
+	for range f.errs {
+		w.pass(context.Background())
+	}
 
-	if f.calls != 2 {
-		t.Fatalf("fetched %d times, want 2", f.calls)
+	if f.calls != 4 {
+		t.Fatalf("fetched %d times, want 4", f.calls)
 	}
 	c, err := h.ledger.NextCaptionCandidate()
 	if err != nil {
@@ -184,7 +196,7 @@ func TestGatedFetchGivesTheAttemptBack(t *testing.T) {
 		t.Fatal("a gated video must still be due; it was never actually tried")
 	}
 	if c.Attempts != 0 {
-		t.Fatalf("attempts = %d after two gated passes, want 0", c.Attempts)
+		t.Fatalf("attempts = %d after four gated passes, want 0", c.Attempts)
 	}
 }
 

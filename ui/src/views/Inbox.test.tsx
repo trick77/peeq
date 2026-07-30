@@ -916,6 +916,24 @@ describe("Inbox summaries", () => {
     expect(within(await card("No speech")).queryByText("summary")).toBeNull();
   });
 
+  // A video the caption fetcher has not reached has no videos row, so its page
+  // would 404. That is the common case on a fresh inbox, not an edge — and the
+  // card must not offer a pointer to it either.
+  it("does not open a video peeq has not read yet", async () => {
+    vi.mocked(listPending).mockResolvedValue([
+      baseItem({ video_id: "unread", summary_status: "", auto_summary: true }),
+    ]);
+    const onOpen = vi.fn();
+    render(<Inbox onOpen={onOpen} />);
+
+    const title = await screen.findByText("First pending video");
+    const card = title.closest("article") as HTMLElement;
+    await userEvent.click(card.querySelector(".thumb") as HTMLElement);
+
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(card.className).toContain("is-inert");
+  });
+
   it("opens the video when the card is clicked", async () => {
     vi.mocked(listPending).mockResolvedValue([itemA]);
     const onOpen = vi.fn();

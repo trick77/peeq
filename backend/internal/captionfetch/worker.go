@@ -247,9 +247,23 @@ func (w *Worker) settleWithout(c *channelvideos.CaptionCandidate) {
 	w.d.Logger.Info("captionfetch: no captions after every attempt", "video_id", c.VideoID)
 }
 
-// refused reports whether err means peeq declined to talk to YouTube at all —
-// no cookie, the kill-switch, or the auto-pause breaker — rather than this
-// video failing.
+// refused reports whether err belongs to a failure family that applies to the
+// whole run rather than to this video — which is exactly how ytdlp/errors.go
+// describes all four of its sentinels.
+//
+// All four, not just the two gates. ErrCookieExpired and ErrBlocked come out of
+// stderr classification rather than a gate, so it is tempting to read them as
+// this call failing. They are not: during bot detection or an expired cookie
+// EVERY call fails the same way, so counting them would burn a rung per tick on
+// every video in the inbox and settle the lot as no_transcript within five
+// ticks — permanently, since nothing re-reads a settled row. That is the exact
+// outcome ReturnCaptionAttempt exists to prevent, and it is the half that
+// matters most: a cookie expires far more often than the kill-switch is
+// thrown. download.Worker.classify groups these two with the pause cases for
+// the same reason.
 func refused(err error) bool {
-	return errors.Is(err, ytdlp.ErrNoCookie) || errors.Is(err, ytdlp.ErrPaused)
+	return errors.Is(err, ytdlp.ErrNoCookie) ||
+		errors.Is(err, ytdlp.ErrPaused) ||
+		errors.Is(err, ytdlp.ErrCookieExpired) ||
+		errors.Is(err, ytdlp.ErrBlocked)
 }

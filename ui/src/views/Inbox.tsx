@@ -64,6 +64,21 @@ function compareBy(
   }
 }
 
+// hasPage reports whether there is anything behind a click on this card.
+//
+// A videos row is created by the caption fetcher, and only by it, so a video it
+// has not reached yet — one just discovered, or one on a channel that opted out
+// — has no row and would 404. summary_status is the signal for that: the column
+// defaults to 'pending' the moment the row is created, so a non-empty value and
+// a row that exists are the same thing.
+//
+// Note this is NOT the same set as "shows a pill". A card can read "reading…"
+// on the strength of auto_summary alone, before any row exists — the marker is
+// a promise about the channel, and this is a fact about the video.
+function hasPage(item: PendingItem) {
+  return item.summary_status !== "";
+}
+
 // summaryPill renders the card's one extra fact: whether peeq has read this
 // video yet.
 //
@@ -276,7 +291,7 @@ export function Inbox({
   // shared grid-tile rule and did nothing at all when clicked. This closes that
   // gap rather than opening one: the card already claimed to be clickable.
   function handleCardClick(e: MouseEvent<HTMLElement>, item: PendingItem) {
-    if (!onOpen) return;
+    if (!onOpen || !hasPage(item)) return;
     if ((e.target as HTMLElement).closest('button, a, [role="button"]')) return;
     if (window.getSelection()?.toString()) return;
     onOpen(item.video_id);
@@ -518,8 +533,10 @@ export function Inbox({
           {visible.map((item) => (
             <article
               key={item.video_id}
-              className="card video-card"
-              onClick={onOpen ? (e) => handleCardClick(e, item) : undefined}
+              className={`card video-card${hasPage(item) ? "" : " is-inert"}`}
+              onClick={
+                hasPage(item) ? (e) => handleCardClick(e, item) : undefined
+              }
             >
               {/* Poster and action bar are one object, so they share a wrapper
                 rather than sitting as two children of .card — .card lays its

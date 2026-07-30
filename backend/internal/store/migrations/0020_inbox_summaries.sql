@@ -48,12 +48,16 @@ ALTER TABLE channel_videos ADD COLUMN next_caption_attempt_at TEXT;
 -- can tell them apart.
 UPDATE channel_videos SET caption_attempts = 99;
 
--- The fetcher's claim query filters on state, auto_summary and the two columns
--- above. state already has an index (idx_channel_videos_state from 0001); this
--- makes the due-work lookup a range scan over the rows that can actually be
--- due, rather than a scan of every ledger row on every tick. Partial, because
--- the exhausted rows the UPDATE above just created are the overwhelming
--- majority on any existing install and none of them will ever match.
-CREATE INDEX idx_channel_videos_caption_due
-    ON channel_videos(next_caption_attempt_at)
- WHERE caption_attempts < 5;
+-- No index for the fetcher's claim query, deliberately.
+--
+-- The obvious one is partial — WHERE caption_attempts < 5, since the rows the
+-- UPDATE above just retired are the overwhelming majority on any existing
+-- install and none of them can ever match again. But the query binds that
+-- bound as a parameter (it comes from channelvideos.CaptionMaxAttempts), and
+-- SQLite will not use a partial index unless it can prove the WHERE clause
+-- implies the index predicate, which it cannot do against a parameter. The
+-- index would sit there costing writes and never be chosen.
+--
+-- The unqualified alternative is not worth it either: state already has
+-- idx_channel_videos_state from 0001, the ledger is thousands of rows rather
+-- than millions, and this query runs once a minute on one goroutine.

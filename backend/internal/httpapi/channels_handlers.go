@@ -1137,7 +1137,7 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "ignore failed")
 		return
 	}
-	s.dropInboxRead(r, id)
+	s.dropInboxRead(r, e, id)
 	// The item just left the inbox, so its cached thumbnail is dead weight.
 	s.removePendingThumbnail(id)
 	writeJSON(w, map[string]string{"status": "ignored"})
@@ -1149,26 +1149,36 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 // the ledger row is already 'ignored' and that is what keeps the video out of
 // the Inbox.
 //
-// The two guards are the point of this function, not incidental to it.
+// The guard is the ledger's own state, and it is stronger than anything on the
+// videos row. StatusNew cannot carry this on its own: it is the videos.status
+// column DEFAULT, and the download worker deliberately returns a CANCELLED
+// download to 'new'. But a cancelled download's LEDGER row sits at 'queued',
+// never 'pending' — approving a video flips it and nothing flips it back — so
+// "this row was still awaiting a decision" is exactly the set of videos that
+// were only ever read, and nothing else.
 //
-// StatusNew alone would not do. It is the videos.status column DEFAULT, so any
-// row whose creator has not yet reached its SetStatus reads as 'new', and the
-// download worker deliberately returns a CANCELLED download to 'new'. Deleting
-// on that alone would let an Ignore destroy a real video's row.
+// That also catches the case a subtitle_path check alone would miss: a video
+// whose captions never arrived has a row (created before the fetch, so the
+// ladder had somewhere to record no_transcript) and no .vtt at all. Keyed only
+// on the path, that row would survive every ignore forever, invisible to every
+// list and reachable by nothing.
 //
-// The subtitle path is the positive evidence. captionfetch is the only writer
-// under ytdlp.SummaryDirName, and the moment a video is downloaded
-// SetDownloaded repoints subtitle_path into the real media directory — so a row
-// that has ever been downloaded cannot match here, whatever its status says.
-func (s *server) dropInboxRead(r *http.Request, id string) {
-	if s.videos == nil || id == "" {
+// The path is still checked, for the one case the ledger state does not
+// separate. A video added by URL and downloaded while its ledger row was never
+// decided is 'pending' with a real transcript; cancel that download and it is
+// also 'new'. So the rule is: still awaiting a decision, recorded but not
+// requested, AND holding either nothing or a caption this feature fetched.
+// Anything that has ever been downloaded fails the last clause, because
+// SetDownloaded repoints subtitle_path into the media directory.
+func (s *server) dropInboxRead(r *http.Request, e *channelvideos.Entry, id string) {
+	if s.videos == nil || id == "" || e == nil || e.State != channelvideos.StatePending {
 		return
 	}
 	v, err := s.videos.Get(id)
-	if err != nil || v == nil {
+	if err != nil || v == nil || v.Status != videos.StatusNew {
 		return
 	}
-	if v.Status != videos.StatusNew || !isSummaryDirPath(v.SubtitlePath) {
+	if v.SubtitlePath != "" && !isSummaryDirPath(v.SubtitlePath) {
 		return
 	}
 	if err := s.videos.Discard(id); err != nil {

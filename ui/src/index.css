@@ -4962,6 +4962,13 @@ details.tomb-sect[open] > summary svg {
   color: var(--color-faint);
 }
 
+/* A card peeq has not read yet has nothing behind it, and `.card`'s shared
+   grid-tile rule would otherwise offer a pointer that does nothing — the exact
+   gap this feature set out to close, reintroduced one state along. */
+.card.video-card.is-inert {
+  cursor: default;
+}
+
 /* The page for a video peeq has read but not downloaded. Bounded well below
    the player's width: the whole content is ~190 words of prose (the summarizer
    caps it there), and running that to a 1100px measure would be unreadable. */
