@@ -202,6 +202,18 @@ func run() error {
 	}, nil)
 	summarizer := summarize.New(chatClient, summarize.WithSummaryChunkTokens(cfg.SummaryChunkTokens))
 
+	// A SECOND chat client, for the interactive Ask answer. The one above
+	// serializes every call through a pacing mutex sized for a background
+	// summarize queue, so sharing it would park a typed question behind however
+	// much of that backlog is in flight. This one has no pacing and a much
+	// shorter cap: a person is waiting for it, and an answer that has not
+	// started arriving in a minute or so is better abandoned than waited out.
+	askClient := llm.NewClient(llm.Config{
+		BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey,
+		RequestInterval: 0, Logger: slog.Default(),
+		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.AskCallTimeout,
+	}, nil)
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -492,6 +504,7 @@ func run() error {
 		Rag:               ragStore,
 		Embedder:          embedClient,
 		SearchMaxDistance: cfg.SearchMaxDistance,
+		Ask:               askClient,
 
 		SummaryJobs:   summaryJobsStore,
 		SummaryList:   summaryJobsStore,

@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Spinner } from "../ui";
 import {
@@ -10,6 +10,8 @@ import {
 import { ThumbFill } from "../components/ThumbFill";
 import { formatDuration } from "../format";
 import { splitHighlights } from "../highlight";
+import { streamAnswer, type AnswerSource } from "../api/answer";
+import { AnswerPanel, type AnswerState } from "../components/AnswerPanel";
 import { DOT } from "../sep";
 
 // Search — the global search view, with two modes over one query box.
@@ -65,6 +67,10 @@ export function Search({
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [answer, setAnswer] = useState<AnswerState | null>(null);
+  // Aborts the in-flight answer when a new search starts or the view unmounts,
+  // so a slow generation for an abandoned query stops costing a model call.
+  const answerAbort = useRef<AbortController | null>(null);
   // Every search takes a ticket; only the newest one may write state. A mode
   // switch fires a search on a single click, so two quick clicks put two
   // requests in flight — and without this the slower one could land last and
@@ -75,6 +81,8 @@ export function Search({
   function runSearch(q: string, m: SearchMode) {
     const trimmed = q.trim();
     const id = ++runId.current;
+    answerAbort.current?.abort();
+    setAnswer(null);
     if (!trimmed) {
       setResults(null);
       setSearched(null);
@@ -87,6 +95,11 @@ export function Search({
     }
     setLoading(true);
     setError(null);
+    // Ask also writes an answer. It is a SEPARATE request on purpose: retrieval
+    // returns in a moment and generation takes seconds, so the results paint
+    // straight away and the answer fills in above them. Nothing below waits on
+    // this, and a failure here never touches the results.
+    if (m === "ask") runAnswer(trimmed, id);
     searchVideos(trimmed, m)
       .then((r) => {
         if (id !== runId.current) return;
@@ -106,6 +119,50 @@ export function Search({
       });
   }
 
+  // runAnswer streams the grounded answer for one search. It shares runId with
+  // the search so a superseded run cannot write over a newer one's answer.
+  function runAnswer(q: string, id: number) {
+    const ac = new AbortController();
+    answerAbort.current = ac;
+    setAnswer({ status: "streaming", text: "", sources: [] });
+    let sources: AnswerSource[] = [];
+    let text = "";
+    let failed = false;
+
+    streamAnswer(
+      q,
+      (e) => {
+        if (id !== runId.current) return;
+        switch (e.type) {
+          case "sources":
+            sources = e.sources;
+            break;
+          case "token":
+            text += e.text;
+            break;
+          case "error":
+            failed = true;
+            break;
+          case "done":
+            break;
+        }
+        setAnswer({
+          status: e.type === "done" ? "done" : "streaming",
+          text,
+          sources,
+          failed,
+        });
+      },
+      ac.signal,
+    ).catch(() => {
+      if (id !== runId.current) return;
+      // The stream itself broke. Keep whatever text arrived — truncated is more
+      // use than blank — and drop the panel entirely if none did, so the plain
+      // results stand alone rather than under an error box.
+      setAnswer(text ? { status: "done", text, sources, failed } : null);
+    });
+  }
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     runSearch(query, mode);
@@ -118,6 +175,8 @@ export function Search({
     setMode(m);
     if (results !== null || query.trim()) runSearch(query, m);
   }
+
+  useEffect(() => () => answerAbort.current?.abort(), []);
 
   const copy = MODE_COPY[mode];
   const matchCount = results?.reduce((n, r) => n + r.matches.length, 0) ?? 0;
@@ -189,6 +248,8 @@ export function Search({
           Searching
         </p>
       ) : null}
+
+      {answer ? <AnswerPanel state={answer} onOpen={onOpen} /> : null}
 
       {!loading && results !== null && (
         <>

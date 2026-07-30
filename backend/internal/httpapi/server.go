@@ -123,6 +123,9 @@ type Deps struct {
 	// SearchMaxDistance bounds the semantic lane so an unrelated query comes
 	// back empty instead of full of the least-distant noise. 0 disables it.
 	SearchMaxDistance float64
+	// Ask streams the grounded answer for /api/search/answer. Optional: a nil
+	// one degrades that endpoint to citations only, never to an error.
+	Ask StreamCompleter
 	// SummaryJobs enqueues a summary job for a video. Optional: when nil,
 	// /api/videos/{id}/reprocess returns 503.
 	SummaryJobs SummaryEnqueuer
@@ -228,6 +231,7 @@ type server struct {
 	rag               RagStore
 	embedder          SearchEmbedder
 	searchMaxDistance float64
+	ask               StreamCompleter
 	summaryJobs       SummaryEnqueuer
 	summaryList       SummaryLister
 	activity          ActivityReader
@@ -273,6 +277,7 @@ func New(d Deps) http.Handler {
 		rag:               d.Rag,
 		embedder:          d.Embedder,
 		searchMaxDistance: d.SearchMaxDistance,
+		ask:               d.Ask,
 		summaryJobs:       d.SummaryJobs,
 		summaryList:       d.SummaryList,
 		activity:          d.Activity,
@@ -382,6 +387,9 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/pending/{id}/download", s.requireAuth(http.HandlerFunc(s.handlePendingDownload)))
 	mux.Handle("POST /api/pending/{id}/ignore", s.requireAuth(http.HandlerFunc(s.handlePendingIgnore)))
 	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
+	// GET, not POST: the browser reads this with fetch+ReadableStream through the
+	// shared streamSSE helper, which sends no body.
+	mux.Handle("GET /api/search/answer", s.requireAuth(http.HandlerFunc(s.handleAnswer)))
 	mux.Handle("POST /api/videos/{id}/reprocess", s.requireAuth(http.HandlerFunc(s.handleReprocess)))
 	if s.static != nil {
 		// More specific than the SPA catch-all, so the share page (and only it)

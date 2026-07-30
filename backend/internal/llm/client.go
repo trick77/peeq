@@ -271,6 +271,18 @@ func usageFrom(raw json.RawMessage) chatUsage {
 // It streams internally but returns whole, so every Completer implementation
 // and every caller in summarize is unaffected.
 func (c *Client) Complete(ctx context.Context, messages []Message) (string, error) {
+	return c.CompleteStream(ctx, messages, nil)
+}
+
+// CompleteStream is Complete with a callback invoked for every content
+// fragment as it arrives, for callers relaying the answer to a browser rather
+// than waiting for it. onDelta runs on the reader goroutine, so it must not
+// block; the returned string is still the whole answer, so a caller that
+// streams and a caller that buffers see exactly the same text.
+//
+// Every bound, counter and log line is shared with Complete — there is one
+// request path, not two.
+func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta func(string)) (string, error) {
 	info := CallFrom(ctx)
 	pacedFor, err := c.pace(ctx)
 	if err != nil {
@@ -348,7 +360,7 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 	// arrival. Every event re-arms this inside readStream.
 	guard.arm(c.idle, stallIdle)
 
-	res, err := readStream(resp.Body, guard, &counters, c.idle)
+	res, err := readStream(resp.Body, guard, &counters, c.idle, onDelta)
 	if err != nil {
 		return fail(fmt.Errorf("chat stream: %w", c.explain(ctx, callCtx, guard, err)))
 	}
