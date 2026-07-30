@@ -12,7 +12,17 @@ import { Icon } from "../icons";
 // only while there is more to scroll that way, so a row that fits shows no
 // chrome at all. The scroll position drives the `l`/`r` classes the CSS uses
 // for the chevrons and the edge fades (see .pillstrip in index.css).
-export function PillStrip({ children }: { children: ReactNode }) {
+//
+// `lead` is for a page where this row is the page's first chip row rather than
+// a refinement of a status row above it (the Inbox): it drops the negative top
+// margin the wrapper otherwise uses to tuck under those status chips.
+export function PillStrip({
+  children,
+  lead,
+}: {
+  children: ReactNode;
+  lead?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ left: false, right: false });
 
@@ -58,7 +68,7 @@ export function PillStrip({ children }: { children: ReactNode }) {
 
   return (
     <div
-      className={`pillstrip${edges.left ? " l" : ""}${edges.right ? " r" : ""}`}
+      className={`pillstrip${lead ? " lead" : ""}${edges.left ? " l" : ""}${edges.right ? " r" : ""}`}
     >
       {edges.left && (
         <button

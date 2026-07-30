@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PillStrip } from "../components/PillStrip";
 import { SearchField } from "../components/SearchField";
 import { ThumbFill } from "../components/ThumbFill";
 import { Icon } from "../icons";
@@ -169,8 +170,13 @@ export function Inbox({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The distinct channels present, in first-seen order, so the chips are
-  // stable and don't reshuffle as the grid drains.
+  // The distinct channels present, sorted by name. The Library's category row
+  // is the master here: its chips sit in a fixed order that does not depend on
+  // what the grid happens to hold, so a chip stays where the eye last left it.
+  // First-seen order gave the Inbox the opposite — the row reshuffled as items
+  // downloaded or were ignored. Channels have no enum to order by, so the name
+  // is the fixed order: alphabetical, case- and accent-insensitive, with
+  // `numeric` so a "Channel 10" sorts after "Channel 9".
   const channels = useMemo(() => {
     const seen = new Map<string, string>();
     for (const it of items) {
@@ -178,7 +184,18 @@ export function Inbox({
         seen.set(it.channel_id, it.channel_name || it.channel_id);
       }
     }
-    return Array.from(seen, ([id, name]) => ({ id, name }));
+    return Array.from(seen, ([id, name]) => ({ id, name })).sort(
+      (a, b) =>
+        a.name.localeCompare(b.name, undefined, {
+          sensitivity: "base",
+          numeric: true,
+        }) ||
+        // Two channels can share a display name, and without a tiebreak they
+        // fall back to Array.sort's stability — first-seen order, the very
+        // thing this sort exists to get rid of. The id is the final tiebreak
+        // here as it is in compareBy above.
+        a.id.localeCompare(b.id),
+    );
   }, [items]);
 
   // The search-scoped list the channel chips count from: items narrowed by the
@@ -376,40 +393,45 @@ export function Inbox({
             </select>
           </div>
           {channels.length > 0 ? (
-            <div className="catchips lead">
-              <button
-                type="button"
-                className={`catchip${channel === "all" ? " on" : ""}`}
-                onClick={() => setChannel("all")}
-              >
-                All channels <span className="n">{searchScoped.length}</span>
-              </button>
-              {/* Counts are search-scoped so a chip reads how many you'd see if
+            <PillStrip lead>
+              <div className="catchips">
+                <button
+                  type="button"
+                  className={`catchip${channel === "all" ? " on" : ""}`}
+                  onClick={() => setChannel("all")}
+                >
+                  All channels <span className="n">{searchScoped.length}</span>
+                </button>
+                {/* Counts are search-scoped so a chip reads how many you'd see if
                   you clicked it under the current query, like the Library. A
                   chip whose channel has no match under the search drops off the
                   row — except the selected one, which stays (at count 0) so you
                   can always un-select it, mirroring the Library's category
                   chips. */}
-              {channels
-                .filter(
-                  (c) =>
-                    c.id === channel ||
-                    searchScoped.some((i) => i.channel_id === c.id),
-                )
-                .map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className={`catchip${channel === c.id ? " on" : ""}`}
-                    onClick={() => setChannel(c.id)}
-                  >
-                    {c.name}{" "}
-                    <span className="n">
-                      {searchScoped.filter((i) => i.channel_id === c.id).length}
-                    </span>
-                  </button>
-                ))}
-            </div>
+                {channels
+                  .filter(
+                    (c) =>
+                      c.id === channel ||
+                      searchScoped.some((i) => i.channel_id === c.id),
+                  )
+                  .map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className={`catchip${channel === c.id ? " on" : ""}`}
+                      onClick={() => setChannel(c.id)}
+                    >
+                      {c.name}{" "}
+                      <span className="n">
+                        {
+                          searchScoped.filter((i) => i.channel_id === c.id)
+                            .length
+                        }
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </PillStrip>
           ) : null}
         </>
       ) : null}
