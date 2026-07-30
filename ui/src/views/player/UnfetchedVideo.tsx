@@ -203,13 +203,6 @@ export function UnfetchedVideo({
                   Ignore
                 </Button>
               </div>
-              {/* Worth saying plainly, because the opposite is the intuitive
-                assumption: downloading does not start the analysis over. The
-                summary below is the one the library keeps. */}
-              <p className="unfetched-note">
-                Downloading keeps this summary — it won&rsquo;t be written
-                again.
-              </p>
             </>
           )}
           {error ? <div className="errline">{error}</div> : null}

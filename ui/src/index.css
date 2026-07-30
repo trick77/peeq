@@ -5292,15 +5292,11 @@ details.tomb-sect[open] > summary svg {
   margin-top: 14px;
 }
 /* Both margins written out. A bare margin-top would leave the user-agent's
-   bottom margin on the <p> in place, and the note would float between the
+   bottom margin on the <p> in place, and the line would float between the
    buttons above it and the rule below rather than belonging to either. */
-.unfetched-note,
 .unfetched-decided {
   margin: 10px 0 0;
   font-size: var(--text-label);
-  color: var(--color-faint);
-}
-.unfetched-decided {
   color: var(--color-accent-strong);
 }
 
