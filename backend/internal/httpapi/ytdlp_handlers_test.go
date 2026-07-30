@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/trick77/peeq/internal/activity"
 )
 
 // fakeYTDLPVersioner is a YTDLPVersioner double so tests never shell out to
@@ -130,6 +132,30 @@ func TestYTDLPVersion_checkFailed_reportsErrorAndKeepsLatest(t *testing.T) {
 	}
 }
 
+// TestYTDLPVersion_versionUnreadable_stillReportsLatest covers a missing or
+// broken yt-dlp binary. Failing the whole response there would take the
+// release check's answer down with it, and both callers swallow the error —
+// so the Settings note would sit on "Checking for newer releases." forever,
+// which is the exact silent failure this endpoint exists to surface. The
+// empty version must also not read as "behind".
+func TestYTDLPVersion_versionUnreadable_stillReportsLatest(t *testing.T) {
+	got := getYTDLPVersion(t, &fakeYTDLPVersioner{
+		versionErr: errors.New("no such file"),
+		latest:     "2026.08.15",
+		checkedAt:  time.Date(2026, 7, 30, 8, 0, 0, 0, time.UTC),
+	})
+
+	if got.Version != "" {
+		t.Fatalf("version = %q, want empty for an unreadable binary", got.Version)
+	}
+	if got.Latest != "2026.08.15" {
+		t.Fatalf("an unreadable binary took the release answer with it: %+v", got)
+	}
+	if got.UpdateAvailable {
+		t.Fatalf("update_available = true with nothing installed: %+v", got)
+	}
+}
+
 // TestYTDLPVersion_unconfigured_returns503 covers the fail-safe default: no
 // YTDLPVersioner wired means the endpoint reports unavailable rather than
 // panicking on a nil dereference.
@@ -140,6 +166,74 @@ func TestYTDLPVersion_unconfigured_returns503(t *testing.T) {
 	rec := doReq(t, h, cookie, http.MethodGet, "/api/ytdlp/version", nil)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /api/ytdlp/version (unconfigured) status = %d, want 503, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// recordingActivity is a capturing ActivityWriter.
+type recordingActivity struct{ events []activity.Event }
+
+func (r *recordingActivity) Record(e activity.Event) { r.events = append(r.events, e) }
+
+// postYTDLPUpdate wires the doubles, presses Update, and returns what the
+// handler recorded.
+func postYTDLPUpdate(t *testing.T, f *fakeYTDLPVersioner) *recordingActivity {
+	t.Helper()
+	rec := &recordingActivity{}
+	deps := testDeps(t)
+	deps.YTDLP = f
+	deps.ActivityWrite = rec
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	res := doReq(t, h, cookie, http.MethodPost, "/api/ytdlp/update", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("POST /api/ytdlp/update status = %d, body = %s", res.Code, res.Body.String())
+	}
+	return rec
+}
+
+// TestYTDLPUpdate_versionChanged_recordsTheInstall covers the receipt for the
+// event this whole feature is built around: the extractor every download
+// depends on just changed. The ticker used to write this row because a timer
+// performed the install; now that a button does, the handler owes it, or the
+// change is nowhere durable and a later behaviour shift cannot be dated.
+func TestYTDLPUpdate_versionChanged_recordsTheInstall(t *testing.T) {
+	rec := postYTDLPUpdate(t, &fakeYTDLPVersioner{version: "2026.07.01", updated: "2026.08.15"})
+
+	if len(rec.events) != 1 {
+		t.Fatalf("recorded %d events, want exactly 1: %+v", len(rec.events), rec.events)
+	}
+	got := rec.events[0]
+	if got.Kind != activity.KindYtdlp || got.Outcome != activity.OutcomeOK {
+		t.Fatalf("event = %s/%s, want %s/%s", got.Kind, got.Outcome, activity.KindYtdlp, activity.OutcomeOK)
+	}
+	if got.Summary != "Updated to 2026.08.15" {
+		t.Fatalf("summary = %q, want %q", got.Summary, "Updated to 2026.08.15")
+	}
+}
+
+// The silence rule: a press that reinstalls the same version moved nothing, so
+// a user who taps Update repeatedly must not fill the agenda with it.
+func TestYTDLPUpdate_versionUnchanged_recordsNothing(t *testing.T) {
+	rec := postYTDLPUpdate(t, &fakeYTDLPVersioner{version: "2026.08.15", updated: "2026.08.15"})
+
+	if len(rec.events) != 0 {
+		t.Fatalf("a no-op update recorded %d events, want 0: %+v", len(rec.events), rec.events)
+	}
+}
+
+// A first install onto a deployment with no working binary has no previous
+// version to name, and "Updated to X" would be a lie about what happened.
+func TestYTDLPUpdate_firstInstall_saysInstalled(t *testing.T) {
+	rec := postYTDLPUpdate(t, &fakeYTDLPVersioner{
+		versionErr: errors.New("no such file"), updated: "2026.08.15",
+	})
+
+	if len(rec.events) != 1 {
+		t.Fatalf("recorded %d events, want exactly 1: %+v", len(rec.events), rec.events)
+	}
+	if got := rec.events[0].Summary; got != "Installed 2026.08.15" {
+		t.Fatalf("summary = %q, want %q", got, "Installed 2026.08.15")
 	}
 }
 

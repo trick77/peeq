@@ -64,9 +64,13 @@ function ytdlpCheckNote(v: YtdlpVersion | null): string {
     // The error string itself is a Go network/HTTP error — accurate but not
     // useful here. What the reader needs is that the answer beside it has
     // stopped refreshing, and how stale it therefore is.
-    const known = v.latest ? ` Last known release ${v.latest}` : "";
+    // The trailing full stop rides on `known`, not on the base sentence: a
+    // check that has never once succeeded — the first-boot failure — has no
+    // last-known release and no timestamp, and would otherwise render with a
+    // doubled period.
     const when = v.checked_at ? `, seen ${formatAgo(v.checked_at)}` : "";
-    return `Couldn't reach GitHub to check for newer releases.${known}${when}.`;
+    const known = v.latest ? ` Last known release ${v.latest}${when}.` : "";
+    return `Couldn't reach GitHub to check for newer releases.${known}`;
   }
   if (!v.latest) return "Checking for newer releases.";
   if (v.update_available) {
@@ -292,11 +296,15 @@ export function Settings() {
       // next scheduled check, or the page would keep offering an update it just
       // performed. `latest` is left alone: it is still the newest release, and
       // the note below reads correctly against the new version.
-      setYtdlp((prev) =>
-        prev
-          ? { ...prev, version: res.version, update_available: false }
-          : prev,
-      );
+      // Falling back to a bare report rather than keeping null: the version
+      // fetch failing is precisely when a user presses Update, and dropping
+      // the result would leave the display reading "unknown" straight after a
+      // successful install.
+      setYtdlp((prev) => ({
+        ...prev,
+        version: res.version,
+        update_available: false,
+      }));
       if (res.updated && res.previous_version) {
         setYtdlpNote(`Updated ${res.previous_version} → ${res.version}.`);
       } else if (res.updated) {
@@ -680,7 +688,7 @@ export function Settings() {
             <span className="lab">yt-dlp version</span>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span className="mono" style={t.label}>
-                {ytdlp?.version ?? "unknown"}
+                {ytdlp?.version || "unknown"}
               </span>
               <Button
                 type="button"

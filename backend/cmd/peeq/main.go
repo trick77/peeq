@@ -506,9 +506,10 @@ func run() error {
 		Embedder:          embedClient,
 		SearchMaxDistance: cfg.SearchMaxDistance,
 
-		SummaryJobs: summaryJobsStore,
-		SummaryList: summaryJobsStore,
-		Activity:    activityStore,
+		SummaryJobs:   summaryJobsStore,
+		SummaryList:   summaryJobsStore,
+		Activity:      activityStore,
+		ActivityWrite: activityStore,
 
 		AllowAnonymous: cfg.AllowAnonymousYoutube,
 	}
@@ -610,13 +611,19 @@ func runYtdlpVersionCheckTicker(
 	// release is newly discovered (the silence rule): most checks find the same
 	// version, and a "new yt-dlp release" row every few hours would be noise.
 	//
-	// The boot check seeds this WITHOUT recording, which is why announced is
-	// assigned on the boot path below. Nothing here is persisted, so a restart
-	// re-discovers whatever is pending — and a user who leaves an update
-	// unapplied for a week while restarting daily would otherwise collect one
-	// identical row per boot. The rail indicator and the Settings note are what
-	// carry a standing pending update; Activity logs the discovery.
+	// The FIRST check to complete seeds this WITHOUT recording. Nothing here is
+	// persisted, so a restart re-discovers whatever is pending — and a user who
+	// leaves an update unapplied for a week while restarting daily would
+	// otherwise collect one identical row per boot. The rail indicator and the
+	// Settings note are what carry a standing pending update; Activity logs the
+	// discovery.
+	//
+	// Seeding hangs off the first check that actually reached GitHub, not off
+	// the boot check specifically: a boot check during a GitHub outage learns
+	// nothing, so the tick that finally answers is still the first sighting and
+	// must seed rather than announce a release that predates the process.
 	var announced string
+	var checked bool
 
 	check := func(boot bool) {
 		installed, err := ytdlp.Version(ctx, resolveYtdlpBin(dir))
@@ -641,6 +648,10 @@ func runYtdlpVersionCheckTicker(
 			return
 		}
 		status.SetChecked(installed, latest, time.Now())
+		// firstSighting is read before `checked` flips, so it describes this
+		// check: true only while no earlier check has ever seen a release list.
+		firstSighting := !checked
+		checked = true
 
 		got := status.Get()
 		if boot {
@@ -654,11 +665,11 @@ func runYtdlpVersionCheckTicker(
 		if latest == announced {
 			return
 		}
-		// Seed on boot rather than record. See announced's declaration: an
-		// update that was already pending before this process started is not
-		// news, and logging it again on every restart is exactly the noise the
-		// silence rule exists to keep out of the agenda.
-		if !boot && rec != nil {
+		// Seed on the first sighting rather than record. See announced's
+		// declaration: an update that was already pending before this process
+		// started is not news, and logging it again on every restart is exactly
+		// the noise the silence rule exists to keep out of the agenda.
+		if !firstSighting && rec != nil {
 			rec.Record(activity.Event{
 				Kind: activity.KindYtdlp, Outcome: activity.OutcomeWarn,
 				Summary: "yt-dlp " + latest + " available",

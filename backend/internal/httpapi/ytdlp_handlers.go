@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/trick77/peeq/internal/activity"
 )
 
 // ytdlpVersionResponse is the response shape for the version check: what is
@@ -49,10 +51,18 @@ func (s *server) handleYTDLPVersion(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "yt-dlp version check not configured")
 		return
 	}
+	// An unreadable binary is reported as an empty version, not as a 500. A
+	// broken or missing yt-dlp is exactly when knowing what upstream publishes
+	// matters most, and failing the whole response would take the release
+	// check's answer down with it — leaving the Settings note stuck on
+	// "Checking for newer releases." forever, which is the silent failure this
+	// endpoint exists to surface. An empty version also keeps
+	// UpdateAvailable false below, so the rail stays quiet rather than nudging
+	// an update at a deployment that has nothing installed to update.
 	v, err := s.ytdlp.Version(r.Context())
 	if err != nil {
-		serverError(w, r, err, "failed to read yt-dlp version")
-		return
+		slog.Warn("yt-dlp version unreadable; reporting an empty version", "err", err)
+		v = ""
 	}
 	latest, checkedAt, checkErr := s.ytdlp.Latest(r.Context())
 	resp := ytdlpVersionResponse{
@@ -98,9 +108,31 @@ func (s *server) handleYTDLPUpdate(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "failed to update yt-dlp")
 		return
 	}
+	updated := previous == "" || previous != v
+	// Record the install that actually moved the binary. This is the event the
+	// whole version check exists around: the extractor every download depends
+	// on just changed, and Activity is the only durable place a later "why did
+	// downloads start behaving differently?" can be answered against a date —
+	// the note beside the button is gone on the next navigation.
+	//
+	// A timer used to write this row; moving the trigger to a button is what
+	// dropped it, not a decision that the event stopped mattering. The silence
+	// rule still holds: a press that reinstalls the same version moved nothing
+	// and records nothing. See the activity package doc for why this one
+	// user-triggered event belongs in the log.
+	if updated && s.activityWrite != nil {
+		summary := "Updated to " + v
+		if previous == "" {
+			summary = "Installed " + v
+		}
+		s.activityWrite.Record(activity.Event{
+			Kind: activity.KindYtdlp, Outcome: activity.OutcomeOK,
+			Summary: summary,
+		})
+	}
 	writeJSON(w, ytdlpUpdateResponse{
 		Version:         v,
 		PreviousVersion: previous,
-		Updated:         previous == "" || previous != v,
+		Updated:         updated,
 	})
 }

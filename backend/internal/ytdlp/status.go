@@ -85,10 +85,15 @@ func (c *StatusCache) SetCheckErr(installed, msg string) {
 	c.status.CheckErr = msg
 }
 
-// SetInstalled records the version now on disk without touching anything
-// the release check owns. It is what a manual update calls so the
-// "update available" signal clears the moment the new binary lands,
-// instead of lingering until the next scheduled check.
+// SetInstalled records the version now on disk without touching anything the
+// release check owns. A manual update calls it so the cache does not go on
+// describing a binary that has been replaced.
+//
+// It is NOT what clears the update indicator: the version endpoint reads the
+// installed version live on every request, and the ticker re-reads it on every
+// tick, so both would report the new binary with or without this. Keeping
+// Installed truthful is the point — a stale value here would be wrong for any
+// future reader of Status, and UpdateAvailable is computed from it.
 func (c *StatusCache) SetInstalled(installed string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -135,6 +135,9 @@ type Deps struct {
 	// when nil, that endpoint returns 503. The /api/activity/upcoming projection
 	// is built from Channels/Jobs/SummaryList and needs no separate dependency.
 	Activity ActivityReader
+	// ActivityWrite records the yt-dlp install the Update button performs.
+	// Optional: when nil the update still runs, unrecorded.
+	ActivityWrite ActivityWriter
 
 	// AllowAnonymous mirrors the dev-only "reach YouTube without a cookie" flag
 	// that the scan loop and the yt-dlp runner already honour. The scan endpoint
@@ -228,6 +231,7 @@ type server struct {
 	summaryJobs       SummaryEnqueuer
 	summaryList       SummaryLister
 	activity          ActivityReader
+	activityWrite     ActivityWriter
 
 	allowAnonymous bool
 
@@ -272,6 +276,7 @@ func New(d Deps) http.Handler {
 		summaryJobs:       d.SummaryJobs,
 		summaryList:       d.SummaryList,
 		activity:          d.Activity,
+		activityWrite:     d.ActivityWrite,
 
 		allowAnonymous: d.AllowAnonymous,
 

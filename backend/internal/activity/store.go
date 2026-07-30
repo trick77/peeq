@@ -5,6 +5,14 @@
 // pass (a sweep that reclaimed nothing, a self-update that changed nothing)
 // records nothing at all: the "silence rule" that keeps the agenda from filling
 // with "nothing happened".
+//
+// The one deliberate exception is a yt-dlp install (KindYtdlp): it is recorded
+// whoever triggered it. The rule above is about keeping UI actions out of the
+// agenda, and an install is not a UI action — it is a change to the binary
+// every download depends on, and the log is the only place a later "why did
+// downloads start behaving differently?" can be answered. It used to be
+// recorded because a timer performed it; moving the trigger to a button did
+// not make the event less worth keeping.
 package activity
 
 import (
