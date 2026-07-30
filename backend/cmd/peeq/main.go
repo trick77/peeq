@@ -606,9 +606,16 @@ func runYtdlpVersionCheckTicker(
 	status *ytdlp.StatusCache,
 	rec *activity.Store,
 ) {
-	// Track the release last reported so the Activity record fires only on a
-	// real change (the silence rule): most checks find the same version, and a
-	// "new yt-dlp release" row every few hours would be pure noise.
+	// Track the release last reported so the Activity record fires only when a
+	// release is newly discovered (the silence rule): most checks find the same
+	// version, and a "new yt-dlp release" row every few hours would be noise.
+	//
+	// The boot check seeds this WITHOUT recording, which is why announced is
+	// assigned on the boot path below. Nothing here is persisted, so a restart
+	// re-discovers whatever is pending — and a user who leaves an update
+	// unapplied for a week while restarting daily would otherwise collect one
+	// identical row per boot. The rail indicator and the Settings note are what
+	// carry a standing pending update; Activity logs the discovery.
 	var announced string
 
 	check := func(boot bool) {
@@ -644,16 +651,21 @@ func runYtdlpVersionCheckTicker(
 			return
 		}
 		slog.Info("yt-dlp update available", "version", installed, "latest", latest)
-		if latest != announced {
-			if rec != nil {
-				rec.Record(activity.Event{
-					Kind: activity.KindYtdlp, Outcome: activity.OutcomeWarn,
-					Summary: "yt-dlp " + latest + " available",
-					Detail:  "Installed " + installed + ". Update from Settings.",
-				})
-			}
-			announced = latest
+		if latest == announced {
+			return
 		}
+		// Seed on boot rather than record. See announced's declaration: an
+		// update that was already pending before this process started is not
+		// news, and logging it again on every restart is exactly the noise the
+		// silence rule exists to keep out of the agenda.
+		if !boot && rec != nil {
+			rec.Record(activity.Event{
+				Kind: activity.KindYtdlp, Outcome: activity.OutcomeWarn,
+				Summary: "yt-dlp " + latest + " available",
+				Detail:  "Installed " + installed + ". Update from Settings.",
+			})
+		}
+		announced = latest
 	}
 
 	check(true)

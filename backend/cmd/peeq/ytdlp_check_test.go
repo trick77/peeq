@@ -2,16 +2,35 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/trick77/peeq/internal/activity"
+	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
+
+// openTestDB opens a migrated scratch database, so the Activity assertions run
+// against the real CHECK constraints rather than a double.
+func openTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return db
+}
 
 // fakeYtdlpBin installs an executable in dir that reports version when run
 // with --version, so the check ticker's "what is installed?" half has a real
@@ -142,6 +161,109 @@ func TestYtdlpVersionCheck_fetchFails_keepsLastKnownRelease(t *testing.T) {
 	}
 	if !got.CheckedAt.Equal(checked) {
 		t.Fatalf("a failed check restamped CheckedAt to %v, want the last SUCCESSFUL check %v", got.CheckedAt, checked)
+	}
+}
+
+// runCheckTicks runs the ticker with a tiny interval so ticks (not just the
+// boot check) fire, and returns once fetch has been called wantCalls times.
+func runCheckTicks(t *testing.T, dir string, cache *ytdlp.StatusCache, rec *activity.Store, wantCalls int, fetch func(context.Context) (string, error)) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var calls atomic.Int32
+	enough := make(chan struct{})
+	var once sync.Once
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runYtdlpVersionCheckTicker(ctx, dir, time.Millisecond, func(c context.Context) (string, error) {
+			v, err := fetch(c)
+			if int(calls.Add(1)) >= wantCalls {
+				once.Do(func() { close(enough) })
+			}
+			return v, err
+		}, cache, rec)
+	}()
+
+	select {
+	case <-enough:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("release check ran %d times, want %d", calls.Load(), wantCalls)
+	}
+	cancel()
+	<-done
+}
+
+// TestYtdlpVersionCheck_recordsActivityOnce is the only test that exercises the
+// Activity write with a REAL store. activity.Record swallows every error at
+// ERROR level by design, and the kind/outcome pair is enforced by a CHECK in
+// 0007_activity.sql, so a wrong pair would fail silently and forever — a fake
+// recorder would never notice.
+//
+// It also pins the silence rule twice over: the row lands once no matter how
+// many checks find the same release, and a release already pending at boot is
+// seeded rather than announced, so restarting daily with an update outstanding
+// does not deposit one identical row per boot.
+func TestYtdlpVersionCheck_recordsActivityOnce(t *testing.T) {
+	db := openTestDB(t)
+	rec := activity.New(db)
+	dir := fakeYtdlpBin(t, "2026.07.01")
+	cache := ytdlp.NewStatusCache()
+
+	// Several checks, all finding the same newer release: boot seeds it, and
+	// every tick after that sees nothing new.
+	runCheckTicks(t, dir, cache, rec, 4, func(context.Context) (string, error) {
+		return "2026.08.15", nil
+	})
+
+	page, err := rec.Recent(0, 40, "")
+	if err != nil {
+		t.Fatalf("read activity: %v", err)
+	}
+	if len(page.Events) != 0 {
+		t.Fatalf("a release pending since boot logged %d rows, want 0: %+v", len(page.Events), page.Events)
+	}
+
+	// A second ticker over the same still-pending release is a RESTART. This is
+	// the case that used to deposit a fresh row every boot.
+	runCheckTicks(t, dir, cache, rec, 4, func(context.Context) (string, error) {
+		return "2026.08.15", nil
+	})
+	page, err = rec.Recent(0, 40, "")
+	if err != nil {
+		t.Fatalf("read activity: %v", err)
+	}
+	if len(page.Events) != 0 {
+		t.Fatalf("restarting with the same update pending logged %d rows, want 0: %+v", len(page.Events), page.Events)
+	}
+
+	// A release that appears WHILE the process runs is news. One ticker, whose
+	// answer changes after the boot check — spawning a second ticker instead
+	// would just be another restart, and would seed rather than announce.
+	var calls atomic.Int32
+	runCheckTicks(t, dir, cache, rec, 5, func(context.Context) (string, error) {
+		if calls.Add(1) == 1 {
+			return "2026.08.15", nil
+		}
+		return "2026.09.20", nil
+	})
+
+	page, err = rec.Recent(0, 40, "")
+	if err != nil {
+		t.Fatalf("read activity: %v", err)
+	}
+	// One row, not zero: a zero here would mean the CHECK rejected the
+	// kind/outcome pair and Record swallowed it.
+	if len(page.Events) != 1 {
+		t.Fatalf("newly discovered release logged %d rows, want exactly 1: %+v", len(page.Events), page.Events)
+	}
+	got := page.Events[0]
+	if got.Kind != activity.KindYtdlp || got.Outcome != activity.OutcomeWarn {
+		t.Fatalf("event = %s/%s, want %s/%s", got.Kind, got.Outcome, activity.KindYtdlp, activity.OutcomeWarn)
+	}
+	if !strings.Contains(got.Summary, "2026.09.20") {
+		t.Fatalf("summary = %q, want it to name the new release", got.Summary)
 	}
 }
 
