@@ -732,6 +732,7 @@ func TestDownloadsPost_doesNotAddChannel(t *testing.T) {
 // can be passed directly to the getJSON/postJSON request helpers.
 type pendingTestHarness struct {
 	http.Handler
+	db       *sql.DB
 	channels *channels.Store
 	ledger   *channelvideos.Store
 	videos   *videos.Store
@@ -780,6 +781,7 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 	}
 	return &pendingTestHarness{
 		Handler:  New(deps),
+		db:       db,
 		channels: channelsStore,
 		ledger:   ledgerStore,
 		videos:   videosStore,
@@ -1124,6 +1126,40 @@ func TestChannelsDelete_cancelsAndCascades(t *testing.T) {
 	}
 	if _, err := os.Stat(mediaFile); !os.IsNotExist(err) {
 		t.Fatalf("media file still on disk after delete: stat err = %v, want not-exist", err)
+	}
+}
+
+// Approving a pending video records the channel name on the videos row it
+// creates. The ledger entry does not carry one — Ledger.Get runs no channels
+// join, unlike the ListPending queries — so the handler looks it up.
+//
+// Asserted against videos.channel_name directly: the read path COALESCEs that
+// column against channels.name, so a test going through videos.Get would pass
+// even if nothing were written.
+func TestPendingDownload_recordsChannelName(t *testing.T) {
+	h := newPendingTestServer(t)
+	// A name distinct from the id, so the assertion cannot pass by falling
+	// through to the channel_id.
+	if err := h.channels.Upsert(channels.Channel{ID: "UC1", Name: "Veritasium"}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "p1", ChannelID: "UC1", Title: "A",
+		URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending",
+	}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+
+	if rr := postJSON(t, h, "/api/pending/p1/download", nil); rr.Code != http.StatusOK {
+		t.Fatalf("download status = %d", rr.Code)
+	}
+
+	var raw string
+	if err := h.db.QueryRow(`SELECT channel_name FROM videos WHERE id = 'p1'`).Scan(&raw); err != nil {
+		t.Fatalf("read raw channel_name: %v", err)
+	}
+	if raw != "Veritasium" {
+		t.Fatalf("videos.channel_name = %q, want %q recorded at approve time", raw, "Veritasium")
 	}
 }
 

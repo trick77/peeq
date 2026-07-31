@@ -758,6 +758,44 @@ func TestScan_autodownloadEnqueueFailure_notMaskedByLedger(t *testing.T) {
 	}
 }
 
+// enqueueAuto records the channel name on the video row it creates. The name
+// costs nothing — the added_at guard immediately above already fetched the
+// channel — and without it the raw column stayed empty for every
+// scan-discovered video, leaving the display name wholly dependent on the
+// read-side join.
+//
+// Asserted against videos.channel_name directly: Get COALESCEs that column
+// against channels.name, and the channel row here HAS a name, so a test
+// reading through Get would pass whether or not the write happened.
+func TestScan_autodownload_recordsChannelName(t *testing.T) {
+	h := newScanHarness(t)
+	h.addAndSubscribe("UC1", true /*autodownload*/, "")
+	// A name distinct from the id, so the assertion cannot pass by falling
+	// through to the channel_id.
+	if err := h.channels.Upsert(channels.Channel{ID: "UC1", Name: "Kurzgesagt"}); err != nil {
+		t.Fatalf("name UC1: %v", err)
+	}
+	h.markBaselined("UC1", nil)
+	h.lister.set("UC1", []ytdlp.ChannelEntry{
+		{ID: "newv", Title: "N", URL: "https://www.youtube.com/watch?v=newv", DurationSeconds: 600, LiveStatus: "not_live"},
+	})
+	sub, _ := h.channels.ClaimDue(h.nowStr())
+	if sub == nil {
+		t.Fatal("expected a due subscription")
+	}
+	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw string
+	if err := h.db.QueryRow(`SELECT channel_name FROM videos WHERE id = 'newv'`).Scan(&raw); err != nil {
+		t.Fatalf("read raw channel_name: %v", err)
+	}
+	if raw != "Kurzgesagt" {
+		t.Fatalf("videos.channel_name = %q, want %q written at scan time", raw, "Kurzgesagt")
+	}
+}
+
 // TestScan_autodownload_notEnqueued_whenChannelNotAdded proves enqueueAuto's
 // guard checks added_at, not mere row presence. channels is a metadata
 // cache: maybeResolveChannel can re-create a cache-only row (added_at

@@ -132,6 +132,15 @@ func New(db *sql.DB) *Store {
 // (e.g. an initial channel scan seeding both metadata and the override in
 // one Upsert); it is simply excluded from the ON CONFLICT UPDATE SET.
 //
+// channel_name belongs to the same family as the two below and was the one
+// member missing its guard, which made a metadata-poor caller an eraser rather
+// than merely a no-op. Only the download worker's metadata preflight has a name
+// to offer, and it runs solely for a row with an empty title — the add-by-URL
+// path. The scan scheduler and the approve-from-inbox handler now look one up;
+// the inbox caption fetcher still has none to give. So a pasted video that a
+// channel scan later re-saw (revive, or a fresh listing entry) had its real
+// channel name replaced by the empty string.
+//
 // published_at and description are refreshed but never CLEARED: several callers
 // legitimately have no date or description to offer (scan's enqueueAuto seeds
 // from a metadata-poor flat listing; the approve-from-inbox path passes
@@ -157,7 +166,7 @@ ON CONFLICT(id) DO UPDATE SET
 	url             = excluded.url,
 	title           = excluded.title,
 	channel_id      = excluded.channel_id,
-	channel_name    = excluded.channel_name,
+	channel_name    = COALESCE(NULLIF(excluded.channel_name, ''), videos.channel_name),
 	duration_seconds = excluded.duration_seconds,
 	published_at    = COALESCE(excluded.published_at, videos.published_at),
 	description     = COALESCE(NULLIF(excluded.description, ''), videos.description),
@@ -176,18 +185,24 @@ ON CONFLICT(id) DO UPDATE SET
 // Columns are qualified "v." because these queries LEFT JOIN the channels
 // table (aliased "ch") to resolve the display channel name — see below.
 //
-// channel_name is coalesced, not read raw: a video discovered through a
-// channel scan or subscription never gets its own videos.channel_name written
-// (only manual-URL paste and TA-import do), so the raw column is empty for
-// those rows and the UI would fall back to showing the bare UCxxxx id. The
-// LEFT JOIN pulls the resolved name from the channels metadata cache instead,
-// falling through to the id only when the channel itself is genuinely
-// unresolved (resolve_ok = 0, name still blank). NULLIF guards both an empty
-// videos.channel_name and an empty channels.name so neither shadows the next
-// fallback. This is a read-side fix: it repairs existing rows with no
-// migration. The write-side gap (populating videos.channel_name at scan/
-// pending upsert) is a separate follow-up for consumers that read the column
-// directly, e.g. search/export.
+// channel_name is coalesced, not read raw. The write side now populates it
+// wherever the name is actually known (Upsert's guard keeps it, the scheduler
+// and the approve-from-inbox handler pass it), but this stays for two reasons
+// that a write-side fix cannot reach: every row written before that fix still
+// has an empty column and there is no migration repairing them, and the inbox
+// caption fetcher genuinely has no name to offer at the point it creates a row.
+//
+// So the raw column can still be empty, and the UI would fall back to showing
+// the bare UCxxxx id. The LEFT JOIN pulls the resolved name from the channels
+// metadata cache instead, falling through to the id only when the channel
+// itself is genuinely unresolved (resolve_ok = 0, name still blank). NULLIF
+// guards both an empty videos.channel_name and an empty channels.name so
+// neither shadows the next fallback.
+//
+// Worth knowing before "simplifying" a test through this: reading a video back
+// with Get or List cannot observe what the raw column holds, because ch.name
+// stands in for it. A test that means to check the write side has to SELECT
+// videos.channel_name directly.
 const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name,
 	v.duration_seconds, v.published_at,

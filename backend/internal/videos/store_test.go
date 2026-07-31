@@ -891,6 +891,50 @@ func TestUpsert_neverClearsPublishedAtOrDescription(t *testing.T) {
 	}
 }
 
+// rawChannelName reads videos.channel_name directly. Get and List cannot be
+// used for this: videoColumns COALESCEs the column against channels.name, so a
+// write that blanked it still reads back correctly and the bug hides.
+func rawChannelName(t *testing.T, s *Store, id string) string {
+	t.Helper()
+	var name string
+	if err := s.db.QueryRow(`SELECT channel_name FROM videos WHERE id = ?`, id).Scan(&name); err != nil {
+		t.Fatalf("read raw channel_name: %v", err)
+	}
+	return name
+}
+
+// channel_name used to be the one metadata column in the ON CONFLICT block
+// without a NULLIF guard, which made a metadata-poor caller an eraser rather
+// than merely a no-op. Only the download worker's preflight has a name to
+// offer, and it runs only for the add-by-URL path; when a channel scan later
+// re-saw that video (revive, or a fresh listing entry) it upserted with no
+// name and wiped the real one.
+func TestUpsert_neverClearsChannelName(t *testing.T) {
+	// Given: a pasted video whose real channel name was written by the
+	// download worker's metadata preflight.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", URL: "u", Title: "T", ChannelID: "UC1", ChannelName: "Real Name"})
+
+	// When: a channel scan re-upserts the same id with no name to offer.
+	if err := s.Upsert(Video{ID: "v1", URL: "u", Title: "T", ChannelID: "UC1"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Then: the name survives in the column itself, not just via the join.
+	if got := rawChannelName(t, s, "v1"); got != "Real Name" {
+		t.Fatalf("channel_name = %q, want it preserved", got)
+	}
+
+	// And: never clearing must not become never writing — a caller that does
+	// have a name still updates it.
+	if err := s.Upsert(Video{ID: "v1", URL: "u", Title: "T", ChannelID: "UC1", ChannelName: "Renamed"}); err != nil {
+		t.Fatalf("upsert with a name: %v", err)
+	}
+	if got := rawChannelName(t, s, "v1"); got != "Renamed" {
+		t.Fatalf("channel_name = %q, want the new value", got)
+	}
+}
+
 // TestList_unknownSort_fallsBackToNewest asserts an unrecognized sort value
 // from a hand-edited URL yields the default order rather than a SQL error or
 // an injected ORDER BY clause.
