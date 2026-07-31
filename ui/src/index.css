@@ -3022,17 +3022,21 @@ button.sleeppick.armed {
   background: none;
   border-color: transparent;
 }
-/* min-width, not width: the column is sized for m:ss so that a card's stamps
-   line up, but a video past an hour formats as h:mm:ss and overflows a fixed
-   box — the stamp then ran straight into the title with none of the row's gap
-   left between them. A floor keeps the alignment for the common case and lets
-   the long ones push the title across instead. Same reason on every other
-   timestamp gutter below. */
+/* A fixed width, wide enough for the longest stamp there is: the gutter's whole
+   job is to start every title in the list on one left edge, and only a width
+   all the rows share can do that. It was 44px, which fits m:ss and let h:mm:ss
+   run into the title; a min-width stopped the collision but broke the alignment
+   instead, since a long stamp then pushed its own title across.
+
+   The numbers are measured, not guessed — "2:16:36" renders 52.7px at 12.5px in
+   the mono stack, 50.6px at 12px, 48.5px at 11.5px — so each gutter is its own
+   measurement plus a few px of slack, and they differ because the font sizes
+   do. Same reasoning on every other timestamp gutter below. */
 .toc .ts {
   color: var(--color-accent-strong);
   font-size: 12.5px;
   flex: none;
-  min-width: 44px;
+  width: 56px;
 }
 .toc .ttl {
   font-size: 13.5px;
@@ -3069,7 +3073,7 @@ button.sleeppick.armed {
   color: var(--color-kept);
   font-size: 12.5px;
   flex: none;
-  min-width: 44px;
+  width: 56px;
   padding-top: 1px;
 }
 .hl .txt {
@@ -3151,7 +3155,7 @@ button.sleeppick.armed {
   color: var(--color-muted);
   font-size: 11.5px;
   flex: none;
-  min-width: 40px;
+  width: 52px;
 }
 .transcript .line {
   font-size: 13px;
@@ -4225,7 +4229,7 @@ details.tomb-sect[open] > summary svg {
   color: var(--color-accent-strong);
   font-size: 12px;
   flex: none;
-  min-width: 46px;
+  width: 54px;
 }
 .match .badge {
   color: var(--color-accent-strong);
@@ -4418,7 +4422,7 @@ details.tomb-sect[open] > summary svg {
 }
 .srcrow .ts {
   flex: none;
-  min-width: 46px;
+  width: 54px;
   color: var(--color-accent-strong);
   font-size: 12px;
 }
