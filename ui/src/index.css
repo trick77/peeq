@@ -2966,8 +2966,22 @@ button.sleeppick.armed {
   flex-direction: column;
   gap: 1px;
 }
+/* Two columns read down, not across: chapters are a sequence, and someone
+   following one skims a column top to bottom the way they would a plain list.
+   Row-major put chapter 2 to the right of chapter 1, so the left column counted
+   1, 3, 5 and neither column read as an order.
+
+   Column-major needs the row count up front — grid-auto-flow: column fills the
+   explicit rows before opening a new column — and only the caller knows how
+   many chapters there are, so it passes ceil(n / 2) in --toc-rows. It arrives
+   as a custom property rather than an inline grid-template-rows so the narrow
+   layout below can still take it back; an inline style would outrank the media
+   query. Absent the property the grid falls back to one row, i.e. one item per
+   column, which is wrong but never happens — both call sites set it. */
 .toc.toc-grid {
   display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(var(--toc-rows, 1), auto);
   grid-template-columns: 1fr 1fr;
   /* The shorthand re-declares the row gap, so it has to track .toc above.
      Both the Player's Contents card and the share page's Chapters card use
@@ -2976,6 +2990,8 @@ button.sleeppick.armed {
 }
 @media (max-width: 620px) {
   .toc.toc-grid {
+    grid-auto-flow: row;
+    grid-template-rows: none;
     grid-template-columns: 1fr;
   }
 }

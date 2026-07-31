@@ -1,5 +1,6 @@
 import { Icon } from "../../icons";
 import { formatDuration } from "../../format";
+import { tocGridStyle } from "../../ui";
 import type { Video } from "../../api/types";
 
 // Chapters come from two places and the card says which: yt-dlp reads them off
@@ -60,7 +61,10 @@ export function ContentsCard({
         {video.chapters.length === 0 ? (
           <p className="placeholder">No chapters.</p>
         ) : (
-          <div className="toc toc-grid">
+          <div
+            className="toc toc-grid"
+            style={tocGridStyle(video.chapters.length)}
+          >
             {video.chapters.map((c, i) => {
               const body = (
                 <>
