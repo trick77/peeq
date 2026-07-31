@@ -892,30 +892,65 @@ describe("Inbox summaries", () => {
         auto_summary: true,
       }),
     ]);
-    render(<Inbox />);
+    render(<Inbox onOpen={vi.fn()} />);
 
     const card = async (title: string) =>
       (await screen.findByText(title)).closest("article") as HTMLElement;
 
+    // The read state is a button, not a label: the summary is the offer, and
+    // the marker is where it gets made.
     expect(
-      within(await card("Read already")).getByText("Summary"),
+      within(await card("Read already")).getByRole("button", {
+        name: "Read summary",
+      }),
     ).toBeTruthy();
+    // The pending one is not, because there is nothing to press yet.
     expect(
       within(await card("Still reading")).getByText("Summarizing…"),
     ).toBeTruthy();
+    expect(
+      within(await card("Still reading")).queryByRole("button", {
+        name: /summary/i,
+      }),
+    ).toBeNull();
     // A channel that opted out promises nothing, so the card says nothing.
     expect(
       within(await card("Channel opted out")).queryByText("Summarizing…"),
     ).toBeNull();
     expect(
-      within(await card("Channel opted out")).queryByText("Summary"),
+      within(await card("Channel opted out")).queryByText(/summary/i),
     ).toBeNull();
     // Neither does one whose captions turned out to be music: there is no
     // action behind it and no progress left to report.
     expect(
       within(await card("No speech")).queryByText("Summarizing…"),
     ).toBeNull();
-    expect(within(await card("No speech")).queryByText("Summary")).toBeNull();
+    expect(within(await card("No speech")).queryByText(/summary/i)).toBeNull();
+  });
+
+  it("opens the summary from the marker", async () => {
+    vi.mocked(listPending).mockResolvedValue([itemA]);
+    const onOpen = vi.fn();
+    render(<Inbox onOpen={onOpen} />);
+    await screen.findByText("First pending video");
+
+    await userEvent.click(screen.getByRole("button", { name: "Read summary" }));
+
+    expect(onOpen).toHaveBeenCalledWith("v1");
+    // Once, not twice: the card's own click handler has to stand down for a
+    // press that lands on a button inside it.
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  // A host that gives the card nowhere to go still gets the fact, as text —
+  // better than a button that does nothing when pressed.
+  it("falls back to a label when there is nothing to open", async () => {
+    vi.mocked(listPending).mockResolvedValue([itemA]);
+    render(<Inbox />);
+    await screen.findByText("First pending video");
+
+    expect(screen.getByText("Summary")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /summary/i })).toBeNull();
   });
 
   // A video the caption fetcher has not reached has no videos row, so its page
