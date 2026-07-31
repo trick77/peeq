@@ -5878,3 +5878,148 @@ details.tomb-sect[open] > summary svg {
   opacity: 0.4;
   cursor: default;
 }
+
+/* ── Sign in: the signed-out screen ──────────────────────────────────────
+   The whole viewport, no rail and no top bar. Cover art as ground, with the
+   sign-in itself on an opaque card.
+
+   The division of labour is the point: legibility comes from the card's own
+   --color-panel fill, never from the wash over the image. A scrim heavy enough
+   to hold text directly on this art mutes it to brown mud AND dims the sign-in
+   along with it — and the sign-in is the one thing on the screen that cannot be
+   dimmed, since it is the only thing to do here. The card takes that job, so
+   the wash only has to keep the art from competing, and stays light. */
+.signin {
+  position: relative;
+  /* dvh second: on iOS Safari the URL bar makes 100vh taller than the visible
+     area, which would push the card off-centre until the bar retracts. */
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: hidden;
+  /* If the cover 404s or is still loading, what shows through is the app's own
+     ground, not white. */
+  background-color: var(--color-bg);
+}
+.signin-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 62%, not centre: the art's dark end is on the left and its lit end on the
+     right, and this keeps both in frame either side of the card rather than
+     cropping to one of them. */
+  object-position: 62% 50%;
+}
+/* The wash is the parent's ::after, so it is generated AFTER the card and would
+   paint over it at z-index auto — veiling the lockup, the copy and the button
+   under a third of the background. The card's z-index below is what keeps the
+   wash on the image where it belongs. Do not remove it.
+
+   Two layers, both light. The radial seats the card by pulling the art down
+   right where it meets the panel edge; the flat one takes the overall level
+   down just enough that the brightest streaks stop competing. Neither is doing
+   any legibility work — that is the card's opaque fill — so both can stay weak
+   enough to leave the render looking like a render. */
+.signin::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      44% 58% at 50% 50%,
+      rgba(31, 31, 30, 0.68) 0%,
+      rgba(31, 31, 30, 0.36) 58%,
+      transparent 100%
+    ),
+    linear-gradient(
+      90deg,
+      rgba(31, 31, 30, 0.5) 0%,
+      rgba(31, 31, 30, 0.22) 50%,
+      rgba(31, 31, 30, 0.08) 100%
+    );
+}
+.signin-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 372px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-ui-lg);
+  padding: 30px;
+  box-shadow: var(--shadow-panel);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.signin-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.signin-logo {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  filter: drop-shadow(0 3px 7px var(--glow-accent));
+}
+.signin-logo .s0 {
+  stop-color: var(--color-accent-strong);
+}
+.signin-logo .s1 {
+  stop-color: var(--color-accent-fill);
+}
+/* The rail's wordmark recipe, scaled: same serif, same weight 500, same literal
+   #f4f0e8 (see .rail-brand b for why that colour is written out rather than
+   bent onto a token). 32px because this one has nothing around it — but the
+   weight stays at 500, so it does not lay down more ink than the rail's and
+   read as a different wordmark. */
+.signin-brand b {
+  display: block;
+  color: #f4f0e8;
+  font-family: var(--font-serif);
+  font-size: 32px;
+  font-weight: 500;
+  line-height: 1;
+}
+.signin-tag {
+  margin: 0;
+  max-width: 260px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-muted);
+}
+/* .errline carries a 16px bottom margin for stacking above a form; inside this
+   flex column the gap already does that, and the shared margin would double it. */
+.signin-card .errline {
+  width: 100%;
+  margin-bottom: 0;
+  text-align: left;
+}
+.signin-go {
+  width: 100%;
+}
+/* Height-matched to .ui-btn so the session check resolving does not move the
+   card by a pixel. */
+.signin-wait {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  font-size: var(--text-label);
+  color: var(--color-muted);
+}
+
+/* No narrow-viewport branch, deliberately. A 16:9 render in a portrait window
+   crops to a vertical slice of itself, but the card is centred and its fill is
+   what holds the contrast, so nothing about the screen depends on which part of
+   the art survives the crop — a phone gets the same rules, just less picture. */

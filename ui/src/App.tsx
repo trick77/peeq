@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
+import { SignIn } from "./shell/SignIn";
 import {
   getMe,
   listDownloads,
@@ -51,6 +52,34 @@ function readRailCollapsed(): boolean {
     return false;
   }
 }
+
+/**
+ * Did we arrive here from a failed OIDC callback?
+ *
+ * The backend redirects to /?auth_error=oidc_callback_failed when the callback
+ * cannot be completed (auth_handlers.go). Nothing read it, so the round trip
+ * ended on a sign-in screen identical to the one the user just left — which
+ * reads as "the button did nothing" rather than "that failed, try again".
+ *
+ * Read once at module load, before anything can rewrite the URL, and stripped
+ * from the address bar immediately: it describes one navigation, and leaving it
+ * there would re-assert the failure on every later reload of the same tab.
+ * Guarded for the no-window case — App also renders through
+ * renderToStaticMarkup in App.test.tsx.
+ */
+function takeAuthFailed(): boolean {
+  try {
+    if (typeof window === "undefined") return false;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("auth_error")) return false;
+    url.searchParams.delete("auth_error");
+    window.history.replaceState(null, "", url.toString());
+    return true;
+  } catch {
+    return false;
+  }
+}
+const AUTH_FAILED = takeAuthFailed();
 
 function writeRailCollapsed(collapsed: boolean) {
   try {
@@ -583,34 +612,11 @@ export function App() {
   }
 
   if (!authChecked) {
-    return (
-      <div
-        style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}
-      >
-        <b>Peeq</b>
-      </div>
-    );
+    return <SignIn checking />;
   }
 
   if (!user) {
-    return (
-      <div
-        style={{
-          display: "grid",
-          placeItems: "center",
-          minHeight: "100vh",
-          gap: 12,
-        }}
-      >
-        <b>Peeq</b>
-        {authError ? (
-          <p style={{ color: "var(--color-danger)" }}>
-            Couldn't reach the server. Try reloading.
-          </p>
-        ) : null}
-        <a href="/api/auth/login">Sign in</a>
-      </div>
-    );
+    return <SignIn unreachable={authError} failed={AUTH_FAILED} />;
   }
 
   function openVideo(id: string) {
