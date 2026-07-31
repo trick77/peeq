@@ -3135,9 +3135,13 @@ func TestPendingIgnore_removesCachedThumbnail(t *testing.T) {
 	}
 }
 
-// TestPendingThumbnail_notPending_404 asserts a ledger row that exists but has
+// TestPendingThumbnail_notPending_404 asserts an UNCACHED ledger row that has
 // already left the inbox (ignored/queued/seen) is a 404: it must not drive an
 // outbound fetch or re-create the cache that leaving the inbox removed.
+//
+// Cached bytes are a different question — see
+// TestPendingThumbnail_servesAKeptReadsPoster, which covers the video that has
+// left the inbox and still needs its picture.
 func TestPendingThumbnail_notPending_404(t *testing.T) {
 	h := newPendingTestServer(t)
 	h.seedChannel("UC1")

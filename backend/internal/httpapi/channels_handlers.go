@@ -1343,20 +1343,26 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 		notFoundCached(w, r)
 		return
 	}
-	// Only 'pending' items appear in the inbox and use this endpoint. Gating on
-	// state stops a request for a decided item (ignored/queued/seen) from
-	// driving an outbound fetch and re-creating the cache directory that
-	// removePendingThumbnail just deleted when it left the inbox.
-	if e.State != channelvideos.StatePending {
-		notFoundCached(w, r)
-		return
-	}
 	t, err := s.ledger.GetThumbnail(id)
 	if err != nil {
 		serverError(w, r, err, "load pending thumbnail failed")
 		return
 	}
 	if t == nil {
+		// Only 'pending' items appear in the inbox. Gating the FETCH on state
+		// stops a request for a decided item (ignored/queued/seen) from driving
+		// an outbound fetch and re-creating a cache that leaving the inbox
+		// deliberately removed.
+		//
+		// The gate is here rather than on the whole request because an ignored
+		// video whose reading was kept still has a poster, and this is the only
+		// endpoint that serves it: the videos row has no poster of its own, so
+		// the summary page and its search results both ask here. Serving bytes
+		// that are already stored fetches nothing and re-creates nothing.
+		if e.State != channelvideos.StatePending {
+			notFoundCached(w, r)
+			return
+		}
 		// Not cached yet — fetch it now and keep it. The scan prefetches these,
 		// so this is the fill-in for an item the prefetch missed or lost.
 		mime, data, ferr := media.FetchPendingThumbnail(r.Context(), id, e.ThumbnailURL)

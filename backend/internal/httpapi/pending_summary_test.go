@@ -110,6 +110,33 @@ func TestPendingIgnore_keepsAnIndexedRead(t *testing.T) {
 	}
 }
 
+// TestPendingThumbnail_servesAKeptReadsPoster is the half of "the poster stays"
+// that keeping the bytes does not buy on its own. The ledger row is 'ignored'
+// by then, and this endpoint used to 404 every row that had left the inbox —
+// so both the summary page and the search card would have fallen back to the
+// gradient placeholder while the picture sat in the database.
+func TestPendingThumbnail_servesAKeptReadsPoster(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	seedInboxRead(t, h, "p5")
+	h.seedPendingThumbCache(t, "p5")
+	seedChunks(t, h.rag, "p5", []rag.ChunkRow{
+		{Ordinal: 0, Text: "worth finding later", Kind: rag.KindTranscript},
+	})
+
+	if rr := postJSON(t, h, "/api/pending/p5/ignore", nil); rr.Code != http.StatusOK {
+		t.Fatalf("ignore status = %d", rr.Code)
+	}
+
+	rec := h.getRaw(t, "/api/pending/p5/thumbnail")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("poster status = %d, want 200 — a kept read's only picture", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("poster response is empty")
+	}
+}
+
 // TestPendingIgnore_stillDropsAnUnindexedRead is the other half of that rule.
 // The decision is made on what the row HOLDS, not on the channel's current
 // setting: a read that never made it into the index is discarded exactly as
