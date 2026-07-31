@@ -49,7 +49,15 @@ export function useMenuPlacement(
     // very edge of the screen.
     const GAP = 7;
     const EDGE = 8;
-    const below = window.innerHeight - rect.bottom - GAP - EDGE;
+    // The floor is the tab bar's top edge when there is one, not the viewport's
+    // bottom: on a phone the bar is fixed over the last ~57px and paints above
+    // these menus (z-index 40 vs 30), so a menu measured against innerHeight
+    // opens "down" into rows that are covered — and a tap meant for one lands
+    // on the bar and navigates away. Absent (every width above the breakpoint,
+    // and jsdom) the answer is the viewport, exactly as before.
+    const bar = document.querySelector(".tabbar");
+    const floor = bar ? bar.getBoundingClientRect().top : window.innerHeight;
+    const below = floor - rect.bottom - GAP - EDGE;
     const above = rect.top - GAP - EDGE;
 
     // Flip only when down genuinely does not fit AND up has more room. A menu

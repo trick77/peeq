@@ -251,6 +251,13 @@ button {
     grid-template-columns: 64px 1fr;
   }
 }
+/* The track is the only thing that animates, and it still answers to the same
+   preference every other transition here does. */
+@media (prefers-reduced-motion: reduce) {
+  .app-shell {
+    transition: none;
+  }
+}
 
 .rail {
   border-right: 1px solid var(--color-border);
@@ -444,7 +451,11 @@ button {
    that always looks the same. Every item now reads at the same weight as
    Channels, and the count pill is the only thing that says how much is in
    there. */
-.rail-nav-item .rail-nav-count {
+/* The More sheet joins the selector rather than getting a copy: it renders the
+   same .rail-nav-count, and scoped to .rail-nav-item alone that pill came out
+   as unstyled text there. */
+.rail-nav-item .rail-nav-count,
+.tabbar-sheet-item .rail-nav-count {
   margin-left: auto;
   font-family:
     ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
@@ -456,7 +467,8 @@ button {
   border-radius: 20px;
   border: 1px solid var(--color-border);
 }
-.rail-nav-item .rail-nav-count.hot {
+.rail-nav-item .rail-nav-count.hot,
+.tabbar-sheet-item .rail-nav-count.hot {
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   color: var(--color-accent);
   border-color: var(--color-accent-dim);
@@ -4605,9 +4617,6 @@ details.tomb-sect[open] > summary svg {
   display: grid;
   place-items: center;
 }
-.tabbar-ic .rail-nav-dot {
-  box-shadow: 0 0 0 2px var(--color-panel);
-}
 .tabbar-label {
   font-size: var(--text-micro);
   max-width: 100%;
@@ -4653,9 +4662,6 @@ details.tomb-sect[open] > summary svg {
 }
 .tabbar-sheet-item.active {
   background: var(--color-elevated-hover);
-}
-.tabbar-sheet-item .rail-nav-count {
-  margin-left: auto;
 }
 
 /* ── Button (ui.tsx) ───────────────────────────────────────────────────────

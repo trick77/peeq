@@ -28,15 +28,30 @@ export function TabBar({
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!moreOpen) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setMoreOpen(false);
+      if (e.key === "Escape") closeMore();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [moreOpen]);
+
+  // Focus goes into the sheet when it opens and back to the tab that opened it
+  // when it closes — ConfirmDialog's contract, which this claims to share. A
+  // modal that leaves focus on a control outside its own scrim strands a screen
+  // reader beyond the thing it just opened.
+  useEffect(() => {
+    if (!moreOpen) return;
+    sheetRef.current?.querySelector<HTMLElement>("button")?.focus();
+  }, [moreOpen]);
+
+  function closeMore() {
+    setMoreOpen(false);
+    moreRef.current?.focus();
+  }
 
   // Same rule the rail uses: a count is shown when it is loaded and non-zero,
   // and Up next additionally needs something actually running — a number that
@@ -54,7 +69,7 @@ export function TabBar({
   }
 
   function go(id: ViewId) {
-    setMoreOpen(false);
+    if (moreOpen) closeMore();
     onNavigate(id);
   }
 
@@ -68,10 +83,20 @@ export function TabBar({
         <div
           className="tabbar-sheet-scrim"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setMoreOpen(false);
+            if (e.target === e.currentTarget) closeMore();
           }}
         >
-          <div className="tabbar-sheet" role="dialog" aria-label="More">
+          {/* aria-modal is not decoration: the "/" shortcut in SearchField
+              stands down for `[role="dialog"][aria-modal="true"]`, so without
+              it a keystroke over this sheet pulls focus to a search field
+              behind the scrim and leaves the open sheet with nothing focused. */}
+          <div
+            ref={sheetRef}
+            className="tabbar-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="More"
+          >
             {MORE_ITEMS.map((item) => {
               const count = countFor(item);
               return (
