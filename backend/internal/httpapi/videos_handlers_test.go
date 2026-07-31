@@ -306,12 +306,11 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 		t.Fatalf("seed video: %v", err)
 	}
 	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
-		MediaPath: mediaPath, ThumbnailPath: thumbPath, SubtitleRelPath: vttPath,
+		MediaPath: mediaPath,
 	}); err != nil {
 		t.Fatalf("set downloaded: %v", err)
 	}
-	// The poster the card renders lives in the database (migration 0022); the
-	// file above is only what the import worker reads it from.
+	// The poster the card renders is stored on the row (0022).
 	if err := deps.Videos.SetThumbnail("v1", "image/jpeg", []byte("fake thumbnail bytes")); err != nil {
 		t.Fatalf("store thumbnail: %v", err)
 	}
@@ -354,24 +353,19 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	if got.MediaPath != "" {
 		t.Fatalf("media_path = %q, want cleared", got.MediaPath)
 	}
-	// The column has to stay in step with the file that was just kept:
-	// clearing it here would drop the poster the tombstoned card is meant
-	// to keep, and keeping it while deleting the file is what produced the
-	// broken image this test now guards against.
-	if got.ThumbnailPath != thumbPath {
-		t.Fatalf("thumbnail_path = %q, want kept as %q", got.ThumbnailPath, thumbPath)
+	if !got.HasThumbnail {
+		t.Fatal("the poster the tombstoned card is meant to keep was dropped")
 	}
-	// End to end, because file-kept and column-kept are only worth anything
-	// if the endpoint the card's <img> points at still answers: this is the
-	// broken image on a tombstoned card, expressed as a request.
+	// End to end, because a stored poster is only worth anything if the
+	// endpoint the card's <img> points at still answers: this is the broken
+	// image on a tombstoned card, expressed as a request.
 	thumbRec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/thumbnail", nil)
 	if thumbRec.Code != http.StatusOK {
 		t.Fatalf("GET thumbnail after delete = %d, want 200 (card would show a broken image)", thumbRec.Code)
 	}
-	// Same reasoning for the transcript: subtitle_path kept and .vtt kept only
-	// mean something if the endpoint the transcript view reads still answers.
-	if got.SubtitlePath != vttPath {
-		t.Fatalf("subtitle_path = %q, want kept as %q", got.SubtitlePath, vttPath)
+	// Same reasoning for the transcript.
+	if !got.HasTranscript {
+		t.Fatal("the transcript was dropped by the tombstone, want kept")
 	}
 	subRec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/subtitles", nil)
 	if subRec.Code != http.StatusOK {
@@ -665,39 +659,10 @@ func TestVideosThumbnail_notFoundWithoutThumbnail(t *testing.T) {
 	}
 }
 
-// TestVideosThumbnail_pathSafety mirrors the stream endpoint's symlink-escape
-// guard: a thumbnail path that resolves outside mediaDir must never be
-// served.
-func TestVideosThumbnail_pathSafety(t *testing.T) {
-	deps, mediaDir := videosTestDeps(t)
-	outsidePath := filepath.Join(t.TempDir(), "secret.jpg")
-	if err := os.WriteFile(outsidePath, []byte("top secret"), 0o644); err != nil {
-		t.Fatalf("write outside file: %v", err)
-	}
-	escapeLink := filepath.Join(mediaDir, "escape.jpg")
-	if err := os.Symlink(outsidePath, escapeLink); err != nil {
-		t.Skipf("symlinks not supported on this platform: %v", err)
-	}
-
-	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
-		t.Fatalf("seed video: %v", err)
-	}
-	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{ThumbnailPath: escapeLink}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-
-	h := New(deps)
-	cookie := loginAndGetCookie(t, h)
-
-	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/thumbnail", nil)
-	if rec.Code == http.StatusOK {
-		t.Fatalf("GET thumbnail via symlink escape = 200, want an error status")
-	}
-	if rec.Body.String() == "top secret" {
-		t.Fatalf("GET thumbnail served the outside file's contents through a symlink escape")
-	}
-}
-
+// The symlink-escape test that used to sit here went with the column it was
+// about. The thumbnail endpoint has read bytes off the row since 0022 and the
+// path is gone since 0024, so there is no filesystem lookup left to escape —
+// the same retirement the subtitle and channel-image endpoints got.
 // TestVideosGet_exposesSponsorblockSegments covers the Task 14 player's
 // client-side auto-skip data: the stored sponsorblock_segments JSON column
 // must come through the DTO as a structured array.
@@ -1721,35 +1686,6 @@ func TestVideosThumbnail_unknownVideo_404(t *testing.T) {
 	}
 }
 
-// TestVideosThumbnail_missingFileOnDisk_404 covers the os.Open error branch
-// for the thumbnail path (safely resolved, but absent on disk).
-func TestVideosThumbnail_missingFileOnDisk_404(t *testing.T) {
-	deps, mediaDir := videosTestDeps(t)
-	videoDir := filepath.Join(mediaDir, "chan1", "v1")
-	if err := os.MkdirAll(videoDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	thumbPath := filepath.Join(videoDir, "v1.jpg")
-	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
-		t.Fatalf("seed video: %v", err)
-	}
-	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{ThumbnailPath: thumbPath}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
-	}
-	// thumbPath is never written to disk.
-
-	h := New(deps)
-	cookie := loginAndGetCookie(t, h)
-
-	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/thumbnail", nil)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("GET thumbnail (missing file) status = %d, want 404, body = %s", rec.Code, rec.Body.String())
-	}
-}
-
-// TestRedownload_jobsNotConfigured_503 covers handleRedownloadVideo's
-// s.jobs == nil branch: an eligible (errored) video still can't be
-// re-downloaded if the queue itself isn't wired.
 func TestRedownload_jobsNotConfigured_503(t *testing.T) {
 	deps, _ := videosTestDeps(t) // no Jobs set
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {

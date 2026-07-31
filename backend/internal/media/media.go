@@ -96,15 +96,6 @@ func resolveExistingOrAncestor(path string) (string, error) {
 	return filepath.Join(resolvedParent, filepath.Base(path)), nil
 }
 
-// RemoveMediaAndSidecars unlinks the media file itself plus any sibling
-// subtitle (.vtt) files in the same directory. Best-effort: a missing file
-// is not an error (it may already be gone), and any single removal failure
-// doesn't stop the others. mediaPath must already be a SafeMediaPath result.
-func RemoveMediaAndSidecars(mediaPath string) {
-	_ = os.Remove(mediaPath)
-	RemoveSubtitleSidecars(mediaPath)
-}
-
 // RemoveSubtitleSidecars unlinks every .vtt sitting beside mediaPath — all of
 // them, not just the one a row happens to name.
 //
@@ -133,41 +124,35 @@ func RemoveSubtitleSidecars(mediaPath string) {
 	}
 }
 
-// RemoveVideoFiles removes everything a video owns on disk: its media file,
-// any subtitle sidecars, and its whole <channelID>/<videoID>/ directory when
-// nothing is left in it.
+// RemoveVideoFiles removes everything a video owns on disk: its media file, any
+// subtitle sidecars, and its whole <channelID>/<videoID>/ directory once nothing
+// is left in it.
 //
-// This is the hard-delete flavour, for when the database row goes too (a
-// channel cascade). Everything else the video owned — poster, transcript,
-// summary, chunks — lives in the database since migrations 0022 and 0023 and
-// goes with the row on the FK cascade, so the caller does not have to name it
-// here. What remains on disk is the media file plus whatever a pre-migration
-// library still has beside it (a poster or .vtt the import worker has not
-// reached, a leftover .info.json), and taking the directory collects the lot.
+// This is the hard-delete flavour, for when the database row goes too (a channel
+// cascade). Everything else the video owned — poster, transcript, summary,
+// chunks — lives in the database since 0022 and 0023 and goes with the row on
+// the FK cascade, so the caller does not have to name any of it. What is left on
+// disk is the media file plus whatever a pre-migration library still has beside
+// it, and taking the directory collects the lot.
 //
 // A tombstone must call RemoveTombstonedVideoFiles instead — see there.
 // Best-effort: an unresolvable or already-gone path is silently skipped.
-func RemoveVideoFiles(mediaDir, mediaPath, thumbnailPath, subtitlePath string) {
-	for _, p := range []string{mediaPath, thumbnailPath, subtitlePath} {
-		if p == "" {
-			continue
-		}
-		if safe, err := SafeMediaPath(mediaDir, p); err == nil {
-			_ = os.Remove(safe)
-		}
+func RemoveVideoFiles(mediaDir, mediaPath string) {
+	if mediaPath == "" {
+		return
 	}
-	// The directory is per-video, so removing it takes any sidecar the paths
-	// above did not name. os.Remove, not RemoveAll: it refuses a non-empty
-	// directory, which is the safety property wanted here — an unexpected file
-	// survives and can be found, rather than being swept silently.
-	if mediaPath != "" {
-		if safe, err := SafeMediaPath(mediaDir, mediaPath); err == nil {
-			RemoveSubtitleSidecars(safe)
-			dir := filepath.Dir(safe)
-			if entries, rerr := os.ReadDir(dir); rerr == nil && len(entries) == 0 {
-				_ = os.Remove(dir)
-			}
-		}
+	safe, err := SafeMediaPath(mediaDir, mediaPath)
+	if err != nil {
+		return
+	}
+	_ = os.Remove(safe)
+	RemoveSubtitleSidecars(safe)
+	// os.Remove, not RemoveAll: it refuses a non-empty directory, which is the
+	// safety property wanted here — an unexpected file survives and can be
+	// found, rather than being swept silently.
+	dir := filepath.Dir(safe)
+	if entries, rerr := os.ReadDir(dir); rerr == nil && len(entries) == 0 {
+		_ = os.Remove(dir)
 	}
 }
 

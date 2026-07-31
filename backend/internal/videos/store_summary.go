@@ -7,13 +7,17 @@ import (
 	"strings"
 )
 
-// SetSubtitle records the downloaded subtitle relpath and resolved audio
-// language.
-func (s *Store) SetSubtitle(id, relPath, audioLang string) error {
+// SetAudioLanguage records the language a video's captions are in.
+//
+// It is what is left of SetSubtitle, which also wrote the subtitle_path column
+// dropped in 0024. The language is not vestigial with it: the download worker
+// asks yt-dlp for that language on the next fetch, and both video DTOs carry it
+// to the player as the <track srcLang>.
+func (s *Store) SetAudioLanguage(id, audioLang string) error {
 	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET subtitle_path=?, audio_language=? WHERE id=?`, relPath, audioLang, id)
+		`UPDATE videos SET audio_language=? WHERE id=?`, audioLang, id)
 	if err != nil {
-		return fmt.Errorf("set video %s subtitle: %w", id, err)
+		return fmt.Errorf("set video %s audio language: %w", id, err)
 	}
 	return nil
 }

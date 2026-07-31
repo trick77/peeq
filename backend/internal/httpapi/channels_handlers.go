@@ -974,11 +974,11 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "delete failed")
 		return
 	}
-	// 4. Unlink media/thumbnail files (plus subtitle sidecars) using the refs
-	//    captured in step 1, via the same path-safe helper handleDeleteVideo
-	//    uses so the two deletion paths can never diverge.
+	// 4. Unlink each video's file — and whatever a pre-migration library still
+	//    has beside it — using the refs captured in step 1. Everything else the
+	//    videos owned went with their rows on the cascade above.
 	for _, rf := range refs {
-		media.RemoveVideoFiles(s.mediaDir, rf.MediaPath, rf.ThumbnailPath, rf.SubtitlePath)
+		media.RemoveVideoFiles(s.mediaDir, rf.MediaPath)
 	}
 	writeJSON(w, map[string]string{"status": "deleted"})
 }

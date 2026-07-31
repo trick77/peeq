@@ -76,38 +76,3 @@ func (s *Store) DeleteThumbnail(videoID string) error {
 	}
 	return nil
 }
-
-// ThumbnaillessPendingIDs returns up to limit inbox items with no cached poster
-// yet, for the import worker to look for under the old .pending/ cache.
-//
-// Scoped to state 'pending': a decided item is out of the inbox and its poster
-// is never rendered again, so carrying one in would be work with no reader.
-func (s *Store) ThumbnaillessPendingIDs(limit int) ([]string, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	rows, err := s.db.QueryContext(context.Background(), `
-SELECT cv.video_id
-FROM channel_videos cv
-WHERE cv.state = 'pending'
-  AND NOT EXISTS (SELECT 1 FROM pending_thumbnails t WHERE t.video_id = cv.video_id)
-ORDER BY cv.discovered_at DESC
-LIMIT ?`, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list thumbnailless pending: %w", err)
-	}
-	defer rows.Close()
-
-	var out []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan thumbnailless pending: %w", err)
-		}
-		out = append(out, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list thumbnailless pending: %w", err)
-	}
-	return out, nil
-}

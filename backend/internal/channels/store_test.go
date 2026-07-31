@@ -493,11 +493,17 @@ func TestUpsert_blankFieldsDoNotEraseCachedMetadata(t *testing.T) {
 		Name:        "Full",
 		Handle:      "@full",
 		Description: "a description",
-		AvatarPath:  ".channels/UCx/avatar.jpg",
-		BannerPath:  ".channels/UCx/banner.jpg",
 		ResolvedAt:  "2026-07-20 10:00:00",
 	}); err != nil {
 		t.Fatalf("seed upsert: %v", err)
+	}
+	// The artwork is rows of its own now, so a metadata write cannot reach it —
+	// which is the durable form of the never-blank rule this test is about.
+	if err := s.SetImage("UCx", ImageAvatar, "image/jpeg", []byte("a")); err != nil {
+		t.Fatalf("seed avatar: %v", err)
+	}
+	if err := s.SetImage("UCx", ImageBanner, "image/jpeg", []byte("b")); err != nil {
+		t.Fatalf("seed banner: %v", err)
 	}
 
 	// A partial re-upsert: every metadata field is the Go zero value.
@@ -512,11 +518,8 @@ func TestUpsert_blankFieldsDoNotEraseCachedMetadata(t *testing.T) {
 	if c.Description != "a description" {
 		t.Fatalf("Description = %q, want it preserved", c.Description)
 	}
-	if c.AvatarPath != ".channels/UCx/avatar.jpg" {
-		t.Fatalf("AvatarPath = %q, want it preserved", c.AvatarPath)
-	}
-	if c.BannerPath != ".channels/UCx/banner.jpg" {
-		t.Fatalf("BannerPath = %q, want it preserved", c.BannerPath)
+	if !c.HasAvatar || !c.HasBanner {
+		t.Fatalf("artwork lost by a partial upsert: avatar=%v banner=%v", c.HasAvatar, c.HasBanner)
 	}
 	if c.ResolvedAt != "2026-07-20 10:00:00" {
 		t.Fatalf("ResolvedAt = %q, want it preserved", c.ResolvedAt)
@@ -704,7 +707,7 @@ func TestMarkResolveAttempted_clearsOkButKeepsMetadata(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.SaveResolved(Channel{
 		ID: "UCa", Name: "Uncanny", Description: "Field docs.",
-		AvatarPath: "a.jpg", Subscribers: 412000, ResolvedAt: "2026-07-01 00:00:00",
+		Subscribers: 412000, ResolvedAt: "2026-07-01 00:00:00",
 	}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -721,7 +724,7 @@ func TestMarkResolveAttempted_clearsOkButKeepsMetadata(t *testing.T) {
 	if got.ResolvedAt != "2026-07-21 00:00:00" {
 		t.Fatalf("ResolvedAt = %q, want the failed attempt's time", got.ResolvedAt)
 	}
-	if got.Name != "Uncanny" || got.Description != "Field docs." || got.AvatarPath != "a.jpg" {
+	if got.Name != "Uncanny" || got.Description != "Field docs." {
 		t.Fatalf("a failed refresh erased stored metadata: %+v", got)
 	}
 	if got.Subscribers != 412000 {

@@ -72,9 +72,6 @@ func TestSucceedPersistsSubtitleAndEnqueuesSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get video: %v", err)
 	}
-	if v.SubtitlePath != "UC/v1/v1.en.vtt" {
-		t.Fatalf("SubtitlePath = %q, want %q", v.SubtitlePath, "UC/v1/v1.en.vtt")
-	}
 	if v.AudioLanguage != "en" {
 		t.Fatalf("AudioLanguage = %q, want %q", v.AudioLanguage, "en")
 	}

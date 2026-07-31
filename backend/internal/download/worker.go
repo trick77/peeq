@@ -472,14 +472,10 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		video.DurationSeconds = int64(meta.DurationSeconds)
 		video.PublishedAt = meta.PublishedAt
 		video.Description = meta.Description
-		// Only when the row has nothing: meta.Thumbnail is a REMOTE CDN url, and
-		// letting it displace a local path would point the thumbnail import at a
-		// file it can never open. It is kept for the brand-new row, where it is
-		// the only hint that exists before the download runs — hence a guard
-		// rather than a deletion.
-		if video.ThumbnailPath == "" {
-			video.ThumbnailPath = meta.Thumbnail
-		}
+		// meta.Thumbnail is deliberately dropped on the floor. It is a REMOTE
+		// CDN url, and the only thing that ever read it back was the import
+		// worker's fallback; the poster this video ends up showing is the file
+		// yt-dlp writes at download time, stored as bytes by storeThumbnail.
 		video.Availability = videos.NormalizeAvailability(meta.Availability)
 		if err := w.deps.Videos.Upsert(*video); err != nil {
 			// Retry, don't fail: a write that could not land is our
@@ -771,11 +767,9 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 	}
 	if err := w.deps.Videos.SetDownloaded(video.ID, videos.DownloadedResult{
 		MediaPath:            res.MediaPath,
-		ThumbnailPath:        res.ThumbnailPath,
 		FilesizeBytes:        res.FilesizeBytes,
 		FormatUsed:           res.FormatUsed,
 		SponsorblockSegments: marshalSegments(res.SponsorblockSegments),
-		SubtitleRelPath:      res.SubtitleRelPath,
 		AudioLanguage:        res.AudioLanguage,
 		ChaptersJSON:         res.ChaptersJSON,
 		PublishedAt:          res.PublishedAt,

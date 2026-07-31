@@ -74,49 +74,6 @@ func TestSetImage_declinesOversizedAndUnknownKind(t *testing.T) {
 	}
 }
 
-// The import worker's candidate query: one row per channel/kind that has a
-// recorded path but no stored bytes, and a kind stops being a candidate the
-// moment its image is in.
-func TestImagelessChannels_selectsRecordedPathsWithoutBytes(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.Upsert(Channel{
-		ID: "UC1", Name: "Both", AvatarPath: ".channels/UC1/avatar.jpg",
-		BannerPath: ".channels/UC1/banner.jpg",
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	// No paths recorded at all: nothing to look for, so not a candidate.
-	if err := s.Upsert(Channel{ID: "UC2", Name: "Bare"}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	got, err := s.ImagelessChannels(10)
-	if err != nil {
-		t.Fatalf("list candidates: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("candidates = %+v, want the two UC1 kinds", got)
-	}
-	for _, c := range got {
-		if c.ChannelID != "UC1" || c.Path == "" {
-			t.Fatalf("candidate %+v: want a UC1 kind with a recorded path", c)
-		}
-	}
-
-	if err := s.SetImage("UC1", ImageAvatar, "image/jpeg", []byte("a")); err != nil {
-		t.Fatalf("set avatar: %v", err)
-	}
-	got, err = s.ImagelessChannels(10)
-	if err != nil {
-		t.Fatalf("list candidates: %v", err)
-	}
-	if len(got) != 1 || got[0].Kind != ImageBanner {
-		t.Fatalf("candidates = %+v, want only the banner", got)
-	}
-}
-
-// Artwork goes with the channel. Nothing ever deleted .channels/<id>/ from
-// disk, so this cascade is the leak's replacement rather than a nicety.
 func TestDeleteChannel_cascadesToImages(t *testing.T) {
 	s := newTestStore(t)
 	seedImageChannel(t, s, "UC1")
@@ -166,21 +123,5 @@ func TestSetImage_rejectsEmptyArguments(t *testing.T) {
 	}
 	if got, err := s.GetImage("UCnone", ImageAvatar); err != nil || got != nil {
 		t.Fatalf("unknown channel = %v, %v, want nil, nil", got, err)
-	}
-}
-
-// A non-positive limit falls back to a sane page rather than every channel.
-func TestImagelessChannels_defaultsTheLimit(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.Upsert(Channel{ID: "UC1", Name: "n", AvatarPath: ".channels/UC1/avatar.jpg"}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	got, err := s.ImagelessChannels(0)
-	if err != nil {
-		t.Fatalf("list candidates: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("candidates = %+v, want the one avatar", got)
 	}
 }

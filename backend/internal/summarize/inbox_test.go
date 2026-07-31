@@ -80,7 +80,7 @@ func seedTranscript(t *testing.T, h *workerHarness, id, rel string) {
 	if err := h.videos.SetTranscript(id, source, string(data)); err != nil {
 		t.Fatalf("set transcript: %v", err)
 	}
-	if err := h.videos.SetSubtitle(id, rel, "en"); err != nil {
+	if err := h.videos.SetAudioLanguage(id, "en"); err != nil {
 		t.Fatalf("set subtitle: %v", err)
 	}
 }

@@ -278,7 +278,7 @@ func downloadRow(t *testing.T, h *scanHarness, videoID string) {
 	t.Helper()
 	if err := h.videos.Upsert(videos.Video{
 		ID: videoID, URL: "https://www.youtube.com/watch?v=" + videoID, Title: videoID,
-		ChannelID: "UC1", DurationSeconds: 600, ThumbnailPath: "thumbs/" + videoID + ".jpg",
+		ChannelID: "UC1", DurationSeconds: 600,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -286,6 +286,12 @@ func downloadRow(t *testing.T, h *scanHarness, videoID string) {
 		`UPDATE videos SET status = 'downloaded', downloaded_at = datetime('now'), media_path = ? WHERE id = ?`,
 		"media/"+videoID+".mp4", videoID,
 	); err != nil {
+		t.Fatal(err)
+	}
+	// A stored poster, so a re-queue that lost it would be visible. This is the
+	// bug that started the whole move: a metadata write blanking the pointer to
+	// an image that was still there.
+	if err := h.videos.SetThumbnail(videoID, "image/jpeg", []byte("POSTER")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -310,8 +316,8 @@ func TestScan_parkedVideoOffListing_alreadyDownloaded_isNotRequeued(t *testing.T
 	if v.Status != "downloaded" {
 		t.Fatalf("videos status = %q, want it left downloaded", v.Status)
 	}
-	if v.ThumbnailPath == "" {
-		t.Fatal("thumbnail_path was blanked by a re-queue of a finished video")
+	if !v.HasThumbnail {
+		t.Fatal("the poster was lost by a re-queue of a finished video")
 	}
 	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
 		t.Fatalf("jobs = %d, want 0 — the video is already on disk", len(jobsList))

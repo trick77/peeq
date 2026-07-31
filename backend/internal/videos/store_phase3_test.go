@@ -15,7 +15,7 @@ func TestPhase3Setters(t *testing.T) {
 	if err := s.Upsert(Video{ID: "v1", URL: "u"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSubtitle("v1", "UC/v1/v1.en.vtt", "en"); err != nil {
+	if err := s.SetAudioLanguage("v1", "en"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetSummaryStatus("v1", "running", ""); err != nil {
@@ -28,8 +28,8 @@ func TestPhase3Setters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.AudioLanguage != "en" || got.SubtitlePath != "UC/v1/v1.en.vtt" {
-		t.Fatalf("subtitle fields: %+v", got)
+	if got.AudioLanguage != "en" {
+		t.Fatalf("audio_language = %q, want en", got.AudioLanguage)
 	}
 	// SetSummary transitions summary_status to 'done' (per its documented
 	// contract), superseding the earlier SetSummaryStatus("running") call.
