@@ -1118,8 +1118,16 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 // ThumbnailPath empty — the ledger's thumbnail_url is a remote url, not a
 // locally-downloaded file path), mark it queued, enqueue a job at the
 // standard manual priority, and flip the ledger row out of 'pending' so it
-// no longer shows up in the pending list. 404s if the ledger row doesn't
-// exist or is no longer pending (e.g. already downloaded or ignored).
+// no longer shows up in the pending list. 404s if the ledger row doesn't exist
+// or is in a state no page offers this action from.
+//
+// 'ignored' is accepted alongside 'pending', because a kept read is reachable
+// from Search long after it left the Inbox and the page it opens still offers
+// Download. Changing one's mind about a video is not the thing 'ignored' is
+// terminal FOR: what stops a video being read a second time is Ledger.Exists
+// matching on video_id whatever the state, and the row lands on 'queued' here
+// either way. Refusing would leave a button that can only ever fail on the one
+// page this feature exists to make reachable.
 func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil || s.videos == nil || s.jobs == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
@@ -1127,7 +1135,8 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	e, err := s.ledger.Get(id)
-	if err != nil || e == nil || e.State != channelvideos.StatePending {
+	if err != nil || e == nil ||
+		(e.State != channelvideos.StatePending && e.State != channelvideos.StateIgnored) {
 		writeJSONError(w, http.StatusNotFound, "pending item not found")
 		return
 	}
@@ -1217,7 +1226,16 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 	// The item just left the inbox, so its cached thumbnail is dead weight —
 	// unless the read was kept, in which case that poster is the only picture
 	// the video has and both the summary page and its search results ask for it.
-	if !s.dropInboxRead(r, e, id) {
+	//
+	// Only an entry that was still 'pending' is leaving the inbox here, and that
+	// is what the reclaim is gated on. A kept read is reachable from Search, and
+	// its page still offers Ignore: pressing it arrives with the ledger row
+	// already 'ignored', which makes dropInboxRead decline at its first guard
+	// (state is not pending) and would otherwise delete the very poster the
+	// first ignore deliberately spared. Nothing is lost by the gate — 'queued'
+	// reclaims at its own transition, a scan's 'seen' baseline never fetched a
+	// poster, and a repeat ignore of a discarded read deletes what is gone.
+	if e.State == channelvideos.StatePending && !s.dropInboxRead(r, e, id) {
 		s.removePendingThumbnail(id)
 	}
 	writeJSON(w, map[string]string{"status": "ignored"})

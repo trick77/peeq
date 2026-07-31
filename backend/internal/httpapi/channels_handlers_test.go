@@ -1197,13 +1197,57 @@ func TestPending_unconfigured_503(t *testing.T) {
 }
 
 // TestPendingDownload_notPending_404 asserts downloading a video id that
-// isn't in the ledger at all (or already moved past 'pending') is a clean
-// 404, not a silent success or a 500.
+// isn't in the ledger at all — or sits in a state no page offers this from —
+// is a clean 404, not a silent success or a 500.
 func TestPendingDownload_notPending_404(t *testing.T) {
 	h := newPendingTestServer(t)
 	rr := postJSON(t, h, "/api/pending/nope/download", nil)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("download unknown id status = %d, want 404, body=%s", rr.Code, rr.Body.String())
+	}
+
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "seen1", ChannelID: "UC1", Title: "A",
+		URL: "https://www.youtube.com/watch?v=seen1", State: "seen",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if rr := postJSON(t, h, "/api/pending/seen1/download", nil); rr.Code != http.StatusNotFound {
+		t.Fatalf("download a 'seen' row status = %d, want 404", rr.Code)
+	}
+}
+
+// TestPendingDownload_ignoredRowCanStillBeQueued is the button on a kept read's
+// page. Such a video is reachable from Search with its ledger row already
+// 'ignored', and Download there has to work: changing your mind is not what
+// that state is terminal for — Ledger.Exists is what stops a re-read, and it
+// ignores the state entirely.
+func TestPendingDownload_ignoredRowCanStillBeQueued(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "kept1", ChannelID: "UC1", Title: "A kept read",
+		URL: "https://www.youtube.com/watch?v=kept1", DurationSeconds: 600, State: "ignored",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/pending/kept1/download", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("download status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	v, err := h.videos.Get("kept1")
+	if err != nil || v == nil {
+		t.Fatalf("get video: %+v (err %v)", v, err)
+	}
+	if v.Status != videos.StatusQueued {
+		t.Fatalf("video status = %q, want queued", v.Status)
+	}
+	e, err := h.ledger.Get("kept1")
+	if err != nil || e == nil || e.State != channelvideos.StateQueued {
+		t.Fatalf("ledger state = %+v (err %v), want queued", e, err)
 	}
 }
 

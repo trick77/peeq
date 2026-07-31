@@ -110,6 +110,38 @@ func TestPendingIgnore_keepsAnIndexedRead(t *testing.T) {
 	}
 }
 
+// TestPendingIgnore_twiceKeepsTheKeptReadsPoster covers the second press. A
+// kept read is reachable from Search, and the page it opens still offers
+// Ignore — so this endpoint is called a second time with the ledger row
+// already 'ignored'. dropInboxRead declines on that state alone, so without the
+// gate in the caller the reclaim would run and delete the one poster the first
+// ignore deliberately spared.
+func TestPendingIgnore_twiceKeepsTheKeptReadsPoster(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	seedInboxRead(t, h, "p6")
+	h.seedPendingThumbCache(t, "p6")
+	seedChunks(t, h.rag, "p6", []rag.ChunkRow{
+		{Ordinal: 0, Text: "worth finding later", Kind: rag.KindTranscript},
+	})
+
+	for i := range 2 {
+		if rr := postJSON(t, h, "/api/pending/p6/ignore", nil); rr.Code != http.StatusOK {
+			t.Fatalf("ignore %d status = %d", i+1, rr.Code)
+		}
+	}
+
+	if got, err := h.ledger.GetThumbnail("p6"); err != nil || got == nil {
+		t.Fatalf("the second ignore took the kept read's poster: %+v (err %v)", got, err)
+	}
+	if v, err := h.videos.Get("p6"); err != nil || v == nil {
+		t.Fatalf("the second ignore discarded the kept read: %+v (err %v)", v, err)
+	}
+	if rec := h.getRaw(t, "/api/pending/p6/thumbnail"); rec.Code != http.StatusOK {
+		t.Fatalf("poster status = %d after two ignores, want 200", rec.Code)
+	}
+}
+
 // TestPendingThumbnail_servesAKeptReadsPoster is the half of "the poster stays"
 // that keeping the bytes does not buy on its own. The ledger row is 'ignored'
 // by then, and this endpoint used to 404 every row that had left the inbox —
