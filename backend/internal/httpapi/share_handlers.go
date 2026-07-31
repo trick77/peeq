@@ -274,7 +274,7 @@ func (s *server) handleShareThumbnail(w http.ResponseWriter, r *http.Request) {
 	if v == nil {
 		return
 	}
-	serveThumbnail(w, r, s.videos, v.ID)
+	serveThumbnail(w, r, s.videos, v.ID, cacheImagePublicHour)
 }
 
 // handleShareSubtitles serves the shared video's VTT captions. The public page
