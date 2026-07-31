@@ -313,6 +313,79 @@ describe("Player", () => {
     });
   });
 
+  describe("action toolbar", () => {
+    it("groups the six controls into four segments of one shell", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ has_media: true, has_subtitles: true }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("button", { name: "Mark watched" });
+
+      const bars = document.querySelectorAll(".playacts .playbar");
+      expect(bars).toHaveLength(1);
+      const segs = bars[0].querySelectorAll(":scope > .playseg");
+      expect(segs).toHaveLength(4);
+
+      // What this video IS: kept, watched, filed-as. The category picker moved
+      // here from the far end of the row, so assert its segment, not just that
+      // it rendered.
+      expect(segs[0].querySelector(".catpick")).not.toBeNull();
+      expect(
+        segs[0].querySelector("button[aria-pressed][aria-label]"),
+      ).toBeNull();
+      // Sleep and subtitles share a scope but not a verb, so they get a divider
+      // between them rather than sitting flush.
+      expect(segs[1].querySelector(".sleeppick")).not.toBeNull();
+      expect(segs[1].querySelector("button[aria-pressed]")).toBeNull();
+      expect(
+        segs[2].querySelector('button[aria-label="Subtitles off"]'),
+      ).not.toBeNull();
+      // The lid, alone behind its own divider.
+      expect(segs[3].querySelector(".kebab")).not.toBeNull();
+    });
+
+    // A video whose captions never arrived drops only the subtitles segment;
+    // sleep keeps its own, and no divider is left pointing at nothing.
+    it("drops only the subtitles segment when there is no transcript", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ has_media: true, has_subtitles: false }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("button", { name: "Mark watched" });
+
+      const segs = document.querySelectorAll(".playbar > .playseg");
+      expect(segs).toHaveLength(3);
+      expect(segs[1].querySelector(".sleeppick")).not.toBeNull();
+      expect(segs[2].querySelector(".kebab")).not.toBeNull();
+    });
+
+    // The floating hairlines are what the segment borders replaced. A leftover
+    // would double the divider it stands next to.
+    it("leaves no free-standing hairline in the row", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo());
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("button", { name: "Mark watched" });
+
+      expect(document.querySelector(".playacts .acts-sep")).toBeNull();
+    });
+
+    // A tombstoned video has no <video> to pause or caption, so both
+    // this-sitting segments go — rendering either empty would draw a divider
+    // pointing at nothing.
+    it("drops both this-sitting segments when there is no file", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ status: "tombstoned", has_media: false }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await screen.findByRole("button", { name: "Mark watched" });
+
+      const segs = document.querySelectorAll(".playbar > .playseg");
+      expect(segs).toHaveLength(2);
+      expect(segs[0].querySelector(".catpick")).not.toBeNull();
+      expect(segs[1].querySelector(".kebab")).not.toBeNull();
+    });
+  });
+
   describe("stage poster", () => {
     it("posters the video with its thumbnail when one was downloaded", async () => {
       vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_thumbnail: true }));

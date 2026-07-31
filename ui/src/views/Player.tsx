@@ -1134,107 +1134,135 @@ export function Player({
               only ever named an action carry that meaning in the icon alone
               — see iconActionClass. */}
           <div className="playacts">
-            <Button
-              type="button"
-              variant={video.favorite ? "gold" : "secondary"}
-              onClick={handleToggleFavorite}
-            >
-              <Icon name={video.favorite ? "starFilled" : "star"} size="17px" />
-              <span>{video.favorite ? "Kept forever" : "Keep forever"}</span>
-            </Button>
-            {/* Tinted when watched, so the state reads at a glance and not only
-                from the label — the favourite beside it has always flipped, and
-                the Library card tints its own watched toggle, so a flat grey
-                button here was the odd one out. Deliberately NOT gold: that is
-                "Kept forever", one button over, and reusing it would make the
-                two states indistinguishable. aria-pressed carries the same
-                state without colour, as the captions toggle below does. */}
-            <Button
-              type="button"
-              variant={video.watched ? "tinted" : "secondary"}
-              aria-pressed={video.watched}
-              onClick={handleToggleWatched}
-            >
-              <Icon name="check" size="17px" />{" "}
-              {video.watched ? "Mark unwatched" : "Mark watched"}
-            </Button>
-            <span className="acts-sep" aria-hidden="true" />
-            {/* has_media as well as has_subtitles: a tombstoned video keeps its
-                transcript (read it in the Transcript panel below), but there is
-                no <video> for burned-in captions to appear over, so the toggle
-                would flip nothing. */}
-            {video.has_media && video.has_subtitles && (
-              // On is terracotta, off is the same muted grey as the icons
-              // beside it — no fill, no dot. aria-pressed + the flipping
-              // aria-label carry the state for anyone who can't see colour.
-              <button
-                type="button"
-                className={iconActionClass({ on: ccOn })}
-                aria-pressed={ccOn}
-                aria-label={ccOn ? "Subtitles on" : "Subtitles off"}
-                title={ccOn ? "Subtitles on" : "Subtitles off"}
-                onClick={handleToggleCC}
-              >
-                <Icon name="captions" size="19px" />
-              </button>
-            )}
-            {/* The sleep timer is a pill rather than one of the row's
-                labelled Buttons because it obeys the row's own rule: a
-                control keeps a label when the label reports the state, and
-                this one's label IS the state — "Sleep" when off, the live
-                countdown when armed.
-
-                It sits left of the separator with the playback controls: it
-                acts on this viewing session, not on how the video is filed.
-                has_media alongside the CC toggle for the same reason — a
-                tombstoned video has no <video> element left to pause. */}
-            {video.has_media && (
-              <SleepTimer
-                remainingSeconds={sleepRemaining}
-                armedMinutes={sleepMinutes}
-                onArm={armSleep}
-              />
-            )}
-            {/* The remaining per-video actions collapse into one ⋮ menu:
-                Share, Reprocess, Re-download, Download file, Watch on YouTube
-                and Delete. Only the stateful toggles above (Keep forever, Mark
-                watched) and the CC toggle stay visible. The ⋮ carries an
-                attention dot only when the menu actually holds a flagged
-                remedy — a failed summary_status on a video that can't be
-                reprocessed (no subtitle) would otherwise promise a fix the
-                menu doesn't offer.
-
-                ShareControl wraps the menu rather than sitting beside it: its
-                popover anchors to the ⋮ that opened it, and the trigger has to
-                live inside ShareControl's wrapper or its outside-click handler
-                would close the popover on the same click that opened it. */}
-            {(() => {
-              const menuActions = buildMenuActions();
-              return (
-                <ShareControl
-                  videoId={video.id}
-                  status={shareStatus}
-                  onStatusChange={setShareStatus}
-                  open={shareOpen}
-                  onOpenChange={setShareOpen}
+            {/* One shell with internal dividers, not six controls that each
+                need their own edge. Every control goes flat inside it — the
+                chrome belongs to the container now — and the segments carry
+                the grouping the two floating hairlines used to strain at. */}
+            <div className="playbar">
+              {/* Segment 1 — what this video IS. Kept, watched and filed-as all
+                  outlive the page, which is why the category picker sits here
+                  rather than alone at the far end: it is a control, but the
+                  thing it controls is what the video is, not what this sitting
+                  does with it. */}
+              <span className="playseg">
+                <Button
+                  type="button"
+                  variant={video.favorite ? "gold" : "secondary"}
+                  onClick={handleToggleFavorite}
                 >
-                  <RowMenu
-                    label="Video actions"
-                    attention={menuActions.some((a) => a.flag)}
-                    actions={menuActions}
+                  <Icon
+                    name={video.favorite ? "starFilled" : "star"}
+                    size="17px"
                   />
-                </ShareControl>
-              );
-            })()}
-            {/* The category picker is a control, not metadata, so it joins the
-                actions rather than the facts below. Behind a separator: the
-                controls to its left act on this video's state, this one
-                changes what the video IS filed as. */}
-            <span className="acts-sep" aria-hidden="true" />
-            <CategoryPicker
-              category={video.category}
-              onPick={handlePickCategory}
-            />
+                  <span>
+                    {video.favorite ? "Kept forever" : "Keep forever"}
+                  </span>
+                </Button>
+                {/* Tinted when watched, so the state reads at a glance and not
+                    only from the label — the favourite beside it has always
+                    flipped, and the Library card tints its own watched toggle,
+                    so a flat grey button here was the odd one out. Deliberately
+                    NOT gold: that is "Kept forever", one button over, and
+                    reusing it would make the two states indistinguishable.
+                    aria-pressed carries the same state without colour, as the
+                    captions toggle below does. */}
+                <Button
+                  type="button"
+                  variant={video.watched ? "tinted" : "secondary"}
+                  aria-pressed={video.watched}
+                  onClick={handleToggleWatched}
+                >
+                  <Icon name="check" size="17px" />{" "}
+                  {video.watched ? "Mark unwatched" : "Mark watched"}
+                </Button>
+                <CategoryPicker
+                  category={video.category}
+                  onPick={handlePickCategory}
+                />
+              </span>
+              {/* Segment 2 — the sleep timer, which acts on this sitting and
+                  nothing that outlives it. Gated as a whole rather than around
+                  the control alone: an empty <span className="playseg"> still
+                  draws its divider, a hairline pointing at nothing. Same for
+                  segment 3 below, so a tombstoned video renders two segments. */}
+              {video.has_media && (
+                <span className="playseg">
+                  {/* The sleep timer is a pill rather than one of the row's
+                      labelled Buttons because it obeys the row's own rule: a
+                      control keeps a label when the label reports the state,
+                      and this one's label IS the state — "Sleep" when off, the
+                      live countdown when armed.
+
+                      has_media alongside the CC toggle for the same reason — a
+                      tombstoned video has no <video> element left to pause. */}
+                  <SleepTimer
+                    remainingSeconds={sleepRemaining}
+                    armedMinutes={sleepMinutes}
+                    onArm={armSleep}
+                  />
+                </span>
+              )}
+              {/* Segment 3 — subtitles, behind its own divider. Sleep and
+                  subtitles share a scope, not a verb: sleep schedules something
+                  that has not happened yet, subtitles toggles something that is
+                  happening now. Sitting them flush also reads wrong — a bare
+                  icon against a labelled pill looks like one broken control.
+
+                  has_subtitles as well as has_media: a tombstoned video keeps
+                  its transcript (read it in the Transcript panel below), but
+                  there is no <video> for burned-in captions to appear over, so
+                  the toggle would flip nothing. */}
+              {video.has_media && video.has_subtitles && (
+                <span className="playseg">
+                  {/* On is terracotta, off is the same muted grey as the icons
+                      beside it — no fill, no dot. aria-pressed + the flipping
+                      aria-label carry the state for anyone who can't see colour. */}
+                  <button
+                    type="button"
+                    className={iconActionClass({ on: ccOn })}
+                    aria-pressed={ccOn}
+                    aria-label={ccOn ? "Subtitles on" : "Subtitles off"}
+                    title={ccOn ? "Subtitles on" : "Subtitles off"}
+                    onClick={handleToggleCC}
+                  >
+                    <Icon name="captions" size="19px" />
+                  </button>
+                </span>
+              )}
+              {/* Segment 4 — everything else. The ⋮ gets a divider of its own
+                  because it is not a sibling of the controls beside it: it is
+                  the lid on six more actions (Share, Reprocess, Re-download,
+                  Download file, Watch on YouTube, Delete). It carries an
+                  attention dot only when the menu actually holds a flagged
+                  remedy — a failed summary_status on a video that can't be
+                  reprocessed (no subtitle) would otherwise promise a fix the
+                  menu doesn't offer.
+
+                  ShareControl wraps the menu rather than sitting beside it: its
+                  popover anchors to the ⋮ that opened it, and the trigger has to
+                  live inside ShareControl's wrapper or its outside-click handler
+                  would close the popover on the same click that opened it. */}
+              <span className="playseg">
+                {(() => {
+                  const menuActions = buildMenuActions();
+                  return (
+                    <ShareControl
+                      videoId={video.id}
+                      status={shareStatus}
+                      onStatusChange={setShareStatus}
+                      open={shareOpen}
+                      onOpenChange={setShareOpen}
+                    >
+                      <RowMenu
+                        label="Video actions"
+                        attention={menuActions.some((a) => a.flag)}
+                        actions={menuActions}
+                      />
+                    </ShareControl>
+                  );
+                })()}
+              </span>
+            </div>
           </div>
           <MediaStats video={video} />
         </div>
