@@ -489,7 +489,10 @@ describe("Search — the Ask answer", () => {
       ).not.toBeInTheDocument(),
     );
     expect(screen.queryByText("Matches")).not.toBeInTheDocument();
-    expect(document.querySelector(".errline")).toBeNull();
+    // ...and it does not go quiet either. Ask makes one request now, so nothing
+    // else on the page would report this: with the line swallowed, a broken
+    // stream left the whole view below the box blank and enter looked inert.
+    expect(await screen.findByText(/stream failed: 503/)).toBeInTheDocument();
   });
 
   // Truncated is more use than blank.

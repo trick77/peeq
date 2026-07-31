@@ -77,8 +77,13 @@ export function AnswerPanel({
       ) : null}
 
       {/* An answer that names no moment leaves nothing below it, so say why
-          rather than ending on a bare paragraph. */}
-      {!streaming && !failed && text && !cited.length ? (
+          rather than ending on a bare paragraph.
+          Gated on `sources` too: when retrieval came back empty the backend
+          writes the answer itself ("Nothing in your library covers that."), and
+          there was never a moment for it to point at. Saying it didn't point at
+          one would be a second, quieter way of repeating the sentence directly
+          above — which the empty-results line below already repeats verbatim. */}
+      {!streaming && !failed && text && sources.length && !cited.length ? (
         <p className="answer-note">
           The answer didn't point at any particular moment.
         </p>

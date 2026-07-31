@@ -213,9 +213,20 @@ export function Search({
       },
       ac.signal,
     )
-      // A transport failure is not reported here — whatever text arrived is
-      // kept, since truncated is more use than blank.
-      .catch(() => {})
+      // Whatever text arrived is kept — truncated is more use than blank — but
+      // a stream that broke before saying anything has to SAY so. Ask makes one
+      // request now, so there is no longer a parallel /api/search whose own
+      // error line covers this: swallowing it left the whole page below the box
+      // blank, and pressing enter looked like it did nothing at all. A 401
+      // arrives here as AuthExpiredError ("auth expired") and reads the same way
+      // it does in Find, which is the only place it is ever surfaced.
+      //
+      // An abort is not a failure: leaving the tab or starting a newer search
+      // rejects this promise on purpose, and neither owes the reader an error.
+      .catch((err: Error) => {
+        if (id !== runId.current || ac.signal.aborted) return;
+        patchTab("ask", { error: err.message });
+      })
       .finally(() => {
         if (id !== runId.current) return;
         // Every way the stream can end comes through here: a done frame, a
