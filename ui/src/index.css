@@ -4684,10 +4684,20 @@ details.tomb-sect[open] > summary svg {
   display: block;
 }
 .chan-srow .hint {
+  /* Every hint in this panel is a sentence, so it wraps as one. The base
+     .hint is display: flex (it carries a status .led elsewhere), which turns
+     each text node and each <b> into its own flex item — the Format override
+     hint bolds a preset name mid-sentence, and under flex that name jumped to
+     its own column and left the closing full stop stranded beside it. */
+  display: block;
   font-size: var(--text-label);
   color: var(--color-faint);
   margin: 3px 0 0;
   max-width: 46ch;
+}
+.chan-srow .hint b {
+  color: var(--color-ink-dim);
+  font-weight: 600;
 }
 .chan-srow input[type="checkbox"] {
   accent-color: var(--color-accent);
