@@ -123,6 +123,13 @@ export function App() {
         .then((p) => {
           const fresh = p.video_id || null;
           setPersistedVideoId(fresh);
+          // The pointer only ever names a downloaded video (playback.Store), so
+          // a pointer naming the video remembered as an inbox summary is that
+          // video after its file arrived — it is being watched now, not read.
+          // Dropping the marker keeps the rail off Inbox on the page this click
+          // opens, and keeps the next click on this item short-circuiting the
+          // way it does for any other video being watched.
+          if (fresh && fresh === inboxSummaryId) setInboxSummaryId(null);
           navigate({ view: "player", videoId: fresh });
         })
         // A failed read must be no worse than not asking, and off the Player

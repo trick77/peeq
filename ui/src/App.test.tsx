@@ -536,6 +536,31 @@ describe("App deep links", () => {
     );
   });
 
+  it("drops the summary marker when the pointer names that same video", async () => {
+    // The marker is an id, so it keeps matching after the video it names gets
+    // downloaded — and then the page at that id is a player, not a summary.
+    // The pointer only ever names a downloaded video, so a pointer answering
+    // with the remembered id says exactly that the file has arrived: the rail
+    // must read "Now playing" rather than stay on Inbox, and the next click on
+    // it must short-circuit again instead of re-reading a pointer another
+    // device could have moved.
+    await openInboxSummary();
+    fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    await screen.findByPlaceholderText("Search titles");
+    vi.mocked(getPlaybackState).mockResolvedValue({ video_id: "p1" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Now playing" }));
+
+    await waitFor(() => expect(window.location.pathname).toBe("/video/p1"));
+    expect(screen.getByRole("button", { name: "Now playing" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("button", { name: /^Inbox/ })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
   it("keeps the rail on Inbox when the summary's stepper moves to the next video", async () => {
     // The stepper is how the inbox is actually read — open, read, decide, next,
     // without returning to the grid — so a fix that only survives the first
