@@ -103,8 +103,18 @@ func (s *Store) Fail(id int64, attempts int, lastErr string) (terminal bool, err
 // EnqueueMissing enqueues a job for every downloaded video that has no
 // summary_jobs row at all, and returns how many it added. It closes the gap
 // left by a process killed between marking a video downloaded and enqueueing
-// its summary — chiefly `peeq import-ta`, whose re-runs skip anything already
-// downloaded and would therefore never revisit such a video.
+// its summary.
+//
+// That window is real and not narrow: download.Worker.succeed marks the video
+// downloaded, then stores the transcript, stores the poster, removes the
+// caption directory and runs a probe bounded at 5s, and only then enqueues. A
+// process killed anywhere in there leaves a downloaded video that nothing else
+// would ever revisit — the download queue is finished with it, so this boot
+// sweep is the only thing that notices.
+//
+// (It was written for `peeq import-ta`, whose re-runs skipped anything already
+// downloaded. That subcommand is gone; the crash window above is what keeps
+// this here.)
 //
 // "No row at all" is the deliberate criterion: a video whose job exhausted
 // max_attempts keeps its 'failed' row and is NOT retried here, so a poison
