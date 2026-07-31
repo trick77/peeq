@@ -1273,24 +1273,33 @@ func TestSearchAskOrFloorDoesNotBuryTheSemanticHit(t *testing.T) {
 	cookie := loginAndGetCookie(t, h)
 
 	// Strict tiers cannot match — no chunk holds every word — so the ladder
-	// relaxes to the OR floor, which "sport" satisfies.
-	rec := doReq(t, h, cookie, http.MethodGet,
-		"/api/search?q=did+someone+talk+about+electrolytes+in+endurance+sport&mode=ask", nil)
-	var resp struct {
-		Results []struct {
-			Video struct {
-				ID string `json:"id"`
-			} `json:"video"`
-		} `json:"results"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v, body = %s", err, rec.Body.String())
-	}
-	if len(resp.Results) == 0 {
-		t.Fatalf("expected results: %s", rec.Body.String())
-	}
-	if resp.Results[0].Video.ID != "ontopic" {
-		t.Errorf("results[0] = %q, want the semantically close video ahead of the "+
-			"chunk that merely shares a word: %s", resp.Results[0].Video.ID, rec.Body.String())
+	// relaxes to the OR floor, which "sport" satisfies. The second query has no
+	// stopwords at all, so its ladder is only TWO rungs and the OR floor is the
+	// SECOND one: weighing a rung by its position in the ladder would hand it
+	// the content-tier weight and bury the semantic hit again.
+	for name, q := range map[string]string{
+		"question with stopwords": "did+someone+talk+about+electrolytes+in+endurance+sport",
+		"bare terms, no stopword": "electrolytes+endurance+sport",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q="+q+"&mode=ask", nil)
+			var resp struct {
+				Results []struct {
+					Video struct {
+						ID string `json:"id"`
+					} `json:"video"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v, body = %s", err, rec.Body.String())
+			}
+			if len(resp.Results) == 0 {
+				t.Fatalf("expected results: %s", rec.Body.String())
+			}
+			if resp.Results[0].Video.ID != "ontopic" {
+				t.Errorf("results[0] = %q, want the semantically close video ahead of the "+
+					"chunk that merely shares a word: %s", resp.Results[0].Video.ID, rec.Body.String())
+			}
+		})
 	}
 }

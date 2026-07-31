@@ -214,24 +214,23 @@ func TestFuseWeightedZeroWeightMutesTheLane(t *testing.T) {
 	}
 }
 
-func TestWeightForTierDescendsAndFloors(t *testing.T) {
-	if !(WeightForTier(0) > WeightForTier(1) && WeightForTier(1) > WeightForTier(2)) {
+func TestKeywordTierWeightsDescendBelowSemantic(t *testing.T) {
+	if !(WeightKeywordStrict > WeightKeywordContent && WeightKeywordContent > WeightKeywordAny) {
 		t.Errorf("tier weights must descend: %v %v %v",
-			WeightForTier(0), WeightForTier(1), WeightForTier(2))
+			WeightKeywordStrict, WeightKeywordContent, WeightKeywordAny)
 	}
 	// The floor sits below the semantic lane on purpose: a chunk that happens to
 	// share one word is worse evidence than one the embedding placed near the
 	// question.
-	if WeightForTier(2) >= WeightSemantic {
+	if WeightKeywordAny >= WeightSemantic {
 		t.Errorf("the OR floor (%v) must weigh less than the semantic lane (%v)",
-			WeightForTier(2), WeightSemantic)
+			WeightKeywordAny, WeightSemantic)
 	}
-	// A tier the ladder does not know is looser still, so it clamps DOWN.
-	if WeightForTier(9) != WeightKeywordAny {
-		t.Errorf("unknown tier = %v, want the floor %v", WeightForTier(9), WeightKeywordAny)
-	}
-	if WeightForTier(0) != WeightKeywordStrict {
-		t.Errorf("tier 0 = %v, want %v", WeightForTier(0), WeightKeywordStrict)
+	// The strict rung still outweighs it, which is the older invariant this
+	// ladder must not have broken.
+	if WeightKeywordStrict <= WeightSemantic {
+		t.Errorf("a literal full match (%v) must outweigh the semantic lane (%v)",
+			WeightKeywordStrict, WeightSemantic)
 	}
 }
 
@@ -253,7 +252,7 @@ func TestOrFloorDoesNotOutrankASemanticHit(t *testing.T) {
 	}
 
 	after := FuseWeighted([]Lane{
-		{Hits: shared, Weight: WeightForTier(2)},
+		{Hits: shared, Weight: WeightKeywordAny},
 		{Hits: onTopic, Weight: WeightSemantic},
 	}, 10)
 	if after[0].VideoID != "on-topic" {
