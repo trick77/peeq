@@ -930,10 +930,12 @@ describe("Inbox summaries", () => {
     expect(within(await card("No speech")).queryByText(/summary/i)).toBeNull();
   });
 
-  // The music case: captions on disk that produced no summary. The status is
-  // the same 'no_transcript' as a video with no captions at all, and the two
-  // must not look alike — one has something to read and the other does not.
-  it("offers the transcript when captions exist but no summary does", async () => {
+  // The music case: captions on disk that produced no summary. It used to be
+  // offered as "Read transcript", and is not offered at all any more — a
+  // summary is the only thing the Inbox stops you to read, and raw caption
+  // text is not one. The .vtt behind the card makes no difference, which is
+  // the whole point: both halves of 'no_transcript' now behave alike.
+  it("does not offer a video whose captions produced no summary", async () => {
     vi.mocked(listPending).mockResolvedValue([
       baseItem({
         video_id: "music",
@@ -944,13 +946,16 @@ describe("Inbox summaries", () => {
     ]);
     const onOpen = vi.fn();
     render(<Inbox onOpen={onOpen} />);
-    await screen.findByText("A music video");
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Read transcript" }),
-    );
+    const card = (await screen.findByText("A music video")).closest(
+      "article",
+    ) as HTMLElement;
+    await userEvent.click(card.querySelector(".thumb") as HTMLElement);
 
-    expect(onOpen).toHaveBeenCalledWith("music");
+    expect(within(card).queryByText(/transcript/i)).toBeNull();
+    expect(within(card).queryByText(/summary/i)).toBeNull();
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(card.className).toContain("is-inert");
   });
 
   // The card opens exactly when it says it opens. A no_transcript video with

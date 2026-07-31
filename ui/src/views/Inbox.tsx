@@ -75,7 +75,6 @@ function compareBy(
 // separate field rather than "mark !== null":
 //
 //   done                  Read summary     opens   the summary is written
-//   no_transcript + vtt    Read transcript  opens   music, but the text is there
 //   pending / running      Summarizing…     opens   a videos row exists; the
 //                                                   page shows live progress
 //   "" + auto_summary      Summarizing…     INERT   the caption fetcher has not
@@ -84,12 +83,16 @@ function compareBy(
 //                                                   would 404 — the marker is a
 //                                                   promise about the channel,
 //                                                   not a fact about the video
-//   no_transcript, no vtt  —                inert   nothing behind the card
+//   no_transcript          —                inert   a summary is the only thing
+//                                                   this card ever offers to
+//                                                   read, and there will not be
+//                                                   one — whether or not a .vtt
+//                                                   exists behind it
 //   "" + opted out         —                inert   never will be
 //   error                  —                inert   the page's only news is
 //                                                   that it will be retried
 type Offer = {
-  mark: "summary" | "transcript" | "reading" | null;
+  mark: "summary" | "reading" | null;
   opens: boolean;
 };
 
@@ -100,15 +103,23 @@ function offer(item: PendingItem): Offer {
     case "pending":
     case "running":
       return { mark: "reading", opens: true };
-    // no_transcript is two different videos wearing one status. YouTube had no
-    // captions at all — nothing behind the card, so it must not pretend
-    // otherwise — or the captions turned out to be music and produced no
-    // summary, in which case the transcript is still there to skim, and
-    // skimming it is how you decide on a video peeq could not read for you.
+    // no_transcript is two different videos wearing one status: YouTube had no
+    // captions at all, or the captions turned out to be music and produced no
+    // summary. The distinction used to matter, because the second kind offered
+    // its raw transcript to skim. It no longer does — the Inbox is a triage
+    // list, and the only thing worth stopping to read here is a summary. A
+    // card with captions but no summary has nothing to offer that a glance at
+    // the poster does not, so it goes inert rather than sending you to a wall
+    // of caption text you would have to read to learn what the summary would
+    // have told you.
+    //
+    // Inert, not merely unmarked: the two halves stay one promise, so the card
+    // stops opening at the same moment it stops advertising. has_subtitles is
+    // deliberately not consulted — a .vtt behind the card is no longer a
+    // reason to offer it. Download is still on the card, and downloading is
+    // still how you get the video itself.
     case "no_transcript":
-      return item.has_subtitles
-        ? { mark: "transcript", opens: true }
-        : { mark: null, opens: false };
+      return { mark: null, opens: false };
     case "":
       return { mark: item.auto_summary ? "reading" : null, opens: false };
     default:
@@ -123,12 +134,12 @@ function hasPage(item: PendingItem) {
 
 // summaryMark draws the card's offer.
 //
-// Everything readable gets a button, named for what is actually behind it —
-// "Read summary" or "Read transcript". A click target with no visible edge is
-// one nobody finds, and naming the verb is what makes the page discoverable;
-// anything quieter is a label with a handler attached, and hover-reveal is not
-// an option peeq has (a trackpad-driven iPad reports `hover: hover` and would
-// hide the control for good).
+// Everything readable gets a button, and there is now exactly one thing that is
+// readable, so the button has one name: "Read summary". A click target with no
+// visible edge is one nobody finds, and naming the verb is what makes the page
+// discoverable; anything quieter is a label with a handler attached, and
+// hover-reveal is not an option peeq has (a trackpad-driven iPad reports
+// `hover: hover` and would hide the control for good).
 //
 // "Summarizing…" stays a span. There is nothing to press yet, and a disabled
 // button would be a control that never worked. The quiet scrim treatment keeps
@@ -139,16 +150,16 @@ function summaryMark(item: PendingItem, onOpen?: (videoID: string) => void) {
   if (mark === "reading") {
     return <span className="metapill oncover is-reading">Summarizing…</span>;
   }
-  const label = mark === "summary" ? "Summary" : "Transcript";
-  // Belt and braces: every readable mark opens today, and a button that did
-  // not would be the dead control this whole rule exists to prevent.
-  if (!opens) {
-    return <span className="metapill oncover has-summary">{label}</span>;
-  }
-  // No onOpen means the host gave the card nowhere to go — App always passes
-  // one, but a caller that does not gets the fact without a dead control.
-  if (!onOpen) {
-    return <span className="metapill oncover has-summary">{label}</span>;
+  // Two ways the mark can be readable with nowhere to press, both answered the
+  // same way: state the fact, draw no control. `!opens` is belt and braces —
+  // every readable mark opens today, and a button that did not would be the
+  // dead control this whole rule exists to prevent. `!onOpen` means the host
+  // gave the card nowhere to go; App always passes one, but a caller that does
+  // not gets the fact without a dead control. They were two branches while the
+  // label was a variable and the strings differed; with one name for one offer
+  // they return the same span, so they ask the question once.
+  if (!opens || !onOpen) {
+    return <span className="metapill oncover has-summary">Summary</span>;
   }
   return (
     <button
@@ -157,7 +168,7 @@ function summaryMark(item: PendingItem, onOpen?: (videoID: string) => void) {
       onClick={() => onOpen(item.video_id)}
     >
       <Icon name="alignLeft" size="12px" />
-      Read {label.toLowerCase()}
+      Read summary
       <Icon name="chevronRight" size="12px" />
     </button>
   );
