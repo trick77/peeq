@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
 import { SignIn } from "./shell/SignIn";
 import { takeAuthFailed } from "./authError";
+import { readSignedInHint, writeSignedInHint } from "./signedInHint";
 import {
   getMe,
   listDownloads,
@@ -200,6 +201,9 @@ export function App() {
   );
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  // Read once, on mount: what the check answers next is allowed to change the
+  // hint in storage, but not what this render was told to expect.
+  const [signedInHint] = useState(readSignedInHint);
   const [authError, setAuthError] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   // undefined until the first listPending() lands. The rail greys Inbox out on
@@ -317,6 +321,11 @@ export function App() {
     getMe()
       .then((u) => {
         if (active) setUser(u);
+        // Resolving at all means the server answered — a user, or a 401 that
+        // says the session is really gone. Either way the hint now knows what
+        // the next reload should expect. Deliberately not in .catch(): see
+        // writeSignedInHint.
+        writeSignedInHint(!!u);
       })
       .catch(() => {
         // getMe() rejecting (backend down, network error, or a non-401
@@ -589,6 +598,18 @@ export function App() {
   }
 
   if (!authChecked) {
+    // A browser that was signed in last time gets nothing at all until the
+    // check lands — body already paints --color-bg, so "nothing" is the app's
+    // own ground, not a white page. Showing the sign-in card here and pulling
+    // it away half a second later is the flash this avoids; the card stays for
+    // the visitor it was written for, who has no hint stored.
+    //
+    // A failed OIDC callback overrides the hint: that user's session just went,
+    // and the "Sign-in didn't complete" line below is the whole point of the
+    // redirect. Suppressing the screen would swallow it.
+    if (signedInHint && !AUTH_FAILED) {
+      return null;
+    }
     return <SignIn checking />;
   }
 
