@@ -943,38 +943,82 @@ describe("Channel", () => {
     expect(onBack).not.toHaveBeenCalled();
   });
 
-  it("blurring the format override field saves it when the value changed", async () => {
+  async function openFormatOverride(user: ReturnType<typeof userEvent.setup>) {
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /settings/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /format override/i }),
+    );
+  }
+
+  it("picking a preset for the format override saves its id", async () => {
     const user = userEvent.setup();
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
     );
-    await screen.findByText("Uncanny Expeditions");
-    await user.click(screen.getByRole("tab", { name: /settings/i }));
+    await openFormatOverride(user);
+    await user.click(
+      screen.getByRole("menuitemradio", { name: /Apple VP9 4K/ }),
+    );
 
-    const formatInput = await screen.findByLabelText(/format override/i);
-    await user.click(formatInput);
-    await user.type(formatInput, "bestaudio");
-    await user.tab();
-
+    // The id, not the 100-character selector it stands for — the worker
+    // resolves it through ytdlp.Presets.
     await waitFor(() => {
       expect(updateChannel).toHaveBeenCalledWith("UCa", {
-        format_override: "bestaudio",
+        format_override: "apple-vp9-4k",
       });
     });
   });
 
-  it("blurring the format override field unchanged does not save", async () => {
+  it("re-picking the current format override does not save", async () => {
     const user = userEvent.setup();
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await openFormatOverride(user);
+    await user.click(
+      screen.getByRole("menuitemradio", { name: /Use the global setting/ }),
+    );
+
+    expect(updateChannel).not.toHaveBeenCalled();
+  });
+
+  it("marks the globally-set preset as the default", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getSettings).mockResolvedValue(
+      settings({ format_preset: "best-mp4" }),
+    );
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await openFormatOverride(user);
+
+    const badges = screen.getAllByText("Default");
+    expect(badges).toHaveLength(1);
+    expect(badges[0].closest("[role=menuitemradio]")?.textContent).toContain(
+      "Best available MP4",
+    );
+  });
+
+  // A channel configured before the picker existed holds a hand-typed yt-dlp
+  // selector. Opening its Settings tab must not quietly rewrite it — that
+  // would change what the channel downloads without anyone asking.
+  it("shows a legacy raw format override without rewriting it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getChannel).mockResolvedValue(
+      detail({ format_override: "bestvideo[height<=1440]+bestaudio" }),
+    );
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
     );
     await screen.findByText("Uncanny Expeditions");
     await user.click(screen.getByRole("tab", { name: /settings/i }));
 
-    const formatInput = await screen.findByLabelText(/format override/i);
-    await user.click(formatInput);
-    await user.tab();
-
+    expect(
+      await screen.findByRole("button", {
+        name: /bestvideo\[height<=1440\]\+bestaudio/,
+      }),
+    ).toBeInTheDocument();
     expect(updateChannel).not.toHaveBeenCalled();
   });
 

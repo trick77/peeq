@@ -164,4 +164,13 @@ describe("RowMenu", () => {
     await user.keyboard("{ArrowUp}");
     expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveFocus();
   });
+
+  it("hands its menu a placement for the flip-up CSS to key on", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole("button", { name: "Actions for X" }));
+    // jsdom measures nothing, so the value is always the "down" fallback.
+    // What is under test is that the attribute is wired at all.
+    expect(screen.getByRole("menu")).toHaveAttribute("data-place", "down");
+  });
 });

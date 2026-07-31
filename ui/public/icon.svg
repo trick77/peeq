@@ -1,16 +1,26 @@
 <!--
-  Peeq's icon: the play glyph .rail-logo wears, inverted. The rail sets a dark
-  glyph on an orange tile; here the tile is gone and the glyph carries the
-  orange, because a favicon that keeps its tile spends ~43% of a 16px square on
-  background it does not need.
+  Peeq's icon: lucide's "square-play" — a play wedge inside a rounded frame.
+  The rail keeps its bare triangle; this is the tab, and a triangle alone at
+  16px is a shape with no outline to hold it. The frame gives it one.
 
-  The glyph is lucide's "play" path (ISC), copied rather than imported — nothing
-  loads lucide-react to draw a static asset. It is scaled off the path's TRUE
-  bbox (x[5,21] y[3.27,20.73], centre 13,12, height 17.46), not its nominal
-  24x24 box, which the path only fills two-thirds of: scaling by the box is what
-  makes the rail's own triangle read as a dot at favicon sizes. Here it spans
-  80% of the tile. The centring carries a +1.0 nudge right — a triangle's visual
-  centre sits left of its bounding-box centre.
+  The paths are lucide's (ISC), copied rather than imported — nothing loads
+  lucide-react to draw a static asset. Two departures from how lucide itself
+  would render them:
+
+  1. The wedge is FILLED, not stroked. lucide draws every glyph as an outline,
+     and a 2-unit outline is the first thing to vanish at 16px. The wedge is a
+     closed path, so filling it costs nothing, and it is what peeq already did
+     with the bare play triangle.
+  2. Stroke is 2.5, not lucide's 2. At 16px a 2-unit frame washes out and a
+     3.5-unit one closes the gap to the wedge; 2.5 keeps both readable. It is
+     given in glyph units, so it scales with the glyph and stays proportional
+     in the two tiled sources.
+
+  Sized off the outer rect's TRUE bbox — x[3,21] y[3,21], grown by half the
+  stroke to 20.5 square — not the nominal 24x24 box the paths only partly fill.
+  Scaling by the box is what makes a glyph read as a dot at favicon sizes. Here
+  it spans 80% of the tile. No optical nudge: unlike a bare triangle, the frame
+  is symmetric, so its bbox centre is also its visual centre.
 
   Transparent ON PURPOSE, and only safe here: browsers composite this onto the
   tab. iOS and Android flatten alpha (onto black and onto the launcher's own
@@ -23,7 +33,8 @@
     <stop offset="0" stop-color="#e08a68"/>
     <stop offset="1" stop-color="#c25f34"/>
   </linearGradient>
-  <g transform="translate(-5.09 -3.16) scale(2.93)">
-    <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" fill="url(#og)"/>
+  <g transform="translate(2.029 2.029) scale(2.4976)" fill="none" stroke="url(#og)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2"/>
+    <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" fill="url(#og)" stroke="none"/>
   </g>
 </svg>

@@ -510,10 +510,19 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	format := set.FormatPreset
 	custom := set.FormatCustom
 	if video.RequestedFormat != "" {
-		// A per-channel format override is a free-form yt-dlp format string;
-		// route it through the "custom" preset slot (format.Resolve("custom",x)==x).
-		format = "custom"
-		custom = video.RequestedFormat
+		// A per-channel format override is a preset id. Rows written before
+		// the channel picker existed hold a free-form yt-dlp selector instead
+		// and still have to download, so both shapes are accepted; a raw
+		// selector is never a preset id, which is what keeps them apart. The
+		// free-form one goes through the "custom" slot, where
+		// ytdlp.Resolve("custom", x) == x.
+		if ytdlp.IsPreset(video.RequestedFormat) {
+			format = video.RequestedFormat
+			custom = ""
+		} else {
+			format = "custom"
+			custom = video.RequestedFormat
+		}
 	}
 	subLang := video.AudioLanguage
 	if subLang == "" {

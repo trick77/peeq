@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { formatDuration } from "../format";
+import { useMenuPlacement } from "./useMenuPlacement";
 
 export const SLEEP_PRESETS = [5, 10, 15, 30, 60] as const;
 
@@ -36,6 +37,7 @@ export function SleepTimer({ remainingSeconds, armedMinutes, onArm }: Props) {
   const wrapRef = useRef<HTMLSpanElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const place = useMenuPlacement(open, triggerRef, menuRef);
 
   const armed = remainingSeconds !== null;
 
@@ -133,6 +135,7 @@ export function SleepTimer({ remainingSeconds, armedMinutes, onArm }: Props) {
         <div
           className="sleepmenu"
           role="menu"
+          data-place={place}
           ref={menuRef}
           onKeyDown={onMenuKeyDown}
         >
