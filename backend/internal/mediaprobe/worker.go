@@ -12,8 +12,9 @@ import (
 const (
 	// pollInterval is how often the worker looks for unprobed videos. The
 	// loop reads local files with a local binary — no network, no account —
-	// so it can be brisk, and it goes permanently idle once the library is
-	// probed.
+	// so it can be brisk. Once the library is probed each pass costs one
+	// index lookup that returns nothing (migration 0025), not a walk of every
+	// downloaded row, which is what makes a 30s poll affordable forever.
 	pollInterval = 30 * time.Second
 	// batchSize is how many files one pass handles. ffprobe on a local file
 	// is milliseconds, but the batch is still bounded so an interrupted
@@ -47,12 +48,20 @@ type Deps struct {
 	Logger       *slog.Logger
 }
 
-// Worker fills in the media facts for videos downloaded before peeq probed
-// anything, so an existing library shows a full stat strip without every
-// video having to be downloaded again.
+// Worker fills in the media facts for videos that have no probe attempt
+// recorded, so every video shows a full stat strip.
 //
-// New downloads are probed inline by the download worker; this loop exists
-// purely for the backlog, and idles once it is drained.
+// It began as a one-time backfill for the library that predated migration
+// 0010, but it is NOT only that, and treating it as a backlog that drains is
+// how the loop gets mistakenly retired. New downloads are probed inline by the
+// download worker under a 5s timeout, and that inline probe deliberately
+// writes nothing when it fails, leaving probed_at NULL specifically so this
+// loop picks the video up (see download.Worker.probeDownloaded, which says so).
+// It is the retry path for every failed inline probe, and has to keep looking
+// long after the original backlog is gone.
+//
+// Migration 0025 gave the claim its index for exactly that reason: the steady
+// state is a pass that finds nothing, twice a minute, forever.
 type Worker struct {
 	d Deps
 }

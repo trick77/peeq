@@ -169,35 +169,6 @@ RETURNING state_version`, position, id).Scan(&version)
 	return version, watched != 0, nil
 }
 
-// SetResumeRaw sets a video's resume position WITHOUT the >=90% auto-watch that
-// SetResume applies, and without the state_version concurrency check. It was
-// written for the TubeArchivist import, so a partially-watched "continue" video
-// imported at, say, 92% kept its position and stayed in the Continue Watching
-// queue rather than being flipped to watched (which would have dropped it out of
-// exactly the queue the migration existed to preserve). That importer was
-// deleted in PR #125, so this has no production caller left: it survives as the
-// discriminator in store_test.go proving SetResume's auto-watch is SetResume's
-// doing and not the bare UPDATE's. It errors on a missing row, so callers must
-// Upsert the video first.
-func (s *Store) SetResumeRaw(id string, position float64) error {
-	if position < 0 {
-		position = 0
-	}
-	res, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET resume_position_seconds = ? WHERE id = ?`, position, id)
-	if err != nil {
-		return fmt.Errorf("set video %s resume (raw): %w", id, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("set video %s resume (raw): %w", id, err)
-	}
-	if n == 0 {
-		return fmt.Errorf("set video %s resume (raw): not found", id)
-	}
-	return nil
-}
-
 // RestartRetentionClock stamps watched_at to now on a watched video, leaving
 // watched and resume_position_seconds alone. It exists for the re-download
 // path: a restored video needs its full retention_days again, or the next

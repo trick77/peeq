@@ -386,20 +386,24 @@ func run() error {
 		Activity:       activityStore,
 	})
 
-	// sponsorblockWorker backfills and refreshes the segments the player skips
-	// and marks. It is the only background loop that talks to a host other than
-	// YouTube, and so deliberately carries none of the YouTube guards: no
-	// cookie gate, no throttle, no kill-switch (see the package doc).
+	// sponsorblockWorker keeps current the segments the player skips
+	// and marks. Despite the name it has always used, this never drains: it
+	// re-reads every video on a 30-day cycle, because segments keep being
+	// submitted long after a video is published. It is the only background loop
+	// that talks to a host other than YouTube, and so deliberately carries none
+	// of the YouTube guards: no cookie gate, no throttle, no kill-switch (see
+	// the package doc).
 	sponsorblockWorker := sponsorblock.NewWorker(sponsorblock.Deps{
 		Fetcher: sponsorblock.NewClient("", nil),
 		Videos:  videosStore,
 	})
 
-	// mediaprobeWorker fills in the media facts for everything downloaded
-	// before peeq probed anything, so an existing library shows a full stat
-	// strip without being re-downloaded. It goes idle once drained. Like the
-	// SponsorBlock backfill it touches no network at all — here, not even
-	// another host: it reads local files with a local binary.
+	// mediaprobeWorker fills in the media facts for any video with no probe
+	// attempt recorded, so the stat strip is complete. It does not drain
+	// either: the download worker's inline probe leaves probed_at NULL when it
+	// fails, so this is the retry path for every one of those (see the package
+	// doc). Like the SponsorBlock loop it touches no network at all — here, not
+	// even another host: it reads local files with a local binary.
 	mediaprobeWorker := mediaprobe.NewWorker(mediaprobe.Deps{
 		Prober: prober,
 		Videos: videosStore,
@@ -413,7 +417,7 @@ func run() error {
 	// Bound all nine background goroutines' lifetimes to the process: the
 	// download worker, the retention sweeper, the yt-dlp version-check ticker,
 	// the scan scheduler, the summarize worker, the channel-metadata
-	// refresher, the SponsorBlock backfill, the media-probe backfill and the
+	// refresher, the SponsorBlock refresher, the media-probe worker and the
 	// inbox caption fetcher. workerWG.Wait() below (after serve returns, i.e.
 	// after ctx is cancelled) blocks until all nine have actually observed
 	// ctx.Done() and returned, rather than exiting the process out from under
@@ -451,12 +455,12 @@ func run() error {
 	}()
 	go func() {
 		defer workerWG.Done()
-		slog.Info("sponsorblock backfill started")
+		slog.Info("sponsorblock refresher started")
 		sponsorblockWorker.Run(ctx)
 	}()
 	go func() {
 		defer workerWG.Done()
-		slog.Info("media probe backfill started")
+		slog.Info("media probe worker started")
 		mediaprobeWorker.Run(ctx)
 	}()
 	go func() {

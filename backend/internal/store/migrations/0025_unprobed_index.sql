@@ -1,0 +1,38 @@
+-- An index for the media-probe worker's claim, which has never had one.
+--
+-- The worker looks for downloaded videos with no probe attempt recorded every
+-- 30 seconds, for the life of the process. Its claim (see
+-- videos.UnprobedDownloaded) filters on status, media_path and probed_at and
+-- then sorts by downloaded_at. The only index it could use was
+-- idx_videos_status, and status = 'downloaded' matches nearly every row in the
+-- table — so each pass walked the whole library and built a temp b-tree to
+-- sort it, twice a minute, in order to return nothing.
+--
+-- Nothing to return is the steady state, and that is the point: the worker is
+-- not a backlog drain that finishes. It is the retry path for an inline probe
+-- that failed, so it has to keep looking long after the library is probed. A
+-- claim that costs a full walk is affordable once and wasteful forever.
+--
+-- Partial on probed_at IS NULL, so the index holds only the rows still
+-- awaiting a probe — on a probed library, none. SQLite uses a partial index
+-- only when the query's WHERE clause provably implies the index's, and
+-- `probed_at IS NULL` appears verbatim in the claim, which is enough.
+--
+-- status leads the column list and downloaded_at follows, which is what makes
+-- this win rather than merely qualify. An earlier attempt indexed downloaded_at
+-- alone and put status in the partial predicate; it was usable but the planner
+-- still preferred idx_videos_status and kept the sort, because peeq never runs
+-- ANALYZE and the cost model favours an equality seek over an ordered walk.
+-- With status as the leading column the claim gets its equality seek AND takes
+-- downloaded_at ASC from the index order, so the temp b-tree disappears.
+-- Verified on 3.51 with and without ANALYZE, and with the index empty.
+--
+-- media_path is deliberately in neither the columns nor the predicate: it
+-- filters almost nothing, and a term the planner has to match exactly buys no
+-- selectivity while adding a way for index and query to drift apart.
+--
+-- This is the same shape as 0006's SponsorBlock claim index, which got one at
+-- the time; the probe worker 0010 added did not.
+CREATE INDEX IF NOT EXISTS idx_videos_unprobed
+    ON videos (status, downloaded_at)
+    WHERE probed_at IS NULL;
