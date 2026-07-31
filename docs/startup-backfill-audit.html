@@ -1,0 +1,116 @@
+<title>peeq — The startup backfills: which are still needed?</title>
+<style>
+  :root{
+    --bg:#1f1f1e; --panel:#1b1b1a; --border:#323230; --border-soft:#2a2a28;
+    --ink:#faf9f5; --ink-dim:#e4e1d8; --muted:#9c9a92; --faint:#6f6d66;
+    --accent:#c6613f; --accent-strong:#d97757; --accent-dim:#5a3527;
+    --online:#5aa06a; --danger:#c14638; --kept:#d6a15a;
+    --sans:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --r:10px; --r-sm:8px;
+  }
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(120% 80% at 80% -10%,rgba(198,97,63,.06),transparent 60%),
+                     radial-gradient(90% 70% at 8% 110%,rgba(214,161,90,.03),transparent 55%)}
+  .wrap{max-width:1000px;margin:0 auto;padding:46px 26px 110px}
+  h1{font-family:var(--serif);font-weight:600;font-size:2rem;margin:0 0 10px;letter-spacing:-.01em;text-wrap:balance}
+  h2{font-family:var(--serif);font-weight:600;font-size:1.3rem;margin:0 0 8px}
+  h3{font-size:12.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:26px 0 8px}
+  .eyebrow{font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--faint);margin:0 0 6px}
+  .lede{color:var(--muted);max-width:70ch;margin:0 0 4px}
+  p{max-width:74ch;color:var(--ink-dim)}
+  section{margin-top:44px;border-top:1px solid var(--border-soft);padding-top:26px}
+  code{font-family:var(--mono);font-size:12.5px;color:var(--ink-dim);background:var(--panel);
+       border:1px solid var(--border-soft);border-radius:4px;padding:1px 5px}
+  pre{margin:14px 0 0;padding:13px 15px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--panel);
+      overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--ink-dim)}
+  pre code{background:none;border:0;padding:0;font-size:inherit}
+  .c{color:var(--faint)}
+  ul{max-width:74ch;color:var(--ink-dim);padding-left:19px}
+  li{margin:5px 0} li::marker{color:var(--faint)}
+  .piece{border:1px solid var(--border);border-radius:var(--r);background:var(--panel);padding:18px 20px 20px;margin-top:18px}
+  .piece.first{border-color:var(--accent-dim);background:color-mix(in srgb,var(--accent) 5%,var(--panel))}
+  .phead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  .phead h2{margin:0;font-size:1.18rem}
+  .badge{font-family:var(--mono);font-size:11px;color:var(--faint);border:1px solid var(--border);
+         border-radius:999px;padding:1px 9px;white-space:nowrap}
+  .badge.be{color:var(--kept);border-color:#4c3b22}
+  .badge.later{opacity:.7}
+  table{border-collapse:collapse;width:100%;margin-top:14px;font-size:13.5px}
+  th{text-align:left;font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);
+     font-weight:600;padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:10px 12px;border-bottom:1px solid var(--border-soft);vertical-align:top;color:var(--ink-dim)}
+  tr:last-child td{border-bottom:0}
+  td.k{white-space:nowrap;font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .tw{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r);background:var(--panel);margin-top:14px}
+  .tw table{margin:0;min-width:620px}
+  .warn{border-left:2px solid var(--kept);background:color-mix(in srgb,var(--kept) 8%,transparent);
+        padding:12px 16px;border-radius:0 var(--r-sm) var(--r-sm) 0;margin-top:16px;max-width:76ch}
+  .warn b{color:var(--ink)}
+  .stop{border-left:2px solid var(--danger);background:color-mix(in srgb,var(--danger) 8%,transparent);
+        padding:12px 16px;border-radius:0 var(--r-sm) var(--r-sm) 0;margin-top:16px;max-width:76ch}
+  .stop b{color:var(--ink)}
+  .ok{border-left:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent);
+      padding:12px 16px;border-radius:0 var(--r-sm) var(--r-sm) 0;margin-top:16px;max-width:76ch}
+  .ok b{color:var(--ink)}
+</style>
+
+<div class="wrap">
+
+<p class="eyebrow">Audit · 2026-07-31 · PR #290</p>
+<h1>The startup backfills: which are still needed?</h1>
+<p class="lede">peeq starts nine background goroutines at boot, two of which log themselves as a <em>backfill</em>. The question was whether any exist only to carry old rows across a migration and can now be deleted.</p>
+
+<div class="ok"><b>None of the four can go.</b> The one job that genuinely was migration-only — <code>internal/diskimport</code> — already left with #287. But two of the survivors are misnamed in a way that invites deleting them, and one was quietly expensive forever.</div>
+
+<div class="warn"><b>Migration DML is immutable.</b> Several items below are legacy-only <em>by construction</em> — <code>0004</code>/<code>0015</code>'s category resets, <code>0013</code>, <code>0020</code>'s <code>caption_attempts = 99</code>, <code>0021</code>. They are recorded in <code>schema_migrations</code>, and rewriting one breaks every existing database. Here, "legacy" never means "removable".</div>
+
+<section>
+<h2>The four boot-time backfills</h2>
+
+<div class="piece first">
+<div class="phead"><h2>1 · media probe</h2><span class="badge be">keep — and it needed an index</span><span class="badge">30s · batch 25</span></div>
+<p>Its own doc said it <em>"exists purely for the backlog, and idles once it is drained."</em> That is the opposite of how it is used. The download worker's inline probe is bounded at 5s and deliberately writes <b>nothing</b> on failure, leaving <code>probed_at</code> NULL precisely so this loop retries it — <code>probeDownloaded</code> says so in as many words. It is the retry path for every failed inline probe, and never drains.</p>
+<p>So its claim cost is permanent — and it had no index. <code>status = 'downloaded'</code> matches nearly every row, so each pass walked the whole library and built a temp b-tree to sort it, twice a minute, to return nothing.</p>
+<pre><code>before             SCAN videos / SEARCH ... idx_videos_status | <b>USE TEMP B-TREE FOR ORDER BY</b>
+after (0025)       SEARCH videos USING INDEX idx_videos_unprobed (status=?)</code></pre>
+<div class="warn"><b>Leading the index with <code>status</code>, not <code>downloaded_at</code>, is load-bearing.</b> peeq never runs <code>ANALYZE</code>. With no statistics the planner takes an equality seek on <code>idx_videos_status</code> over an ordered walk — the first version of this index sorted on <code>downloaded_at</code> alone, was perfectly usable, and was silently never chosen. A test asserts the plan and fails against that shape.</div>
+</div>
+
+<div class="piece">
+<div class="phead"><h2>2 · SponsorBlock</h2><span class="badge">keep as-is · 60s · batch 20</span></div>
+<p>Logged as a backfill; it is a <b>30-day refresher</b>. Segments keep being submitted long after a video is published, so <code>ClaimSponsorblockStale</code> re-claims anything older than the interval. It never drains <em>by design</em> — and its idle poll is already cheap, because <code>0006</code> gave it the partial index the probe worker never got.</p>
+</div>
+
+<div class="piece">
+<div class="phead"><h2>3 · Summary-job boot sweep</h2><span class="badge">keep · once, at boot</span></div>
+<p>Its comment justified it by <code>peeq import-ta</code> — <b>a subcommand that no longer exists</b>. The function survives for a reason that outlived the importer: <code>succeed()</code> marks a video downloaded, then stores a transcript, stores a poster, removes a directory and probes for up to 5s, and only then enqueues. A crash anywhere in that window leaves a downloaded video nothing else would revisit.</p>
+<p class="c">It correctly refuses to retry <code>failed</code> rows, so a poison video cannot re-queue on every boot.</p>
+</div>
+
+<div class="piece">
+<div class="phead"><h2>4 · Orphan resets ×2</h2><span class="badge">keep · untouched</span></div>
+<p><code>running</code> → <code>pending</code> for jobs left behind by a killed process. Plain crash recovery, no migration history.</p>
+</div>
+</section>
+
+<section>
+<h2>Also found</h2>
+<ul>
+<li><b><code>SetResumeRaw</code> is dead — deleted.</b> Written for the TubeArchivist importer removed in #125; the only callers were its own two tests. The ≥90% auto-watch rule it discriminated against is asserted independently by <code>TestSetResume_autoMarksWatchedAtNinetyPercent_noResetOnRewatch</code>, so no coverage of live behaviour went with it.</li>
+<li><b><code>videos/store.go</code>'s <code>channel_name</code> COALESCE looks like residue and isn't.</b> It papers over a live <em>write-side</em> gap: scan-discovered videos still write an empty <code>channel_name</code> today, and consumers reading the raw column (search, export) see the bare UCID. Reachable on a fresh install. <b>Reported, not fixed here</b> — its own comment calls the write-side fix a follow-up.</li>
+</ul>
+</section>
+
+<section>
+<h2>Verification</h2>
+<ul>
+<li><code>go build ./...</code>, <code>go vet ./...</code>, <code>gofmt -l</code> clean, full <code>go test ./...</code> green.</li>
+<li>Query plans captured against a real <code>Migrate</code>-built schema — not a synthetic table — with and without <code>ANALYZE</code>, and with the index empty (the steady state).</li>
+<li>The plan guard was checked against the losing index shape and fails on it, so it is a real regression test rather than a tautology.</li>
+</ul>
+</section>
+
+</div>
