@@ -37,6 +37,12 @@ export const PRESETS_NO_CUSTOM: FormatPreset[] = PRESETS.filter(
 // isn't one — including a raw yt-dlp selector, which is what a channel's
 // format_override held before the preset picker existed — so callers can
 // tell "this is a preset" from "this is a string someone typed".
+//
+// It looks up PRESETS_NO_CUSTOM, so "custom" is not a name it will give:
+// this mirrors ytdlp.IsPreset, which excludes it for the same reason. The
+// id stands for whatever format string travels beside it, so on its own it
+// names nothing — and "follow Custom…" is not a sentence about what will
+// actually be downloaded.
 export function presetLabel(id: string): string | null {
-  return PRESETS.find((p) => p.id === id)?.label ?? null;
+  return PRESETS_NO_CUSTOM.find((p) => p.id === id)?.label ?? null;
 }

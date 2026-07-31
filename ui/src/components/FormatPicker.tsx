@@ -125,7 +125,10 @@ export function FormatPicker({ value, globalPreset, onPick, disabled }: Props) {
           >
             <span className="fmtmenu-label">Use the global setting</span>
           </button>
-          <span className="fmtmenu-sep" />
+          {/* role="separator" because a role="menu" only admits menuitem,
+              group and separator children; an unroled span is a text node a
+              screen reader announces in the middle of the list. */}
+          <span className="fmtmenu-sep" role="separator" />
           {PRESETS_NO_CUSTOM.map((p) => (
             <button
               key={p.id}
