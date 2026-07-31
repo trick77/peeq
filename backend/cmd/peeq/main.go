@@ -338,7 +338,7 @@ func run() error {
 
 	summarizeWorker := summarize.NewWorker(summarize.WorkerDeps{
 		Jobs: summaryJobsStore, Videos: videosStore, Rag: ragStore,
-		Summarizer: summarizer, Embedder: embedClient, MediaDir: cfg.MediaDir,
+		Summarizer: summarizer, Embedder: embedClient,
 		EmbedModel: cfg.EmbedModel, EmbedDim: cfg.EmbedDim,
 		VideoDelay: cfg.SummarizeVideoDelay,
 		Activity:   activityStore,

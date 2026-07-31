@@ -118,7 +118,6 @@ type TranscriptImportCandidate struct {
 	ID           string
 	ChannelID    string
 	SubtitlePath string
-	Status       string
 }
 
 // TranscriptlessVideos returns up to limit videos that have no row in
@@ -131,7 +130,7 @@ func (s *Store) TranscriptlessVideos(limit int) ([]TranscriptImportCandidate, er
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(context.Background(), `
-SELECT v.id, v.channel_id, v.subtitle_path, v.status
+SELECT v.id, v.channel_id, v.subtitle_path
 FROM videos v
 WHERE NOT EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = v.id)
 ORDER BY COALESCE(v.downloaded_at, v.created_at) DESC
@@ -144,7 +143,7 @@ LIMIT ?`, limit)
 	var out []TranscriptImportCandidate
 	for rows.Next() {
 		var c TranscriptImportCandidate
-		if err := rows.Scan(&c.ID, &c.ChannelID, &c.SubtitlePath, &c.Status); err != nil {
+		if err := rows.Scan(&c.ID, &c.ChannelID, &c.SubtitlePath); err != nil {
 			return nil, fmt.Errorf("scan transcriptless video: %w", err)
 		}
 		out = append(out, c)

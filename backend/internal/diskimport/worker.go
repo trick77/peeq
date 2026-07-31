@@ -191,8 +191,18 @@ var sweepable = map[string]struct{}{
 	".jpeg":        {},
 	".png":         {},
 	".webp":        {},
-	".json":        {}, // <id>.info.json
+	".info.json":   {},
 	".description": {},
+}
+
+// sweepExt is filepath.Ext with one special case: ".info.json" is matched
+// whole, so the sweep takes yt-dlp's metadata dump without claiming every .json
+// a future version of peeq might keep beside a video.
+func sweepExt(path string) string {
+	if strings.HasSuffix(strings.ToLower(path), ".info.json") {
+		return ".info.json"
+	}
+	return strings.ToLower(filepath.Ext(path))
 }
 
 // legacyDirs are the media-tree directories whose entire contents moved into
@@ -254,7 +264,7 @@ func (w *Worker) sweep(ctx context.Context) {
 			}
 			return nil
 		}
-		if _, ok := sweepable[strings.ToLower(filepath.Ext(path))]; !ok {
+		if _, ok := sweepable[sweepExt(path)]; !ok {
 			kept++
 			return nil
 		}

@@ -621,6 +621,11 @@ func TestVideosThumbnail_servesStoredPoster(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Fatalf("Content-Type = %q, want image/jpeg", ct)
 	}
+	// The stored updated_at has to parse, or every poster silently loses its
+	// 304 on every page load and nothing turns red.
+	if lm := rec.Header().Get("Last-Modified"); lm == "" {
+		t.Fatal("no Last-Modified on a served poster: conditional requests are dead")
+	}
 
 	getRec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
 	var dto map[string]any

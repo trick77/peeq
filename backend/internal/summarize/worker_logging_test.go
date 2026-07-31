@@ -114,8 +114,7 @@ func (u *usageCompleter) Complete(ctx context.Context, m []llm.Message) (string,
 	info.Totals.Add(llm.Usage{
 		Requests: 1, Accounted: 1,
 		PromptTokens: 1000, CompletionTokens: 200, ReasoningTokens: 120, TotalTokens: 1200,
-		InferenceNanos: int64(250 * time.Millisecond),
-	})
+		InferenceNanos: int64(250 * time.Millisecond)})
 
 	sys := m[0].Content
 	switch {
@@ -172,8 +171,7 @@ func seedVideo(t *testing.T, h *workerHarness, id string) {
 		t.Fatalf("write vtt: %v", err)
 	}
 	if err := h.videos.Upsert(videos.Video{
-		ID: id, URL: "https://youtu.be/" + id, Title: "A Test Video", ChannelName: "A Test Channel",
-	}); err != nil {
+		ID: id, URL: "https://youtu.be/" + id, Title: "A Test Video", ChannelName: "A Test Channel"}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
 	seedTranscript(t, h, id, relPath)
@@ -191,8 +189,7 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(comp), Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536, Logger: log,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536, Logger: log})
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}
@@ -205,8 +202,7 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 	}
 	for k, want := range map[string]any{
 		"video_id": "v1", "title": "A Test Video", "channel": "A Test Channel",
-		"attempt": "1/3", "resumed": false,
-	} {
+		"attempt": "1/3", "resumed": false} {
 		if start[k] != want {
 			t.Errorf("started.%s = %v, want %v", k, start[k], want)
 		}
@@ -314,8 +310,7 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(&usageCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536, Logger: log,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536, Logger: log})
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}
@@ -327,8 +322,7 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	// A skipped stage keeps its own number, so the stages a resumed job does
 	// run are still numbered where a reader expects them.
 	for _, want := range []struct{ step, stage string }{
-		{"summary", "1/4"}, {"classify", "2/4"},
-	} {
+		{"summary", "1/4"}, {"classify", "2/4"}} {
 		rec := findStageRec(recs, want.step, "skipped")
 		if rec == nil {
 			t.Fatalf("stage %s (%s) was not logged as skipped", want.stage, want.step)
@@ -364,8 +358,7 @@ func TestWorkerLogsRetryAttemptWhenKeyPointsFail(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(keypointsErrCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536, Logger: log,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536, Logger: log})
 	if _, err := w.processOne(context.Background()); err == nil {
 		t.Fatal("expected processOne to surface the key-points failure")
 	}
@@ -377,8 +370,7 @@ func TestWorkerLogsRetryAttemptWhenKeyPointsFail(t *testing.T) {
 	}
 	for k, want := range map[string]any{
 		"attempt": "1/3", "will_retry": true,
-		"title": "A Test Video", "channel": "A Test Channel",
-	} {
+		"title": "A Test Video", "channel": "A Test Channel"} {
 		if rec[k] != want {
 			t.Errorf("retry.%s = %v, want %v", k, rec[k], want)
 		}
@@ -404,8 +396,7 @@ func TestWorkerLogsExhaustedRetryAsFinal(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(keypointsErrCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536, Logger: log,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536, Logger: log})
 	if _, err := w.processOne(context.Background()); err == nil {
 		t.Fatal("expected the key-points failure to surface")
 	}
@@ -430,8 +421,7 @@ func TestWorkerLogsEmbedFailureAsErrorOutcome(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(&usageCompleter{}), Embedder: failingEmbedder{},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536, Logger: log,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536, Logger: log})
 	if _, err := w.processOne(context.Background()); err == nil {
 		t.Fatal("expected processOne to surface the embed failure")
 	}
@@ -453,8 +443,7 @@ func TestWorkerLogsNoTranscriptReason(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(failCompleter{t: t}), Embedder: failEmbedder{t: t},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 4, Logger: log,
-	})
+		EmbedModel: "test-model", EmbedDim: 4, Logger: log})
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}
@@ -538,8 +527,7 @@ func TestWorkerLogsTerminalLineOnPanic(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(panicCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536, Logger: log,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536, Logger: log})
 	// The recover in processOne swallows the panic; the loop must survive it.
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
@@ -572,8 +560,7 @@ func TestWorkerLogsBacklogClassifyWithIdentityAndTokens(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(&usageCompleter{}), Embedder: failEmbedder{t: t},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536, Logger: log,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536, Logger: log})
 	did, err := w.processOne(context.Background())
 	if err != nil {
 		t.Fatalf("processOne: %v", err)

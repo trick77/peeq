@@ -38,7 +38,6 @@ type WorkerDeps struct {
 	Rag          *rag.Store
 	Summarizer   *Summarizer
 	Embedder     Embedder
-	MediaDir     string
 	EmbedModel   string
 	EmbedDim     int
 	PollInterval time.Duration

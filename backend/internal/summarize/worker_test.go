@@ -121,8 +121,7 @@ func newWorkerHarness(t *testing.T) *workerHarness {
 		videos:   videos.New(db),
 		jobs:     summaryjobs.New(db),
 		rag:      rag.NewStore(db),
-		mediaDir: t.TempDir(),
-	}
+		mediaDir: t.TempDir()}
 }
 
 func TestWorkerNoTranscriptShortCircuits(t *testing.T) {
@@ -141,10 +140,8 @@ func TestWorkerNoTranscriptShortCircuits(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(failCompleter{t: t}),
 		Embedder:   failEmbedder{t: t},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   4,
-	})
+		EmbedDim:   4})
 
 	did, err := w.processOne(context.Background())
 	if err != nil {
@@ -199,10 +196,8 @@ func TestWorkerHappyPathPersistsSummaryAndChunks(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(fakeWorkerCompleter{}),
 		Embedder:   fakeWorkerEmbedder{dim: 1536},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   1536,
-	})
+		EmbedDim:   1536})
 
 	did, err := w.processOne(context.Background())
 	if err != nil {
@@ -262,10 +257,8 @@ func TestProcessOneSetsCategory(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(fakeWorkerCompleter{}),
 		Embedder:   fakeWorkerEmbedder{dim: 1536},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   1536,
-	})
+		EmbedDim:   1536})
 
 	did, err := w.processOne(context.Background())
 	if err != nil || !did {
@@ -312,10 +305,8 @@ func TestClassifyErrorLeavesUncategorizedAndJobSucceeds(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(classifyErrCompleter{}),
 		Embedder:   fakeWorkerEmbedder{dim: 1536},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   1536,
-	})
+		EmbedDim:   1536})
 
 	did, err := w.processOne(context.Background())
 	if err != nil || !did {
@@ -369,10 +360,8 @@ func TestProcessOneReturnsErrorOnEmbedFailure(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(fakeWorkerCompleter{}),
 		Embedder:   failingEmbedder{},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   1536,
-	})
+		EmbedDim:   1536})
 
 	did, err := w.processOne(context.Background())
 	if !did {
@@ -435,11 +424,9 @@ func seedFailingVideo(t *testing.T, id string, maxAttempts int) *fakeActivityRec
 		Rag:        h.rag,
 		Summarizer: New(fakeWorkerCompleter{}),
 		Embedder:   failingEmbedder{},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
 		EmbedDim:   1536,
-		Activity:   rec,
-	})
+		Activity:   rec})
 	if _, err := w.processOne(context.Background()); err == nil {
 		t.Fatal("processOne err = nil, want non-nil (the embed failure)")
 	}
@@ -502,10 +489,8 @@ func TestProcessOneIndexesSummaryChunk(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(fakeWorkerCompleter{}),
 		Embedder:   fakeWorkerEmbedder{dim: 1536},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   1536,
-	})
+		EmbedDim:   1536})
 
 	did, err := w.processOne(context.Background())
 	if err != nil {
@@ -579,13 +564,11 @@ func TestProcessOneEmitsPhaseEvents(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(fakeWorkerCompleter{}),
 		Embedder:   fakeWorkerEmbedder{dim: 1536},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
 		EmbedDim:   1536,
 		OnPhase: func(id, status, phase string) {
 			events = append(events, id+":"+status+":"+phase)
-		},
-	})
+		}})
 
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatal(err)
@@ -670,10 +653,8 @@ func TestWorkerChunkTimestampsAreExactAndMonotonic(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(fakeWorkerCompleter{}),
 		Embedder:   fakeWorkerEmbedder{dim: 1536},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   1536,
-	})
+		EmbedDim:   1536})
 
 	did, err := w.processOne(context.Background())
 	if err != nil {
@@ -795,8 +776,7 @@ func TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints(t *
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(completer), Embedder: embedder,
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536})
 
 	// Attempt 1: key-points fails. Summary + embeddings persist, the video is
 	// marked done, and the job requeues.
@@ -881,10 +861,8 @@ func TestWorkerRunBackfillsDownloadedVideosWithNoJob(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(failCompleter{t: t}),
 		Embedder:   failEmbedder{t: t},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   4,
-	})
+		EmbedDim:   4})
 
 	// Cancelled up front: Run does its boot sweep, then returns before
 	// claiming anything, so the assertion is about the sweep alone.
@@ -929,8 +907,7 @@ func TestProcessOneIdleSweepClassifiesBacklog(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(fakeWorkerCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536})
 
 	did, err := w.processOne(context.Background())
 	if err != nil {
@@ -983,9 +960,8 @@ func TestIdleSweepParksFailuresAndAdvances(t *testing.T) {
 			}
 			return "ai", nil
 		})),
-		Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		EmbedModel: "test-model", EmbedDim: 1536})
 	if _, err := h.db.Exec(`UPDATE videos SET title='v-b video' WHERE id='v-b'`); err != nil {
 		t.Fatalf("title v-b: %v", err)
 	}
@@ -1036,9 +1012,8 @@ func TestIdleSweepParksUnusableReply(t *testing.T) {
 			calls++
 			return "I'm not sure about this one.", nil
 		})),
-		Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		EmbedModel: "test-model", EmbedDim: 1536})
 
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
@@ -1088,9 +1063,8 @@ func TestIdleSweepSurvivesCategoryWriteFailure(t *testing.T) {
 			calls++
 			return "ai", nil
 		})),
-		Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		EmbedModel: "test-model", EmbedDim: 1536})
 
 	did, err := w.processOne(context.Background())
 	if err != nil {
@@ -1136,8 +1110,7 @@ func TestClassifyWriteFailureDoesNotFailTheJob(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(fakeWorkerCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536})
 
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("a category write failure must not surface as a job error: %v", err)
@@ -1198,9 +1171,8 @@ func TestClassifyDoesNotOverwriteAPickMadeDuringTheJob(t *testing.T) {
 			}
 			return "chunk summary", nil
 		})),
-		Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		EmbedModel: "test-model", EmbedDim: 1536})
 
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
@@ -1230,9 +1202,8 @@ func TestIdleSweepDoesNotOverwriteAPickMadeDuringClassify(t *testing.T) {
 			}
 			return "ai", nil
 		})),
-		Embedder: fakeWorkerEmbedder{dim: 1536},
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		EmbedModel: "test-model", EmbedDim: 1536})
 
 	did, err := w.processOne(context.Background())
 	if err != nil {
@@ -1267,8 +1238,7 @@ func TestWorkerMusicOnlyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 	frags := []string{
 		"[Music] I play games with", "[Music] you yeah", "[Music] I'm give a",
 		"[Music] back I give it", "[Music]", "[Music] you scar", "[Music] I get my",
-		"[Music] [Applause]", "[Music] back", "[Music] oh",
-	}
+		"[Music] [Applause]", "[Music] back", "[Music] oh"}
 	for i, f := range frags {
 		fmt.Fprintf(&b, "00:00:%02d.000 --> 00:00:%02d.000\n%s\n\n", i*3, i*3+3, f)
 	}
@@ -1277,8 +1247,7 @@ func TestWorkerMusicOnlyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 	}
 
 	if err := h.videos.Upsert(videos.Video{
-		ID: "v9", URL: "https://youtu.be/v9", DurationSeconds: 200,
-	}); err != nil {
+		ID: "v9", URL: "https://youtu.be/v9", DurationSeconds: 200}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
 	seedTranscript(t, h, "v9", relPath)
@@ -1314,10 +1283,8 @@ func TestWorkerMusicOnlyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(failCompleter{t: t}),
 		Embedder:   failEmbedder{t: t},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   4,
-	})
+		EmbedDim:   4})
 
 	did, err := w.processOne(context.Background())
 	if err != nil {
@@ -1373,10 +1340,8 @@ func TestWorkerNoSubtitleFileKeepsTheStoredSummary(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(failCompleter{t: t}),
 		Embedder:   failEmbedder{t: t},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   4,
-	})
+		EmbedDim:   4})
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}
@@ -1408,7 +1373,7 @@ func TestDiscardStaleAnalysisSurvivesWriteFailures(t *testing.T) {
 	}
 
 	// Rag deliberately left nil: an embedding-less deployment must not panic here.
-	w := NewWorker(WorkerDeps{Jobs: h.jobs, Videos: h.videos, MediaDir: h.mediaDir})
+	w := NewWorker(WorkerDeps{Jobs: h.jobs, Videos: h.videos})
 	w.discardStaleAnalysis(context.Background(), &videos.Video{ID: "v11", Summary: "stale"})
 
 	v, err := h.videos.Get("v11")
@@ -1441,7 +1406,7 @@ func TestDiscardStaleAnalysisSkipsTheRowWriteWhenNothingIsStored(t *testing.T) {
 		t.Fatalf("create trigger: %v", err)
 	}
 
-	w := NewWorker(WorkerDeps{Jobs: h.jobs, Videos: h.videos, Rag: h.rag, MediaDir: h.mediaDir})
+	w := NewWorker(WorkerDeps{Jobs: h.jobs, Videos: h.videos, Rag: h.rag})
 	w.discardStaleAnalysis(context.Background(), &videos.Video{ID: "v12"})
 
 	var count int
@@ -1484,10 +1449,8 @@ func TestWorkerEmptyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 		Rag:        h.rag,
 		Summarizer: New(failCompleter{t: t}),
 		Embedder:   failEmbedder{t: t},
-		MediaDir:   h.mediaDir,
 		EmbedModel: "test-model",
-		EmbedDim:   1536,
-	})
+		EmbedDim:   1536})
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}
@@ -1594,9 +1557,7 @@ func TestWorkerIndexesChaptersFromKeyPointsOutput(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(chapterCompleter{}),
-		Embedder:   fakeWorkerEmbedder{dim: 1536},
-		MediaDir:   h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		Embedder:   fakeWorkerEmbedder{dim: 1536}, EmbedModel: "test-model", EmbedDim: 1536})
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}
@@ -1624,9 +1585,7 @@ func TestWorkerStillIndexesWhenKeyPointsFails(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(keyPointsFailCompleter{}),
-		Embedder:   fakeWorkerEmbedder{dim: 1536},
-		MediaDir:   h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		Embedder:   fakeWorkerEmbedder{dim: 1536}, EmbedModel: "test-model", EmbedDim: 1536})
 	// A key-points failure requeues the job, which surfaces as an error from
 	// processOne — that is the path under test, not a problem with it.
 	if _, err := w.processOne(context.Background()); err == nil {
@@ -1679,12 +1638,10 @@ func TestEmbeddingEmitsDoneNotRunning(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(chapterCompleter{}),
-		Embedder:   fakeWorkerEmbedder{dim: 1536},
-		MediaDir:   h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
+		Embedder:   fakeWorkerEmbedder{dim: 1536}, EmbedModel: "test-model", EmbedDim: 1536,
 		OnPhase: func(id, status, phase string) {
 			events = append(events, id+":"+status+":"+phase)
-		},
-	})
+		}})
 	if _, err := w.processOne(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1729,9 +1686,7 @@ func TestFallbackReindexesAReprocessedVideoWithStaleRev(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(keyPointsFailCompleter{}),
-		Embedder:   fakeWorkerEmbedder{dim: 1536},
-		MediaDir:   h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		Embedder:   fakeWorkerEmbedder{dim: 1536}, EmbedModel: "test-model", EmbedDim: 1536})
 	// Key points fails, so the fallback is the only thing that can re-index.
 	if _, err := w.processOne(context.Background()); err == nil {
 		t.Fatal("expected the key-points failure to be reported")

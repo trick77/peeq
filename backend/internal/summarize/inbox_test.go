@@ -111,8 +111,7 @@ func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(completer), Embedder: embedder,
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536})
 	if _, err := w.processOne(t.Context()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}
@@ -175,8 +174,7 @@ func TestDownloadingAnInboxVideoSkipsTheSummaryAndRunsTheRest(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(completer), Embedder: embedder,
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536})
 	if _, err := w.processOne(t.Context()); err != nil {
 		t.Fatalf("inbox pass: %v", err)
 	}
@@ -245,8 +243,7 @@ func TestOrdinaryNewVideoIsNotTreatedAsAnInboxRead(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(completer), Embedder: embedder,
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536})
 	if _, err := w.processOne(t.Context()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}
