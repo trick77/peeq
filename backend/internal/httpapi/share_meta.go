@@ -10,6 +10,7 @@ import (
 	_ "image/png"
 	"net/http"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/trick77/peeq/internal/sharecard"
@@ -172,9 +173,15 @@ func (s *server) handleShareCard(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "render share card failed")
 		return
 	}
+	// ServeContent rather than a raw Write: the card is rendered per request and
+	// has no row of its own, so a content ETag is its only validator, and going
+	// through ServeContent is what makes it answer If-None-Match with a 304
+	// instead of re-sending a freshly rendered JPEG that is byte-identical to the
+	// one the client already has. The zero modTime just means no Last-Modified.
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "public, max-age=3600")
-	w.Write(jpg)
+	w.Header().Set("Cache-Control", s.shareImageCacheControl(r, v.ID))
+	w.Header().Set("ETag", etagFor(jpg))
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(jpg))
 }
 
 // loadThumbnail decodes a video's stored poster, or returns nil — missing,

@@ -493,7 +493,7 @@ func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	serveThumbnail(w, r, s.videos, v.ID)
+	serveThumbnail(w, r, s.videos, v.ID, cacheImageHour)
 }
 
 // serveStoredImage writes one image held in the database — a video poster, a
@@ -505,6 +505,11 @@ func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
 // a 304 instead of the bytes; the name carries the extension matching the stored
 // mime, which is what makes the Content-Type right. The lookup stays with the
 // caller — the stores are different types and only the writing is shared.
+//
+// The ETag is what makes that 304 dependable. Last-Modified alone rests on a
+// stamp that is second-resolution, and missing entirely on the inbox's
+// lazy-fetch path; a content hash is right on every path. ServeContent reads the
+// header we set here, so it must go on before the call.
 func serveStoredImage(w http.ResponseWriter, r *http.Request, mime string, data []byte, updatedAt string) {
 	modTime, err := time.Parse("2006-01-02 15:04:05", updatedAt)
 	if err != nil {
@@ -512,12 +517,15 @@ func serveStoredImage(w http.ResponseWriter, r *http.Request, mime string, data 
 		// a zero time makes ServeContent skip the Last-Modified header.
 		modTime = time.Time{}
 	}
+	w.Header().Set("ETag", etagFor(data))
 	http.ServeContent(w, r, "image"+media.ThumbnailExtForMime(mime), modTime, bytes.NewReader(data))
 }
 
 // serveThumbnail writes one stored video poster, shared by the library and
-// share-page endpoints so the two cannot drift.
-func serveThumbnail(w http.ResponseWriter, r *http.Request, store *videos.Store, videoID string) {
+// share-page endpoints so the two cannot drift. The caller passes its own
+// Cache-Control because that is the one thing the two do not share: the library
+// route is behind a session and the share route is behind a link.
+func serveThumbnail(w http.ResponseWriter, r *http.Request, store *videos.Store, videoID, cacheControl string) {
 	if store == nil {
 		writeJSONError(w, http.StatusNotFound, "thumbnail not available")
 		return
@@ -531,6 +539,7 @@ func serveThumbnail(w http.ResponseWriter, r *http.Request, store *videos.Store,
 		writeJSONError(w, http.StatusNotFound, "no thumbnail for this video")
 		return
 	}
+	w.Header().Set("Cache-Control", cacheControl)
 	serveStoredImage(w, r, t.Mime, t.Bytes, t.UpdatedAt)
 }
 

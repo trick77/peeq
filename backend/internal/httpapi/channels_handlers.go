@@ -1248,7 +1248,7 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if e == nil {
-		http.NotFound(w, r)
+		notFoundCached(w, r)
 		return
 	}
 	// Only 'pending' items appear in the inbox and use this endpoint. Gating on
@@ -1256,7 +1256,7 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 	// driving an outbound fetch and re-creating the cache directory that
 	// removePendingThumbnail just deleted when it left the inbox.
 	if e.State != channelvideos.StatePending {
-		http.NotFound(w, r)
+		notFoundCached(w, r)
 		return
 	}
 	t, err := s.ledger.GetThumbnail(id)
@@ -1271,7 +1271,7 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 		if ferr != nil {
 			// Both candidates failed. The UI renders its gradient placeholder on
 			// a 404, exactly like a downloaded video with no poster.
-			http.NotFound(w, r)
+			notFoundCached(w, r)
 			return
 		}
 		if serr := s.ledger.SetThumbnail(id, mime, data); serr != nil {
@@ -1279,7 +1279,7 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 		}
 		t = &channelvideos.Thumbnail{Mime: mime, Bytes: data}
 	}
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Cache-Control", cacheImageDay)
 	serveStoredImage(w, r, t.Mime, t.Bytes, t.UpdatedAt)
 }
 
@@ -1312,7 +1312,7 @@ func (s *server) serveChannelImage(w http.ResponseWriter, r *http.Request, kind 
 	// Artwork changes at most weekly (the metadata refresher's interval), so a
 	// day of browser caching is safe and saves a request per channel per page.
 	// The pending-thumbnail route has said the same for longer.
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Cache-Control", cacheImageDay)
 	serveStoredImage(w, r, img.Mime, img.Bytes, img.UpdatedAt)
 }
 
