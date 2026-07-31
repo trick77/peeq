@@ -219,10 +219,12 @@ export function UnfetchedVideo({
           //
           // What it does split on is has_subtitles, because "the title and the
           // channel are all peeq knows about it" is flatly false when a
-          // transcript panel is rendering underneath it — and this page is now
-          // where "Read transcript" on the Inbox card lands. Still no cause
-          // named: captions with no summary also cover an empty file and one
-          // that could not be read, and neither is music.
+          // transcript panel is rendering underneath it. The Inbox used to send
+          // you here on a "Read transcript" button and no longer offers that
+          // card at all, but this page is still reached for such a video from
+          // the Library and the channel tabs, so the split stays. Still no
+          // cause named: captions with no summary also cover an empty file and
+          // one that could not be read, and neither is music.
           video.has_subtitles ? (
             <p className="unfetched-empty">
               No speech peeq could summarize in this video. The captions it
@@ -259,8 +261,10 @@ export function UnfetchedVideo({
         nothing.
 
         Expanded for a no_transcript video, and only for that one: there is no
-        summary coming, the transcript is the entire content of the page, and
-        the Inbox card sent you here on a button that says "Read transcript".
+        summary coming, so the transcript is the entire content of the page.
+        (It was also where the Inbox's "Read transcript" button landed, until
+        the Inbox stopped offering those cards at all — arriving from the
+        Library or a channel tab, the reason is the same.)
         A video still being summarized keeps the panel folded — the summary is
         what that page is waiting to show. Keyed on the video for the same reason the Player
         keys it: the stepper walks from one inbox video to the next without
