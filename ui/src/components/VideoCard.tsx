@@ -309,24 +309,28 @@ function Lifecycle({
   // on the poster and everything under it reads as it would on any other video.
   // The one thing not carried over is the expiry countdown a watched video
   // shows — there is nothing left to expire — so a swept video's row holds
-  // "Kept forever" if it is a favorite (the manual Delete does not spare one,
-  // the sweeper does) and otherwise nothing but the way back.
+  // nothing but the way back.
   //
-  // Both halves can be absent at once — a non-favorite in a list that wires no
-  // onRedownload handler (the channel Archive tab) — and an empty .card-foot
-  // still eats the .card flex gap, so that case renders nothing at all, exactly
-  // as the fresh-video case at the bottom does.
+  // That half can be absent too — a list that wires no onRedownload handler
+  // (the channel Archive tab) — and an empty .card-foot still eats the .card
+  // flex gap, so that case renders nothing at all, exactly as the fresh-video
+  // case at the bottom does.
   if (video.status === "tombstoned") {
-    if (!video.favorite && !onRedownload) return null;
+    if (!onRedownload) return null;
     return (
       <div className="card-foot">
-        {video.favorite ? <KeptForever /> : null}
         <Redownload video={video} onRedownload={onRedownload} />
       </div>
     );
   }
+  // A favorite renders no lifecycle row at all. It used to say "Kept forever"
+  // under a star; the lit star on the thumbnail is that same fact, and saying
+  // it twice on one card made the word the redundant half. The early return is
+  // load-bearing rather than a formality: fall through and a WATCHED favorite
+  // would pick up the expiry countdown below and count down to a sweep that
+  // will never come for it.
   if (video.favorite) {
-    return <KeptForever />;
+    return null;
   }
   if (video.watched) {
     const expiresIn = Math.max(0, retentionDays - daysSince(video.watched_at));
@@ -344,20 +348,6 @@ function Lifecycle({
   // carry now sits on the thumbnail, so there is nothing left to render —
   // an empty .life would still eat a 10px `.card` flex gap, hence null.
   return null;
-}
-
-// KeptForever is the favorite's lifecycle row. Shared, because a tombstoned
-// favorite shows the same row a downloaded one does — the two branches must not
-// drift into two different-looking "Kept forever"s.
-function KeptForever() {
-  return (
-    <div className="life kept">
-      <span className="k">
-        <Icon name="starFilled" size="13px" />
-        Kept forever
-      </span>
-    </div>
-  );
 }
 
 // Redownload is the way back from a failed download or a tombstone — the only

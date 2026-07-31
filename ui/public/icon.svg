@@ -1,7 +1,11 @@
 <!--
   Peeq's icon: lucide's "square-play" — a play wedge inside a rounded frame.
-  The rail keeps its bare triangle; this is the tab, and a triangle alone at
-  16px is a shape with no outline to hold it. The frame gives it one.
+  A triangle alone at 16px is a shape with no outline to hold it; the frame
+  gives it one. The rail used to keep that bare triangle and leave this to the
+  tab, which made the app and its own favicon two different marks. It no
+  longer does: the rail's PeeqMark (ui/src/shell/Rail.tsx) copies the geometry
+  below, dropping the two things that exist only for browser chrome — the
+  opaque ground and the literal hex. A change here wants a look at that one.
 
   The paths are lucide's (ISC), copied rather than imported — nothing loads
   lucide-react to draw a static asset. Two departures from how lucide itself
