@@ -78,7 +78,10 @@ function matchesFilter(v: Video, filter: VideoFilter): boolean {
         v.status === "downloaded" && !v.watched && v.resume_position_seconds > 0
       );
     case "watched":
-      return v.watched;
+      // Not tombstoned: a swept video was reclaimed BECAUSE it was watched, and
+      // the server leaves those out of this filter. Counting them here would
+      // put a number on the chip that the grid it opens does not show.
+      return v.watched && v.status !== "tombstoned";
     case "favorites":
       return v.favorite;
     default:

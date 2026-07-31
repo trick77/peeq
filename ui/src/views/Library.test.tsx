@@ -854,6 +854,46 @@ describe("Library category chips", () => {
     expect(screen.getByRole("button", { name: /Watched/ })).toHaveClass("on");
   });
 
+  // The server leaves swept videos out of the watched filter, so the count has
+  // to leave them out too — it is computed here from the unfiltered list, and a
+  // chip reading 2 above a grid of 1 is the count lying about the click.
+  it("does not count a swept video on the Watched chip", async () => {
+    const here = categoryVideo({
+      id: "here",
+      title: "still here",
+      watched: true,
+    });
+    const swept = categoryVideo({
+      id: "swept",
+      title: "reclaimed",
+      watched: true,
+      status: "tombstoned",
+      has_media: false,
+    });
+    vi.mocked(listVideos).mockImplementation((opts) =>
+      Promise.resolve(opts?.filter === "watched" ? [here] : [here, swept]),
+    );
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Watched/ }));
+    await screen.findByText("still here");
+
+    // Read the status chips off the row itself: "All" also names a category
+    // chip, and the counts being compared here are the status ones.
+    const counts = Object.fromEntries(
+      Array.from(document.querySelectorAll(".chips .chip")).map((c) => [
+        c.textContent?.replace(/\d+$/, "").trim(),
+        c.textContent?.match(/\d+$/)?.[0],
+      ]),
+    );
+    expect(counts["Watched"]).toBe("1");
+    expect(screen.queryByText("reclaimed")).not.toBeInTheDocument();
+    // Still counted under All: that is where a re-download starts.
+    expect(counts["All"]).toBe("2");
+  });
+
   it("renders a category chip row and filters by category", async () => {
     const aiVideo = categoryVideo({
       id: "v1",
