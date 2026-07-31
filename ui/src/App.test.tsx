@@ -448,6 +448,11 @@ describe("App deep links", () => {
   // moves once it does (Inbox.tsx). These two pin the shell telling the cases
   // apart anyway: the rail must not announce "Now playing" over a video with no
   // file, and the fileless id must not become what "Now playing" means.
+  //
+  // getVideo is mocked to return mockVideo for every id, so the page these open
+  // is not literally fileless — what is being pinned is the shell's handling of
+  // where the page was opened from, which is the signal the fix keys on. A test
+  // that needs a genuinely fileless video belongs in Player's own suite.
   async function openInboxSummary() {
     vi.mocked(listPendingApi).mockResolvedValue([inboxItem]);
     render(<App />);
@@ -494,6 +499,27 @@ describe("App deep links", () => {
     fireEvent.click(screen.getByRole("button", { name: "Now playing" }));
 
     await waitFor(() => expect(window.location.pathname).toBe("/video/v1"));
+  });
+
+  it("answers Now playing with the pointer while a summary is on screen", async () => {
+    // The other half of the same guard, and the one that keeps this click from
+    // being dead. On a summary page the URL carries an id, which is normally
+    // the signal to short-circuit — clicking "Now playing" on a video you are
+    // watching must not re-read a pointer another device could have moved, or
+    // it would navigate you out of what you are playing. A summary is not that,
+    // so the click has to reach the pointer instead of landing back on itself.
+    vi.mocked(getPlaybackState).mockResolvedValue({ video_id: "v1" });
+    vi.mocked(listVideos).mockResolvedValue([mockVideo]);
+    await openInboxSummary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Now playing" }));
+
+    await waitFor(() => expect(window.location.pathname).toBe("/video/v1"));
+    // And the rail follows: the page showing is no longer the inbox video's.
+    expect(screen.getByRole("button", { name: "Now playing" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("re-derives the view from the URL on back/forward (popstate)", async () => {
