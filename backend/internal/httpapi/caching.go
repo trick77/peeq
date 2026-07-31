@@ -3,7 +3,9 @@ package httpapi
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
+	"time"
 )
 
 // Cache-Control values for the routes that hand the browser bytes rather than
@@ -29,9 +31,15 @@ const (
 	// cost a request on every load.
 	cacheImageHour = "private, max-age=3600"
 
-	// cacheImagePublicHour is the same window for the share-token routes, which
-	// are served to anyone holding the link.
-	cacheImagePublicHour = "public, max-age=3600"
+	// shareImageMaxAge is the ceiling for the share-token image routes, in
+	// seconds. Far shorter than the owner-side windows, and deliberately so: a
+	// share link can be revoked at any moment, and a cached copy is not reachable
+	// to revoke. Five minutes covers a reader's own repeat views — after that the
+	// ETag makes the re-ask a 304 with no bytes — while bounding how long a
+	// picture can outlive the link that authorized it.
+	//
+	// shareImageCacheControl clamps it further against the link's own expiry.
+	shareImageMaxAge = 300
 
 	// cacheImageMissing is the negative cache for an image that genuinely is not
 	// there. The inbox is the reason it exists: its posters are requested
@@ -41,6 +49,34 @@ const (
 	// may well fill the gap in.
 	cacheImageMissing = "private, max-age=300"
 )
+
+// shareImageCacheControl is the Cache-Control for a share-token image, clamped
+// so a cached picture cannot outlive the link that authorized it.
+//
+// The public routes are the only ones where the cache window is a security
+// question rather than a freshness one. Resolve already refuses an expired
+// token, but a copy already in a browser or an intermediary is past asking: a
+// link shared with a 24h TTL and fetched at hour 23 would keep serving its
+// poster into hour 24 on a fixed window. So the window is the smaller of the
+// ceiling and whatever is left of the link.
+//
+// A link that never expires, or one whose row cannot be re-read, gets the plain
+// ceiling — the same reasoning handleShareVideo uses when it re-reads the link
+// for the footer: a miss here is harmless, not a reason to fail the request.
+func (s *server) shareImageCacheControl(r *http.Request, videoID string) string {
+	seconds := shareImageMaxAge
+	if link, err := s.shareLinks.GetByVideo(r.Context(), videoID); err == nil && link != nil && link.ExpiresAt != "" {
+		// Stored as a UTC datetime string (sharelink.sqliteTime), so an
+		// unparsable value means the row is not what this code thinks it is —
+		// keep the ceiling rather than inventing a window from a zero time.
+		if exp, perr := time.Parse("2006-01-02 15:04:05", link.ExpiresAt); perr == nil {
+			if remaining := int(time.Until(exp).Seconds()); remaining < seconds {
+				seconds = max(remaining, 0)
+			}
+		}
+	}
+	return fmt.Sprintf("public, max-age=%d", seconds)
+}
 
 // notFoundCached is http.NotFound with the negative cache attached, for an
 // image route whose answer is "there is no such image" rather than "something

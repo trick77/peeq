@@ -5,8 +5,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
@@ -225,8 +227,8 @@ func TestShareImages_revalidate(t *testing.T) {
 			return httptest.NewRequest(http.MethodGet, path, nil)
 		})
 		cc := getPublic(t, h, path).Header().Get("Cache-Control")
-		if cc != cacheImagePublicHour {
-			t.Fatalf("%s Cache-Control = %q, want %q", suffix, cc, cacheImagePublicHour)
+		if cc != "public, max-age=300" {
+			t.Fatalf("%s Cache-Control = %q, want the share image ceiling", suffix, cc)
 		}
 	}
 }
@@ -252,4 +254,59 @@ func TestShareCard_keepsItsContentType(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Fatalf("Content-Type = %q, want image/jpeg", ct)
 	}
+}
+
+// TestShareImages_cacheWindowClampsToTheLink is the security half of the share
+// routes' caching: Resolve refuses an expired token, but a copy already sitting
+// in a browser or an intermediary is past refusing. A link with less life left
+// than the ceiling must hand out a correspondingly shorter window, so the
+// picture cannot outlive the link that authorized it.
+func TestShareImages_cacheWindowClampsToTheLink(t *testing.T) {
+	deps, mediaDir := shareMetaDeps(t)
+	writePNG(t, filepath.Join(mediaDir, "chan", "v1", "v1.png"), 64, 36)
+	png, err := os.ReadFile(filepath.Join(mediaDir, "chan", "v1", "v1.png"))
+	if err != nil {
+		t.Fatalf("read seeded png: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "Shared"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetThumbnail("v1", "image/png", png); err != nil {
+		t.Fatalf("store thumbnail: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// A link that never expires gets the plain ceiling.
+	never := createShare(t, h, cookie, "v1", "never")
+	if cc := getPublic(t, h, "/api/s/"+never.Token+"/thumbnail").Header().Get("Cache-Control"); cc != "public, max-age=300" {
+		t.Fatalf("never-expiring Cache-Control = %q, want the ceiling", cc)
+	}
+
+	// Now one whose remaining life is shorter than the ceiling. Re-sharing keeps
+	// the token and only re-stamps the expiry, so this is the same link.
+	if _, err := deps.ShareLinks.Upsert(t.Context(), "v1", 30*time.Second); err != nil {
+		t.Fatalf("re-stamp expiry: %v", err)
+	}
+	for _, suffix := range []string{"/thumbnail", "/card.jpg"} {
+		cc := getPublic(t, h, "/api/s/"+never.Token+suffix).Header().Get("Cache-Control")
+		seconds := maxAgeOf(t, cc)
+		if seconds <= 0 || seconds > 30 {
+			t.Fatalf("%s max-age = %d (%q), want it clamped into (0, 30]", suffix, seconds, cc)
+		}
+	}
+}
+
+// maxAgeOf pulls the seconds out of a Cache-Control header.
+func maxAgeOf(t *testing.T, cacheControl string) int {
+	t.Helper()
+	_, after, found := strings.Cut(cacheControl, "max-age=")
+	if !found {
+		t.Fatalf("no max-age in %q", cacheControl)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(after))
+	if err != nil {
+		t.Fatalf("unparsable max-age in %q: %v", cacheControl, err)
+	}
+	return n
 }

@@ -179,7 +179,7 @@ func (s *server) handleShareCard(w http.ResponseWriter, r *http.Request) {
 	// instead of re-sending a freshly rendered JPEG that is byte-identical to the
 	// one the client already has. The zero modTime just means no Last-Modified.
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", cacheImagePublicHour)
+	w.Header().Set("Cache-Control", s.shareImageCacheControl(r, v.ID))
 	w.Header().Set("ETag", etagFor(jpg))
 	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(jpg))
 }

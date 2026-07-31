@@ -173,8 +173,8 @@ func TestShareCard_rendersJPEGFromTheThumbnail(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Fatalf("Content-Type = %q", ct)
 	}
-	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=3600") {
-		t.Fatalf("Cache-Control = %q, want it cacheable", cc)
+	if cc := rec.Header().Get("Cache-Control"); cc != "public, max-age=300" {
+		t.Fatalf("Cache-Control = %q, want the share image ceiling", cc)
 	}
 	img, err := jpeg.Decode(bytes.NewReader(rec.Body.Bytes()))
 	if err != nil {
