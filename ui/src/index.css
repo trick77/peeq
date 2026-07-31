@@ -2082,6 +2082,13 @@ button.sleeppick.armed {
   left: 0;
   z-index: 20;
   min-width: 150px;
+  /* The same clamp .catmenu carries, for the same reason — six presets are
+     short, but a landscape phone is shorter. A lower ceiling than .catmenu's
+     380px because this menu has six rows, not twenty-two; the vh half matches.
+     Paired with the flip below, which useMenuPlacement picks when there is more
+     room above the pill than under it. */
+  max-height: min(320px, 50vh);
+  overflow-y: auto;
   padding: 5px;
   background: var(--color-elevated);
   border: 1px solid var(--color-elevated-border);
@@ -2090,6 +2097,15 @@ button.sleeppick.armed {
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+/* Opened upward instead, when useMenuPlacement measured no room below. The
+   trigger cannot move while a menu is open, so one measurement per open is
+   enough; without a measurement the attribute reads "down" and nothing here
+   applies. */
+.sleepmenu[data-place="up"],
+.catmenu[data-place="up"] {
+  top: auto;
+  bottom: calc(100% + 7px);
 }
 .sleepmenu button {
   display: flex;
@@ -3568,6 +3584,12 @@ textarea.cookiebox:focus {
 /* Hairline fencing the destructive entry off from the ordinary ones. Inset
    from the popover's edges so it reads as a rule between items, not a border
    across the whole surface. */
+/* Opened upward when useMenuPlacement found no room below — see .sleepmenu.
+   6px, matching this menu's own downward offset rather than the other two. */
+.rowmenu[data-place="up"] {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
 .rowmenu-sep {
   height: 1px;
   margin: 4px 9px;
