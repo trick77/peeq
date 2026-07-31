@@ -62,6 +62,23 @@ export function App() {
   // Which video "Now playing" means: the one in the URL, else the persisted
   // pointer. This is the whole read side of the feature.
   const nowPlayingId = selectedVideoId ?? persistedVideoId;
+  // The video opened from the Inbox to read its summary, if that is the page
+  // currently showing. An inbox video has no media yet, so /video/<id> renders
+  // what peeq read of it rather than a player — deliberately the same URL the
+  // Library opens, so that nothing changes when the file later arrives
+  // (Inbox.tsx). That sharing is what this exists to disambiguate: the route
+  // alone cannot say whether /video/<id> is a video playing or a summary being
+  // read, and the two want different things from the rail and from "Now
+  // playing".
+  //
+  // Held as the video's id rather than a bare "came from the Inbox" flag, so it
+  // is a claim about one specific page instead of a mode the app is left in.
+  // That makes it self-expiring: navigating to another video simply stops
+  // matching, and walking back to the summary with the browser's back button
+  // starts matching again, with no clearing logic to keep in step.
+  const [inboxSummaryId, setInboxSummaryId] = useState<string | null>(null);
+  const readingInboxSummary =
+    view === "player" && !!route.videoId && route.videoId === inboxSummaryId;
   // setView keeps every existing call site (the rail, the banner's "fix
   // cookie", ViewSwitch's back/deleted handlers) unchanged — it just pushes a
   // new URL. navigate is stable, so this is too.
@@ -78,11 +95,27 @@ export function App() {
   // clears it server-side, and a stale local copy would have this click reopen a
   // finished video at 0:00 — exactly what the clear rule exists to prevent. Any
   // pointer another device has moved on lands here too. One request per click on
-  // one rail item, only when the URL has no id of its own; a failed read falls
-  // back to the loaded copy, so this is never worse than not asking.
+  // one rail item, only when the URL has no video of its own to show; a failed
+  // read falls back to the loaded copy, so this is never worse than not asking.
+  //
+  // "Of its own to show" is narrower than "route.videoId is set", and the
+  // difference is a bug this once had. navigate merges onto the current route
+  // (route.ts), so videoId survives leaving the Player — that is what lets "Now
+  // playing" return to your video after a detour through Channels. But once an
+  // inbox summary could occupy /video/<id>, that memory could hold a video with
+  // no file, and skipping the re-read on it made a fileless video shadow the
+  // real pointer for the rest of the session: read one summary, go anywhere,
+  // and "Now playing" reopened the summary rather than the video you were
+  // actually watching. The pointer is already guarded — the backend only ever
+  // points at a downloaded video (playback.Store) — so the fix is to consult it
+  // rather than the memory whenever the memory is not a video being watched.
   const setView = useCallback(
     (v: ViewId) => {
-      if (v !== "player" || route.videoId) {
+      // The URL already shows a video being watched: this click is a no-op, and
+      // must stay one. Re-reading here would let a pointer another device moved
+      // navigate you out of what you are watching.
+      const watchingAVideo = !!route.videoId && !readingInboxSummary;
+      if (v !== "player" || (view === "player" && watchingAVideo)) {
         navigate({ view: v });
         return;
       }
@@ -94,7 +127,7 @@ export function App() {
         })
         .catch(() => navigate({ view: "player", videoId: persistedVideoId }));
     },
-    [navigate, route.videoId, persistedVideoId],
+    [navigate, view, route.videoId, readingInboxSummary, persistedVideoId],
   );
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -506,6 +539,18 @@ export function App() {
 
   function openVideo(id: string) {
     setPendingSeek(undefined);
+    setInboxSummaryId(null);
+    navigate({ view: "player", videoId: id });
+  }
+
+  // openInboxSummary — the Inbox's onOpen. Same destination as openVideo, and
+  // deliberately so: an inbox video's page is the video's page, it just has no
+  // file to play yet. The one difference is that this records which video it
+  // was, so the shell can tell a summary being read from a video being watched
+  // (see inboxSummaryId).
+  function openInboxSummary(id: string) {
+    setPendingSeek(undefined);
+    setInboxSummaryId(id);
     navigate({ view: "player", videoId: id });
   }
 
@@ -515,6 +560,7 @@ export function App() {
   // out of the deep-link scope.
   function openVideoAt(id: string, startSeconds: number) {
     setPendingSeek(startSeconds);
+    setInboxSummaryId(null);
     navigate({ view: "player", videoId: id });
   }
 
@@ -527,7 +573,11 @@ export function App() {
   return (
     <div className="app-shell">
       <Rail
-        active={view}
+        // Reading an inbox video's summary keeps the rail on Inbox. The page is
+        // reached from there and nowhere else, so lighting "Now playing" for it
+        // told you both where you weren't and something untrue — nothing is
+        // playing, there is no file yet.
+        active={readingInboxSummary ? "inbox" : view}
         onNavigate={setView}
         pendingCount={pendingCount}
         upNextCount={
@@ -563,6 +613,7 @@ export function App() {
             selectedChannelId={selectedChannelId}
             pendingSeek={pendingSeek}
             onOpenVideo={openVideo}
+            onOpenInboxSummary={openInboxSummary}
             onOpenVideoAt={openVideoAt}
             onOpenChannel={openChannel}
             onSeekConsumed={() => setPendingSeek(undefined)}
@@ -676,6 +727,7 @@ function ViewSwitch({
   selectedChannelId,
   pendingSeek,
   onOpenVideo,
+  onOpenInboxSummary,
   onOpenVideoAt,
   onOpenChannel,
   onSeekConsumed,
@@ -708,6 +760,7 @@ function ViewSwitch({
   selectedChannelId: string | null;
   pendingSeek: number | undefined;
   onOpenVideo: (id: string) => void;
+  onOpenInboxSummary: (id: string) => void;
   onOpenVideoAt: (id: string, startSeconds: number) => void;
   onOpenChannel: (id: string) => void;
   onSeekConsumed: () => void;
@@ -793,7 +846,7 @@ function ViewSwitch({
         <Inbox
           onCountChange={setPendingCount}
           onOpenChannel={onOpenChannel}
-          onOpen={onOpenVideo}
+          onOpen={onOpenInboxSummary}
           onOrderChange={setInboxOrder}
           search={inboxSearch}
           onSearchChange={onInboxSearchChange}

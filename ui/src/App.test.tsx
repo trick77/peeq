@@ -23,7 +23,26 @@ import {
 } from "./api";
 import { addDownload } from "./api/downloads";
 import { searchVideos } from "./api/search";
-import type { Job, User, Video } from "./api/types";
+// The Inbox reads its own module, not the barrel — the two listPending mocks
+// are separate, and this is the one the rendered view actually calls.
+import { listPending as listPendingApi } from "./api/pending";
+import type { Job, PendingItem, User, Video } from "./api/types";
+
+// An inbox video: discovered, summarised, but with no file yet. Its page is
+// /video/<id> just like a downloaded video's.
+const inboxItem: PendingItem = {
+  video_id: "p1",
+  channel_id: "c1",
+  channel_name: "Channel One",
+  title: "A video worth reading about",
+  duration_seconds: 610,
+  url: "https://youtube.com/watch?v=p1",
+  thumbnail_url: "https://img.example/p1.jpg",
+  published_at: "2026-07-28",
+  discovered_at: "2026-07-29 09:00:00",
+  summary_status: "done",
+  auto_summary: true,
+};
 
 describe("App (static)", () => {
   it("renders Peeq", () => {
@@ -100,6 +119,9 @@ vi.mock("./api/videos", () => ({
   listVideos: vi.fn().mockResolvedValue([]),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
   thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
+  // The Inbox card's poster. Only reached once a test puts an item in the
+  // inbox — until then listPending resolves empty and no card renders.
+  pendingThumbnailUrl: (id: string) => `/api/pending/${id}/thumbnail`,
 }));
 
 vi.mock("./api/search", () => ({
@@ -143,6 +165,11 @@ vi.mock("./api/pending", () => ({
 // every describe regardless of textual position.
 beforeEach(() => {
   window.history.replaceState(null, "", "/");
+  // Empty the inbox for the same reason. This is the module the rendered Inbox
+  // actually calls, and a mockResolvedValue outlives clearAllMocks (which drops
+  // call history, not implementations) — so without this, the one test that
+  // seeds an item would leave it in every later test's inbox.
+  vi.mocked(listPendingApi).mockResolvedValue([]);
 });
 
 // The dock only starts its 3s poll once `jobs` already holds an active
@@ -414,6 +441,59 @@ describe("App deep links", () => {
     fireEvent.click(screen.getByRole("button", { name: "Now playing" }));
 
     expect(await screen.findByText(/Nothing playing/i)).toBeInTheDocument();
+  });
+
+  // An inbox video's page shares the Player's URL — /video/<id> is the video's
+  // page whether or not a file has arrived yet, deliberately, so that nothing
+  // moves once it does (Inbox.tsx). These two pin the shell telling the cases
+  // apart anyway: the rail must not announce "Now playing" over a video with no
+  // file, and the fileless id must not become what "Now playing" means.
+  async function openInboxSummary() {
+    vi.mocked(listPendingApi).mockResolvedValue([inboxItem]);
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+    await waitFor(() => expect(getPlaybackState).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: /^Inbox/ }));
+    const title = await screen.findByText("A video worth reading about");
+    const poster = (title.closest("article") as HTMLElement).querySelector(
+      ".thumb",
+    ) as HTMLElement;
+    fireEvent.click(poster);
+    await waitFor(() => expect(window.location.pathname).toBe("/video/p1"));
+  }
+
+  it("keeps the rail on Inbox while an inbox video's summary is open", async () => {
+    // The summary page is reached from the Inbox and nowhere else, so leaving
+    // Inbox lit says where you are. Lighting "Now playing" instead said both
+    // where you weren't and something untrue — there is no file to play.
+    await openInboxSummary();
+
+    expect(screen.getByRole("button", { name: /^Inbox/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      screen.getByRole("button", { name: "Now playing" }),
+    ).not.toHaveAttribute("aria-current");
+  });
+
+  it("does not let a read inbox summary become what Now playing means", async () => {
+    // navigate() merges onto the current route, so videoId survives leaving the
+    // Player — which is what lets "Now playing" return to your video after a
+    // detour. A fileless inbox video landing in that memory used to shadow the
+    // real pointer for the rest of the session: read one summary and every
+    // later "Now playing" click reopened it instead of the video being watched.
+    vi.mocked(getPlaybackState).mockResolvedValue({ video_id: "v1" });
+    vi.mocked(listVideos).mockResolvedValue([mockVideo]);
+    await openInboxSummary();
+
+    // Leave for any other page, then ask for what is playing.
+    fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    await screen.findByPlaceholderText("Search titles");
+    fireEvent.click(screen.getByRole("button", { name: "Now playing" }));
+
+    await waitFor(() => expect(window.location.pathname).toBe("/video/v1"));
   });
 
   it("re-derives the view from the URL on back/forward (popstate)", async () => {
