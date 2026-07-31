@@ -10,7 +10,7 @@
   2. Square corners. iOS applies its own superellipse mask; rounding the corners
      here would double-round them.
 
-  The glyph is smaller than in icon.svg (60% vs 96%) because it now sits inside
+  The glyph is smaller than in icon.svg (60% vs 80%) because it now sits inside
   a tile with its own edges to breathe against, rather than being the whole
   picture. Note that this puts one rounded frame inside another: the glyph's
   own corners are lucide's, at rx 2 of 24, and are meant to be seen. Only the
