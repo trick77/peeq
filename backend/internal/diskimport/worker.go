@@ -29,6 +29,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -181,8 +182,7 @@ func (w *Worker) pass(ctx context.Context) bool {
 	// copy, and deleting it would be the data loss this migration exists to
 	// prevent.
 	if drained && !w.blocked && !w.swept {
-		w.swept = true
-		w.sweep(ctx)
+		w.swept = w.sweep(ctx)
 	}
 	return true
 }
@@ -235,18 +235,91 @@ var legacyDirs = []string{".channels", ".pending", ytdlp.SummaryDirName}
 // Deliberately conservative: only known asset extensions are removed, only
 // outside .staging, and everything removed is counted in the log line. A file
 // it does not recognise is reported and left alone.
-func (w *Worker) sweep(ctx context.Context) {
+//
+// It reports whether the sweep actually ran, so a pass that had to abandon it
+// leaves w.swept false and a later one tries again.
+func (w *Worker) sweep(ctx context.Context) bool {
 	if w.d.MediaDir == "" {
-		return
+		return true
 	}
 	root, err := media.SafeMediaPath(w.d.MediaDir, ".")
 	if err != nil {
 		w.d.Logger.Error("diskimport: sweep could not resolve media dir", "err", err)
-		return
+		return false
 	}
 
-	// The wholesale directories go first: nothing inside them is ever read
-	// again, so walking their contents file by file would only be slower.
+	// Phase one WALKS ONLY — nothing is removed while the tree is being read.
+	// The walk takes real time on a large library, and the drain that let the
+	// sweep start says nothing about what happens during it: a download that
+	// finalizes meanwhile renames its .vtt and poster out of .staging and into
+	// the tree, and there is a moment before the download worker reads them
+	// where those files are the only copy that exists anywhere.
+	var found []string
+	kept := 0
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // an unreadable entry is not worth failing the sweep over
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if d.IsDir() {
+			if filepath.Dir(path) == root {
+				// A download in flight is not litter.
+				if d.Name() == stagingDirName {
+					return filepath.SkipDir
+				}
+				// The legacy directories are removed wholesale below, which
+				// overrides the per-file guard. Walking into them would count
+				// files in "kept" that the RemoveAll then takes anyway, and
+				// this log line is what gates the follow-up PR.
+				if slices.Contains(legacyDirs, d.Name()) {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if _, ok := sweepable[sweepExt(path)]; !ok {
+			kept++
+			return nil
+		}
+		found = append(found, path)
+		return nil
+	})
+	if err != nil && ctx.Err() == nil {
+		w.d.Logger.Warn("diskimport: sweep walk failed", "err", err)
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+
+	// Phase two asks the database, as late as possible, which videos STILL have
+	// nothing stored. Those are the ids whose files must survive: either the
+	// import could not find them — in which case the file on disk is the only
+	// copy — or they arrived while the walk was running.
+	guard, ok := w.protected()
+	if !ok {
+		w.d.Logger.Warn("diskimport: sweep abandoned, the library moved under it")
+		return false
+	}
+
+	removed := 0
+	for _, path := range found {
+		if guard.protects(path) {
+			kept++
+			continue
+		}
+		if rerr := os.Remove(path); rerr != nil {
+			w.d.Logger.Warn("diskimport: sweep could not remove file", "path", path, "err", rerr)
+			continue
+		}
+		removed++
+	}
+
+	// The wholesale directories hold nothing any reader will ever open again.
+	// .summaries is the only one still written to, by the inbox caption
+	// fetcher, and that worker burns a retry rung rather than losing anything
+	// for good if its file disappears mid-fetch.
 	for _, name := range legacyDirs {
 		if safe, serr := media.SafeMediaPath(w.d.MediaDir, name); serr == nil {
 			if _, statErr := os.Stat(safe); statErr == nil {
@@ -259,41 +332,70 @@ func (w *Worker) sweep(ctx context.Context) {
 		}
 	}
 
-	removed, kept := 0, 0
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil // an unreadable entry is not worth failing the sweep over
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if d.IsDir() {
-			// A download in flight is not litter.
-			if d.Name() == stagingDirName && filepath.Dir(path) == root {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if _, ok := sweepable[sweepExt(path)]; !ok {
-			kept++
-			return nil
-		}
-		if rerr := os.Remove(path); rerr != nil {
-			w.d.Logger.Warn("diskimport: sweep could not remove file", "path", path, "err", rerr)
-			return nil
-		}
-		removed++
-		return nil
-	})
-	if err != nil && ctx.Err() == nil {
-		w.d.Logger.Warn("diskimport: sweep walk failed", "err", err)
-	}
-
 	// Second walk for the directories the removals just emptied. Bottom-up so a
 	// <channelID>/ goes once its last <videoID>/ has.
 	w.pruneEmptyDirs(root)
 
 	w.d.Logger.Info("diskimport: sweep complete", "removed", removed, "kept", kept)
+	return true
+}
+
+// assetGuard is the set of videos that still have nothing stored, taken fresh
+// at sweep time rather than inherited from the pass's candidate queries.
+type assetGuard struct {
+	transcriptless map[string]struct{}
+	thumbnailless  map[string]struct{}
+}
+
+// protects reports whether removing path could destroy the only copy of an
+// asset. The media tree is <channelID>/<videoID>/<videoID>*.<ext>, so the video
+// that owns a file is the directory it sits in; a file somewhere else answers to
+// no row and is litter by definition.
+//
+// .info.json and .description are never protected: nothing in peeq reads them,
+// so there is no store that could be missing them.
+func (g assetGuard) protects(path string) bool {
+	id := filepath.Base(filepath.Dir(path))
+	switch sweepExt(path) {
+	case ".vtt":
+		_, ok := g.transcriptless[id]
+		return ok
+	case ".jpg", ".jpeg", ".png", ".webp":
+		_, ok := g.thumbnailless[id]
+		return ok
+	}
+	return false
+}
+
+// protected re-reads the candidate queries for the guard, reporting false when
+// the sweep must not proceed at all: a query that failed says nothing, and one
+// that comes back FULL means new work appeared after the pass looked drained.
+// Either way the safe answer is to leave the tree alone and let a later pass,
+// after the import has drained again, do the tidying.
+func (w *Worker) protected() (assetGuard, bool) {
+	g := assetGuard{
+		transcriptless: map[string]struct{}{},
+		thumbnailless:  map[string]struct{}{},
+	}
+	if w.d.Videos == nil {
+		return g, true
+	}
+	budget := w.budget()
+	ts, err := w.d.Videos.TranscriptlessVideos(budget)
+	if err != nil || len(ts) >= budget {
+		return g, false
+	}
+	for _, c := range ts {
+		g.transcriptless[c.ID] = struct{}{}
+	}
+	th, err := w.d.Videos.ThumbnaillessVideos(budget)
+	if err != nil || len(th) >= budget {
+		return g, false
+	}
+	for _, c := range th {
+		g.thumbnailless[c.ID] = struct{}{}
+	}
+	return g, true
 }
 
 // pruneEmptyDirs removes every empty directory under root, deepest first, so a

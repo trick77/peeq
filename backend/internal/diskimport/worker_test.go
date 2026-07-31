@@ -568,6 +568,38 @@ func TestPass_writesOffMissingChannelAndPendingFiles(t *testing.T) {
 	}
 }
 
+// A video the database still says has no stored transcript keeps its .vtt,
+// even on a pass that looks drained. That is the whole safety property: a file
+// the import did not carry in — because it was not where the import looked, or
+// because the download that produced it landed after the pass's candidate
+// query — is the only copy there is, and sweeping it is unrecoverable.
+func TestSweep_keepsFilesForVideosWithNothingStored(t *testing.T) {
+	mediaDir := t.TempDir()
+	dir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := filepath.Join(dir, "v1.en.vtt")
+	if err := os.WriteFile(vtt, []byte("WEBVTT"), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	// The candidate carries neither a recorded path nor a channel id, so the
+	// import cannot find the file and writes the video off — the pass drains
+	// with the .vtt still sitting there.
+	store := newFakeStore()
+	store.transcriptCandidates = []videos.TranscriptImportCandidate{{ID: "v1"}}
+	w := NewWorker(Deps{Videos: store, MediaDir: mediaDir})
+
+	w.pass(context.Background())
+
+	if !w.swept {
+		t.Fatal("the sweep did not run on a drained pass")
+	}
+	if _, err := os.Stat(vtt); err != nil {
+		t.Fatalf("the only copy of a transcript was swept: %v", err)
+	}
+}
+
 // The sweep is one-shot: after the tree is clean, re-walking a large library
 // every poll forever would be pure waste.
 func TestSweep_runsOnce(t *testing.T) {

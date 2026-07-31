@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/trick77/peeq/internal/channelvideos"
@@ -303,6 +304,14 @@ func (w *Worker) storeTranscript(videoID, relPath string) error {
 	}
 	if err := w.d.Videos.SetTranscript(videoID, videos.TranscriptSourceCaption, string(data)); err != nil {
 		return err
+	}
+	// A traversal guard before the RemoveAll, for the reason the inbox-ignore
+	// path used to carry one: SafeMediaPath accepts a relative path that cleans
+	// to "." — so an id of "../.." would resolve .summaries/<id> to the media
+	// dir itself, and a bare RemoveAll would wipe the whole tree. A real video
+	// id is always a single path segment.
+	if videoID == "." || videoID == ".." || filepath.Base(videoID) != videoID {
+		return nil
 	}
 	if dir, derr := media.SafeMediaPath(w.d.MediaDir, ytdlp.SummaryDir("", videoID)); derr == nil {
 		_ = os.RemoveAll(dir)

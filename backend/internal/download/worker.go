@@ -898,16 +898,22 @@ func (w *Worker) storeTranscript(videoID, subtitleRelPath, mediaPath string) {
 		return
 	}
 	if subtitleRelPath != "" {
-		if safe, err := media.SafeMediaPath(w.deps.MediaDir, subtitleRelPath); err == nil {
-			if data, rerr := os.ReadFile(safe); rerr == nil {
-				if serr := w.deps.Videos.SetTranscript(videoID, videos.TranscriptSourceDownload, string(data)); serr != nil {
-					w.deps.Logger.Warn("download worker: store transcript failed", "video_id", videoID, "err", serr)
-					return
-				}
-			} else {
-				w.deps.Logger.Warn("download worker: read transcript failed", "video_id", videoID, "err", rerr)
-				return
-			}
+		// Every failure to get the text into the row RETURNS, the rejected path
+		// included: the unlink below takes all of them, so falling through
+		// would delete the only copy of a transcript nothing had read.
+		safe, err := media.SafeMediaPath(w.deps.MediaDir, subtitleRelPath)
+		if err != nil {
+			w.deps.Logger.Warn("download worker: transcript path rejected", "video_id", videoID, "err", err)
+			return
+		}
+		data, rerr := os.ReadFile(safe)
+		if rerr != nil {
+			w.deps.Logger.Warn("download worker: read transcript failed", "video_id", videoID, "err", rerr)
+			return
+		}
+		if serr := w.deps.Videos.SetTranscript(videoID, videos.TranscriptSourceDownload, string(data)); serr != nil {
+			w.deps.Logger.Warn("download worker: store transcript failed", "video_id", videoID, "err", serr)
+			return
 		}
 	}
 	if mediaPath == "" {
