@@ -242,7 +242,7 @@ func (s *server) handleShareVideo(w http.ResponseWriter, r *http.Request) {
 		SummaryStatus:   v.SummaryStatus,
 		Chapters:        rawJSONOrNil(v.Chapters),
 		KeyPoints:       rawJSONOrNil(v.KeyPoints),
-		HasThumbnail:    v.ThumbnailPath != "",
+		HasThumbnail:    v.HasThumbnail,
 		HasSubtitles:    v.SubtitlePath != "",
 		AudioLanguage:   v.AudioLanguage,
 		ExpiresAt:       expiresAt,
@@ -266,13 +266,15 @@ func (s *server) handleShareStream(w http.ResponseWriter, r *http.Request) {
 	s.serveMediaFile(w, r, v.MediaPath, "")
 }
 
-// handleShareThumbnail serves the shared video's poster image.
+// handleShareThumbnail serves the shared video's poster image — from the
+// database, exactly like the library endpoint, so the public page and the app
+// can never disagree about whether a video has a poster.
 func (s *server) handleShareThumbnail(w http.ResponseWriter, r *http.Request) {
 	v := s.resolveShare(w, r)
 	if v == nil {
 		return
 	}
-	s.serveMediaFile(w, r, v.ThumbnailPath, "")
+	serveThumbnail(w, r, s.videos, v.ID)
 }
 
 // handleShareSubtitles serves the shared video's VTT captions. The public page

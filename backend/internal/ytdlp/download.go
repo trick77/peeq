@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/sponsorblock"
 )
 
@@ -420,14 +421,13 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 	}, nil
 }
 
-// thumbnailExts are the extensions yt-dlp's --write-thumbnail may produce,
-// depending on what format the source thumbnail was served in.
-var thumbnailExts = []string{".jpg", ".jpeg", ".png", ".webp"}
-
 // findThumbnail returns the path to the downloaded thumbnail file in dir,
-// or "" if none of the known extensions is present.
+// or "" if none of the known extensions is present. The extension list lives in
+// media.ThumbnailExts: the thumbnail import worker goes looking for the very
+// same files, and a second copy of the list would be a second thing to keep in
+// lockstep with what yt-dlp actually writes.
 func findThumbnail(dir, videoID string) string {
-	for _, ext := range thumbnailExts {
+	for _, ext := range media.ThumbnailExts {
 		p := filepath.Join(dir, videoID+ext)
 		if _, err := os.Stat(p); err == nil {
 			return p

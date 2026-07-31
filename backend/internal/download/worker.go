@@ -472,7 +472,14 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		video.DurationSeconds = int64(meta.DurationSeconds)
 		video.PublishedAt = meta.PublishedAt
 		video.Description = meta.Description
-		video.ThumbnailPath = meta.Thumbnail
+		// Only when the row has nothing: meta.Thumbnail is a REMOTE CDN url, and
+		// letting it displace a local path would point the thumbnail import at a
+		// file it can never open. It is kept for the brand-new row, where it is
+		// the only hint that exists before the download runs — hence a guard
+		// rather than a deletion.
+		if video.ThumbnailPath == "" {
+			video.ThumbnailPath = meta.Thumbnail
+		}
 		video.Availability = videos.NormalizeAvailability(meta.Availability)
 		if err := w.deps.Videos.Upsert(*video); err != nil {
 			// Retry, don't fail: a write that could not land is our
@@ -785,6 +792,13 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 		return
 	}
 
+	// Take the poster into the database. yt-dlp wrote it to disk beside the
+	// media file; from here on that file is only an import source, and the bytes
+	// in video_thumbnails are what every card and player renders (migration
+	// 0022). Best-effort and never gating: a video with no poster is a cosmetic
+	// loss, and the import worker retries this on its own schedule.
+	w.storeThumbnail(video.ID, res.ThumbnailPath)
+
 	// Probe the finished file so the player can show what it actually is.
 	// Deliberately after SetDownloaded and never gating anything below: the
 	// media facts are decoration, and a missing or broken ffprobe must not
@@ -862,6 +876,30 @@ func (w *Worker) probeDownloaded(videoID, mediaPath string) {
 	}
 	if err := w.deps.Videos.SetProbed(videoID, mediaprobe.StoreResult(info)); err != nil {
 		w.deps.Logger.Error("download worker: store probe failed", "video_id", videoID, "err", err)
+	}
+}
+
+// storeThumbnail reads the poster yt-dlp wrote and stores its bytes on the
+// video row. Best-effort at every step: no poster, an unreadable file, an
+// oversized image or a failed insert are all logged and shrugged off — the
+// download itself succeeded, and the thumbimport worker will retry the import
+// on its next pass since the row still has no stored poster.
+func (w *Worker) storeThumbnail(videoID, thumbPath string) {
+	if thumbPath == "" || w.deps.Videos == nil {
+		return
+	}
+	safe, err := media.SafeMediaPath(w.deps.MediaDir, thumbPath)
+	if err != nil {
+		w.deps.Logger.Warn("download worker: thumbnail path rejected", "video_id", videoID, "err", err)
+		return
+	}
+	data, err := os.ReadFile(safe)
+	if err != nil {
+		w.deps.Logger.Warn("download worker: read thumbnail failed", "video_id", videoID, "err", err)
+		return
+	}
+	if err := w.deps.Videos.SetThumbnail(videoID, media.ThumbnailMime(safe), data); err != nil {
+		w.deps.Logger.Warn("download worker: store thumbnail failed", "video_id", videoID, "err", err)
 	}
 }
 

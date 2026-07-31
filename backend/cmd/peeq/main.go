@@ -45,6 +45,7 @@ import (
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/summarize"
 	"github.com/trick77/peeq/internal/summaryjobs"
+	"github.com/trick77/peeq/internal/thumbimport"
 	"github.com/trick77/peeq/internal/version"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -404,21 +405,32 @@ func run() error {
 		Videos: videosStore,
 	})
 
+	// thumbimportWorker carries posters that live in the media tree into the
+	// database (migration 0022), so an existing library keeps its cards without
+	// re-downloading anything. It also rescues the rows whose thumbnail_path was
+	// blanked by a metadata write while the image survived on disk. Local file
+	// reads only — no network at all — and it idles once drained.
+	thumbimportWorker := thumbimport.NewWorker(thumbimport.Deps{
+		Videos:   videosStore,
+		MediaDir: cfg.MediaDir,
+	})
+
 	// ytdlpStatus is written by the version-check ticker and read by the
 	// version endpoint, so the Settings page and the nav rail can report an
 	// available yt-dlp update without a GitHub call per request.
 	ytdlpStatus := ytdlp.NewStatusCache()
 
-	// Bound all nine background goroutines' lifetimes to the process: the
+	// Bound all ten background goroutines' lifetimes to the process: the
 	// download worker, the retention sweeper, the yt-dlp version-check ticker,
 	// the scan scheduler, the summarize worker, the channel-metadata
-	// refresher, the SponsorBlock backfill, the media-probe backfill and the
-	// inbox caption fetcher. workerWG.Wait() below (after serve returns, i.e.
-	// after ctx is cancelled) blocks until all nine have actually observed
-	// ctx.Done() and returned, rather than exiting the process out from under
-	// them. All nine loops exit promptly on ctx.Done(), so this wait is short.
+	// refresher, the SponsorBlock backfill, the media-probe backfill, the
+	// thumbnail import and the inbox caption fetcher. workerWG.Wait() below
+	// (after serve returns, i.e. after ctx is cancelled) blocks until all ten
+	// have actually observed ctx.Done() and returned, rather than exiting the
+	// process out from under them. All ten loops exit promptly on ctx.Done(),
+	// so this wait is short.
 	var workerWG sync.WaitGroup
-	workerWG.Add(9)
+	workerWG.Add(10)
 	go func() {
 		defer workerWG.Done()
 		slog.Info("download worker started")
@@ -457,6 +469,11 @@ func run() error {
 		defer workerWG.Done()
 		slog.Info("media probe backfill started")
 		mediaprobeWorker.Run(ctx)
+	}()
+	go func() {
+		defer workerWG.Done()
+		slog.Info("thumbnail import started")
+		thumbimportWorker.Run(ctx)
 	}()
 	go func() {
 		defer workerWG.Done()

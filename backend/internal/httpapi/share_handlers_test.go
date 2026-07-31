@@ -217,6 +217,10 @@ func TestShare_publicVideoNeverLeaksVideoID(t *testing.T) {
 	if _, err := db.Exec(`UPDATE videos SET media_path = ?, thumbnail_path = ? WHERE id = ?`, mediaPath, thumbPath, id); err != nil {
 		t.Fatalf("set paths: %v", err)
 	}
+	// The share page reads the poster from the row, not from the media tree.
+	if err := deps.Videos.SetThumbnail(id, "image/jpeg", []byte("JPGDATA")); err != nil {
+		t.Fatalf("store thumbnail: %v", err)
+	}
 	if err := deps.Videos.SetSubtitle(id, subPath, "en"); err != nil {
 		t.Fatalf("set subtitle: %v", err)
 	}
@@ -468,7 +472,10 @@ func TestShare_publicThumbnailAndSubtitles(t *testing.T) {
 		t.Fatalf("seed video: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE videos SET thumbnail_path = ? WHERE id = ?`, thumbPath, "v1"); err != nil {
-		t.Fatalf("set thumbnail: %v", err)
+		t.Fatalf("set thumbnail path: %v", err)
+	}
+	if err := deps.Videos.SetThumbnail("v1", "image/jpeg", []byte("JPGDATA")); err != nil {
+		t.Fatalf("store thumbnail: %v", err)
 	}
 	if err := deps.Videos.SetSubtitle("v1", vttPath, "en"); err != nil {
 		t.Fatalf("set subtitle: %v", err)

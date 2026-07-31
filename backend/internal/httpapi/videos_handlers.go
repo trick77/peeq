@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/videos"
@@ -122,7 +124,7 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		DurationSeconds:       v.DurationSeconds,
 		PublishedAt:           v.PublishedAt,
 		Description:           v.Description,
-		HasThumbnail:          v.ThumbnailPath != "",
+		HasThumbnail:          v.HasThumbnail,
 		HasMedia:              v.MediaPath != "",
 		FilesizeBytes:         v.FilesizeBytes,
 		FormatUsed:            v.FormatUsed,
@@ -479,39 +481,49 @@ func attachmentDisposition(name string) string {
 		name, url.PathEscape(name))
 }
 
-// handleVideoThumbnail serves the video's thumbnail image file, resolved
-// safely under mediaDir exactly like handleStreamVideo does for the media
-// file itself. 404 covers both "no video" and "video has no local
-// thumbnail" (including the not-yet-downloaded case where ThumbnailPath may
-// hold a remote URL rather than a local path — SafeMediaPath rejects that
-// too, which is the correct outcome here).
+// handleVideoThumbnail serves the video's poster from the database (migration
+// 0022). There is no filesystem lookup left here: the bytes are either stored on
+// the row or the video has no poster, which is the whole point of the move — a
+// path column could go stale under a perfectly good image, stored bytes cannot.
+//
+// 404 covers both "no video" and "video has no poster". Videos deleted to
+// reclaim space keep theirs: a tombstone takes the media file, not the card.
 func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.lookupVideo(w, r)
 	if !ok {
 		return
 	}
-	if v.ThumbnailPath == "" {
-		writeJSONError(w, http.StatusNotFound, "no thumbnail for this video")
-		return
-	}
-	safe, err := media.SafeMediaPath(s.mediaDir, v.ThumbnailPath)
-	if err != nil {
-		writeJSONError(w, http.StatusNotFound, "thumbnail not available")
-		return
-	}
-	f, err := os.Open(safe)
-	if err != nil {
-		writeJSONError(w, http.StatusNotFound, "thumbnail not available")
-		return
-	}
-	defer f.Close()
+	serveThumbnail(w, r, s.videos, v.ID)
+}
 
-	stat, err := f.Stat()
+// serveThumbnail writes one stored poster, shared by the library and share-page
+// endpoints so the two cannot drift.
+//
+// ServeContent gets the stored updated_at as the modification time, so
+// conditional requests still work and a browser that has the poster gets a 304
+// instead of the bytes; the name carries the extension matching the stored mime,
+// which is what makes the Content-Type right.
+func serveThumbnail(w http.ResponseWriter, r *http.Request, store *videos.Store, videoID string) {
+	if store == nil {
+		writeJSONError(w, http.StatusNotFound, "thumbnail not available")
+		return
+	}
+	t, err := store.GetThumbnail(videoID)
 	if err != nil {
 		serverError(w, r, err, "thumbnail not available")
 		return
 	}
-	http.ServeContent(w, r, filepath.Base(safe), stat.ModTime(), f)
+	if t == nil {
+		writeJSONError(w, http.StatusNotFound, "no thumbnail for this video")
+		return
+	}
+	modTime, err := time.Parse("2006-01-02 15:04:05", t.UpdatedAt)
+	if err != nil {
+		// An unparsable stamp only costs conditional requests, never the image:
+		// a zero time makes ServeContent skip the Last-Modified header.
+		modTime = time.Time{}
+	}
+	http.ServeContent(w, r, "thumbnail"+media.ThumbnailExtForMime(t.Mime), modTime, bytes.NewReader(t.Bytes))
 }
 
 // handleRedownloadVideo re-queues a failed or tombstoned video for download.
