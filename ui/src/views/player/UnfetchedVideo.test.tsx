@@ -120,9 +120,10 @@ describe("UnfetchedVideo", () => {
     expect(screen.getByText(/No speech in this video/)).toBeTruthy();
   });
 
-  // The music case, which is where the Inbox card's "Read transcript" lands.
-  // The transcript IS the page, so it arrives expanded rather than as a folded
-  // accordion the user has to find and press a second time.
+  // A no_transcript video that HAS captions — where the Inbox card's "Read
+  // transcript" lands. The transcript IS the page, so it arrives expanded
+  // rather than as a folded accordion the user has to press a second time, and
+  // the copy above it must not claim the title and channel are all peeq has.
   it("opens the transcript expanded when there is no summary to read", async () => {
     vi.stubGlobal(
       "fetch",
@@ -139,7 +140,7 @@ describe("UnfetchedVideo", () => {
 
     expect(await screen.findByText("la la la")).toBeTruthy();
     expect(screen.queryByText(/all peeq knows about it/)).toBeNull();
-    expect(screen.getByText(/turned out to be music/)).toBeTruthy();
+    expect(screen.getByText(/captions it fetched are below/)).toBeTruthy();
     vi.unstubAllGlobals();
   });
 

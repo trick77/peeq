@@ -217,14 +217,16 @@ export function UnfetchedVideo({
           // are none" and "they turned out to be music", which is the wording
           // the Player already settled on.
           //
-          // has_subtitles is what tells the two apart, and it has to be said
-          // here: the second sentence below is false when a transcript is
-          // sitting in the panel underneath, and this page is now where "Read
-          // transcript" on the Inbox card lands.
+          // What it does split on is has_subtitles, because "the title and the
+          // channel are all peeq knows about it" is flatly false when a
+          // transcript panel is rendering underneath it — and this page is now
+          // where "Read transcript" on the Inbox card lands. Still no cause
+          // named: captions with no summary also cover an empty file and one
+          // that could not be read, and neither is music.
           video.has_subtitles ? (
             <p className="unfetched-empty">
-              No speech peeq could summarize — the captions turned out to be
-              music. The transcript below is everything they said.
+              No speech peeq could summarize in this video. The captions it
+              fetched are below.
             </p>
           ) : (
             <p className="unfetched-empty">
