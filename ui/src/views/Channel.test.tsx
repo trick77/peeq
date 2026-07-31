@@ -132,6 +132,8 @@ function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     disk_bytes: 40802189312,
     newest_published_at: "2026-07-18T00:00:00Z",
     subscribed: true,
+    auto_summary: true,
+    keep_reads: false,
     autodownload: true,
     format_override: "",
     last_scanned_at: "2026-07-20 08:00:00",
@@ -1062,6 +1064,40 @@ describe("Channel", () => {
     ) as HTMLElement;
     expect(
       within(settingsPanel).getByRole("button", { name: /^subscribe$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeping readings for search is a per-channel switch", async () => {
+    const user = userEvent.setup();
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /settings/i }));
+
+    const box = await screen.findByLabelText(/keep readings for search/i);
+    expect(box).not.toBeChecked();
+    await user.click(box);
+
+    expect(updateChannel).toHaveBeenCalledWith("UCa", { keep_reads: true });
+  });
+
+  it("keeping readings is disabled while summaries are off, and says why", async () => {
+    // Nothing is read on such a channel, so there is nothing to keep — a live
+    // toggle here would be a switch that silently does nothing.
+    vi.mocked(getChannel).mockResolvedValue(detail({ auto_summary: false }));
+    const user = userEvent.setup();
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /settings/i }));
+
+    expect(
+      await screen.findByLabelText(/keep readings for search/i),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/summaries are off for this channel/i),
     ).toBeInTheDocument();
   });
 

@@ -59,6 +59,10 @@ type answerVideo struct {
 	// the Library card already asked for, so an answer reuses that cache entry
 	// instead of opening a second one for the same picture.
 	ThumbnailVersion string `json:"thumbnail_version,omitempty"`
+	// Status is here for one distinction the card has to draw: 'new' means peeq
+	// read this video but never downloaded it, so the card badges it and drops
+	// the play affordance rather than promising a file that does not exist.
+	Status string `json:"status"`
 }
 
 const (
@@ -223,6 +227,7 @@ func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVid
 				ChannelName: v.ChannelName, DurationSeconds: v.DurationSeconds,
 				HasThumbnail:     v.HasThumbnail,
 				ThumbnailVersion: v.ThumbnailVersion,
+				Status:           v.Status,
 			})
 		}
 		perVideo[h.VideoID]++

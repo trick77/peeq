@@ -53,6 +53,13 @@ type Channel struct {
 	// channel subscribed to for one video in ten, where the other nine are
 	// summaries nobody asked for.
 	AutoSummary bool
+	// KeepReads is whether that reading is kept and indexed for search rather
+	// than thrown away when the video is ignored. Default false (migration
+	// 0026): the reading is paid for either way, but keeping it costs an
+	// embedding call per chunk and a few dozen KB of vectors for a video that
+	// will never reach the Library. A kept video is searchable and nothing
+	// else — it stays status 'new', which every Library query excludes.
+	KeepReads bool
 }
 
 // Subscription mirrors one row of the subscriptions table. BaselinedAt and
@@ -354,7 +361,7 @@ const channelColumns = `c.id, c.handle, c.name, c.description,
           WHERE i.channel_id = c.id AND i.kind = 'banner') AS banner_version,
        c.subscriber_count, c.verified,
        COALESCE(c.resolved_at, ''), c.resolve_ok, COALESCE(c.added_at, ''), c.first_seen_at,
-       c.auto_summary`
+       c.auto_summary, c.keep_reads`
 
 // rowScanner is *sql.Row and *sql.Rows both.
 type rowScanner interface{ Scan(dest ...any) error }
@@ -369,7 +376,8 @@ func scanChannel(row rowScanner) (*Channel, error) {
 	var avatarVersion, bannerVersion sql.NullString
 	if err := row.Scan(&c.ID, &c.Handle, &c.Name, &c.Description,
 		&avatarVersion, &bannerVersion, &c.Subscribers, &c.Verified,
-		&c.ResolvedAt, &c.ResolveOk, &c.AddedAt, &c.FirstSeenAt, &c.AutoSummary); err != nil {
+		&c.ResolvedAt, &c.ResolveOk, &c.AddedAt, &c.FirstSeenAt,
+		&c.AutoSummary, &c.KeepReads); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -621,6 +629,25 @@ UPDATE channels SET auto_summary = ? WHERE id = ? RETURNING auto_summary`, on, c
 			return false, false, nil
 		}
 		return false, false, fmt.Errorf("set auto summary %s: %w", channelID, err)
+	}
+	return result, true, nil
+}
+
+// SetKeepReads turns "keep what was read, and index it for search" on or off
+// for a channel, returning the stored value. ok is false (with a nil error)
+// when no such channel exists.
+//
+// Same table and same reasoning as SetAutoSummary above, of which this is the
+// downstream half: auto_summary decides whether a video is read at all, and
+// this decides whether that reading is kept once it has served the Inbox.
+func (s *Store) SetKeepReads(channelID string, on bool) (result bool, ok bool, err error) {
+	row := s.db.QueryRowContext(context.Background(), `
+UPDATE channels SET keep_reads = ? WHERE id = ? RETURNING keep_reads`, on, channelID)
+	if err := row.Scan(&result); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, false, nil
+		}
+		return false, false, fmt.Errorf("set keep reads %s: %w", channelID, err)
 	}
 	return result, true, nil
 }

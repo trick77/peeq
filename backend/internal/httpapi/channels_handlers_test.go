@@ -20,6 +20,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -736,6 +737,10 @@ type pendingTestHarness struct {
 	ledger   *channelvideos.Store
 	videos   *videos.Store
 	jobs     *jobs.Store
+	// rag is wired because ignoring asks it whether the video it is about to
+	// discard is indexed. Without it the handler takes the nil-store path and
+	// the keep-an-indexed-read branch is unreachable from a test.
+	rag      *rag.Store
 	mediaDir string
 }
 
@@ -761,6 +766,7 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 	ledgerStore := channelvideos.New(db)
 	videosStore := videos.New(db)
 	jobsStore := jobs.New(db)
+	ragStore := rag.NewStore(db)
 	mediaDir := t.TempDir()
 	deps := Deps{
 		AuthService:    auth.NewService(nil, sessions, users),
@@ -770,6 +776,7 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 		Ledger:         ledgerStore,
 		Videos:         videosStore,
 		Jobs:           jobsStore,
+		Rag:            ragStore,
 		MediaDir:       mediaDir,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
@@ -784,6 +791,7 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 		ledger:   ledgerStore,
 		videos:   videosStore,
 		jobs:     jobsStore,
+		rag:      ragStore,
 		mediaDir: mediaDir,
 	}
 }

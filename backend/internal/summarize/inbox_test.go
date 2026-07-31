@@ -85,10 +85,29 @@ func seedTranscript(t *testing.T, h *workerHarness, id, rel string) {
 	}
 }
 
+// seedChannel writes a bare channels row with keep_reads set as given, and
+// points the video at it. The flag reaches the worker through the join
+// videoColumns already makes, so a video with no channels row at all reads as
+// off — which is what every other test here relies on.
+func seedChannel(t *testing.T, h *workerHarness, channelID, videoID string, keepReads bool) {
+	t.Helper()
+	if _, err := h.db.Exec(
+		`INSERT INTO channels (id, keep_reads) VALUES (?, ?)
+		 ON CONFLICT(id) DO UPDATE SET keep_reads = excluded.keep_reads`,
+		channelID, keepReads); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if _, err := h.db.Exec(`UPDATE videos SET channel_id = ? WHERE id = ?`, channelID, videoID); err != nil {
+		t.Fatalf("point video at channel: %v", err)
+	}
+}
+
 // TestInboxVideoStopsAfterTheSummary is the cost promise. A video peeq read to
 // help decide whether to download it gets the prose and nothing else: no
 // classify call, no embeddings, no key points. Every one of those is an
 // investment in a video the library keeps, and this one may still be ignored.
+//
+// This is the default: the channel has not asked for its readings to be kept.
 func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 	h := newWorkerHarness(t)
 	rel := writeInboxCaption(t, h, "inbox1")
@@ -141,6 +160,65 @@ func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 		t.Fatalf("embedder called %d times, want 0", embedder.calls)
 	}
 	// One call: the summary. Anything more means a deferred step ran anyway.
+	if completer.calls != 1 {
+		t.Fatalf("completer called %d times, want exactly 1 (the summary)", completer.calls)
+	}
+}
+
+// TestInboxVideoOnAKeepReadsChannelIsIndexed is what the channel setting buys.
+// The same video on an opted-in channel is chunked and embedded as well as
+// summarized, so it is findable in Search — and it STILL costs exactly one LLM
+// call, because classify and key points remain deferred either way.
+func TestInboxVideoOnAKeepReadsChannelIsIndexed(t *testing.T) {
+	h := newWorkerHarness(t)
+	rel := writeInboxCaption(t, h, "inbox-keep")
+
+	if err := h.videos.Upsert(videos.Video{ID: "inbox-keep", URL: "https://youtu.be/inbox-keep"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	seedTranscript(t, h, "inbox-keep", rel)
+	if err := h.videos.SetStatus("inbox-keep", videos.StatusNew, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	seedChannel(t, h, "UCkeep", "inbox-keep", true)
+	if _, err := h.jobs.Enqueue("inbox-keep"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	completer := &countingCompleter{reply: "A summary of the video."}
+	embedder := &countingEmbedder{dim: 1536}
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completer), Embedder: embedder,
+		EmbedModel: "test-model", EmbedDim: 1536})
+	if _, err := w.processOne(t.Context()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+
+	v, err := h.videos.Get("inbox-keep")
+	if err != nil || v == nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.SummaryStatus != videos.SummaryDone {
+		t.Fatalf("summary_status = %q, want done", v.SummaryStatus)
+	}
+	if v.EmbedModel == "" {
+		t.Fatal("expected the read to be embedded on a keep_reads channel")
+	}
+	if indexed, herr := h.rag.HasChunks(t.Context(), "inbox-keep"); herr != nil || !indexed {
+		t.Fatalf("no chunks written: indexed=%v (err %v)", indexed, herr)
+	}
+	if embedder.calls == 0 {
+		t.Fatal("embedder never called")
+	}
+	// Still the two deferred steps: keeping the reading is not the same as
+	// treating the video as one the library holds.
+	if v.Category != videos.UncategorizedCategory {
+		t.Fatalf("category = %q, want it still deferred", v.Category)
+	}
+	if v.KeyPoints != "" && v.KeyPoints != "[]" {
+		t.Fatalf("key_points = %q, want them still deferred", v.KeyPoints)
+	}
 	if completer.calls != 1 {
 		t.Fatalf("completer called %d times, want exactly 1 (the summary)", completer.calls)
 	}

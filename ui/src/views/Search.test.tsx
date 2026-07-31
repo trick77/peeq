@@ -298,6 +298,7 @@ describe("Search — the Ask answer", () => {
       channel_name: "Attia",
       duration_seconds: 3600,
       has_thumbnail: true,
+      status: "downloaded",
     },
     {
       id: "v2",
@@ -306,6 +307,7 @@ describe("Search — the Ask answer", () => {
       channel_name: "Huberman",
       duration_seconds: 1800,
       has_thumbnail: true,
+      status: "downloaded",
     },
   ];
 

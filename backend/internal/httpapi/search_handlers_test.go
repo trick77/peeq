@@ -812,6 +812,12 @@ func (f *failingRag) RetrieveWithin(ctx context.Context, q []float32, k int, max
 	return f.real.RetrieveWithin(ctx, q, k, maxDistance)
 }
 
+// HasChunks belongs to the ignore path, not the search path, so it always
+// delegates: no test here breaks it.
+func (f *failingRag) HasChunks(ctx context.Context, videoID string) (bool, error) {
+	return f.real.HasChunks(ctx, videoID)
+}
+
 // TestSearch_ragDegradedStillServes pins the fail-soft contract from both
 // sides: whichever lane breaks, the other one's hits still come back 200.
 func TestSearch_ragDegradedStillServes(t *testing.T) {

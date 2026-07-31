@@ -29,6 +29,8 @@ function makeDetail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     runtime_seconds: 0,
     disk_bytes: 0,
     subscribed: true,
+    auto_summary: true,
+    keep_reads: false,
     autodownload: false,
     pending_count: 0,
     ...overrides,

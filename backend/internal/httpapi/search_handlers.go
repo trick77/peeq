@@ -11,11 +11,15 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 )
 
-// RagStore is the slice of rag.Store the search endpoint uses — declared here
-// at the consumer, following DownloadsRunner, PlaybackStore and ShareLinkStore.
+// RagStore is the slice of rag.Store the handlers use — declared here at the
+// consumer, following DownloadsRunner, PlaybackStore and ShareLinkStore.
 // *rag.Store satisfies it. Unlike those two this is a genuine subset: the store
 // also owns the chunk write/delete path, which the summarize worker drives and
 // no handler touches.
+//
+// HasChunks is the one method here that is not the search endpoint's: the
+// ignore handler asks it whether deleting a video row would take a search
+// index with it. It reads, like the rest.
 //
 // Note this does NOT let httpapi drop its rag import. rag.Hit is the return
 // type, and the query builders (rag.ParseFTSQuery, rag.BuildFTSQueries) are
@@ -31,6 +35,7 @@ type RagStore interface {
 	SearchFTS(ctx context.Context, match string, n int) ([]rag.Hit, error)
 	Retrieve(ctx context.Context, queryEmbedding []float32, k int) ([]rag.Hit, error)
 	RetrieveWithin(ctx context.Context, queryEmbedding []float32, k int, maxDistance float64) ([]rag.Hit, error)
+	HasChunks(ctx context.Context, videoID string) (bool, error)
 }
 
 // searchMatch is one hit within a search result's video, in the shape the
