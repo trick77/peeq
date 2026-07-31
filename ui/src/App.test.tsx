@@ -168,6 +168,24 @@ vi.mock("./api/pending", () => ({
   ignorePending: vi.fn(),
 }));
 
+// This environment's global localStorage is node's experimental one, which has
+// no clear() and is not the browser object App talks to. A tiny map stands in
+// for it, which also keeps one test's choice out of the next. Seeds the rail
+// preference, the only key a test has ever needed to arrive already set.
+function stubStorage(seed?: string) {
+  const map = new Map<string, string>();
+  if (seed !== undefined) map.set("peeq.rail.collapsed", seed);
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+      removeItem: (k: string) => void map.delete(k),
+    },
+  });
+  return map;
+}
+
 // Reset the URL before every test in this file. useRoute() derives the
 // initial view from window.location.pathname, and jsdom persists location
 // across tests in a file — without this, the deep-link tests below (which
@@ -176,6 +194,12 @@ vi.mock("./api/pending", () => ({
 // every describe regardless of textual position.
 beforeEach(() => {
   window.history.replaceState(null, "", "/");
+  // A fresh browser for every case. App now writes a "was signed in" hint on
+  // each successful session check, and a hint left behind by the previous test
+  // would change what the next one paints while the check is in flight — the
+  // sign-in card, or nothing at all. Node's global localStorage has no clear(),
+  // so a map stands in for it.
+  stubStorage();
   // Empty the inbox for the same reason. This is the module the rendered Inbox
   // actually calls, and a mockResolvedValue outlives clearAllMocks (which drops
   // call history, not implementations) — so without this, the one test that
@@ -890,23 +914,6 @@ describe("App queue and summaries", () => {
 // tests: a phone renders the tab bar instead of the rail, and must not write
 // the desktop preference away while it does.
 describe("App rail collapse", () => {
-  // This environment's global localStorage is node's experimental one, which
-  // has no clear() and is not the browser object App talks to. A tiny map
-  // stands in for it, which also keeps one test's choice out of the next.
-  function stubStorage(seed?: string) {
-    const map = new Map<string, string>();
-    if (seed !== undefined) map.set("peeq.rail.collapsed", seed);
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        getItem: (k: string) => map.get(k) ?? null,
-        setItem: (k: string, v: string) => void map.set(k, v),
-        removeItem: (k: string) => void map.delete(k),
-      },
-    });
-    return map;
-  }
-
   function setViewport(mobile: boolean) {
     vi.stubGlobal(
       "matchMedia",
@@ -965,5 +972,99 @@ describe("App rail collapse", () => {
     // desktop preference on the way past.
     expect(screen.queryByRole("button", { name: /sidebar/i })).toBeNull();
     expect(store.get("peeq.rail.collapsed")).toBe("0");
+  }, 20000);
+});
+
+// The frame between first paint and /api/auth/me answering. It is the only
+// thing the returning user ever saw of the sign-in screen, and the whole point
+// of the hint is that they stop seeing it.
+describe("App session check", () => {
+  // getMe left hanging, so the checking frame is the render under test rather
+  // than something a resolved promise races past.
+  function hangingGetMe() {
+    let answer: (u: User | null) => void = () => {};
+    vi.mocked(getMe).mockReturnValue(
+      new Promise<User | null>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    return (u: User | null) => answer(u);
+  }
+
+  it("shows the sign-in card while checking a browser it has not seen", async () => {
+    hangingGetMe();
+    render(<App />);
+
+    expect(await screen.findByText("Checking your session")).toBeTruthy();
+  }, 20000);
+
+  it("paints nothing while checking a browser that was signed in", async () => {
+    stubStorage();
+    window.localStorage.setItem("peeq.signedIn", "1");
+    const answer = hangingGetMe();
+    const { container } = render(<App />);
+
+    expect(container.innerHTML).toBe("");
+
+    // And the app arrives directly, with no sign-in screen in between.
+    answer({ id: "u1", email: "a@b.c" } as User);
+    await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
+  }, 20000);
+
+  // Nothing at all is only right while "nothing" reads as the app arriving. A
+  // check that hangs — a cold backend, or a server that answers no one — must
+  // not leave a hinted browser staring at an empty page for as long as it
+  // takes.
+  it("falls back to the card when the check is not quick", async () => {
+    stubStorage();
+    window.localStorage.setItem("peeq.signedIn", "1");
+    hangingGetMe();
+    const { container } = render(<App />);
+
+    expect(container.innerHTML).toBe("");
+    expect(
+      await screen.findByText("Checking your session", undefined, {
+        timeout: 8000,
+      }),
+    ).toBeTruthy();
+  }, 20000);
+
+  // The hint meeting a failed OIDC callback — the case where the screen must
+  // stay, because it carries the only report that the sign-in did not
+  // complete — has no test here on purpose: AUTH_FAILED is resolved at module
+  // load, before any test can put ?auth_error= in the URL. takeAuthFailed is
+  // covered directly in authError.test.ts.
+
+  it("remembers a signed-in check for the next reload", async () => {
+    const store = stubStorage();
+    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    render(<App />);
+    await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
+
+    expect(store.get("peeq.signedIn")).toBe("1");
+  }, 20000);
+
+  it("forgets when the check comes back signed out", async () => {
+    const store = stubStorage();
+    store.set("peeq.signedIn", "1");
+    vi.mocked(getMe).mockResolvedValue(null);
+    render(<App />);
+
+    await screen.findByRole("link", { name: "Sign in" }, { timeout: 8000 });
+    expect(store.has("peeq.signedIn")).toBe(false);
+  }, 20000);
+
+  // Backend down is not signed out. Clearing the hint here would flash the
+  // sign-in card on the next reload, at the moment it helps least.
+  it("keeps the hint when the check cannot reach the server", async () => {
+    const store = stubStorage();
+    store.set("peeq.signedIn", "1");
+    vi.mocked(getMe).mockRejectedValue(new Error("down"));
+    render(<App />);
+
+    await screen.findByText(/Couldn't reach the server/, undefined, {
+      timeout: 8000,
+    });
+    expect(store.get("peeq.signedIn")).toBe("1");
   }, 20000);
 });
