@@ -125,9 +125,34 @@ export function App() {
           setPersistedVideoId(fresh);
           navigate({ view: "player", videoId: fresh });
         })
-        .catch(() => navigate({ view: "player", videoId: persistedVideoId }));
+        // A failed read must be no worse than not asking, and off the Player
+        // that now means falling back to the route's memory before the copy
+        // loaded at bootstrap: the id the URL is carrying is the last video
+        // this tab opened, and until this callback started re-reading off the
+        // Player, a click here returned to it without asking anything. The
+        // bootstrap copy can easily be null on a tab that cold-loaded "/" —
+        // dropping to "Nothing playing" because one GET failed would lose the
+        // video you were watching a moment ago. An inbox summary sitting in
+        // that memory is excluded by id, the same thing readingInboxSummary
+        // checks and the reason this can't just reuse it (that flag is false
+        // off the Player, where this runs).
+        .catch(() =>
+          navigate({
+            view: "player",
+            videoId:
+              (route.videoId !== inboxSummaryId ? route.videoId : null) ??
+              persistedVideoId,
+          }),
+        );
     },
-    [navigate, view, route.videoId, readingInboxSummary, persistedVideoId],
+    [
+      navigate,
+      view,
+      route.videoId,
+      readingInboxSummary,
+      inboxSummaryId,
+      persistedVideoId,
+    ],
   );
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -824,7 +849,13 @@ function ViewSwitch({
           onQueued={onQueued}
           onBackToInbox={() => setView("inbox")}
           inboxOrder={inboxOrder}
-          onOpenInboxVideo={onOpenVideo}
+          // The summary page's Prev/Next stepper, and the hop a decision makes
+          // to the item after it. Both stay inside the Inbox, so they open the
+          // next video the same way the grid did — openVideo would clear
+          // inboxSummaryId and leave the stepped-to video reading as one being
+          // watched: the rail would announce "Now playing" over a file that
+          // does not exist yet, and "Now playing" would be a dead click.
+          onOpenInboxVideo={onOpenInboxSummary}
         />
       );
     case "search":

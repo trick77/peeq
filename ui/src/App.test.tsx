@@ -26,6 +26,7 @@ import { searchVideos } from "./api/search";
 // The Inbox reads its own module, not the barrel — the two listPending mocks
 // are separate, and this is the one the rendered view actually calls.
 import { listPending as listPendingApi } from "./api/pending";
+import { getVideo } from "./api/videos";
 import type { Job, PendingItem, User, Video } from "./api/types";
 
 // An inbox video: discovered, summarised, but with no file yet. Its page is
@@ -42,6 +43,15 @@ const inboxItem: PendingItem = {
   discovered_at: "2026-07-29 09:00:00",
   summary_status: "done",
   auto_summary: true,
+};
+
+// The item after it, so the summary page's Prev/Next stepper has somewhere to
+// step — it renders nothing at all on an inbox of one.
+const nextInboxItem: PendingItem = {
+  ...inboxItem,
+  video_id: "p2",
+  title: "The one after it",
+  url: "https://youtube.com/watch?v=p2",
 };
 
 describe("App (static)", () => {
@@ -170,6 +180,10 @@ beforeEach(() => {
   // call history, not implementations) — so without this, the one test that
   // seeds an item would leave it in every later test's inbox.
   vi.mocked(listPendingApi).mockResolvedValue([]);
+  // And restore the downloaded video, for the same reason: the one test that
+  // makes getVideo answer with a fileless one would otherwise leave every later
+  // test rendering the no-file page instead of a player.
+  vi.mocked(getVideo).mockResolvedValue(mockVideo);
 });
 
 // The dock only starts its 3s poll once `jobs` already holds an active
@@ -449,12 +463,12 @@ describe("App deep links", () => {
   // apart anyway: the rail must not announce "Now playing" over a video with no
   // file, and the fileless id must not become what "Now playing" means.
   //
-  // getVideo is mocked to return mockVideo for every id, so the page these open
-  // is not literally fileless — what is being pinned is the shell's handling of
-  // where the page was opened from, which is the signal the fix keys on. A test
-  // that needs a genuinely fileless video belongs in Player's own suite.
-  async function openInboxSummary() {
-    vi.mocked(listPendingApi).mockResolvedValue([inboxItem]);
+  // Unless a test calls fileless() below, getVideo returns mockVideo for every
+  // id, so the page these open is not literally without a file — what is being
+  // pinned is the shell's handling of where the page was opened from, which is
+  // the signal the fix keys on.
+  async function openInboxSummary(items: PendingItem[] = [inboxItem]) {
+    vi.mocked(listPendingApi).mockResolvedValue(items);
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
     await waitFor(() => expect(getPlaybackState).toHaveBeenCalled());
@@ -520,6 +534,60 @@ describe("App deep links", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("keeps the rail on Inbox when the summary's stepper moves to the next video", async () => {
+    // The stepper is how the inbox is actually read — open, read, decide, next,
+    // without returning to the grid — so a fix that only survives the first
+    // click has not fixed much. Everything it steps to is another inbox video,
+    // which means it has to open them the way the grid does, not the way the
+    // Library does.
+    //
+    // This one needs genuinely fileless videos: the stepper lives on the
+    // no-file page, which Player renders on status "new".
+    vi.mocked(getVideo).mockImplementation(async (id: string) => ({
+      ...mockVideo,
+      id,
+      status: "new" as const,
+      has_media: false,
+    }));
+    await openInboxSummary([inboxItem, nextInboxItem]);
+    expect(screen.getByRole("button", { name: /^Inbox/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Next/ }));
+
+    await waitFor(() => expect(window.location.pathname).toBe("/video/p2"));
+    expect(screen.getByRole("button", { name: /^Inbox/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      screen.getByRole("button", { name: "Now playing" }),
+    ).not.toHaveAttribute("aria-current");
+  });
+
+  it("falls back to the video in hand when the pointer read fails", async () => {
+    // The re-read is a convenience, so failing it must be no worse than never
+    // asking. Off the Player the route still carries the last video this tab
+    // opened, and before the re-read reached this path a click here simply
+    // returned to it. The bootstrap copy is null on a tab that cold-loaded, so
+    // preferring it would answer one failed GET by losing the video you were
+    // watching a moment ago.
+    window.history.replaceState(null, "", "/video/v1");
+    vi.mocked(listVideos).mockResolvedValue([mockVideo]);
+    render(<App />);
+    await waitFor(() => expect(document.querySelector("video")).not.toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    await screen.findByPlaceholderText("Search titles");
+    vi.mocked(getPlaybackState).mockRejectedValue(new Error("boom"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Now playing" }));
+
+    await waitFor(() => expect(window.location.pathname).toBe("/video/v1"));
   });
 
   it("re-derives the view from the URL on back/forward (popstate)", async () => {
