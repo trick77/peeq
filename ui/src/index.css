@@ -3980,18 +3980,6 @@ details.tomb-sect[open] > summary svg {
   padding: 2px 6px;
   background: var(--color-panel);
 }
-.semantic-note {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-  color: var(--color-muted);
-  font-size: 12px;
-}
-.semantic-note svg {
-  color: var(--color-accent-strong);
-}
-
 .results-head {
   display: flex;
   align-items: baseline;

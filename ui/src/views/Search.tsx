@@ -1,17 +1,15 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Spinner } from "../ui";
+import { searchVideos, type SearchMode } from "../api/search";
 import {
-  searchVideos,
-  type SearchMatch,
-  type SearchMode,
-  type SearchResult,
-} from "../api/search";
-import { ThumbFill } from "../components/ThumbFill";
-import { formatDuration } from "../format";
-import { splitHighlights } from "../highlight";
-import { streamAnswer, type AnswerSource } from "../api/answer";
+  streamAnswer,
+  type AnswerSource,
+  type AnswerVideo,
+} from "../api/answer";
+import { citedInOrder, groupCited } from "../answerSources";
 import { AnswerPanel, type AnswerState } from "../components/AnswerPanel";
+import { ResultCards, type ResultCardGroup } from "../components/ResultCards";
 import { DOT } from "../sep";
 
 // Search — the global search view, with two modes over one query box.
@@ -58,7 +56,9 @@ const OPERATORS: { syntax: string; means: string }[] = [
 // you what that tab last did rather than reinterpreting the other tab's query.
 type TabState = {
   query: string;
-  results: SearchResult[] | null;
+  // Find's groups come from /api/search; Ask's are derived from the moments the
+  // answer cited. ResultCardGroup is what both render as.
+  results: ResultCardGroup[] | null;
   searchedQuery: string | null;
   loading: boolean;
   error: string | null;
@@ -118,11 +118,14 @@ export function Search({
       return;
     }
     patchTab(m, { loading: true, error: null });
-    // Ask also writes an answer. It is a SEPARATE request on purpose: retrieval
-    // returns in a moment and generation takes seconds, so the results paint
-    // straight away and the answer fills in above them. Nothing below waits on
-    // this, and a failure here never touches the results.
-    if (m === "ask") runAnswer(trimmed, id);
+    // Ask makes ONE request. Its moments are the ones the answer cited, which
+    // the answer stream already carries — a second /api/search would spend
+    // another embedding call and another keyword ladder to produce a wider list
+    // that this view no longer shows.
+    if (m === "ask") {
+      runAnswer(trimmed, id);
+      return;
+    }
     searchVideos(trimmed, m)
       .then((r) => {
         if (id !== runId.current) return;
@@ -148,8 +151,35 @@ export function Search({
     answerAbort.current = ac;
     setAnswer({ status: "streaming", text: "", sources: [] });
     let sources: AnswerSource[] = [];
+    let videos: AnswerVideo[] = [];
     let text = "";
     let failed = false;
+    // Whether retrieval reported at all. An empty source list means the library
+    // covers nothing; never hearing one means the request broke, and the two
+    // must not read the same on screen.
+    let retrieved = false;
+
+    // settle writes the moments once the answer is done with them. They are the
+    // cited ones and nothing else:
+    //
+    //   the library covers nothing -> [] , so EmptyResult offers Find instead
+    //   the answer cited moments   -> those moments, in citation order
+    //   anything else              -> null, and no Matches section at all
+    //
+    // The last row covers a failed answer and an answer that named no moment.
+    // Both used to fall back to the whole retrieved set, which is how a question
+    // about transients ended up listing videos that never mention them.
+    const settle = () => {
+      const empty = retrieved && sources.length === 0;
+      const cited = empty
+        ? []
+        : groupCited(citedInOrder(text, sources), videos);
+      patchTab("ask", {
+        results: empty || cited.length ? cited : null,
+        searchedQuery: q,
+        loading: false,
+      });
+    };
 
     streamAnswer(
       q,
@@ -158,6 +188,8 @@ export function Search({
         switch (e.type) {
           case "sources":
             sources = e.sources;
+            videos = e.videos;
+            retrieved = true;
             break;
           case "token":
             text += e.text;
@@ -174,15 +206,42 @@ export function Search({
           sources,
           failed,
         });
+        // The done frame is the normal end, and acting on it rather than
+        // waiting for the socket to close puts the moments up a beat sooner.
+        // settle is idempotent, so the safety net below can run again.
+        if (e.type === "done") settle();
       },
       ac.signal,
-    ).catch(() => {
-      if (id !== runId.current) return;
-      // The stream itself broke. Keep whatever text arrived — truncated is more
-      // use than blank — and drop the panel entirely if none did, so the plain
-      // results stand alone rather than under an error box.
-      setAnswer(text ? { status: "done", text, sources, failed } : null);
-    });
+    )
+      // Whatever text arrived is kept — truncated is more use than blank — but
+      // a stream that broke before saying anything has to SAY so. Ask makes one
+      // request now, so there is no longer a parallel /api/search whose own
+      // error line covers this: swallowing it left the whole page below the box
+      // blank, and pressing enter looked like it did nothing at all. A 401
+      // arrives here as AuthExpiredError ("auth expired") and reads the same way
+      // it does in Find, which is the only place it is ever surfaced.
+      //
+      // An abort is not a failure: leaving the tab or starting a newer search
+      // rejects this promise on purpose, and neither owes the reader an error.
+      .catch((err: Error) => {
+        if (id !== runId.current || ac.signal.aborted) return;
+        patchTab("ask", { error: err.message });
+      })
+      .finally(() => {
+        if (id !== runId.current) return;
+        // Every way the stream can end comes through here: a done frame, a
+        // broken connection, or an abort when the tab is left. Settling only on
+        // `done` left the other two streaming forever — a blinking caret over a
+        // spinner that never stopped.
+        //
+        // Nothing written and nothing to report means no panel at all. A
+        // reported failure keeps one: with no moments below it either, dropping
+        // it would leave a page that says nothing happened.
+        setAnswer(
+          text || failed ? { status: "done", text, sources, failed } : null,
+        );
+        settle();
+      });
   }
 
   function handleSubmit(e: FormEvent) {
@@ -215,15 +274,10 @@ export function Search({
   return (
     <>
       <div className="gsearch-hero">
+        {/* Ask leads because Ask is the tab the view opens on. A selected tab
+            sitting to the right of an unselected one reads as the second
+            choice. */}
         <div className="modeswitch" role="group" aria-label="Search mode">
-          <button
-            type="button"
-            aria-pressed={mode === "find"}
-            onClick={() => switchMode("find")}
-          >
-            <Icon name="search" size="15px" />
-            Find
-          </button>
           <button
             type="button"
             aria-pressed={mode === "ask"}
@@ -231,6 +285,14 @@ export function Search({
           >
             <Icon name="sparkles" size="15px" />
             Ask
+          </button>
+          <button
+            type="button"
+            aria-pressed={mode === "find"}
+            onClick={() => switchMode("find")}
+          >
+            <Icon name="search" size="15px" />
+            Find
           </button>
         </div>
         <p className="lead">{copy.lead}</p>
@@ -255,18 +317,15 @@ export function Search({
             ))}
           </div>
         ) : null}
-        {results !== null && !loading ? (
-          <p className="semantic-note">
-            <Icon name={mode === "ask" ? "sparkles" : "search"} size="14px" />
-            {mode === "ask"
-              ? "Keyword and meaning, across transcripts, summaries and chapters."
-              : "Exact words, across transcripts, summaries and chapters."}
-          </p>
-        ) : null}
       </div>
 
       {error ? <div className="errline">{error}</div> : null}
-      {loading ? (
+      {/* Find's wait indicator only. Ask stays "loading" for as long as the
+          answer is being written — that is what keeps the previous query's
+          moments off the screen — and its wait is already spoken for by the
+          panel's own spinner, then by the words arriving. Two spinners for one
+          wait is worse than the line this replaced. */}
+      {loading && mode !== "ask" ? (
         <p
           style={{
             display: "flex",
@@ -300,82 +359,9 @@ export function Search({
           {results.length === 0 ? (
             <EmptyResult mode={mode} />
           ) : (
-            results.map((r) => (
-              <div className="result" key={r.video.id}>
-                <div className="thumb">
-                  <ThumbFill
-                    id={r.video.id}
-                    hasThumbnail={r.video.has_thumbnail}
-                  />
-                  <div className="play">
-                    <Icon name="play" size="30px" />
-                  </div>
-                  <span className="dur mono">
-                    {formatDuration(r.video.duration_seconds)}
-                  </span>
-                </div>
-                <div className="rmeta">
-                  <h3>{r.video.title}</h3>
-                  <div className="ch">
-                    {r.video.channel_name || r.video.channel_id}
-                  </div>
-                  <div className="matches">
-                    {r.matches.map((m, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        className="match"
-                        onClick={() => onOpen(r.video.id, m.start_seconds)}
-                      >
-                        <MatchLead match={m} />
-                        <span className="snip">
-                          <Snippet text={m.snippet} />
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ))
+            <ResultCards results={results} onOpen={onOpen} />
           )}
         </>
-      )}
-    </>
-  );
-}
-
-// MatchLead renders the left of a match row: where the hit came from, and when
-// it happens. A summary describes the whole video and has no timestamp; a
-// chapter and a transcript moment both do.
-//
-// This replaces the raw vector distance that used to sit at the end of the row.
-// That number was retrieval diagnostics — it is meaningless for a bm25-ranked
-// keyword hit, and it told a user nothing they could act on.
-function MatchLead({ match }: { match: SearchMatch }) {
-  if (match.kind === "summary") {
-    return <span className="badge">Summary</span>;
-  }
-  return (
-    <>
-      <span className="ts mono">{formatDuration(match.start_seconds)}</span>
-      {match.kind === "chapter" ? (
-        <span className="badge">Chapter</span>
-      ) : (
-        <span className="src">Transcript</span>
-      )}
-    </>
-  );
-}
-
-// Snippet renders a search preview, marking the terms that matched. The
-// backend delimits them with control characters rather than markup precisely so
-// this can build text nodes and <mark> elements instead of setting innerHTML.
-function Snippet({ text }: { text: string }) {
-  const segments = splitHighlights(text);
-  return (
-    <>
-      {segments.map((s, i) =>
-        s.match ? <mark key={i}>{s.text}</mark> : <span key={i}>{s.text}</span>,
       )}
     </>
   );
@@ -388,6 +374,9 @@ function Snippet({ text }: { text: string }) {
 //
 // It offers no way out. The other tab is one visible click away with its own
 // text, and a suggestion here would be guessing at what the reader wants next.
+//
+// MatchLead and Snippet used to live here too; they moved into ResultCards with
+// the card markup, which Find and Ask now share.
 function EmptyResult({ mode }: { mode: SearchMode }) {
   return (
     <p className="noresults">

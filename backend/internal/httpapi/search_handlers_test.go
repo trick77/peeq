@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1301,5 +1302,78 @@ func TestSearchAskOrFloorDoesNotBuryTheSemanticHit(t *testing.T) {
 					"chunk that merely shares a word: %s", resp.Results[0].Video.ID, rec.Body.String())
 			}
 		})
+	}
+}
+
+// angled builds a unit vector at the given cosine similarity to unit(0), so a
+// test can seed a chunk at a chosen L2 distance: L2 = sqrt(2 - 2*cos).
+func angled(cos float64) []float32 {
+	v := make([]float32, 1536)
+	v[0] = float32(cos)
+	v[1] = float32(math.Sqrt(1 - cos*cos))
+	return v
+}
+
+// TestSearchAskStopsAtTheSpread is the "unrelated videos in Matches" report.
+// All three chunks clear the absolute bound — in a library about one broad
+// subject they always do — so the absolute bound alone cannot tell the second
+// genuinely relevant chunk from the third merely-nearest one. Only the
+// per-query spread can, and without it the response pads out to k with whatever
+// was least distant among the irrelevant.
+func TestSearchAskStopsAtTheSpread(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	for _, v := range []struct {
+		id  string
+		cos float64
+	}{
+		{"onpoint", 1.0},   // distance 0
+		{"related", 0.995}, // distance ~0.10, inside the spread
+		{"nearest", 0.875}, // distance ~0.50: past the spread, still inside 1.05
+	} {
+		if err := deps.Videos.Upsert(videos.Video{ID: v.id, URL: "u", Title: v.id}); err != nil {
+			t.Fatalf("seed %s: %v", v.id, err)
+		}
+		if err := ragStore.ReplaceVideoChunks(context.Background(), v.id,
+			rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
+			[]rag.ChunkRow{{Ordinal: 0, Text: "a passage", Kind: rag.KindTranscript, StartSeconds: 1}},
+			[][]float32{angled(v.cos)}); err != nil {
+			t.Fatalf("seed chunks %s: %v", v.id, err)
+		}
+	}
+	// A word no chunk contains, so this is the semantic lane alone.
+	deps.Embedder = &fakeEmbedder{vec: angled(1.0)}
+	deps.SearchMaxDistance = rag.DefaultMaxDistance
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	body := doReq(t, h, cookie, http.MethodGet, "/api/search?q=zzqqxx&mode=ask", nil).Body.String()
+	for _, want := range []string{`"id":"onpoint"`, `"id":"related"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s was dropped — the spread cut into the evidence: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `"id":"nearest"`) {
+		t.Errorf("a merely-nearest chunk padded the response: %s", body)
+	}
+}
+
+// The ladder shapes that have to be tested together: a natural question, whose
+// terms are mostly stopwords, and bare terms, which skip rungs entirely. A past
+// weighting bug survived CI because only the first shape was covered.
+func TestSearchAskFindsTheTopicInBothQueryShapes(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "on transients"}); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "the transients vanish between plates", StartSeconds: 12},
+	})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	for _, q := range []string{"tell+me+more+about+transients", "transients"} {
+		body := doReq(t, h, cookie, http.MethodGet, "/api/search?q="+q+"&mode=ask", nil).Body.String()
+		if !strings.Contains(body, `"id":"v1"`) {
+			t.Errorf("query %q missed the only matching video: %s", q, body)
+		}
 	}
 }
