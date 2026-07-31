@@ -37,7 +37,7 @@ const MODE_COPY: Record<
     placeholder: "electrolytes endurance",
   },
   ask: {
-    lead: "Ask Peeq anything you've watched.",
+    lead: "Ask Peeq about anything in your library.",
     hint: "Searches by meaning, not just wording — ask a full question and jump straight to the moment.",
     placeholder: "Did someone ever talk about electrolytes in endurance sport?",
   },

@@ -192,7 +192,7 @@ describe("Search", () => {
   it("does not search on mount or for a blank query", () => {
     render(<Search onOpen={vi.fn()} />);
     expect(mockedSearchVideos).not.toHaveBeenCalled();
-    expect(screen.getByText(/ask peeq anything/i)).toBeInTheDocument();
+    expect(screen.getByText(/ask peeq about anything/i)).toBeInTheDocument();
   });
 
   // The empty state is an answer, not a dead end with a suggestion attached.

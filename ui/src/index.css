@@ -106,6 +106,21 @@ html {
 
 /* ── shared primitives (ui.tsx) ────────────────────────────────────────── */
 
+/* Placeholders are examples of what you COULD type, never content. Every
+   browser dims them with its own alpha off the input's colour, and against
+   peeq's near-white ink that still lands bright enough to read as a typed
+   value — most visibly in the search box, whose placeholder is a whole
+   question. Pinning them to the dimmest ink token keeps "what you could type"
+   and "what you typed" unambiguous.
+
+   opacity: 1 is required, not decoration: Firefox applies an opacity of its own
+   to ::placeholder on top of the colour, so without it the rule is darkened
+   twice there and nowhere else. */
+::placeholder {
+  color: var(--color-faint);
+  opacity: 1;
+}
+
 /* The 40px form control. Focus is a 2px ring, not a border-colour swap, so the
    control doesn't shift by a pixel when it gains focus. */
 .ui-control {
@@ -2163,9 +2178,6 @@ button.sleeppick.armed {
   color: var(--color-ink);
   font-size: 16px;
   font-family: inherit;
-}
-.paste input::placeholder {
-  color: var(--color-faint);
 }
 .addkbd {
   font-size: 12px;
