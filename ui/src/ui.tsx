@@ -74,6 +74,20 @@ export const controlStyle: CSSProperties = {
   outline: "none",
 };
 
+/**
+ * tocGridStyle sizes a .toc.toc-grid so its two columns read top-to-bottom
+ * rather than across. The grid is column-major (see index.css), which means it
+ * needs its row count declared, and only the caller knows how many chapters it
+ * is about to render. Half, rounded up, so an odd count leaves the shorter
+ * column on the right.
+ *
+ * Both chapter lists — the Player's Contents card and the share page's
+ * Chapters card — go through this, so the two cannot drift apart.
+ */
+export function tocGridStyle(count: number): CSSProperties {
+  return { "--toc-rows": Math.max(1, Math.ceil(count / 2)) } as CSSProperties;
+}
+
 export type ButtonVariant =
   | "primary"
   | "secondary"

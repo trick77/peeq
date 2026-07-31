@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
-import { Spinner } from "../ui";
+import { Spinner, tocGridStyle } from "../ui";
 import {
   getSharedVideo,
   shareStreamUrl,
@@ -296,7 +296,10 @@ export function Share({ token }: { token: string | null }) {
                 <span className="meta">{chapters.length} chapters</span>
               </div>
               <div className="tabbody">
-                <div className="toc toc-grid">
+                <div
+                  className="toc toc-grid"
+                  style={tocGridStyle(chapters.length)}
+                >
                   {chapters.map((c, i) => (
                     <button
                       key={i}
