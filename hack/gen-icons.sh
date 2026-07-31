@@ -30,10 +30,12 @@ for tool in rsvg-convert magick; do
 	fi
 done
 
-# --- from the master ---------------------------------------------------------
-# -b none stays even though these come out opaque: the ground is the master's
-# own background rect, not something the renderer supplies. Keeping the renderer
-# out of it is what lets the check below catch a master that lost that rect.
+# --- transparent, from the master --------------------------------------------
+# -b none, and now these genuinely come out transparent: the master paints only
+# its glyph — no canvas rect, no fill inside the frame — so the mark composites
+# onto whatever is behind it instead of stamping peeq's ground onto it. The
+# renderer must not supply a ground of its own here or the check below, which
+# is what catches a master that grew a background rect back, could never fail.
 rsvg-convert -b none -w 192 -h 192 "$MASTER" -o "$OUT/icon-192.png"
 rsvg-convert -b none -w 512 -h 512 "$MASTER" -o "$OUT/icon-512.png"
 
@@ -45,17 +47,27 @@ rsvg-convert -w 180 -h 180 "$SRC/icon-tile.svg" -o "$OUT/apple-touch-icon.png"
 rsvg-convert -w 512 -h 512 "$SRC/icon-maskable.svg" -o "$OUT/icon-maskable-512.png"
 
 # --- verify the grounds survived --------------------------------------------
-# Rendering can succeed and still produce the wrong thing — most plausibly a
-# source that lost its background rect, which yields a touch icon iOS flattens
-# onto black, or a favicon whose corners leak the tab bar's white. That fails
-# silently in a viewer and only shows up on a real device, so assert every
-# ground here instead.
+# Rendering can succeed and still produce the wrong thing — a tiled source that
+# lost its background rect yields a touch icon iOS flattens onto black; a master
+# that GREW one stamps a square of peeq's ground onto every tab bar it lands in.
+# Either fails silently in a viewer and only shows up on a real device, so
+# assert every ground here instead.
 #
-# ALL FOUR are opaque. icon-192/512 used to be expected transparent, back when
-# ui/public/icon.svg let the browser composite the mark onto the tab; that is
-# what put white in the favicon's corners on Safari, so the master carries its
-# own #1f1f1e now. If either of these two goes back to opaque=false, the master
-# has lost its background rect — do not "fix" it by relaxing the check.
+# The four split two and two, and the halves are not the same decision:
+#
+#   icon-192/512          transparent — rendered from ui/public/icon.svg, which
+#                         paints only its glyph so the mark can take the colour
+#                         behind it. These were opaque for a while, when the
+#                         master carried a #1f1f1e canvas to stop Safari's light
+#                         tab bar showing through the corners of a rounded
+#                         silhouette. It no longer fills anything at all, which
+#                         is why that artifact has nothing left to appear in.
+#   apple-touch/maskable  opaque — from ui/icons/, and deliberately NOT following
+#                         the master: iOS flattens alpha onto black and Android
+#                         fills it with the launcher's colour, so these two must
+#                         carry their own ground whatever the favicon does.
+#
+# A mismatch here means a source changed, not that the check needs relaxing.
 fail=0
 check_alpha() { # <file> <expected true|false>
 	local got
@@ -67,8 +79,8 @@ check_alpha() { # <file> <expected true|false>
 		fail=1
 	fi
 }
-check_alpha "$OUT/icon-192.png" true
-check_alpha "$OUT/icon-512.png" true
+check_alpha "$OUT/icon-192.png" false
+check_alpha "$OUT/icon-512.png" false
 check_alpha "$OUT/apple-touch-icon.png" true
 check_alpha "$OUT/icon-maskable-512.png" true
 

@@ -71,17 +71,17 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
 // than stroked, frame at stroke 2.5 — and NOT imported through the Icon set,
 // which draws one flat currentColor and cannot carry the gradient.
 //
-// Two departures from the file it came from, both because a tab and a rail are
-// different grounds:
+// One departure from the file it came from: the colors are the accent tokens,
+// not its literal #e08a68/#c25f34. The bottom stop is the same value either
+// way, and the app's CSS is token-based — the tile this replaced used exactly
+// this strong→fill pair.
 //
-//  1. The frame's interior is transparent. icon.svg fills it with #1f1f1e
-//     because a browser paints its own chrome behind a favicon and a hollow
-//     frame goes white on a light tab bar. Here the ground is the rail's own
-//     panel→bg gradient, and letting it through is what keeps the mark from
-//     reading as a dark patch on it.
-//  2. The colors are the accent tokens, not the file's literal #e08a68/#c25f34.
-//     The bottom stop is the same value either way, and the app's CSS is
-//     token-based — the previous tile used exactly this strong→fill pair.
+// Nothing else differs any more. This used to also paint no ground where
+// icon.svg painted two — a #1f1f1e canvas and a fill inside the frame, both
+// there to stop a browser's own chrome showing through a favicon. The favicon
+// dropped them, so the mark is now the same outline in both places: here it
+// lets the rail's panel→bg gradient through, on a tab it takes the tab's
+// colour, and that is one behaviour rather than two.
 //
 // The viewBox is the frame's TRUE bbox (x/y 3→21 in glyph units, grown by half
 // the 2.5 stroke) rather than the nominal 24x24 the paths only partly fill, so
