@@ -1092,7 +1092,11 @@ export function Player({
                 video.has_thumbnail ? undefined : gradientClassFor(video.id)
               }
               src={playbackSrc}
-              poster={video.has_thumbnail ? thumbnailUrl(video.id) : undefined}
+              poster={
+                video.has_thumbnail
+                  ? thumbnailUrl(video.id, video.thumbnail_version)
+                  : undefined
+              }
               controls
               onLoadedMetadata={handleLoadedMetadata}
               onTimeUpdate={handleTimeUpdate}
@@ -1115,7 +1119,9 @@ export function Player({
               }`}
               style={
                 video.has_thumbnail
-                  ? { backgroundImage: `url(${thumbnailUrl(video.id)})` }
+                  ? {
+                      backgroundImage: `url(${thumbnailUrl(video.id, video.thumbnail_version)})`,
+                    }
                   : undefined
               }
             >

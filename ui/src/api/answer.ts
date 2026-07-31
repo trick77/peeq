@@ -26,6 +26,7 @@ export type AnswerVideo = {
   channel_name: string;
   duration_seconds: number;
   has_thumbnail: boolean;
+  thumbnail_version?: string;
 };
 
 // AnswerEvent is the narrowed stream.

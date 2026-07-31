@@ -10,6 +10,7 @@ import {
   redownload,
   streamUrl,
   thumbnailUrl,
+  pendingThumbnailUrl,
 } from "./videos";
 
 beforeEach(() => {
@@ -176,5 +177,26 @@ describe("videos api", () => {
 
   it("thumbnailUrl builds the thumbnail endpoint with the id encoded", () => {
     expect(thumbnailUrl("v 1")).toBe("/api/videos/v%201/thumbnail");
+  });
+
+  // The version is what lets the backend serve the poster as immutable, so a
+  // builder that quietly dropped it would turn every cached image back into a
+  // request without anything failing.
+  it("thumbnailUrl appends the version when given one", () => {
+    expect(thumbnailUrl("v1", "1700000000")).toBe(
+      "/api/videos/v1/thumbnail?v=1700000000",
+    );
+  });
+
+  it("thumbnailUrl stays bare when there is no version", () => {
+    expect(thumbnailUrl("v1", undefined)).toBe("/api/videos/v1/thumbnail");
+    expect(thumbnailUrl("v1", "")).toBe("/api/videos/v1/thumbnail");
+  });
+
+  it("pendingThumbnailUrl versions the inbox endpoint the same way", () => {
+    expect(pendingThumbnailUrl("p 1", "42")).toBe(
+      "/api/pending/p%201/thumbnail?v=42",
+    );
+    expect(pendingThumbnailUrl("p1")).toBe("/api/pending/p1/thumbnail");
   });
 });

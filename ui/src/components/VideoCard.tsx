@@ -138,7 +138,11 @@ export function VideoCard({
           onClick={() => onOpen(video.id)}
           aria-label={`Open ${openLabel}`}
         >
-          <ThumbFill id={video.id} hasThumbnail={video.has_thumbnail} />
+          <ThumbFill
+            id={video.id}
+            hasThumbnail={video.has_thumbnail}
+            version={video.thumbnail_version}
+          />
           {/* Dot only: the word "Unwatched" was the loudest thing on the
               thumbnail for a fact the glowing dot already carries. The pill
               shape and the label stay for anyone not reading it visually. */}

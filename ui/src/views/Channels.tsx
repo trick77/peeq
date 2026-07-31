@@ -471,12 +471,18 @@ export function Channels({
             {c.has_banner ? (
               <div
                 className="chan-banner"
-                style={{ backgroundImage: `url(${channelBannerUrl(c.id)})` }}
+                style={{
+                  backgroundImage: `url(${channelBannerUrl(c.id, c.banner_version)})`,
+                }}
                 aria-hidden="true"
               />
             ) : null}
             {c.has_avatar ? (
-              <img className="chan-av" src={channelAvatarUrl(c.id)} alt="" />
+              <img
+                className="chan-av"
+                src={channelAvatarUrl(c.id, c.avatar_version)}
+                alt=""
+              />
             ) : (
               <div
                 className={`chan-av ${gradientClassFor(c.id)}`}

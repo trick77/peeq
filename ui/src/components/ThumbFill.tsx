@@ -22,10 +22,17 @@ import { gradientClassFor } from "../format";
 export function ThumbFill({
   id,
   hasThumbnail,
+  version,
   src,
 }: {
   id: string;
   hasThumbnail: boolean;
+  // version is the row's thumbnail_version. It goes in the URL so the poster
+  // can be cached immutably — the URL changes exactly when the bytes do. The
+  // prop lives here rather than at each caller so every card builds the same
+  // URL and they all share one cache entry per poster. Ignored when src is
+  // given: the Inbox versions its own endpoint's URL.
+  version?: string;
   // src overrides the default downloaded-video thumbnail endpoint. The Inbox
   // passes the pending-thumbnail endpoint here: a pending item has no videos
   // row, so thumbnailUrl(id) (which points at /api/videos/{id}/thumbnail)
@@ -42,7 +49,7 @@ export function ThumbFill({
   return (
     <img
       className="fill"
-      src={src ?? thumbnailUrl(id)}
+      src={src ?? thumbnailUrl(id, version)}
       alt=""
       loading="lazy"
       onError={() => setFailedId(id)}

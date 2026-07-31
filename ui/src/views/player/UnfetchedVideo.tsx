@@ -152,7 +152,7 @@ export function UnfetchedVideo({
           <ThumbFill
             id={video.id}
             hasThumbnail={true}
-            src={pendingThumbnailUrl(video.id)}
+            src={pendingThumbnailUrl(video.id, video.thumbnail_version)}
           />
           {(video.duration_seconds ?? 0) > 0 ? (
             <span className="dur">

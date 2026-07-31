@@ -146,8 +146,24 @@ export async function createPlaybackGrant(id: string): Promise<PlaybackGrant> {
 // thumbnailUrl points at the Task 14 thumbnail endpoint. Callers should
 // only render this (as an <img src>) when Video.has_thumbnail is true —
 // VideoCard falls back to a gradient fill otherwise, matching the mockup.
-export function thumbnailUrl(id: string): string {
-  return `/api/videos/${encodeURIComponent(id)}/thumbnail`;
+//
+// Pass the row's thumbnail_version and the backend serves the poster as
+// immutable, so the browser reuses its copy without asking. The URL changes
+// when the stored bytes do, which is what keeps that safe — and is also why a
+// re-downloaded poster appears at once rather than whenever a cache lapses.
+export function thumbnailUrl(id: string, version?: string): string {
+  return withVersion(
+    `/api/videos/${encodeURIComponent(id)}/thumbnail`,
+    version,
+  );
+}
+
+// withVersion appends the cache-busting stamp, or returns the bare url when
+// there is none — an unversioned request still works, it just revalidates.
+// encodeURIComponent because the stamp comes from the database: it is a unix
+// integer today, and a query parameter is not the place to trust that.
+export function withVersion(url: string, version?: string): string {
+  return version ? `${url}?v=${encodeURIComponent(version)}` : url;
 }
 
 // pendingThumbnailUrl points at the inbox thumbnail endpoint, which fetches and
@@ -155,6 +171,9 @@ export function thumbnailUrl(id: string): string {
 // It is distinct from thumbnailUrl because a pending item has no videos row: it
 // lives only in the channel_videos ledger, so the /api/videos/{id} route
 // wouldn't find it.
-export function pendingThumbnailUrl(id: string): string {
-  return `/api/pending/${encodeURIComponent(id)}/thumbnail`;
+export function pendingThumbnailUrl(id: string, version?: string): string {
+  return withVersion(
+    `/api/pending/${encodeURIComponent(id)}/thumbnail`,
+    version,
+  );
 }

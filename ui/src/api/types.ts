@@ -62,6 +62,11 @@ export type Video = {
   // has_thumbnail (not the filesystem path) is what the backend sends — see
   // GET /api/videos/{id}/thumbnail (Task 14) for the actual image bytes.
   has_thumbnail: boolean;
+  // thumbnail_version is the stored poster's timestamp. Passed to thumbnailUrl
+  // it makes the URL change whenever the bytes do, which is what lets the
+  // backend serve the picture as immutable — the browser then reuses its copy
+  // without asking, and a re-downloaded poster still appears immediately.
+  thumbnail_version?: string;
   has_media: boolean;
   filesize_bytes?: number;
   // format_used is the resolved yt-dlp -f selector — what was ASKED FOR, the
@@ -288,6 +293,10 @@ export type Channel = {
   // gradient — same presence flags ChannelDetail carries, now on the list too.
   has_avatar?: boolean;
   has_banner?: boolean;
+  // The versions go in the artwork URLs so those can be cached immutably; see
+  // Video.thumbnail_version.
+  avatar_version?: string;
+  banner_version?: string;
   dormant: boolean;
   last_video_at?: string;
   // first_seen_at is when peeq first created the channel row — what the list's
@@ -344,6 +353,11 @@ export type PendingItem = {
   // "YouTube had none" and "they turned out to be music"; only the second
   // leaves a transcript to read, and this is what tells them apart.
   has_subtitles: boolean;
+  // thumbnail_version is the cached poster's timestamp, absent when nothing has
+  // been cached yet. Absent does NOT mean "no poster": the endpoint fetches one
+  // on demand, so the card asks either way — it just asks on the plain URL and
+  // gets a revalidating response until a poster lands.
+  thumbnail_version?: string;
 };
 
 // CookieHealth mirrors httpapi.cookieHealthResponse — distinct from
@@ -381,6 +395,8 @@ export type ChannelDetail = {
   description?: string;
   has_avatar: boolean;
   has_banner: boolean;
+  avatar_version?: string;
+  banner_version?: string;
 
   // What YouTube publishes, as of the last successful refresh. subscribers is
   // absent when unknown (hidden by the channel, or never read) — YouTube does

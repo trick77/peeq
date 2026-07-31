@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -309,4 +310,179 @@ func maxAgeOf(t *testing.T, cacheControl string) int {
 		t.Fatalf("unparsable max-age in %q: %v", cacheControl, err)
 	}
 	return n
+}
+
+// TestImageCache_versionedRequestIsImmutable is the other half of the caching
+// work: a URL carrying a version can never mean different bytes later, so the
+// response stops asking the browser to revalidate at all.
+func TestImageCache_versionedRequestIsImmutable(t *testing.T) {
+	deps, _ := shareMetaDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetThumbnail("v1", "image/jpeg", []byte("poster")); err != nil {
+		t.Fatalf("store thumbnail: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	share := createShare(t, h, cookie, "v1", "never")
+
+	owned := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/thumbnail?v=1700000000", nil)
+	if cc := owned.Header().Get("Cache-Control"); cc != cacheImageVersioned {
+		t.Fatalf("versioned Cache-Control = %q, want %q", cc, cacheImageVersioned)
+	}
+	// The stamp is never matched against the row — a client holding an old one
+	// gets current bytes, which is exactly what it would have got anyway.
+	if body := owned.Body.String(); body != "poster" {
+		t.Fatalf("versioned body = %q, want the current bytes", body)
+	}
+
+	// The share route is the deliberate exception. A version says the bytes
+	// cannot change; it says nothing about whether the reader is still allowed
+	// to see them, so the link's clamped window outranks it. Granting an
+	// immutable year here would undo shareImageCacheControl entirely.
+	shared := getPublic(t, h, "/api/s/"+share.Token+"/thumbnail?v=1700000000")
+	if cc := shared.Header().Get("Cache-Control"); cc != "public, max-age=300" {
+		t.Fatalf("share versioned Cache-Control = %q, want the clamped window", cc)
+	}
+
+	// An empty v= is not a version. Treating it as one would hand a year-long
+	// immutable window to a URL that never changes.
+	blank := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/thumbnail?v=", nil)
+	if cc := blank.Header().Get("Cache-Control"); cc != cacheImageHour {
+		t.Fatalf("empty v= Cache-Control = %q, want the plain window %q", cc, cacheImageHour)
+	}
+}
+
+// TestVideoDTO_carriesThumbnailVersion asserts the stamp reaches the client at
+// all — without it every URL stays bare and the immutable path above is dead
+// code — and that it moves when the poster is replaced.
+func TestVideoDTO_carriesThumbnailVersion(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	// Upsert leaves the row at 'new', which the Library list filters out.
+	if err := deps.Videos.SetStatus("v1", "downloaded", ""); err != nil {
+		t.Fatalf("mark downloaded: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// A video with no poster: has_thumbnail false and no version to speak of.
+	var bare map[string]any
+	if err := json.Unmarshal(doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil).Body.Bytes(), &bare); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if has, _ := bare["has_thumbnail"].(bool); has {
+		t.Fatalf("has_thumbnail = true with no poster stored")
+	}
+	if _, present := bare["thumbnail_version"]; present {
+		t.Fatalf("thumbnail_version present with no poster: %+v", bare)
+	}
+
+	if err := deps.Videos.SetThumbnail("v1", "image/jpeg", []byte("poster")); err != nil {
+		t.Fatalf("store thumbnail: %v", err)
+	}
+	var withPoster map[string]any
+	if err := json.Unmarshal(doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil).Body.Bytes(), &withPoster); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if has, _ := withPoster["has_thumbnail"].(bool); !has {
+		t.Fatalf("has_thumbnail = false with a poster stored")
+	}
+	// One subquery answers both questions, so this is also the guard against
+	// the presence flag and the version ever disagreeing.
+	version, _ := withPoster["thumbnail_version"].(string)
+	if version == "" {
+		t.Fatalf("no thumbnail_version alongside has_thumbnail: %+v", withPoster)
+	}
+
+	// And the list DTO agrees with the detail one.
+	var list []map[string]any
+	if err := json.Unmarshal(doReq(t, h, cookie, http.MethodGet, "/api/videos", nil).Body.Bytes(), &list); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("video list = %d rows, want 1", len(list))
+	}
+	if list[0]["thumbnail_version"] != version {
+		t.Fatalf("list thumbnail_version = %v, want %q", list[0]["thumbnail_version"], version)
+	}
+}
+
+// TestChannelDTOs_carryImageVersions covers the artwork stamps on both the list
+// and the detail shape, and that the two images do not share one.
+func TestChannelDTOs_carryImageVersions(t *testing.T) {
+	deps, _ := channelImageTestDeps(t, &testResolver{})
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X"}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if err := deps.Channels.MarkAdded("UCx", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("mark added: %v", err)
+	}
+	if err := deps.Channels.SetImage("UCx", channels.ImageAvatar, "image/jpeg", []byte("a")); err != nil {
+		t.Fatalf("store avatar: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	var detail map[string]any
+	if err := json.Unmarshal(doReq(t, h, cookie, http.MethodGet, "/api/channels/UCx", nil).Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal detail: %v", err)
+	}
+	if v, _ := detail["avatar_version"].(string); v == "" {
+		t.Fatalf("no avatar_version on the detail DTO: %+v", detail)
+	}
+	// No banner stored: no version, and has_banner already says so.
+	if _, present := detail["banner_version"]; present {
+		t.Fatalf("banner_version present with no banner: %+v", detail)
+	}
+	if has, _ := detail["has_banner"].(bool); has {
+		t.Fatalf("has_banner = true with no banner stored")
+	}
+
+	var list []map[string]any
+	if err := json.Unmarshal(doReq(t, h, cookie, http.MethodGet, "/api/channels", nil).Body.Bytes(), &list); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("channel list = %d rows, want 1", len(list))
+	}
+	if list[0]["avatar_version"] != detail["avatar_version"] {
+		t.Fatalf("list avatar_version = %v, detail = %v", list[0]["avatar_version"], detail["avatar_version"])
+	}
+}
+
+// TestPendingDTO_carriesThumbnailVersion covers the inbox list, which did not
+// read its thumbnail table at all before this.
+func TestPendingDTO_carriesThumbnailVersion(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	for _, id := range []string{"pv1", "pv2"} {
+		if err := h.ledger.Insert(channelvideos.Entry{
+			VideoID: id, ChannelID: "UC1", Title: id,
+			URL: "https://www.youtube.com/watch?v=" + id, State: "pending",
+		}); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	// Only one has a cached poster. The other must still be listed, and must
+	// still be asked for: nothing cached is not the same as nothing to fetch.
+	h.seedPendingThumbCache(t, "pv1")
+
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(getJSON(t, h, "/api/pending")), &items); err != nil {
+		t.Fatalf("unmarshal pending: %v", err)
+	}
+	byID := map[string]map[string]any{}
+	for _, it := range items {
+		byID[it["video_id"].(string)] = it
+	}
+	if v, _ := byID["pv1"]["thumbnail_version"].(string); v == "" {
+		t.Fatalf("no thumbnail_version on the cached item: %+v", byID["pv1"])
+	}
+	if _, present := byID["pv2"]["thumbnail_version"]; present {
+		t.Fatalf("thumbnail_version present with nothing cached: %+v", byID["pv2"])
+	}
 }

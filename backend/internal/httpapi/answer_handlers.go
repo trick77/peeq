@@ -55,6 +55,10 @@ type answerVideo struct {
 	ChannelName     string `json:"channel_name"`
 	DurationSeconds int64  `json:"duration_seconds"`
 	HasThumbnail    bool   `json:"has_thumbnail"`
+	// ThumbnailVersion keeps a cited source's poster on the same immutable URL
+	// the Library card already asked for, so an answer reuses that cache entry
+	// instead of opening a second one for the same picture.
+	ThumbnailVersion string `json:"thumbnail_version,omitempty"`
 }
 
 const (
@@ -217,7 +221,8 @@ func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVid
 			vids = append(vids, answerVideo{
 				ID: v.ID, Title: v.Title, ChannelID: v.ChannelID,
 				ChannelName: v.ChannelName, DurationSeconds: v.DurationSeconds,
-				HasThumbnail: v.HasThumbnail,
+				HasThumbnail:     v.HasThumbnail,
+				ThumbnailVersion: v.ThumbnailVersion,
 			})
 		}
 		perVideo[h.VideoID]++

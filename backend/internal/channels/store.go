@@ -32,14 +32,21 @@ type Channel struct {
 	// HasAvatar and HasBanner are whether artwork is stored for this channel.
 	// Migration 0024 took the avatar_path/banner_path columns that used to
 	// stand in for them; the images themselves are rows (0023).
-	HasAvatar   bool
-	HasBanner   bool
-	Subscribers int64
-	Verified    bool
-	ResolvedAt  string
-	ResolveOk   bool
-	AddedAt     string
-	FirstSeenAt string
+	HasAvatar bool
+	HasBanner bool
+	// AvatarVersion and BannerVersion are each image's updated_at as a unix
+	// stamp, empty when there is no such image. They go in the artwork URLs so
+	// those can be cached as immutable — the URL changes exactly when the bytes
+	// do, which is also what makes a weekly metadata refresh show up at once
+	// instead of whenever the cache window happens to lapse.
+	AvatarVersion string
+	BannerVersion string
+	Subscribers   int64
+	Verified      bool
+	ResolvedAt    string
+	ResolveOk     bool
+	AddedAt       string
+	FirstSeenAt   string
 	// AutoSummary is whether peeq reads this channel's new videos — fetching
 	// their captions and writing a summary — before the user decides whether to
 	// download them. Default true (migration 0018); the switch exists for the
@@ -341,8 +348,10 @@ func (s *Store) Get(id string) (*Channel, error) {
 // Shared so a reader that joins channels (the metadata claims) cannot drift
 // from Get's column order, which scanChannel depends on.
 const channelColumns = `c.id, c.handle, c.name, c.description,
-       EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'avatar') AS has_avatar,
-       EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'banner') AS has_banner,
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+          WHERE i.channel_id = c.id AND i.kind = 'avatar') AS avatar_version,
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+          WHERE i.channel_id = c.id AND i.kind = 'banner') AS banner_version,
        c.subscriber_count, c.verified,
        COALESCE(c.resolved_at, ''), c.resolve_ok, COALESCE(c.added_at, ''), c.first_seen_at,
        c.auto_summary`
@@ -354,14 +363,20 @@ type rowScanner interface{ Scan(dest ...any) error }
 // an error: "no such channel" is an ordinary answer everywhere this is used.
 func scanChannel(row rowScanner) (*Channel, error) {
 	var c Channel
+	// Each image subquery returns NULL only when that artwork is absent, so its
+	// validity IS the has_* flag: one subquery answers both "is there a picture"
+	// and "which one", and the two can never disagree.
+	var avatarVersion, bannerVersion sql.NullString
 	if err := row.Scan(&c.ID, &c.Handle, &c.Name, &c.Description,
-		&c.HasAvatar, &c.HasBanner, &c.Subscribers, &c.Verified,
+		&avatarVersion, &bannerVersion, &c.Subscribers, &c.Verified,
 		&c.ResolvedAt, &c.ResolveOk, &c.AddedAt, &c.FirstSeenAt, &c.AutoSummary); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
+	c.HasAvatar, c.AvatarVersion = avatarVersion.Valid, avatarVersion.String
+	c.HasBanner, c.BannerVersion = bannerVersion.Valid, bannerVersion.String
 	return &c, nil
 }
 
@@ -411,8 +426,10 @@ WITH lv AS (
   GROUP BY channel_id
 )
 SELECT c.id, c.handle, c.name, c.description,
-       EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'avatar'),
-       EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'banner'),
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+          WHERE i.channel_id = c.id AND i.kind = 'avatar'),
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+          WHERE i.channel_id = c.id AND i.kind = 'banner'),
        COALESCE(c.resolved_at, ''), COALESCE(c.added_at, ''), c.first_seen_at,
        s.channel_id IS NOT NULL AS subscribed,
        COALESCE(s.autodownload, 0), COALESCE(s.format_override, ''), c.auto_summary,
@@ -466,9 +483,12 @@ WHERE (c.added_at IS NOT NULL OR ` + hasDownloadsPredicate + `)`
 	var out []ListItem
 	for rows.Next() {
 		var it ListItem
+		// Same NULL-means-absent contract as scanChannel: the subquery's
+		// validity is the presence flag and its value is the version.
+		var avatarVersion, bannerVersion sql.NullString
 		if err := rows.Scan(
 			&it.ID, &it.Handle, &it.Name, &it.Description,
-			&it.HasAvatar, &it.HasBanner,
+			&avatarVersion, &bannerVersion,
 			&it.ResolvedAt, &it.AddedAt, &it.FirstSeenAt,
 			&it.Subscribed, &it.Autodownload, &it.FormatOverride, &it.AutoSummary,
 			&it.PendingCount, &it.DownloadedCount,
@@ -476,6 +496,8 @@ WHERE (c.added_at IS NOT NULL OR ` + hasDownloadsPredicate + `)`
 		); err != nil {
 			return nil, fmt.Errorf("scan channel list item: %w", err)
 		}
+		it.HasAvatar, it.AvatarVersion = avatarVersion.Valid, avatarVersion.String
+		it.HasBanner, it.BannerVersion = bannerVersion.Valid, bannerVersion.String
 		out = append(out, it)
 	}
 	if err := rows.Err(); err != nil {

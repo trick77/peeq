@@ -645,7 +645,10 @@ export function Inbox({
                     // empty recorded thumbnail_url still gets a real poster. A true
                     // 404 still degrades to the shared gradient via onError.
                     hasThumbnail={true}
-                    src={pendingThumbnailUrl(item.video_id)}
+                    src={pendingThumbnailUrl(
+                      item.video_id,
+                      item.thumbnail_version,
+                    )}
                   />
                   <span className="dur">
                     {formatDuration(item.duration_seconds)}

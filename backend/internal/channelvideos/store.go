@@ -59,6 +59,15 @@ type Entry struct {
 	// readable transcript and the first has nothing, and only this flag tells
 	// the Inbox card which of the two it is holding.
 	HasSubtitles bool
+	// ThumbnailVersion is the cached poster's updated_at as a unix stamp, and ""
+	// when nothing has been cached for this video yet. Like SummaryStatus it is
+	// populated only by the ListPending queries.
+	//
+	// The Inbox puts it in the poster URL so a cached poster can be served as
+	// immutable. An empty value is not "no poster": the endpoint fetches one on
+	// demand, so the card still asks — it just asks on the unversioned URL and
+	// gets the ordinary revalidating response.
+	ThumbnailVersion string
 }
 
 // Store persists the channel_videos scan ledger.
@@ -244,7 +253,8 @@ func (s *Store) ListPending() ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
-       EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id)
+       EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id),
+       (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt WHERE pt.video_id = cv.video_id)
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id
@@ -263,7 +273,8 @@ func (s *Store) ListPendingForChannel(channelID string) ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
-       EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id)
+       EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id),
+       (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt WHERE pt.video_id = cv.video_id)
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id
@@ -335,17 +346,22 @@ func scanPendingEntries(rows *sql.Rows) ([]Entry, error) {
 
 // scanPendingRow scans one ListPending row: the selectColumns set (in Entry
 // field order, minus ChannelName) followed by the joined channel_name, the
-// video's summary_status, its channel's auto_summary flag and whether captions
-// are on disk.
+// video's summary_status, its channel's auto_summary flag, whether captions
+// are on disk, and the cached poster's version.
 func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 	var e Entry
 	var duration sql.NullInt64
 	var decidedAt, publishedAt, unavailableAt sql.NullString
+	// NULL here means no poster has been cached yet — which is not the same as
+	// "this video has no poster", since the endpoint fetches one on demand. So
+	// unlike the other two image versions, this one's absence is not a presence
+	// flag, and the Inbox asks for the poster either way.
+	var thumbnailVersion sql.NullString
 	if err := sc.Scan(
 		&e.VideoID, &e.ChannelID, &e.Title, &duration, &e.URL, &e.ThumbnailURL,
 		&e.State, &e.DiscoveredAt, &decidedAt, &publishedAt, &e.UnavailableReason,
 		&unavailableAt, &e.ChannelName, &e.SummaryStatus, &e.AutoSummary,
-		&e.HasSubtitles,
+		&e.HasSubtitles, &thumbnailVersion,
 	); err != nil {
 		return Entry{}, err
 	}
@@ -353,5 +369,6 @@ func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 	e.DecidedAt = decidedAt.String
 	e.PublishedAt = publishedAt.String
 	e.UnavailableAt = unavailableAt.String
+	e.ThumbnailVersion = thumbnailVersion.String
 	return e, nil
 }

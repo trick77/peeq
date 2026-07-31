@@ -383,13 +383,19 @@ export function Channel({
         {detail.has_banner ? (
           <div
             className="chan-banner"
-            style={{ backgroundImage: `url(${channelBannerUrl(detail.id)})` }}
+            style={{
+              backgroundImage: `url(${channelBannerUrl(detail.id, detail.banner_version)})`,
+            }}
             aria-hidden="true"
           />
         ) : null}
         <div className="chan-head-in">
           {detail.has_avatar ? (
-            <img className="chan-av" src={channelAvatarUrl(detail.id)} alt="" />
+            <img
+              className="chan-av"
+              src={channelAvatarUrl(detail.id, detail.avatar_version)}
+              alt=""
+            />
           ) : (
             <div
               className={`chan-av ${gradientClassFor(detail.id)}`}

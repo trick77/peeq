@@ -19,6 +19,7 @@ export type ResultCardVideo = {
   // and formatDuration renders that as a dash.
   duration_seconds?: number;
   has_thumbnail: boolean;
+  thumbnail_version?: string;
 };
 
 export type ResultCardGroup = {
@@ -38,7 +39,11 @@ export function ResultCards({
       {results.map((r) => (
         <div className="result" key={r.video.id}>
           <div className="thumb">
-            <ThumbFill id={r.video.id} hasThumbnail={r.video.has_thumbnail} />
+            <ThumbFill
+              id={r.video.id}
+              hasThumbnail={r.video.has_thumbnail}
+              version={r.video.thumbnail_version}
+            />
             <div className="play">
               <Icon name="play" size="30px" />
             </div>
