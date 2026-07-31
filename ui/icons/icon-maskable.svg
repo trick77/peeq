@@ -10,8 +10,11 @@
   to run edge to edge for the same reason it does on iOS — the launcher fills
   whatever the icon leaves transparent, and that fill is not ours to choose.
 
-  Same lucide play path and true-bbox centring as the other two; see
-  ui/public/icon.svg for why the nominal 24x24 box is not used.
+  Same lucide square-play paths, filled wedge, 2.5 stroke and true-bbox centring
+  as the other two; see ui/public/icon.svg for all of it, and for why the
+  nominal 24x24 box is not used. A square glyph is the good case for a round
+  crop: its corners are the only part near the safe circle's edge, and at 46%
+  they clear it with room to spare.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
@@ -19,7 +22,8 @@
     <stop offset="1" stop-color="#c25f34"/>
   </linearGradient>
   <rect width="64" height="64" fill="#1f1f1e"/>
-  <g transform="translate(11.1 11.8) scale(1.685)">
-    <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" fill="url(#og)"/>
+  <g transform="translate(14.767 14.767) scale(1.4361)" fill="none" stroke="url(#og)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2"/>
+    <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" fill="url(#og)" stroke="none"/>
   </g>
 </svg>
