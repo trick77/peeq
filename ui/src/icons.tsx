@@ -72,7 +72,13 @@ const COMPONENTS = {
   history: History,
   play: Play,
   tv: Tv,
-  playFilled: Play, // rendered solid via the FILLED set below — rail logo + player play button
+  // Rendered solid via the FILLED set below. Nothing draws it at the moment:
+  // its last consumer was the rail's logo, which now inlines the favicon's own
+  // square-play geometry (PeeqMark in shell/Rail.tsx) because a gradient needs
+  // more than the single currentColor this set can hand an icon. Kept rather
+  // than deleted — a filled play is the obvious glyph for the next play
+  // affordance, and the entry is one line.
+  playFilled: Play,
   captions: Captions,
   chevronRight: ChevronRight,
   chevronDown: ChevronDown,

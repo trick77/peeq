@@ -88,7 +88,7 @@ describe("VideoCard channel/date eyebrow", () => {
 });
 
 describe("VideoCard lifecycle line", () => {
-  it('renders "Kept forever" for a favorite video', () => {
+  it("says nothing under a favorite, and never counts one down", () => {
     render(
       <VideoCard
         video={baseVideo({ favorite: true, watched: true })}
@@ -98,7 +98,17 @@ describe("VideoCard lifecycle line", () => {
         onToggleWatched={noop}
       />,
     );
-    expect(screen.getByText("Kept forever")).toBeInTheDocument();
+    // The row used to read "Kept forever" beside a gold star. The lit star in
+    // the card's actions is the same fact on the same card, so the words went.
+    expect(screen.queryByText("Kept forever")).not.toBeInTheDocument();
+    // Watched AND favorite — the case that proves the favorite branch returns
+    // instead of falling through to the expiry countdown below it. A kept
+    // video is never swept, so a countdown here would be a lie.
+    expect(screen.queryByText(/Expires/)).not.toBeInTheDocument();
+    // …and the star is still there saying it.
+    expect(
+      screen.getByRole("button", { name: "Remove from favorites" }),
+    ).toBeInTheDocument();
   });
 
   it('renders "Expires in N days" for a watched, non-favorite video', () => {
@@ -257,7 +267,7 @@ describe("VideoCard lifecycle line", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows a tombstoned favorite as Kept forever, and never an expiry", () => {
+  it("gives a tombstoned favorite the way back, and never an expiry", () => {
     render(
       <VideoCard
         video={baseVideo({
@@ -275,7 +285,10 @@ describe("VideoCard lifecycle line", () => {
         onRedownload={noop}
       />,
     );
-    expect(screen.getByText("Kept forever")).toBeInTheDocument();
+    expect(screen.queryByText("Kept forever")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /re-download/i }),
+    ).toBeInTheDocument();
     // Nothing left to expire — the countdown belongs to a video that still has
     // a file to lose.
     expect(screen.queryByText(/Expires/)).not.toBeInTheDocument();

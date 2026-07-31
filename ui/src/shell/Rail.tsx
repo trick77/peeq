@@ -65,6 +65,54 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
   },
 ];
 
+// PeeqMark is the lockup's mark: the same glyph the browser tab wears, so the
+// app and its favicon are one brand rather than two. The geometry is copied
+// from ui/public/icon.svg — lucide "square-play" (ISC), wedge filled rather
+// than stroked, frame at stroke 2.5 — and NOT imported through the Icon set,
+// which draws one flat currentColor and cannot carry the gradient.
+//
+// Two departures from the file it came from, both because a tab and a rail are
+// different grounds:
+//
+//  1. The frame's interior is transparent. icon.svg fills it with #1f1f1e
+//     because a browser paints its own chrome behind a favicon and a hollow
+//     frame goes white on a light tab bar. Here the ground is the rail's own
+//     panel→bg gradient, and letting it through is what keeps the mark from
+//     reading as a dark patch on it.
+//  2. The colors are the accent tokens, not the file's literal #e08a68/#c25f34.
+//     The bottom stop is the same value either way, and the app's CSS is
+//     token-based — the previous tile used exactly this strong→fill pair.
+//
+// The viewBox is the frame's TRUE bbox (x/y 3→21 in glyph units, grown by half
+// the 2.5 stroke) rather than the nominal 24x24 the paths only partly fill, so
+// the mark spans its 30px box edge to edge instead of shrinking to a dot in the
+// middle of it — the same sizing rule icon.svg's own comment sets out.
+function PeeqMark() {
+  return (
+    <svg className="rail-logo" viewBox="1.75 1.75 20.5 20.5" aria-hidden="true">
+      <linearGradient id="rail-mark-grad" x1="0" y1="0" x2="0.72" y2="1">
+        <stop className="s0" offset="0" />
+        <stop className="s1" offset="1" />
+      </linearGradient>
+      <rect
+        x="3"
+        y="3"
+        width="18"
+        height="18"
+        rx="2"
+        fill="none"
+        stroke="url(#rail-mark-grad)"
+        strokeWidth="2.5"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z"
+        fill="url(#rail-mark-grad)"
+      />
+    </svg>
+  );
+}
+
 export function Rail({
   active,
   onNavigate,
@@ -111,14 +159,10 @@ export function Rail({
   return (
     <aside className="rail">
       <div className="rail-brand">
-        <div className="rail-logo">
-          <Icon name="playFilled" size="0.9rem" />
-        </div>
-        <div>
-          <b>
-            P<span>ee</span>q
-          </b>
-        </div>
+        <PeeqMark />
+        <b>
+          P<span>ee</span>q
+        </b>
       </div>
 
       <nav className="rail-nav">
