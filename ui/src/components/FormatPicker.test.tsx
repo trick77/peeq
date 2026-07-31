@@ -31,11 +31,14 @@ describe("FormatPicker", () => {
     );
     open();
 
-    const badges = screen
-      .getAllByRole("menuitemradio")
-      .filter((i) => i.querySelector(".fmtmenu-tag"));
+    // Asserted through the badge's own text, not its class: the badge is the
+    // reason this is a menu instead of a <select>, so it has to be readable,
+    // and a class name is a styling detail no test should be pinned to.
+    const badges = screen.getAllByText("Default");
     expect(badges).toHaveLength(1);
-    expect(badges[0].textContent).toContain("Apple VP9 4K");
+    expect(badges[0].closest("[role=menuitemradio]")?.textContent).toContain(
+      "Apple VP9 4K",
+    );
   });
 
   // The global preset can be "custom", which has no row here. Badging nothing
@@ -44,7 +47,7 @@ describe("FormatPicker", () => {
     render(<FormatPicker value="" globalPreset="custom" onPick={vi.fn()} />);
     open();
 
-    expect(document.querySelectorAll(".fmtmenu-tag")).toHaveLength(0);
+    expect(screen.queryByText("Default")).toBeNull();
   });
 
   it("checks the stored preset and reports a new pick", () => {

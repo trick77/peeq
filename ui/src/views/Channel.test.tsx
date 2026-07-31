@@ -989,11 +989,11 @@ describe("Channel", () => {
     );
     await openFormatOverride(user);
 
-    const badged = screen
-      .getAllByRole("menuitemradio")
-      .filter((i) => i.querySelector(".fmtmenu-tag"));
-    expect(badged).toHaveLength(1);
-    expect(badged[0].textContent).toContain("Best available MP4");
+    const badges = screen.getAllByText("Default");
+    expect(badges).toHaveLength(1);
+    expect(badges[0].closest("[role=menuitemradio]")?.textContent).toContain(
+      "Best available MP4",
+    );
   });
 
   // A channel configured before the picker existed holds a hand-typed yt-dlp

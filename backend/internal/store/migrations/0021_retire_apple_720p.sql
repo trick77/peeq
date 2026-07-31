@@ -15,3 +15,7 @@ UPDATE settings SET format_preset = 'apple-1080p' WHERE format_preset = 'apple-7
 -- per-channel preset picker landed alongside this migration, so no row can
 -- name a preset id yet and there is nothing to rewrite here. The download
 -- worker still accepts a raw selector for exactly those rows.
+--
+-- That is true of THIS migration only. From here on the picker writes preset
+-- ids into that column too, so the next preset retirement has to rewrite both
+-- settings.format_preset and subscriptions.format_override.
