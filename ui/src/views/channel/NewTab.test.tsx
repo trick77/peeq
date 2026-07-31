@@ -84,6 +84,7 @@ describe("NewTab", () => {
         discovered_at: "2026-07-24 08:00:00",
         summary_status: "",
         auto_summary: false,
+        has_subtitles: false,
       },
       {
         video_id: "p2",
@@ -96,6 +97,7 @@ describe("NewTab", () => {
         discovered_at: "2026-07-24 08:00:00",
         summary_status: "",
         auto_summary: false,
+        has_subtitles: false,
       },
     ]);
     render(<NewTab detail={makeDetail()} onChanged={() => {}} />);
@@ -124,6 +126,7 @@ describe("NewTab", () => {
         discovered_at: "2026-07-24 08:00:00",
         summary_status: "",
         auto_summary: false,
+        has_subtitles: false,
       },
       // No url on the ledger row — the link is built from the video id.
       {
@@ -137,6 +140,7 @@ describe("NewTab", () => {
         discovered_at: "2026-07-24 08:00:00",
         summary_status: "",
         auto_summary: false,
+        has_subtitles: false,
       },
     ]);
     render(<NewTab detail={makeDetail()} onChanged={() => {}} />);

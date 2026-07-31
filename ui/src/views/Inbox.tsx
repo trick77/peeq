@@ -64,74 +64,103 @@ function compareBy(
   }
 }
 
-// hasPage reports whether there is anything behind a click on this card.
+// offer is everything the card decides about its summary: what the marker says,
+// and whether a click leads anywhere. One function answers both because they are
+// two halves of one promise, and they had drifted apart — a no_transcript card
+// drew no marker and still opened on click, which is exactly the invisible click
+// target the marker was introduced to remove.
 //
-// A videos row is created by the caption fetcher, and only by it, so a video it
-// has not reached yet — one just discovered, or one on a channel that opted out
-// — has no row and would 404. summary_status is the signal for that: the column
-// defaults to 'pending' the moment the row is created, so a non-empty value and
-// a row that exists are the same thing.
+// The rule it enforces is one-directional: **the card never opens without a
+// marker**. The converse is not true and must not be, which is why `opens` is a
+// separate field rather than "mark !== null":
 //
-// Note this is NOT the same set as "shows a pill". A card can read "Summarizing…"
-// on the strength of auto_summary alone, before any row exists — the marker is
-// a promise about the channel, and this is a fact about the video.
-function hasPage(item: PendingItem) {
-  return item.summary_status !== "";
+//   done                  Read summary     opens   the summary is written
+//   no_transcript + vtt    Read transcript  opens   music, but the text is there
+//   pending / running      Summarizing…     opens   a videos row exists; the
+//                                                   page shows live progress
+//   "" + auto_summary      Summarizing…     INERT   the caption fetcher has not
+//                                                   reached it, so there is no
+//                                                   videos row and the page
+//                                                   would 404 — the marker is a
+//                                                   promise about the channel,
+//                                                   not a fact about the video
+//   no_transcript, no vtt  —                inert   nothing behind the card
+//   "" + opted out         —                inert   never will be
+//   error                  —                inert   the page's only news is
+//                                                   that it will be retried
+type Offer = {
+  mark: "summary" | "transcript" | "reading" | null;
+  opens: boolean;
+};
+
+function offer(item: PendingItem): Offer {
+  switch (item.summary_status) {
+    case "done":
+      return { mark: "summary", opens: true };
+    case "pending":
+    case "running":
+      return { mark: "reading", opens: true };
+    // no_transcript is two different videos wearing one status. YouTube had no
+    // captions at all — nothing behind the card, so it must not pretend
+    // otherwise — or the captions turned out to be music and produced no
+    // summary, in which case the transcript is still there to skim, and
+    // skimming it is how you decide on a video peeq could not read for you.
+    case "no_transcript":
+      return item.has_subtitles
+        ? { mark: "transcript", opens: true }
+        : { mark: null, opens: false };
+    case "":
+      return { mark: item.auto_summary ? "reading" : null, opens: false };
+    default:
+      return { mark: null, opens: false };
+  }
 }
 
-// summaryMark renders the card's one extra fact: whether peeq has read this
-// video yet.
+// hasPage reports whether a click on this card leads anywhere.
+function hasPage(item: PendingItem) {
+  return offer(item).opens;
+}
+
+// summaryMark draws the card's offer.
 //
-// Three outcomes, and the third is why the API sends two fields instead of one.
+// Everything readable gets a button, named for what is actually behind it —
+// "Read summary" or "Read transcript". A click target with no visible edge is
+// one nobody finds, and naming the verb is what makes the page discoverable;
+// anything quieter is a label with a handler attached, and hover-reveal is not
+// an option peeq has (a trackpad-driven iPad reports `hover: hover` and would
+// hide the control for good).
 //
-//   done            → "Read summary", a button that opens it
-//   pending/running → "Summarizing…", captions are being fetched or read
-//   anything else   → nothing at all
-//
-// The first outcome is a control, the second a label, and the difference is
-// deliberate. The card as a whole already opens the summary page, but a click
-// target with no visible edge is one nobody finds: the marker read "Summary"
-// for a release and said what peeq had done, not what you could do about it.
-// Naming the verb and drawing it as a filled chip is what makes the page
-// discoverable — anything quieter is the old label with a handler attached, and
-// hover-reveal is not an option peeq has (a trackpad-driven iPad reports
-// `hover: hover` and would hide it for good).
-//
-// "Summarizing…" stays a span for the same reason inverted: there is nothing to
-// press yet, and a disabled button would be a control that never worked. It
-// keeps the quiet scrim treatment so the two never look interchangeable.
-//
-// The empty-status case splits on auto_summary. On an opted-in channel it means
-// the fetcher has not reached this video yet, which is progress and deserves
-// the marker; on an opted-out one it means it never will, and a marker would be
-// a promise peeq is not going to keep. no_transcript lands in the same silence:
-// YouTube has no captions for it, or they turned out to be music, and neither
-// is something the user can act on.
+// "Summarizing…" stays a span. There is nothing to press yet, and a disabled
+// button would be a control that never worked. The quiet scrim treatment keeps
+// the two from ever looking interchangeable.
 function summaryMark(item: PendingItem, onOpen?: (videoID: string) => void) {
-  if (item.summary_status === "done") {
-    // No onOpen means the host gave the card nowhere to go — App always passes
-    // one, but a caller that does not gets the fact without a dead control.
-    if (!onOpen) {
-      return <span className="metapill oncover has-summary">Summary</span>;
-    }
-    return (
-      <button
-        type="button"
-        className="metapill oncover has-summary summary-open"
-        onClick={() => onOpen(item.video_id)}
-      >
-        <Icon name="alignLeft" size="12px" />
-        Read summary
-        <Icon name="chevronRight" size="12px" />
-      </button>
-    );
+  const { mark, opens } = offer(item);
+  if (mark === null) return null;
+  if (mark === "reading") {
+    return <span className="metapill oncover is-reading">Summarizing…</span>;
   }
-  const reading =
-    item.summary_status === "pending" ||
-    item.summary_status === "running" ||
-    (item.summary_status === "" && item.auto_summary);
-  if (!reading) return null;
-  return <span className="metapill oncover is-reading">Summarizing…</span>;
+  const label = mark === "summary" ? "Summary" : "Transcript";
+  // Belt and braces: every readable mark opens today, and a button that did
+  // not would be the dead control this whole rule exists to prevent.
+  if (!opens) {
+    return <span className="metapill oncover has-summary">{label}</span>;
+  }
+  // No onOpen means the host gave the card nowhere to go — App always passes
+  // one, but a caller that does not gets the fact without a dead control.
+  if (!onOpen) {
+    return <span className="metapill oncover has-summary">{label}</span>;
+  }
+  return (
+    <button
+      type="button"
+      className="metapill oncover has-summary summary-open"
+      onClick={() => onOpen(item.video_id)}
+    >
+      <Icon name="alignLeft" size="12px" />
+      Read {label.toLowerCase()}
+      <Icon name="chevronRight" size="12px" />
+    </button>
+  );
 }
 
 export function Inbox({
@@ -620,7 +649,10 @@ export function Inbox({
                     on every card. The bar below is no home for it either: three
                     labelled buttons overrun the 300px card the two-column grid
                     draws, and on the cards with nothing to read the third one
-                    would vanish and take Download's alignment with it. */}
+                    would vanish and take Download's alignment with it.
+
+                    Its absence is meaningful: no marker means the card does not
+                    open, because offer() decides both. */}
                   {summaryMark(item, onOpen)}
                 </div>
                 {/* The pair rode the poster itself for one release. That put

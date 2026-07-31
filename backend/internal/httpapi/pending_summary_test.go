@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,6 +135,56 @@ func TestPendingList_carriesSummaryState(t *testing.T) {
 	}
 	if !strings.Contains(body, `"auto_summary":true`) {
 		t.Fatalf("pending list is missing the channel opt-in: %s", body)
+	}
+	if !strings.Contains(body, `"has_subtitles":true`) {
+		t.Fatalf("pending list is missing the captions flag: %s", body)
+	}
+}
+
+// TestPendingList_noTranscriptSplitsOnCaptions is the distinction the card
+// cannot make without this field. 'no_transcript' is recorded both for a video
+// YouTube has no captions for and for one whose captions turned out to be
+// music: same status, but the second has a transcript worth opening and the
+// first has nothing at all behind the card.
+func TestPendingList_noTranscriptSplitsOnCaptions(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+
+	// Captions on disk, no summary made of them — the music case.
+	seedInboxRead(t, h, "music")
+	if err := h.videos.SetSummaryStatus("music", videos.SummaryNoTranscript, ""); err != nil {
+		t.Fatalf("set summary status: %v", err)
+	}
+	// No captions ever fetched.
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "silent", ChannelID: "UC1", Title: "No captions ever",
+		URL: "https://www.youtube.com/watch?v=silent", DurationSeconds: 600, State: "pending",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := h.videos.Upsert(videos.Video{ID: "silent", URL: "https://youtu.be/silent"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := h.videos.SetSummaryStatus("silent", videos.SummaryNoTranscript, ""); err != nil {
+		t.Fatalf("set summary status: %v", err)
+	}
+
+	var got []struct {
+		VideoID      string `json:"video_id"`
+		HasSubtitles bool   `json:"has_subtitles"`
+	}
+	if err := json.Unmarshal([]byte(getJSON(t, h, "/api/pending")), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	flags := map[string]bool{}
+	for _, it := range got {
+		flags[it.VideoID] = it.HasSubtitles
+	}
+	if !flags["music"] {
+		t.Error("a video with captions but no summary reports no transcript to read")
+	}
+	if flags["silent"] {
+		t.Error("a video that never got captions claims to have a transcript")
 	}
 }
 
