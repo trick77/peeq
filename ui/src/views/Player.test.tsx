@@ -2269,6 +2269,40 @@ describe("Player", () => {
         screen.getByRole("button", { name: /sleep timer off/i }),
       ).toBeInTheDocument();
     });
+
+    // Marking watched is how you say the sitting is over, and the timer counts
+    // down a sitting. Left armed it would park a countdown against a video
+    // paused at 0:00 that can never tick.
+    it("disarms when the video is marked watched", async () => {
+      const { el } = await mountPlayer();
+      await arm(30);
+      play(el, 60_000);
+
+      fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: /sleep timer off/i }),
+        ).toBeInTheDocument(),
+      );
+    });
+
+    // A failed toggle must leave the player exactly as it found it — and at the
+    // budget the timer had, not at the preset it was armed with.
+    it("re-arms at the remaining budget when marking watched fails", async () => {
+      vi.mocked(setWatched).mockRejectedValueOnce(new Error("nope"));
+      const { el } = await mountPlayer();
+      await arm(30);
+      play(el, 60_000);
+      expect(readout()).toBe("29:00");
+
+      fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
+
+      await waitFor(() => expect(readout()).toBe("29:00"));
+      expect(
+        screen.getByRole("button", { name: /sleep timer: 30 minutes/i }),
+      ).toBeInTheDocument();
+    });
   });
 });
 

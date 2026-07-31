@@ -819,6 +819,12 @@ export function Player({
   // then reports is 0* — a flush of 0 matches what the server already stored,
   // and 0 can never re-cross the 90% threshold. Anything that changes this
   // function to leave a non-zero playhead behind has to revisit that.
+  //
+  // The sleep timer goes off with it, for the same reason handleEnded disarms:
+  // the timer counts down a sitting, and this button is how you say the sitting
+  // is over. Leaving it armed would park a countdown against a paused video at
+  // 0:00 — one that cannot tick, since tickSleep only runs on timeupdate — and
+  // then fire "Paused by sleep timer" over whatever you started watching next.
   async function handleToggleWatched() {
     if (!video) return;
     const id = video.id;
@@ -829,12 +835,20 @@ export function Player({
     // exactly as it found it, not paused at 0:00 with the old state restored.
     const wasPlaying = el ? !el.paused : false;
     const previousPlayhead = el ? el.currentTime : 0;
+    const previousSleepMs = sleepRemainingRef.current;
+    const previousSleepMinutes = sleepMinutes;
 
     setVideo({ ...video, watched: next, resume_position_seconds: 0 });
     el?.pause();
     seek(0);
     positionRef.current = 0;
     positionKnownRef.current = false;
+    if (previousSleepMs !== null) {
+      disarmSleep();
+      // Said out loud: the pill is one control away from the button just
+      // pressed, and a countdown that vanishes on its own reads as a glitch.
+      showToast("Sleep timer off", "clock", "info");
+    }
 
     try {
       const res = await setWatched(id, next);
@@ -860,6 +874,17 @@ export function Player({
       // video sitting at 0:00 while the restored state still claims the old
       // position — and the next resume ping would persist that 0.
       seek(previousPlayhead);
+      // And re-arm the timer at the budget it had, not at the preset: a
+      // half-spent 30 must not come back as a fresh 30. sleepLastTickRef is
+      // re-based here rather than left alone because the mark only means
+      // anything across continuous playback — the same reason handlePlay
+      // re-bases it — and the request took real time to fail.
+      if (previousSleepMs !== null) {
+        sleepRemainingRef.current = previousSleepMs;
+        sleepLastTickRef.current = Date.now();
+        setSleepRemaining(Math.ceil(previousSleepMs / 1000));
+        setSleepMinutes(previousSleepMinutes);
+      }
       // play() returns a promise that can reject (autoplay policy), and
       // returns nothing at all under jsdom — resuming is a nicety on an
       // already-failed path, so neither case may surface.
