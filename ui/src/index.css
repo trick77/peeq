@@ -2667,15 +2667,133 @@ button.sleeppick.armed {
 .playacts {
   display: flex;
   /* Positioning context for the share popover on narrow screens — see the
-     media query beside .sharepop. */
+     media query beside .sharepop. .playbar deliberately takes no `position`,
+     so it does not steal the popover's offsetParent. */
   position: relative;
-  /* Centred, not stretched: the hairline (22px) and the kebab (32px) carry a
-     definite height, so the default `stretch` parks them at the top of the
-     40px line instead of on the buttons' centreline. */
+  /* Centred, not stretched: .playbar is one inline-flex shell with no definite
+     height of its own, so `stretch` would pull it to the full line box. */
   align-items: center;
   gap: 10px;
   margin-top: 18px;
   flex-wrap: wrap;
+}
+/* The action row is one bordered shell with internal dividers, not six loose
+   controls that each need their own edge. The chrome lives on the container, so
+   every control inside goes flat and carries its state in colour alone; the
+   segments carry the grouping the two floating hairlines used to strain at.
+   Three of them: what this video IS, what this sitting does, and the lid. */
+.playbar {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-panel);
+}
+.playseg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 3px;
+}
+.playseg + .playseg {
+  margin-left: 4px;
+  padding-left: 7px;
+  border-left: 1px solid var(--color-border);
+}
+/* Flat inside the shell. The gold/tinted variants keep only their ink: the
+   wash and the border they normally carry would put chrome back on a control
+   that is meant to have handed it to the container. */
+.playbar .ui-btn {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border-color: transparent;
+  background: none;
+  color: var(--color-ink-dim);
+  font-size: var(--text-label);
+  /* .ui-btn sets no white-space, so a squeezed button breaks its label mid
+     phrase — "Keep / forever" over two lines. On a phone the first segment is
+     genuinely too wide for the row, so it will be squeezed; let the segment
+     wrap between controls (below) rather than each control wrap inside itself. */
+  white-space: nowrap;
+}
+.playbar .ui-btn:hover:not(:disabled) {
+  background: var(--color-active);
+  color: var(--color-ink);
+}
+.playbar .ui-btn--gold {
+  background: none;
+  border-color: transparent;
+  color: var(--color-kept);
+}
+.playbar .ui-btn--tinted {
+  background: none;
+  border-color: transparent;
+  color: var(--color-accent-strong);
+}
+/* Radius as well as height: one silhouette is the whole point of the shell, and
+   button.sleeppick carries its own 15px that would otherwise sit flush against
+   a 9px button. .catpick and .sleeppick are named alongside .metapill rather
+   than left to specificity — .playbar .metapill does win at 0,2,0 over
+   button.sleeppick's 0,1,1, but a reader shouldn't have to work that out. */
+.playbar .metapill,
+.playbar .catpick,
+.playbar .sleeppick {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+}
+/* An armed timer keeps its terracotta ink but loses its terracotta border:
+   button.sleeppick.armed sets only border-color, and `border: 0` above zeroes
+   the width that colour would have painted on. Deliberate — inside the shell
+   every state is ink and nothing else, the captions toggle included, and one
+   bordered control among five flat ones would read as the odd one out. */
+.playbar .ui-iconact,
+.playbar .kebab {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 0;
+  background: none;
+}
+/* Phones: an inline-flex shell has no wrap point, so at 390px it runs 199px off
+   the right edge instead of folding. Below 620px — the breakpoint .sharepop
+   already uses, so the player has one narrow threshold and not two — it becomes
+   two stacked rows: what the video IS on top, this sitting plus the lid below.
+   The divider turns from vertical to horizontal because the split did too.
+   No margin-left:auto on the last segment: pushing the ⋮ to the right edge of a
+   line it nearly occupies alone reads as a layout mistake, and on a tombstoned
+   video (no segment 2) it would sit stranded out there by itself. */
+@media (max-width: 620px) {
+  .playbar {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  /* Kept + watched + filed-as is about 370px of controls in 310px of shell, so
+     the first segment has to fold too. It folds inside itself — the category
+     pill drops below the two toggles but stays above the rule — because the
+     rule is what separates "what the video is" from "what this sitting does",
+     and pushing the pill under it would say the opposite. */
+  .playseg {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .playseg:first-child {
+    flex-basis: 100%;
+    padding-bottom: 3px;
+    margin-bottom: 3px;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .playseg:first-child + .playseg {
+    margin-left: 0;
+    padding-left: 3px;
+    border-left: 0;
+  }
 }
 
 .side {
@@ -3641,13 +3759,13 @@ textarea.cookiebox:focus {
   box-shadow: 0 0 0 2px var(--color-bg);
 }
 /* In the Player action row the ⋮ sits among always-visible controls, so it
-   must be shown at rest (the row has no hover-reveal like the channel list). */
-.playacts .kebab {
+   must be shown at rest (the row has no hover-reveal like the channel list).
+   Only the opacity is set here: the border and background it used to carry are
+   now the toolbar shell's job — see .playbar .kebab, which flattens it. */
+.playbar .kebab {
   opacity: 1;
-  border-color: var(--color-border);
-  background: var(--color-panel);
 }
-.playacts .kebab:hover {
+.playbar .kebab:hover {
   background: var(--color-active);
 }
 
@@ -4509,15 +4627,6 @@ details.tomb-sect[open] > summary svg {
 .ui-iconact.is-on,
 .ui-iconact.is-on:hover {
   color: var(--color-accent-strong);
-}
-
-/* Hairline between the state buttons and the bare icon cluster. */
-.playacts .acts-sep {
-  width: 1px;
-  height: 22px;
-  background: var(--color-border);
-  margin: 0 4px;
-  flex: none;
 }
 
 /* pressed state for toggles (the captions button) — was .abtn.cc-btn.on. */

@@ -224,6 +224,31 @@
   whichever option you pick, the fix survives it.</p>
 </div>
 
+<div class="fixnote">
+  <h3>Decided: option 04b shipped</h3>
+  <p>This document sat in the repo for three days with nothing chosen — it was committed as a
+  passenger in the same PR as the menu-flip fix above, so the five options below were never
+  acted on. <strong>Option 04b, one segmented toolbar with subtitles split off, is now what
+  ships.</strong> Four segments — kept/watched/filed-as, sleep, subtitles, the ⋮ — with the
+  category pill inside the first one, both floating hairlines gone, and every control flat at
+  34px inside a single bordered shell. 04b over plain 04 on the case made for it below: sleep
+  and subtitles share a scope but not a verb, and a bare icon flush against a labelled pill
+  reads as one broken control however the grouping is argued.</p>
+  <p>Three things the options below did not fully specify, settled during implementation.
+  <strong>A segment is gated as a whole, never rendered empty</strong> — an empty segment
+  still draws its divider, a hairline pointing at nothing — so a tombstoned video renders two
+  segments and a video with no transcript renders three. At 390px the first segment is about
+  370px of controls in 310px of shell, so <strong>it folds inside itself</strong>: the
+  category pill drops below the two toggles but stays above the horizontal rule, since the
+  rule is what separates what the video IS from what this sitting does. And <strong>an armed
+  timer keeps its terracotta ink but not its terracotta border</strong> — inside the shell
+  every state is ink and nothing else, so one bordered control among five flat ones would read
+  as the odd one out. The stacked-shell prescription below is otherwise as built, at the same
+  620px breakpoint <code>.sharepop</code> already used.</p>
+  <p>Everything from "Where it stands" down is kept as the record of the decision, not as a
+  description of the app.</p>
+</div>
+
 <h2 class="sec">Where it stands</h2>
 
 <div class="opt today">
