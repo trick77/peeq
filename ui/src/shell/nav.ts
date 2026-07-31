@@ -77,9 +77,15 @@ export const ALL_NAV_ITEMS: NavItem[] = SECTIONS.flatMap((s) => s.items);
 // with typing, Channels/History/Settings because they are read rarely.
 export const TAB_IDS: ViewId[] = ["library", "player", "inbox", "upnext"];
 
+// Looked up rather than written out a second time, and filtered rather than
+// asserted non-null: ViewId also names destinations SECTIONS deliberately does
+// not carry ("channel", "share"), so a plausible future edit to TAB_IDS
+// type-checks and finds nothing. A missing id then costs the bar one tab; the
+// non-null assertion it replaces cost the whole phone UI, because TabBar throws
+// reading `.id` off undefined while rendering.
 export const TAB_ITEMS: NavItem[] = TAB_IDS.map((id) =>
-  ALL_NAV_ITEMS.find((i) => i.id === id)!,
-);
+  ALL_NAV_ITEMS.find((i) => i.id === id),
+).filter((i): i is NavItem => i !== undefined);
 
 export const MORE_ITEMS: NavItem[] = ALL_NAV_ITEMS.filter(
   (i) => !TAB_IDS.includes(i.id),
