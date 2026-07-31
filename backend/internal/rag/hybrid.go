@@ -47,12 +47,51 @@ const (
 // "not actually about this" and dropped before ranking.
 //
 // The embedding vectors are unit length, so L2 and cosine rank identically and
-// convert exactly: L2 = sqrt(2 - 2*cos). 1.20 is cosine ~0.28. For
+// convert exactly: L2 = sqrt(2 - 2*cos). 1.05 is cosine ~0.45. For
 // text-embedding-3-small, unrelated text pairs sit around cosine 0.0-0.15
-// (L2 1.31-1.41) and genuinely related passages above cosine 0.3, so this sits
-// in the gap while staying permissive enough not to cost recall. Tunable via
-// BACKEND_SEARCH_MAX_DISTANCE.
-const DefaultMaxDistance = 1.20
+// (L2 1.31-1.41) and genuinely related passages above cosine 0.3.
+//
+// This started at 1.20 (cosine ~0.28), a value read off published model
+// behaviour and never measured against a real library. It was too permissive to
+// do its job: a question with six good chunks still came back with twenty
+// moments, the last fourteen being whatever was least distant among the
+// irrelevant. Tunable via BACKEND_SEARCH_MAX_DISTANCE.
+const DefaultMaxDistance = 1.05
+
+// SemanticSpread is how much worse than the BEST hit of this query a semantic
+// hit may be and still count as evidence.
+//
+// An absolute bound cannot express what matters here. A library about one broad
+// subject has small distances across the whole corpus, so a cutoff loose enough
+// to keep recall on a narrow query is loose enough to admit half the library on
+// a query nothing covers. The question worth asking is relative: is this hit
+// close to the best thing the query found, or merely closer than the floor?
+//
+// 0.12 in L2 is roughly a tenth of a cosine point at this end of the range —
+// wide enough to keep a paraphrase that the top hit states outright, narrow
+// enough that "nearest available" cannot ride in behind a genuine match.
+const SemanticSpread = 0.12
+
+// WithinSpread drops semantic hits more than SemanticSpread past the closest
+// one, and is what lets the vector lane return FEWER rows than it was asked
+// for. hits must be distance-ascending, which is what Store.RetrieveWithin
+// returns; an empty list stays empty.
+//
+// This belongs on the fused input rather than in SQL, unlike the absolute
+// bound: the reference point is the best row of this particular query, which is
+// not known until the rows come back.
+func WithinSpread(hits []Hit, spread float64) []Hit {
+	if len(hits) == 0 || spread <= 0 {
+		return hits
+	}
+	limit := hits[0].Distance + spread
+	for i, h := range hits {
+		if h.Distance > limit {
+			return hits[:i]
+		}
+	}
+	return hits
+}
 
 // The cutoff itself lives in SQL, in Store.RetrieveWithin: a Go-side filter over
 // the fused list would have to guess which hits carry a real distance and which

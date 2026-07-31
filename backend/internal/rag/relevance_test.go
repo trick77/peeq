@@ -259,3 +259,48 @@ func TestOrFloorDoesNotOutrankASemanticHit(t *testing.T) {
 		t.Errorf("the OR floor still outranks a genuine semantic hit: %+v", after)
 	}
 }
+
+// TestWithinSpreadCutsTheTailNotTheQuery is the "a short list is allowed to be
+// short" property. The absolute bound cannot supply it: on a query the library
+// covers well every row clears the bound, so something has to say when the
+// merely-nearest rows begin.
+func TestWithinSpreadCutsTheTailNotTheQuery(t *testing.T) {
+	hits := []Hit{
+		{VideoID: "a", Ordinal: 1, Distance: l2(0.62)},
+		{VideoID: "a", Ordinal: 2, Distance: l2(0.58)}, // still about this
+		{VideoID: "b", Ordinal: 1, Distance: l2(0.31)}, // nearest available
+		{VideoID: "c", Ordinal: 1, Distance: l2(0.30)},
+	}
+	got := WithinSpread(hits, SemanticSpread)
+	if len(got) != 2 {
+		t.Fatalf("kept %d hits, want 2 — the tail past the spread should be gone: %+v", len(got), got)
+	}
+	if got[1].Ordinal != 2 {
+		t.Errorf("kept the wrong second hit: %+v", got[1])
+	}
+}
+
+// A query whose hits are all equally good keeps all of them: the gate is
+// relative, so a tight cluster is never thinned.
+func TestWithinSpreadKeepsAnEvenCluster(t *testing.T) {
+	hits := []Hit{
+		{VideoID: "a", Distance: l2(0.60)},
+		{VideoID: "b", Distance: l2(0.59)},
+		{VideoID: "c", Distance: l2(0.58)},
+	}
+	if got := WithinSpread(hits, SemanticSpread); len(got) != 3 {
+		t.Errorf("kept %d of 3 hits in a tight cluster", len(got))
+	}
+}
+
+func TestWithinSpreadDegenerateInputs(t *testing.T) {
+	if got := WithinSpread(nil, SemanticSpread); len(got) != 0 {
+		t.Errorf("nil in, %d out", len(got))
+	}
+	hits := []Hit{{Distance: 0.1}, {Distance: 1.4}}
+	// A non-positive spread is the opt-out, not a spread of zero that would
+	// keep only the best hit.
+	if got := WithinSpread(hits, 0); len(got) != 2 {
+		t.Errorf("a zero spread should pass everything through, kept %d", len(got))
+	}
+}

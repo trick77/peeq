@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -266,4 +267,104 @@ func TestAnswerCapsSourcesPerVideo(t *testing.T) {
 	if n := strings.Count(prompt, `"chatty"`); n > answerMaxSourcesPerVideo {
 		t.Errorf("one video contributed %d excerpts, want at most %d", n, answerMaxSourcesPerVideo)
 	}
+}
+
+// Ask renders its moments from these sources now, not from a second
+// /api/search request, so a source has to carry what a result card shows: the
+// match-centred preview, with the keyword lane's highlight markers intact.
+func TestAnswerSourcesCarryTheMatchSnippet(t *testing.T) {
+	deps, _ := answerDeps(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	body := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil).Body.String()
+
+	frame := firstEvent(t, body, "sources")
+	var got struct {
+		Sources []answerSource `json:"sources"`
+	}
+	if err := json.Unmarshal([]byte(frame), &got); err != nil {
+		t.Fatalf("sources frame: %v — %s", err, frame)
+	}
+	if len(got.Sources) == 0 {
+		t.Fatalf("no sources: %s", frame)
+	}
+	snip := got.Sources[0].Snippet
+	if !strings.Contains(snip, "electrolytes") {
+		t.Errorf("snippet %q does not show the matched term", snip)
+	}
+	if !strings.Contains(snip, rag.HighlightStart) {
+		t.Errorf("the keyword lane's highlight was lost on the way to the card: %q", snip)
+	}
+}
+
+// One video, several qualifying passages: three sources, but the video record
+// itself travels once. Repeating it per source would put the same title,
+// channel and duration on the wire three times.
+func TestAnswerVideosAppearOncePerVideo(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "chatty"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := make([]rag.ChunkRow, 0, 5)
+	for i := range 5 {
+		rows = append(rows, rag.ChunkRow{Ordinal: i, Text: "electrolytes again", StartSeconds: i * 600})
+	}
+	seedChunks(t, ragStore, "v1", rows)
+	deps.Ask = &fakeAsk{deltas: []string{"x"}}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	frame := firstEvent(t, doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil).Body.String(), "sources")
+
+	var got struct {
+		Sources []answerSource `json:"sources"`
+		Videos  []answerVideo  `json:"videos"`
+	}
+	if err := json.Unmarshal([]byte(frame), &got); err != nil {
+		t.Fatalf("sources frame: %v — %s", err, frame)
+	}
+	if len(got.Sources) < 2 {
+		t.Fatalf("expected several sources from one chatty video, got %d", len(got.Sources))
+	}
+	if len(got.Videos) != 1 {
+		t.Errorf("one video produced %d video records, want 1", len(got.Videos))
+	}
+}
+
+// The video record on the wire is answerVideo, not videoDTO. This pins that
+// down: videoDTO carries the whole summary, the chapter and key-point blobs and
+// the probe set, and twelve of those would dominate a stream whose point is to
+// start fast.
+func TestAnswerVideosOmitTheSummaryText(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{
+		ID: "v1", URL: "u", Title: "Why Athletes Cramp",
+		Summary: "SENTINEL-SUMMARY-TEXT", Description: "SENTINEL-DESCRIPTION",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "the electrolytes you replace", StartSeconds: 10},
+	})
+	deps.Ask = &fakeAsk{deltas: []string{"x"}}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	frame := firstEvent(t, doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil).Body.String(), "sources")
+
+	for _, leaked := range []string{"SENTINEL-SUMMARY-TEXT", "SENTINEL-DESCRIPTION"} {
+		if strings.Contains(frame, leaked) {
+			t.Errorf("%s reached the wire — someone swapped answerVideo for videoDTO: %s", leaked, frame)
+		}
+	}
+}
+
+// firstEvent returns the data of the first frame with the given event name.
+func firstEvent(t *testing.T, body, name string) string {
+	t.Helper()
+	for _, e := range events(t, body) {
+		if e[0] == name {
+			return e[1]
+		}
+	}
+	t.Fatalf("no %q frame in: %s", name, body)
+	return ""
 }

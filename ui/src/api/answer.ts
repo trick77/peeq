@@ -1,7 +1,10 @@
 import { streamSSE } from "./stream";
 
-// AnswerSource is one cited passage: enough to render the citation and to open
-// the player at the moment it came from.
+// AnswerSource is one retrieved passage: enough to render the citation, list it
+// as a source, show it as a moment, and open the player at it.
+//
+// `snippet` may contain HIGHLIGHT_START/HIGHLIGHT_END around the matched terms,
+// exactly like a search match — render it through splitHighlights.
 export type AnswerSource = {
   n: number;
   video_id: string;
@@ -9,6 +12,20 @@ export type AnswerSource = {
   channel_name?: string;
   start_seconds: number;
   kind: string;
+  snippet: string;
+};
+
+// AnswerVideo is the video a source belongs to, in the shape a result card
+// reads. It travels once per video rather than once per source, and is a
+// structural subset of api/types Video, so one card component serves both Find's
+// full records and Ask's narrow ones.
+export type AnswerVideo = {
+  id: string;
+  title: string;
+  channel_id: string;
+  channel_name: string;
+  duration_seconds: number;
+  has_thumbnail: boolean;
 };
 
 // AnswerEvent is the narrowed stream.
@@ -19,7 +36,7 @@ export type AnswerSource = {
 // `error` replaces the tokens when there is no answer to give — it is not a
 // transport failure, and the sources that preceded it are still good.
 export type AnswerEvent =
-  | { type: "sources"; sources: AnswerSource[] }
+  | { type: "sources"; sources: AnswerSource[]; videos: AnswerVideo[] }
   | { type: "token"; text: string }
   | { type: "done" }
   | { type: "error"; message: string };
@@ -38,8 +55,15 @@ export async function streamAnswer(
     ({ event, data }) => {
       switch (event) {
         case "sources": {
-          const d = data as { sources?: AnswerSource[] };
-          onEvent({ type: "sources", sources: d.sources ?? [] });
+          const d = data as {
+            sources?: AnswerSource[];
+            videos?: AnswerVideo[];
+          };
+          onEvent({
+            type: "sources",
+            sources: d.sources ?? [],
+            videos: d.videos ?? [],
+          });
           break;
         }
         case "token": {

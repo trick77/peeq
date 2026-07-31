@@ -2,15 +2,17 @@ import { Icon } from "../icons";
 import { Spinner } from "../ui";
 import { formatDuration } from "../format";
 import { splitCitations } from "../citations";
+import { citedInOrder, type CitedSource } from "../answerSources";
 import { splitIntoSegments } from "../streamFade";
 import type { AnswerSource } from "../api/answer";
 
-// AnswerPanel renders the grounded answer above Ask's results.
+// AnswerPanel renders the grounded answer above Ask's moments.
 //
-// It never blocks the results: the parent fires retrieval and generation
-// together, so the ranked moments paint as soon as they arrive and this fills
-// in above them. If the answer fails the panel keeps whatever text it has —
-// truncated is more use than blank.
+// Sources are the ones the answer CITED, numbered from 1 in the order it
+// mentions them. Retrieval hands the model twelve passages; the ones it did not
+// use are a working set, not findings, and listing them made the answer look
+// like it was skipping numbered evidence ("[2] [4] [5]", no [1] in sight).
+// See answerSources.ts — the same derivation feeds the moments below.
 
 export type AnswerState = {
   status: "streaming" | "done";
@@ -27,12 +29,16 @@ export function AnswerPanel({
   onOpen: (videoId: string, startSeconds: number) => void;
 }) {
   const { status, text, sources, failed } = state;
+  // `known` is the FULL retrieved set, not the cited one: that is what keeps a
+  // hallucinated [9] rendering as the characters the model produced rather than
+  // as a citation pointing nowhere.
   const known = new Set(sources.map((s) => s.n));
-  const byNumber = new Map(sources.map((s) => [s.n, s]));
+  const cited = citedInOrder(text, sources);
+  const display = new Map(cited.map((s) => [s.n, s]));
   const streaming = status === "streaming";
 
-  // Nothing to show at all — the parent renders the plain results alone rather
-  // than an empty box.
+  // Nothing to show at all — the parent renders whatever it has rather than an
+  // empty box.
   if (!text && !sources.length && !streaming) return null;
 
   return (
@@ -41,13 +47,16 @@ export function AnswerPanel({
         <Icon name="sparkles" size="14px" />
         Answer
         <span className="status">
-          {streaming ? (
+          {/* The spinner belongs to the wait before the first token. Once words
+              are arriving they say the same thing better, and the caret below
+              carries "still going". */}
+          {streaming && !text ? (
             <>
               <Spinner size="12px" />
               Reading your library
             </>
-          ) : sources.length ? (
-            `${sources.length} source${sources.length === 1 ? "" : "s"}`
+          ) : !streaming && cited.length ? (
+            `${cited.length} source${cited.length === 1 ? "" : "s"}`
           ) : null}
         </span>
       </div>
@@ -55,7 +64,7 @@ export function AnswerPanel({
       <div className="answer-body" aria-live="polite" aria-busy={streaming}>
         {splitCitations(text, known).map((part, i) =>
           part.kind === "cite" ? (
-            <CiteMark key={i} source={byNumber.get(part.n)!} onOpen={onOpen} />
+            <CiteMark key={i} source={display.get(part.n)!} onOpen={onOpen} />
           ) : (
             <FadedText key={i} text={part.text} />
           ),
@@ -64,24 +73,30 @@ export function AnswerPanel({
       </div>
 
       {failed && !text ? (
+        <p className="answer-note">Couldn't write an answer just now.</p>
+      ) : null}
+
+      {/* An answer that names no moment leaves nothing below it, so say why
+          rather than ending on a bare paragraph. */}
+      {!streaming && !failed && text && !cited.length ? (
         <p className="answer-note">
-          Couldn't write an answer just now — the moments below are still good.
+          The answer didn't point at any particular moment.
         </p>
       ) : null}
 
       {/* Held back until the answer settles: a citation list above a
           half-written answer is evidence arriving before the claim. */}
-      {sources.length && !streaming ? (
+      {cited.length && !streaming ? (
         <div className="answer-sources">
           <p className="lbl">Sources</p>
-          {sources.map((s) => (
+          {cited.map((s) => (
             <button
               key={s.n}
               type="button"
               className="srcrow"
               onClick={() => onOpen(s.video_id, s.start_seconds)}
             >
-              <span className="n mono">{s.n}</span>
+              <span className="n mono">{s.display}</span>
               <span className="ts mono">
                 {s.kind === "summary" ? "—" : formatDuration(s.start_seconds)}
               </span>
@@ -116,11 +131,15 @@ function FadedText({ text }: { text: string }) {
 // CiteMark is an inline citation. It rests visible — a bordered superscript
 // numeral, not something that appears on hover — and carries the moment it
 // points at in its accessible name, since the numeral alone says nothing.
+//
+// Every number it renders is the DISPLAY number. The backend number must not
+// reach any rendered string: a mark drawn as 2 whose label says "Source 4"
+// sends a screen-reader user to a row that is not there.
 function CiteMark({
   source,
   onOpen,
 }: {
-  source: AnswerSource;
+  source: CitedSource;
   onOpen: (videoId: string, startSeconds: number) => void;
 }) {
   const at =
@@ -132,10 +151,10 @@ function CiteMark({
       type="button"
       className="cite"
       title={`${source.title} · ${at}`}
-      aria-label={`Source ${source.n}: ${source.title} at ${at}`}
+      aria-label={`Source ${source.display}: ${source.title} at ${at}`}
       onClick={() => onOpen(source.video_id, source.start_seconds)}
     >
-      {source.n}
+      {source.display}
     </button>
   );
 }

@@ -102,6 +102,14 @@ const (
 	searchModeAsk  = "ask"
 )
 
+// These four bound the SEARCH response. Ask mode no longer renders through it —
+// the Ask view draws its moments from the answer's citations (see
+// handleAnswer) — so in practice they now shape Find, plus any client calling
+// /api/search?mode=ask directly.
+//
+// Note what defaultSearchK is and is not: a ceiling, never a target. A query
+// with six good chunks must return six moments. Padding it to twenty is the
+// bug the lane bounds in rag/hybrid.go exist to prevent.
 const (
 	// defaultSearchK caps how many moments the response carries, counted after
 	// the per-video cap below rather than before it — capping the candidate
@@ -109,11 +117,19 @@ const (
 	// every other video that mentioned the topic, which is the very thing
 	// maxMatchesPerVideo exists to prevent.
 	defaultSearchK = 20
-	// searchCandidates is how many rows each LANE retrieves, and how deep the
-	// fused list runs. It has to sit well above defaultSearchK for the spread
-	// to have anything to work with: 200 chunks from one video still leave room
-	// for other videos below them.
+	// searchCandidates is how many rows the KEYWORD lane retrieves, and how deep
+	// the fused list runs. It has to sit well above defaultSearchK for the
+	// spread to have anything to work with: 200 chunks from one video still
+	// leave room for other videos below them.
 	searchCandidates = 200
+	// semanticCandidates is the vector lane's own, much shallower depth. The two
+	// lanes degrade differently with depth: an FTS row at position 150 still
+	// literally contains the searched terms, while a KNN row at position 150 is
+	// noise by construction — "nearest" is relative, so the tail of a KNN result
+	// is whatever was least distant among the irrelevant. Handing the vector
+	// lane the keyword lane's depth gave that tail 160 chances to place into a
+	// twenty-slot response.
+	semanticCandidates = 40
 	// maxMatchesPerVideo caps how many moments one video contributes, so a
 	// long video cannot crowd out the rest of the library.
 	maxMatchesPerVideo = 4
@@ -254,11 +270,25 @@ func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
 
 	if s.embedder != nil {
 		if vecs, err := s.embedder.Embed(r.Context(), []string{q}); err == nil && len(vecs) > 0 {
-			semHits, err := s.rag.RetrieveWithin(r.Context(), vecs[0], searchCandidates, s.searchMaxDistance)
+			semHits, err := s.rag.RetrieveWithin(r.Context(), vecs[0], semanticCandidates, s.searchMaxDistance)
 			switch {
 			case err != nil:
 				slog.Warn("search: semantic retrieve degraded", "err", err)
 			case len(semHits) > 0:
+				// The absolute bound says "not about anything"; the spread says
+				// "not about THIS, given what this query actually found". Both
+				// are needed — on a query the library covers well every row
+				// clears the absolute bound, and the spread is the only thing
+				// that can tell the sixth genuinely relevant chunk from the
+				// seventh merely-nearest one.
+				//
+				// A negative searchMaxDistance is the documented opt-out from
+				// bounding the vector lane, so it opts out of BOTH: an operator
+				// who asks for unbounded KNN gets unbounded KNN, not a floor
+				// they cannot see in any setting.
+				if s.searchMaxDistance > 0 {
+					semHits = rag.WithinSpread(semHits, rag.SemanticSpread)
+				}
 				lanes = append(lanes, rag.Lane{Hits: semHits, Weight: rag.WeightSemantic})
 			}
 		} else if err != nil {

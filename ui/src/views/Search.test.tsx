@@ -119,7 +119,10 @@ describe("Search", () => {
     expect(container.textContent).not.toContain(HIGHLIGHT_END);
   });
 
-  it("lands on ask, since a question is what the box is for", async () => {
+  // Ask makes ONE request. Its moments are the ones the answer cited, which
+  // the answer stream already carries, so a second /api/search would spend
+  // another embedding call to build a list this view no longer shows.
+  it("lands on ask and spends a single request on it", async () => {
     mockedSearchVideos.mockResolvedValue([]);
     render(<Search onOpen={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Ask" })).toHaveAttribute(
@@ -127,9 +130,8 @@ describe("Search", () => {
       "true",
     );
     submit("battery life");
-    await waitFor(() =>
-      expect(mockedSearchVideos).toHaveBeenCalledWith("battery life", "ask"),
-    );
+    await waitFor(() => expect(mockedStreamAnswer).toHaveBeenCalled());
+    expect(mockedSearchVideos).not.toHaveBeenCalled();
   });
 
   it("searches with find once find is selected", async () => {
@@ -222,7 +224,11 @@ describe("Search", () => {
 
   it("says the library covers nothing when ask comes up empty", async () => {
     mockedSearchVideos.mockResolvedValue([]);
+    // The backend always reports retrieval first, even when it found nothing —
+    // which is what tells the view "the library covers nothing" apart from
+    // "the request never got that far".
     mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
+      onEvent({ type: "sources", sources: [], videos: [] });
       onEvent({ type: "done" });
     });
     render(<Search onOpen={vi.fn()} />);
@@ -249,6 +255,7 @@ describe("Search", () => {
   it("retires the error line when the box is emptied", async () => {
     mockedSearchVideos.mockRejectedValueOnce(new Error("search backend down"));
     render(<Search onOpen={vi.fn()} />);
+    toFind();
     submit("iphone");
     expect(await screen.findByText(/search backend down/i)).toBeInTheDocument();
 
@@ -272,6 +279,45 @@ describe("Search — the Ask answer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ask" }));
   }
 
+  // The evidence Ask renders: two retrieved passages from two videos. What the
+  // answer cites out of these is what the page shows.
+  const askSources = [
+    {
+      n: 1,
+      video_id: "v1",
+      title: "Why Athletes Cramp",
+      start_seconds: 872,
+      kind: "transcript",
+      snippet: "the electrolytes you replace",
+    },
+    {
+      n: 2,
+      video_id: "v2",
+      title: "Hydration Protocols",
+      start_seconds: 60,
+      kind: "transcript",
+      snippet: "how much sodium to drink",
+    },
+  ];
+  const askVideos = [
+    {
+      id: "v1",
+      title: "Why Athletes Cramp",
+      channel_id: "c1",
+      channel_name: "Attia",
+      duration_seconds: 3600,
+      has_thumbnail: true,
+    },
+    {
+      id: "v2",
+      title: "Hydration Protocols",
+      channel_id: "c2",
+      channel_name: "Huberman",
+      duration_seconds: 1800,
+      has_thumbnail: true,
+    },
+  ];
+
   it("does not ask for an answer in find mode", async () => {
     mockedSearchVideos.mockResolvedValue([]);
     mockedStreamAnswer.mockReturnValue(new Promise(() => {}));
@@ -285,8 +331,7 @@ describe("Search — the Ask answer", () => {
   // Retrieval returns long before generation does. Showing the moments and the
   // citation list first puts the evidence on screen ahead of the claim that
   // cites it, and pulls the eye off the text being written.
-  it("holds the results and sources until the answer settles", async () => {
-    mockedSearchVideos.mockResolvedValue(result());
+  it("holds the moments and the sources until the answer settles", async () => {
     let emit: ((e: AnswerEvent) => void) | null = null;
     mockedStreamAnswer.mockImplementation(
       (_q, onEvent) =>
@@ -298,19 +343,8 @@ describe("Search — the Ask answer", () => {
     submit("electrolytes");
 
     await screen.findByText(/Reading your library/);
-    emit!({
-      type: "sources",
-      sources: [
-        {
-          n: 1,
-          video_id: "v1",
-          title: "Why Athletes Cramp",
-          start_seconds: 872,
-          kind: "transcript",
-        },
-      ],
-    });
-    emit!({ type: "token", text: "Yes — " });
+    emit!({ type: "sources", sources: askSources, videos: askVideos });
+    emit!({ type: "token", text: "Yes — Attia covers it[1]." });
 
     // Mid-stream: the answer text is there, its evidence is not.
     await waitFor(() =>
@@ -318,29 +352,18 @@ describe("Search — the Ask answer", () => {
         "Yes —",
       ),
     );
-    expect(screen.queryByText("iPhone 27 review")).not.toBeInTheDocument();
+    expect(screen.queryByText("Why Athletes Cramp")).not.toBeInTheDocument();
     expect(document.querySelector(".answer-sources")).toBeNull();
 
     emit!({ type: "done" });
-    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+    // The title now appears twice — once as a source row, once as a card.
+    expect(await screen.findAllByText("Why Athletes Cramp")).toHaveLength(2);
     expect(document.querySelector(".answer-sources")).not.toBeNull();
   });
 
   it("streams tokens into the panel and links a citation", async () => {
-    mockedSearchVideos.mockResolvedValue([]);
     mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
-      onEvent({
-        type: "sources",
-        sources: [
-          {
-            n: 1,
-            video_id: "v1",
-            title: "Why Athletes Cramp",
-            start_seconds: 872,
-            kind: "transcript",
-          },
-        ],
-      });
+      onEvent({ type: "sources", sources: askSources, videos: askVideos });
       onEvent({ type: "token", text: "Yes — Attia covers it[1]." });
       onEvent({ type: "done" });
     });
@@ -356,29 +379,132 @@ describe("Search — the Ask answer", () => {
     expect(onOpen).toHaveBeenCalledWith("v1", 872);
   });
 
-  // A broken answer stream must never take the results down with it.
-  it("drops the panel but keeps results when the stream fails", async () => {
-    mockedSearchVideos.mockResolvedValue(result());
-    mockedStreamAnswer.mockRejectedValue(new Error("stream failed: 503"));
+  // The reported bug: retrieval hands the model twelve passages, it uses six,
+  // and the page listed all twelve — videos that never mentioned the topic,
+  // under an answer whose first citation was [2].
+  it("shows only the moments the answer cited", async () => {
+    mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
+      onEvent({ type: "sources", sources: askSources, videos: askVideos });
+      onEvent({ type: "token", text: "Attia covers it[1]." });
+      onEvent({ type: "done" });
+    });
     render(<Search onOpen={vi.fn()} />);
-    toAsk();
     submit("electrolytes");
 
-    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+    await screen.findAllByText("Why Athletes Cramp");
+    expect(screen.queryByText("Hydration Protocols")).not.toBeInTheDocument();
+    expect(screen.getByText(/1 video/)).toBeInTheDocument();
+  });
+
+  // Ask has one wait and one indicator for it. The page-level "Searching" line
+  // outlives retrieval now that Ask stays loading until the answer settles, so
+  // it would sit next to the panel's spinner for the whole generation.
+  it("never stacks a second spinner beside the answer", async () => {
+    let emit: ((e: AnswerEvent) => void) | null = null;
+    mockedStreamAnswer.mockImplementation(
+      (_q, onEvent) =>
+        new Promise(() => {
+          emit = onEvent;
+        }),
+    );
+    render(<Search onOpen={vi.fn()} />);
+    submit("electrolytes");
+
+    await screen.findByText(/Reading your library/);
+    expect(screen.queryByText("Searching")).not.toBeInTheDocument();
+
+    emit!({ type: "sources", sources: askSources, videos: askVideos });
+    emit!({ type: "token", text: "Yes — " });
     await waitFor(() =>
       expect(
         screen.queryByText(/Reading your library/),
       ).not.toBeInTheDocument(),
     );
-    expect(screen.queryByText(/answer unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Searching")).not.toBeInTheDocument();
+  });
+
+  // Leaving Ask aborts the generation, and streamAnswer RESOLVES on abort
+  // rather than rejecting. Settling only on a done frame left the tab loading
+  // for good: come back and it is still spinning over an answer nobody is
+  // writing.
+  it("leaves no spinner behind when the tab is left mid-answer", async () => {
+    mockedStreamAnswer.mockImplementation(
+      (_q, onEvent, signal) =>
+        new Promise((resolve) => {
+          onEvent({ type: "sources", sources: askSources, videos: askVideos });
+          signal?.addEventListener("abort", () => resolve());
+        }),
+    );
+    mockedSearchVideos.mockResolvedValue([]);
+    render(<Search onOpen={vi.fn()} />);
+    submit("electrolytes");
+    await screen.findByText(/Reading your library/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    toAsk();
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Reading your library/),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Searching")).not.toBeInTheDocument();
+  });
+
+  it("shows no moments when the answer names none", async () => {
+    mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
+      onEvent({ type: "sources", sources: askSources, videos: askVideos });
+      onEvent({ type: "token", text: "The excerpts don't say." });
+      onEvent({ type: "done" });
+    });
+    render(<Search onOpen={vi.fn()} />);
+    submit("electrolytes");
+
+    await screen.findByText(/didn't point at any particular moment/);
+    expect(screen.queryByText("Why Athletes Cramp")).not.toBeInTheDocument();
+    expect(screen.queryByText("Matches")).not.toBeInTheDocument();
+  });
+
+  // The model is down. There are no moments to show — nothing cited them — but
+  // the page still has to say what happened rather than going quiet.
+  it("says the answer failed when the model is unavailable", async () => {
+    mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
+      onEvent({ type: "sources", sources: askSources, videos: askVideos });
+      onEvent({ type: "error", message: "answer unavailable" });
+      onEvent({ type: "done" });
+    });
+    render(<Search onOpen={vi.fn()} />);
+    submit("electrolytes");
+
+    expect(
+      await screen.findByText(/Couldn't write an answer/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Why Athletes Cramp")).not.toBeInTheDocument();
+    expect(screen.queryByText("Matches")).not.toBeInTheDocument();
+  });
+
+  // A failed answer has cited nothing, so there is nothing to stand behind. The
+  // page says the answer failed and stops there rather than falling back to the
+  // whole retrieved set.
+  it("shows no moments when the stream fails outright", async () => {
+    mockedStreamAnswer.mockRejectedValue(new Error("stream failed: 503"));
+    render(<Search onOpen={vi.fn()} />);
+    toAsk();
+    submit("electrolytes");
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Reading your library/),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Matches")).not.toBeInTheDocument();
     expect(document.querySelector(".errline")).toBeNull();
   });
 
   // Truncated is more use than blank.
   it("keeps partial text when the stream breaks mid-answer", async () => {
-    mockedSearchVideos.mockResolvedValue([]);
     mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
-      onEvent({ type: "sources", sources: [] });
+      onEvent({ type: "sources", sources: [], videos: [] });
       onEvent({ type: "token", text: "Yes — Attia" });
       throw new Error("connection lost");
     });
@@ -396,7 +522,7 @@ describe("Search — the Ask answer", () => {
   it("clears the previous answer when a new search starts", async () => {
     mockedSearchVideos.mockResolvedValue([]);
     mockedStreamAnswer.mockImplementationOnce(async (_q, onEvent) => {
-      onEvent({ type: "sources", sources: [] });
+      onEvent({ type: "sources", sources: [], videos: [] });
       onEvent({ type: "token", text: "First answer." });
       onEvent({ type: "done" });
     });

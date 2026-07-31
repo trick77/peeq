@@ -25,7 +25,7 @@ type StreamCompleter interface {
 }
 
 // answerSource is one cited passage, in the shape the UI needs to render a
-// citation and open the player at it.
+// citation, list it as a source, and open the player at it.
 type answerSource struct {
 	N            int    `json:"n"`
 	VideoID      string `json:"video_id"`
@@ -33,6 +33,27 @@ type answerSource struct {
 	ChannelName  string `json:"channel_name,omitempty"`
 	StartSeconds int    `json:"start_seconds"`
 	Kind         string `json:"kind"`
+	// Snippet is the passage preview, match-centred and carrying
+	// rag.HighlightStart/End around matched terms when the keyword lane found
+	// it. Ask renders its moments from these sources rather than from a second
+	// /api/search request, so the preview has to travel with them.
+	Snippet string `json:"snippet"`
+}
+
+// answerVideo is the video behind one or more sources, in the shape a result
+// card reads: a thumbnail, a duration, a title, a channel.
+//
+// Deliberately NOT videoDTO. That carries the full summary text, the chapter
+// and key-point blobs, the description and the whole media-probe set — none of
+// which a card renders, and twelve of them would dominate a stream whose point
+// is to start fast.
+type answerVideo struct {
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	ChannelID       string `json:"channel_id"`
+	ChannelName     string `json:"channel_name"`
+	DurationSeconds int64  `json:"duration_seconds"`
+	HasThumbnail    bool   `json:"has_thumbnail"`
 }
 
 const (
@@ -99,12 +120,12 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
-		send("sources", map[string]any{"sources": []any{}})
+		send("sources", map[string]any{"sources": []any{}, "videos": []any{}})
 		return
 	}
 
-	sources, excerpts := s.buildAnswerContext(s.retrieveAsk(r, q))
-	if !send("sources", map[string]any{"sources": sources}) {
+	sources, vids, excerpts := s.buildAnswerContext(s.retrieveAsk(r, q))
+	if !send("sources", map[string]any{"sources": sources, "videos": vids}) {
 		return // client gone
 	}
 
@@ -149,10 +170,17 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildAnswerContext turns ranked hits into the numbered citation table the UI
-// renders and the excerpt block the model reads. The two are built together so
-// a citation number always means the same passage in both.
-func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []string) {
+// renders, the videos those citations belong to, and the excerpt block the
+// model reads. Sources and excerpts are built together so a citation number
+// always means the same passage in both.
+//
+// The video list is separate rather than embedded in each source because a
+// video contributes up to answerMaxSourcesPerVideo passages, and repeating its
+// record three times would put the same title, channel and duration on the wire
+// three times.
+func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVideo, []string) {
 	sources := make([]answerSource, 0, answerMaxSources)
+	vids := make([]answerVideo, 0, answerMaxSources)
 	excerpts := make([]string, 0, answerMaxSources)
 	perVideo := make(map[string]int)
 	// A chapter chunk repeats the transcript of its own span, so the same words
@@ -184,17 +212,24 @@ func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []string) {
 		if !isSummary {
 			seen[key] = true
 		}
+		if perVideo[h.VideoID] == 0 {
+			vids = append(vids, answerVideo{
+				ID: v.ID, Title: v.Title, ChannelID: v.ChannelID,
+				ChannelName: v.ChannelName, DurationSeconds: v.DurationSeconds,
+				HasThumbnail: v.ThumbnailPath != "",
+			})
+		}
 		perVideo[h.VideoID]++
 
 		n := len(sources) + 1
 		sources = append(sources, answerSource{
 			N: n, VideoID: h.VideoID, Title: v.Title, ChannelName: v.ChannelName,
-			StartSeconds: h.StartSeconds, Kind: h.Kind,
+			StartSeconds: h.StartSeconds, Kind: h.Kind, Snippet: matchSnippet(h),
 		})
 		excerpts = append(excerpts, fmt.Sprintf("[%d] %q at %ds:\n%s",
 			n, v.Title, h.StartSeconds, truncateRunes(h.Text, answerExcerptRunes)))
 	}
-	return sources, excerpts
+	return sources, vids, excerpts
 }
 
 // answerMomentBucket is how coarsely two passages count as the same moment when
@@ -216,10 +251,15 @@ func truncateRunes(s string, n int) string {
 // is a backstop, not the primary defence: a query that retrieves nothing never
 // reaches the model at all (see handleAnswer). This covers the subtler case
 // where passages came back but none of them actually address what was asked.
+//
+// The citation rules carry more weight than they used to. The interface now
+// shows the moments the answer CITED and nothing else, so an uncited claim is
+// not merely unattributed — it leaves the reader with no way to go and check it.
 const answerSystemPrompt = `You answer questions about a personal video library, using ONLY the numbered excerpts provided.
 
 Rules:
 - Cite every claim with the excerpt number in square brackets, like [1] or [3]. Cite the excerpt the claim actually came from.
+- An answer drawn from the excerpts must carry at least one citation.
 - If the excerpts do not answer the question, say so plainly in one sentence. Do not pad it out.
 - Never invent a video, a title, a timestamp, or a fact that is not in the excerpts.
 - If the excerpts disagree with each other, say so and cite both.
