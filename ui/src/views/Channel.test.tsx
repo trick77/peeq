@@ -723,6 +723,7 @@ describe("Channel", () => {
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
+        has_subtitles: false,
       },
     ]);
     render(
@@ -754,6 +755,7 @@ describe("Channel", () => {
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
+        has_subtitles: false,
       },
     ]);
     vi.mocked(downloadPending).mockRejectedValue(
@@ -786,6 +788,7 @@ describe("Channel", () => {
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
+        has_subtitles: false,
       },
     ]);
     render(
@@ -817,6 +820,7 @@ describe("Channel", () => {
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
+        has_subtitles: false,
       },
     ]);
     vi.mocked(ignorePending).mockRejectedValue(new Error("failed to ignore"));

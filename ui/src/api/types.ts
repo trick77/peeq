@@ -340,6 +340,10 @@ export type PendingItem = {
   // progress marker versus nothing at all.
   summary_status: SummaryStatus | "";
   auto_summary: boolean;
+  // has_subtitles is whether captions are on disk. 'no_transcript' covers both
+  // "YouTube had none" and "they turned out to be music"; only the second
+  // leaves a transcript to read, and this is what tells them apart.
+  has_subtitles: boolean;
 };
 
 // CookieHealth mirrors httpapi.cookieHealthResponse — distinct from

@@ -17,6 +17,7 @@ function baseItem(overrides: Partial<PendingItem> = {}): PendingItem {
     discovered_at: "2026-07-21 09:00:00",
     summary_status: "done",
     auto_summary: true,
+    has_subtitles: true,
     ...overrides,
   };
 }
@@ -890,6 +891,7 @@ describe("Inbox summaries", () => {
         title: "No speech",
         summary_status: "no_transcript",
         auto_summary: true,
+        has_subtitles: false,
       }),
     ]);
     render(<Inbox onOpen={vi.fn()} />);
@@ -926,6 +928,71 @@ describe("Inbox summaries", () => {
       within(await card("No speech")).queryByText("Summarizing…"),
     ).toBeNull();
     expect(within(await card("No speech")).queryByText(/summary/i)).toBeNull();
+  });
+
+  // The music case: captions on disk that produced no summary. The status is
+  // the same 'no_transcript' as a video with no captions at all, and the two
+  // must not look alike — one has something to read and the other does not.
+  it("offers the transcript when captions exist but no summary does", async () => {
+    vi.mocked(listPending).mockResolvedValue([
+      baseItem({
+        video_id: "music",
+        title: "A music video",
+        summary_status: "no_transcript",
+        has_subtitles: true,
+      }),
+    ]);
+    const onOpen = vi.fn();
+    render(<Inbox onOpen={onOpen} />);
+    await screen.findByText("A music video");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Read transcript" }),
+    );
+
+    expect(onOpen).toHaveBeenCalledWith("music");
+  });
+
+  // The card opens exactly when it says it opens. A no_transcript video with
+  // no captions has nothing behind it — its page would add nothing the card is
+  // not already showing — so it must neither draw a marker nor answer a click.
+  it("does not open a video with nothing to read", async () => {
+    vi.mocked(listPending).mockResolvedValue([
+      baseItem({
+        video_id: "silent",
+        title: "No captions ever",
+        summary_status: "no_transcript",
+        has_subtitles: false,
+      }),
+    ]);
+    const onOpen = vi.fn();
+    render(<Inbox onOpen={onOpen} />);
+
+    const card = (await screen.findByText("No captions ever")).closest(
+      "article",
+    ) as HTMLElement;
+    await userEvent.click(card.querySelector(".thumb") as HTMLElement);
+
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(card.className).toContain("is-inert");
+  });
+
+  // Same rule, the state that used to slip through it: a failed summary drew no
+  // marker and still opened a page whose only news was that it would be retried.
+  it("does not open a video whose summary failed", async () => {
+    vi.mocked(listPending).mockResolvedValue([
+      baseItem({ video_id: "bad", title: "Failed", summary_status: "error" }),
+    ]);
+    const onOpen = vi.fn();
+    render(<Inbox onOpen={onOpen} />);
+
+    const card = (await screen.findByText("Failed")).closest(
+      "article",
+    ) as HTMLElement;
+    await userEvent.click(card.querySelector(".thumb") as HTMLElement);
+
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(card.className).toContain("is-inert");
   });
 
   it("opens the summary from the marker", async () => {

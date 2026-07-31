@@ -1013,6 +1013,11 @@ type pendingItem struct {
 	// different cards.
 	SummaryStatus string `json:"summary_status"`
 	AutoSummary   bool   `json:"auto_summary"`
+	// HasSubtitles is whether captions are on disk. The card needs it because
+	// 'no_transcript' means two things: no captions exist, or the ones that do
+	// turned out to be music. Only the second leaves something to read, and
+	// only a card that knows which it is can offer the right thing.
+	HasSubtitles bool `json:"has_subtitles"`
 }
 
 // handlePendingList returns every ledger entry in state 'pending'. Mirrors
@@ -1049,6 +1054,7 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 			DiscoveredAt:    e.DiscoveredAt,
 			SummaryStatus:   e.SummaryStatus,
 			AutoSummary:     e.AutoSummary,
+			HasSubtitles:    e.HasSubtitles,
 		})
 	}
 	writeJSON(w, out)

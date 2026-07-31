@@ -51,6 +51,14 @@ type Entry struct {
 	// card shows a progress marker or nothing at all.
 	SummaryStatus string
 	AutoSummary   bool
+	// HasSubtitles is whether captions are already on disk for this video.
+	//
+	// It is not implied by SummaryStatus. 'no_transcript' covers two different
+	// videos: one YouTube has no captions for at all, and one whose captions
+	// turned out to be music and so produced no summary. The second has a
+	// readable transcript and the first has nothing, and only this flag tells
+	// the Inbox card which of the two it is holding.
+	HasSubtitles bool
 }
 
 // Store persists the channel_videos scan ledger.
@@ -235,7 +243,8 @@ func (s *Store) Get(videoID string) (*Entry, error) {
 func (s *Store) ListPending() ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
-       COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0)
+       COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
+       COALESCE(v.subtitle_path, '') <> ''
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id
@@ -253,7 +262,8 @@ ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_a
 func (s *Store) ListPendingForChannel(channelID string) ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
-       COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0)
+       COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
+       COALESCE(v.subtitle_path, '') <> ''
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id
@@ -325,7 +335,8 @@ func scanPendingEntries(rows *sql.Rows) ([]Entry, error) {
 
 // scanPendingRow scans one ListPending row: the selectColumns set (in Entry
 // field order, minus ChannelName) followed by the joined channel_name, the
-// video's summary_status and its channel's auto_summary flag.
+// video's summary_status, its channel's auto_summary flag and whether captions
+// are on disk.
 func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 	var e Entry
 	var duration sql.NullInt64
@@ -334,6 +345,7 @@ func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 		&e.VideoID, &e.ChannelID, &e.Title, &duration, &e.URL, &e.ThumbnailURL,
 		&e.State, &e.DiscoveredAt, &decidedAt, &publishedAt, &e.UnavailableReason,
 		&unavailableAt, &e.ChannelName, &e.SummaryStatus, &e.AutoSummary,
+		&e.HasSubtitles,
 	); err != nil {
 		return Entry{}, err
 	}

@@ -29,6 +29,7 @@ export function TranscriptCard({
   filenameBase,
   seek,
   className = "full",
+  defaultOpen = false,
 }: {
   // vttUrl is where the WebVTT is fetched from, lazily, the first time the
   // panel is opened. Nothing is loaded until then.
@@ -45,8 +46,17 @@ export function TranscriptCard({
   // className distinguishes the Player's full-width card from the share page's,
   // which carries its own width and spacing rules.
   className?: string;
+  // defaultOpen starts the panel expanded, for the one caller whose page has
+  // nothing else on it: a video with captions but no summary is opened FROM a
+  // button that says "Read transcript", and landing on a collapsed accordion
+  // makes that a promise kept only after a second click. Everywhere else the
+  // transcript is the long tail below a summary and stays folded away.
+  //
+  // Read once, as the initial state: the panel is the user's to fold after
+  // that, and a later render must not spring it back open.
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   // loaded is the URL `parsed` came from, so the cache below can tell "already
   // have this transcript" from "have A, now being asked for B".
   const [loaded, setLoaded] = useState<string | null>(null);
