@@ -243,7 +243,7 @@ func (s *server) handleShareVideo(w http.ResponseWriter, r *http.Request) {
 		Chapters:        rawJSONOrNil(v.Chapters),
 		KeyPoints:       rawJSONOrNil(v.KeyPoints),
 		HasThumbnail:    v.HasThumbnail,
-		HasSubtitles:    v.SubtitlePath != "",
+		HasSubtitles:    v.HasTranscript,
 		AudioLanguage:   v.AudioLanguage,
 		ExpiresAt:       expiresAt,
 
@@ -287,7 +287,7 @@ func (s *server) handleShareSubtitles(w http.ResponseWriter, r *http.Request) {
 	if v == nil {
 		return
 	}
-	s.serveMediaFile(w, r, v.SubtitlePath, "text/vtt; charset=utf-8")
+	serveTranscript(w, r, s, v.ID)
 }
 
 // serveMediaFile resolves storedPath under mediaDir and serves it via

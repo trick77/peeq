@@ -350,12 +350,13 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	// at re-download (Phase 3.1b) instead of corrupting the summary.
 	//
 	// media_path is deliberately NOT part of the gate, and neither is
-	// status='tombstoned'. A tombstone keeps subtitle_path and the .vtt precisely
-	// so its analysis stays rebuildable; rejecting it here would leave a swept
-	// video permanently unsearchable the moment its chunks needed rebuilding,
-	// which is the whole reason the file is kept. A row tombstoned before that
-	// changed has a blank subtitle_path and still lands here.
-	if v.SubtitlePath == "" {
+	// status='tombstoned'. A tombstone takes the media file only; the transcript
+	// stays on the row, so a swept video is still rebuildable and rejecting it
+	// here would make it permanently unsearchable the moment its chunks needed
+	// rebuilding. Since migration 0023 this asks whether the text exists rather
+	// than whether a path column happens to be set — a pointer standing in for
+	// the thing itself is exactly what used to make this gate lie.
+	if !v.HasTranscript {
 		writeJSONError(w, http.StatusConflict, "no transcript present; re-download to restore before reprocessing")
 		return
 	}

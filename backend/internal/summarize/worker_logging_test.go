@@ -176,9 +176,7 @@ func seedVideo(t *testing.T, h *workerHarness, id string) {
 	}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle(id, relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, id, relPath)
 	if _, err := h.jobs.Enqueue(id); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -465,7 +463,7 @@ func TestWorkerLogsNoTranscriptReason(t *testing.T) {
 	if rec == nil {
 		t.Fatal("no 'no transcript' record")
 	}
-	if rec["reason"] != "no subtitle file" || rec["title"] != "No Subs" {
+	if rec["reason"] != "no transcript" || rec["title"] != "No Subs" {
 		t.Errorf("no-transcript record = %v", rec)
 	}
 	// A video that is never analyzed must not announce an analysis: an import

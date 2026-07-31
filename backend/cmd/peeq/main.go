@@ -27,6 +27,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/config"
+	"github.com/trick77/peeq/internal/diskimport"
 	"github.com/trick77/peeq/internal/download"
 	"github.com/trick77/peeq/internal/failmonitor"
 	"github.com/trick77/peeq/internal/httpapi"
@@ -45,7 +46,6 @@ import (
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/summarize"
 	"github.com/trick77/peeq/internal/summaryjobs"
-	"github.com/trick77/peeq/internal/thumbimport"
 	"github.com/trick77/peeq/internal/version"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -364,6 +364,7 @@ func run() error {
 		Ledger:    ledgerStore,
 		Videos:    videosStore,
 		Summaries: summaryJobsStore,
+		MediaDir:  cfg.MediaDir,
 		// Must match the download worker's, three declarations up: if the two
 		// ever ask YouTube for different caption languages, the transcript
 		// summarized from the Inbox is not the one the library ends up with.
@@ -405,13 +406,20 @@ func run() error {
 		Videos: videosStore,
 	})
 
-	// thumbimportWorker carries posters that live in the media tree into the
-	// database (migration 0022), so an existing library keeps its cards without
-	// re-downloading anything. It also rescues the rows whose thumbnail_path was
-	// blanked by a metadata write while the image survived on disk. Local file
-	// reads only — no network at all — and it idles once drained.
-	thumbimportWorker := thumbimport.NewWorker(thumbimport.Deps{
+	// diskimportWorker carries the assets that used to live in the media tree —
+	// posters, transcripts, channel artwork, inbox posters — into the database
+	// (migrations 0022 and 0023), so an existing library keeps everything it has
+	// without re-downloading anything. It also rescues the rows whose
+	// thumbnail_path was blanked by a metadata write while the image survived on
+	// disk, and once it has drained it tidies away what nothing references any
+	// more. Local file reads only — no network at all — and it idles when done.
+	//
+	// Temporary by design: it and the path columns it reads go once it has run
+	// in production.
+	diskimportWorker := diskimport.NewWorker(diskimport.Deps{
 		Videos:   videosStore,
+		Channels: channelsStore,
+		Ledger:   ledgerStore,
 		MediaDir: cfg.MediaDir,
 	})
 
@@ -424,7 +432,7 @@ func run() error {
 	// download worker, the retention sweeper, the yt-dlp version-check ticker,
 	// the scan scheduler, the summarize worker, the channel-metadata
 	// refresher, the SponsorBlock backfill, the media-probe backfill, the
-	// thumbnail import and the inbox caption fetcher. workerWG.Wait() below
+	// disk import and the inbox caption fetcher. workerWG.Wait() below
 	// (after serve returns, i.e. after ctx is cancelled) blocks until all ten
 	// have actually observed ctx.Done() and returned, rather than exiting the
 	// process out from under them. All ten loops exit promptly on ctx.Done(),
@@ -472,8 +480,8 @@ func run() error {
 	}()
 	go func() {
 		defer workerWG.Done()
-		slog.Info("thumbnail import started")
-		thumbimportWorker.Run(ctx)
+		slog.Info("disk import started")
+		diskimportWorker.Run(ctx)
 	}()
 	go func() {
 		defer workerWG.Done()

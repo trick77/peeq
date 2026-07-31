@@ -148,7 +148,7 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		SummaryStatus:         v.SummaryStatus,
 		Category:              v.Category,
 		AudioLanguage:         v.AudioLanguage,
-		HasSubtitles:          v.SubtitlePath != "",
+		HasSubtitles:          v.HasTranscript,
 		MediaType:             v.MediaType,
 		LiveStatus:            v.LiveStatus,
 		YTTags:                rawJSONOrNil(v.YTTags),
@@ -496,13 +496,27 @@ func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
 	serveThumbnail(w, r, s.videos, v.ID)
 }
 
-// serveThumbnail writes one stored poster, shared by the library and share-page
-// endpoints so the two cannot drift.
+// serveStoredImage writes one image held in the database — a video poster, a
+// channel avatar or banner, an inbox poster. Every asset route funnels through
+// here so they cannot drift on caching or content type.
 //
 // ServeContent gets the stored updated_at as the modification time, so
-// conditional requests still work and a browser that has the poster gets a 304
-// instead of the bytes; the name carries the extension matching the stored mime,
-// which is what makes the Content-Type right.
+// conditional requests still work and a browser that already has the image gets
+// a 304 instead of the bytes; the name carries the extension matching the stored
+// mime, which is what makes the Content-Type right. The lookup stays with the
+// caller — the stores are different types and only the writing is shared.
+func serveStoredImage(w http.ResponseWriter, r *http.Request, mime string, data []byte, updatedAt string) {
+	modTime, err := time.Parse("2006-01-02 15:04:05", updatedAt)
+	if err != nil {
+		// An unparsable stamp only costs conditional requests, never the image:
+		// a zero time makes ServeContent skip the Last-Modified header.
+		modTime = time.Time{}
+	}
+	http.ServeContent(w, r, "image"+media.ThumbnailExtForMime(mime), modTime, bytes.NewReader(data))
+}
+
+// serveThumbnail writes one stored video poster, shared by the library and
+// share-page endpoints so the two cannot drift.
 func serveThumbnail(w http.ResponseWriter, r *http.Request, store *videos.Store, videoID string) {
 	if store == nil {
 		writeJSONError(w, http.StatusNotFound, "thumbnail not available")
@@ -517,13 +531,7 @@ func serveThumbnail(w http.ResponseWriter, r *http.Request, store *videos.Store,
 		writeJSONError(w, http.StatusNotFound, "no thumbnail for this video")
 		return
 	}
-	modTime, err := time.Parse("2006-01-02 15:04:05", t.UpdatedAt)
-	if err != nil {
-		// An unparsable stamp only costs conditional requests, never the image:
-		// a zero time makes ServeContent skip the Last-Modified header.
-		modTime = time.Time{}
-	}
-	http.ServeContent(w, r, "thumbnail"+media.ThumbnailExtForMime(t.Mime), modTime, bytes.NewReader(t.Bytes))
+	serveStoredImage(w, r, t.Mime, t.Bytes, t.UpdatedAt)
 }
 
 // handleRedownloadVideo re-queues a failed or tombstoned video for download.

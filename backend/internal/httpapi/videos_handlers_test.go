@@ -315,6 +315,10 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	if err := deps.Videos.SetThumbnail("v1", "image/jpeg", []byte("fake thumbnail bytes")); err != nil {
 		t.Fatalf("store thumbnail: %v", err)
 	}
+	// Same for the transcript: the delete must leave both where they are.
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT"); err != nil {
+		t.Fatalf("store transcript: %v", err)
+	}
 
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)

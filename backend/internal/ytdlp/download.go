@@ -359,6 +359,11 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 	if err := os.Rename(stagingDir, finalDir); err != nil {
 		return nil, fmt.Errorf("ytdlp: atomic rename to final dir: %w", err)
 	}
+	// The info.json has told us everything it is ever asked: it is read once,
+	// here, and nothing else in peeq opens it. Keeping it meant a file that
+	// survived tombstone, hard delete and channel cascade alike, referenced by
+	// nothing. --write-info-json stays because finalize needs the channel id.
+	_ = os.Remove(filepath.Join(finalDir, videoID+".info.json"))
 
 	mediaPath := filepath.Join(finalDir, videoID+".mp4")
 	fi, err := os.Stat(mediaPath)

@@ -2,31 +2,25 @@ package httpapi
 
 import (
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/trick77/peeq/internal/videos"
 )
 
-// TestVideosSubtitles_servesVTT covers the happy path: a video with a local
-// subtitle file serves its bytes with the VTT content type.
+// TestVideosSubtitles_servesVTT covers the happy path: the stored transcript is
+// served back byte-for-byte as text/vtt.
+//
+// Byte-for-byte is the requirement, not a nicety: the <track> element, the
+// transcript panel's own parser and the user-facing .vtt download all read this
+// body, so anything that reformatted it would break one of the three.
 func TestVideosSubtitles_servesVTT(t *testing.T) {
-	deps, mediaDir := videosTestDeps(t)
-	videoDir := filepath.Join(mediaDir, "chan1", "v1")
-	if err := os.MkdirAll(videoDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	vttPath := filepath.Join(videoDir, "v1.en.vtt")
-	content := []byte("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello")
-	if err := os.WriteFile(vttPath, content, 0o644); err != nil {
-		t.Fatalf("write vtt file: %v", err)
-	}
+	deps, _ := videosTestDeps(t)
+	content := "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello"
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
 		t.Fatalf("seed video: %v", err)
 	}
-	if err := deps.Videos.SetSubtitle("v1", vttPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, content); err != nil {
+		t.Fatalf("store transcript: %v", err)
 	}
 
 	h := New(deps)
@@ -39,14 +33,14 @@ func TestVideosSubtitles_servesVTT(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "text/vtt; charset=utf-8" {
 		t.Fatalf("Content-Type = %q, want text/vtt; charset=utf-8", ct)
 	}
-	if got := rec.Body.String(); got != string(content) {
-		t.Fatalf("body = %q, want %q", got, string(content))
+	if got := rec.Body.String(); got != content {
+		t.Fatalf("body = %q, want %q", got, content)
 	}
 }
 
-// TestVideosSubtitles_notFoundWithoutSubtitle covers the negative path: a
-// video with no subtitle_path returns 404.
-func TestVideosSubtitles_notFoundWithoutSubtitle(t *testing.T) {
+// TestVideosSubtitles_notFoundWithoutTranscript covers the negative path: a
+// video with nothing stored returns 404, and the UI hides the transcript panel.
+func TestVideosSubtitles_notFoundWithoutTranscript(t *testing.T) {
 	deps, _ := videosTestDeps(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
 		t.Fatalf("seed video: %v", err)
@@ -60,55 +54,22 @@ func TestVideosSubtitles_notFoundWithoutSubtitle(t *testing.T) {
 	}
 }
 
-// TestVideosSubtitles_pathSafety mirrors the thumbnail/stream endpoints'
-// symlink-escape guard: a subtitle path that resolves outside mediaDir must
-// never be served.
-func TestVideosSubtitles_pathSafety(t *testing.T) {
-	deps, mediaDir := videosTestDeps(t)
-	outsidePath := filepath.Join(t.TempDir(), "secret.vtt")
-	if err := os.WriteFile(outsidePath, []byte("top secret"), 0o644); err != nil {
-		t.Fatalf("write outside file: %v", err)
-	}
-	escapeLink := filepath.Join(mediaDir, "escape.vtt")
-	if err := os.Symlink(outsidePath, escapeLink); err != nil {
-		t.Skipf("symlinks not supported on this platform: %v", err)
-	}
-
-	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+// TestVideosSubtitles_ignoresSubtitlePathEntirely is what replaced this
+// endpoint's two path-safety tests.
+//
+// It used to resolve subtitle_path through media.SafeMediaPath and serve the
+// file, so a symlink escape or a literal "../" traversal stored in that column
+// was a real route to a file outside the media dir, and each was pinned by its
+// own test. Since migration 0023 the endpoint reads the row and never touches
+// the filesystem, so the whole class is gone rather than guarded — which is
+// what this pins: a hostile path with no stored transcript is simply a 404.
+func TestVideosSubtitles_ignoresSubtitlePathEntirely(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
 		t.Fatalf("seed video: %v", err)
 	}
-	if err := deps.Videos.SetSubtitle("v1", escapeLink, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
-
-	h := New(deps)
-	cookie := loginAndGetCookie(t, h)
-
-	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/subtitles", nil)
-	if rec.Code == http.StatusOK {
-		t.Fatalf("GET subtitles via symlink escape = 200, want an error status")
-	}
-	if rec.Body.String() == "top secret" {
-		t.Fatalf("GET subtitles served the outside file's contents through a symlink escape")
-	}
-}
-
-// TestVideosSubtitles_traversalRejected covers a literal ".." traversal
-// attempt in subtitle_path, which media.SafeMediaPath must reject.
-func TestVideosSubtitles_traversalRejected(t *testing.T) {
-	deps, mediaDir := videosTestDeps(t)
-	outside := t.TempDir()
-	secretPath := filepath.Join(outside, "secret.vtt")
-	if err := os.WriteFile(secretPath, []byte("top secret"), 0o644); err != nil {
-		t.Fatalf("write outside file: %v", err)
-	}
-
-	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
-		t.Fatalf("seed video: %v", err)
-	}
-	traversal := filepath.Join(mediaDir, "..", filepath.Base(outside), "secret.vtt")
-	if err := deps.Videos.SetSubtitle("v1", traversal, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
+	if err := deps.Videos.SetSubtitle("v1", "../../../../etc/passwd", "en"); err != nil {
+		t.Fatalf("set subtitle path: %v", err)
 	}
 
 	h := New(deps)
@@ -116,9 +77,6 @@ func TestVideosSubtitles_traversalRejected(t *testing.T) {
 
 	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/subtitles", nil)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("GET subtitles (traversal) status = %d, want 404, body = %s", rec.Code, rec.Body.String())
-	}
-	if rec.Body.String() == "top secret" {
-		t.Fatalf("GET subtitles served the outside file's contents through traversal")
+		t.Fatalf("GET subtitles status = %d, want 404, body = %s", rec.Code, rec.Body.String())
 	}
 }

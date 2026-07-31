@@ -102,7 +102,20 @@ func resolveExistingOrAncestor(path string) (string, error) {
 // doesn't stop the others. mediaPath must already be a SafeMediaPath result.
 func RemoveMediaAndSidecars(mediaPath string) {
 	_ = os.Remove(mediaPath)
+	RemoveSubtitleSidecars(mediaPath)
+}
 
+// RemoveSubtitleSidecars unlinks every .vtt sitting beside mediaPath — all of
+// them, not just the one a row happens to name.
+//
+// yt-dlp writes captions as <videoID>*.vtt next to <videoID>.<ext>, and may
+// write several language and auto-caption variants at once; the code that
+// records subtitle_path globs and takes the first match, so the rest were
+// already referenced by nothing. Since migration 0023 the transcript text lives
+// in the database, so the files are an import source and nothing more.
+//
+// mediaPath must already be a SafeMediaPath result. Best-effort throughout.
+func RemoveSubtitleSidecars(mediaPath string) {
 	dir := filepath.Dir(mediaPath)
 	base := strings.TrimSuffix(filepath.Base(mediaPath), filepath.Ext(mediaPath))
 	entries, err := os.ReadDir(dir)
@@ -120,65 +133,62 @@ func RemoveMediaAndSidecars(mediaPath string) {
 	}
 }
 
-// RemoveVideoFiles removes a video's media file (plus sidecars), thumbnail,
-// and subtitle from disk under mediaDir, resolving each path safely first.
+// RemoveVideoFiles removes everything a video owns on disk: its media file,
+// any subtitle sidecars, and its whole <channelID>/<videoID>/ directory when
+// nothing is left in it.
+//
 // This is the hard-delete flavour, for when the database row goes too (a
-// channel cascade): nothing is left behind that could reference the files.
+// channel cascade). Everything else the video owned — poster, transcript,
+// summary, chunks — lives in the database since migrations 0022 and 0023 and
+// goes with the row on the FK cascade, so the caller does not have to name it
+// here. What remains on disk is the media file plus whatever a pre-migration
+// library still has beside it (a poster or .vtt the import worker has not
+// reached, a leftover .info.json), and taking the directory collects the lot.
+//
 // A tombstone must call RemoveTombstonedVideoFiles instead — see there.
-// Best-effort: an unresolvable (already-gone, or not a local path) media,
-// thumbnail, or subtitle path is silently skipped rather than treated as
-// an error — there is nothing on disk to remove in that case.
+// Best-effort: an unresolvable or already-gone path is silently skipped.
 func RemoveVideoFiles(mediaDir, mediaPath, thumbnailPath, subtitlePath string) {
-	// Written out rather than delegating to RemoveTombstonedVideoFiles: that
-	// flavour deliberately spares the .vtt sidecars, and a hard delete that
-	// inherited the sparing would leave orphaned subtitles on disk with no row
-	// left to reference them.
+	for _, p := range []string{mediaPath, thumbnailPath, subtitlePath} {
+		if p == "" {
+			continue
+		}
+		if safe, err := SafeMediaPath(mediaDir, p); err == nil {
+			_ = os.Remove(safe)
+		}
+	}
+	// The directory is per-video, so removing it takes any sidecar the paths
+	// above did not name. os.Remove, not RemoveAll: it refuses a non-empty
+	// directory, which is the safety property wanted here — an unexpected file
+	// survives and can be found, rather than being swept silently.
 	if mediaPath != "" {
 		if safe, err := SafeMediaPath(mediaDir, mediaPath); err == nil {
-			RemoveMediaAndSidecars(safe)
-		}
-	}
-	if subtitlePath != "" {
-		if safe, err := SafeMediaPath(mediaDir, subtitlePath); err == nil {
-			_ = os.Remove(safe)
-		}
-	}
-	if thumbnailPath != "" {
-		// A queued-but-not-yet-downloaded video may have a remote thumbnail
-		// URL here instead of a local path; SafeMediaPath rejecting that (or
-		// the file simply not existing under mediaDir) is harmless — there
-		// is nothing on local disk to remove in that case.
-		if safe, err := SafeMediaPath(mediaDir, thumbnailPath); err == nil {
-			_ = os.Remove(safe)
+			RemoveSubtitleSidecars(safe)
+			dir := filepath.Dir(safe)
+			if entries, rerr := os.ReadDir(dir); rerr == nil && len(entries) == 0 {
+				_ = os.Remove(dir)
+			}
 		}
 	}
 }
 
 // RemoveTombstonedVideoFiles reclaims what a tombstone is for and nothing
 // else: the media file, which is the whole point — megabytes against the
-// kilobytes everything around it costs. It deliberately KEEPS:
+// kilobytes everything around it costs.
 //
-//   - the thumbnail, so the remembered card keeps its poster. Removing it used
-//     to leave thumbnail_path pointing at a file that no longer existed, which
-//     rendered as a broken image on every tombstoned card.
-//   - the subtitle .vtt — both the one subtitle_path names and any .vtt
-//     sidecar sitting next to the media file (yt-dlp writes them as
-//     <videoID>*.vtt beside <videoID>.<ext>, so RemoveMediaAndSidecars would
-//     sweep exactly those). The .vtt is the ONLY source a transcript can be
-//     rebuilt from: transcript_chunks / fts_chunks / vec_chunks serve today's
-//     searches, but re-chunking or re-embedding (a Reprocess, an embedding
-//     model change) reads the file back. Deleting it made a tombstone silently
-//     permanent for search, and cost the transcript view too.
+// Everything the card still shows after a delete — the poster, the transcript
+// the transcript panel reads and the chunks search answers from, the summary —
+// lives in the database (migrations 0022 and 0023) and is untouched by this.
+// That is what a delete means in peeq: the file goes, the memory of the video
+// stays, and it stays searchable and re-analysable with nothing on disk at all.
 //
-// The media file therefore goes via a plain unlink, NOT
-// RemoveMediaAndSidecars — see the sidecar note above. A hard delete (the
-// database row going too, e.g. a channel cascade) wants the opposite and calls
-// RemoveVideoFiles.
+// This used to be a careful exercise in sparing the right siblings: the poster,
+// the .vtt subtitle_path named, AND any .vtt sidecar beside the media file,
+// because yt-dlp writes them as <videoID>*.vtt and a plain sidecar sweep would
+// have taken the only source a transcript could be rebuilt from. None of that
+// is needed now — there is nothing beside the media file worth keeping.
 //
-// Both tombstone paths — the manual DELETE endpoint and the retention
-// sweeper — go through here, so the two can never diverge.
-// The subtitle path is not a parameter: there is nothing here to decide about
-// it. A caller with one in hand is meant to leave it alone.
+// Both tombstone paths — the manual DELETE endpoint and the retention sweeper —
+// go through here, so the two can never diverge.
 func RemoveTombstonedVideoFiles(mediaDir, mediaPath string) {
 	if mediaPath != "" {
 		if safe, err := SafeMediaPath(mediaDir, mediaPath); err == nil {

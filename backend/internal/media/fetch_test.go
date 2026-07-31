@@ -1,282 +1,159 @@
 package media
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// TestFetchImage_savesAndReturnsRelativePath asserts the image lands under
-// mediaDir and the returned path is relative, matching how subtitle_path is
-// stored (SafeMediaPath resolves both, but relative is what new code writes).
-func TestFetchImage_savesAndReturnsRelativePath(t *testing.T) {
+// TestFetchImageBytes_returnsBodyAndMime asserts the caller gets the bytes and
+// the content type to store them under, and that nothing is written to disk on
+// the way — since migration 0023 every image peeq caches lives in a row.
+func TestFetchImageBytes_returnsBodyAndMime(t *testing.T) {
+	body := []byte("\xff\xd8\xff fake jpeg bytes")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write([]byte("\xff\xd8\xff fake jpeg bytes"))
+		_, _ = w.Write(body)
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	rel, err := FetchImage(context.Background(), srv.URL, dir, ".channels/UCx/avatar")
+	mime, got, err := FetchImageBytes(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	if filepath.IsAbs(rel) {
-		t.Fatalf("returned path %q is absolute, want relative", rel)
+	if mime != "image/jpeg" {
+		t.Fatalf("mime = %q, want image/jpeg", mime)
 	}
-	if !strings.HasSuffix(rel, ".jpg") {
-		t.Fatalf("returned path %q has no jpeg extension", rel)
-	}
-	if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
-		t.Fatalf("file not written: %v", err)
+	if !bytes.Equal(got, body) {
+		t.Fatalf("body = %q, want %q", got, body)
 	}
 }
 
-// TestFetchImage_rejectsNonImage asserts an HTML error page served with a 200
-// is not written to disk as if it were an avatar.
-func TestFetchImage_rejectsNonImage(t *testing.T) {
+// TestFetchImageBytes_toleratesCharsetParameter asserts the mime is taken from
+// the type alone: a server that appends "; charset=..." must not make a
+// perfectly good image look like an unknown type.
+func TestFetchImageBytes_toleratesCharsetParameter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/webp; charset=binary")
+		_, _ = w.Write([]byte("RIFFfake"))
+	}))
+	defer srv.Close()
+
+	mime, _, err := FetchImageBytes(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if mime != "image/webp" {
+		t.Fatalf("mime = %q, want image/webp", mime)
+	}
+}
+
+// TestFetchImageBytes_rejectsNonImage asserts an HTML error page served with a
+// 200 is not handed back as if it were an avatar.
+func TestFetchImageBytes_rejectsNonImage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte("<html>nope</html>"))
 	}))
 	defer srv.Close()
 
-	if _, err := FetchImage(context.Background(), srv.URL, t.TempDir(), ".channels/UCx/avatar"); err == nil {
-		t.Fatal("expected an error for a non-image content type")
+	_, _, err := FetchImageBytes(context.Background(), srv.URL)
+	if !errors.Is(err, ErrUnsupportedContentType) {
+		t.Fatalf("err = %v, want ErrUnsupportedContentType", err)
 	}
 }
 
-// TestFetchImage_rejectsOversizeBody asserts a hostile or broken server
-// cannot fill the disk through this path.
-func TestFetchImage_rejectsOversizeBody(t *testing.T) {
+// TestFetchImageBytes_rejectsOversizeBody asserts a hostile or broken server
+// cannot bloat the database through this path.
+func TestFetchImageBytes_rejectsOversizeBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
-		big := make([]byte, maxImageBytes+1024)
-		_, _ = w.Write(big)
+		_, _ = w.Write(make([]byte, maxImageBytes+1024))
 	}))
 	defer srv.Close()
 
-	if _, err := FetchImage(context.Background(), srv.URL, t.TempDir(), ".channels/UCx/avatar"); err == nil {
+	if _, _, err := FetchImageBytes(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected an error for an oversize body")
 	}
 }
 
-// TestFetchImage_emptyURL asserts a channel with no banner is a no-op rather
-// than an error the caller has to special-case.
-func TestFetchImage_emptyURL(t *testing.T) {
-	rel, err := FetchImage(context.Background(), "", t.TempDir(), ".channels/UCx/banner")
+// TestFetchImageBytes_emptyURL asserts a channel with no banner is a no-op
+// rather than an error the caller has to special-case.
+func TestFetchImageBytes_emptyURL(t *testing.T) {
+	mime, data, err := FetchImageBytes(context.Background(), "")
 	if err != nil {
 		t.Fatalf("empty url should not error: %v", err)
 	}
-	if rel != "" {
-		t.Fatalf("rel = %q, want empty", rel)
+	if mime != "" || data != nil {
+		t.Fatalf("empty url returned %q/%v, want nothing", mime, data)
 	}
 }
 
-// TestFetchImage_emptyMediaDir asserts a misconfigured media dir is reported
-// as an error rather than attempting to write outside any known root.
-func TestFetchImage_emptyMediaDir(t *testing.T) {
-	_, err := FetchImage(context.Background(), "http://example.com/x.jpg", "", ".channels/UCx/avatar")
-	if err == nil {
-		t.Fatal("expected an error for an unconfigured media dir")
-	}
-	if !strings.Contains(err.Error(), "media dir not configured") {
-		t.Fatalf("err = %v, want mention of unconfigured media dir", err)
+// TestFetchImageBytes_rejectsMalformedURL covers the request-construction
+// failure branch.
+func TestFetchImageBytes_rejectsMalformedURL(t *testing.T) {
+	if _, _, err := FetchImageBytes(context.Background(), "http://\x7f/bad"); err == nil {
+		t.Fatal("expected an error for a malformed url")
 	}
 }
 
-// TestFetchImage_rejectsMalformedURL asserts a URL that fails to parse into
-// an *http.Request is reported rather than panicking or being silently
-// swallowed.
-func TestFetchImage_rejectsMalformedURL(t *testing.T) {
-	_, err := FetchImage(context.Background(), "http://%zz", t.TempDir(), ".channels/UCx/avatar")
-	if err == nil {
-		t.Fatal("expected an error for a malformed URL")
+// TestFetchImageBytes_rejectsUnreachableHost covers the transport failure
+// branch — a network error, which the pending-thumbnail retry treats as
+// transient rather than permanent.
+func TestFetchImageBytes_rejectsUnreachableHost(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
 	}
-}
+	addr := ln.Addr().String()
+	ln.Close() // nothing is listening now
 
-// TestFetchImage_rejectsUnreachableHost asserts a connection failure (refused,
-// unresolvable, etc.) surfaces as an error rather than a panic.
-func TestFetchImage_rejectsUnreachableHost(t *testing.T) {
-	// Port 1 is a reserved, well-known port nothing listens on; the
-	// connection is refused immediately instead of timing out.
-	_, err := FetchImage(context.Background(), "http://127.0.0.1:1/x.jpg", t.TempDir(), ".channels/UCx/avatar")
-	if err == nil {
+	if _, _, err := FetchImageBytes(context.Background(), "http://"+addr+"/x.jpg"); err == nil {
 		t.Fatal("expected an error for an unreachable host")
 	}
 }
 
-// TestFetchImage_rejectsNon200Status asserts a non-2xx response (a private
-// video's now-410 avatar, a moved banner, etc.) is rejected rather than the
-// error body being written to disk as if it were image data.
-func TestFetchImage_rejectsNon200Status(t *testing.T) {
+// TestFetchImageBytes_rejectsNon200Status asserts the status is carried in a
+// typed error, which is what lets a caller tell a permanent 404 (try the next
+// candidate) from a 5xx (worth retrying).
+func TestFetchImageBytes_rejectsNon200Status(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
-	_, err := FetchImage(context.Background(), srv.URL, t.TempDir(), ".channels/UCx/avatar")
-	if err == nil {
-		t.Fatal("expected an error for a non-200 status")
-	}
-	if !strings.Contains(err.Error(), "status 404") {
-		t.Fatalf("err = %v, want mention of status 404", err)
+	_, _, err := FetchImageBytes(context.Background(), srv.URL)
+	var se *FetchStatusError
+	if !errors.As(err, &se) || se.StatusCode != http.StatusNotFound {
+		t.Fatalf("err = %v, want a FetchStatusError carrying 404", err)
 	}
 }
 
-// TestFetchImage_rejectsTruncatedBody asserts a connection that closes before
-// delivering the Content-Length it promised is reported as an error rather
-// than a shorter-than-expected file being written silently.
-func TestFetchImage_rejectsTruncatedBody(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer ln.Close()
-
-	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
+// TestFetchImageBytes_rejectsTruncatedBody asserts a connection that dies
+// mid-body is an error rather than a half image the caller would store.
+func TestFetchImageBytes_rejectsTruncatedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Content-Length", "1024")
+		_, _ = w.Write([]byte("short"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
 		}
-		defer conn.Close()
-		buf := make([]byte, 1024)
-		_, _ = conn.Read(buf)
-		// Claim a Content-Length far larger than what is actually sent, then
-		// close the connection: io.ReadAll must observe an unexpected EOF.
-		_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 1000\r\n\r\n1234567890"))
-	}()
+		// Hijack and close without writing the promised remainder.
+		if hj, ok := w.(http.Hijacker); ok {
+			conn, _, herr := hj.Hijack()
+			if herr == nil {
+				conn.Close()
+			}
+		}
+	}))
+	defer srv.Close()
 
-	url := "http://" + ln.Addr().String() + "/x.jpg"
-	_, err = FetchImage(context.Background(), url, t.TempDir(), ".channels/UCx/avatar")
-	if err == nil {
+	if _, _, err := FetchImageBytes(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected an error for a truncated body")
-	}
-}
-
-// TestFetchImage_mkdirAllFailure asserts a destination directory that cannot
-// be created (because a path component is already a regular file) is
-// reported as an error instead of panicking.
-func TestFetchImage_mkdirAllFailure(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write([]byte("\xff\xd8\xff fake jpeg bytes"))
-	}))
-	defer srv.Close()
-
-	dir := t.TempDir()
-	// relBase is ".channels/UCx/avatar", so its parent directory is
-	// dir/.channels/UCx. Blocking ".channels" as a regular file makes the
-	// MkdirAll for that parent fail.
-	if err := os.WriteFile(filepath.Join(dir, ".channels"), []byte("not a dir"), 0o644); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	_, err := FetchImage(context.Background(), srv.URL, dir, ".channels/UCx/avatar")
-	if err == nil {
-		t.Fatal("expected an error when the destination directory cannot be created")
-	}
-}
-
-// TestFetchImage_writeFileFailure asserts a temp-file write that fails
-// (because the temp path is already occupied by a directory) is reported as
-// an error instead of the rename step papering over it.
-func TestFetchImage_writeFileFailure(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write([]byte("\xff\xd8\xff fake jpeg bytes"))
-	}))
-	defer srv.Close()
-
-	dir := t.TempDir()
-	// The function writes to dest+".tmp" before renaming to dest. Occupying
-	// that exact path with a directory makes os.WriteFile fail to open it.
-	if err := os.MkdirAll(filepath.Join(dir, "avatar.jpg.tmp"), 0o755); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	_, err := FetchImage(context.Background(), srv.URL, dir, "avatar")
-	if err == nil {
-		t.Fatal("expected an error when the temp file cannot be written")
-	}
-}
-
-// TestFetchImage_renameFailure asserts a failed final rename (destination
-// occupied by a non-empty directory) is reported as an error, and the temp
-// file it cleans up after itself does not linger.
-func TestFetchImage_renameFailure(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write([]byte("\xff\xd8\xff fake jpeg bytes"))
-	}))
-	defer srv.Close()
-
-	dir := t.TempDir()
-	// dest is dir/avatar.jpg; occupy it with a non-empty directory so the
-	// final os.Rename cannot replace it.
-	destDir := filepath.Join(dir, "avatar.jpg")
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(destDir, "inner"), []byte("x"), 0o644); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	_, err := FetchImage(context.Background(), srv.URL, dir, "avatar")
-	if err == nil {
-		t.Fatal("expected an error when the final rename fails")
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, "avatar.jpg.tmp")); !os.IsNotExist(statErr) {
-		t.Fatalf("temp file %q should have been removed after a failed rename", "avatar.jpg.tmp")
-	}
-}
-
-// TestFetchImage_rejectsEscapingDestination asserts the write path enforces
-// the containment rule the read path (SafeMediaPath) already does. Callers
-// build relBase by interpolating an id — ".channels/"+channelID+"/avatar" —
-// and filepath.Join CLEANS a "../" away rather than rejecting it, so without
-// this check an id carrying traversal would write a fetched image outside the
-// media dir. Rejected before the request, so a caller bug costs nothing.
-func TestFetchImage_rejectsEscapingDestination(t *testing.T) {
-	dir := t.TempDir()
-	served := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		served = true
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte("not really a png"))
-	}))
-	defer srv.Close()
-
-	for _, relBase := range []string{
-		".channels/../../escaped/avatar",
-		"../escaped",
-		"",
-	} {
-		if _, err := FetchImage(context.Background(), srv.URL, dir, relBase); err == nil {
-			t.Fatalf("relBase %q was accepted", relBase)
-		}
-	}
-	if served {
-		t.Fatal("a rejected destination still cost a network fetch")
-	}
-	// An absolute path is refused too: the contract is a path RELATIVE to the
-	// media dir, and an absolute one that happens to sit inside it today would
-	// stop doing so the moment the media dir moves.
-	if _, err := FetchImage(context.Background(), srv.URL, dir, filepath.Join(dir, "inside")); err == nil {
-		t.Fatal("an absolute relBase was accepted")
-	}
-
-	// The ordinary case still works.
-	rel, err := FetchImage(context.Background(), srv.URL, dir, ".channels/UCa/avatar")
-	if err != nil {
-		t.Fatalf("valid destination rejected: %v", err)
-	}
-	if rel != ".channels/UCa/avatar.png" {
-		t.Fatalf("rel = %q", rel)
 	}
 }

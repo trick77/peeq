@@ -78,7 +78,14 @@ type Video struct {
 	CreatedAt     string
 	DownloadedAt  string
 	AudioLanguage string
+	// SubtitlePath is where the .vtt FILE lived. Since migration 0023 the
+	// transcript text itself lives in video_transcripts; this column survives
+	// only as the import worker's map of where to look. HasTranscript is the
+	// question every reader actually has, and it is answered from the stored
+	// text — not from this path, which the same class of metadata write that
+	// blanked thumbnail_path could blank too.
 	SubtitlePath  string
+	HasTranscript bool
 	Summary       string
 	Chapters      string
 	KeyPoints     string
@@ -200,7 +207,8 @@ const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	v.availability, v.status, v.error_message, v.sponsorblock_segments,
 	v.watched, v.watched_at, v.resume_position_seconds, v.state_version, v.favorite, v.favorited_at,
 	v.created_at, v.downloaded_at,
-	v.audio_language, v.subtitle_path, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.embed_rev, v.category,
+	v.audio_language, v.subtitle_path,
+	EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = v.id) AS has_transcript, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.embed_rev, v.category,
 	v.media_container, v.video_codec, v.video_height, v.audio_codec, v.probed_at,
 	v.media_type, v.live_status, v.yt_tags, v.yt_categories`
 
@@ -220,14 +228,14 @@ func scanVideo(rs rowScanner) (Video, error) {
 	var v Video
 	var duration, filesize sql.NullInt64
 	var publishedAt, watchedAt, favoritedAt, downloadedAt, probedAt sql.NullString
-	var watched, favorite, hasThumbnail int
+	var watched, favorite, hasThumbnail, hasTranscript int
 	err := rs.Scan(
 		&v.ID, &v.URL, &v.Title, &v.ChannelID, &v.ChannelName, &duration, &publishedAt,
 		&v.Description, &v.ThumbnailPath, &hasThumbnail, &v.MediaPath, &filesize, &v.FormatUsed, &v.RequestedFormat,
 		&v.Availability, &v.Status, &v.ErrorMessage, &v.SponsorblockSegments,
 		&watched, &watchedAt, &v.ResumePositionSeconds, &v.StateVersion, &favorite, &favoritedAt,
 		&v.CreatedAt, &downloadedAt,
-		&v.AudioLanguage, &v.SubtitlePath, &v.Summary, &v.Chapters, &v.KeyPoints,
+		&v.AudioLanguage, &v.SubtitlePath, &hasTranscript, &v.Summary, &v.Chapters, &v.KeyPoints,
 		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim, &v.EmbedRev, &v.Category,
 		&v.MediaContainer, &v.VideoCodec, &v.VideoHeight, &v.AudioCodec, &probedAt,
 		&v.MediaType, &v.LiveStatus, &v.YTTags, &v.YTCategories,
@@ -237,6 +245,7 @@ func scanVideo(rs rowScanner) (Video, error) {
 	}
 	v.DurationSeconds = duration.Int64
 	v.HasThumbnail = hasThumbnail != 0
+	v.HasTranscript = hasTranscript != 0
 	v.FilesizeBytes = filesize.Int64
 	v.PublishedAt = publishedAt.String
 	v.Watched = watched != 0

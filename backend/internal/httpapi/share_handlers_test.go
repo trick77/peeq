@@ -224,6 +224,10 @@ func TestShare_publicVideoNeverLeaksVideoID(t *testing.T) {
 	if err := deps.Videos.SetSubtitle(id, subPath, "en"); err != nil {
 		t.Fatalf("set subtitle: %v", err)
 	}
+	if err := deps.Videos.SetTranscript(id, videos.TranscriptSourceDownload,
+		"WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nhello\n"); err != nil {
+		t.Fatalf("store transcript: %v", err)
+	}
 
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
@@ -476,6 +480,9 @@ func TestShare_publicThumbnailAndSubtitles(t *testing.T) {
 	}
 	if err := deps.Videos.SetThumbnail("v1", "image/jpeg", []byte("JPGDATA")); err != nil {
 		t.Fatalf("store thumbnail: %v", err)
+	}
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT"); err != nil {
+		t.Fatalf("store transcript: %v", err)
 	}
 	if err := deps.Videos.SetSubtitle("v1", vttPath, "en"); err != nil {
 		t.Fatalf("set subtitle: %v", err)

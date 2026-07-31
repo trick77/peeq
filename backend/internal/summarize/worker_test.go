@@ -188,9 +188,7 @@ func TestWorkerHappyPathPersistsSummaryAndChunks(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v2", URL: "https://youtu.be/v2"}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v2", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v2", relPath)
 	if _, err := h.jobs.Enqueue("v2"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -253,9 +251,7 @@ func TestProcessOneSetsCategory(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v6", URL: "https://youtu.be/v6"}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v6", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v6", relPath)
 	if _, err := h.jobs.Enqueue("v6"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -305,9 +301,7 @@ func TestClassifyErrorLeavesUncategorizedAndJobSucceeds(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v7", URL: "https://youtu.be/v7"}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v7", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v7", relPath)
 	if _, err := h.jobs.Enqueue("v7"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -364,9 +358,7 @@ func TestProcessOneReturnsErrorOnEmbedFailure(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v4", URL: "https://youtu.be/v4"}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v4", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v4", relPath)
 	if _, err := h.jobs.Enqueue("v4"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -426,9 +418,7 @@ func seedFailingVideo(t *testing.T, id string, maxAttempts int) *fakeActivityRec
 	if err := h.videos.Upsert(videos.Video{ID: id, URL: "https://youtu.be/" + id, Title: "Test " + id}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle(id, relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, id, relPath)
 	if _, err := h.jobs.Enqueue(id); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -501,9 +491,7 @@ func TestProcessOneIndexesSummaryChunk(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v5", URL: "https://youtu.be/v5"}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v5", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v5", relPath)
 	if _, err := h.jobs.Enqueue("v5"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -579,9 +567,7 @@ func TestProcessOneEmitsPhaseEvents(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "https://youtu.be/v1"}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v1", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v1", relPath)
 	if _, err := h.jobs.Enqueue("v1"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -673,9 +659,7 @@ func TestWorkerChunkTimestampsAreExactAndMonotonic(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v3", URL: "https://youtu.be/v3"}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v3", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v3", relPath)
 	if _, err := h.jobs.Enqueue("v3"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -800,9 +784,7 @@ func TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints(t *
 	if err := h.videos.Upsert(videos.Video{ID: "v3", URL: "https://youtu.be/v3"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v3", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v3", relPath)
 	jobID, err := h.jobs.Enqueue("v3")
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -1145,9 +1127,7 @@ func TestClassifyWriteFailureDoesNotFailTheJob(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v7", URL: "https://youtu.be/v7"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v7", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v7", relPath)
 	if _, err := h.jobs.Enqueue("v7"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -1193,9 +1173,7 @@ func TestClassifyDoesNotOverwriteAPickMadeDuringTheJob(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v8", URL: "https://youtu.be/v8"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v8", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v8", relPath)
 	if _, err := h.jobs.Enqueue("v8"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -1303,9 +1281,7 @@ func TestWorkerMusicOnlyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v9", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v9", relPath)
 	// Seed the state a previous, credulous run left behind.
 	if err := h.videos.SetSummary("v9", "A thoughtful essay on trust.",
 		`[{"ts":0,"title":"Intro","source":"mimo"}]`, `[{"ts":5,"text":"Invented."}]`); err != nil {
@@ -1494,9 +1470,7 @@ func TestWorkerEmptyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v13", URL: "https://youtu.be/v13"}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v13", relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v13", relPath)
 	if err := h.videos.SetSummary("v13", "stale text", "", ""); err != nil {
 		t.Fatalf("seed summary: %v", err)
 	}
@@ -1585,9 +1559,7 @@ func seedChapterVideo(t *testing.T, h *workerHarness, id string) {
 	if err := h.videos.Upsert(videos.Video{ID: id, URL: "https://youtu.be/" + id}); err != nil {
 		t.Fatalf("upsert video: %v", err)
 	}
-	if err := h.videos.SetSubtitle(id, relPath, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, id, relPath)
 	if _, err := h.jobs.Enqueue(id); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}

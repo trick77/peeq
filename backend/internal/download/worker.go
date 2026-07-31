@@ -792,6 +792,12 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 		return
 	}
 
+	// Take the transcript into the database and drop every .vtt beside the
+	// media file. The chunk tables answer searches, but until now the .vtt was
+	// the only thing they could be rebuilt from — which is why a tombstone had
+	// to spare it by name. In a row it cannot be swept by accident.
+	w.storeTranscript(video.ID, res.SubtitleRelPath, res.MediaPath)
+
 	// Take the poster into the database. yt-dlp wrote it to disk beside the
 	// media file; from here on that file is only an import source, and the bytes
 	// in video_thumbnails are what every card and player renders (migration
@@ -879,6 +885,39 @@ func (w *Worker) probeDownloaded(videoID, mediaPath string) {
 	}
 }
 
+// storeTranscript reads the .vtt yt-dlp wrote into the row, then unlinks every
+// .vtt beside the media file.
+//
+// All of them, not just the one subtitle_path names: yt-dlp may write several
+// language and auto-caption variants, and both globs that look for them take
+// the FIRST match, so the rest were already unreferenced. Best-effort at every
+// step — the download succeeded either way, and the import worker retries a
+// transcript that did not land.
+func (w *Worker) storeTranscript(videoID, subtitleRelPath, mediaPath string) {
+	if w.deps.Videos == nil {
+		return
+	}
+	if subtitleRelPath != "" {
+		if safe, err := media.SafeMediaPath(w.deps.MediaDir, subtitleRelPath); err == nil {
+			if data, rerr := os.ReadFile(safe); rerr == nil {
+				if serr := w.deps.Videos.SetTranscript(videoID, videos.TranscriptSourceDownload, string(data)); serr != nil {
+					w.deps.Logger.Warn("download worker: store transcript failed", "video_id", videoID, "err", serr)
+					return
+				}
+			} else {
+				w.deps.Logger.Warn("download worker: read transcript failed", "video_id", videoID, "err", rerr)
+				return
+			}
+		}
+	}
+	if mediaPath == "" {
+		return
+	}
+	if safe, err := media.SafeMediaPath(w.deps.MediaDir, mediaPath); err == nil {
+		media.RemoveSubtitleSidecars(safe)
+	}
+}
+
 // storeThumbnail reads the poster yt-dlp wrote and stores its bytes on the
 // video row. Best-effort at every step: no poster, an unreadable file, an
 // oversized image or a failed insert are all logged and shrugged off — the
@@ -900,7 +939,12 @@ func (w *Worker) storeThumbnail(videoID, thumbPath string) {
 	}
 	if err := w.deps.Videos.SetThumbnail(videoID, media.ThumbnailMime(safe), data); err != nil {
 		w.deps.Logger.Warn("download worker: store thumbnail failed", "video_id", videoID, "err", err)
+		return
 	}
+	// The file has served its purpose. Removing it only after a successful
+	// store is what makes the failure mode "retry the import later" rather than
+	// "the poster is gone".
+	_ = os.Remove(safe)
 }
 
 // recordActivity records a download event for the Activity feed, nil-safe.

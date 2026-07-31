@@ -1,0 +1,178 @@
+<title>peeq — Move everything but the video into SQLite</title>
+<style>
+  :root{
+    --bg:#1f1f1e; --panel:#1b1b1a; --border:#323230; --border-soft:#2a2a28;
+    --ink:#faf9f5; --ink-dim:#e4e1d8; --muted:#9c9a92; --faint:#6f6d66;
+    --accent:#c6613f; --accent-strong:#d97757; --accent-dim:#5a3527;
+    --online:#5aa06a; --danger:#c14638; --kept:#d6a15a;
+    --sans:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --r:10px; --r-sm:8px;
+  }
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(120% 80% at 80% -10%,rgba(198,97,63,.06),transparent 60%),
+                     radial-gradient(90% 70% at 8% 110%,rgba(214,161,90,.03),transparent 55%)}
+  .wrap{max-width:1000px;margin:0 auto;padding:46px 26px 110px}
+  h1{font-family:var(--serif);font-weight:600;font-size:2rem;margin:0 0 10px;letter-spacing:-.01em;text-wrap:balance}
+  h2{font-family:var(--serif);font-weight:600;font-size:1.3rem;margin:0 0 8px}
+  h3{font-size:12.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:26px 0 8px}
+  .eyebrow{font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--faint);margin:0 0 6px}
+  .lede{color:var(--muted);max-width:70ch;margin:0 0 4px}
+  p{max-width:74ch;color:var(--ink-dim)}
+  section{margin-top:44px;border-top:1px solid var(--border-soft);padding-top:26px}
+  code{font-family:var(--mono);font-size:12.5px;color:var(--ink-dim);background:var(--panel);
+       border:1px solid var(--border-soft);border-radius:4px;padding:1px 5px}
+  pre{margin:14px 0 0;padding:13px 15px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--panel);
+      overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--ink-dim)}
+  pre code{background:none;border:0;padding:0;font-size:inherit}
+  .c{color:var(--faint)}
+  ul{max-width:74ch;color:var(--ink-dim);padding-left:19px}
+  li{margin:5px 0} li::marker{color:var(--faint)}
+  .piece{border:1px solid var(--border);border-radius:var(--r);background:var(--panel);padding:18px 20px 20px;margin-top:18px}
+  .piece.first{border-color:var(--accent-dim);background:color-mix(in srgb,var(--accent) 5%,var(--panel))}
+  .phead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  .phead h2{margin:0;font-size:1.18rem}
+  .badge{font-family:var(--mono);font-size:11px;color:var(--faint);border:1px solid var(--border);
+         border-radius:999px;padding:1px 9px;white-space:nowrap}
+  .badge.be{color:var(--kept);border-color:#4c3b22}
+  .badge.later{opacity:.7}
+  table{border-collapse:collapse;width:100%;margin-top:14px;font-size:13.5px}
+  th{text-align:left;font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);
+     font-weight:600;padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:10px 12px;border-bottom:1px solid var(--border-soft);vertical-align:top;color:var(--ink-dim)}
+  tr:last-child td{border-bottom:0}
+  td.k{white-space:nowrap;font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .tw{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r);background:var(--panel);margin-top:14px}
+  .tw table{margin:0;min-width:620px}
+  .warn{border-left:2px solid var(--kept);background:color-mix(in srgb,var(--kept) 8%,transparent);
+        padding:12px 16px;border-radius:0 var(--r-sm) var(--r-sm) 0;margin-top:16px;max-width:76ch}
+  .warn b{color:var(--ink)}
+  .stop{border-left:2px solid var(--danger);background:color-mix(in srgb,var(--danger) 8%,transparent);
+        padding:12px 16px;border-radius:0 var(--r-sm) var(--r-sm) 0;margin-top:16px;max-width:76ch}
+  .stop b{color:var(--ink)}
+  .ok{border-left:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent);
+      padding:12px 16px;border-radius:0 var(--r-sm) var(--r-sm) 0;margin-top:16px;max-width:76ch}
+  .ok b{color:var(--ink)}
+</style>
+
+<div class="wrap">
+
+<p class="eyebrow">peeq · implementation plan · 2026-07-31</p>
+<h1>Move everything but the video into SQLite</h1>
+<p class="lede">A deleted video showed up in search with no poster. The cause was not the delete — it was that every asset peeq owns is a file plus a column pointing at it, and the two can drift apart silently. Phase 1 (posters) is done. This is the rest.</p>
+
+<section>
+<h2>Context</h2>
+<p>Phase 1 shipped on this branch: posters live in <code>video_thumbnails</code>, because <code>thumbnail_path</code> was a pointer any metadata write could blank while the image sat untouched on disk. Three callers did exactly that — every channel scan, the inbox caption fetcher, and add-by-URL — and for a tombstoned video, which never downloads again, the loss is permanent.</p>
+<p>The <code>.vtt</code> case is sharper, because search depends on it. <code>transcript_chunks</code> / <code>fts_chunks</code> / <code>vec_chunks</code> answer every query, and the <code>.vtt</code> file is the <b>only</b> thing they can be rebuilt from. That is why #239 had to teach the tombstone to spare <code>.vtt</code> sidecars by name, and why <code>handleReprocess</code> refuses when <code>subtitle_path</code> is empty.</p>
+<div class="ok"><b>The decision.</b> Everything except the video file moves into the database — transcripts, channel avatars and banners, inbox posters. The <code>.info.json</code> stops being kept at all. After import the source file is <b>deleted</b>, so the media tree converges on <code>.mp4</code> files and the database becomes the single copy.</div>
+</section>
+
+<section>
+<h2>What moves</h2>
+<div class="tw"><table>
+<thead><tr><th>Today</th><th>After</th></tr></thead>
+<tbody>
+<tr><td class="k">&lt;ch&gt;/&lt;id&gt;/&lt;id&gt;*.vtt<br>+ videos.subtitle_path</td><td><code>video_transcripts.vtt</code> — raw WebVTT text</td></tr>
+<tr><td class="k">.summaries/&lt;id&gt;/*.vtt</td><td>same table, told apart by a <code>source</code> column</td></tr>
+<tr><td class="k">.channels/&lt;UC&gt;/avatar|banner<br>+ avatar_path / banner_path</td><td><code>channel_images</code> blobs</td></tr>
+<tr><td class="k">.pending/&lt;id&gt;/thumbnail.*</td><td><code>pending_thumbnails</code> blobs</td></tr>
+<tr><td class="k">&lt;ch&gt;/&lt;id&gt;/&lt;id&gt;.info.json</td><td>nothing — parsed at finalize, then unlinked</td></tr>
+<tr><td class="k">&lt;ch&gt;/&lt;id&gt;/&lt;id&gt;.mp4</td><td>unchanged, stays on disk</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<div class="piece first">
+<div class="phead"><h2>1 · Migration 0023</h2><span class="badge be">schema</span></div>
+<p>One migration, three side tables — a blob must never ride along on the row reads that only want titles.</p>
+<pre><code>CREATE TABLE video_transcripts (
+    video_id   TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    source     TEXT NOT NULL CHECK (source IN ('download','caption')),
+    vtt        TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE channel_images (
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL CHECK (kind IN ('avatar','banner')),
+    mime       TEXT NOT NULL,  bytes BLOB NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (channel_id, kind)
+);
+CREATE TABLE pending_thumbnails (
+    video_id   TEXT PRIMARY KEY REFERENCES channel_videos(video_id) ON DELETE CASCADE,
+    mime       TEXT NOT NULL,  bytes BLOB NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);</code></pre>
+<p>Store the VTT <b>verbatim</b>, not parsed cues: the <code>&lt;track&gt;</code> element, <code>ui/src/vtt.tsx</code> and the user-facing <code>.vtt</code> download all need the raw bytes, so the wire format stays byte-identical and the two-parser lockstep rule is untouched. Cap at 8 MiB, matching <code>media.maxImageBytes</code> — today nothing caps a <code>.vtt</code> at all.</p>
+<p>No <code>lang</code> column: <code>videos.audio_language</code> already holds it. A second home for the same fact is the disease being cured.</p>
+<div class="warn"><b>The pending cascade is a backstop, not the reclaim path.</b> <code>channel_videos</code> rows are not deleted on approve / queue / ignore — <code>state</code> flips and the row stays — so the FK never fires there. The three <code>removePendingThumbnail</code> sites become <code>DELETE FROM pending_thumbnails</code> and keep doing the reclaiming. What the cascade <i>does</i> fix is channel deletion, which orphans <code>.pending/&lt;id&gt;/</code> today — as <code>.channels/</code> is orphaned always, since nothing ever deletes it.</div>
+<p class="c">Size: raw auto-caption VTT runs ~3–4 KB/min — a 1-hour video ≈ 150–250 KB, a 10-hour stream ≈ 2 MB. The bytes leave the filesystem as they enter the database, so total storage is flat; what changes is that the DB file, and its backup, now carry them.</p>
+</div>
+
+<div class="piece">
+<div class="phead"><h2>2 · <code>source</code> replaces path-as-provenance</h2><span class="badge be">backend</span></div>
+<p>Two behaviours read the <code>.summaries/</code> prefix out of the path string today: <code>isInboxRead</code> (truncated pipeline — no category, no key points, no embeddings) and <code>isSummaryDirPath</code> (guards the inbox discard). Moving the text erases that signal, so it becomes an explicit column.</p>
+<div class="warn"><b>Overwrite on conflict, never skip.</b> A video first read from the inbox and later downloaded shares one <code>video_id</code> PK. A conflict-skipping upsert would strand it on the truncated pipeline forever. The <code>status == 'new'</code> half of <code>isInboxRead</code> stays.</div>
+</div>
+
+<div class="piece">
+<div class="phead"><h2>3 · Stores and read paths</h2><span class="badge be">backend</span></div>
+<ul>
+<li>Mirror phase 1's <code>videos/store_thumbnail.go</code>: <code>SetX</code> / <code>GetX</code> / candidate query, plus <code>EXISTS (…)</code> in the shared column list so the "does it exist" flag rides the row read — no N+1.</li>
+<li><code>has_subtitles</code>, <code>has_avatar</code>, <code>has_banner</code> stop testing a path column and follow the stored bytes, exactly as <code>has_thumbnail</code> now does.</li>
+<li>Both subtitle endpoints serve the stored text as <code>text/vtt; charset=utf-8</code> — byte-identical, so the frontend needs no change at all.</li>
+<li>Generalise phase 1's <code>serveThumbnail</code> to take an already-fetched <code>(mime, bytes, updatedAt)</code>: the reusable part is the <code>ServeContent</code> body, not the lookup, which is hard-typed to <code>*videos.Store</code>.</li>
+<li>Give the channel-image routes the <code>Cache-Control: public, max-age=86400</code> the pending route already has and they lack.</li>
+<li><b>Phase-1 gap to close here:</b> <code>share_meta.go:174</code> still decodes the og:image card from a file while its sibling endpoint already reads the DB.</li>
+</ul>
+</div>
+
+<div class="piece">
+<div class="phead"><h2>4 · Deletion becomes trivial</h2><span class="badge be">backend</span></div>
+<p><code>RemoveTombstonedVideoFiles</code> loses its long justification for sparing the poster and the <code>.vtt</code>: there is nothing beside the media file left to spare. Tombstone = unlink the <code>.mp4</code>, clear <code>media_path</code>. <code>RemoveMediaAndSidecars</code>' sidecar sweep and <code>RemoveVideoFiles</code>' thumbnail/subtitle arguments go away — the rows cascade. The <code>park</code> path's known <code>.summaries/</code> orphan disappears with the directory.</p>
+</div>
+
+<div class="piece">
+<div class="phead"><h2>5 · The one-off import</h2><span class="badge be">backend</span></div>
+<p>Generalise phase 1's <code>thumbimport</code> into <code>internal/diskimport</code>, keeping its skeleton: bounded batch, poll interval, panic guard, an in-process "already looked, nothing there" set so a hopeless row costs one stat per boot, and idle once drained. One pass per asset kind: transcript, poster, channel avatar/banner, inbox poster.</p>
+<p><b>After a successful store, unlink the source</b> and <code>rmdir</code> the directory when it empties. For transcripts that means the whole <code>&lt;videoID&gt;*.vtt</code> set, not just the imported one — both globs take the <i>first</i> match today, so extra language and auto-caption variants already sit unreferenced on disk. A failed store leaves the file alone.</p>
+</div>
+
+<div class="piece">
+<div class="phead"><h2>6 · The teardown</h2><span class="badge be">backend</span><span class="badge later">separate PR, after production</span></div>
+<ul>
+<li>delete <code>internal/diskimport</code> and its <code>cmd/peeq/main.go</code> wiring, restoring the <code>workerWG.Add(n)</code> comment block</li>
+<li><code>0024_drop_asset_paths.sql</code> drops <code>videos.thumbnail_path</code>, <code>videos.subtitle_path</code>, <code>channels.avatar_path</code>, <code>channels.banner_path</code> — vestigial once nothing looks for files. SQLite needs the table-rebuild dance; <code>0014_channel_videos_unavailable.sql</code> is the worked example in-repo.</li>
+<li>precedent for the header and commit message: <code>0019_drop_embed_jobs.sql</code> and #255, "Drop the inbox backfill now that it has run"</li>
+</ul>
+<div class="warn"><b>The gate is the log line, not the calendar.</b> The teardown must not ship until production confirms the import drained.</div>
+</div>
+</section>
+
+<section>
+<h2>What this does to search</h2>
+<ul>
+<li><b>Query time: nothing changes.</b> Find (FTS5) and Ask (hybrid) read the chunk tables. No query path opens a <code>.vtt</code> today, so results are identical before and after.</li>
+<li><b>Index time: one line.</b> <code>rag</code> never touches the filesystem — <code>BuildVideoChunks</code> takes an already-parsed <code>subtitles.Parsed</code>. The single disk read in the whole pipeline is the summarize worker's, and <code>ParseVTT</code> already takes an <code>io.Reader</code>.</li>
+<li><b>The gate moves.</b> <code>handleReprocess</code> stops asking whether <code>subtitle_path</code> is set and asks whether a transcript exists — the same defect class as the poster bug, a pointer standing in for the thing itself.</li>
+<li><b>What improves.</b> Reprocess is the only repair route after a chunk-recipe or embedding-model change, since the re-embed worker was retired in <code>0019</code>. It can no longer be blocked by a missing file, and the reason #239 spared sidecars stops existing.</li>
+<li class="c">The transcript will exist twice in SQLite — raw here, chunked there. Deliberate: source vs. derivative, the same relationship the file and the chunks have today.</li>
+</ul>
+</section>
+
+<section>
+<h2>Verification</h2>
+<ul>
+<li><code>go test ./...</code> — re-run the known flaky ones before blaming the diff (<code>internal/download</code> metadata-preflight, <code>cmd/peeq</code> yt-dlp checks).</li>
+<li><code>npm run format:check &amp;&amp; npm test</code> — the UI should need no change at all, which is the real check that the wire format stayed identical.</li>
+<li>Dev stack end to end: download → poster, transcript and captions all render → <code>ls</code> the media dir and see only the <code>.mp4</code> → delete → card keeps its poster, transcript panel still works, Reprocess still runs.</li>
+<li>A tombstoned video with no file on disk can still be reprocessed — the guarantee #239 bought with sidecar sparing, now bought structurally.</li>
+</ul>
+<div class="stop"><b>This is a one-way door once deployed.</b> The import deletes the files it reads, so a <code>git revert</code> would restore file-reading code pointing at transcripts and posters that no longer exist — total loss, not a degraded mode. After this ships the rollback is restore-from-database-backup. Take a database backup immediately before the first boot on the new version.</div>
+</section>
+
+</div>

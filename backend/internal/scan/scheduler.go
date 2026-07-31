@@ -159,16 +159,21 @@ func New(d Deps) *Scheduler {
 	return &Scheduler{d: d, rand: sched.PseudoRand()}
 }
 
-// prefetchPendingThumbnail fetches and caches a newly-pending video's thumbnail
-// to local disk. It runs detached from the scan pass on its own background
-// context so a slow fetch neither blocks the loop nor is cancelled when the
-// pass ends. Best-effort: a failure is logged and left for the serve endpoint
-// to retry on demand.
+// prefetchPendingThumbnail fetches a newly-pending video's thumbnail and caches
+// it on its ledger row. It runs detached from the scan pass on its own
+// background context so a slow fetch neither blocks the loop nor is cancelled
+// when the pass ends. Best-effort: a failure is logged and left for the serve
+// endpoint to retry on demand.
 func (s *Scheduler) prefetchPendingThumbnail(videoID, thumbnailURL string) {
 	ctx, cancel := context.WithTimeout(context.Background(), pendingThumbPrefetchTimeout)
 	defer cancel()
-	if _, err := media.EnsurePendingThumbnail(ctx, s.d.MediaDir, videoID, thumbnailURL); err != nil {
+	mime, data, err := media.FetchPendingThumbnail(ctx, videoID, thumbnailURL)
+	if err != nil {
 		s.d.Logger.Warn("scan: prefetch pending thumbnail failed", "video", videoID, "err", err)
+		return
+	}
+	if err := s.d.Ledger.SetThumbnail(videoID, mime, data); err != nil {
+		s.d.Logger.Warn("scan: store pending thumbnail failed", "video", videoID, "err", err)
 	}
 }
 

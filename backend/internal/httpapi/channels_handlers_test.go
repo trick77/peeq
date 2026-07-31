@@ -517,7 +517,7 @@ func TestChannelDetail_unconfigured_503(t *testing.T) {
 func TestChannelDetail_getError_500(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{})
 	if _, err := deps.Channels.DB().Exec(`DROP TABLE channels`); err != nil {
-		t.Fatalf("drop channels table: %v", err)
+		t.Fatalf("drop channel_images table: %v", err)
 	}
 	h := New(deps)
 	req := httptest.NewRequest(http.MethodGet, "/api/channels/UCx", nil)
@@ -2463,16 +2463,18 @@ func TestChannelsList_includesDormantFields(t *testing.T) {
 // TestChannelsList_includesImageFlags asserts the list JSON carries
 // has_avatar/has_banner so a row can decide between an <img> and a gradient
 // fallback without firing a request that 404s. The flags come from whether the
-// stored avatar/banner paths are set — the paths themselves never leave the
-// server.
+// image bytes are stored on the row.
 func TestChannelsList_includesImageFlags(t *testing.T) {
 	h := newChannelsListTestServer(t, &testResolver{})
-	if err := h.channels.Upsert(channels.Channel{
-		ID:         "UCart",
-		Name:       "Has Art",
-		AvatarPath: ".channels/UCart/avatar.jpg",
-		BannerPath: ".channels/UCart/banner.jpg",
-	}); err != nil {
+	if err := h.channels.Upsert(channels.Channel{ID: "UCart", Name: "Has Art"}); err != nil {
+		t.Fatal(err)
+	}
+	// The flags follow the STORED IMAGE, not a path column — that is the whole
+	// point of migration 0023.
+	if err := h.channels.SetImage("UCart", channels.ImageAvatar, "image/jpeg", []byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.channels.SetImage("UCart", channels.ImageBanner, "image/jpeg", []byte("b")); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.channels.MarkAdded("UCart", "2000-01-01 00:00:00"); err != nil {
@@ -2778,19 +2780,16 @@ func channelImageTestDeps(t *testing.T, resolver ChannelResolver) (Deps, string)
 	return deps, deps.MediaDir
 }
 
-// TestChannelAvatar_servesFile asserts a cached avatar is served byte-for-
-// byte off local disk, mirroring how video thumbnails work.
-func TestChannelAvatar_servesFile(t *testing.T) {
-	deps, mediaDir := channelImageTestDeps(t, &testResolver{})
-	if err := os.MkdirAll(filepath.Join(mediaDir, ".channels", "UCx"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+// TestChannelAvatar_servesStoredImage asserts a stored avatar is served
+// byte-for-byte from the row, mirroring how video thumbnails work.
+func TestChannelAvatar_servesStoredImage(t *testing.T) {
+	deps, _ := channelImageTestDeps(t, &testResolver{})
 	content := []byte("fake avatar bytes")
-	if err := os.WriteFile(filepath.Join(mediaDir, ".channels", "UCx", "avatar.jpg"), content, 0o644); err != nil {
-		t.Fatalf("write avatar: %v", err)
-	}
-	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X", AvatarPath: ".channels/UCx/avatar.jpg"}); err != nil {
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X"}); err != nil {
 		t.Fatalf("seed channel: %v", err)
+	}
+	if err := deps.Channels.SetImage("UCx", channels.ImageAvatar, "image/jpeg", content); err != nil {
+		t.Fatalf("store avatar: %v", err)
 	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
@@ -2804,19 +2803,16 @@ func TestChannelAvatar_servesFile(t *testing.T) {
 	}
 }
 
-// TestChannelBanner_servesFile is TestChannelAvatar_servesFile for the
-// banner endpoint, which shares serveChannelImage but selects BannerPath.
-func TestChannelBanner_servesFile(t *testing.T) {
-	deps, mediaDir := channelImageTestDeps(t, &testResolver{})
-	if err := os.MkdirAll(filepath.Join(mediaDir, ".channels", "UCx"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+// TestChannelBanner_servesStoredImage is the avatar test for the banner
+// endpoint, which shares serveChannelImage but selects the other kind.
+func TestChannelBanner_servesStoredImage(t *testing.T) {
+	deps, _ := channelImageTestDeps(t, &testResolver{})
 	content := []byte("fake banner bytes")
-	if err := os.WriteFile(filepath.Join(mediaDir, ".channels", "UCx", "banner.jpg"), content, 0o644); err != nil {
-		t.Fatalf("write banner: %v", err)
-	}
-	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X", BannerPath: ".channels/UCx/banner.jpg"}); err != nil {
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X"}); err != nil {
 		t.Fatalf("seed channel: %v", err)
+	}
+	if err := deps.Channels.SetImage("UCx", channels.ImageBanner, "image/jpeg", content); err != nil {
+		t.Fatalf("store banner: %v", err)
 	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
@@ -2849,8 +2845,8 @@ func TestChannelAvatar_unconfigured_503(t *testing.T) {
 // avatar".
 func TestChannelAvatar_getError_500(t *testing.T) {
 	deps, _ := channelImageTestDeps(t, &testResolver{})
-	if _, err := deps.Channels.DB().Exec(`DROP TABLE channels`); err != nil {
-		t.Fatalf("drop channels table: %v", err)
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE channel_images`); err != nil {
+		t.Fatalf("drop channel_images table: %v", err)
 	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
@@ -3084,18 +3080,14 @@ func TestChannelRefresh_stalledResolve_504(t *testing.T) {
 	}
 }
 
-// seedPendingThumbCache writes a fake cached thumbnail for videoID under the
-// harness media dir, so the serve endpoint can be exercised without any
-// outbound fetch. Returns the bytes written.
+// seedPendingThumbCache stores a fake cached poster for videoID on its ledger
+// row, so the serve endpoint can be exercised without any outbound fetch.
+// Returns the bytes stored.
 func (h *pendingTestHarness) seedPendingThumbCache(t *testing.T, videoID string) []byte {
 	t.Helper()
-	dir := filepath.Join(h.mediaDir, ".pending", videoID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir cache: %v", err)
-	}
 	body := []byte("\xff\xd8\xff cached jpeg")
-	if err := os.WriteFile(filepath.Join(dir, "thumbnail.jpg"), body, 0o644); err != nil {
-		t.Fatalf("write cache: %v", err)
+	if err := h.ledger.SetThumbnail(videoID, "image/jpeg", body); err != nil {
+		t.Fatalf("store cache: %v", err)
 	}
 	return body
 }
@@ -3143,8 +3135,9 @@ func TestPendingThumbnail_unknownID_404(t *testing.T) {
 }
 
 // TestPendingIgnore_removesCachedThumbnail asserts ignoring a pending item drops
-// its cached thumbnail directory, so the cache doesn't accumulate for items
-// that left the inbox.
+// its cached poster, so the cache doesn't accumulate for items that left the
+// inbox. The ledger row itself survives the transition, so this delete is the
+// only thing that frees it — the FK cascade never fires here.
 func TestPendingIgnore_removesCachedThumbnail(t *testing.T) {
 	h := newPendingTestServer(t)
 	h.seedChannel("UC1")
@@ -3152,17 +3145,16 @@ func TestPendingIgnore_removesCachedThumbnail(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 	h.seedPendingThumbCache(t, "pt3")
-	dir := filepath.Join(h.mediaDir, ".pending", "pt3")
-	if _, err := os.Stat(dir); err != nil {
-		t.Fatalf("cache dir missing before ignore: %v", err)
+	if got, err := h.ledger.GetThumbnail("pt3"); err != nil || got == nil {
+		t.Fatalf("cached poster missing before ignore: %v, %v", got, err)
 	}
 
 	rec := postJSON(t, h, "/api/pending/pt3/ignore", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ignore status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Fatalf("cache dir still present after ignore (err = %v)", err)
+	if got, err := h.ledger.GetThumbnail("pt3"); err != nil || got != nil {
+		t.Fatalf("cached poster still present after ignore: %v, %v", got, err)
 	}
 }
 
