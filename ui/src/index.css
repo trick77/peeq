@@ -5434,15 +5434,24 @@ details.tomb-sect[open] > summary svg {
   color: var(--color-faint);
 }
 
-/* The read state as a button. It fills rather than tinting, and that is the
-   whole point of the rule: the tinted-on-scrim version above is a label, and a
-   label with a click handler is a control nobody finds. Filled, named with a
-   verb and pointing somewhere, it reads as pressable at thumbnail scale.
+/* The read state as a button. It has to read as pressable at thumbnail scale,
+   and the tinted-on-scrim version above is a label — a label with a click
+   handler is a control nobody finds. What makes this one a button is the verb,
+   the chevron pointing somewhere, the pale edge and the shadow lifting it off
+   the artwork; it does NOT need a filled accent to say so, which is what it
+   used to use.
 
-   Loud is the cost, knowingly paid. A filled accent chip sits over artwork on
-   every read card at once, which is the treatment #233 took off the poster —
-   but the alternative placements are worse: the action bar cannot hold a third
-   label at the 300px card the two-column grid draws, and a button that
+   That fill was wrong twice over. Its label was --color-ink-dim on
+   --color-accent-strong, which is 2.4:1 — under the 4.5:1 floor and under even
+   the 3:1 large-text floor, so the word went chalky and the 1.9-weight glyphs
+   nearly dissolved. And it was the only solid accent fill in the app, sitting
+   directly above Download: the chip outranked the primary action beneath it.
+   So the chip goes back to the scrim the rest of the poster uses, takes the
+   card title's ink for its label, and keeps the accent on the leading mark
+   alone — enough to say the feature is ours without a coloured slab.
+
+   The placement is unchanged and still deliberate: the action bar cannot hold a
+   third label at the 300px card the two-column grid draws, and a button that
    disappears on the cards with no summary would move Download on every row.
 
    It carries `.metapill`, not `.ui-btn`: it belongs to the chip family already
@@ -5460,23 +5469,45 @@ details.tomb-sect[open] > summary svg {
   font-size: 12px;
   padding: 4px 8px 4px 7px;
   border-radius: 8px;
-  /* The card title's ink, icons included — they take it through currentColor.
-     The chip names what the title names, so the two say it in one voice
-     instead of the chip speaking in the page's ground colour. */
+  /* The card title's ink, and never anything brighter: the chip names what the
+     title names, so the two say it in one voice. The scrim is 80% opaque, so
+     what the label actually sits on moves with the artwork — 14:1 over a dark
+     poster, around 9:1 over a bright one. Both ends clear 4.5:1; the accent
+     fill this replaces was 2.4:1 everywhere.
+
+     A little more opaque than the shared .oncover scrim, and the blur it turns
+     off is turned back on here — both are inherited values restated rather than
+     defaults, because this chip carries a word to be read where the others
+     carry a fact to be glanced at, and artwork showing through a label is the
+     thing that made the old one hard to read. */
   color: var(--color-ink-dim);
-  background: var(--color-accent-strong);
-  border-color: var(--color-accent-strong);
-  box-shadow: 0 2px 10px rgb(5 8 11 / 0.45);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  background: rgba(5, 8, 11, 0.8);
+  /* Paper at rest, not accent: the hairline is what separates the pressable
+     chip from the .has-summary label above, which keeps the chip family's
+     border colour. An accent edge here would read as the old fill's ghost —
+     :hover below spends it deliberately, which only works while rest does not.
+     Derived from the ink rather than written as its hex, so the edge follows
+     the token the day it moves. */
+  border-color: color-mix(in srgb, var(--color-ink-dim) 22%, transparent);
+  box-shadow: 0 2px 10px rgb(5 8 11 / 0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   cursor: pointer;
 }
-.thumb .metapill.oncover.summary-open:hover {
-  background: color-mix(in srgb, var(--color-accent-strong) 82%, white);
-  border-color: color-mix(in srgb, var(--color-accent-strong) 82%, white);
+/* The one warm mark. It is the leading glyph only — the label and the chevron
+   stay in the title's ink, which is why this is a child selector and not a
+   colour on the chip. */
+.thumb .metapill.oncover.summary-open > :first-child {
+  color: var(--color-accent-strong);
 }
+.thumb .metapill.oncover.summary-open:hover {
+  background: rgba(5, 8, 11, 0.9);
+  border-color: var(--color-accent-strong);
+}
+/* The app's own ring, restored. The --color-ink override this replaces existed
+   only because an accent ring was invisible against an accent fill. */
 .thumb .metapill.oncover.summary-open:focus-visible {
-  outline: 2px solid var(--color-ink);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
