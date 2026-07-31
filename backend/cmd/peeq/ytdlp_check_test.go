@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -66,26 +66,45 @@ func runCheckOnceInto(t *testing.T, dir string, fetch func(context.Context) (str
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fetched := make(chan struct{})
-	var once sync.Once
+	before := cache.Get()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runYtdlpVersionCheckTicker(ctx, dir, time.Hour, func(c context.Context) (string, error) {
-			defer once.Do(func() { close(fetched) })
-			return fetch(c)
-		}, cache, nil)
+		runYtdlpVersionCheckTicker(ctx, dir, time.Hour, fetch, cache, nil)
 	}()
 
-	select {
-	case <-fetched:
-	case <-time.After(10 * time.Second):
-		t.Fatal("boot release check never ran")
-	}
-	// The cache write happens just after fetch returns; cancelling the ticker
-	// is what guarantees it has, since the goroutine only exits past that point.
+	// Wait for the CACHE to change, not for fetch to return.
+	//
+	// This used to signal from a defer as fetch returned and then cancel
+	// immediately, on the reasoning that the goroutine only exits past the
+	// write. It does not: on a fetch error the ticker checks ctx.Err() first and
+	// returns WITHOUT recording, because a cancelled fetch is a shutdown rather
+	// than a check failure (see runYtdlpVersionCheckTicker). So the cancel could
+	// land in the window between fetch returning and the write, the result went
+	// missing, and TestYtdlpVersionCheck_fetchFails_keepsLastKnownRelease failed
+	// on CI while passing locally every time.
+	//
+	// Waiting on the observable effect closes that window: by the time the cache
+	// differs, the write this test is about has already happened.
+	waitUntil(t, "the release check to record a result", func() bool {
+		return cache.Get() != before
+	})
 	cancel()
 	<-done
+}
+
+// waitUntil polls ok until it holds, failing the test if it never does. Tests
+// here wait on EFFECTS rather than on the calls that cause them, since the
+// ticker decides whether to record after its collaborator has returned.
+func waitUntil(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // TestYtdlpVersionCheck_recordsBothVersions covers the boot check populating
@@ -165,32 +184,33 @@ func TestYtdlpVersionCheck_fetchFails_keepsLastKnownRelease(t *testing.T) {
 }
 
 // runCheckTicks runs the ticker with a tiny interval so ticks (not just the
-// boot check) fire, and returns once fetch has been called wantCalls times.
+// boot check) fire, and returns once wantCalls checks have COMPLETED.
+//
+// Completed, not started: the ticker records its result after fetch returns and
+// skips recording entirely if ctx is already cancelled, so returning as soon as
+// the wantCalls-th fetch returned raced that write — the same bug as in
+// runCheckOnceInto. The ticker runs its checks sequentially, so the START of
+// one more call is proof the previous one finished writing. That costs one
+// extra fetch, which every caller here tolerates: their fetches return a
+// constant after the first call.
 func runCheckTicks(t *testing.T, dir string, cache *ytdlp.StatusCache, rec *activity.Store, wantCalls int, fetch func(context.Context) (string, error)) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var calls atomic.Int32
-	enough := make(chan struct{})
-	var once sync.Once
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		runYtdlpVersionCheckTicker(ctx, dir, time.Millisecond, func(c context.Context) (string, error) {
-			v, err := fetch(c)
-			if int(calls.Add(1)) >= wantCalls {
-				once.Do(func() { close(enough) })
-			}
-			return v, err
+			calls.Add(1)
+			return fetch(c)
 		}, cache, rec)
 	}()
 
-	select {
-	case <-enough:
-	case <-time.After(10 * time.Second):
-		t.Fatalf("release check ran %d times, want %d", calls.Load(), wantCalls)
-	}
+	waitUntil(t, fmt.Sprintf("%d release checks to complete", wantCalls), func() bool {
+		return int(calls.Load()) > wantCalls
+	})
 	cancel()
 	<-done
 }
