@@ -59,6 +59,12 @@ function readRailCollapsed(): boolean {
 // takeAuthFailed for why it is consumed rather than merely read.
 const AUTH_FAILED = takeAuthFailed();
 
+// How long a session check may take before a hinted browser stops being shown
+// nothing and gets the checking card instead. Long enough that a healthy
+// backend never reaches it — the flash the hint removes lasts a fraction of
+// this — short enough that a slow or hung one is never a blank page.
+const SLOW_CHECK_MS = 600;
+
 function writeRailCollapsed(collapsed: boolean) {
   try {
     window.localStorage?.setItem(RAIL_COLLAPSED_KEY, collapsed ? "1" : "0");
@@ -341,6 +347,19 @@ export function App() {
     };
   }, []);
 
+  // The hint buys silence for a quick check, not for an arbitrarily long one.
+  // /api/auth/me can take seconds on a cold-started backend, and can hang
+  // outright on a server that accepts the connection and never answers —
+  // getMe() has no timeout of its own. Painting nothing for that whole stretch
+  // trades a brief flash for a page that looks broken, so once the check stops
+  // being quick the checking card comes back and says what is happening.
+  const [checkSlow, setCheckSlow] = useState(false);
+  useEffect(() => {
+    if (authChecked) return;
+    const timer = setTimeout(() => setCheckSlow(true), SLOW_CHECK_MS);
+    return () => clearTimeout(timer);
+  }, [authChecked]);
+
   useEffect(() => {
     if (!authChecked || !user) return;
     let active = true;
@@ -606,8 +625,10 @@ export function App() {
     //
     // A failed OIDC callback overrides the hint: that user's session just went,
     // and the "Sign-in didn't complete" line below is the whole point of the
-    // redirect. Suppressing the screen would swallow it.
-    if (signedInHint && !AUTH_FAILED) {
+    // redirect. Suppressing the screen would swallow it. So does a check that
+    // has stopped being quick (see checkSlow) — nothing at all is only right
+    // while "nothing" reads as the app arriving.
+    if (signedInHint && !AUTH_FAILED && !checkSlow) {
       return null;
     }
     return <SignIn checking />;

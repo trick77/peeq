@@ -1011,6 +1011,24 @@ describe("App session check", () => {
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
   }, 20000);
 
+  // Nothing at all is only right while "nothing" reads as the app arriving. A
+  // check that hangs — a cold backend, or a server that answers no one — must
+  // not leave a hinted browser staring at an empty page for as long as it
+  // takes.
+  it("falls back to the card when the check is not quick", async () => {
+    stubStorage();
+    window.localStorage.setItem("peeq.signedIn", "1");
+    hangingGetMe();
+    const { container } = render(<App />);
+
+    expect(container.innerHTML).toBe("");
+    expect(
+      await screen.findByText("Checking your session", undefined, {
+        timeout: 8000,
+      }),
+    ).toBeTruthy();
+  }, 20000);
+
   // The hint meeting a failed OIDC callback — the case where the screen must
   // stay, because it carries the only report that the sign-in did not
   // complete — has no test here on purpose: AUTH_FAILED is resolved at module
