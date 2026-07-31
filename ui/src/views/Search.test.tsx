@@ -194,10 +194,12 @@ describe("Search", () => {
   it("does not search on mount or for a blank query", () => {
     render(<Search onOpen={vi.fn()} />);
     expect(mockedSearchVideos).not.toHaveBeenCalled();
-    expect(screen.getByText(/ask peeq anything/i)).toBeInTheDocument();
+    expect(screen.getByText(/ask peeq about anything/i)).toBeInTheDocument();
   });
 
-  it("offers the other mode when find comes up empty", async () => {
+  // The empty state is an answer, not a dead end with a suggestion attached.
+  // The other tab is already one visible click away with its own text.
+  it("says find found nothing, and offers no way out", async () => {
     mockedSearchVideos.mockResolvedValue([]);
     render(<Search onOpen={vi.fn()} />);
     toFind();
@@ -206,20 +208,9 @@ describe("Search", () => {
     expect(
       await screen.findByText(/none of your transcripts contain those words/i),
     ).toBeInTheDocument();
-    const offer = screen.getByRole("button", { name: /in Ask instead/i });
-
-    mockedSearchVideos.mockClear();
-    fireEvent.click(offer);
-
-    // It hands the words over and stops. A search starts from the box only,
-    // so nothing here spends a request — least of all a model call.
-    expect(screen.getByRole("button", { name: "Ask" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    expect(box()).toHaveValue("electrolytes");
-    expect(mockedSearchVideos).not.toHaveBeenCalled();
-    expect(mockedStreamAnswer).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: /instead/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("says the library covers nothing when ask comes up empty", async () => {
