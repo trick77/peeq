@@ -330,6 +330,61 @@ func TestSettingsHandlers_putRejectsNegativeNumbers(t *testing.T) {
 	}
 }
 
+// An unknown format_preset makes ytdlp.Resolve error, which surfaces as a
+// failed download for EVERY video until the setting is corrected. A retired
+// id gets here without anyone hand-crafting a request — a Settings tab
+// rendered before the deploy that retired it still carries its button — so
+// the write is refused and the stored preset left alone.
+func TestSettingsHandlers_putRejectsUnknownFormatPreset(t *testing.T) {
+	for _, preset := range []string{"apple-720p", "", "bestvideo+bestaudio"} {
+		t.Run(preset, func(t *testing.T) {
+			h := New(testDeps(t))
+			sessionCookie := loginAndGetCookie(t, h)
+
+			putBody, _ := json.Marshal(map[string]any{"format_preset": preset})
+			putReq := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(putBody))
+			putReq.AddCookie(sessionCookie)
+			putReq.Header.Set("Content-Type", "application/json")
+			putRec := httptest.NewRecorder()
+			h.ServeHTTP(putRec, putReq)
+			if putRec.Code != http.StatusBadRequest {
+				t.Fatalf("PUT format_preset=%q status = %d, want 400, body = %s", preset, putRec.Code, putRec.Body.String())
+			}
+
+			// The rejected value must not have been persisted.
+			getReq := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+			getReq.AddCookie(sessionCookie)
+			getRec := httptest.NewRecorder()
+			h.ServeHTTP(getRec, getReq)
+			var got map[string]any
+			if err := json.Unmarshal(getRec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("unmarshal GET /api/settings: %v", err)
+			}
+			if got["format_preset"] != "apple-1080p" {
+				t.Fatalf("format_preset = %v after a rejected PUT, want the untouched default", got["format_preset"])
+			}
+		})
+	}
+
+	// Every live preset id, and the "custom" escape hatch, still write.
+	for _, preset := range []string{"apple-1080p", "apple-vp9-4k", "best-mp4", "custom"} {
+		t.Run("accepts/"+preset, func(t *testing.T) {
+			h := New(testDeps(t))
+			sessionCookie := loginAndGetCookie(t, h)
+
+			putBody, _ := json.Marshal(map[string]any{"format_preset": preset, "format_custom": "bestvideo+bestaudio"})
+			putReq := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(putBody))
+			putReq.AddCookie(sessionCookie)
+			putReq.Header.Set("Content-Type", "application/json")
+			putRec := httptest.NewRecorder()
+			h.ServeHTTP(putRec, putReq)
+			if putRec.Code != http.StatusOK {
+				t.Fatalf("PUT format_preset=%q status = %d, want 200, body = %s", preset, putRec.Code, putRec.Body.String())
+			}
+		})
+	}
+}
+
 func TestSettingsHandlers_cookieHealth(t *testing.T) {
 	h := New(testDeps(t))
 	sessionCookie := loginAndGetCookie(t, h)

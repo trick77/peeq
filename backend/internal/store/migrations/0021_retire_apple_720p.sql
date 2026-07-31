@@ -1,0 +1,21 @@
+-- Retire the apple-720p format preset.
+--
+-- 720p was the cautious half of a pair whose whole point is AirPlay: both
+-- entries pinned H.264/AAC, and the 1080p one plays anywhere the 720p one
+-- does. Keeping two rungs of the same ladder only made the picker longer.
+--
+-- The rewrite below is not cosmetic. ytdlp.Resolve errors on an unknown
+-- preset id, and that error surfaces as a failed download — so an install
+-- sitting on apple-720p would stop downloading entirely the moment the id
+-- left the Presets map. Moving those rows to apple-1080p keeps the same
+-- codec and container and only lifts the height cap.
+UPDATE settings SET format_preset = 'apple-1080p' WHERE format_preset = 'apple-720p';
+
+-- subscriptions.format_override held RAW yt-dlp selector strings until the
+-- per-channel preset picker landed alongside this migration, so no row can
+-- name a preset id yet and there is nothing to rewrite here. The download
+-- worker still accepts a raw selector for exactly those rows.
+--
+-- That is true of THIS migration only. From here on the picker writes preset
+-- ids into that column too, so the next preset retirement has to rewrite both
+-- settings.format_preset and subscriptions.format_override.

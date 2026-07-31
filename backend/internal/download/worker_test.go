@@ -304,9 +304,11 @@ func TestWorker_success(t *testing.T) {
 	}
 }
 
-func TestWorker_prefersRequestedFormat(t *testing.T) {
-	// Seed a video with a per-channel override; the fake Runner records the
-	// DownloadReq it receives.
+// downloadReqFor seeds a video carrying requested as its per-channel format
+// override, runs one download, and returns the DownloadReq the Runner saw.
+func downloadReqFor(t *testing.T, requested string) ytdlp.DownloadReq {
+	t.Helper()
+
 	var gotReq ytdlp.DownloadReq
 	var rmu sync.Mutex
 
@@ -322,7 +324,7 @@ func TestWorker_prefersRequestedFormat(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{
 		ID:              "v1",
 		URL:             "https://www.youtube.com/watch?v=v1",
-		RequestedFormat: "bestvideo+bestaudio",
+		RequestedFormat: requested,
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -334,8 +336,24 @@ func TestWorker_prefersRequestedFormat(t *testing.T) {
 	waitForVideoStatus(t, h, "v1", "downloaded")
 
 	rmu.Lock()
-	req := gotReq
-	rmu.Unlock()
+	defer rmu.Unlock()
+	return gotReq
+}
+
+// A channel override written by the preset picker is a preset id, and has to
+// reach yt-dlp as that preset — not as a literal -f string of "apple-vp9-4k".
+func TestWorker_prefersRequestedFormat_presetID(t *testing.T) {
+	req := downloadReqFor(t, "apple-vp9-4k")
+	if req.Format != "apple-vp9-4k" || req.CustomFormat != "" {
+		t.Fatalf("req = {Format:%q Custom:%q}, want apple-vp9-4k with no custom string",
+			req.Format, req.CustomFormat)
+	}
+}
+
+// Overrides stored before the picker existed are raw yt-dlp selectors. They
+// keep downloading exactly as they did, through the "custom" slot.
+func TestWorker_prefersRequestedFormat_rawSelector(t *testing.T) {
+	req := downloadReqFor(t, "bestvideo+bestaudio")
 	if req.Format != "custom" || req.CustomFormat != "bestvideo+bestaudio" {
 		t.Fatalf("req = {Format:%q Custom:%q}, want custom/bestvideo+bestaudio", req.Format, req.CustomFormat)
 	}

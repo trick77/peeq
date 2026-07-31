@@ -3,8 +3,10 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // settingsPatchRequest is the request body for PUT /api/settings. It never
@@ -74,6 +76,19 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, f.name+" must not be negative")
 			return
 		}
+	}
+	// format_preset is a preset id, or "custom" — the escape hatch that reads
+	// format_custom beside it. Anything else makes ytdlp.Resolve error, and
+	// that error surfaces as a FAILED DOWNLOAD for every video until someone
+	// corrects the setting. A retired id reaches here without anyone hand-
+	// crafting a request: a Settings tab rendered before the deploy that
+	// retired it still carries its button, and clicking it writes the id
+	// straight back over what 0021_retire_apple_720p.sql just fixed. Refuse
+	// it at the door, the way PUT /api/channels/{id} refuses "custom".
+	if req.FormatPreset != nil && *req.FormatPreset != "custom" && !ytdlp.IsPreset(*req.FormatPreset) {
+		writeJSONError(w, http.StatusBadRequest,
+			"unknown format_preset "+strconv.Quote(*req.FormatPreset))
+		return
 	}
 	patch := settings.Patch{
 		FormatPreset:            req.FormatPreset,

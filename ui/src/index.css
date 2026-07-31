@@ -1897,7 +1897,14 @@ button.catpick.unset {
 button.catpick.unset:hover {
   color: var(--color-ink-dim);
 }
-.catmenu {
+/* The popup is shared with FormatPicker (.fmtmenu) — same control shape, so
+   one rule rather than a second copy of it. .fmtmenu adds only what differs:
+   it hangs off the right edge (its trigger is the right-hand control in a
+   .chan-srow, not a pill at the left of a meta strip) and it carries a
+   DEFAULT badge, which is why its rows put the label on margin-right: auto
+   instead of letting the ✓ claim the free space. */
+.catmenu,
+.fmtmenu {
   position: absolute;
   top: calc(100% + 7px);
   left: 0;
@@ -1918,7 +1925,8 @@ button.catpick.unset:hover {
   flex-direction: column;
   gap: 1px;
 }
-.catmenu button {
+.catmenu button,
+.fmtmenu button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1933,15 +1941,18 @@ button.catpick.unset:hover {
   text-align: left;
   cursor: pointer;
 }
-.catmenu button:hover {
+.catmenu button:hover,
+.fmtmenu button:hover {
   background: var(--color-elevated-hover);
   color: var(--color-ink);
 }
-.catmenu button[aria-checked="true"] {
+.catmenu button[aria-checked="true"],
+.fmtmenu button[aria-checked="true"] {
   color: var(--color-ink);
   font-weight: 600;
 }
-.catmenu button[aria-checked="true"]::after {
+.catmenu button[aria-checked="true"]::after,
+.fmtmenu button[aria-checked="true"]::after {
   content: "\2713";
   margin-left: auto;
   color: var(--color-accent-strong);
@@ -1951,6 +1962,68 @@ button.catpick.unset:hover {
   height: 7px;
   border-radius: 50%;
   flex: none;
+}
+
+/* ---- FormatPicker (a channel's Format override) ----
+   Everything above is shared with CategoryPicker; below is what differs. */
+.fmtwrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.fmtmenu {
+  /* The trigger is the right-hand control of a .chan-srow, so the menu hangs
+     from the right edge — anchored left it would run past the panel. */
+  left: auto;
+  right: 0;
+  min-width: 260px;
+}
+/* The label claims the free space so the DEFAULT badge and the ✓ both pack
+   right. Without this the shared ::after's `margin-left: auto` splits that
+   space with the badge and strands the badge mid-row. */
+.fmtmenu button > .fmtmenu-label {
+  margin-right: auto;
+}
+.fmtmenu button[aria-checked="true"]::after {
+  margin-left: 0;
+}
+.fmtmenu-sep {
+  display: block;
+  height: 1px;
+  background: var(--color-elevated-border);
+  margin: 5px 4px;
+}
+.fmtmenu-tag {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent-strong);
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  flex: none;
+}
+button.fmtpick {
+  width: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.fmtpick .fmtpick-val {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A raw selector carried over from before the picker existed: shown as-is so
+   it is never silently replaced, in mono so it reads as the string it is. */
+button.fmtpick.legacy .fmtpick-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-muted);
 }
 
 /* The sleep timer pill (SleepTimer) is the category pill's trick applied a
@@ -4781,10 +4854,20 @@ details.tomb-sect[open] > summary svg {
   display: block;
 }
 .chan-srow .hint {
+  /* Every hint in this panel is a sentence, so it wraps as one. The base
+     .hint is display: flex (it carries a status .led elsewhere), which turns
+     each text node and each <b> into its own flex item — the Format override
+     hint bolds a preset name mid-sentence, and under flex that name jumped to
+     its own column and left the closing full stop stranded beside it. */
+  display: block;
   font-size: var(--text-label);
   color: var(--color-faint);
   margin: 3px 0 0;
   max-width: 46ch;
+}
+.chan-srow .hint b {
+  color: var(--color-ink-dim);
+  font-weight: 600;
 }
 .chan-srow input[type="checkbox"] {
   accent-color: var(--color-accent);

@@ -720,6 +720,19 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// format_override holds a preset id or "" (the picker sends nothing else),
+	// and rows predating the picker hold a raw yt-dlp selector the download
+	// worker still honours. "custom" is the one value that is neither: it is
+	// ytdlp.Resolve's escape hatch, meaningful only beside a format string this
+	// endpoint has nowhere to put, so it would reach yt-dlp as the literal
+	// selector "custom". This route is reachable with an API token, so the read
+	// side declining it (ytdlp.IsPreset) does not keep it out of the column.
+	if req.FormatOverride != nil && *req.FormatOverride == "custom" {
+		writeJSONError(w, http.StatusBadRequest,
+			`format_override cannot be "custom"; write a custom format string in settings instead`)
+		return
+	}
+
 	// auto_summary is written first, and against a different table. It is a
 	// property of the CHANNEL — "do I want peeq to read this channel's videos"
 	// — and survives an unsubscribe/resubscribe, so it must not be gated on a

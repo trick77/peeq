@@ -398,6 +398,31 @@ func TestChannelsPut_partialUpdate_preservesOtherField(t *testing.T) {
 	}
 }
 
+// "custom" is ytdlp.Resolve's escape hatch, not a selector, and this endpoint
+// has nowhere to put the format string it would need beside it. The picker
+// never sends it, but the route is reachable with an API token — so it is
+// refused here rather than left to reach yt-dlp as the literal -f "custom".
+func TestChannelsPut_rejectsCustomFormatOverride(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCcust", Name: "Cust"}})
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@cust", "subscribe": true}); rr.Code != http.StatusCreated {
+		t.Fatalf("add+subscribe status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UCcust", map[string]any{"format_override": "custom"})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("PUT format_override=custom status = %d, want 400, body=%s", rr.Code, rr.Body.String())
+	}
+
+	// A preset id and a raw selector both remain acceptable.
+	for _, v := range []string{"apple-vp9-4k", "bestvideo+bestaudio", ""} {
+		rr = putJSONWithCookie(t, h, cookie, "/api/channels/UCcust", map[string]any{"format_override": v})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("PUT format_override=%q status = %d, want 200, body=%s", v, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 // TestChannels_requireAuth asserts every channels route is behind
 // requireAuth.
 func TestChannels_requireAuth(t *testing.T) {

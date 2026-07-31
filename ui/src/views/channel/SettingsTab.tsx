@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { Button, controlClass } from "../../ui";
+import { useEffect, useState } from "react";
+import { Button } from "../../ui";
 import { Icon } from "../../icons";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ChannelDeleteWarning } from "../../components/ChannelDeleteWarning";
+import { FormatPicker } from "../../components/FormatPicker";
 import {
   updateChannel,
   scanChannel,
@@ -10,6 +11,8 @@ import {
   subscribeChannel,
   unsubscribeChannel,
 } from "../../api/channels";
+import { getSettings } from "../../api/settings";
+import { presetLabel } from "../../formatPresets";
 import { isScanQueued, scanNotice, scheduleLine } from "./schedule";
 import type { ChannelDetail } from "../../api/types";
 
@@ -24,10 +27,19 @@ export function SettingsTab({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [format, setFormat] = useState(detail.format_override ?? "");
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // The global format preset, so the override list can mark which one
+  // "use the global setting" actually resolves to. A failed fetch leaves it
+  // "", which badges no row — better than badging the wrong one.
+  const [globalPreset, setGlobalPreset] = useState("");
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setGlobalPreset(s.format_preset))
+      .catch(() => setGlobalPreset(""));
+  }, []);
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -131,28 +143,27 @@ export function SettingsTab({
 
             <div className="chan-srow">
               <div>
-                <label className="lab" htmlFor="chan-format">
-                  Format override
-                </label>
+                <span className="lab">Format override</span>
                 <div className="hint">
-                  Leave empty to use your global format setting.
+                  {presetLabel(globalPreset) ? (
+                    <>
+                      Leave on the global setting to follow{" "}
+                      <b>{presetLabel(globalPreset)}</b>.
+                    </>
+                  ) : (
+                    "Leave on the global setting to follow your Settings choice."
+                  )}
                 </div>
               </div>
-              <input
-                id="chan-format"
-                className={controlClass}
-                style={{ maxWidth: 220 }}
-                type="text"
-                value={format}
-                onChange={(e) => setFormat(e.target.value)}
-                onBlur={() => {
-                  if (format !== (detail.format_override ?? "")) {
-                    run(() =>
-                      updateChannel(detail.id, { format_override: format }),
-                    );
-                  }
-                }}
-                placeholder="Use the default"
+              <FormatPicker
+                value={detail.format_override ?? ""}
+                globalPreset={globalPreset}
+                disabled={busy}
+                onPick={(value) =>
+                  run(() =>
+                    updateChannel(detail.id, { format_override: value }),
+                  )
+                }
               />
             </div>
 
