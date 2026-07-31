@@ -86,7 +86,7 @@ func runCheckOnceInto(t *testing.T, dir string, fetch func(context.Context) (str
 	//
 	// Waiting on the observable effect closes that window: by the time the cache
 	// differs, the write this test is about has already happened.
-	waitUntil(t, "the release check to record a result", func() bool {
+	waitUntil(t, func() string { return "the release check to record a result" }, func() bool {
 		return cache.Get() != before
 	})
 	cancel()
@@ -96,12 +96,17 @@ func runCheckOnceInto(t *testing.T, dir string, fetch func(context.Context) (str
 // waitUntil polls ok until it holds, failing the test if it never does. Tests
 // here wait on EFFECTS rather than on the calls that cause them, since the
 // ticker decides whether to record after its collaborator has returned.
-func waitUntil(t *testing.T, what string, ok func() bool) {
+//
+// what is a func so it can report what was actually observed at the moment of
+// the timeout, not just what was hoped for. These waits exist to debug a
+// CI-only flake, and "timed out waiting for 5 checks" with no sign of whether
+// 0 or 4 ran is the one message that would leave the next flake unreadable.
+func waitUntil(t *testing.T, what func() string, ok func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for !ok() {
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
+			t.Fatalf("timed out waiting for %s", what())
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -186,13 +191,15 @@ func TestYtdlpVersionCheck_fetchFails_keepsLastKnownRelease(t *testing.T) {
 // runCheckTicks runs the ticker with a tiny interval so ticks (not just the
 // boot check) fire, and returns once wantCalls checks have COMPLETED.
 //
-// Completed, not started: the ticker records its result after fetch returns and
-// skips recording entirely if ctx is already cancelled, so returning as soon as
-// the wantCalls-th fetch returned raced that write — the same bug as in
-// runCheckOnceInto. The ticker runs its checks sequentially, so the START of
-// one more call is proof the previous one finished writing. That costs one
-// extra fetch, which every caller here tolerates: their fetches return a
-// constant after the first call.
+// Completed, not started. Unlike runCheckOnceInto this is HARDENING rather than
+// a bug fix, and the difference is worth stating so nobody hunts for a second
+// live race: the ticker's write-losing early return sits only on the
+// fetch-ERROR path, and every caller here returns a nil error, so a cancel
+// landing mid-check still completed it. The helper simply should not depend on
+// that. The ticker runs its checks sequentially, so the START of one more call
+// proves the previous one finished writing. That costs one extra fetch, which
+// every caller tolerates: their fetches return a constant after the first
+// call.
 func runCheckTicks(t *testing.T, dir string, cache *ytdlp.StatusCache, rec *activity.Store, wantCalls int, fetch func(context.Context) (string, error)) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -208,7 +215,9 @@ func runCheckTicks(t *testing.T, dir string, cache *ytdlp.StatusCache, rec *acti
 		}, cache, rec)
 	}()
 
-	waitUntil(t, fmt.Sprintf("%d release checks to complete", wantCalls), func() bool {
+	waitUntil(t, func() string {
+		return fmt.Sprintf("%d release checks to complete; %d have started", wantCalls, calls.Load())
+	}, func() bool {
 		return int(calls.Load()) > wantCalls
 	})
 	cancel()
