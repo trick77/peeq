@@ -19,22 +19,36 @@
   Sized off the outer rect's TRUE bbox — x[3,21] y[3,21], grown by half the
   stroke to 20.5 square — not the nominal 24x24 box the paths only partly fill.
   Scaling by the box is what makes a glyph read as a dot at favicon sizes. Here
-  it spans 80% of the tile. No optical nudge: unlike a bare triangle, the frame
-  is symmetric, so its bbox centre is also its visual centre.
+  it spans 96% of the tile, near enough edge to edge: a tab already sets the
+  icon in padding of its own, so a margin inside the tile only shrinks the mark
+  for nothing. The two tiled sources inset their glyph instead, because there
+  the tile itself is visible. No optical nudge: unlike a bare triangle, the
+  frame is symmetric, so its bbox centre is also its visual centre.
 
-  Transparent ON PURPOSE, and only safe here: browsers composite this onto the
-  tab. iOS and Android flatten alpha (onto black and onto the launcher's own
-  fill), so apple-touch-icon.png and icon-maskable-512.png are rendered from the
-  opaque sources in ui/icons/ instead. Regenerate the rasters with
-  hack/gen-icons.sh after touching this file.
+  THE FRAME IS FILLED, and that is not decoration. A frame is a closed shape,
+  so the area it encloses is a surface the mark owns. Leaving it transparent
+  hands that surface to whatever the client draws behind the icon: Safari's tab
+  bar is light, so a hollow frame renders as a white box. peeq's own UI is dark,
+  which is exactly why that went unseen — the interior picked up a dark chrome
+  and looked deliberate. The fill is peeq's ground, the same #1f1f1e the two
+  tiled sources and index.html's theme-color already use, so the icon reads the
+  same on a light tab, a dark tab and a white bookmark card. The bare triangle
+  this replaced needed no fill because a triangle encloses nothing.
+
+  The alpha OUTSIDE the frame stays transparent and is still right — only the
+  enclosed area is filled, so the icon's silhouette is still the frame and not
+  a square. iOS and Android flatten what alpha remains (onto black and onto the
+  launcher's own fill), so apple-touch-icon.png and icon-maskable-512.png are
+  rendered from the opaque sources in ui/icons/ instead. Regenerate the rasters
+  with hack/gen-icons.sh after touching this file.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
     <stop offset="0" stop-color="#e08a68"/>
     <stop offset="1" stop-color="#c25f34"/>
   </linearGradient>
-  <g transform="translate(2.029 2.029) scale(2.4976)" fill="none" stroke="url(#og)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="3" y="3" width="18" height="18" rx="2"/>
+  <g transform="translate(-3.965 -3.965) scale(2.9971)" fill="none" stroke="url(#og)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2" fill="#1f1f1e"/>
     <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" fill="url(#og)" stroke="none"/>
   </g>
 </svg>
