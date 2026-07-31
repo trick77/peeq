@@ -1,0 +1,88 @@
+<!--
+  Peeq's icon: lucide's "square-play" — a play wedge inside a rounded frame.
+  A triangle alone at 16px is a shape with no outline to hold it; the frame
+  gives it one. The rail used to keep that bare triangle and leave this to the
+  tab, which made the app and its own favicon two different marks. It no
+  longer does: the rail's PeeqMark (ui/src/shell/Rail.tsx) copies the geometry
+  below. A change here wants a look at that one.
+
+  The paths are lucide's (ISC), copied rather than imported — nothing loads
+  lucide-react to draw a static asset. Two departures from how lucide itself
+  would render them:
+
+  1. The wedge is FILLED, not stroked. lucide draws every glyph as an outline,
+     and a 2-unit outline is the first thing to vanish at 16px. The wedge is a
+     closed path, so filling it costs nothing, and it is what peeq already did
+     with the bare play triangle.
+  2. Stroke is 2.5, not lucide's 2. At 16px a 2-unit frame washes out and a
+     3.5-unit one closes the gap to the wedge; 2.5 keeps both readable. It is
+     given in glyph units, so it scales with the glyph and stays proportional
+     in the two tiled sources.
+
+  Sized off the outer rect's TRUE bbox — x[3,21] y[3,21], grown by half the
+  stroke to 20.5 square — not the nominal 24x24 box the paths only partly fill.
+  Scaling by the box is what makes a glyph read as a dot at favicon sizes. Here
+  it spans 96% of the tile, near enough edge to edge: a tab already sets the
+  icon in padding of its own, so a margin inside the tile only shrinks the mark
+  for nothing. The two tiled sources inset their glyph instead, because there
+  the tile itself is visible. No optical nudge: unlike a bare triangle, the
+  frame is symmetric, so its bbox centre is also its visual centre.
+
+  NOTHING HERE IS PAINTED BUT THE MARK. No canvas rect, no fill inside the
+  frame — only the orange stroke and the orange wedge. The silhouette is what
+  the glyph draws and everything else is the client's.
+
+  This reverses two earlier decisions in this file, and the reasons they existed
+  have not gone away, so they are worth stating rather than deleting:
+
+  - The frame's interior used to be filled #1f1f1e, because a frame encloses a
+    surface and leaving it transparent hands that surface to the client. On
+    Safari's light tab bar the wedge now sits on white instead of on peeq's
+    ground. It stays legible — the wedge is a solid orange shape against white,
+    not a hairline — but it is a different mark there than on a dark tab, and
+    that was the thing the fill bought.
+  - The whole 64x64 canvas then carried the same ground, because filling only
+    the interior left the four corners outside the rounded silhouette
+    transparent, and those corners measured pure #FFFFFF at 16px on a light tab
+    bar: pale notches on exactly the chrome the fill was meant to fix. With
+    nothing filled at all there is no interior/corner mismatch left to create
+    that artifact — the mark is an outline either way — so this half of the
+    problem is not merely traded away, it stops existing.
+
+  What is bought back is a mark that composites: it takes the tab's own colour
+  behind it, dark or light, instead of stamping a square of peeq's ground onto
+  whatever chrome it lands in. The silhouette is a rounded frame again rather
+  than a square.
+
+  THE TAB ICON NO LONGER COMES FROM THIS FILE. It moved to icon-favicon.svg
+  beside this one, which is this file with the frame's rect filled. The reason
+  is a surface neither reversal above had measured: Safari draws favicons on a
+  light rgb(192,192,192) plate in its favourites and bookmarks bars, where a
+  transparent mark lands as an orange scribble on a white card. The tab bar
+  itself does not do that. Note also that the "pale notches" argument above was
+  measuring a light tab bar showing through transparent corners, which is what
+  transparency does, not a plate.
+
+  What is above still holds for what this file DOES render, which is icon-192
+  and icon-512, and it is kept rather than deleted for the reason this file
+  already gives for keeping such things.
+
+  So this file HAS alpha, and so do the two rasters rendered from it —
+  hack/gen-icons.sh expects icon-192/512 to be opaque=false and would now fail
+  if this file grew a background rect back. apple-touch-icon.png and
+  icon-maskable-512.png stay opaque and are unaffected: they come from the
+  separate sources in ui/icons/, which keep their grounds because iOS flattens
+  alpha onto black and Android hands a transparent launcher icon whatever
+  colour it likes. Regenerate the rasters with hack/gen-icons.sh after touching
+  this file.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
+    <stop offset="0" stop-color="#e08a68"/>
+    <stop offset="1" stop-color="#c25f34"/>
+  </linearGradient>
+  <g transform="translate(-3.965 -3.965) scale(2.9971)" fill="none" stroke="url(#og)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2"/>
+    <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" fill="url(#og)" stroke="none"/>
+  </g>
+</svg>

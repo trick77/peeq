@@ -21,7 +21,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/ui/icons"
 OUT="$ROOT/ui/public"
-MASTER="$OUT/icon.svg" # the master ships as-is; it is not a copy
+MASTER="$SRC/icon.svg"          # renders the PWA rasters; never ships itself
+FAVICON="$SRC/icon-favicon.svg" # the master with a filled frame; ships as-is
+TAB='#33322f'                   # the tab icon's ground, see icon-favicon.svg
 
 for tool in rsvg-convert magick; do
 	if ! command -v "$tool" >/dev/null 2>&1; then
@@ -29,6 +31,13 @@ for tool in rsvg-convert magick; do
 		exit 1
 	fi
 done
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# --- icon.svg: served directly as the modern tab icon ------------------------
+# Its own source, not the master: Safari plates favicons on its favourites bar,
+# so this one carries a ground where the master does not.
+cp "$FAVICON" "$OUT/icon.svg"
 
 # --- transparent, from the master --------------------------------------------
 # -b none, and now these genuinely come out transparent: the master paints only
@@ -83,6 +92,27 @@ check_alpha "$OUT/icon-192.png" false
 check_alpha "$OUT/icon-512.png" false
 check_alpha "$OUT/apple-touch-icon.png" true
 check_alpha "$OUT/icon-maskable-512.png" true
+
+# icon.svg ships as SVG, so there is no raster to read — render one here just to
+# assert it. Two samples, because it has to be a chip and not a tile: the canvas
+# corner transparent, and a point inside the frame clear of the wedge filled
+# with $TAB. Losing the fill is invisible until someone opens Safari.
+#
+# -alpha on before both reads. Without it a fully opaque image carries no alpha
+# channel, and then %[hex:...] returns six digits instead of eight and
+# %[fx:...a] does not report 1 — the comparisons would be measuring
+# ImageMagick's channel bookkeeping rather than the icon.
+rsvg-convert -b none -w 512 -h 512 "$OUT/icon.svg" -o "$TMP/icon-favicon.png"
+fav_corner="$(magick "$TMP/icon-favicon.png" -alpha on -format '%[fx:p{0,0}.a]' info:)"
+fav_ground="$(magick "$TMP/icon-favicon.png" -alpha on -format '%[hex:p{256,96}]' info: | tr '[:upper:]' '[:lower:]')"
+if [[ "$fav_corner" != "0" ]]; then
+	echo "gen-icons: icon.svg's canvas corner has alpha $fav_corner, expected 0" >&2
+	fail=1
+fi
+if [[ "$fav_ground" != "${TAB#\#}ff" ]]; then
+	echo "gen-icons: icon.svg's frame is #$fav_ground, expected ${TAB}ff" >&2
+	fail=1
+fi
 
 [[ "$fail" == 0 ]] || exit 1
 echo "gen-icons: wrote $(cd "$OUT" && ls icon-*.png apple-touch-icon.png | tr '\n' ' ')"
