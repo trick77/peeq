@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   render,
@@ -918,6 +918,17 @@ describe("App rail collapse", () => {
       })),
     );
   }
+
+  // Both stubs above are permanent until something puts them back: vitest is
+  // configured with neither unstubGlobals nor restoreMocks, so without this a
+  // describe appended after this one would render in a permanent phone
+  // viewport against a fake storage and fail for a reason nowhere near itself.
+  const ownStorage = Object.getOwnPropertyDescriptor(window, "localStorage");
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (ownStorage) Object.defineProperty(window, "localStorage", ownStorage);
+    else delete (window as unknown as Record<string, unknown>).localStorage;
+  });
 
   it("remembers a collapsed rail", async () => {
     setViewport(false);

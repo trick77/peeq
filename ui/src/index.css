@@ -424,11 +424,14 @@ button {
 }
 /* ── Collapsed rail: ../music's icon column, 64px of it ──────────────────── */
 
-/* 44px of target inside a 64px track leaves 10px either side, so the nav's own
-   8px padding tightens to 10 - (64 - 44) / 2 … i.e. the item is centred and the
-   padding just has to not fight it. */
+/* The 44px target is centred by its own margin-inline: auto, so the padding
+   here only has to stay out of its way — and 10px did not. The track is 64px
+   but .rail carries a 1px border-right, and Tailwind's preflight makes every
+   box border-box, so the nav's content box is 63px: 44 + 10 + 10 overflows it
+   by 1px and the rounded background bleeds over the border. 8px leaves 47px
+   for a 44px item, which auto-centres with room to spare. */
 .rail.collapsed .rail-nav {
-  padding: 8px 10px;
+  padding: 8px;
 }
 .rail.collapsed .rail-nav-item {
   width: 44px;
