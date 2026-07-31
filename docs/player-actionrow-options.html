@@ -1,0 +1,981 @@
+<title>Player action row — five ways out of the mess</title>
+<style>
+  /* peeq's own tokens, re-declared standalone (no woff2 here, so system-ui
+     stands in for Anthropic Sans). Dark only, deliberately: the app is dark
+     only, and a light rendering would misrepresent every one of these rows. */
+  :root {
+    --bg: #1f1f1e;
+    --panel: #1b1b1a;
+    --active: #2c2c2a;
+    --border: #323230;
+    --border-soft: #2a2a28;
+    --ink: #faf9f5;
+    --ink-dim: #e4e1d8;
+    --muted: #9c9a92;
+    --faint: #6f6d66;
+    --accent: #c6613f;
+    --accent-strong: #d97757;
+    --accent-dim: #5a3527;
+    --kept: #d6a15a;
+    --elevated: #363632;
+    --elevated-border: #454540;
+    --elevated-ink: #f3f0e8;
+    --elevated-hover: #3f3f3a;
+    --danger: #c14638;
+    --font-sans: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, monospace;
+    --radius-ui: 10px;
+  }
+
+  html { color-scheme: dark; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    background-image:
+      radial-gradient(120% 80% at 80% -10%, rgba(198, 97, 63, 0.06), transparent 60%),
+      radial-gradient(90% 70% at 8% 110%, rgba(214, 161, 90, 0.03), transparent 55%);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 48px 24px 110px;
+    display: flex;
+    flex-direction: column;
+    gap: 34px;
+  }
+
+  /* ---- document chrome ---- */
+
+  header.doc {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 30px;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  header.doc h1 {
+    margin: 0;
+    font-size: 30px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+  header.doc p {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--muted);
+  }
+
+  h2.sec {
+    margin: 0;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  /* ---- option cards ---- */
+
+  .opt {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--panel);
+    overflow: hidden;
+  }
+  .opt.today {
+    border-color: var(--accent-dim);
+  }
+  .opt > .head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 20px 24px 0;
+    flex-wrap: wrap;
+  }
+  .opt .num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-strong);
+    letter-spacing: 0.08em;
+    flex: none;
+  }
+  .opt.today .num { color: var(--muted); }
+  .opt h3 {
+    margin: 0;
+    font-size: 19px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  .opt .thesis {
+    margin: 6px 24px 0;
+    max-width: 66ch;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  /* the stage renders each row at its real pixel size against the app ground */
+  .stage {
+    margin: 20px 0 0;
+    padding: 26px 24px 28px;
+    background: var(--bg);
+    border-top: 1px solid var(--border-soft);
+    border-bottom: 1px solid var(--border-soft);
+    overflow-x: auto;
+  }
+  .stage .stagelabel {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 16px;
+  }
+
+  .notes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px 32px;
+    padding: 22px 24px 24px;
+  }
+  @media (max-width: 720px) {
+    .notes { grid-template-columns: 1fr; }
+  }
+  .notes h4 {
+    margin: 0 0 7px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 500;
+  }
+  .notes ul {
+    margin: 0;
+    padding-left: 17px;
+    color: var(--ink-dim);
+    font-size: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .notes li::marker { color: var(--faint); }
+  .notes .cost li::marker { color: var(--accent-dim); }
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    color: var(--ink-dim);
+    background: var(--active);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  .flag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 1px 7px;
+    border-radius: 20px;
+    vertical-align: 1px;
+  }
+  .flag.warn {
+    color: var(--kept);
+    background: color-mix(in srgb, var(--kept) 13%, transparent);
+    border: 1px solid color-mix(in srgb, var(--kept) 38%, transparent);
+  }
+  .flag.pick {
+    color: var(--accent-strong);
+    background: color-mix(in srgb, var(--accent-strong) 14%, transparent);
+    border: 1px solid var(--accent-dim);
+  }
+
+  /* ---- the real player context: title + byline above every row ---- */
+
+  .playmeta-by {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .playmeta-by .chan {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
+  }
+  .playmeta-by .dot { color: var(--faint); }
+  .playmeta-h1 {
+    margin: 0 0 18px;
+    font-size: 22px;
+    font-weight: 450;
+    color: var(--ink-dim);
+    letter-spacing: -0.01em;
+    line-height: 1.4;
+  }
+
+  /* ---- the controls themselves, at their real dimensions ---- */
+
+  .playacts {
+    display: flex;
+    position: relative;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .acts-sep {
+    width: 1px;
+    height: 22px;
+    background: var(--border);
+    margin: 0 4px;
+    flex: none;
+  }
+  .push { margin-left: auto; }
+
+  .ui-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 40px;
+    padding: 0 16px;
+    border-radius: var(--radius-ui);
+    border: 1px solid transparent;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    background: none;
+    color: inherit;
+  }
+  .ui-btn--secondary {
+    background: var(--active);
+    color: var(--ink-dim);
+    border-color: var(--border);
+  }
+  .ui-btn--gold {
+    background: color-mix(in srgb, var(--kept) 12%, transparent);
+    color: var(--kept);
+    border-color: var(--accent-dim);
+  }
+  .ui-btn--tinted {
+    background: color-mix(in srgb, var(--accent-strong) 12%, transparent);
+    color: var(--accent-strong);
+    border-color: var(--accent-dim);
+  }
+  .ui-iconact {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    flex: none;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-ui);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .metapill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border-radius: 15px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--ink-dim);
+    min-height: 30px;
+    padding: 0 7px 0 11px;
+    font-family: var(--font-sans);
+    cursor: pointer;
+  }
+  .metapill .dotc {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex: none;
+  }
+  .metapill.armed {
+    color: var(--accent-strong);
+    border-color: var(--accent-dim);
+    background: color-mix(in srgb, var(--accent-strong) 10%, transparent);
+  }
+  .sleepleft {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .kebab {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    position: relative;
+  }
+
+  /* option-specific control variants, each scoped so nothing here would
+     leak into .card / .metapill globally if it were ported as-is */
+  .r-even .ui-btn,
+  .r-even .metapill,
+  .r-even .ui-iconact,
+  .r-even .kebab {
+    min-height: 34px;
+    height: 34px;
+    border-radius: 17px;
+  }
+  .r-even .ui-btn { padding: 0 14px; font-size: 14px; }
+  .r-even .ui-iconact,
+  .r-even .kebab { width: 34px; padding: 0; }
+  .r-even .metapill { font-size: 13px; }
+
+  .r-boxed {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel);
+    padding: 3px;
+  }
+  .r-boxed .seg {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 3px;
+  }
+  .r-boxed .seg + .seg {
+    border-left: 1px solid var(--border-soft);
+    margin-left: 4px;
+    padding-left: 7px;
+  }
+  .r-boxed .ui-btn {
+    min-height: 34px;
+    border-radius: 9px;
+    padding: 0 12px;
+    font-size: 14px;
+    border-color: transparent;
+    background: none;
+    color: var(--ink-dim);
+  }
+  .r-boxed .ui-btn.on-gold { color: var(--kept); }
+  .r-boxed .ui-btn.on-tint { color: var(--accent-strong); }
+  .r-boxed .ui-iconact,
+  .r-boxed .kebab {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    background: none;
+    border: 0;
+  }
+  .r-boxed .metapill {
+    background: none;
+    border: 0;
+    min-height: 34px;
+    padding: 0 10px;
+  }
+
+  .iconpair {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* eyebrow-mounted category, option 3 */
+  .by-cat {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 1px 7px 1px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-dim);
+    text-transform: none;
+    letter-spacing: 0;
+    cursor: pointer;
+  }
+  .by-cat .dotc { width: 6px; height: 6px; border-radius: 50%; }
+
+  /* the ⋮ menu shown open in option 5 */
+  .menudemo {
+    margin-top: 12px;
+    width: 220px;
+    padding: 5px;
+    background: var(--elevated);
+    border: 1px solid var(--elevated-border);
+    border-radius: var(--radius-ui);
+    box-shadow: 0 18px 44px -14px rgba(0, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .menudemo .mi {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 9px;
+    border-radius: 7px;
+    font-size: 13px;
+    color: var(--elevated-ink);
+  }
+  .menudemo .mi .mi-flag {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-strong);
+    font-variant-numeric: tabular-nums;
+  }
+  .menudemo .sep {
+    height: 1px;
+    margin: 4px 9px;
+    background: var(--elevated-border);
+  }
+
+  /* callouts marking what is wrong today */
+  .problems {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+    padding: 22px 24px 24px;
+  }
+  @media (max-width: 720px) {
+    .problems { grid-template-columns: 1fr; }
+  }
+  .problem {
+    border-left: 2px solid var(--accent);
+    padding-left: 13px;
+  }
+  .problem b {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 3px;
+  }
+  .problem span {
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+
+  .fixnote {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--panel);
+    padding: 22px 24px;
+  }
+  .fixnote h3 {
+    margin: 0 0 8px;
+    font-size: 17px;
+    font-weight: 500;
+  }
+  .fixnote p {
+    margin: 0 0 10px;
+    color: var(--muted);
+    font-size: 14px;
+    max-width: 68ch;
+  }
+  .fixnote p:last-child { margin-bottom: 0; }
+  .fixnote strong { color: var(--ink-dim); font-weight: 600; }
+
+  footer.doc {
+    border-top: 1px solid var(--border);
+    padding-top: 26px;
+    color: var(--muted);
+    font-size: 14px;
+    max-width: 70ch;
+  }
+  footer.doc p { margin: 0 0 10px; }
+  footer.doc p:last-child { margin-bottom: 0; }
+  footer.doc strong { color: var(--ink-dim); }
+
+  svg { flex: none; }
+</style>
+
+<div class="wrap">
+  <header class="doc">
+    <div class="eyebrow">Peeq · player</div>
+    <h1>The line from Keep forever to the category pill</h1>
+    <p>
+      Six controls, four different heights, two hairlines and one pill left
+      stranded at the far end. Below: what the row is today, then five ways to
+      settle it. Every row is drawn at its real pixel size, in the app's own
+      colours — nothing here is scaled or stylised.
+    </p>
+  </header>
+
+  <div class="fixnote">
+    <h3>The sleep bug is already fixed</h3>
+    <p>
+      The sleep menu was a plain absolutely-positioned child of its pill, pinned
+      <code>top: calc(100% + 7px)</code> with no idea where the viewport ended.
+      On an iPad the action row sits about 100px above the fold, so six presets
+      opened straight off the bottom of the screen.
+    </p>
+    <p>
+      <strong>Now:</strong> a shared <code>useMenuPlacement</code> measures once
+      per open and flips the menu upward when there is more room above than
+      below. The category picker and the ⋮ menu use the same hook — they had the
+      identical flaw. <code>.sleepmenu</code> also gained the height clamp
+      <code>.catmenu</code> has carried all along. This is independent of
+      everything below: whichever option you pick, the fix survives it.
+    </p>
+  </div>
+
+  <h2 class="sec">Where it stands</h2>
+
+  <div class="opt today">
+    <div class="head">
+      <span class="num">TODAY</span>
+      <h3>What ships now</h3>
+    </div>
+    <p class="thesis">
+      The row grew one control at a time, and each arrival brought its own
+      shape.
+    </p>
+    <div class="stage">
+      <div class="stagelabel">Player · 1024px wide</div>
+      <div class="playmeta-by">
+        <span class="chan">Dr Brian Keating</span>
+        <span class="dot">·</span><span>aired 18 days ago</span>
+        <span class="dot">·</span><span>added 8 days ago</span>
+      </div>
+      <h1 class="playmeta-h1">
+        Nine Objects, One Plate, Zero Explanation — Until Now | Beatriz
+        Villarroel
+      </h1>
+      <div class="playacts">
+        <button class="ui-btn ui-btn--secondary" type="button">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 3.5 14 9l6 .5-4.5 4 1.5 6-5.5-3.5L6 19.5l1.5-6L3 9.5 9 9Z"/></svg>
+          <span>Keep forever</span>
+        </button>
+        <button class="ui-btn ui-btn--secondary" type="button">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Mark watched</span>
+        </button>
+        <span class="acts-sep"></span>
+        <button class="ui-iconact" type="button" aria-label="Subtitles off">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M10 10.5A2 2 0 0 0 6.5 12a2 2 0 0 0 3.5 1.5M18 10.5A2 2 0 0 0 14.5 12a2 2 0 0 0 3.5 1.5"/></svg>
+        </button>
+        <button class="metapill" type="button">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          Sleep
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button class="kebab" type="button" aria-label="Video actions">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+        </button>
+        <span class="acts-sep"></span>
+        <button class="metapill" type="button">
+          <span class="dotc" style="background: #6aa9c4"></span>
+          Science
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="problems">
+      <div class="problem">
+        <b>Four heights in one line</b>
+        <span>40px buttons, a 40px bare icon, 30px pills, a 32px kebab. Nothing lines up but the centreline.</span>
+      </div>
+      <div class="problem">
+        <b>Two hairlines, six controls</b>
+        <span>Three groups of two. A separator is meant to be rare enough to mean something.</span>
+      </div>
+      <div class="problem">
+        <b>The category pill is stranded</b>
+        <span>Last in line, after a second divider, in a shape used nowhere else in the row.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="sec">Five ways out</h2>
+
+  <div class="opt">
+    <div class="head">
+      <span class="num">01</span>
+      <h3>One height, one silhouette</h3>
+      <span class="flag pick">smallest change</span>
+    </div>
+    <p class="thesis">
+      Change nothing about what the row contains or the order it sits in. Give
+      every control the same 34px height and the same rounded shape, drop the
+      second hairline, and push the category pill to the right edge so its
+      distance reads as intended rather than leftover.
+    </p>
+    <div class="stage">
+      <div class="stagelabel">Option 01</div>
+      <div class="playacts r-even">
+        <button class="ui-btn ui-btn--secondary" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 3.5 14 9l6 .5-4.5 4 1.5 6-5.5-3.5L6 19.5l1.5-6L3 9.5 9 9Z"/></svg>
+          <span>Keep forever</span>
+        </button>
+        <button class="ui-btn ui-btn--secondary" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Mark watched</span>
+        </button>
+        <span class="acts-sep"></span>
+        <button class="ui-iconact" type="button" aria-label="Subtitles off">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M10 10.5A2 2 0 0 0 6.5 12a2 2 0 0 0 3.5 1.5M18 10.5A2 2 0 0 0 14.5 12a2 2 0 0 0 3.5 1.5"/></svg>
+        </button>
+        <button class="metapill" type="button">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          Sleep
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button class="kebab" type="button" aria-label="Video actions">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+        </button>
+        <button class="metapill push" type="button">
+          <span class="dotc" style="background: #6aa9c4"></span>
+          Science
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="notes">
+      <div>
+        <h4>What changes</h4>
+        <ul>
+          <li>Every control is 34px tall with a 17px radius — one family, one baseline.</li>
+          <li>The second hairline goes; <code>margin-left: auto</code> does that job better.</li>
+          <li>No control moves, appears or disappears. No behaviour changes at all.</li>
+        </ul>
+      </div>
+      <div class="cost">
+        <h4>What it costs</h4>
+        <ul>
+          <li><span class="flag warn">watch</span> <code>.metapill</code> is shared with Library cards. The override must be scoped <code>.playacts .metapill</code> or the whole grid moves with it.</li>
+          <li>The row still reads as six loose things. This tidies the mess; it does not resolve it.</li>
+          <li>Buttons shrink from 40px to 34px — still above the 32px comfortable-tap floor, but it is a real reduction on touch.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="head">
+      <span class="num">02</span>
+      <h3>What it is, then what this sitting does</h3>
+    </div>
+    <p class="thesis">
+      Give the row a rule you can state in one sentence. On the left, the
+      controls that change the video permanently — kept, watched, filed. On the
+      right, pushed to the edge, the ones that only affect this sitting:
+      subtitles, sleep, and the overflow. One hairline disappears because the
+      gap now carries the split.
+    </p>
+    <div class="stage">
+      <div class="stagelabel">Option 02</div>
+      <div class="playacts r-even">
+        <button class="ui-btn ui-btn--gold" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M11.5 3.5 14 9l6 .5-4.5 4 1.5 6-5.5-3.5L6 19.5l1.5-6L3 9.5 9 9Z"/></svg>
+          <span>Kept forever</span>
+        </button>
+        <button class="ui-btn ui-btn--secondary" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Mark watched</span>
+        </button>
+        <button class="metapill" type="button">
+          <span class="dotc" style="background: #6aa9c4"></span>
+          Science
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <span class="iconpair push">
+          <button class="ui-iconact" type="button" aria-label="Subtitles off">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M10 10.5A2 2 0 0 0 6.5 12a2 2 0 0 0 3.5 1.5M18 10.5A2 2 0 0 0 14.5 12a2 2 0 0 0 3.5 1.5"/></svg>
+          </button>
+          <button class="metapill armed" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            <span class="sleepleft">14:22</span>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <button class="kebab" type="button" aria-label="Video actions">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+          </button>
+        </span>
+      </div>
+    </div>
+    <div class="notes">
+      <div>
+        <h4>What changes</h4>
+        <ul>
+          <li>The category pill joins the two toggles — it belongs with them: all three say what the video <em>is</em>, and all three outlive the page.</li>
+          <li>Sleep, subtitles and ⋮ move to the right edge as one cluster. Nothing was added or taken away.</li>
+          <li>Both hairlines go. The gap between the clusters is the divider.</li>
+          <li>Shown here with the timer armed, so you can see the countdown pill at its widest — the row must not reflow when it arms.</li>
+        </ul>
+      </div>
+      <div class="cost">
+        <h4>What it costs</h4>
+        <ul>
+          <li>The category pill jumps left. It is documented at <code>Player.tsx:1219</code> as belonging with the actions "behind a separator" — that comment gets rewritten, not ignored.</li>
+          <li>Same scoped-<code>.metapill</code> caution as 01.</li>
+          <li>On a narrow window the row wraps and <code>margin-left: auto</code> stops meaning anything; the two clusters need to stack deliberately rather than by accident.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="head">
+      <span class="num">03</span>
+      <h3>The category goes back up to the facts</h3>
+    </div>
+    <p class="thesis">
+      The row's real problem may be that it holds one thing that is not an
+      action. Move the category onto the byline, beside the channel and the
+      dates, where the rest of what-this-video-is already lives. It stays fully
+      editable — it is a button up there too. What is left below is five
+      controls and one hairline.
+    </p>
+    <div class="stage">
+      <div class="stagelabel">Option 03</div>
+      <div class="playmeta-by">
+        <span class="chan">Dr Brian Keating</span>
+        <span class="dot">·</span><span>aired 18 days ago</span>
+        <span class="dot">·</span><span>added 8 days ago</span>
+        <span class="dot">·</span>
+        <button class="by-cat" type="button">
+          <span class="dotc" style="background: #6aa9c4"></span>
+          Science
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+      <h1 class="playmeta-h1">
+        Nine Objects, One Plate, Zero Explanation — Until Now | Beatriz
+        Villarroel
+      </h1>
+      <div class="playacts r-even">
+        <button class="ui-btn ui-btn--secondary" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 3.5 14 9l6 .5-4.5 4 1.5 6-5.5-3.5L6 19.5l1.5-6L3 9.5 9 9Z"/></svg>
+          <span>Keep forever</span>
+        </button>
+        <button class="ui-btn ui-btn--secondary" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Mark watched</span>
+        </button>
+        <span class="acts-sep"></span>
+        <button class="ui-iconact" type="button" aria-label="Subtitles off">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M10 10.5A2 2 0 0 0 6.5 12a2 2 0 0 0 3.5 1.5M18 10.5A2 2 0 0 0 14.5 12a2 2 0 0 0 3.5 1.5"/></svg>
+        </button>
+        <button class="metapill" type="button">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          Sleep
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button class="kebab" type="button" aria-label="Video actions">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="notes">
+      <div>
+        <h4>What changes</h4>
+        <ul>
+          <li>The category becomes an 11px pill on the byline, one chevron wide, still a real picker.</li>
+          <li>The action row drops to five controls, one hairline, and the last thing in it is the ⋮ — which is where an eye expects a row of actions to end.</li>
+          <li>The category is now visible on the share page and the player in the same place, if you want that parity later.</li>
+        </ul>
+      </div>
+      <div class="cost">
+        <h4>What it costs</h4>
+        <ul>
+          <li><span class="flag warn">argue first</span> This directly reverses the reasoning written at <code>Player.tsx:1219–1222</code>. The counter-argument: editable does not mean action. The Library card's watched chip is editable and lives on the card, not in a button row.</li>
+          <li>An 11px chevron is a small tap target. It needs padding beyond its ink to clear ~32px on touch.</li>
+          <li>The byline already ellipsises long channel names and wraps at narrow widths; a fourth item makes that busier.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="head">
+      <span class="num">04</span>
+      <h3>One toolbar, not six controls</h3>
+    </div>
+    <p class="thesis">
+      Put everything inside a single bordered shell with internal dividers.
+      Instead of six objects that each need their own edge, there is one object
+      with segments. The chrome moves from the controls to the container, so the
+      controls themselves can go flat and quiet.
+    </p>
+    <div class="stage">
+      <div class="stagelabel">Option 04</div>
+      <div class="playacts">
+        <div class="r-boxed">
+          <span class="seg">
+            <button class="ui-btn on-gold" type="button">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M11.5 3.5 14 9l6 .5-4.5 4 1.5 6-5.5-3.5L6 19.5l1.5-6L3 9.5 9 9Z"/></svg>
+              <span>Kept forever</span>
+            </button>
+            <button class="ui-btn" type="button">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              <span>Mark watched</span>
+            </button>
+          </span>
+          <span class="seg">
+            <button class="ui-iconact" type="button" aria-label="Subtitles off">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M10 10.5A2 2 0 0 0 6.5 12a2 2 0 0 0 3.5 1.5M18 10.5A2 2 0 0 0 14.5 12a2 2 0 0 0 3.5 1.5"/></svg>
+            </button>
+            <button class="metapill" type="button">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              Sleep
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </span>
+          <span class="seg">
+            <button class="metapill" type="button">
+              <span class="dotc" style="background: #6aa9c4"></span>
+              Science
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <button class="kebab" type="button" aria-label="Video actions">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div>
+        <h4>What changes</h4>
+        <ul>
+          <li>One border around the lot; the dividers become internal and thin instead of two floating hairlines.</li>
+          <li>Every control loses its own background and border. State is carried by colour alone — gold for kept, terracotta for watched and subtitles-on.</li>
+          <li>The category stops being an outlier: it is simply the last segment.</li>
+          <li>Grouping is now visible without a separator doing extra work, so the three groups can be read at a glance.</li>
+        </ul>
+      </div>
+      <div class="cost">
+        <h4>What it costs</h4>
+        <ul>
+          <li>The biggest new pattern here — nothing else in Peeq is a segmented toolbar, so it arrives without precedent to lean on.</li>
+          <li>Flat controls inside a box read as less tappable. The hover and pressed states have to work harder, and there is no rest-state border to hint at hit area.</li>
+          <li>A fixed shell wraps badly. Below roughly 620px it either scrolls sideways or has to break into two shells.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="head">
+      <span class="num">05</span>
+      <h3>Two decisions and a menu</h3>
+    </div>
+    <p class="thesis">
+      Only two things in that row are decisions you make often: keep it, and
+      mark it watched. Leave those labelled and let everything else fall into
+      the ⋮ menu that already exists — subtitles and sleep included, sleep
+      carrying its countdown as a flag so the armed state stays readable without
+      opening anything.
+    </p>
+    <div class="stage">
+      <div class="stagelabel">Option 05 · menu shown open</div>
+      <div class="playacts">
+        <button class="ui-btn ui-btn--secondary" type="button">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 3.5 14 9l6 .5-4.5 4 1.5 6-5.5-3.5L6 19.5l1.5-6L3 9.5 9 9Z"/></svg>
+          <span>Keep forever</span>
+        </button>
+        <button class="ui-btn ui-btn--secondary" type="button">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Mark watched</span>
+        </button>
+        <button class="metapill" type="button">
+          <span class="dotc" style="background: #6aa9c4"></span>
+          Science
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button class="kebab push" type="button" aria-label="Video actions">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+        </button>
+      </div>
+      <div class="menudemo">
+        <div class="mi">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M10 10.5A2 2 0 0 0 6.5 12a2 2 0 0 0 3.5 1.5M18 10.5A2 2 0 0 0 14.5 12a2 2 0 0 0 3.5 1.5"/></svg>
+          Subtitles
+          <span class="mi-flag">off</span>
+        </div>
+        <div class="mi">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          Sleep timer
+          <span class="mi-flag">14:22</span>
+        </div>
+        <div class="sep"></div>
+        <div class="mi">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
+          Share
+        </div>
+        <div class="mi">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+          Reprocess
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div>
+        <h4>What changes</h4>
+        <ul>
+          <li>The row drops to three controls plus the ⋮. Both hairlines are gone with nothing left to separate.</li>
+          <li>Subtitles and Sleep become menu rows with a right-hand flag showing their state — the flag slot the ⋮ menu already uses.</li>
+          <li>The quietest of the five by a distance, and the only one that gets calmer rather than tidier.</li>
+        </ul>
+      </div>
+      <div class="cost">
+        <h4>What it costs</h4>
+        <ul>
+          <li>Subtitles goes from one tap to two, on the control most likely to be toggled mid-video. That is the real price here.</li>
+          <li>An armed sleep timer stops being visible on the page. The flag only shows once the menu is open, so "is it still running?" needs a look inside — a countdown badge on the ⋮ would answer it, at the cost of the calm this option is buying.</li>
+          <li>Sleep needs a submenu or an inline preset strip. Neither exists in <code>RowMenu</code> today, so this is more new code than it looks.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <footer class="doc">
+    <p>
+      <strong>Two rules every option was checked against.</strong> Nothing here
+      rests invisible until hover — <code>@media (hover: none)</code> is not an
+      escape hatch, since an iPad with a trackpad reports
+      <code>hover: hover</code>. And nothing changes the shared
+      <code>.metapill</code> or <code>.chip</code> rules unscoped: those
+      selectors are used by the Library grid, Decide, Channels and the share
+      page, and restyling them here would move all of them.
+    </p>
+    <p>
+      <strong>They combine.</strong> 03 is about where the category lives and 05
+      is about how much the row holds; either works with 01's single height
+      underneath it. Say which parts you want and I will draw the combination
+      before building anything.
+    </p>
+  </footer>
+</div>
