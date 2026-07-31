@@ -663,6 +663,7 @@ func TestVideosThumbnail_notFoundWithoutThumbnail(t *testing.T) {
 // about. The thumbnail endpoint has read bytes off the row since 0022 and the
 // path is gone since 0024, so there is no filesystem lookup left to escape —
 // the same retirement the subtitle and channel-image endpoints got.
+
 // TestVideosGet_exposesSponsorblockSegments covers the Task 14 player's
 // client-side auto-skip data: the stored sponsorblock_segments JSON column
 // must come through the DTO as a structured array.
@@ -1686,6 +1687,9 @@ func TestVideosThumbnail_unknownVideo_404(t *testing.T) {
 	}
 }
 
+// TestRedownload_jobsNotConfigured_503 covers handleRedownloadVideo's
+// s.jobs == nil branch: an eligible (errored) video still can't be
+// re-downloaded if the queue itself isn't wired.
 func TestRedownload_jobsNotConfigured_503(t *testing.T) {
 	deps, _ := videosTestDeps(t) // no Jobs set
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {

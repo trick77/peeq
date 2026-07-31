@@ -598,10 +598,10 @@ func (w *Worker) finishNoTranscript(job *summaryjobs.Job, video *videos.Video, r
 // This is deliberately NOT called when the subtitle file is simply absent or
 // unreadable: a video whose transcript cannot be read on this run must keep the
 // summary it already has rather than have it wiped by a run that learned
-// nothing. A tombstone no longer takes that path — it keeps both subtitle_path
-// and the .vtt, precisely so the archived analysis stays rebuildable — but a
-// row tombstoned before that changed still has a blank subtitle_path and relies
-// on this.
+// nothing. A tombstone no longer takes that path — it keeps the stored
+// transcript row, precisely so the archived analysis stays rebuildable — but a
+// row tombstoned before that changed has no transcript at all and relies on
+// this.
 //
 // Best-effort throughout — the caller's path is terminal and a cleanup failure
 // must not turn it into a job failure.

@@ -428,8 +428,8 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 
 // findThumbnail returns the path to the downloaded thumbnail file in dir,
 // or "" if none of the known extensions is present. The extension list lives in
-// media.ThumbnailExts: the thumbnail import worker goes looking for the very
-// same files, and a second copy of the list would be a second thing to keep in
+// media.ThumbnailExts, which also decides the Content-Type the stored poster is
+// served as; a second copy of the list here would be a second thing to keep in
 // lockstep with what yt-dlp actually writes.
 func findThumbnail(dir, videoID string) string {
 	for _, ext := range media.ThumbnailExts {

@@ -95,6 +95,7 @@ func TestDeleteChannel_cascadesToPendingThumbnails(t *testing.T) {
 	}
 }
 
+// seedPendingEntry inserts a channel and one pending ledger row for it.
 func seedPendingEntry(t *testing.T, st *Store, channelID, videoID string) {
 	t.Helper()
 	var n int

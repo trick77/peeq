@@ -74,6 +74,8 @@ func TestSetImage_declinesOversizedAndUnknownKind(t *testing.T) {
 	}
 }
 
+// Artwork goes with the channel. Nothing ever deleted .channels/<id>/ from
+// disk, so this cascade is the leak's replacement rather than a nicety.
 func TestDeleteChannel_cascadesToImages(t *testing.T) {
 	s := newTestStore(t)
 	seedImageChannel(t, s, "UC1")

@@ -18,8 +18,8 @@
 // the end can still be finished. Tombstone keeps
 // the row (for watched history and a future summary/transcript) but clears
 // media_path and marks status='tombstoned'; the caller is responsible for
-// unlinking the actual media file from disk first (the thumbnail and the
-// subtitle stay — see media.RemoveTombstonedVideoFiles).
+// unlinking the actual media file from disk first (the stored poster and
+// transcript rows stay — see media.RemoveTombstonedVideoFiles).
 //
 // The store's methods are grouped across sibling files by the lifecycle stage
 // they serve, all on the same *Store: this file holds the row shape, the

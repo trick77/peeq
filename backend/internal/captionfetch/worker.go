@@ -293,8 +293,9 @@ func refused(err error) bool {
 //
 // The read is the only part that can fail usefully: if the text does not land
 // in the database there is nothing to summarize, so the caller must not enqueue
-// the analysis. The unlink is best-effort — a file left behind is tidied by the
-// import worker, or by the next caption fetch overwriting it.
+// the analysis. The unlink is best-effort — a file left behind is overwritten
+// by the next caption fetch, or taken by the download worker's .summaries/
+// cleanup if this video is ever approved.
 func (w *Worker) storeTranscript(videoID, relPath string) error {
 	safe, err := media.SafeMediaPath(w.d.MediaDir, relPath)
 	if err != nil {
