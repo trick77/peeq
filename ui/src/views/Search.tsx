@@ -202,16 +202,6 @@ export function Search({
     setMode(m);
   }
 
-  // The empty-state offer hands the query to the other tab and stops there.
-  // A search only ever starts from the box: nothing that is not a submit should
-  // spend a request, least of all a model call.
-  function askOtherMode(q: string) {
-    const other: SearchMode = mode === "find" ? "ask" : "find";
-    if (mode === "ask") answerAbort.current?.abort();
-    patchTab(other, { query: q });
-    setMode(other);
-  }
-
   const copy = MODE_COPY[mode];
   const { query, results, loading, error } = tab;
   // In Ask, everything BELOW the streaming answer waits for it to finish.
@@ -308,11 +298,7 @@ export function Search({
             </span>
           </div>
           {results.length === 0 ? (
-            <EmptyResult
-              mode={mode}
-              query={tab.searchedQuery ?? query.trim()}
-              onSwitch={() => askOtherMode(tab.searchedQuery ?? query.trim())}
-            />
+            <EmptyResult mode={mode} />
           ) : (
             results.map((r) => (
               <div className="result" key={r.video.id}>
@@ -395,30 +381,19 @@ function Snippet({ text }: { text: string }) {
   );
 }
 
-// EmptyResult says which mode came up empty and offers the other one. Find can
-// legitimately find nothing — that is what a keyword search is for — and the
-// useful next step is almost always to try meaning instead, or vice versa.
-function EmptyResult({
-  mode,
-  query,
-  onSwitch,
-}: {
-  mode: SearchMode;
-  query: string;
-  onSwitch: () => void;
-}) {
+// EmptyResult says which mode came up empty. Both sentences are answers rather
+// than apologies: Find legitimately finds nothing when the words are not there,
+// and Ask can now say the library covers nothing — which it could not do at all
+// before the distance bound, since a KNN query always returned its k nearest.
+//
+// It offers no way out. The other tab is one visible click away with its own
+// text, and a suggestion here would be guessing at what the reader wants next.
+function EmptyResult({ mode }: { mode: SearchMode }) {
   return (
-    <div className="noresults">
-      <p>
-        {mode === "find"
-          ? `None of your transcripts contain those words.`
-          : `Nothing in your library covers that.`}
-      </p>
-      <button type="button" className="linkish" onClick={onSwitch}>
-        {mode === "find"
-          ? `Put "${query}" in Ask instead`
-          : `Put "${query}" in Find instead`}
-      </button>
-    </div>
+    <p className="noresults">
+      {mode === "find"
+        ? `None of your transcripts contain those words.`
+        : `Nothing in your library covers that.`}
+    </p>
   );
 }
