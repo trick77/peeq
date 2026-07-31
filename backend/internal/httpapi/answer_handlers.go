@@ -217,7 +217,7 @@ func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVid
 			vids = append(vids, answerVideo{
 				ID: v.ID, Title: v.Title, ChannelID: v.ChannelID,
 				ChannelName: v.ChannelName, DurationSeconds: v.DurationSeconds,
-				HasThumbnail: v.ThumbnailPath != "",
+				HasThumbnail: v.HasThumbnail,
 			})
 		}
 		perVideo[h.VideoID]++

@@ -16,10 +16,14 @@ package captionfetch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -75,6 +79,7 @@ type VideoStore interface {
 	Upsert(v videos.Video) error
 	SetStatus(id, status, errMsg string) error
 	SetSubtitle(id, relPath, audioLang string) error
+	SetTranscript(id, source, vtt string) error
 	SetSummaryStatus(id, status, errMsg string) error
 }
 
@@ -86,9 +91,12 @@ type SummaryQueue interface {
 // Deps are the worker's collaborators. Fetcher, Ledger, Videos and Summaries
 // are required.
 type Deps struct {
-	Fetcher   SubtitleFetcher
-	Ledger    Ledger
-	Videos    VideoStore
+	Fetcher SubtitleFetcher
+	Ledger  Ledger
+	Videos  VideoStore
+	// MediaDir is where the fetched caption lands before it is read into the
+	// row; required, since a caption that cannot be read cannot be summarized.
+	MediaDir  string
 	Summaries SummaryQueue
 	// DefaultSubLang is the caption language to request, mirroring the download
 	// worker's. It must agree with what a download would ask for: if the two
@@ -193,6 +201,16 @@ func (w *Worker) pass(ctx context.Context) {
 		return
 	}
 
+	// The transcript goes into the row and the file it came from goes away
+	// (migration 0023). source='caption' is what the ".summaries/" path prefix
+	// used to say: this video was read to help decide whether to download it, so
+	// the analysis it gets is deliberately truncated.
+	if err := w.storeTranscript(c.VideoID, relPath); err != nil {
+		w.d.Logger.Error("captionfetch: save transcript failed", "video_id", c.VideoID, "err", err)
+		return
+	}
+	// audio_language still rides on the subtitle write; the path it records is
+	// now only of interest to the import worker, and is about to be dead.
 	if err := w.d.Videos.SetSubtitle(c.VideoID, relPath, w.d.DefaultSubLang); err != nil {
 		w.d.Logger.Error("captionfetch: save subtitle failed", "video_id", c.VideoID, "err", err)
 		return
@@ -266,4 +284,37 @@ func refused(err error) bool {
 		errors.Is(err, ytdlp.ErrPaused) ||
 		errors.Is(err, ytdlp.ErrCookieExpired) ||
 		errors.Is(err, ytdlp.ErrBlocked)
+}
+
+// storeTranscript reads the .vtt yt-dlp just fetched into the row and removes
+// the file, so a caption read leaves nothing behind in the media tree.
+//
+// The read is the only part that can fail usefully: if the text does not land
+// in the database there is nothing to summarize, so the caller must not enqueue
+// the analysis. The unlink is best-effort — a file left behind is tidied by the
+// import worker, or by the next caption fetch overwriting it.
+func (w *Worker) storeTranscript(videoID, relPath string) error {
+	safe, err := media.SafeMediaPath(w.d.MediaDir, relPath)
+	if err != nil {
+		return fmt.Errorf("resolve caption path: %w", err)
+	}
+	data, err := os.ReadFile(safe)
+	if err != nil {
+		return fmt.Errorf("read caption: %w", err)
+	}
+	if err := w.d.Videos.SetTranscript(videoID, videos.TranscriptSourceCaption, string(data)); err != nil {
+		return err
+	}
+	// A traversal guard before the RemoveAll, for the reason the inbox-ignore
+	// path used to carry one: SafeMediaPath accepts a relative path that cleans
+	// to "." — so an id of "../.." would resolve .summaries/<id> to the media
+	// dir itself, and a bare RemoveAll would wipe the whole tree. A real video
+	// id is always a single path segment.
+	if videoID == "." || videoID == ".." || filepath.Base(videoID) != videoID {
+		return nil
+	}
+	if dir, derr := media.SafeMediaPath(w.d.MediaDir, ytdlp.SummaryDir("", videoID)); derr == nil {
+		_ = os.RemoveAll(dir)
+	}
+	return nil
 }

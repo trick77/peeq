@@ -30,8 +30,14 @@ type Channel struct {
 	Handle      string
 	Name        string
 	Description string
+	// AvatarPath and BannerPath are where the image FILES lived. Since migration
+	// 0023 the images live in channel_images; the columns survive only as the
+	// import worker's map of where to look. HasAvatar/HasBanner are what every
+	// reader actually wants, answered from the stored bytes.
 	AvatarPath  string
 	BannerPath  string
+	HasAvatar   bool
+	HasBanner   bool
 	Subscribers int64
 	Verified    bool
 	ResolvedAt  string
@@ -342,6 +348,8 @@ func (s *Store) Get(id string) (*Channel, error) {
 // Shared so a reader that joins channels (the metadata claims) cannot drift
 // from Get's column order, which scanChannel depends on.
 const channelColumns = `c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
+       EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'avatar') AS has_avatar,
+       EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'banner') AS has_banner,
        c.subscriber_count, c.verified,
        COALESCE(c.resolved_at, ''), c.resolve_ok, COALESCE(c.added_at, ''), c.first_seen_at,
        c.auto_summary`
@@ -354,7 +362,7 @@ type rowScanner interface{ Scan(dest ...any) error }
 func scanChannel(row rowScanner) (*Channel, error) {
 	var c Channel
 	if err := row.Scan(&c.ID, &c.Handle, &c.Name, &c.Description,
-		&c.AvatarPath, &c.BannerPath, &c.Subscribers, &c.Verified,
+		&c.AvatarPath, &c.BannerPath, &c.HasAvatar, &c.HasBanner, &c.Subscribers, &c.Verified,
 		&c.ResolvedAt, &c.ResolveOk, &c.AddedAt, &c.FirstSeenAt, &c.AutoSummary); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -410,6 +418,8 @@ WITH lv AS (
   GROUP BY channel_id
 )
 SELECT c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
+       EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'avatar'),
+       EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'banner'),
        COALESCE(c.resolved_at, ''), COALESCE(c.added_at, ''), c.first_seen_at,
        s.channel_id IS NOT NULL AS subscribed,
        COALESCE(s.autodownload, 0), COALESCE(s.format_override, ''), c.auto_summary,
@@ -465,6 +475,7 @@ WHERE (c.added_at IS NOT NULL OR ` + hasDownloadsPredicate + `)`
 		var it ListItem
 		if err := rows.Scan(
 			&it.ID, &it.Handle, &it.Name, &it.Description, &it.AvatarPath, &it.BannerPath,
+			&it.HasAvatar, &it.HasBanner,
 			&it.ResolvedAt, &it.AddedAt, &it.FirstSeenAt,
 			&it.Subscribed, &it.Autodownload, &it.FormatOverride, &it.AutoSummary,
 			&it.PendingCount, &it.DownloadedCount,

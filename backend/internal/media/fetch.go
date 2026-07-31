@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -43,39 +41,23 @@ var imageExts = map[string]string{
 	"image/webp": ".webp",
 }
 
-// FetchImage downloads url into mediaDir under relBase (a path relative to
-// mediaDir, WITHOUT an extension — the extension comes from the response's
-// content type) and returns the stored path relative to mediaDir.
+// FetchImageBytes downloads url and returns the image bytes plus the content
+// type to serve them as. Nothing is written to disk: since migration 0023 every
+// image peeq caches — channel avatars and banners, inbox posters — lives in the
+// database, so the bytes go straight to a row.
 //
-// relBase is CONTAINMENT-CHECKED before anything is written: callers build it
-// by interpolating an id (".channels/"+channelID+"/avatar"), and an id
-// carrying "../" would otherwise resolve outside mediaDir, since
-// filepath.Join cleans the traversal away rather than rejecting it. Every
-// read path already goes through SafeMediaPath; this is the write side of the
-// same rule, enforced here rather than at each call site so no future caller
-// has to remember it.
-//
-// An empty url is a no-op returning ("", nil): a channel with no banner is
+// An empty url is a no-op returning ("", nil, nil): a channel with no banner is
 // normal, not an error.
-func FetchImage(ctx context.Context, url, mediaDir, relBase string) (string, error) {
+//
+// The response is vetted before it is accepted: a non-200 becomes a
+// *FetchStatusError so the caller can tell a permanent 404 from a transient
+// blip, a content type outside imageExts is refused (an HTML error page served
+// with a 200 must never be stored as if it were an avatar), and the body is
+// read one byte past the cap so an oversize response is detected rather than
+// silently truncated.
+func FetchImageBytes(ctx context.Context, url string) (string, []byte, error) {
 	if url == "" {
-		return "", nil
-	}
-	if mediaDir == "" {
-		return "", fmt.Errorf("fetch image: media dir not configured")
-	}
-	// Checked BEFORE the request, not just before the write: a relBase that
-	// points outside mediaDir is a caller bug, and there is no reason to
-	// spend a network fetch discovering it.
-	absMediaDir, err := filepath.Abs(mediaDir)
-	if err != nil {
-		return "", fmt.Errorf("fetch image: resolve media dir: %w", err)
-	}
-	if relBase == "" || filepath.IsAbs(relBase) {
-		return "", fmt.Errorf("fetch image: relative destination required, got %q", relBase)
-	}
-	if err := requireWithin(absMediaDir, filepath.Join(absMediaDir, relBase)); err != nil {
-		return "", fmt.Errorf("fetch image: %w", err)
+		return "", nil, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -83,47 +65,28 @@ func FetchImage(ctx context.Context, url, mediaDir, relBase string) (string, err
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", fmt.Errorf("fetch image: %w", err)
+		return "", nil, fmt.Errorf("fetch image: %w", err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetch image: %w", err)
+		return "", nil, fmt.Errorf("fetch image: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", &FetchStatusError{StatusCode: resp.StatusCode}
+		return "", nil, &FetchStatusError{StatusCode: resp.StatusCode}
 	}
 
 	ctype := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
-	ext, ok := imageExts[strings.ToLower(ctype)]
-	if !ok {
-		return "", fmt.Errorf("%w %q", ErrUnsupportedContentType, ctype)
+	if _, ok := imageExts[strings.ToLower(ctype)]; !ok {
+		return "", nil, fmt.Errorf("%w %q", ErrUnsupportedContentType, ctype)
 	}
 
-	// Read one byte past the cap so an exactly-at-limit body still succeeds
-	// while an oversize one is detected rather than silently truncated.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
 	if err != nil {
-		return "", fmt.Errorf("fetch image: %w", err)
+		return "", nil, fmt.Errorf("fetch image: %w", err)
 	}
 	if len(body) > maxImageBytes {
-		return "", fmt.Errorf("fetch image: body exceeds %d bytes", maxImageBytes)
+		return "", nil, fmt.Errorf("fetch image: body exceeds %d bytes", maxImageBytes)
 	}
-
-	rel := relBase + ext
-	dest := filepath.Join(mediaDir, rel)
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return "", fmt.Errorf("fetch image: %w", err)
-	}
-	// Write to a temp file and rename, so a reader never observes a partial
-	// image and a failed write cannot leave a corrupt one behind.
-	tmp := dest + ".tmp"
-	if err := os.WriteFile(tmp, body, 0o644); err != nil {
-		return "", fmt.Errorf("fetch image: %w", err)
-	}
-	if err := os.Rename(tmp, dest); err != nil {
-		_ = os.Remove(tmp)
-		return "", fmt.Errorf("fetch image: %w", err)
-	}
-	return rel, nil
+	return strings.ToLower(ctype), body, nil
 }

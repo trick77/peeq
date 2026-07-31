@@ -314,6 +314,10 @@ func TestReprocessEnqueues(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
+	// Reprocess gates on the stored transcript, not on subtitle_path.
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
 	if err := deps.Videos.SetSummary("v1", "The old summary.",
 		`[{"ts":0,"title":"Intro","source":"mimo"}]`, `[{"ts":5,"text":"Old point."}]`); err != nil {
 		t.Fatalf("seed summary: %v", err)
@@ -424,6 +428,10 @@ func TestReprocess_noJobsConfigured503(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
+	// Reprocess gates on the stored transcript, not on subtitle_path.
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
@@ -525,6 +533,10 @@ func TestReprocess_downloadInFlightReturns409(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("seed downloaded: %v", err)
 			}
+			// Reprocess gates on the stored transcript, not on subtitle_path.
+			if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+				t.Fatalf("seed transcript: %v", err)
+			}
 			if err := deps.Videos.Tombstone("v1"); err != nil {
 				t.Fatalf("tombstone v1: %v", err)
 			}
@@ -566,6 +578,10 @@ func TestReprocess_tombstonedWithSubtitleReturns202(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
+	// Reprocess gates on the stored transcript, not on subtitle_path.
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
 	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
 		t.Fatalf("seed summary status: %v", err)
 	}
@@ -603,6 +619,10 @@ func TestReprocess_downloadedWithSubtitleReturns202(t *testing.T) {
 		SubtitleRelPath: "v1.en.vtt",
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
+	}
+	// Reprocess gates on the stored transcript, not on subtitle_path.
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
 	}
 	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
 		t.Fatalf("seed summary status: %v", err)
@@ -651,6 +671,10 @@ func TestReprocess_categoryResetFailure500(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
+	// Reprocess gates on the stored transcript, not on subtitle_path.
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
 	// Block only the category UPDATE, so the handler reaches the reset with
 	// every earlier write having succeeded.
 	if _, err := db.Exec(`CREATE TRIGGER no_category BEFORE UPDATE OF category ON videos
@@ -684,6 +708,10 @@ func TestReprocess_clearSummaryFailureIs500(t *testing.T) {
 		SubtitleRelPath: "v1.en.vtt",
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
+	}
+	// Reprocess gates on the stored transcript, not on subtitle_path.
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
 	}
 	if err := deps.Videos.SetSummary("v1", "the old summary", "", ""); err != nil {
 		t.Fatalf("seed summary: %v", err)
@@ -725,6 +753,10 @@ func TestReprocess_sponsorblockResetFailureIs500(t *testing.T) {
 		SubtitleRelPath: "v1.en.vtt",
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
+	}
+	// Reprocess gates on the stored transcript, not on subtitle_path.
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
 	}
 	spy := &spySummaryJobs{}
 	deps.SummaryJobs = spy
@@ -1055,6 +1087,9 @@ func TestReprocessMarksIndexStale(t *testing.T) {
 	if _, err := db.Exec(
 		`UPDATE videos SET media_path='m.mp4', subtitle_path='s.vtt' WHERE id='v1'`); err != nil {
 		t.Fatal(err)
+	}
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
 	}
 	seedChunks(t, ragStore, "v1", []rag.ChunkRow{{Ordinal: 0, Text: "old summary", StartSeconds: 0}})
 	if _, err := db.Exec(`UPDATE videos SET embed_rev=? WHERE id='v1'`, rag.ChunkRecipeRev); err != nil {

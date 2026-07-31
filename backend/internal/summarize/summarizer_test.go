@@ -132,8 +132,7 @@ func TestClassifyRendersHintsOnePerLine(t *testing.T) {
 	if _, err := s.Classify(context.Background(), "Is aero worth it?", "A cycling video.",
 		[]videos.Category{
 			{ID: "sports", Label: "Sports & Fitness", Hint: "cycling, running, gym"},
-			{ID: "gaming", Label: "Gaming"},
-		}); err != nil {
+			{ID: "gaming", Label: "Gaming"}}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(gotSystem, "- sports (Sports & Fitness): cycling, running, gym") {

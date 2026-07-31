@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -400,17 +399,17 @@ func TestScan_prefetchesPendingThumbnail(t *testing.T) {
 		t.Fatalf("newp state = %q, want pending", h.ledgerState("newp"))
 	}
 
-	want := filepath.Join(h.mediaDir, ".pending", "newp", "thumbnail.jpg")
+	// The poster is cached on the ledger row, not under .pending/ (0023).
 	var found bool
 	for i := 0; i < 200; i++ {
-		if _, err := os.Stat(want); err == nil {
+		if t, err := h.ledger.GetThumbnail("newp"); err == nil && t != nil {
 			found = true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	if !found {
-		t.Fatalf("prefetched thumbnail not written to %s", want)
+		t.Fatal("prefetched thumbnail was not stored on the ledger row")
 	}
 }
 
@@ -2188,5 +2187,30 @@ func TestScan_rescheduleSurvivesALostRankQuery(t *testing.T) {
 	got := h.sched.nextScanAt("UC1")
 	if want := fixedNow.Add(24 * time.Hour).Format(sqlTimeLayout); got != want {
 		t.Fatalf("fell back to %q, want a plain interval out (%q)", got, want)
+	}
+}
+
+// A prefetch whose fetch fails stores nothing and does not fail the scan: the
+// serve endpoint retries on demand, which is the whole reason the prefetch is
+// best-effort.
+func TestScan_prefetchFailureStoresNothing(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "gone", http.StatusNotFound)
+	}))
+	defer dead.Close()
+
+	h := newScanHarness(t)
+	h.addAndSubscribe("UC1", false, "")
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "pf1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=pf1",
+		State: channelvideos.StatePending,
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	h.sched.prefetchPendingThumbnail("pf1", dead.URL)
+
+	if got, err := h.ledger.GetThumbnail("pf1"); err != nil || got != nil {
+		t.Fatalf("stored a poster from a failed fetch: %v, %v", got, err)
 	}
 }

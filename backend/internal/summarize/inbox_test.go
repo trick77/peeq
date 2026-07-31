@@ -60,6 +60,31 @@ func writeInboxCaption(t *testing.T, h *workerHarness, id string) string {
 	return rel
 }
 
+// seedTranscript stores the .vtt at rel on the video's row, the way the
+// download worker and the caption fetcher now do, and keeps writing
+// subtitle_path so the tests still describe where the file came from.
+//
+// The source follows the path: a caption under .summaries/ was read to inform
+// an inbox decision, anything else arrived with a download. That is exactly the
+// rule migration 0023 turned from a path-prefix guess into a stored fact.
+func seedTranscript(t *testing.T, h *workerHarness, id, rel string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(h.mediaDir, rel))
+	if err != nil {
+		t.Fatalf("read seeded vtt: %v", err)
+	}
+	source := videos.TranscriptSourceDownload
+	if strings.HasPrefix(filepath.ToSlash(rel), ytdlp.SummaryDirName+"/") {
+		source = videos.TranscriptSourceCaption
+	}
+	if err := h.videos.SetTranscript(id, source, string(data)); err != nil {
+		t.Fatalf("set transcript: %v", err)
+	}
+	if err := h.videos.SetSubtitle(id, rel, "en"); err != nil {
+		t.Fatalf("set subtitle: %v", err)
+	}
+}
+
 // TestInboxVideoStopsAfterTheSummary is the cost promise. A video peeq read to
 // help decide whether to download it gets the prose and nothing else: no
 // classify call, no embeddings, no key points. Every one of those is an
@@ -71,9 +96,7 @@ func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "inbox1", URL: "https://youtu.be/inbox1"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := h.videos.SetSubtitle("inbox1", rel, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "inbox1", rel)
 	if err := h.videos.SetStatus("inbox1", videos.StatusNew, ""); err != nil {
 		t.Fatalf("set status: %v", err)
 	}
@@ -88,8 +111,7 @@ func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(completer), Embedder: embedder,
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536})
 	if _, err := w.processOne(t.Context()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}
@@ -139,9 +161,7 @@ func TestDownloadingAnInboxVideoSkipsTheSummaryAndRunsTheRest(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "inbox2", URL: "https://youtu.be/inbox2"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := h.videos.SetSubtitle("inbox2", inboxRel, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "inbox2", inboxRel)
 	if err := h.videos.SetStatus("inbox2", videos.StatusNew, ""); err != nil {
 		t.Fatalf("set status: %v", err)
 	}
@@ -154,8 +174,7 @@ func TestDownloadingAnInboxVideoSkipsTheSummaryAndRunsTheRest(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(completer), Embedder: embedder,
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536})
 	if _, err := w.processOne(t.Context()); err != nil {
 		t.Fatalf("inbox pass: %v", err)
 	}
@@ -164,9 +183,7 @@ func TestDownloadingAnInboxVideoSkipsTheSummaryAndRunsTheRest(t *testing.T) {
 	// The download: captions now live with the media, and the status says so.
 	downloadedRel := filepath.Join("UC123", "inbox2", "inbox2.en.vtt")
 	writeVTT(t, filepath.Join(h.mediaDir, downloadedRel))
-	if err := h.videos.SetSubtitle("inbox2", downloadedRel, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "inbox2", downloadedRel)
 	if err := h.videos.SetStatus("inbox2", videos.StatusDownloaded, ""); err != nil {
 		t.Fatalf("set status: %v", err)
 	}
@@ -212,9 +229,7 @@ func TestOrdinaryNewVideoIsNotTreatedAsAnInboxRead(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "v-cancelled", URL: "https://youtu.be/v-cancelled"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := h.videos.SetSubtitle("v-cancelled", rel, "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
-	}
+	seedTranscript(t, h, "v-cancelled", rel)
 	// Exactly what download.Worker.settleCanceled leaves behind.
 	if err := h.videos.SetStatus("v-cancelled", videos.StatusNew, ""); err != nil {
 		t.Fatalf("set status: %v", err)
@@ -228,8 +243,7 @@ func TestOrdinaryNewVideoIsNotTreatedAsAnInboxRead(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(completer), Embedder: embedder,
-		MediaDir: h.mediaDir, EmbedModel: "test-model", EmbedDim: 1536,
-	})
+		EmbedModel: "test-model", EmbedDim: 1536})
 	if _, err := w.processOne(t.Context()); err != nil {
 		t.Fatalf("processOne: %v", err)
 	}

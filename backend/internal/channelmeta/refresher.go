@@ -131,21 +131,11 @@ func (f *Refresher) Resolve(ctx context.Context, channelID string, cached *chann
 		handle = cached.Handle
 	}
 
-	avatarPath, aerr := media.FetchImage(ctx, info.AvatarURL, f.MediaDir, ".channels/"+channelID+"/avatar")
-	if aerr != nil {
-		f.logger().Warn("channel avatar fetch failed", "channel_id", channelID, "err", aerr)
-	}
-	bannerPath, berr := media.FetchImage(ctx, info.BannerURL, f.MediaDir, ".channels/"+channelID+"/banner")
-	if berr != nil {
-		f.logger().Warn("channel banner fetch failed", "channel_id", channelID, "err", berr)
-	}
 	if uerr := f.Channels.SaveResolved(channels.Channel{
 		ID:          channelID,
 		Name:        info.Name,
 		Handle:      handle,
 		Description: info.Description,
-		AvatarPath:  avatarPath,
-		BannerPath:  bannerPath,
 		Subscribers: info.Subscribers,
 		Verified:    info.Verified,
 		ResolvedAt:  now,
@@ -153,5 +143,38 @@ func (f *Refresher) Resolve(ctx context.Context, channelID string, cached *chann
 		f.logger().Error("cache resolved channel", "channel_id", channelID, "err", uerr)
 		return fmt.Errorf("cache resolved channel %s: %w", channelID, uerr)
 	}
+
+	// Artwork goes into the row (migration 0023), and only AFTER SaveResolved:
+	// channel_images has an FK to channels, so storing first would be rejected
+	// for a channel being resolved for the very first time — which is most of
+	// them, and exactly when the artwork is new.
+	//
+	// Best-effort in both directions: a fetch that fails is logged and skipped
+	// rather than stored, so a blip cannot replace good artwork with nothing —
+	// the rule the avatar_path/banner_path COALESCE guards used to encode.
+	f.storeImage(ctx, channelID, channels.ImageAvatar, info.AvatarURL)
+	f.storeImage(ctx, channelID, channels.ImageBanner, info.BannerURL)
 	return nil
+}
+
+// storeImage fetches one piece of channel artwork and stores it on the row.
+//
+// Every failure mode is a warning, never an error the caller acts on: a channel
+// with no banner, a CDN blip and an unreadable response all mean "no new image
+// this time", and the artwork already stored stays exactly as it was.
+func (f *Refresher) storeImage(ctx context.Context, channelID, kind, url string) {
+	if url == "" {
+		return
+	}
+	mime, data, err := media.FetchImageBytes(ctx, url)
+	if err != nil {
+		f.logger().Warn("channel image fetch failed", "channel_id", channelID, "kind", kind, "err", err)
+		return
+	}
+	if len(data) == 0 {
+		return
+	}
+	if err := f.Channels.SetImage(channelID, kind, mime, data); err != nil {
+		f.logger().Warn("channel image store failed", "channel_id", channelID, "kind", kind, "err", err)
+	}
 }

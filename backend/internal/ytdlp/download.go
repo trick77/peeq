@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/sponsorblock"
 )
 
@@ -358,6 +359,11 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 	if err := os.Rename(stagingDir, finalDir); err != nil {
 		return nil, fmt.Errorf("ytdlp: atomic rename to final dir: %w", err)
 	}
+	// The info.json has told us everything it is ever asked: it is read once,
+	// here, and nothing else in peeq opens it. Keeping it meant a file that
+	// survived tombstone, hard delete and channel cascade alike, referenced by
+	// nothing. --write-info-json stays because finalize needs the channel id.
+	_ = os.Remove(filepath.Join(finalDir, videoID+".info.json"))
 
 	mediaPath := filepath.Join(finalDir, videoID+".mp4")
 	fi, err := os.Stat(mediaPath)
@@ -420,14 +426,13 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 	}, nil
 }
 
-// thumbnailExts are the extensions yt-dlp's --write-thumbnail may produce,
-// depending on what format the source thumbnail was served in.
-var thumbnailExts = []string{".jpg", ".jpeg", ".png", ".webp"}
-
 // findThumbnail returns the path to the downloaded thumbnail file in dir,
-// or "" if none of the known extensions is present.
+// or "" if none of the known extensions is present. The extension list lives in
+// media.ThumbnailExts: the thumbnail import worker goes looking for the very
+// same files, and a second copy of the list would be a second thing to keep in
+// lockstep with what yt-dlp actually writes.
 func findThumbnail(dir, videoID string) string {
-	for _, ext := range thumbnailExts {
+	for _, ext := range media.ThumbnailExts {
 		p := filepath.Join(dir, videoID+ext)
 		if _, err := os.Stat(p); err == nil {
 			return p

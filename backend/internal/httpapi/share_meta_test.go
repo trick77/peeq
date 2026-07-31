@@ -141,14 +141,24 @@ func TestShareShell_neverNamesTheVideoID(t *testing.T) {
 }
 
 func TestShareCard_rendersJPEGFromTheThumbnail(t *testing.T) {
-	// Given a shared video with a thumbnail on disk.
+	// Given a shared video whose poster is stored on its row. The card reads
+	// the same bytes the thumbnail endpoint serves — while it decoded a file
+	// instead, an unfurl silently lost its picture for every video whose poster
+	// had already been imported.
 	deps, mediaDir := shareMetaDeps(t)
 	rel := filepath.Join("chan", "v1", "v1.png")
 	writePNG(t, filepath.Join(mediaDir, rel), 640, 360)
+	png, rerr := os.ReadFile(filepath.Join(mediaDir, rel))
+	if rerr != nil {
+		t.Fatalf("read seeded png: %v", rerr)
+	}
 	if err := deps.Videos.Upsert(videos.Video{
-		ID: "v1", URL: "u", Title: "Thumbed", ChannelName: "Chan", ThumbnailPath: rel, DurationSeconds: 60,
+		ID: "v1", URL: "u", Title: "Thumbed", ChannelName: "Chan", DurationSeconds: 60,
 	}); err != nil {
 		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetThumbnail("v1", "image/png", png); err != nil {
+		t.Fatalf("store thumbnail: %v", err)
 	}
 	h := New(deps)
 	share := createShare(t, h, loginAndGetCookie(t, h), "v1", "never")

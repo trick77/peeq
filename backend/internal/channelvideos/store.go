@@ -244,7 +244,7 @@ func (s *Store) ListPending() ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
-       COALESCE(v.subtitle_path, '') <> ''
+       EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id)
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id
@@ -263,7 +263,7 @@ func (s *Store) ListPendingForChannel(channelID string) ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
-       COALESCE(v.subtitle_path, '') <> ''
+       EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id)
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id

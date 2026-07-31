@@ -8,13 +8,10 @@ import (
 	_ "image/gif" // register decoders for whatever yt-dlp's --write-thumbnail produced
 	_ "image/jpeg"
 	_ "image/png"
-	"io"
 	"net/http"
-	"os"
 	"strings"
 	"unicode"
 
-	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/sharecard"
 	"github.com/trick77/peeq/internal/videos"
 	_ "golang.org/x/image/webp" // yt-dlp thumbnails are frequently .webp (decode-only)
@@ -170,7 +167,7 @@ func (s *server) handleShareCard(w http.ResponseWriter, r *http.Request) {
 	if v == nil {
 		return
 	}
-	jpg, err := sharecard.Render(s.loadThumbnail(v.ThumbnailPath), v.Title, shareCardSubtitle(v))
+	jpg, err := sharecard.Render(s.loadThumbnail(v.ID), v.Title, shareCardSubtitle(v))
 	if err != nil {
 		serverError(w, r, err, "render share card failed")
 		return
@@ -180,27 +177,22 @@ func (s *server) handleShareCard(w http.ResponseWriter, r *http.Request) {
 	w.Write(jpg)
 }
 
-// loadThumbnail decodes a stored thumbnail, or returns nil — missing, unsafe,
+// loadThumbnail decodes a video's stored poster, or returns nil — missing,
 // unreadable and undecodable all mean "no image", and the card falls back to its
 // text-only layout instead of the whole unfurl failing.
-func (s *server) loadThumbnail(storedPath string) image.Image {
-	if storedPath == "" {
+//
+// It reads the same bytes the thumbnail endpoint serves (migration 0023). While
+// this decoded a file and its sibling endpoint read the row, an unfurl silently
+// lost its picture for every video whose poster had been imported.
+func (s *server) loadThumbnail(videoID string) image.Image {
+	if s.videos == nil {
 		return nil
 	}
-	safe, err := media.SafeMediaPath(s.mediaDir, storedPath)
-	if err != nil {
+	t, err := s.videos.GetThumbnail(videoID)
+	if err != nil || t == nil {
 		return nil
 	}
-	f, err := os.Open(safe)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, 16<<20))
-	if err != nil {
-		return nil
-	}
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, _, err := image.Decode(bytes.NewReader(t.Bytes))
 	if err != nil {
 		return nil
 	}

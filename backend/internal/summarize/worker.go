@@ -5,20 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/llm"
-	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/subtitles"
 	"github.com/trick77/peeq/internal/summaryjobs"
 	"github.com/trick77/peeq/internal/videos"
-	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // Embedder is the subset of rag.EmbedClient the worker needs. Batched, because
@@ -42,7 +38,6 @@ type WorkerDeps struct {
 	Rag          *rag.Store
 	Summarizer   *Summarizer
 	Embedder     Embedder
-	MediaDir     string
 	EmbedModel   string
 	EmbedDim     int
 	PollInterval time.Duration
@@ -159,8 +154,12 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// before the analysis is announced: a video that is never analyzed must not
 	// log a start line, or an import of subtitle-less videos fills the log with
 	// analyses that begin and never end.
-	if video.SubtitlePath == "" {
-		w.finishNoTranscript(job, video, "no subtitle file")
+	transcript, terr := w.d.Videos.GetTranscript(video.ID)
+	if terr != nil {
+		return true, w.failJob(job, video, run, "load transcript: "+terr.Error())
+	}
+	if transcript == nil {
+		w.finishNoTranscript(job, video, "no transcript")
 		return true, nil
 	}
 
@@ -171,17 +170,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		w.emit(video.ID, videos.SummaryRunning, PhaseSummarizing)
 	}
 
-	safe, err := media.SafeMediaPath(w.d.MediaDir, video.SubtitlePath)
-	if err != nil {
-		return true, w.failJob(job, video, run, "unsafe subtitle path")
-	}
-	f, err := os.Open(safe)
-	if err != nil {
-		w.finishNoTranscript(job, video, "subtitle file unreadable")
-		return true, nil
-	}
-	parsed, perr := subtitles.ParseVTT(f)
-	f.Close()
+	parsed, perr := subtitles.ParseVTT(strings.NewReader(transcript.VTT))
 	if perr != nil {
 		return true, w.failJob(job, video, run, "parse vtt: "+perr.Error())
 	}
@@ -242,7 +231,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// checks around this block mean that job spends nothing on the summary and
 	// runs exactly the three steps deferred here. That is the whole reason
 	// deciding to download never pays for the expensive call twice.
-	if isInboxRead(video) {
+	if isInboxRead(video, transcript.Source) {
 		if err := w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryDone, ""); err != nil {
 			return true, w.failJob(job, video, run, err.Error())
 		}
@@ -577,13 +566,14 @@ func (r *analysisRun) finished(outcome string) {
 //
 // The path is not, because it is only meaningful in combination: it says where
 // the .vtt came from, and captionfetch is the sole writer under
-// ytdlp.SummaryDirName. Once the video is downloaded, SetDownloaded repoints
-// subtitle_path at the real media directory, so the same row stops matching
-// here and its next summary job runs the full pipeline — which is exactly the
-// handover this feature promises.
-func isInboxRead(v *videos.Video) bool {
-	return v.Status == videos.StatusNew &&
-		strings.HasPrefix(filepath.ToSlash(v.SubtitlePath), ytdlp.SummaryDirName+"/")
+// video's stored transcript. Before migration 0023 that was inferred from a
+// ".summaries/" prefix on subtitle_path; the text no longer has a path, so the
+// provenance is recorded on the row instead. Once the video is downloaded, the
+// download worker stores its transcript with source='download' — overwriting,
+// not skipping — so the same row stops matching here and its next summary job
+// runs the full pipeline, which is exactly the handover this feature promises.
+func isInboxRead(v *videos.Video, source string) bool {
+	return v.Status == videos.StatusNew && source == videos.TranscriptSourceCaption
 }
 
 // finishNoTranscript closes out a video that has nothing to summarize. It is a

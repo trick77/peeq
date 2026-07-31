@@ -6,8 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -178,23 +176,11 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	if handle == "" {
 		handle = info.Handle
 	}
-	// Images are best-effort: a channel with no banner, or a transient fetch
-	// failure, must not prevent the channel from being added.
-	avatarPath, err := media.FetchImage(r.Context(), info.AvatarURL, s.mediaDir, ".channels/"+ucid+"/avatar")
-	if err != nil {
-		slog.Warn("channel avatar fetch failed", "channel_id", ucid, "err", err)
-	}
-	bannerPath, err := media.FetchImage(r.Context(), info.BannerURL, s.mediaDir, ".channels/"+ucid+"/banner")
-	if err != nil {
-		slog.Warn("channel banner fetch failed", "channel_id", ucid, "err", err)
-	}
 	if err := s.channels.SaveResolved(channels.Channel{
 		ID:          ucid,
 		Name:        name,
 		Handle:      handle,
 		Description: info.Description,
-		AvatarPath:  avatarPath,
-		BannerPath:  bannerPath,
 		Subscribers: info.Subscribers,
 		Verified:    info.Verified,
 		ResolvedAt:  time.Now().UTC().Format("2006-01-02 15:04:05"),
@@ -202,6 +188,16 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "adding the channel failed")
 		return
 	}
+	// Artwork lands in the row rather than the media tree (migration 0023), and
+	// only AFTER SaveResolved: channel_images has an FK to channels, so storing
+	// first would be rejected for exactly the case this handler is — a channel
+	// being added for the first time.
+	//
+	// Best-effort: a channel with no banner, or a transient fetch failure, must
+	// not prevent the channel from being added.
+	s.storeChannelImage(r.Context(), ucid, channels.ImageAvatar, info.AvatarURL)
+	s.storeChannelImage(r.Context(), ucid, channels.ImageBanner, info.BannerURL)
+
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	if err := s.channels.MarkAdded(ucid, now); err != nil {
 		serverError(w, r, err, "adding the channel failed")
@@ -280,8 +276,8 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 			PendingCount:    it.PendingCount,
 			DownloadedCount: it.DownloadedCount,
 			Added:           it.AddedAt != "",
-			HasAvatar:       it.AvatarPath != "",
-			HasBanner:       it.BannerPath != "",
+			HasAvatar:       it.HasAvatar,
+			HasBanner:       it.HasBanner,
 			Dormant:         it.Dormant,
 			LastVideoAt:     it.LastVideoAt,
 			FirstSeenAt:     it.FirstSeenAt,
@@ -419,8 +415,8 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 	if c != nil {
 		out.Handle = c.Handle
 		out.Description = c.Description
-		out.HasAvatar = c.AvatarPath != ""
-		out.HasBanner = c.BannerPath != ""
+		out.HasAvatar = c.HasAvatar
+		out.HasBanner = c.HasBanner
 		out.Subscribers = c.Subscribers
 		out.Verified = c.Verified
 		out.ResolvedAt = c.ResolvedAt
@@ -1197,54 +1193,46 @@ func (s *server) dropInboxRead(r *http.Request, e *channelvideos.Entry, id strin
 	if err != nil || v == nil || v.Status != videos.StatusNew {
 		return
 	}
-	if v.SubtitlePath != "" && !isSummaryDirPath(v.SubtitlePath) {
+	// Only a row whose transcript came from a caption READ may be discarded: a
+	// downloaded video's analysis is not this endpoint's to throw away. Since
+	// migration 0023 that is a recorded fact rather than a guess at a path
+	// prefix.
+	source, serr := s.videos.TranscriptSource(id)
+	if serr != nil {
+		slog.WarnContext(r.Context(), "ignore: read transcript source failed", "video_id", id, "err", serr)
 		return
 	}
+	if source != "" && source != videos.TranscriptSourceCaption {
+		return
+	}
+	// Discard takes the row, and the transcript goes with it on the cascade.
 	if err := s.videos.Discard(id); err != nil {
 		slog.WarnContext(r.Context(), "ignore: discard inbox video row failed", "video_id", id, "err", err)
 		return
 	}
-	// The same traversal guard as removePendingThumbnail, for the same reason:
-	// a real video id is always a single path segment, and RemoveAll on a
-	// computed path deserves the check even where SafeMediaPath follows.
-	if s.mediaDir == "" || filepath.Base(id) != id || id == "." || id == ".." {
-		return
-	}
-	if safe, err := media.SafeMediaPath(s.mediaDir, filepath.Join(ytdlp.SummaryDirName, id)); err == nil {
-		_ = os.RemoveAll(safe)
-	}
 }
 
-// isSummaryDirPath reports whether relPath is a caption file the inbox caption
-// fetcher wrote, as opposed to one that arrived with a download.
-func isSummaryDirPath(relPath string) bool {
-	return strings.HasPrefix(filepath.ToSlash(relPath), ytdlp.SummaryDirName+"/")
-}
-
-// removePendingThumbnail drops a pending video's cached thumbnail directory
-// (.pending/<id>/). Best-effort: it is called when the item leaves the inbox
-// (ignored, or promoted to a real download that will write its own thumbnail),
-// so leaving the cache behind would only accumulate. A failure here must never
-// fail the request that triggered it.
+// removePendingThumbnail drops a pending video's cached poster. Best-effort: it
+// is called when the item leaves the inbox (ignored, or promoted to a real
+// download that will write its own poster), so leaving the cache behind would
+// only accumulate. A failure here must never fail the request that triggered it.
+//
+// This is the PRIMARY reclaim path, not a nicety. The ledger row survives every
+// one of those transitions — only its state flips — so the ON DELETE CASCADE on
+// pending_thumbnails never fires here; the cascade covers channel deletion.
 func (s *server) removePendingThumbnail(id string) {
-	if s.mediaDir == "" || id == "" {
+	if s.ledger == nil || id == "" {
 		return
 	}
-	// Guard against a traversal id: PendingThumbDir("..") cleans to the media
-	// dir itself, which SafeMediaPath accepts (rel == "."), so a bare RemoveAll
-	// would wipe the whole media tree. A real video id is always a single path
-	// segment.
-	if filepath.Base(id) != id || id == "." || id == ".." {
-		return
-	}
-	if safe, err := media.SafeMediaPath(s.mediaDir, media.PendingThumbDir(id)); err == nil {
-		_ = os.RemoveAll(safe)
+	if err := s.ledger.DeleteThumbnail(id); err != nil {
+		slog.Warn("remove pending thumbnail failed", "video_id", id, "err", err)
 	}
 }
 
-// handlePendingThumbnail serves a pending (inbox) video's thumbnail off local
-// disk, fetching and caching it from YouTube on first request (and re-fetching
-// if it ever vanishes). This is what keeps an inbox card from loading
+// handlePendingThumbnail serves a pending (inbox) video's poster from its
+// ledger row, fetching and caching it from YouTube on first request (and
+// re-fetching if it was never cached). This is what keeps an inbox card from
+// loading
 // i.ytimg.com directly in the browser, and — via the hqdefault fallback and
 // the UI's gradient placeholder on a 404 — from ever showing a broken-image
 // glyph. See media.EnsurePendingThumbnail.
@@ -1271,31 +1259,28 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 		http.NotFound(w, r)
 		return
 	}
-	rel, err := media.EnsurePendingThumbnail(r.Context(), s.mediaDir, id, e.ThumbnailURL)
+	t, err := s.ledger.GetThumbnail(id)
 	if err != nil {
-		// Both candidates failed. The UI renders its gradient placeholder on a
-		// 404, exactly like a downloaded video with no poster.
-		http.NotFound(w, r)
+		serverError(w, r, err, "load pending thumbnail failed")
 		return
 	}
-	path, err := media.SafeMediaPath(s.mediaDir, rel)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		http.NotFound(w, r)
-		return
+	if t == nil {
+		// Not cached yet — fetch it now and keep it. The scan prefetches these,
+		// so this is the fill-in for an item the prefetch missed or lost.
+		mime, data, ferr := media.FetchPendingThumbnail(r.Context(), id, e.ThumbnailURL)
+		if ferr != nil {
+			// Both candidates failed. The UI renders its gradient placeholder on
+			// a 404, exactly like a downloaded video with no poster.
+			http.NotFound(w, r)
+			return
+		}
+		if serr := s.ledger.SetThumbnail(id, mime, data); serr != nil {
+			slog.Warn("store pending thumbnail failed", "video_id", id, "err", serr)
+		}
+		t = &channelvideos.Thumbnail{Mime: mime, Bytes: data}
 	}
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	http.ServeContent(w, r, filepath.Base(path), fi.ModTime(), f)
+	serveStoredImage(w, r, t.Mime, t.Bytes, t.UpdatedAt)
 }
 
 // handleChannelAvatar and handleChannelBanner serve a cached channel image
@@ -1303,47 +1288,51 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 // browser — only these endpoints do — and it is resolved through
 // media.SafeMediaPath so a crafted stored value cannot escape the media dir.
 func (s *server) handleChannelAvatar(w http.ResponseWriter, r *http.Request) {
-	s.serveChannelImage(w, r, func(c *channels.Channel) string { return c.AvatarPath })
+	s.serveChannelImage(w, r, channels.ImageAvatar)
 }
 
 func (s *server) handleChannelBanner(w http.ResponseWriter, r *http.Request) {
-	s.serveChannelImage(w, r, func(c *channels.Channel) string { return c.BannerPath })
+	s.serveChannelImage(w, r, channels.ImageBanner)
 }
 
-func (s *server) serveChannelImage(w http.ResponseWriter, r *http.Request, pick func(*channels.Channel) string) {
+func (s *server) serveChannelImage(w http.ResponseWriter, r *http.Request, kind string) {
 	if s.channels == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
-	c, err := s.channels.Get(r.PathValue("id"))
+	img, err := s.channels.GetImage(r.PathValue("id"), kind)
 	if err != nil {
-		serverError(w, r, err, "load channel failed")
+		serverError(w, r, err, "load channel image failed")
 		return
 	}
-	if c == nil {
+	if img == nil {
 		http.NotFound(w, r)
 		return
 	}
-	stored := pick(c)
-	if stored == "" {
-		http.NotFound(w, r)
+	// Artwork changes at most weekly (the metadata refresher's interval), so a
+	// day of browser caching is safe and saves a request per channel per page.
+	// The pending-thumbnail route has said the same for longer.
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	serveStoredImage(w, r, img.Mime, img.Bytes, img.UpdatedAt)
+}
+
+// storeChannelImage fetches one piece of channel artwork at add time and stores
+// it on the row. Best-effort throughout: a channel with no banner, a CDN blip
+// and an unreadable response all mean "no image", and none of them may stop the
+// channel being added.
+func (s *server) storeChannelImage(ctx context.Context, channelID, kind, url string) {
+	if url == "" || s.channels == nil {
 		return
 	}
-	path, err := media.SafeMediaPath(s.mediaDir, stored)
+	mime, data, err := media.FetchImageBytes(ctx, url)
 	if err != nil {
-		http.NotFound(w, r)
+		slog.Warn("channel image fetch failed", "channel_id", channelID, "kind", kind, "err", err)
 		return
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		http.NotFound(w, r)
+	if len(data) == 0 {
 		return
 	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		http.NotFound(w, r)
-		return
+	if err := s.channels.SetImage(channelID, kind, mime, data); err != nil {
+		slog.Warn("channel image store failed", "channel_id", channelID, "kind", kind, "err", err)
 	}
-	http.ServeContent(w, r, filepath.Base(path), fi.ModTime(), f)
 }

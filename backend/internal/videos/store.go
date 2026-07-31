@@ -41,15 +41,22 @@ import (
 // writes. Fields left at their zero value on Upsert fall back to the
 // column defaults on insert.
 type Video struct {
-	ID                    string
-	URL                   string
-	Title                 string
-	ChannelID             string
-	ChannelName           string
-	DurationSeconds       int64
-	PublishedAt           string
-	Description           string
+	ID              string
+	URL             string
+	Title           string
+	ChannelID       string
+	ChannelName     string
+	DurationSeconds int64
+	PublishedAt     string
+	Description     string
+	// ThumbnailPath is where yt-dlp wrote the poster FILE. Since migration 0022
+	// the poster itself lives in video_thumbnails; this column survives only as
+	// the import worker's map of where to look, and nothing serves from it.
+	// HasThumbnail is the question every reader actually has, and it is answered
+	// from the stored bytes (see videoColumns) — not from this path, which any
+	// metadata write could once blank out from under a perfectly good image.
 	ThumbnailPath         string
+	HasThumbnail          bool
 	MediaPath             string
 	FilesizeBytes         int64
 	FormatUsed            string
@@ -71,7 +78,14 @@ type Video struct {
 	CreatedAt     string
 	DownloadedAt  string
 	AudioLanguage string
+	// SubtitlePath is where the .vtt FILE lived. Since migration 0023 the
+	// transcript text itself lives in video_transcripts; this column survives
+	// only as the import worker's map of where to look. HasTranscript is the
+	// question every reader actually has, and it is answered from the stored
+	// text — not from this path, which the same class of metadata write that
+	// blanked thumbnail_path could blank too.
 	SubtitlePath  string
+	HasTranscript bool
 	Summary       string
 	Chapters      string
 	KeyPoints     string
@@ -126,12 +140,19 @@ func New(db *sql.DB) *Store {
 // (e.g. an initial channel scan seeding both metadata and the override in
 // one Upsert); it is simply excluded from the ON CONFLICT UPDATE SET.
 //
-// published_at and description are refreshed but never CLEARED: several
-// callers legitimately have no date or description to offer (scan's
-// enqueueAuto seeds from a metadata-poor flat listing; the approve-from-inbox
-// path passes id/url/title/duration only), and a plain
+// published_at, description and thumbnail_path are refreshed but never
+// CLEARED: several callers legitimately have no date, description or poster to
+// offer (scan's enqueueAuto seeds from a metadata-poor flat listing; the
+// approve-from-inbox path passes id/url/title/duration only), and a plain
 // `= excluded.published_at` let any of them blank out a good air date on a
 // re-seen id. Filling a hole is fine; punching one is not.
+//
+// thumbnail_path was the unguarded one, and it cost real posters: every channel
+// scan, every inbox caption-fetch and every add-by-URL blanked it on the rows it
+// touched while the image sat untouched on disk. The poster itself now lives in
+// video_thumbnails (migration 0022), so that can no longer make a card go gray —
+// but this column is still how the import worker FINDS a not-yet-imported file,
+// and blanking it would strand exactly the images the worker exists to rescue.
 func (s *Store) Upsert(v Video) error {
 	availability := v.Availability
 	if availability == "" {
@@ -149,7 +170,7 @@ ON CONFLICT(id) DO UPDATE SET
 	duration_seconds = excluded.duration_seconds,
 	published_at    = COALESCE(excluded.published_at, videos.published_at),
 	description     = COALESCE(NULLIF(excluded.description, ''), videos.description),
-	thumbnail_path  = excluded.thumbnail_path,
+	thumbnail_path  = COALESCE(NULLIF(excluded.thumbnail_path, ''), videos.thumbnail_path),
 	availability    = excluded.availability`,
 		v.ID, v.URL, v.Title, v.ChannelID, v.ChannelName, nullInt(v.DurationSeconds),
 		nullStr(v.PublishedAt), v.Description, v.ThumbnailPath, availability, v.RequestedFormat,
@@ -180,11 +201,14 @@ ON CONFLICT(id) DO UPDATE SET
 const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name,
 	v.duration_seconds, v.published_at,
-	v.description, v.thumbnail_path, v.media_path, v.filesize_bytes, v.format_used, v.requested_format,
+	v.description, v.thumbnail_path,
+	EXISTS (SELECT 1 FROM video_thumbnails t WHERE t.video_id = v.id) AS has_thumbnail,
+	v.media_path, v.filesize_bytes, v.format_used, v.requested_format,
 	v.availability, v.status, v.error_message, v.sponsorblock_segments,
 	v.watched, v.watched_at, v.resume_position_seconds, v.state_version, v.favorite, v.favorited_at,
 	v.created_at, v.downloaded_at,
-	v.audio_language, v.subtitle_path, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.embed_rev, v.category,
+	v.audio_language, v.subtitle_path,
+	EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = v.id) AS has_transcript, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.embed_rev, v.category,
 	v.media_container, v.video_codec, v.video_height, v.audio_codec, v.probed_at,
 	v.media_type, v.live_status, v.yt_tags, v.yt_categories`
 
@@ -204,14 +228,14 @@ func scanVideo(rs rowScanner) (Video, error) {
 	var v Video
 	var duration, filesize sql.NullInt64
 	var publishedAt, watchedAt, favoritedAt, downloadedAt, probedAt sql.NullString
-	var watched, favorite int
+	var watched, favorite, hasThumbnail, hasTranscript int
 	err := rs.Scan(
 		&v.ID, &v.URL, &v.Title, &v.ChannelID, &v.ChannelName, &duration, &publishedAt,
-		&v.Description, &v.ThumbnailPath, &v.MediaPath, &filesize, &v.FormatUsed, &v.RequestedFormat,
+		&v.Description, &v.ThumbnailPath, &hasThumbnail, &v.MediaPath, &filesize, &v.FormatUsed, &v.RequestedFormat,
 		&v.Availability, &v.Status, &v.ErrorMessage, &v.SponsorblockSegments,
 		&watched, &watchedAt, &v.ResumePositionSeconds, &v.StateVersion, &favorite, &favoritedAt,
 		&v.CreatedAt, &downloadedAt,
-		&v.AudioLanguage, &v.SubtitlePath, &v.Summary, &v.Chapters, &v.KeyPoints,
+		&v.AudioLanguage, &v.SubtitlePath, &hasTranscript, &v.Summary, &v.Chapters, &v.KeyPoints,
 		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim, &v.EmbedRev, &v.Category,
 		&v.MediaContainer, &v.VideoCodec, &v.VideoHeight, &v.AudioCodec, &probedAt,
 		&v.MediaType, &v.LiveStatus, &v.YTTags, &v.YTCategories,
@@ -220,6 +244,8 @@ func scanVideo(rs rowScanner) (Video, error) {
 		return Video{}, err
 	}
 	v.DurationSeconds = duration.Int64
+	v.HasThumbnail = hasThumbnail != 0
+	v.HasTranscript = hasTranscript != 0
 	v.FilesizeBytes = filesize.Int64
 	v.PublishedAt = publishedAt.String
 	v.Watched = watched != 0

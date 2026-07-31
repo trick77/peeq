@@ -3,6 +3,7 @@ package captionfetch
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ type harness struct {
 	videos   *videos.Store
 	summary  *summaryjobs.Store
 	channels *channels.Store
+	mediaDir string
 }
 
 // newHarness builds a migrated database with one subscribed channel and one
@@ -44,6 +46,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{
 		db: db, ledger: channelvideos.New(db), videos: videos.New(db),
 		summary: summaryjobs.New(db), channels: channels.New(db),
+		mediaDir: t.TempDir(),
 	}
 	if err := h.ledger.Insert(channelvideos.Entry{
 		VideoID: "v1", ChannelID: "UC1", Title: "A video",
@@ -76,7 +79,21 @@ func (f *fetcher) Subtitles(ctx context.Context, videoID, rawURL, subLang string
 }
 
 func (h *harness) worker(f *fetcher) *Worker {
-	return NewWorker(Deps{Fetcher: f, Ledger: h.ledger, Videos: h.videos, Summaries: h.summary})
+	return NewWorker(Deps{Fetcher: f, Ledger: h.ledger, Videos: h.videos, Summaries: h.summary, MediaDir: h.mediaDir})
+}
+
+// writeCaption puts a .vtt where the fetcher claims to have written one. The
+// worker reads it into the row and removes it, so a test that skips this sees
+// the caption treated as never having arrived.
+func writeCaption(t *testing.T, h *harness, rel string) {
+	t.Helper()
+	full := filepath.Join(h.mediaDir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(full, []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nhello\n"), 0o644); err != nil {
+		t.Fatalf("write caption: %v", err)
+	}
 }
 
 // TestCaptionsArriveQueuesExactlyOneSummary is the happy path: a caption file
@@ -85,6 +102,7 @@ func (h *harness) worker(f *fetcher) *Worker {
 func TestCaptionsArriveQueuesExactlyOneSummary(t *testing.T) {
 	h := newHarness(t)
 	rel := filepath.Join(ytdlp.SummaryDirName, "v1", "v1.en.vtt")
+	writeCaption(t, h, rel)
 	f := &fetcher{results: []string{rel}}
 
 	h.worker(f).pass(context.Background())
@@ -98,6 +116,15 @@ func TestCaptionsArriveQueuesExactlyOneSummary(t *testing.T) {
 	}
 	if v.SubtitlePath != rel {
 		t.Fatalf("subtitle_path = %q, want %q", v.SubtitlePath, rel)
+	}
+	// The text is what matters now, and it is stored as a caption read: an
+	// inbox video's analysis stops after the prose.
+	tr, terr := h.videos.GetTranscript("v1")
+	if terr != nil || tr == nil {
+		t.Fatalf("transcript not stored: %v, %v", tr, terr)
+	}
+	if tr.Source != videos.TranscriptSourceCaption {
+		t.Fatalf("source = %q, want caption", tr.Source)
 	}
 	active, err := h.summary.ListActive()
 	if err != nil {
@@ -356,5 +383,42 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return on a cancelled context")
+	}
+}
+
+// A caption that yt-dlp reported but did not actually leave on disk must not
+// queue an analysis: there is nothing to summarize, and a summary job would run
+// against a video with no transcript.
+func TestCaptionUnreadableDoesNotQueueASummary(t *testing.T) {
+	h := newHarness(t)
+	rel := filepath.Join(ytdlp.SummaryDirName, "v1", "v1.en.vtt")
+	f := &fetcher{results: []string{rel}} // no writeCaption: the file is absent
+
+	h.worker(f).pass(context.Background())
+
+	if tr, err := h.videos.GetTranscript("v1"); err != nil || tr != nil {
+		t.Fatalf("a transcript was stored from a file that does not exist: %v, %v", tr, err)
+	}
+	active, err := h.summary.ListActive()
+	if err != nil {
+		t.Fatalf("list active: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("queued %d summaries for a video with no transcript, want 0", len(active))
+	}
+}
+
+// The caption directory goes as soon as its text is in the row, so a read
+// leaves nothing behind in the media tree.
+func TestCaptionArrival_removesTheCaptionDirectory(t *testing.T) {
+	h := newHarness(t)
+	rel := filepath.Join(ytdlp.SummaryDirName, "v1", "v1.en.vtt")
+	writeCaption(t, h, rel)
+	f := &fetcher{results: []string{rel}}
+
+	h.worker(f).pass(context.Background())
+
+	if _, err := os.Stat(filepath.Join(h.mediaDir, ytdlp.SummaryDirName, "v1")); !os.IsNotExist(err) {
+		t.Fatalf("caption directory survived the read (err = %v)", err)
 	}
 }

@@ -310,6 +310,15 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set downloaded: %v", err)
 	}
+	// The poster the card renders lives in the database (migration 0022); the
+	// file above is only what the import worker reads it from.
+	if err := deps.Videos.SetThumbnail("v1", "image/jpeg", []byte("fake thumbnail bytes")); err != nil {
+		t.Fatalf("store thumbnail: %v", err)
+	}
+	// Same for the transcript: the delete must leave both where they are.
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT"); err != nil {
+		t.Fatalf("store transcript: %v", err)
+	}
 
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
@@ -585,25 +594,18 @@ func TestSafeMediaPath_allowsRegularFileInsideMediaDir(t *testing.T) {
 	}
 }
 
-// TestVideosThumbnail_servesFile covers the happy path: a video with a
-// local thumbnail file serves its bytes, and the list/get DTO reports
-// has_thumbnail=true without ever exposing the filesystem path itself.
-func TestVideosThumbnail_servesFile(t *testing.T) {
-	deps, mediaDir := videosTestDeps(t)
-	videoDir := filepath.Join(mediaDir, "chan1", "v1")
-	if err := os.MkdirAll(videoDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	thumbPath := filepath.Join(videoDir, "v1.jpg")
+// TestVideosThumbnail_servesStoredPoster covers the happy path: a video whose
+// poster is stored on its row serves those bytes with the stored mime, and the
+// list/get DTO reports has_thumbnail=true without ever exposing a filesystem
+// path.
+func TestVideosThumbnail_servesStoredPoster(t *testing.T) {
+	deps, _ := videosTestDeps(t)
 	content := []byte("fake jpeg bytes")
-	if err := os.WriteFile(thumbPath, content, 0o644); err != nil {
-		t.Fatalf("write thumbnail file: %v", err)
-	}
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
 		t.Fatalf("seed video: %v", err)
 	}
-	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{ThumbnailPath: thumbPath}); err != nil {
-		t.Fatalf("set downloaded: %v", err)
+	if err := deps.Videos.SetThumbnail("v1", "image/jpeg", content); err != nil {
+		t.Fatalf("store thumbnail: %v", err)
 	}
 
 	h := New(deps)
@@ -615,6 +617,14 @@ func TestVideosThumbnail_servesFile(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != string(content) {
 		t.Fatalf("body = %q, want %q", got, string(content))
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
+		t.Fatalf("Content-Type = %q, want image/jpeg", ct)
+	}
+	// The stored updated_at has to parse, or every poster silently loses its
+	// 304 on every page load and nothing turns red.
+	if lm := rec.Header().Get("Last-Modified"); lm == "" {
+		t.Fatal("no Last-Modified on a served poster: conditional requests are dead")
 	}
 
 	getRec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
