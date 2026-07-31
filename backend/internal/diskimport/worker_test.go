@@ -2,9 +2,11 @@ package diskimport
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/videos"
@@ -432,5 +434,237 @@ func TestPass_doesNotSweepWhileImportsRemain(t *testing.T) {
 
 	if _, err := os.Stat(vtt); err != nil {
 		t.Fatalf("a transcript was swept before the import drained: %v", err)
+	}
+}
+
+// failingStore lets a test drive the two failure branches that matter: a
+// candidate query that errors, and a store that refuses what was read.
+type failingStore struct {
+	*fakeStore
+	listErr  error
+	storeErr error
+	thumbErr error
+}
+
+func (f *failingStore) SetThumbnail(id, mime string, data []byte) error {
+	if f.thumbErr != nil {
+		return f.thumbErr
+	}
+	return f.fakeStore.SetThumbnail(id, mime, data)
+}
+
+func (f *failingStore) TranscriptlessVideos(limit int) ([]videos.TranscriptImportCandidate, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.fakeStore.TranscriptlessVideos(limit)
+}
+
+func (f *failingStore) SetTranscript(id, source, vtt string) error {
+	if f.storeErr != nil {
+		return f.storeErr
+	}
+	return f.fakeStore.SetTranscript(id, source, vtt)
+}
+
+// A store that refuses the text must leave the file alone: the unlink follows a
+// successful store, never precedes it, or a rejected transcript would be lost
+// outright.
+func TestImport_storeFailureKeepsTheFile(t *testing.T) {
+	mediaDir := t.TempDir()
+	dir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := filepath.Join(dir, "v1.en.vtt")
+	if err := os.WriteFile(vtt, []byte("WEBVTT"), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	base := newFakeStore()
+	base.transcriptCandidates = []videos.TranscriptImportCandidate{{ID: "v1", ChannelID: "chan1"}}
+	store := &failingStore{fakeStore: base, storeErr: errors.New("refused")}
+
+	NewWorker(Deps{Videos: store, MediaDir: mediaDir}).pass(context.Background())
+
+	if _, err := os.Stat(vtt); err != nil {
+		t.Fatalf("the file was removed even though the store refused it: %v", err)
+	}
+}
+
+// A failed candidate query must not read as "nothing left to import", or the
+// sweep would run on a library it never actually looked at.
+func TestPass_listFailureDoesNotLookDrained(t *testing.T) {
+	mediaDir := t.TempDir()
+	dir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	stray := filepath.Join(dir, "v1.en.vtt")
+	if err := os.WriteFile(stray, []byte("WEBVTT"), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	store := &failingStore{fakeStore: newFakeStore(), listErr: errors.New("db down")}
+
+	w := NewWorker(Deps{Videos: store, MediaDir: mediaDir})
+	w.pass(context.Background())
+
+	if w.swept {
+		t.Fatal("the sweep ran after a failed candidate query")
+	}
+	if _, err := os.Stat(stray); err != nil {
+		t.Fatalf("a transcript was swept after a failed query: %v", err)
+	}
+}
+
+// A channel image or inbox poster whose file is gone is written off, so the
+// next pass does not stat it again — the same convergence rule the video passes
+// follow.
+func TestPass_writesOffMissingChannelAndPendingFiles(t *testing.T) {
+	mediaDir := t.TempDir()
+	chans := &fakeChannelStore{
+		candidates: []channels.ImageImportCandidate{
+			{ChannelID: "UC1", Kind: channels.ImageAvatar, Path: filepath.Join(".channels", "UC1", "avatar.jpg")},
+		},
+		stored: map[string][]byte{},
+	}
+	ledger := &fakeLedger{ids: []string{"p1"}, stored: map[string][]byte{}}
+	w := NewWorker(Deps{Channels: chans, Ledger: ledger, MediaDir: mediaDir})
+
+	w.pass(context.Background())
+
+	if _, marked := w.missing["chan:UC1:avatar"]; !marked {
+		t.Error("a channel image with no file was not written off")
+	}
+	if _, marked := w.missing["pending:p1"]; !marked {
+		t.Error("an inbox poster with no file was not written off")
+	}
+	if len(chans.stored) != 0 || len(ledger.stored) != 0 {
+		t.Fatal("something was stored from a file that does not exist")
+	}
+}
+
+// The sweep is one-shot: after the tree is clean, re-walking a large library
+// every poll forever would be pure waste.
+func TestSweep_runsOnce(t *testing.T) {
+	mediaDir := t.TempDir()
+	w := NewWorker(Deps{Videos: newFakeStore(), MediaDir: mediaDir})
+
+	w.pass(context.Background())
+	if !w.swept {
+		t.Fatal("the sweep did not run on a drained pass")
+	}
+	// A leftover that appears afterwards is not swept again: the tidy is a
+	// migration step, not a permanent watchdog over the media tree.
+	dir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	late := filepath.Join(dir, "v1.en.vtt")
+	if err := os.WriteFile(late, []byte("WEBVTT"), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	w.pass(context.Background())
+	if _, err := os.Stat(late); err != nil {
+		t.Fatalf("the sweep ran a second time: %v", err)
+	}
+}
+
+// Run returns promptly when the context is already cancelled, so shutdown does
+// not wait on a poll interval.
+func TestRun_returnsOnCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan struct{})
+	go func() {
+		NewWorker(Deps{Videos: newFakeStore(), MediaDir: t.TempDir()}).Run(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return on a cancelled context")
+	}
+}
+
+// The companion to the previous test: an asset that was found but could not be
+// stored also blocks the sweep, so the copy on disk — still the only one —
+// survives for the next boot to retry.
+func TestSweep_blockedByAFailedImport(t *testing.T) {
+	mediaDir := t.TempDir()
+	dir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := filepath.Join(dir, "v1.en.vtt")
+	if err := os.WriteFile(vtt, []byte("WEBVTT"), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+	base := newFakeStore()
+	base.transcriptCandidates = []videos.TranscriptImportCandidate{{ID: "v1", ChannelID: "chan1"}}
+	store := &failingStore{fakeStore: base, storeErr: errors.New("refused")}
+
+	w := NewWorker(Deps{Videos: store, MediaDir: mediaDir})
+	w.pass(context.Background())
+
+	if w.swept {
+		t.Fatal("the sweep ran while an asset was still only on disk")
+	}
+	if _, err := os.Stat(vtt); err != nil {
+		t.Fatalf("the only copy of a transcript was swept: %v", err)
+	}
+}
+
+// The thumbnail pass has the same must-not-lose-it rule as the transcript one:
+// a store that refuses the bytes leaves the file where it was, and the sweep
+// stays blocked so nothing else removes it either.
+func TestImport_thumbnailStoreFailureKeepsTheFileAndBlocksTheSweep(t *testing.T) {
+	mediaDir := t.TempDir()
+	path := writePoster(t, mediaDir, "chan1", "v1", ".jpg", []byte("JPGDATA"))
+	base := newFakeStore(videos.ThumbnailImportCandidate{ID: "v1", ChannelID: "chan1"})
+	store := &failingStore{fakeStore: base, thumbErr: errors.New("refused")}
+
+	w := NewWorker(Deps{Videos: store, MediaDir: mediaDir})
+	w.pass(context.Background())
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the poster was removed even though the store refused it: %v", err)
+	}
+	if w.swept {
+		t.Fatal("the sweep ran while a poster was still only on disk")
+	}
+}
+
+// Run drives passes until its context is cancelled, and a first pass that
+// imports something proves the loop is doing the work rather than idling.
+func TestRun_importsThenStops(t *testing.T) {
+	mediaDir := t.TempDir()
+	writePoster(t, mediaDir, "chan1", "v1", ".jpg", []byte("JPGDATA"))
+	store := newFakeStore(videos.ThumbnailImportCandidate{ID: "v1", ChannelID: "chan1"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	w := NewWorker(Deps{Videos: store, MediaDir: mediaDir, PollInterval: time.Millisecond})
+	done := make(chan struct{})
+	go func() {
+		w.Run(ctx)
+		close(done)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, ok := store.stored["v1"]; ok {
+			break
+		}
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("Run never imported the poster")
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop on cancellation")
 	}
 }

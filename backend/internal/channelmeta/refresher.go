@@ -131,12 +131,6 @@ func (f *Refresher) Resolve(ctx context.Context, channelID string, cached *chann
 		handle = cached.Handle
 	}
 
-	// Artwork goes into the row (migration 0023). Best-effort in both
-	// directions: a fetch that fails is logged and skipped rather than stored,
-	// so a blip cannot replace good artwork with nothing — the same rule the
-	// avatar_path/banner_path COALESCE guards used to encode for the columns.
-	f.storeImage(ctx, channelID, channels.ImageAvatar, info.AvatarURL)
-	f.storeImage(ctx, channelID, channels.ImageBanner, info.BannerURL)
 	if uerr := f.Channels.SaveResolved(channels.Channel{
 		ID:          channelID,
 		Name:        info.Name,
@@ -149,6 +143,17 @@ func (f *Refresher) Resolve(ctx context.Context, channelID string, cached *chann
 		f.logger().Error("cache resolved channel", "channel_id", channelID, "err", uerr)
 		return fmt.Errorf("cache resolved channel %s: %w", channelID, uerr)
 	}
+
+	// Artwork goes into the row (migration 0023), and only AFTER SaveResolved:
+	// channel_images has an FK to channels, so storing first would be rejected
+	// for a channel being resolved for the very first time — which is most of
+	// them, and exactly when the artwork is new.
+	//
+	// Best-effort in both directions: a fetch that fails is logged and skipped
+	// rather than stored, so a blip cannot replace good artwork with nothing —
+	// the rule the avatar_path/banner_path COALESCE guards used to encode.
+	f.storeImage(ctx, channelID, channels.ImageAvatar, info.AvatarURL)
+	f.storeImage(ctx, channelID, channels.ImageBanner, info.BannerURL)
 	return nil
 }
 

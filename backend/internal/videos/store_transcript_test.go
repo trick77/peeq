@@ -184,3 +184,45 @@ func TestTranscriptlessVideos_selectsByStoredTextNotPath(t *testing.T) {
 		t.Fatalf("candidates = %+v, want only blankedPath", got)
 	}
 }
+
+// DeleteTranscript drops the text alone. The cascade covers a row going away;
+// this is for dropping what a video knows without dropping the video.
+func TestDeleteTranscript_dropsTheTextOnly(t *testing.T) {
+	s := newTestStore(t)
+	seedThumbVideo(t, s, "v1")
+	if err := s.SetTranscript("v1", TranscriptSourceDownload, "WEBVTT"); err != nil {
+		t.Fatalf("set transcript: %v", err)
+	}
+
+	if err := s.DeleteTranscript("v1"); err != nil {
+		t.Fatalf("delete transcript: %v", err)
+	}
+	if got, err := s.GetTranscript("v1"); err != nil || got != nil {
+		t.Fatalf("transcript survived: %v, %v", got, err)
+	}
+	if v, err := s.Get("v1"); err != nil || v == nil {
+		t.Fatalf("the video row went with it: %v, %v", v, err)
+	}
+}
+
+// An empty video id is a caller bug, not a video without captions.
+func TestSetTranscript_rejectsEmptyID(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SetTranscript("", TranscriptSourceDownload, "WEBVTT"); err == nil {
+		t.Fatal("empty id accepted, want refused")
+	}
+}
+
+// A non-positive limit falls back to a sane page rather than the whole library.
+func TestTranscriptlessVideos_defaultsTheLimit(t *testing.T) {
+	s := newTestStore(t)
+	seedThumbVideo(t, s, "v1")
+
+	got, err := s.TranscriptlessVideos(0)
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("candidates = %+v, want the one video", got)
+	}
+}

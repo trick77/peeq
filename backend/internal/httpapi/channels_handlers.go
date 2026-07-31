@@ -176,11 +176,6 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	if handle == "" {
 		handle = info.Handle
 	}
-	// Images are best-effort: a channel with no banner, or a transient fetch
-	// failure, must not prevent the channel from being added. They land in the
-	// row rather than the media tree (migration 0023).
-	s.storeChannelImage(r.Context(), ucid, channels.ImageAvatar, info.AvatarURL)
-	s.storeChannelImage(r.Context(), ucid, channels.ImageBanner, info.BannerURL)
 	if err := s.channels.SaveResolved(channels.Channel{
 		ID:          ucid,
 		Name:        name,
@@ -193,6 +188,16 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "adding the channel failed")
 		return
 	}
+	// Artwork lands in the row rather than the media tree (migration 0023), and
+	// only AFTER SaveResolved: channel_images has an FK to channels, so storing
+	// first would be rejected for exactly the case this handler is — a channel
+	// being added for the first time.
+	//
+	// Best-effort: a channel with no banner, or a transient fetch failure, must
+	// not prevent the channel from being added.
+	s.storeChannelImage(r.Context(), ucid, channels.ImageAvatar, info.AvatarURL)
+	s.storeChannelImage(r.Context(), ucid, channels.ImageBanner, info.BannerURL)
+
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	if err := s.channels.MarkAdded(ucid, now); err != nil {
 		serverError(w, r, err, "adding the channel failed")

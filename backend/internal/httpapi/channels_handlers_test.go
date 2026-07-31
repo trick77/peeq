@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -3170,5 +3171,96 @@ func TestPendingThumbnail_notPending_404(t *testing.T) {
 	rec := h.getRaw(t, "/api/pending/gone1/thumbnail")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 for a non-pending row", rec.Code)
+	}
+}
+
+// TestPendingThumbnail_fetchesAndCachesOnMiss covers the fill-in path: an inbox
+// item the scan's prefetch never cached is fetched on first request and kept,
+// so the second request is served from the row.
+func TestPendingThumbnail_fetchesAndCachesOnMiss(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("\xff\xd8\xff fetched"))
+	}))
+	defer srv.Close()
+
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "pt9", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=pt9",
+		ThumbnailURL: srv.URL, State: "pending",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	rec := h.getRaw(t, "/api/pending/pt9/thumbnail")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got, err := h.ledger.GetThumbnail("pt9"); err != nil || got == nil {
+		t.Fatalf("the fetched poster was not cached: %v, %v", got, err)
+	}
+
+	if rec2 := h.getRaw(t, "/api/pending/pt9/thumbnail"); rec2.Code != http.StatusOK {
+		t.Fatalf("second request = %d", rec2.Code)
+	}
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Fatalf("origin hit %d times, want 1 — the second request must come from the row", n)
+	}
+}
+
+// TestPendingThumbnail_unfetchable404s: both candidates failing is a 404, and
+// the UI draws its gradient placeholder exactly as it does for a downloaded
+// video with no poster.
+func TestPendingThumbnail_unfetchable404s(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "gone", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "pt8", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=pt8",
+		ThumbnailURL: srv.URL, State: "pending",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if rec := h.getRaw(t, "/api/pending/pt8/thumbnail"); rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestChannelAdd_storesArtworkOnTheRow pins the ordering the FK demands: the
+// channel row has to exist before its images can reference it, so a channel
+// added for the first time — the only case this handler serves — must still end
+// up with its artwork.
+func TestChannelAdd_storesArtworkOnTheRow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("\xff\xd8\xff art"))
+	}))
+	defer srv.Close()
+
+	deps, _ := channelImageTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{
+		UCID: "UCnew", Name: "New", AvatarURL: srv.URL + "/a", BannerURL: srv.URL + "/b",
+	}})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodPost, "/api/channels",
+		[]byte(`{"url":"https://www.youtube.com/channel/UCnew"}`))
+	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("add status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	for _, kind := range []string{channels.ImageAvatar, channels.ImageBanner} {
+		img, err := deps.Channels.GetImage("UCnew", kind)
+		if err != nil || img == nil {
+			t.Fatalf("%s not stored on a freshly added channel: %v, %v", kind, img, err)
+		}
 	}
 }

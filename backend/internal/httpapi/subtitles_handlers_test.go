@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
 )
 
@@ -78,5 +81,33 @@ func TestVideosSubtitles_ignoresSubtitlePathEntirely(t *testing.T) {
 	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/subtitles", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET subtitles status = %d, want 404, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A store failure is a 500, not a 404: "the database is broken" and "this video
+// has no captions" must not look the same to the caller.
+func TestVideosSubtitles_storeErrorIs500(t *testing.T) {
+	db := openTestDB(t)
+	deps := Deps{
+		AuthService:    auth.NewService(nil, auth.NewSessionStore(db, false), auth.NewUserStore(db)),
+		AuthMiddleware: auth.NewMiddleware(auth.NewSessionStore(db, false), auth.NewUserStore(db)),
+		Settings:       settings.New(db),
+		Videos:         videos.New(db),
+		Channels:       channels.New(db),
+		MediaDir:       t.TempDir(),
+		DevAuthClaims:  auth.Claims{Subject: "dev-tester", PreferredUsername: "dev", Email: "dev@example.local", Name: "Dev Tester"},
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if _, err := db.Exec(`DROP TABLE video_transcripts`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1/subtitles", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
 	}
 }

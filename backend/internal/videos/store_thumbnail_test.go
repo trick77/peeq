@@ -183,3 +183,82 @@ func seedThumbVideo(t *testing.T, s *Store, id string) {
 	t.Helper()
 	seedVideo(t, s, Video{ID: id, URL: "https://example.test/" + id})
 }
+
+// The write guards, each of which is a caller bug rather than a video without a
+// poster: nothing is stored and the error says which.
+func TestSetThumbnail_guards(t *testing.T) {
+	s := newTestStore(t)
+	seedThumbVideo(t, s, "v1")
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		mime string
+		data []byte
+	}{
+		{"empty id", "", "image/jpeg", []byte("x")},
+		{"empty image", "v1", "image/jpeg", nil},
+		{"empty mime", "v1", "", []byte("x")},
+	} {
+		if err := s.SetThumbnail(tc.id, tc.mime, tc.data); err == nil {
+			t.Errorf("%s accepted, want refused", tc.name)
+		}
+	}
+	if got, err := s.GetThumbnail("v1"); err != nil || got != nil {
+		t.Fatalf("something was stored anyway: %v, %v", got, err)
+	}
+}
+
+// DeleteThumbnail drops the poster alone, leaving the video and everything else
+// on its row untouched — the delete a re-download needs when the new poster is
+// a different format.
+func TestDeleteThumbnail_dropsThePosterOnly(t *testing.T) {
+	s := newTestStore(t)
+	seedThumbVideo(t, s, "v1")
+	if err := s.SetThumbnail("v1", "image/jpeg", []byte("x")); err != nil {
+		t.Fatalf("set thumbnail: %v", err)
+	}
+
+	if err := s.DeleteThumbnail("v1"); err != nil {
+		t.Fatalf("delete thumbnail: %v", err)
+	}
+	if got, err := s.GetThumbnail("v1"); err != nil || got != nil {
+		t.Fatalf("poster survived: %v, %v", got, err)
+	}
+	if v, err := s.Get("v1"); err != nil || v == nil {
+		t.Fatalf("the video row went with it: %v, %v", v, err)
+	}
+}
+
+// SetThumbnailPath is the import worker's repair: it makes a blanked pointer
+// truthful again so a later hard delete still takes the file off disk.
+func TestSetThumbnailPath_repairsThePointer(t *testing.T) {
+	s := newTestStore(t)
+	seedThumbVideo(t, s, "v1")
+
+	if err := s.SetThumbnailPath("v1", "chan1/v1/v1.webp"); err != nil {
+		t.Fatalf("set thumbnail path: %v", err)
+	}
+	v, err := s.Get("v1")
+	if err != nil || v == nil {
+		t.Fatalf("get video = %v, %v", v, err)
+	}
+	if v.ThumbnailPath != "chan1/v1/v1.webp" {
+		t.Fatalf("thumbnail_path = %q, want the repaired value", v.ThumbnailPath)
+	}
+}
+
+// A non-positive limit is a caller that did not think about paging, not a
+// request for the whole library: it falls back to a sane page.
+func TestThumbnaillessVideos_defaultsTheLimit(t *testing.T) {
+	s := newTestStore(t)
+	seedThumbVideo(t, s, "v1")
+
+	got, err := s.ThumbnaillessVideos(0)
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("candidates = %+v, want the one video", got)
+	}
+}

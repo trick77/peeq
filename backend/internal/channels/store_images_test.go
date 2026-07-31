@@ -143,3 +143,44 @@ func seedImageChannel(t *testing.T, s *Store, id string) {
 		t.Fatalf("seed channel %s: %v", id, err)
 	}
 }
+
+// The remaining write guards, and the read for a channel that has no row at all.
+func TestSetImage_rejectsEmptyArguments(t *testing.T) {
+	s := newTestStore(t)
+	seedImageChannel(t, s, "UC1")
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		kind string
+		mime string
+		data []byte
+	}{
+		{"empty channel id", "", ImageAvatar, "image/jpeg", []byte("x")},
+		{"empty image", "UC1", ImageAvatar, "image/jpeg", nil},
+		{"empty mime", "UC1", ImageAvatar, "", []byte("x")},
+	} {
+		if err := s.SetImage(tc.id, tc.kind, tc.mime, tc.data); err == nil {
+			t.Errorf("%s accepted, want refused", tc.name)
+		}
+	}
+	if got, err := s.GetImage("UCnone", ImageAvatar); err != nil || got != nil {
+		t.Fatalf("unknown channel = %v, %v, want nil, nil", got, err)
+	}
+}
+
+// A non-positive limit falls back to a sane page rather than every channel.
+func TestImagelessChannels_defaultsTheLimit(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Channel{ID: "UC1", Name: "n", AvatarPath: ".channels/UC1/avatar.jpg"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got, err := s.ImagelessChannels(0)
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("candidates = %+v, want the one avatar", got)
+	}
+}

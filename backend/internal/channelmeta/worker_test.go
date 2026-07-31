@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -854,5 +856,69 @@ func TestWorker_rescheduleSurvivesALostRankQuery(t *testing.T) {
 	got := w.nextRefreshAt("UCa")
 	if want := "2026-07-29 12:00:00"; got != want { // the fixed clock + 7 days
 		t.Fatalf("fell back to %q, want a plain interval out (%q)", got, want)
+	}
+}
+
+// A resolve stores the channel's artwork on its row (migration 0023) rather
+// than under .channels/, so nothing has to delete it later — a channel delete
+// takes it on the cascade.
+func TestResolve_storesArtworkOnTheRow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("\xff\xd8\xff " + r.URL.Path))
+	}))
+	defer srv.Close()
+
+	s := newTestStore(t)
+	r := &fakeResolver{info: ytdlp.ChannelInfo{
+		Name: "X", AvatarURL: srv.URL + "/avatar", BannerURL: srv.URL + "/banner",
+	}}
+	f := &Refresher{Channels: s, Resolver: r, MediaDir: t.TempDir(), Logger: quietLogger()}
+
+	if err := f.Resolve(context.Background(), "UC1", nil); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	for _, kind := range []string{channels.ImageAvatar, channels.ImageBanner} {
+		img, err := s.GetImage("UC1", kind)
+		if err != nil || img == nil {
+			t.Fatalf("%s not stored: %v, %v", kind, img, err)
+		}
+		if img.Mime != "image/jpeg" {
+			t.Errorf("%s mime = %q, want image/jpeg", kind, img.Mime)
+		}
+	}
+	c, err := s.Get("UC1")
+	if err != nil || c == nil || !c.HasAvatar || !c.HasBanner {
+		t.Fatalf("channel = %+v (err %v), want both image flags true", c, err)
+	}
+}
+
+// A fetch that fails leaves the artwork already stored exactly as it was: a CDN
+// blip must not blank a channel's picture, which is the rule the avatar_path
+// COALESCE guards used to encode for the columns.
+func TestResolve_failedImageFetchKeepsWhatIsStored(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusInternalServerError)
+	}))
+	defer dead.Close()
+
+	s := newTestStore(t)
+	if err := s.Upsert(channels.Channel{ID: "UC1", Name: "X"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := s.SetImage("UC1", channels.ImageAvatar, "image/jpeg", []byte("good")); err != nil {
+		t.Fatalf("seed avatar: %v", err)
+	}
+	r := &fakeResolver{info: ytdlp.ChannelInfo{Name: "X", AvatarURL: dead.URL + "/avatar"}}
+	f := &Refresher{Channels: s, Resolver: r, MediaDir: t.TempDir(), Logger: quietLogger()}
+
+	if err := f.Resolve(context.Background(), "UC1", nil); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	img, err := s.GetImage("UC1", channels.ImageAvatar)
+	if err != nil || img == nil || string(img.Bytes) != "good" {
+		t.Fatalf("avatar = %+v (err %v), want the stored one kept", img, err)
 	}
 }

@@ -385,3 +385,40 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 		t.Fatal("Run did not return on a cancelled context")
 	}
 }
+
+// A caption that yt-dlp reported but did not actually leave on disk must not
+// queue an analysis: there is nothing to summarize, and a summary job would run
+// against a video with no transcript.
+func TestCaptionUnreadableDoesNotQueueASummary(t *testing.T) {
+	h := newHarness(t)
+	rel := filepath.Join(ytdlp.SummaryDirName, "v1", "v1.en.vtt")
+	f := &fetcher{results: []string{rel}} // no writeCaption: the file is absent
+
+	h.worker(f).pass(context.Background())
+
+	if tr, err := h.videos.GetTranscript("v1"); err != nil || tr != nil {
+		t.Fatalf("a transcript was stored from a file that does not exist: %v, %v", tr, err)
+	}
+	active, err := h.summary.ListActive()
+	if err != nil {
+		t.Fatalf("list active: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("queued %d summaries for a video with no transcript, want 0", len(active))
+	}
+}
+
+// The caption directory goes as soon as its text is in the row, so a read
+// leaves nothing behind in the media tree.
+func TestCaptionArrival_removesTheCaptionDirectory(t *testing.T) {
+	h := newHarness(t)
+	rel := filepath.Join(ytdlp.SummaryDirName, "v1", "v1.en.vtt")
+	writeCaption(t, h, rel)
+	f := &fetcher{results: []string{rel}}
+
+	h.worker(f).pass(context.Background())
+
+	if _, err := os.Stat(filepath.Join(h.mediaDir, ytdlp.SummaryDirName, "v1")); !os.IsNotExist(err) {
+		t.Fatalf("caption directory survived the read (err = %v)", err)
+	}
+}

@@ -100,6 +100,16 @@ type Worker struct {
 	// is already clean, and re-walking a large library every 30 seconds forever
 	// would be pure waste.
 	swept bool
+	// blocked records that some asset was FOUND on disk but could not be carried
+	// in — an unreadable file, an oversized image, a write the store refused.
+	// Those are exactly the files the sweep must not touch: the copy on disk is
+	// still the only one. A file that simply is not there does not set this;
+	// there is nothing to lose in that case, and a library with one permanently
+	// missing poster must still get its tree tidied.
+	//
+	// One-way for the life of the process. The next boot retries the import and,
+	// if it succeeds, sweeps then.
+	blocked bool
 }
 
 // stagingDirName is the in-flight download directory the sweep must never
@@ -165,12 +175,12 @@ func (w *Worker) pass(ctx context.Context) bool {
 			return false
 		}
 	}
-	// The sweep runs ONLY once nothing is left to carry in. Ordering is the
-	// whole safety argument: while anything is still being imported, a file on
-	// disk may be the only copy, and deleting it would be the data loss this
-	// migration exists to prevent. A drained pass means every asset the database
-	// wanted is in it, so what is left over is genuinely left over.
-	if drained && !w.swept {
+	// The sweep runs ONLY once nothing is left to carry in AND nothing that was
+	// found failed to land. Ordering is the whole safety argument: while an
+	// asset is still on disk and not yet in the database, that file is the only
+	// copy, and deleting it would be the data loss this migration exists to
+	// prevent.
+	if drained && !w.blocked && !w.swept {
 		w.swept = true
 		w.sweep(ctx)
 	}
@@ -361,6 +371,7 @@ func (w *Worker) importTranscript(c videos.TranscriptImportCandidate) bool {
 	if err != nil || len(data) == 0 {
 		if err != nil {
 			w.d.Logger.Warn("diskimport: read transcript failed", "video_id", c.ID, "err", err)
+			w.blocked = true
 		}
 		w.missing[key] = struct{}{}
 		return false
@@ -368,6 +379,7 @@ func (w *Worker) importTranscript(c videos.TranscriptImportCandidate) bool {
 	if err := w.d.Videos.SetTranscript(c.ID, source, string(data)); err != nil {
 		w.d.Logger.Warn("diskimport: store transcript failed", "video_id", c.ID, "err", err)
 		w.missing[key] = struct{}{}
+		w.blocked = true
 		return false
 	}
 	// Every .vtt beside it, not just the one that was read: yt-dlp may write
@@ -466,6 +478,7 @@ func (w *Worker) importThumbnail(c videos.ThumbnailImportCandidate) bool {
 	if err != nil {
 		w.d.Logger.Warn("diskimport: read thumbnail failed", "video_id", c.ID, "err", err)
 		w.missing[key] = struct{}{}
+		w.blocked = true
 		return false
 	}
 	if err := w.d.Videos.SetThumbnail(c.ID, media.ThumbnailMime(path), data); err != nil {
@@ -473,6 +486,7 @@ func (w *Worker) importThumbnail(c videos.ThumbnailImportCandidate) bool {
 		// write it off for this process.
 		w.d.Logger.Warn("diskimport: store thumbnail failed", "video_id", c.ID, "err", err)
 		w.missing[key] = struct{}{}
+		w.blocked = true
 		return false
 	}
 	// Record where it was found before removing it, so a hard delete over a
@@ -554,12 +568,16 @@ func (w *Worker) importChannelImages(ctx context.Context) (int, int, bool) {
 		data, rerr := os.ReadFile(safe)
 		if rerr != nil {
 			w.missing[key] = struct{}{}
+			if !os.IsNotExist(rerr) {
+				w.blocked = true
+			}
 			continue
 		}
 		if err := w.d.Channels.SetImage(c.ChannelID, c.Kind, media.ThumbnailMime(safe), data); err != nil {
 			w.d.Logger.Warn("diskimport: store channel image failed",
 				"channel_id", c.ChannelID, "kind", c.Kind, "err", err)
 			w.missing[key] = struct{}{}
+			w.blocked = true
 			continue
 		}
 		_ = os.Remove(safe)
@@ -605,11 +623,13 @@ func (w *Worker) importPendingThumbnails(ctx context.Context) (int, int, bool) {
 		data, rerr := os.ReadFile(path)
 		if rerr != nil {
 			w.missing[key] = struct{}{}
+			w.blocked = true
 			continue
 		}
 		if err := w.d.Ledger.SetThumbnail(id, media.ThumbnailMime(path), data); err != nil {
 			w.d.Logger.Warn("diskimport: store pending thumbnail failed", "video_id", id, "err", err)
 			w.missing[key] = struct{}{}
+			w.blocked = true
 			continue
 		}
 		_ = os.Remove(path)

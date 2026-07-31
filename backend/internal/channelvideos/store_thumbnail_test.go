@@ -135,3 +135,43 @@ func seedPendingEntry(t *testing.T, st *Store, channelID, videoID string) {
 		t.Fatalf("seed ledger row %s: %v", videoID, err)
 	}
 }
+
+// The write guards. Each is a caller bug rather than an inbox item without a
+// poster, so nothing is stored and the error says which.
+func TestSetPendingThumbnail_guards(t *testing.T) {
+	st := newTestStore(t)
+	seedPendingEntry(t, st, "UC1", "p1")
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		mime string
+		data []byte
+	}{
+		{"empty id", "", "image/jpeg", []byte("x")},
+		{"empty image", "p1", "image/jpeg", nil},
+		{"empty mime", "p1", "", []byte("x")},
+		{"oversize", "p1", "image/jpeg", make([]byte, MaxThumbnailBytes+1)},
+	} {
+		if err := st.SetThumbnail(tc.id, tc.mime, tc.data); err == nil {
+			t.Errorf("%s accepted, want refused", tc.name)
+		}
+	}
+	if got, err := st.GetThumbnail("p1"); err != nil || got != nil {
+		t.Fatalf("something was stored anyway: %v, %v", got, err)
+	}
+}
+
+// A non-positive limit falls back to a sane page rather than the whole ledger.
+func TestThumbnaillessPendingIDs_defaultsTheLimit(t *testing.T) {
+	st := newTestStore(t)
+	seedPendingEntry(t, st, "UC1", "p1")
+
+	got, err := st.ThumbnaillessPendingIDs(0)
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("candidates = %v, want the one pending item", got)
+	}
+}

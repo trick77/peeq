@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -1474,5 +1475,205 @@ BEGIN SELECT RAISE(ABORT, 'database is locked'); END`); err != nil {
 	}
 	if v.Title != "Resolved Title" {
 		t.Fatalf("title = %q, want the retry's resolved title", v.Title)
+	}
+}
+
+// A finished download hands its poster and its transcript to the database and
+// removes both files, so what a download leaves in the media tree is the video
+// and nothing else.
+//
+// Both are best-effort by design, so the assertion that matters is the pairing:
+// stored AND unlinked, never one without the other.
+func TestSucceed_storesPosterAndTranscriptThenUnlinksThem(t *testing.T) {
+	mediaDir := t.TempDir()
+	videoDir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mediaPath := filepath.Join(videoDir, "v1.mp4")
+	thumbPath := filepath.Join(videoDir, "v1.webp")
+	vttPath := filepath.Join(videoDir, "v1.en.vtt")
+	// A second language variant: the code that records subtitle_path globs and
+	// keeps the first match, so this one was referenced by nothing even before
+	// the move — and it has to go too.
+	otherVTT := filepath.Join(videoDir, "v1.de.vtt")
+	for path, body := range map[string]string{
+		mediaPath: "VIDEO", thumbPath: "POSTER", vttPath: "WEBVTT en", otherVTT: "WEBVTT de",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	h := newHarness(t, &fakeRunner{}, func(d *Deps) { d.MediaDir = mediaDir })
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v1", 0); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, err := h.jobs.ClaimNext()
+	if err != nil || job == nil {
+		t.Fatalf("claim: %v, %v", job, err)
+	}
+	v, err := h.videos.Get("v1")
+	if err != nil || v == nil {
+		t.Fatalf("get video: %v", err)
+	}
+
+	h.worker.succeed(job, v, &ytdlp.Result{
+		MediaPath:       mediaPath,
+		ThumbnailPath:   thumbPath,
+		SubtitleRelPath: filepath.Join("chan1", "v1", "v1.en.vtt"),
+	})
+
+	tr, terr := h.videos.GetTranscript("v1")
+	if terr != nil || tr == nil {
+		t.Fatalf("transcript not stored: %v, %v", tr, terr)
+	}
+	if tr.VTT != "WEBVTT en" || tr.Source != videos.TranscriptSourceDownload {
+		t.Fatalf("transcript = %+v, want the en text stored as a download", tr)
+	}
+	th, herr := h.videos.GetThumbnail("v1")
+	if herr != nil || th == nil {
+		t.Fatalf("poster not stored: %v, %v", th, herr)
+	}
+	if string(th.Bytes) != "POSTER" || th.Mime != "image/webp" {
+		t.Fatalf("poster = %q/%q, want POSTER/image/webp", th.Bytes, th.Mime)
+	}
+
+	for _, p := range []string{thumbPath, vttPath, otherVTT} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s survived the download (err = %v)", filepath.Base(p), err)
+		}
+	}
+	if _, err := os.Stat(mediaPath); err != nil {
+		t.Fatalf("the video file was removed: %v", err)
+	}
+}
+
+// A download with no captions is ordinary, not a failure: the poster still
+// lands and nothing errors.
+func TestSucceed_toleratesAMissingTranscript(t *testing.T) {
+	mediaDir := t.TempDir()
+	videoDir := filepath.Join(mediaDir, "chan1", "v2")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mediaPath := filepath.Join(videoDir, "v2.mp4")
+	if err := os.WriteFile(mediaPath, []byte("VIDEO"), 0o644); err != nil {
+		t.Fatalf("write media: %v", err)
+	}
+
+	h := newHarness(t, &fakeRunner{}, func(d *Deps) { d.MediaDir = mediaDir })
+	if err := h.videos.Upsert(videos.Video{ID: "v2", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v2", 0); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, err := h.jobs.ClaimNext()
+	if err != nil || job == nil {
+		t.Fatalf("claim: %v, %v", job, err)
+	}
+	v, _ := h.videos.Get("v2")
+
+	h.worker.succeed(job, v, &ytdlp.Result{MediaPath: mediaPath})
+
+	if tr, err := h.videos.GetTranscript("v2"); err != nil || tr != nil {
+		t.Fatalf("a transcript appeared from nowhere: %v, %v", tr, err)
+	}
+	got, err := h.videos.Get("v2")
+	if err != nil || got == nil || got.Status != videos.StatusDownloaded {
+		t.Fatalf("video = %+v (err %v), want downloaded", got, err)
+	}
+}
+
+// Every failure around the poster and the transcript is survivable: the
+// download succeeded, and a card without a picture is a cosmetic loss the
+// import worker retries. What must NOT happen is the file being removed when
+// its contents did not land.
+func TestSucceed_survivesUnstorableAssets(t *testing.T) {
+	mediaDir := t.TempDir()
+	videoDir := filepath.Join(mediaDir, "chan1", "v3")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mediaPath := filepath.Join(videoDir, "v3.mp4")
+	if err := os.WriteFile(mediaPath, []byte("VIDEO"), 0o644); err != nil {
+		t.Fatalf("write media: %v", err)
+	}
+	// A poster and a transcript the row points at but which are not there —
+	// the shape a partially cleaned library has.
+	h := newHarness(t, &fakeRunner{}, func(d *Deps) { d.MediaDir = mediaDir })
+	if err := h.videos.Upsert(videos.Video{ID: "v3", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v3", 0); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, err := h.jobs.ClaimNext()
+	if err != nil || job == nil {
+		t.Fatalf("claim: %v, %v", job, err)
+	}
+	v, _ := h.videos.Get("v3")
+
+	h.worker.succeed(job, v, &ytdlp.Result{
+		MediaPath:       mediaPath,
+		ThumbnailPath:   filepath.Join(videoDir, "v3.jpg"),         // never written
+		SubtitleRelPath: filepath.Join("chan1", "v3", "v3.en.vtt"), // never written
+	})
+
+	got, err := h.videos.Get("v3")
+	if err != nil || got == nil || got.Status != videos.StatusDownloaded {
+		t.Fatalf("video = %+v (err %v), want downloaded despite the missing assets", got, err)
+	}
+	if th, terr := h.videos.GetThumbnail("v3"); terr != nil || th != nil {
+		t.Fatalf("a poster appeared from a file that does not exist: %v, %v", th, terr)
+	}
+	if _, err := os.Stat(mediaPath); err != nil {
+		t.Fatalf("the video file was removed: %v", err)
+	}
+}
+
+// A path that resolves outside the media dir is refused rather than read: the
+// download path writes these columns, but a crafted or corrupted value must not
+// become a route to an arbitrary file on the host.
+func TestSucceed_refusesAssetsOutsideTheMediaDir(t *testing.T) {
+	mediaDir := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.jpg")
+	if err := os.WriteFile(secret, []byte("top secret"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	videoDir := filepath.Join(mediaDir, "chan1", "v4")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mediaPath := filepath.Join(videoDir, "v4.mp4")
+	if err := os.WriteFile(mediaPath, []byte("VIDEO"), 0o644); err != nil {
+		t.Fatalf("write media: %v", err)
+	}
+
+	h := newHarness(t, &fakeRunner{}, func(d *Deps) { d.MediaDir = mediaDir })
+	if err := h.videos.Upsert(videos.Video{ID: "v4", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("v4", 0); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, err := h.jobs.ClaimNext()
+	if err != nil || job == nil {
+		t.Fatalf("claim: %v, %v", job, err)
+	}
+	v, _ := h.videos.Get("v4")
+
+	h.worker.succeed(job, v, &ytdlp.Result{MediaPath: mediaPath, ThumbnailPath: secret})
+
+	if th, terr := h.videos.GetThumbnail("v4"); terr != nil || th != nil {
+		t.Fatalf("stored a file from outside the media dir: %v, %v", th, terr)
+	}
+	if _, err := os.Stat(secret); err != nil {
+		t.Fatalf("the outside file was removed: %v", err)
 	}
 }
