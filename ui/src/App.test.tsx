@@ -707,6 +707,8 @@ describe("App routing", () => {
       runtime_seconds: 600,
       disk_bytes: 1024,
       newest_published_at: "2026-07-18T00:00:00Z",
+      auto_summary: true,
+      keep_reads: false,
       subscribed: true,
       autodownload: false,
       format_override: "",

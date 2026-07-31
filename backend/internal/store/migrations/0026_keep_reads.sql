@@ -1,0 +1,21 @@
+-- Keep what peeq read, so it stays searchable.
+--
+-- Every video on an auto_summary channel is already read before anyone decides
+-- anything: its captions are fetched and an LLM turns them into a summary. All
+-- of that was then thrown away twice over -- the summarize worker stopped short
+-- of building the search index for a video nobody had asked for, and ignoring
+-- the video deleted its row outright.
+--
+-- With this on, the reading is indexed at read time and survives the ignore.
+-- Such a video never reaches the Library on its own: it stays status='new',
+-- which every Library query already excludes. It is reachable through Search,
+-- and Search only.
+--
+-- Default 0, unlike auto_summary next to it. The reading is paid for either
+-- way, but keeping it costs an embedding call per chunk and a few dozen KB of
+-- vectors per video -- a bill the user opts into, per channel, for the channels
+-- whose back catalogue is worth being able to search.
+--
+-- On channels, not subscriptions, for the reason SetAutoSummary states: this is
+-- a judgement about the channel, and it has to outlive an unsubscribe.
+ALTER TABLE channels ADD COLUMN keep_reads INTEGER NOT NULL DEFAULT 0;

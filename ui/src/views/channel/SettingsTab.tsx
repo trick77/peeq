@@ -141,6 +141,38 @@ export function SettingsTab({
               />
             </div>
 
+            {/* What this keeps is already paid for: peeq fetches captions and
+                summarizes them for the New tab regardless. Off, that reading is
+                thrown away when the video is ignored; on, it is indexed and
+                stays searchable. Either way the video never joins the library,
+                which is why the row sits with the other "what happens to new
+                videos" switches rather than near the archive. */}
+            <div className="chan-srow">
+              <div>
+                <label className="lab" htmlFor="chan-keepreads">
+                  Keep readings for search
+                </label>
+                <div className="hint">
+                  {detail.auto_summary
+                    ? "Videos you never download stay findable in Search by what was said in them. They do not appear in your library."
+                    : "Summaries are off for this channel, so there is nothing to keep."}
+                </div>
+              </div>
+              <input
+                id="chan-keepreads"
+                type="checkbox"
+                disabled={busy || !detail.auto_summary}
+                checked={detail.keep_reads}
+                onChange={() =>
+                  run(() =>
+                    updateChannel(detail.id, {
+                      keep_reads: !detail.keep_reads,
+                    }),
+                  )
+                }
+              />
+            </div>
+
             <div className="chan-srow">
               <div>
                 <span className="lab">Format override</span>

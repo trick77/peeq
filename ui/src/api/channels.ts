@@ -53,11 +53,12 @@ export type ChannelConfigUpdate = {
   id: string;
   autodownload: boolean;
   format_override: string;
-  // auto_summary is optional because the handler omits the two subscription
-  // fields when the channel is not subscribed and the request only carried
-  // this one — see handleChannelsPut. It is the only field settable on an
-  // added-but-unsubscribed channel.
+  // auto_summary and keep_reads are optional because the handler omits the two
+  // subscription fields when the channel is not subscribed and the request only
+  // carried these — see handleChannelsPut. They are the fields settable on an
+  // added-but-unsubscribed channel, because they live on the channel row.
   auto_summary?: boolean;
+  keep_reads?: boolean;
 };
 
 export async function updateChannel(
@@ -66,6 +67,7 @@ export async function updateChannel(
     autodownload?: boolean;
     format_override?: string;
     auto_summary?: boolean;
+    keep_reads?: boolean;
   },
 ): Promise<ChannelConfigUpdate> {
   return api.put<ChannelConfigUpdate>(

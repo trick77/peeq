@@ -23,6 +23,7 @@ function vid(id: string): AnswerVideo {
     channel_name: "ch",
     duration_seconds: 600,
     has_thumbnail: true,
+    status: "downloaded",
   };
 }
 

@@ -115,6 +115,13 @@ type Video struct {
 	LiveStatus   string
 	YTTags       string
 	YTCategories string
+	// ChannelKeepReads is the owning channel's keep_reads setting, read through
+	// the join videoColumns already makes rather than through a channels store
+	// the readers would otherwise have to hold — the same way ChannelName
+	// arrives. It belongs to the channel, not the video: no write path on this
+	// struct touches it, and COALESCE makes a video whose channel row was never
+	// created read as off.
+	ChannelKeepReads bool
 }
 
 // Store persists video rows.
@@ -231,7 +238,8 @@ const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	v.audio_language,
 	EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = v.id) AS has_transcript, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.embed_rev, v.category,
 	v.media_container, v.video_codec, v.video_height, v.audio_codec, v.probed_at,
-	v.media_type, v.live_status, v.yt_tags, v.yt_categories`
+	v.media_type, v.live_status, v.yt_tags, v.yt_categories,
+	COALESCE(ch.keep_reads, 0) AS channel_keep_reads`
 
 // videoFrom is the FROM clause every whole-Video read shares: videos aliased
 // "v", LEFT JOINed to the channels metadata cache so videoColumns can resolve
@@ -264,6 +272,7 @@ func scanVideo(rs rowScanner) (Video, error) {
 		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim, &v.EmbedRev, &v.Category,
 		&v.MediaContainer, &v.VideoCodec, &v.VideoHeight, &v.AudioCodec, &probedAt,
 		&v.MediaType, &v.LiveStatus, &v.YTTags, &v.YTCategories,
+		&v.ChannelKeepReads,
 	)
 	if err != nil {
 		return Video{}, err

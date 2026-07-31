@@ -27,6 +27,9 @@ export type AnswerVideo = {
   duration_seconds: number;
   has_thumbnail: boolean;
   thumbnail_version?: string;
+  // status distinguishes a cited video peeq holds from one it only read: see
+  // ResultCardVideo, which this has to keep satisfying.
+  status: string;
 };
 
 // AnswerEvent is the narrowed stream.

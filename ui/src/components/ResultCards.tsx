@@ -1,5 +1,6 @@
 import { Icon } from "../icons";
 import { ThumbFill } from "./ThumbFill";
+import { pendingThumbnailUrl } from "../api/videos";
 import { formatDuration } from "../format";
 import { splitHighlights } from "../highlight";
 import type { SearchMatch } from "../api/search";
@@ -10,6 +11,8 @@ import type { SearchMatch } from "../api/search";
 // grouped response of /api/search, Ask derives its list from the moments the
 // answer cited. ResultCardVideo is the intersection of what those two carry —
 // api/types Video satisfies it structurally, so neither caller needs a cast.
+// Anything added here has to be added to answerVideo as well, which is what
+// status cost: the Ask stream is deliberately narrow and did not carry one.
 export type ResultCardVideo = {
   id: string;
   title: string;
@@ -20,7 +23,17 @@ export type ResultCardVideo = {
   duration_seconds?: number;
   has_thumbnail: boolean;
   thumbnail_version?: string;
+  // status is here for one distinction: 'new' means peeq read this video —
+  // fetched its captions, summarized and indexed them — but never downloaded
+  // it. Search is the only place such a video appears at all.
+  status: string;
 };
+
+// A search hit can be a video peeq only ever read. It has no file, so its card
+// says so instead of offering a play button that leads to a summary page.
+function isUnfetched(video: ResultCardVideo): boolean {
+  return video.status === "new";
+}
 
 export type ResultCardGroup = {
   video: ResultCardVideo;
@@ -39,14 +52,25 @@ export function ResultCards({
       {results.map((r) => (
         <div className="result" key={r.video.id}>
           <div className="thumb">
+            {/* An unfetched video's only poster is the one cached for the
+                Inbox: it has no videos-row thumbnail, so the default endpoint
+                would 404 into the gradient. Same source UnfetchedVideo reads,
+                and the onError fallback still covers a poster that has gone. */}
             <ThumbFill
               id={r.video.id}
-              hasThumbnail={r.video.has_thumbnail}
+              hasThumbnail={isUnfetched(r.video) || r.video.has_thumbnail}
               version={r.video.thumbnail_version}
+              src={
+                isUnfetched(r.video)
+                  ? pendingThumbnailUrl(r.video.id, r.video.thumbnail_version)
+                  : undefined
+              }
             />
-            <div className="play">
-              <Icon name="play" size="30px" />
-            </div>
+            {isUnfetched(r.video) ? null : (
+              <div className="play">
+                <Icon name="play" size="30px" />
+              </div>
+            )}
             <span className="dur mono">
               {formatDuration(r.video.duration_seconds)}
             </span>
@@ -55,6 +79,9 @@ export function ResultCards({
             <h3>{r.video.title}</h3>
             <div className="ch">
               {r.video.channel_name || r.video.channel_id}
+              {isUnfetched(r.video) ? (
+                <span className="badge">Summary only</span>
+              ) : null}
             </div>
             <div className="matches">
               {r.matches.map((m, i) => (

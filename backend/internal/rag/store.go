@@ -161,6 +161,24 @@ func (s *Store) DeleteVideoChunks(ctx context.Context, videoID string) error {
 	return tx.Commit()
 }
 
+// HasChunks reports whether this video is indexed at all.
+//
+// It answers a question about consequences rather than about settings: deleting
+// a video row takes its chunks with it on the cascade, so a caller about to do
+// that can ask here whether anything searchable would go with it. Reading the
+// channel's keep_reads instead would give a different answer depending on when
+// the switch was last flipped, and take results away that the user can neither
+// see nor account for.
+func (s *Store) HasChunks(ctx context.Context, videoID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM transcript_chunks WHERE video_id = ?)`, videoID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("rag: has chunks %s: %w", videoID, err)
+	}
+	return n != 0, nil
+}
+
 // Retrieve returns up to k chunks nearest to queryEmbedding across all videos.
 //
 // Note this is an unbounded KNN: it returns k rows for ANY query vector, however

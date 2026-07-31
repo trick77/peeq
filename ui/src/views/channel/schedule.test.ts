@@ -27,6 +27,8 @@ function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     runtime_seconds: 0,
     disk_bytes: 0,
     subscribed: true,
+    auto_summary: true,
+    keep_reads: false,
     autodownload: false,
     format_override: "",
     // Relative to now, not hardcoded: isScanQueued compares next_scan_at to the

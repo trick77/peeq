@@ -20,6 +20,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -736,6 +737,10 @@ type pendingTestHarness struct {
 	ledger   *channelvideos.Store
 	videos   *videos.Store
 	jobs     *jobs.Store
+	// rag is wired because ignoring asks it whether the video it is about to
+	// discard is indexed. Without it the handler takes the nil-store path and
+	// the keep-an-indexed-read branch is unreachable from a test.
+	rag      *rag.Store
 	mediaDir string
 }
 
@@ -761,6 +766,7 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 	ledgerStore := channelvideos.New(db)
 	videosStore := videos.New(db)
 	jobsStore := jobs.New(db)
+	ragStore := rag.NewStore(db)
 	mediaDir := t.TempDir()
 	deps := Deps{
 		AuthService:    auth.NewService(nil, sessions, users),
@@ -770,6 +776,7 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 		Ledger:         ledgerStore,
 		Videos:         videosStore,
 		Jobs:           jobsStore,
+		Rag:            ragStore,
 		MediaDir:       mediaDir,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
@@ -784,6 +791,7 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 		ledger:   ledgerStore,
 		videos:   videosStore,
 		jobs:     jobsStore,
+		rag:      ragStore,
 		mediaDir: mediaDir,
 	}
 }
@@ -1189,13 +1197,57 @@ func TestPending_unconfigured_503(t *testing.T) {
 }
 
 // TestPendingDownload_notPending_404 asserts downloading a video id that
-// isn't in the ledger at all (or already moved past 'pending') is a clean
-// 404, not a silent success or a 500.
+// isn't in the ledger at all — or sits in a state no page offers this from —
+// is a clean 404, not a silent success or a 500.
 func TestPendingDownload_notPending_404(t *testing.T) {
 	h := newPendingTestServer(t)
 	rr := postJSON(t, h, "/api/pending/nope/download", nil)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("download unknown id status = %d, want 404, body=%s", rr.Code, rr.Body.String())
+	}
+
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "seen1", ChannelID: "UC1", Title: "A",
+		URL: "https://www.youtube.com/watch?v=seen1", State: "seen",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if rr := postJSON(t, h, "/api/pending/seen1/download", nil); rr.Code != http.StatusNotFound {
+		t.Fatalf("download a 'seen' row status = %d, want 404", rr.Code)
+	}
+}
+
+// TestPendingDownload_ignoredRowCanStillBeQueued is the button on a kept read's
+// page. Such a video is reachable from Search with its ledger row already
+// 'ignored', and Download there has to work: changing your mind is not what
+// that state is terminal for — Ledger.Exists is what stops a re-read, and it
+// ignores the state entirely.
+func TestPendingDownload_ignoredRowCanStillBeQueued(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "kept1", ChannelID: "UC1", Title: "A kept read",
+		URL: "https://www.youtube.com/watch?v=kept1", DurationSeconds: 600, State: "ignored",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/pending/kept1/download", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("download status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	v, err := h.videos.Get("kept1")
+	if err != nil || v == nil {
+		t.Fatalf("get video: %+v (err %v)", v, err)
+	}
+	if v.Status != videos.StatusQueued {
+		t.Fatalf("video status = %q, want queued", v.Status)
+	}
+	e, err := h.ledger.Get("kept1")
+	if err != nil || e == nil || e.State != channelvideos.StateQueued {
+		t.Fatalf("ledger state = %+v (err %v), want queued", e, err)
 	}
 }
 
@@ -3127,9 +3179,13 @@ func TestPendingIgnore_removesCachedThumbnail(t *testing.T) {
 	}
 }
 
-// TestPendingThumbnail_notPending_404 asserts a ledger row that exists but has
+// TestPendingThumbnail_notPending_404 asserts an UNCACHED ledger row that has
 // already left the inbox (ignored/queued/seen) is a 404: it must not drive an
 // outbound fetch or re-create the cache that leaving the inbox removed.
+//
+// Cached bytes are a different question — see
+// TestPendingThumbnail_servesAKeptReadsPoster, which covers the video that has
+// left the inbox and still needs its picture.
 func TestPendingThumbnail_notPending_404(t *testing.T) {
 	h := newPendingTestServer(t)
 	h.seedChannel("UC1")

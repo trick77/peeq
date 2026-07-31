@@ -425,6 +425,13 @@ export type ChannelDetail = {
   disk_bytes: number;
   newest_published_at?: string;
 
+  // auto_summary and keep_reads live on the channel rather than on the
+  // subscription, so they arrive for an added-but-unsubscribed channel too.
+  // keep_reads only means anything while auto_summary is on: nothing is kept
+  // for a channel whose videos are never read.
+  auto_summary: boolean;
+  keep_reads: boolean;
+
   subscribed: boolean;
   autodownload: boolean;
   format_override?: string;

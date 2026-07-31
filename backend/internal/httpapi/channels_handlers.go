@@ -49,6 +49,10 @@ type channelsPutRequest struct {
 	// so it is settable on a channel that is merely added. See the handler for
 	// why that changes when the "not subscribed" rejection applies.
 	AutoSummary *bool `json:"auto_summary"`
+	// KeepReads sits on channels beside AutoSummary and behaves identically:
+	// whether a read this channel's videos got is kept and indexed for search
+	// instead of being discarded when the video is ignored.
+	KeepReads *bool `json:"keep_reads"`
 }
 
 // channelItem is the JSON shape returned by GET /api/channels: one listed
@@ -359,6 +363,12 @@ type channelDetail struct {
 	DiskBytes         int64  `json:"disk_bytes"`
 	NewestPublishedAt string `json:"newest_published_at,omitempty"`
 
+	// AutoSummary and KeepReads live on the channel, not the subscription, so
+	// they are reported for any cached channel — subscribed or not. They are a
+	// pair the settings UI reads together: nothing is kept for a channel that
+	// is never read, so the second only means anything while the first is on.
+	AutoSummary    bool   `json:"auto_summary"`
+	KeepReads      bool   `json:"keep_reads"`
 	Subscribed     bool   `json:"subscribed"`
 	Autodownload   bool   `json:"autodownload"`
 	FormatOverride string `json:"format_override,omitempty"`
@@ -436,6 +446,8 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		out.ResolveOk = c.ResolveOk
 		out.Added = c.AddedAt != ""
 		out.AddedAt = c.AddedAt
+		out.AutoSummary = c.AutoSummary
+		out.KeepReads = c.KeepReads
 	}
 
 	// "Gone" is asked for regardless of whether the channel is still added
@@ -760,33 +772,58 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 		autoSummary = v
 	}
 
+	// keep_reads is auto_summary's downstream half — whether the reading is kept
+	// and indexed for search once it has served the Inbox — and lives on the
+	// same table for the same reason, so it is written the same way.
+	keepReads := false
+	if req.KeepReads != nil {
+		v, found, err := s.channels.SetKeepReads(id, *req.KeepReads)
+		if err != nil {
+			serverError(w, r, err, "update config failed")
+			return
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "channel not found")
+			return
+		}
+		keepReads = v
+	}
+
+	// Whatever this request did not set, report as stored rather than as the
+	// zero value a caller would otherwise read as "it just got turned off". One
+	// read serves both fields and both responses below.
+	if req.AutoSummary == nil || req.KeepReads == nil {
+		if c, err := s.channels.Get(id); err == nil && c != nil {
+			if req.AutoSummary == nil {
+				autoSummary = c.AutoSummary
+			}
+			if req.KeepReads == nil {
+				keepReads = c.KeepReads
+			}
+		}
+	}
+
 	autodownload, formatOverride, ok, err := s.channels.UpdateConfig(id, req.Autodownload, req.FormatOverride)
 	if err != nil {
 		serverError(w, r, err, "update config failed")
 		return
 	}
 	// "Not subscribed" is only an error for the two fields that live on the
-	// subscription. A request that carried nothing but auto_summary has already
-	// done its whole job above, and rejecting it here would make the toggle
-	// unusable on an added-but-unsubscribed channel.
+	// subscription. A request that carried nothing but the channel-level
+	// switches has already done its whole job above, and rejecting it here would
+	// make those toggles unusable on an added-but-unsubscribed channel.
 	if !ok {
 		if req.Autodownload != nil || req.FormatOverride != nil {
 			writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
 			return
 		}
-		writeJSON(w, map[string]any{"id": id, "auto_summary": autoSummary})
+		writeJSON(w, map[string]any{"id": id, "auto_summary": autoSummary, "keep_reads": keepReads})
 		return
-	}
-	if req.AutoSummary == nil {
-		// Not sent, so report what is stored rather than the zero value a
-		// caller would otherwise read as "it just got turned off".
-		if c, err := s.channels.Get(id); err == nil && c != nil {
-			autoSummary = c.AutoSummary
-		}
 	}
 	writeJSON(w, map[string]any{
 		"id": id, "autodownload": autodownload,
 		"format_override": formatOverride, "auto_summary": autoSummary,
+		"keep_reads": keepReads,
 	})
 }
 
@@ -1081,8 +1118,16 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 // ThumbnailPath empty — the ledger's thumbnail_url is a remote url, not a
 // locally-downloaded file path), mark it queued, enqueue a job at the
 // standard manual priority, and flip the ledger row out of 'pending' so it
-// no longer shows up in the pending list. 404s if the ledger row doesn't
-// exist or is no longer pending (e.g. already downloaded or ignored).
+// no longer shows up in the pending list. 404s if the ledger row doesn't exist
+// or is in a state no page offers this action from.
+//
+// 'ignored' is accepted alongside 'pending', because a kept read is reachable
+// from Search long after it left the Inbox and the page it opens still offers
+// Download. Changing one's mind about a video is not the thing 'ignored' is
+// terminal FOR: what stops a video being read a second time is Ledger.Exists
+// matching on video_id whatever the state, and the row lands on 'queued' here
+// either way. Refusing would leave a button that can only ever fail on the one
+// page this feature exists to make reachable.
 func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil || s.videos == nil || s.jobs == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
@@ -1090,7 +1135,8 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	e, err := s.ledger.Get(id)
-	if err != nil || e == nil || e.State != channelvideos.StatePending {
+	if err != nil || e == nil ||
+		(e.State != channelvideos.StatePending && e.State != channelvideos.StateIgnored) {
 		writeJSONError(w, http.StatusNotFound, "pending item not found")
 		return
 	}
@@ -1147,16 +1193,21 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 // handlePendingIgnore marks a pending ledger entry as ignored, removing it
 // from the pending list. 404s if the ledger row doesn't exist.
 //
-// It also throws away whatever reading the video: the videos row created to
-// hold its summary, and the .vtt under .summaries/. That was the user's
-// explicit choice — ignoring a video means it is gone, not archived — and the
-// ledger row staying 'ignored' is what makes sure it never comes back to be
-// read a second time.
+// By default it also throws away whatever reading the video: the videos row
+// created to hold its summary, and the transcript with it. Ignoring a video
+// means it is gone, not archived — and the ledger row staying 'ignored' is what
+// makes sure it never comes back to be read a second time.
 //
-// The deletion is narrowly guarded (see dropInboxRead): only a row that is
-// still StatusNew AND whose transcript came from a caption fetch is touched.
-// A video the user downloaded and then somehow ignored, or one whose download
-// was cancelled back to 'new', keeps everything.
+// The exception is a video that was indexed for search, which only happens on a
+// channel whose keep_reads is on (migration 0026). There the reading is the
+// point: the row stays, unreachable from every list but findable in Search, and
+// its poster stays with it because the summary page and the search card both
+// render one.
+//
+// The deletion is narrowly guarded either way (see dropInboxRead): only a row
+// that is still StatusNew AND whose transcript came from a caption fetch is
+// ever touched. A video the user downloaded and then somehow ignored, or one
+// whose download was cancelled back to 'new', keeps everything.
 func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
@@ -1172,14 +1223,34 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "ignore failed")
 		return
 	}
-	s.dropInboxRead(r, e, id)
-	// The item just left the inbox, so its cached thumbnail is dead weight.
-	s.removePendingThumbnail(id)
+	// The item just left the inbox, so its cached thumbnail is dead weight —
+	// unless the read was kept, in which case that poster is the only picture
+	// the video has and both the summary page and its search results ask for it.
+	//
+	// Only an entry that was still 'pending' is leaving the inbox here, and that
+	// is what the reclaim is gated on. A kept read is reachable from Search, and
+	// its page still offers Ignore: pressing it arrives with the ledger row
+	// already 'ignored', which makes dropInboxRead decline at its first guard
+	// (state is not pending) and would otherwise delete the very poster the
+	// first ignore deliberately spared. Nothing is lost by the gate — 'queued'
+	// reclaims at its own transition, a scan's 'seen' baseline never fetched a
+	// poster, and a repeat ignore of a discarded read deletes what is gone.
+	if e.State == channelvideos.StatePending && !s.dropInboxRead(r, e, id) {
+		s.removePendingThumbnail(id)
+	}
 	writeJSON(w, map[string]string{"status": "ignored"})
 }
 
 // dropInboxRead throws away everything peeq learned by reading a video: the
-// videos row holding the summary, and the caption file under .summaries/.
+// videos row holding the summary, and the transcript that goes with it on the
+// cascade.
+//
+// It reports whether a row was deliberately KEPT — not whether it deleted
+// something. Those are different questions, and the caller is asking the first
+// one: a ledger row with no videos row at all deletes nothing and still wants
+// its cached poster reclaimed, while a kept row is the one case where that
+// poster is the only picture the video has left.
+//
 // Best-effort — an ignore must succeed whether or not the cleanup does, since
 // the ledger row is already 'ignored' and that is what keeps the video out of
 // the Inbox.
@@ -1205,13 +1276,20 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 // requested, AND holding either nothing or a caption this feature fetched.
 // Anything that has ever been downloaded fails the last clause, because
 // SetDownloaded repoints subtitle_path into the media directory.
-func (s *server) dropInboxRead(r *http.Request, e *channelvideos.Entry, id string) {
+//
+// One kind of read is then spared: one that made it into the search index. That
+// is asked of the index itself rather than of the channel's keep_reads switch,
+// deliberately. The switch says what to do with FUTURE reads and can be flipped
+// at any time; the index is what a delete would actually destroy. Re-reading
+// the switch here would make turning it off silently take away results the user
+// can neither see going nor explain afterwards.
+func (s *server) dropInboxRead(r *http.Request, e *channelvideos.Entry, id string) (kept bool) {
 	if s.videos == nil || id == "" || e == nil || e.State != channelvideos.StatePending {
-		return
+		return false
 	}
 	v, err := s.videos.Get(id)
 	if err != nil || v == nil || v.Status != videos.StatusNew {
-		return
+		return false
 	}
 	// Only a row whose transcript came from a caption READ may be discarded: a
 	// downloaded video's analysis is not this endpoint's to throw away. Since
@@ -1220,16 +1298,28 @@ func (s *server) dropInboxRead(r *http.Request, e *channelvideos.Entry, id strin
 	source, serr := s.videos.TranscriptSource(id)
 	if serr != nil {
 		slog.WarnContext(r.Context(), "ignore: read transcript source failed", "video_id", id, "err", serr)
-		return
+		return false
 	}
 	if source != "" && source != videos.TranscriptSourceCaption {
-		return
+		return false
+	}
+	// An indexed read is kept: it is searchable, and this endpoint is the only
+	// thing that would ever remove it. A failure to find out falls through to
+	// the discard — the same answer this code gave before there was anything to
+	// ask.
+	if s.rag != nil {
+		indexed, ierr := s.rag.HasChunks(r.Context(), id)
+		if ierr != nil {
+			slog.WarnContext(r.Context(), "ignore: read chunk presence failed", "video_id", id, "err", ierr)
+		} else if indexed {
+			return true
+		}
 	}
 	// Discard takes the row, and the transcript goes with it on the cascade.
 	if err := s.videos.Discard(id); err != nil {
 		slog.WarnContext(r.Context(), "ignore: discard inbox video row failed", "video_id", id, "err", err)
-		return
 	}
+	return false
 }
 
 // removePendingThumbnail drops a pending video's cached poster. Best-effort: it
@@ -1271,20 +1361,26 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 		notFoundCached(w, r)
 		return
 	}
-	// Only 'pending' items appear in the inbox and use this endpoint. Gating on
-	// state stops a request for a decided item (ignored/queued/seen) from
-	// driving an outbound fetch and re-creating the cache directory that
-	// removePendingThumbnail just deleted when it left the inbox.
-	if e.State != channelvideos.StatePending {
-		notFoundCached(w, r)
-		return
-	}
 	t, err := s.ledger.GetThumbnail(id)
 	if err != nil {
 		serverError(w, r, err, "load pending thumbnail failed")
 		return
 	}
 	if t == nil {
+		// Only 'pending' items appear in the inbox. Gating the FETCH on state
+		// stops a request for a decided item (ignored/queued/seen) from driving
+		// an outbound fetch and re-creating a cache that leaving the inbox
+		// deliberately removed.
+		//
+		// The gate is here rather than on the whole request because an ignored
+		// video whose reading was kept still has a poster, and this is the only
+		// endpoint that serves it: the videos row has no poster of its own, so
+		// the summary page and its search results both ask here. Serving bytes
+		// that are already stored fetches nothing and re-creates nothing.
+		if e.State != channelvideos.StatePending {
+			notFoundCached(w, r)
+			return
+		}
 		// Not cached yet — fetch it now and keep it. The scan prefetches these,
 		// so this is the fill-in for an item the prefetch missed or lost.
 		mime, data, ferr := media.FetchPendingThumbnail(r.Context(), id, e.ThumbnailURL)

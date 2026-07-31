@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
 )
 
@@ -65,6 +67,126 @@ func TestPendingIgnore_throwsAwayTheRead(t *testing.T) {
 	}
 	if e.State != channelvideos.StateIgnored {
 		t.Fatalf("ledger state = %q, want ignored — it is what stops a re-read", e.State)
+	}
+}
+
+// TestPendingIgnore_keepsAnIndexedRead is the exception the keep_reads setting
+// buys. A read that made it into the search index survives being ignored: the
+// row, its transcript and its chunks all stay, so the video remains findable in
+// Search — the only place it ever appears, since status 'new' is excluded from
+// every list.
+//
+// Its poster stays too. The pending cache holds the only picture such a video
+// has, and both the summary page and the search card render one.
+func TestPendingIgnore_keepsAnIndexedRead(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	seedInboxRead(t, h, "p3")
+	h.seedPendingThumbCache(t, "p3")
+	seedChunks(t, h.rag, "p3", []rag.ChunkRow{
+		{Ordinal: 0, Text: "the bit worth finding later", Kind: rag.KindTranscript, StartSeconds: 12},
+	})
+
+	if rr := postJSON(t, h, "/api/pending/p3/ignore", nil); rr.Code != http.StatusOK {
+		t.Fatalf("ignore status = %d", rr.Code)
+	}
+
+	if v, err := h.videos.Get("p3"); err != nil || v == nil {
+		t.Fatalf("an indexed read was discarded: %+v (err %v)", v, err)
+	}
+	if tr, err := h.videos.GetTranscript("p3"); err != nil || tr == nil {
+		t.Fatalf("the indexed read's transcript went: %+v (err %v)", tr, err)
+	}
+	if indexed, err := h.rag.HasChunks(context.Background(), "p3"); err != nil || !indexed {
+		t.Fatalf("chunks went with the ignore: indexed=%v (err %v)", indexed, err)
+	}
+	if got, err := h.ledger.GetThumbnail("p3"); err != nil || got == nil {
+		t.Fatalf("a kept video lost the only poster it has: %+v (err %v)", got, err)
+	}
+	// The ledger row still has to move, or the video comes straight back.
+	e, err := h.ledger.Get("p3")
+	if err != nil || e == nil || e.State != channelvideos.StateIgnored {
+		t.Fatalf("ledger state = %+v (err %v), want ignored", e, err)
+	}
+}
+
+// TestPendingIgnore_twiceKeepsTheKeptReadsPoster covers the second press. A
+// kept read is reachable from Search, and the page it opens still offers
+// Ignore — so this endpoint is called a second time with the ledger row
+// already 'ignored'. dropInboxRead declines on that state alone, so without the
+// gate in the caller the reclaim would run and delete the one poster the first
+// ignore deliberately spared.
+func TestPendingIgnore_twiceKeepsTheKeptReadsPoster(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	seedInboxRead(t, h, "p6")
+	h.seedPendingThumbCache(t, "p6")
+	seedChunks(t, h.rag, "p6", []rag.ChunkRow{
+		{Ordinal: 0, Text: "worth finding later", Kind: rag.KindTranscript},
+	})
+
+	for i := range 2 {
+		if rr := postJSON(t, h, "/api/pending/p6/ignore", nil); rr.Code != http.StatusOK {
+			t.Fatalf("ignore %d status = %d", i+1, rr.Code)
+		}
+	}
+
+	if got, err := h.ledger.GetThumbnail("p6"); err != nil || got == nil {
+		t.Fatalf("the second ignore took the kept read's poster: %+v (err %v)", got, err)
+	}
+	if v, err := h.videos.Get("p6"); err != nil || v == nil {
+		t.Fatalf("the second ignore discarded the kept read: %+v (err %v)", v, err)
+	}
+	if rec := h.getRaw(t, "/api/pending/p6/thumbnail"); rec.Code != http.StatusOK {
+		t.Fatalf("poster status = %d after two ignores, want 200", rec.Code)
+	}
+}
+
+// TestPendingThumbnail_servesAKeptReadsPoster is the half of "the poster stays"
+// that keeping the bytes does not buy on its own. The ledger row is 'ignored'
+// by then, and this endpoint used to 404 every row that had left the inbox —
+// so both the summary page and the search card would have fallen back to the
+// gradient placeholder while the picture sat in the database.
+func TestPendingThumbnail_servesAKeptReadsPoster(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	seedInboxRead(t, h, "p5")
+	h.seedPendingThumbCache(t, "p5")
+	seedChunks(t, h.rag, "p5", []rag.ChunkRow{
+		{Ordinal: 0, Text: "worth finding later", Kind: rag.KindTranscript},
+	})
+
+	if rr := postJSON(t, h, "/api/pending/p5/ignore", nil); rr.Code != http.StatusOK {
+		t.Fatalf("ignore status = %d", rr.Code)
+	}
+
+	rec := h.getRaw(t, "/api/pending/p5/thumbnail")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("poster status = %d, want 200 — a kept read's only picture", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("poster response is empty")
+	}
+}
+
+// TestPendingIgnore_stillDropsAnUnindexedRead is the other half of that rule.
+// The decision is made on what the row HOLDS, not on the channel's current
+// setting: a read that never made it into the index is discarded exactly as
+// before, even on a channel that is opted in today.
+func TestPendingIgnore_stillDropsAnUnindexedRead(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	seedInboxRead(t, h, "p4")
+	if _, _, err := h.channels.SetKeepReads("UC1", true); err != nil {
+		t.Fatalf("set keep_reads: %v", err)
+	}
+
+	if rr := postJSON(t, h, "/api/pending/p4/ignore", nil); rr.Code != http.StatusOK {
+		t.Fatalf("ignore status = %d", rr.Code)
+	}
+
+	if v, err := h.videos.Get("p4"); err != nil || v != nil {
+		t.Fatalf("an unindexed read survived: %+v (err %v)", v, err)
 	}
 }
 
@@ -217,6 +339,66 @@ func TestChannelPut_autoSummary(t *testing.T) {
 	}
 	if c, _ := h.channels.Get("UC1"); c == nil || !c.AutoSummary {
 		t.Fatal("auto_summary did not go back on")
+	}
+}
+
+// TestChannelPut_keepReads covers the second channel-level switch. It defaults
+// OFF — the reading is paid for either way, but keeping it costs embeddings —
+// and, living on the channel like auto_summary, it is settable on a channel
+// that is merely added. The last assertion is the one worth having: a request
+// that sets only one of the two must not report the other as off.
+func TestChannelPut_keepReads(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+
+	c, err := h.channels.Get("UC1")
+	if err != nil || c == nil {
+		t.Fatalf("get channel: %v", err)
+	}
+	if c.KeepReads {
+		t.Fatal("keep_reads must default to off")
+	}
+
+	rr := putJSON(t, h, "/api/channels/UC1", map[string]any{"keep_reads": true})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"keep_reads":true`) {
+		t.Fatalf("body = %s, want the stored value echoed back", rr.Body.String())
+	}
+	if c, _ := h.channels.Get("UC1"); c == nil || !c.KeepReads {
+		t.Fatal("keep_reads was not persisted")
+	}
+
+	// A request about the OTHER switch must leave this one alone, and say so.
+	rr = putJSON(t, h, "/api/channels/UC1", map[string]any{"auto_summary": false})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"keep_reads":true`) {
+		t.Fatalf("body = %s, want keep_reads reported as stored, not as its zero value", rr.Body.String())
+	}
+	if c, _ := h.channels.Get("UC1"); c == nil || !c.KeepReads {
+		t.Fatal("a request about auto_summary turned keep_reads off")
+	}
+}
+
+// TestChannelDetail_carriesBothChannelSwitches pins what the Settings tab reads.
+// It needs both: keep_reads is meaningless while auto_summary is off, so the row
+// disables itself rather than offering a toggle that does nothing.
+func TestChannelDetail_carriesBothChannelSwitches(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if _, _, err := h.channels.SetKeepReads("UC1", true); err != nil {
+		t.Fatalf("set keep_reads: %v", err)
+	}
+
+	body := getJSON(t, h, "/api/channels/UC1")
+	if !strings.Contains(body, `"keep_reads":true`) {
+		t.Fatalf("channel detail is missing keep_reads: %s", body)
+	}
+	if !strings.Contains(body, `"auto_summary":true`) {
+		t.Fatalf("channel detail is missing auto_summary: %s", body)
 	}
 }
 

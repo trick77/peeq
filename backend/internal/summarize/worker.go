@@ -217,26 +217,51 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		run.skipped("summary", "already stored")
 	}
 
-	// An inbox video stops here, with the prose and nothing else.
+	// An inbox video stops here, with the prose and — on a channel that asked
+	// for it — a search index.
 	//
 	// StatusNew is "recorded, nothing requested yet": peeq read this video's
 	// captions to help decide whether to download it, and the card is still
-	// sitting in the Inbox awaiting that decision. The remaining three steps
-	// are all investments in a video the library keeps — a category to filter
-	// by, embeddings to search, key points to navigate — and this one may well
-	// be ignored, in which case every one of them was thrown away.
+	// sitting in the Inbox awaiting that decision. Category and key points are
+	// investments in a video the library keeps — something to filter by,
+	// something to navigate — and this one may well be ignored, in which case
+	// both were thrown away.
+	//
+	// The index is the exception, and only where the channel's keep_reads says
+	// so (migration 0026). There the reading is worth keeping on its own: the
+	// chunks survive the ignore (see dropInboxRead), so a video peeq read and
+	// the user never downloaded is still findable in Search. It reaches no list
+	// while doing so — status 'new' is excluded from every one of them.
+	//
+	// Status first, then embed. An embedder outage must fail the JOB, which is
+	// retryable, rather than regress the summary the Inbox card is already
+	// rendering into an error the user has to look at.
 	//
 	// Nothing special is needed to resume. When the video is downloaded, the
 	// download worker enqueues a fresh summary job, and the skip-what-exists
 	// checks around this block mean that job spends nothing on the summary and
-	// runs exactly the three steps deferred here. That is the whole reason
-	// deciding to download never pays for the expensive call twice.
+	// runs exactly the steps deferred here — re-embedding over the top of any
+	// caption-built index with the downloaded transcript and its chapters. That
+	// is the whole reason deciding to download never pays for the expensive
+	// call twice.
 	if isInboxRead(video, transcript.Source) {
 		if err := w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryDone, ""); err != nil {
 			return true, w.failJob(job, video, run, err.Error())
 		}
+		outcome := "done_inbox"
+		if video.ChannelKeepReads {
+			// No chapters: an inbox read never runs the key-points step that
+			// produces them, so this index is transcript and summary only.
+			w.emit(video.ID, videos.SummaryDone, PhaseEmbedding)
+			ectx, edone := run.step("embedding")
+			if err := w.embedAndStore(ectx, video.ID, parsed, summary, nil); err != nil {
+				return true, w.failJob(job, video, run, err.Error())
+			}
+			edone()
+			outcome = "done_inbox_indexed"
+		}
 		w.emit(video.ID, videos.SummaryDone, "")
-		run.finished("done_inbox")
+		run.finished(outcome)
 		_ = w.d.Jobs.Finish(job.ID, summaryjobs.StateDone, "")
 		return true, nil
 	}
