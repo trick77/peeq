@@ -1,8 +1,8 @@
 import { useLayoutEffect, useState, type RefObject } from "react";
 
-// Every anchored menu in peeq (.sleepmenu, .catmenu, .rowmenu) is a plain
-// absolutely-positioned child of its trigger's wrapper, opening downward with
-// no idea where the viewport ends. That is fine on a tall desktop window and
+// Every anchored menu in peeq (.sleepmenu, .catmenu, .fmtmenu, .rowmenu) is a
+// plain absolutely-positioned child of its trigger's wrapper, opening downward
+// with no idea where the viewport ends. That is fine on a tall desktop and
 // wrong everywhere else: on an iPad the player's action row sits ~100px above
 // the fold, so the sleep menu opened straight off the bottom of the screen.
 //

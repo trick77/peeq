@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { controlClass } from "../ui";
 import { PRESETS_NO_CUSTOM, presetLabel } from "../formatPresets";
+import { useMenuPlacement } from "./useMenuPlacement";
 
 type Props = {
   // The channel's stored format_override: "" for none, a preset id, or —
@@ -32,6 +33,7 @@ export function FormatPicker({ value, globalPreset, onPick, disabled }: Props) {
   const wrapRef = useRef<HTMLSpanElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const place = useMenuPlacement(open, triggerRef, menuRef);
 
   // A value that is neither empty nor a preset id is a selector someone
   // typed before this control existed. It is shown as-is and never
@@ -114,6 +116,7 @@ export function FormatPicker({ value, globalPreset, onPick, disabled }: Props) {
         <div
           className="fmtmenu"
           role="menu"
+          data-place={place}
           ref={menuRef}
           onKeyDown={onMenuKeyDown}
         >

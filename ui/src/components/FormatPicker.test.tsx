@@ -144,4 +144,15 @@ describe("FormatPicker", () => {
 
     expect(screen.queryByRole("menu")).toBeNull();
   });
+
+  it("hands its menu a placement for the flip-up CSS to key on", () => {
+    render(
+      <FormatPicker value="" globalPreset="apple-1080p" onPick={vi.fn()} />,
+    );
+    open();
+    // jsdom measures nothing, so the value is always the "down" fallback.
+    // What is under test is that the attribute is wired at all — .fmtmenu is
+    // the fourth of these menus and was the one left un-flipped.
+    expect(screen.getByRole("menu")).toHaveAttribute("data-place", "down");
+  });
 });
