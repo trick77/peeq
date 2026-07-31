@@ -231,10 +231,25 @@ button {
 
 /* ── App shell (Task 13): rail + main. View pages are Task 14. ─────────── */
 
+/* One column on a phone: the rail is not rendered there at all, the tab bar at
+   the bottom is (shell/TabBar.tsx). Above the breakpoint the rail is a real
+   grid track, and collapsing it animates that track rather than sliding the
+   rail over the page — main is the 1fr beside it, so it reflows for free. The
+   breakpoint is written here as min-width: 768px and in JS as max-width: 767px
+   (shell/useMediaQuery.ts); the two must move together. */
 .app-shell {
   display: grid;
-  grid-template-columns: 248px 1fr;
+  grid-template-columns: 1fr;
   min-height: 100vh;
+  transition: grid-template-columns 200ms ease-out;
+}
+@media (min-width: 768px) {
+  .app-shell {
+    grid-template-columns: 248px 1fr;
+  }
+  .app-shell.collapsed {
+    grid-template-columns: 64px 1fr;
+  }
 }
 
 .rail {
@@ -251,64 +266,57 @@ button {
   height: 100vh;
 }
 
+/* The brand row is loom's sidebar header, geometry included: a 44px band with
+   12px side padding, the wordmark at one end and the collapse toggle at the
+   other. The mark that used to lead it is gone — loom's header carries a word
+   and its controls, nothing else — and with it .rail-logo and the accent span
+   that painted "ee". Collapsed there is no room for a word, so the row centres
+   on the toggle alone. */
 .rail-brand {
-  padding: 22px 22px 18px;
+  height: 44px;
+  padding: 0 12px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
-/* The mark is now the favicon's glyph itself (see PeeqMark in shell/Rail.tsx),
-   not a bare triangle set in a gradient tile. It keeps the tile's 30px
-   footprint so the lockup and the rail below it do not move. The tile carried
-   the accent glow as a box-shadow; a hollow glyph has no box to cast one, so
-   the glow follows the silhouette as a drop-shadow instead — tighter than the
-   tile's 16px blur, which on an outline reads as smudge rather than light. */
-.rail-logo {
-  width: 30px;
-  height: 30px;
+.rail.collapsed .rail-brand {
+  justify-content: center;
+  padding: 0 10px;
+}
+.rail-collapse {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
   flex: none;
-  filter: drop-shadow(0 3px 7px var(--glow-accent));
+  border: none;
+  border-radius: var(--radius-ui-sm);
+  background: none;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
-.rail-logo .s0 {
-  stop-color: var(--color-accent-strong);
+.rail-collapse:hover {
+  color: var(--color-ink-dim);
+  background: var(--color-active);
 }
-.rail-logo .s1 {
-  stop-color: var(--color-accent-fill);
-}
-/* display:block, and it is what centres the lockup. The word used to sit in a
-   wrapper <div> as an inline child, so its box was a LINE box — height set by
-   the inherited sans strut, not by these 23px — and flex centring aligned the
-   mark against a box taller than the word, leaving it visibly low. Blockified,
-   the box is exactly the em box and the wrapper is gone (see shell/Rail.tsx).
-
-   No optical nudge on top of that, which is not the obvious answer: "Peeq"
-   hangs a q below the baseline that the mark has no counterpart for, so
-   centring the em box and centring the WORD — the cap-top-to-baseline band the
-   eye actually reads — are different things. They coincide here by measurement,
-   not by luck of rounding: Anthropic Serif's ascent+descent (23+6) overflows a
-   line-height of 1, and the -3px of half-leading that follows pushes the
-   baseline to 20/23 of the box, which puts the cap band's centre 0.15px off the
-   mark's. Measured in the browser against the real face — the Georgia fallback
-   has its own metrics and would land somewhere else. A serif at another size
-   or weight here needs re-measuring, not this rule carried over. */
+/* Loom's wordmark exactly: Anthropic Serif at 21px/28px, weight 500, its own
+   #f4f0e8 — a shade the peeq scale does not carry (ink #faf9f5 is brighter,
+   ink-dim #e4e1d8 duller), so it is written literally rather than bent onto the
+   nearest token. 21px is likewise off peeq's six-step scale on purpose: this
+   row is a quotation, and half-quoting it would just look like a mistake.
+   No letter-spacing and no optical nudge — there is no mark left to centre the
+   word against, so the flex row's own centring is the whole story. */
 .rail-brand b {
   display: block;
-  /* --color-ink-dim, not --color-ink, and the difference is optical rather
-     than arithmetic. The wordmark and an active .rail-nav-item used to be the
-     SAME value — both plain --color-ink, inherited — and the wordmark still
-     read as the brighter white of the two, because 23px of 600-weight serif
-     lays down several times the ink of a 14.5px 500-weight nav label and a
-     colour is only as bright as the area carrying it. Stepping one token down
-     is what makes them read level. Matching the token again would undo it. */
-  color: var(--color-ink-dim);
+  color: #f4f0e8;
   font-family: var(--font-serif);
-  font-size: 23px;
-  letter-spacing: -0.01em;
-  font-weight: 600;
-  line-height: 1;
-}
-.rail-brand b span {
-  color: var(--color-accent);
+  font-size: 1.3125rem;
+  font-weight: 500;
+  line-height: 1.75rem;
 }
 .rail-brand small {
   display: block;
@@ -319,8 +327,12 @@ button {
   margin-top: 3px;
 }
 
+/* 8px here plus 6px on the item puts a nav glyph 14px from the rail's edge,
+   which is where loom's sits — and 2px inside the wordmark's 12px, so the word
+   still reads as the thing the list hangs under. It used to be 12 + 11 = 23px,
+   which left the entries floating well right of the brand. */
 .rail-nav {
-  padding: 8px 12px;
+  padding: 8px 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -330,13 +342,13 @@ button {
   letter-spacing: 0.15em;
   text-transform: uppercase;
   color: var(--color-faint);
-  padding: 10px 10px 4px;
+  padding: 10px 6px 4px;
 }
 .rail-nav-item {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 6px 11px;
+  padding: 6px;
   border-radius: var(--radius-ui-sm);
   color: var(--color-muted);
   text-decoration: none;
@@ -354,8 +366,31 @@ button {
   width: 100%;
   text-align: left;
 }
-/* nav icons are sized inline in Rail.tsx (size="18px"); there is deliberately
-   no .rail-nav-ic rule here — the class was never applied. */
+/* nav icons are sized inline in Rail.tsx (18px expanded, 22px collapsed): the
+   inline width/height would beat any rule written here, so the size is set at
+   the one place that can win. .rail-nav-ic is only the positioning context the
+   count dot is pinned to. */
+.rail-nav-ic {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.rail-nav-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-muted);
+  /* The rail's gradient shows between the dot and the glyph beneath it, so the
+     ring is what keeps the dot from reading as part of the icon. */
+  box-shadow: 0 0 0 2px var(--color-panel);
+}
+.rail-nav-dot.hot {
+  background: var(--color-accent);
+}
 .rail-nav-item:hover {
   color: var(--color-ink-dim);
   background: var(--color-active);
@@ -368,7 +403,9 @@ button {
 .rail-nav-item.active::before {
   content: "";
   position: absolute;
-  left: -12px;
+  /* tracks .rail-nav's side padding — the bar sits against the rail's edge, so
+     when that padding moves this must move with it. */
+  left: -8px;
   /* inset tracks .rail-nav-item's vertical padding — keep them in step or
      the bar drifts off-centre within the item. */
   top: 7px;
@@ -377,6 +414,29 @@ button {
   border-radius: 3px;
   background: var(--color-accent);
   box-shadow: 0 0 10px var(--glow-accent);
+}
+/* ── Collapsed rail: ../music's icon column, 64px of it ──────────────────── */
+
+/* 44px of target inside a 64px track leaves 10px either side, so the nav's own
+   8px padding tightens to 10 - (64 - 44) / 2 … i.e. the item is centred and the
+   padding just has to not fight it. */
+.rail.collapsed .rail-nav {
+  padding: 8px 10px;
+}
+.rail.collapsed .rail-nav-item {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  gap: 0;
+  margin-inline: auto;
+  justify-content: center;
+  border-radius: var(--radius-ui-lg);
+}
+/* No accent bar when collapsed: at 64px it would sit outside the track, and the
+   rounded active background is doing the same job that music's rail asks of it
+   alone. */
+.rail.collapsed .rail-nav-item.active::before {
+  content: none;
 }
 /* Inbox and Up next used to fade to 42% when empty, so the rail read as a
    to-do list. They no longer do: an empty page is not a lesser page, and a
@@ -4495,17 +4555,107 @@ details.tomb-sect[open] > summary svg {
   color: var(--color-muted);
 }
 
-@media (max-width: 760px) {
-  .app-shell {
-    grid-template-columns: 1fr;
-  }
+/* ── Phone: the tab bar replaces the rail ────────────────────────────────
+   The rail used to become a full-width block stacked above the page here, so
+   every visit started below nine nav rows. It is now not rendered at all
+   (shell/TabBar.tsx takes over), which is ../music's swap: a left column above
+   the breakpoint, a bottom bar below it. 767/768 rather than 760 so the pair
+   matches shell/useMediaQuery.ts exactly. */
+.tabbar {
+  display: none;
+}
+@media (max-width: 767px) {
   .rail {
-    position: static;
-    height: auto;
-  }
-  .rail-foot {
     display: none;
   }
+  .tabbar {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 40;
+    display: flex;
+    height: calc(57px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: var(--color-panel);
+    border-top: 1px solid var(--color-border);
+  }
+  /* The page's own 90px bottom padding is what the last row of cards used to
+     clear the viewport with; the bar now sits in that space, so the page owes
+     it its full height on top. */
+  .page {
+    padding: 20px 16px calc(90px + 57px + env(safe-area-inset-bottom, 0px));
+  }
+}
+.tabbar-item {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  border: none;
+  background: none;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.tabbar-item.active {
+  color: var(--color-ink);
+}
+.tabbar-ic {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.tabbar-ic .rail-nav-dot {
+  box-shadow: 0 0 0 2px var(--color-panel);
+}
+.tabbar-label {
+  font-size: var(--text-micro);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* "More" is a sheet rather than a menu: it holds five destinations, and a phone
+   already knows this shape. Same scrim/Escape contract as .modal-overlay
+   (ConfirmDialog), anchored to the bottom so it rises out of the bar it belongs
+   to. */
+.tabbar-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.5);
+}
+.tabbar-sheet {
+  width: 100%;
+  margin-bottom: calc(57px + env(safe-area-inset-bottom, 0px));
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--color-elevated);
+  border-top: 1px solid var(--color-elevated-border);
+}
+.tabbar-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 10px;
+  border: none;
+  border-radius: var(--radius-ui-sm);
+  background: none;
+  color: var(--color-elevated-ink);
+  font-size: var(--text-ui);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.tabbar-sheet-item.active {
+  background: var(--color-elevated-hover);
+}
+.tabbar-sheet-item .rail-nav-count {
+  margin-left: auto;
 }
 
 /* ── Button (ui.tsx) ───────────────────────────────────────────────────────

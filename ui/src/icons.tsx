@@ -31,6 +31,8 @@ import {
   Copy,
   LoaderCircle,
   EllipsisVertical,
+  Ellipsis,
+  PanelLeft,
   Share2,
   type LucideIcon,
 } from "lucide-react";
@@ -88,6 +90,11 @@ const COMPONENTS = {
   copy: Copy,
   share: Share2, // share-link action (player action row + share popover)
   moreVertical: EllipsisVertical, // the row's 3-dot actions trigger
+  // The same glyph in both directions, as loom's sidebar button has: a chevron
+  // that flips says "this moves left/right", but the control is a switch
+  // between two layouts, and its aria-label already says which way it goes.
+  panelLeft: PanelLeft, // rail collapse/expand toggle
+  more: Ellipsis, // the phone tab bar's fifth tab, holding what does not fit
   spinner: LoaderCircle, // spun by .ui-spin — every async wait spins
 } satisfies Record<string, LucideIcon>;
 

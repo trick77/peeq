@@ -158,6 +158,96 @@ describe("Rail", () => {
       expect(items.some((i) => i.classes.includes("idle"))).toBe(false);
     });
   });
+
+  describe("collapsed", () => {
+    function collapsedRail(props: Partial<Parameters<typeof Rail>[0]> = {}) {
+      const host = document.createElement("div");
+      host.innerHTML = renderToStaticMarkup(
+        <Rail
+          active="library"
+          onNavigate={() => {}}
+          collapsed
+          onToggleCollapsed={() => {}}
+          {...props}
+        />,
+      );
+      return host;
+    }
+
+    it("drops the wordmark and the labels, keeping an accessible name", () => {
+      const host = collapsedRail();
+      expect(host.querySelector(".rail-brand b")).toBeNull();
+      const inbox = Array.from(
+        host.querySelectorAll("button.rail-nav-item"),
+      ).find((b) => b.getAttribute("aria-label") === "Inbox");
+      expect(inbox).toBeDefined();
+      // The label is gone from the text, not merely hidden by CSS — so the
+      // aria-label above is the only thing naming the button.
+      expect(inbox?.textContent).toBe("");
+      expect(host.textContent).not.toContain("Peeq");
+    });
+
+    it("keeps the wordmark and the labels when expanded", () => {
+      const host = document.createElement("div");
+      host.innerHTML = renderToStaticMarkup(
+        <Rail
+          active="library"
+          onNavigate={() => {}}
+          onToggleCollapsed={() => {}}
+        />,
+      );
+      expect(host.querySelector(".rail-brand b")?.textContent).toBe("Peeq");
+      expect(host.textContent).toContain("Inbox");
+    });
+
+    it("says a count it cannot show as a number", () => {
+      const host = collapsedRail({ pendingCount: 3 });
+      const inbox = Array.from(
+        host.querySelectorAll("button.rail-nav-item"),
+      ).find((b) => (b.getAttribute("aria-label") ?? "").startsWith("Inbox"));
+      // The pill has nowhere to go beside a centred icon, so the dot carries
+      // "something is in there" and the aria-label carries how much.
+      expect(inbox?.getAttribute("aria-label")).toBe("Inbox, 3");
+      expect(inbox?.querySelector(".rail-nav-count")).toBeNull();
+      expect(inbox?.querySelector(".rail-nav-dot")).not.toBeNull();
+    });
+
+    it("hides the status dock, which does not fit", () => {
+      const host = collapsedRail({ cookieStatus: "valid" });
+      expect(host.querySelector(".cookie-status")).toBeNull();
+    });
+
+    it("reports its state on the toggle", () => {
+      expect(
+        collapsedRail()
+          .querySelector(".rail-collapse")
+          ?.getAttribute("aria-expanded"),
+      ).toBe("false");
+      const host = document.createElement("div");
+      host.innerHTML = renderToStaticMarkup(
+        <Rail
+          active="library"
+          onNavigate={() => {}}
+          onToggleCollapsed={() => {}}
+        />,
+      );
+      const toggle = host.querySelector(".rail-collapse");
+      expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+      expect(toggle?.getAttribute("aria-label")).toBe("Hide sidebar");
+    });
+
+    it("leaves the active item's class untouched", () => {
+      // Collapsed styling hangs off .rail.collapsed, never off a modifier on
+      // the item — App and the tests both read this class as the active marker.
+      const active = collapsedRail().querySelector(
+        "button.rail-nav-item.active",
+      );
+      expect(Array.from(active?.classList ?? [])).toEqual([
+        "rail-nav-item",
+        "active",
+      ]);
+    });
+  });
 });
 
 describe("CookieStatus", () => {

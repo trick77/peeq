@@ -882,3 +882,75 @@ describe("App queue and summaries", () => {
     await waitFor(() => expect(cancelDownload).toHaveBeenCalledWith(5));
   }, 20000);
 });
+
+// The rail's width is the one piece of UI state peeq keeps in the browser
+// rather than on the server, and the rule that matters is the one a resize
+// tests: a phone renders the tab bar instead of the rail, and must not write
+// the desktop preference away while it does.
+describe("App rail collapse", () => {
+  // This environment's global localStorage is node's experimental one, which
+  // has no clear() and is not the browser object App talks to. A tiny map
+  // stands in for it, which also keeps one test's choice out of the next.
+  function stubStorage(seed?: string) {
+    const map = new Map<string, string>();
+    if (seed !== undefined) map.set("peeq.rail.collapsed", seed);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: (k: string) => map.get(k) ?? null,
+        setItem: (k: string, v: string) => void map.set(k, v),
+        removeItem: (k: string) => void map.delete(k),
+      },
+    });
+    return map;
+  }
+
+  function setViewport(mobile: boolean) {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: mobile,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+  }
+
+  it("remembers a collapsed rail", async () => {
+    setViewport(false);
+    const store = stubStorage();
+    render(<App />);
+    await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
+
+    await waitFor(() => expect(store.get("peeq.rail.collapsed")).toBe("1"));
+    // Collapsed, the wordmark and every label are unmounted; the toggle is the
+    // way back and names itself accordingly.
+    expect(screen.getByRole("button", { name: "Show sidebar" })).toBeTruthy();
+  }, 20000);
+
+  it("opens collapsed when that is what was stored", async () => {
+    setViewport(false);
+    stubStorage("1");
+    render(<App />);
+    await screen.findByRole(
+      "button",
+      { name: "Show sidebar" },
+      { timeout: 8000 },
+    );
+  }, 20000);
+
+  it("gives a phone the tab bar and leaves the stored choice alone", async () => {
+    setViewport(true);
+    const store = stubStorage("0");
+    render(<App />);
+    await screen.findByRole("button", { name: "More" }, { timeout: 8000 });
+
+    // No rail to collapse, so no toggle — and nothing has overwritten the
+    // desktop preference on the way past.
+    expect(screen.queryByRole("button", { name: /sidebar/i })).toBeNull();
+    expect(store.get("peeq.rail.collapsed")).toBe("0");
+  }, 20000);
+});
