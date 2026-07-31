@@ -32,8 +32,9 @@ export function useMenuPlacement(
     const menu = menuRef.current;
     if (!trigger || !menu) return;
     const rect = trigger.getBoundingClientRect();
-    // offsetHeight, not the rect: the menu is measured while still placed
-    // downward, and this is the height it wants regardless of where it lands.
+    // offsetHeight is the height after max-height has clamped it, which is
+    // the right input: a menu already scrolling at its clamp overflows nothing
+    // wherever it lands, so scrollHeight would flip menus that did not need it.
     const wanted = menu.offsetHeight;
     if (!wanted) return;
 

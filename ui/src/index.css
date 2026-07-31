@@ -2004,10 +2004,14 @@ button.sleeppick.armed {
    enough; without a measurement the attribute reads "down" and nothing here
    applies. */
 .sleepmenu[data-place="up"],
-.catmenu[data-place="up"],
-.rowmenu[data-place="up"] {
+.catmenu[data-place="up"] {
   top: auto;
   bottom: calc(100% + 7px);
+}
+/* 6px, matching this menu's own downward offset rather than the other two. */
+.rowmenu[data-place="up"] {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 
 .sleepmenu button {
