@@ -1,121 +1,19 @@
+import { useEffect, useRef } from "react";
 import type { YtdlpVersion } from "../api/ytdlp";
-import { Icon, type IconName } from "../icons";
+import { Icon } from "../icons";
 import { CookieStatus } from "./CookieStatus";
 import { YtdlpStatus } from "./YtdlpStatus";
+import { SECTIONS, type ViewId } from "./nav";
 
-// ViewId enumerates the destinations App routes to. App.tsx owns the actual
-// view-state (manual, no router lib — see App.tsx); Rail is purely
-// presentational plus the onNavigate callback.
-//
-// "channel" is a detail destination reached by clicking a channel name, not
-// a rail entry — deliberately absent from SECTIONS below, like "player" is
-// reached from a video card. Rail's `active` simply matches nothing then.
-export type ViewId =
-  | "library"
-  | "player"
-  | "search"
-  | "add"
-  | "inbox"
-  | "upnext"
-  | "channels"
-  | "channel"
-  | "history"
-  | "settings"
-  // share is the public /s/<token> page — reached only by a share link, never
-  // a rail item, and rendered chromeless (no rail/top bar) above the app shell.
-  | "share";
-
-type NavItem = {
-  id: ViewId;
-  label: string;
-  icon: IconName;
-  count?: number;
-  hot?: boolean;
-};
-
-// Sectioned per the mockup: Watch / Collect / Setup.
-const SECTIONS: { label: string; items: NavItem[] }[] = [
-  {
-    label: "Watch",
-    items: [
-      { id: "library", label: "Library", icon: "library" },
-      // Channels sits directly under Library: it is the other way you browse
-      // what you already have, not part of collecting more.
-      { id: "channels", label: "Channels", icon: "tv" },
-      { id: "player", label: "Now playing", icon: "circlePlay" },
-      { id: "search", label: "Search", icon: "search" },
-    ],
-  },
-  {
-    label: "Collect",
-    items: [
-      { id: "add", label: "Add", icon: "plus" },
-      { id: "inbox", label: "Inbox", icon: "inbox", hot: true },
-      // Up next and History are the same question asked in two directions —
-      // what peeq is about to do, and what it already did. They sit adjacent so
-      // the pair is obvious; the old Queue/Activity split put the two halves of
-      // "what is peeq doing" on pages in different visual languages.
-      { id: "upnext", label: "Up next", icon: "clockArrowUp", hot: true },
-      { id: "history", label: "History", icon: "history" },
-    ],
-  },
-  {
-    label: "Setup",
-    items: [{ id: "settings", label: "Settings", icon: "settings" }],
-  },
-];
-
-// PeeqMark is the lockup's mark: the same glyph the browser tab wears, so the
-// app and its favicon are one brand rather than two. The geometry is copied
-// from ui/public/icon.svg — lucide "square-play" (ISC), wedge filled rather
-// than stroked, frame at stroke 2.5 — and NOT imported through the Icon set,
-// which draws one flat currentColor and cannot carry the gradient.
-//
-// One departure from the file it came from: the colors are the accent tokens,
-// not its literal #e08a68/#c25f34. The bottom stop is the same value either
-// way, and the app's CSS is token-based — the tile this replaced used exactly
-// this strong→fill pair.
-//
-// Nothing else differs any more. This used to also paint no ground where
-// icon.svg painted two — a #1f1f1e canvas and a fill inside the frame, both
-// there to stop a browser's own chrome showing through a favicon. The favicon
-// dropped them, so the mark is now the same outline in both places: here it
-// lets the rail's panel→bg gradient through, on a tab it takes the tab's
-// colour, and that is one behaviour rather than two.
-//
-// The viewBox is the frame's TRUE bbox (x/y 3→21 in glyph units, grown by half
-// the 2.5 stroke) rather than the nominal 24x24 the paths only partly fill, so
-// the mark spans its 30px box edge to edge instead of shrinking to a dot in the
-// middle of it — the same sizing rule icon.svg's own comment sets out.
-function PeeqMark() {
-  return (
-    <svg className="rail-logo" viewBox="1.75 1.75 20.5 20.5" aria-hidden="true">
-      <linearGradient id="rail-mark-grad" x1="0" y1="0" x2="0.72" y2="1">
-        <stop className="s0" offset="0" />
-        <stop className="s1" offset="1" />
-      </linearGradient>
-      <rect
-        x="3"
-        y="3"
-        width="18"
-        height="18"
-        rx="2"
-        fill="none"
-        stroke="url(#rail-mark-grad)"
-        strokeWidth="2.5"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z"
-        fill="url(#rail-mark-grad)"
-      />
-    </svg>
-  );
-}
+// ViewId and the nav list moved to ./nav, which the mobile tab bar reads too.
+// Re-exported here because Rail was where the rest of the app imported it from.
+export type { ViewId } from "./nav";
 
 export function Rail({
   active,
   onNavigate,
+  collapsed = false,
+  onToggleCollapsed,
   pendingCount,
   upNextCount,
   upNextLive,
@@ -125,6 +23,13 @@ export function Rail({
 }: {
   active: ViewId;
   onNavigate: (view: ViewId) => void;
+  /**
+   * Icon-only rail. App owns the flag because the same state also swaps the
+   * shell's grid track, and it is already derived there: on a phone the rail is
+   * not rendered at all, so this is never true for want of room.
+   */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
   /**
    * Badge count for "Inbox" — new uploads awaiting a keep/ignore decision.
    * Deliberately not defaulted to 0: `undefined` means "not loaded yet", which
@@ -156,13 +61,37 @@ export function Rail({
    */
   ytdlp?: YtdlpVersion;
 }) {
+  // Collapsing unmounts every label, the section headings and the foot dock. If
+  // focus was inside any of that it would be dropped on the floor and the next
+  // Tab would start again from the top of the document, so it moves to the
+  // control that caused it — which is also the control that undoes it.
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const wasCollapsed = useRef(collapsed);
+  useEffect(() => {
+    if (collapsed !== wasCollapsed.current) {
+      wasCollapsed.current = collapsed;
+      if (collapsed && toggleRef.current?.contains(document.activeElement))
+        return;
+      if (collapsed) toggleRef.current?.focus();
+    }
+  }, [collapsed]);
+
   return (
-    <aside className="rail">
+    <aside className={`rail${collapsed ? " collapsed" : ""}`}>
       <div className="rail-brand">
-        <PeeqMark />
-        <b>
-          P<span>ee</span>q
-        </b>
+        {collapsed ? null : <b>Peeq</b>}
+        {onToggleCollapsed ? (
+          <button
+            ref={toggleRef}
+            type="button"
+            className="rail-collapse"
+            onClick={onToggleCollapsed}
+            aria-label={collapsed ? "Show sidebar" : "Hide sidebar"}
+            aria-expanded={!collapsed}
+          >
+            <Icon name="panelLeft" size="18px" />
+          </button>
+        ) : null}
       </div>
 
       <nav className="rail-nav">
@@ -171,7 +100,9 @@ export function Rail({
           // children of .rail-nav, so the 2px gap applies within a section
           // (not just between sections) — matches the mockup.
           <div key={section.label} style={{ display: "contents" }}>
-            <div className="rail-nav-label">{section.label}</div>
+            {collapsed ? null : (
+              <div className="rail-nav-label">{section.label}</div>
+            )}
             {section.items.map((item) => {
               const count =
                 item.id === "inbox"
@@ -194,6 +125,17 @@ export function Rail({
                 count !== undefined &&
                 count > 0 &&
                 (item.id !== "upnext" || upNextLive === true);
+              // Collapsed, the label is unmounted rather than hidden — nothing
+              // about it animates, only the shell's grid track does — so the
+              // button would lose its accessible name. aria-label carries it,
+              // and carries the count with it: a dot can say "there is
+              // something" but not how much, and a screen reader gets neither
+              // from a bare glyph.
+              const ariaLabel = collapsed
+                ? showCount
+                  ? `${item.label}, ${count}`
+                  : item.label
+                : undefined;
               return (
                 <button
                   key={item.id}
@@ -201,14 +143,32 @@ export function Rail({
                   className={`rail-nav-item${item.id === active ? " active" : ""}`}
                   onClick={() => onNavigate(item.id)}
                   aria-current={item.id === active ? "page" : undefined}
+                  aria-label={ariaLabel}
                 >
-                  <Icon
-                    name={item.icon}
-                    size="18px"
-                    style={{ width: 18, height: 18 }}
-                  />
-                  {item.label}
-                  {showCount ? (
+                  <span className="rail-nav-ic">
+                    <Icon
+                      name={item.icon}
+                      size={collapsed ? "22px" : "18px"}
+                      style={
+                        collapsed
+                          ? { width: 22, height: 22 }
+                          : { width: 18, height: 18 }
+                      }
+                    />
+                    {/* Collapsed there is no room beside a centred icon for the
+                        count pill, and dropping the signal outright would cost
+                        the rail the one thing it says about the Inbox. The dot
+                        keeps "there is something in there" at a size that
+                        fits; the number is in the aria-label above. */}
+                    {collapsed && showCount ? (
+                      <span
+                        className={`rail-nav-dot${item.hot ? " hot" : ""}`}
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                  </span>
+                  {collapsed ? null : item.label}
+                  {!collapsed && showCount ? (
                     <span className={`rail-nav-count${item.hot ? " hot" : ""}`}>
                       {count}
                     </span>
@@ -220,14 +180,17 @@ export function Rail({
         ))}
       </nav>
 
+      {/* The dock says two sentences — a cookie's age, a yt-dlp release — and
+          neither survives 64px. It goes when the rail collapses, the way it
+          already goes on a phone. */}
       <div className="rail-foot">
-        {cookieStatus !== undefined ? (
+        {collapsed ? null : cookieStatus !== undefined ? (
           <CookieStatus
             status={cookieStatus}
             updatedAtLabel={cookieUpdatedAtLabel}
           />
         ) : null}
-        {ytdlp?.update_available && ytdlp.latest ? (
+        {!collapsed && ytdlp?.update_available && ytdlp.latest ? (
           <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
         ) : null}
       </div>

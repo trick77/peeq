@@ -31,6 +31,8 @@ import {
   Copy,
   LoaderCircle,
   EllipsisVertical,
+  Ellipsis,
+  PanelLeft,
   Share2,
   type LucideIcon,
 } from "lucide-react";
@@ -73,11 +75,11 @@ const COMPONENTS = {
   play: Play,
   tv: Tv,
   // Rendered solid via the FILLED set below. Nothing draws it at the moment:
-  // its last consumer was the rail's logo, which now inlines the favicon's own
-  // square-play geometry (PeeqMark in shell/Rail.tsx) because a gradient needs
-  // more than the single currentColor this set can hand an icon. Kept rather
-  // than deleted — a filled play is the obvious glyph for the next play
-  // affordance, and the entry is one line.
+  // its last consumer was the rail's logo, which is gone — the rail now wears
+  // the wordmark alone. The one lockup still standing, the share page's footer
+  // (PeeqMark in views/Share.tsx), sets a magnifier in a gradient tile and
+  // never asked for this glyph. Kept rather than deleted — a filled play is the
+  // obvious glyph for the next play affordance, and the entry is one line.
   playFilled: Play,
   captions: Captions,
   chevronRight: ChevronRight,
@@ -88,6 +90,11 @@ const COMPONENTS = {
   copy: Copy,
   share: Share2, // share-link action (player action row + share popover)
   moreVertical: EllipsisVertical, // the row's 3-dot actions trigger
+  // The same glyph in both directions, as loom's sidebar button has: a chevron
+  // that flips says "this moves left/right", but the control is a switch
+  // between two layouts, and its aria-label already says which way it goes.
+  panelLeft: PanelLeft, // rail collapse/expand toggle
+  more: Ellipsis, // the phone tab bar's fifth tab, holding what does not fit
   spinner: LoaderCircle, // spun by .ui-spin — every async wait spins
 } satisfies Record<string, LucideIcon>;
 

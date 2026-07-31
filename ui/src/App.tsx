@@ -28,6 +28,37 @@ import { Search } from "./views/Search";
 import { Share } from "./views/Share";
 import { useRoute } from "./route";
 import { Button } from "./ui";
+import { TabBar } from "./shell/TabBar";
+import { MOBILE_QUERY, useMediaQuery } from "./shell/useMediaQuery";
+
+// Where the rail's collapsed/expanded choice is kept. It is a preference about
+// this browser's window, not about the account, so it lives in localStorage
+// rather than in settings on the server — a phone and a desktop that share a
+// login should not argue about how wide a sidebar is.
+const RAIL_COLLAPSED_KEY = "peeq.rail.collapsed";
+
+// Both accessors are wrapped: App is also rendered through
+// renderToStaticMarkup in App.test.tsx, where there is no window at all, and a
+// browser with storage blocked throws on access rather than returning null.
+// Neither case is worth a broken app over a sidebar width.
+function readRailCollapsed(): boolean {
+  try {
+    return (
+      typeof window !== "undefined" &&
+      window.localStorage?.getItem(RAIL_COLLAPSED_KEY) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function writeRailCollapsed(collapsed: boolean) {
+  try {
+    window.localStorage?.setItem(RAIL_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* storage blocked — the session still works, it just forgets. */
+  }
+}
 
 // Per-view page titles used to live here, in a VIEW_META map feeding the top
 // bar's <h1>. They were dropped: the title only ever restated the rail item
@@ -217,6 +248,19 @@ export function App() {
   const [historySearch, setHistorySearch] = useState("");
   const [upNextSearch, setUpNextSearch] = useState("");
   const [inboxSearch, setInboxSearch] = useState("");
+  // The rail's width, remembered across reloads. Two flags rather than one:
+  // sidebarCollapsed is what the user chose on a desktop and the only thing
+  // written to storage, railCollapsed is what the shell actually renders. On a
+  // phone there is no rail to collapse — the tab bar is the navigation — so the
+  // derived value is false there while the stored preference stays untouched,
+  // and a window dragged back to full width finds it exactly as it was left.
+  // Forcing the flag itself on a narrow window would destroy that preference.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readRailCollapsed);
+  const isMobile = useMediaQuery(MOBILE_QUERY);
+  const railCollapsed = !isMobile && sidebarCollapsed;
+  useEffect(() => {
+    writeRailCollapsed(sidebarCollapsed);
+  }, [sidebarCollapsed]);
   // The ids the Inbox grid is currently showing, in the order it shows them,
   // so a video's page can step through the inbox without going back to it.
   //
@@ -602,31 +646,53 @@ export function App() {
     navigate({ view: "channel", channelId: id });
   }
 
+  // The rail and the phone's tab bar are the same navigation in two shapes, so
+  // they are handed the same three answers rather than each working them out.
+  //
+  // Reading an inbox video's summary keeps the nav on Inbox. The page is
+  // reached from there and nowhere else, so lighting "Now playing" for it told
+  // you both where you weren't and something untrue — nothing is playing, there
+  // is no file yet.
+  const navActive = readingInboxSummary ? "inbox" : view;
+  const navUpNextCount =
+    jobsLoaded && summariesLoaded
+      ? activeDownloads + summaries.length
+      : undefined;
+  // The pill is a "something is happening" light, not a backlog size, so it
+  // needs a job actually running in either lane. Both lanes count: a running
+  // summary lights it exactly as a running download does.
+  const navUpNextLive =
+    jobs.some((j) => j.state === "running") ||
+    summaries.some((s) => s.state === "running");
+
   return (
-    <div className="app-shell">
-      <Rail
-        // Reading an inbox video's summary keeps the rail on Inbox. The page is
-        // reached from there and nowhere else, so lighting "Now playing" for it
-        // told you both where you weren't and something untrue — nothing is
-        // playing, there is no file yet.
-        active={readingInboxSummary ? "inbox" : view}
-        onNavigate={setView}
-        pendingCount={pendingCount}
-        upNextCount={
-          jobsLoaded && summariesLoaded
-            ? activeDownloads + summaries.length
-            : undefined
-        }
-        // The pill is a "something is happening" light, not a backlog size, so
-        // it needs a job actually running in either lane. Both lanes count: a
-        // running summary lights it exactly as a running download does.
-        upNextLive={
-          jobs.some((j) => j.state === "running") ||
-          summaries.some((s) => s.state === "running")
-        }
-        cookieStatus={cookieStatus}
-        ytdlp={ytdlp}
-      />
+    <div className={`app-shell${railCollapsed ? " collapsed" : ""}`}>
+      {/* One navigation at a time, chosen in JS rather than hidden in CSS.
+          Rendering both and hiding one would put nine duplicate destinations in
+          the accessibility tree, where display:none is the only thing telling
+          them apart — and a screen reader that ignores the viewport would read
+          the app's whole nav twice. */}
+      {isMobile ? (
+        <TabBar
+          active={navActive}
+          onNavigate={setView}
+          pendingCount={pendingCount}
+          upNextCount={navUpNextCount}
+          upNextLive={navUpNextLive}
+        />
+      ) : (
+        <Rail
+          active={navActive}
+          onNavigate={setView}
+          collapsed={railCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+          pendingCount={pendingCount}
+          upNextCount={navUpNextCount}
+          upNextLive={navUpNextLive}
+          cookieStatus={cookieStatus}
+          ytdlp={ytdlp}
+        />
+      )}
       <main className="main">
         <section className="page">
           <DownloadStatusBanner
