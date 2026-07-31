@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { CATEGORIES, CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
+import { useMenuPlacement } from "./useMenuPlacement";
 
 type Props = {
   category: string;
@@ -23,6 +24,7 @@ export function CategoryPicker({ category, onPick }: Props) {
   const wrapRef = useRef<HTMLSpanElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const place = useMenuPlacement(open, triggerRef, menuRef);
 
   const meta =
     category && category !== UNCATEGORIZED
@@ -108,6 +110,7 @@ export function CategoryPicker({ category, onPick }: Props) {
         <div
           className="catmenu"
           role="menu"
+          data-place={place}
           ref={menuRef}
           onKeyDown={onMenuKeyDown}
         >

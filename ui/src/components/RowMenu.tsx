@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "../icons";
+import { useMenuPlacement } from "./useMenuPlacement";
 
 export type RowMenuAction = {
   label: string;
@@ -50,6 +51,7 @@ export function RowMenu({
   const wrapRef = useRef<HTMLSpanElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const place = useMenuPlacement(open, triggerRef, menuRef);
 
   // Focus the first item when the menu opens, so the keyboard lands inside it.
   useEffect(() => {
@@ -122,6 +124,7 @@ export function RowMenu({
         <div
           className="rowmenu"
           role="menu"
+          data-place={place}
           ref={menuRef}
           onKeyDown={onMenuKeyDown}
         >
