@@ -104,18 +104,30 @@ func BuildFTSMatch(q string) string {
 	return strings.Join(terms, " ")
 }
 
-// BuildFTSQueries returns Ask-mode MATCH expressions ordered strictest first.
-// The caller runs them in order and keeps the first that returns any row, so a
+// FTSTier is one rung of the Ask ladder: a MATCH expression plus the
+// confidence the keyword lane earns by answering at that rung. The weight
+// travels WITH the expression because the ladder skips redundant rungs — a
+// query with no stopwords has no content-ANDed rung, so the OR floor is the
+// second entry, not the third. A caller weighing by slice position would hand
+// that floor near-full confidence.
+type FTSTier struct {
+	Match  string
+	Weight float64
+}
+
+// BuildFTSQueries returns the Ask-mode ladder, strictest rung first. The caller
+// runs the rungs in order and keeps the first that returns any row, so a
 // precise query still gets a precise keyword lane and only a query that would
 // otherwise match nothing pays for a second round-trip:
 //
-//	[0] every term ANDed          — identical to BuildFTSMatch(q)
-//	[1] content terms ANDed       — function words dropped
-//	[2] content terms ORed        — recall floor
+//	every term ANDed          — identical to BuildFTSMatch(q)  (WeightKeywordStrict)
+//	content terms ANDed       — function words dropped         (WeightKeywordContent)
+//	content terms ORed        — recall floor                   (WeightKeywordAny)
 //
-// Consecutive duplicates are dropped, so a query with no stopwords yields one
-// entry and costs exactly what it costs today. Returns nil for unusable input.
-func BuildFTSQueries(q string) []string {
+// Redundant rungs are dropped, so a query with no stopwords yields fewer
+// entries and costs exactly what it costs today. Returns nil for unusable
+// input.
+func BuildFTSQueries(q string) []FTSTier {
 	strict := BuildFTSMatch(q)
 	if strict == "" {
 		return nil
@@ -135,19 +147,22 @@ func BuildFTSQueries(q string) []string {
 		}
 		content = append(content, t)
 	}
-	tiers := []string{strict}
+	tiers := []FTSTier{{Match: strict, Weight: WeightKeywordStrict}}
 	// Every term was a stopword ("what is it about") — there is no content
 	// query to fall back to, so the strict tier stands alone.
 	if len(content) == 0 {
 		return tiers
 	}
 	if and := strings.Join(content, " "); and != strict {
-		tiers = append(tiers, and)
+		tiers = append(tiers, FTSTier{Match: and, Weight: WeightKeywordContent})
 	}
 	// ORing a single term reproduces the AND tier exactly; only add the recall
 	// floor when it actually widens the match.
 	if len(content) > 1 {
-		tiers = append(tiers, strings.Join(content, " OR "))
+		tiers = append(tiers, FTSTier{
+			Match:  strings.Join(content, " OR "),
+			Weight: WeightKeywordAny,
+		})
 	}
 	return tiers
 }

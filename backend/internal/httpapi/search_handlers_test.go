@@ -1237,3 +1237,69 @@ func TestSearchUnsetDistanceBoundStillBounds(t *testing.T) {
 		t.Errorf("the aligned chunk should still be returned: %s", body)
 	}
 }
+
+// End to end through the endpoint: a natural question whose strict tiers match
+// nothing must not let the OR recall floor bury a semantically close passage.
+// This is the query shape the whole feature exists for.
+func TestSearchAskOrFloorDoesNotBuryTheSemanticHit(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	unit := func(i int) []float32 {
+		v := make([]float32, 1536)
+		v[i] = 1
+		return v
+	}
+	// "shares" contains the question's function-ish content word "sport" and
+	// nothing else about it; "ontopic" contains none of the question's words but
+	// sits right next to the query vector.
+	for _, v := range []struct {
+		id, text string
+		vec      []float32
+	}{
+		{"shares", "a sport documentary about nothing in particular", unit(7)},
+		{"ontopic", "sodium replacement during long efforts", unit(0)},
+	} {
+		if err := deps.Videos.Upsert(videos.Video{ID: v.id, URL: "u", Title: v.id}); err != nil {
+			t.Fatalf("seed %s: %v", v.id, err)
+		}
+		if err := ragStore.ReplaceVideoChunks(context.Background(), v.id,
+			rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
+			[]rag.ChunkRow{{Ordinal: 0, Text: v.text, Kind: rag.KindTranscript, StartSeconds: 1}},
+			[][]float32{v.vec}); err != nil {
+			t.Fatalf("seed chunks %s: %v", v.id, err)
+		}
+	}
+	deps.Embedder = &fakeEmbedder{vec: unit(0)}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// Strict tiers cannot match — no chunk holds every word — so the ladder
+	// relaxes to the OR floor, which "sport" satisfies. The second query has no
+	// stopwords at all, so its ladder is only TWO rungs and the OR floor is the
+	// SECOND one: weighing a rung by its position in the ladder would hand it
+	// the content-tier weight and bury the semantic hit again.
+	for name, q := range map[string]string{
+		"question with stopwords": "did+someone+talk+about+electrolytes+in+endurance+sport",
+		"bare terms, no stopword": "electrolytes+endurance+sport",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q="+q+"&mode=ask", nil)
+			var resp struct {
+				Results []struct {
+					Video struct {
+						ID string `json:"id"`
+					} `json:"video"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v, body = %s", err, rec.Body.String())
+			}
+			if len(resp.Results) == 0 {
+				t.Fatalf("expected results: %s", rec.Body.String())
+			}
+			if resp.Results[0].Video.ID != "ontopic" {
+				t.Errorf("results[0] = %q, want the semantically close video ahead of the "+
+					"chunk that merely shares a word: %s", resp.Results[0].Video.ID, rec.Body.String())
+			}
+		})
+	}
+}

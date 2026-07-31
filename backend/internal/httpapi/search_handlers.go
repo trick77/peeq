@@ -236,14 +236,18 @@ func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
 	// words and matches nothing, so fall through to content-terms-only and
 	// finally to OR. First tier with a row wins, so a precise query still gets
 	// a precise lane and pays for exactly one round-trip.
-	for _, match := range rag.BuildFTSQueries(q) {
-		hits, err := s.rag.SearchFTS(r.Context(), match, searchCandidates)
+	for _, tier := range rag.BuildFTSQueries(q) {
+		hits, err := s.rag.SearchFTS(r.Context(), tier.Match, searchCandidates)
 		if err != nil {
 			slog.Warn("search: FTS degraded", "err", err)
 			break
 		}
 		if len(hits) > 0 {
-			lanes = append(lanes, rag.Lane{Hits: hits, Weight: rag.WeightKeyword})
+			// The rung that answered decides how much the lane counts: a query
+			// that only matched once relaxed to "any one content word" is a
+			// recall floor, not evidence. The weight rides on the rung itself,
+			// since the ladder skips rungs that would repeat one another.
+			lanes = append(lanes, rag.Lane{Hits: hits, Weight: tier.Weight})
 			break
 		}
 	}

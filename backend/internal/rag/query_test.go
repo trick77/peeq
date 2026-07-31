@@ -116,37 +116,56 @@ func TestBuildFTSQueriesRelaxesAQuestion(t *testing.T) {
 	// so the keyword lane used to abstain entirely and leave pure vector search.
 	got := BuildFTSQueries("Did someone ever talk about electrolytes being useful in endurance sport?")
 	if len(got) != 3 {
-		t.Fatalf("want 3 tiers, got %d: %q", len(got), got)
+		t.Fatalf("want 3 tiers, got %d: %+v", len(got), got)
 	}
-	if got[0] != BuildFTSMatch("Did someone ever talk about electrolytes being useful in endurance sport?") {
-		t.Errorf("tier 0 must equal BuildFTSMatch, got %q", got[0])
+	if got[0].Match != BuildFTSMatch("Did someone ever talk about electrolytes being useful in endurance sport?") {
+		t.Errorf("tier 0 must equal BuildFTSMatch, got %q", got[0].Match)
 	}
 	for _, dropped := range []string{`"did"`, `"someone"`, `"ever"`, `"about"`, `"being"`, `"in"`} {
-		if strings.Contains(got[1], dropped) {
-			t.Errorf("tier 1 %q should not contain stopword %s", got[1], dropped)
+		if strings.Contains(got[1].Match, dropped) {
+			t.Errorf("tier 1 %q should not contain stopword %s", got[1].Match, dropped)
 		}
 	}
 	for _, kept := range []string{`"electrolytes"`, `"endurance"`, `"sport"`, `"talk"`, `"useful"`} {
-		if !strings.Contains(got[1], kept) {
-			t.Errorf("tier 1 %q dropped content term %s", got[1], kept)
+		if !strings.Contains(got[1].Match, kept) {
+			t.Errorf("tier 1 %q dropped content term %s", got[1].Match, kept)
 		}
 	}
-	if !strings.Contains(got[2], " OR ") {
-		t.Errorf("tier 2 %q should be the OR recall floor", got[2])
+	if !strings.Contains(got[2].Match, " OR ") {
+		t.Errorf("tier 2 %q should be the OR recall floor", got[2].Match)
+	}
+	want := []float64{WeightKeywordStrict, WeightKeywordContent, WeightKeywordAny}
+	for i, w := range want {
+		if got[i].Weight != w {
+			t.Errorf("tier %d weight = %v, want %v", i, got[i].Weight, w)
+		}
 	}
 }
 
 func TestBuildFTSQueriesSkipsRedundantTiers(t *testing.T) {
 	// No stopwords and one term: relaxing would reproduce the strict tier, so
 	// the ladder must not cost an extra round-trip.
-	if got := BuildFTSQueries("electrolytes"); !reflect.DeepEqual(got, []string{`"electrolytes"`}) {
-		t.Errorf("single content term should yield one tier, got %q", got)
+	if got := BuildFTSQueries("electrolytes"); !reflect.DeepEqual(got,
+		[]FTSTier{{Match: `"electrolytes"`, Weight: WeightKeywordStrict}}) {
+		t.Errorf("single content term should yield one tier, got %+v", got)
 	}
 	// No stopwords, several terms: the AND tier duplicates strict, so only the
 	// OR floor is added.
 	got := BuildFTSQueries("electrolytes endurance")
-	if len(got) != 2 || got[0] != `"electrolytes" "endurance"` || got[1] != `"electrolytes" OR "endurance"` {
-		t.Errorf("unexpected tiers: %q", got)
+	if len(got) != 2 || got[0].Match != `"electrolytes" "endurance"` || got[1].Match != `"electrolytes" OR "endurance"` {
+		t.Fatalf("unexpected tiers: %+v", got)
+	}
+	// The rung that matters: with no stopwords the ladder has two rungs, so the
+	// OR floor lands in SECOND position. Weighing by slice position would give
+	// it the content-tier weight and float it above the semantic lane — exactly
+	// the burial this ladder exists to prevent.
+	if got[1].Weight != WeightKeywordAny {
+		t.Errorf("the OR floor weighs %v, want the floor %v — its position in the "+
+			"ladder must not decide its weight", got[1].Weight, WeightKeywordAny)
+	}
+	if got[1].Weight >= WeightSemantic {
+		t.Errorf("the OR floor (%v) must weigh less than the semantic lane (%v)",
+			got[1].Weight, WeightSemantic)
 	}
 }
 
@@ -155,12 +174,12 @@ func TestBuildFTSQueriesAllStopwords(t *testing.T) {
 	// rather than relaxing to an empty (and invalid) expression.
 	got := BuildFTSQueries("what is it about")
 	if len(got) != 1 {
-		t.Fatalf("want 1 tier, got %d: %q", len(got), got)
+		t.Fatalf("want 1 tier, got %d: %+v", len(got), got)
 	}
-	if got[0] == "" {
+	if got[0].Match == "" {
 		t.Error("strict tier must not be empty")
 	}
 	if got := BuildFTSQueries("   "); got != nil {
-		t.Errorf("blank query should yield no tiers, got %q", got)
+		t.Errorf("blank query should yield no tiers, got %+v", got)
 	}
 }
