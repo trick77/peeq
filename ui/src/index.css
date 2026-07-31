@@ -5342,7 +5342,10 @@ details.tomb-sect[open] > summary svg {
   font-size: 12px;
   padding: 4px 8px 4px 7px;
   border-radius: 8px;
-  color: var(--color-bg);
+  /* The card title's ink, icons included — they take it through currentColor.
+     The chip names what the title names, so the two say it in one voice
+     instead of the chip speaking in the page's ground colour. */
+  color: var(--color-ink-dim);
   background: var(--color-accent-strong);
   border-color: var(--color-accent-strong);
   box-shadow: 0 2px 10px rgb(5 8 11 / 0.45);
