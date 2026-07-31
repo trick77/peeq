@@ -79,14 +79,27 @@ function hasPage(item: PendingItem) {
   return item.summary_status !== "";
 }
 
-// summaryPill renders the card's one extra fact: whether peeq has read this
+// summaryMark renders the card's one extra fact: whether peeq has read this
 // video yet.
 //
 // Three outcomes, and the third is why the API sends two fields instead of one.
 //
-//   done            → "Summary", and the card opens something worth opening
+//   done            → "Read summary", a button that opens it
 //   pending/running → "Summarizing…", captions are being fetched or read
 //   anything else   → nothing at all
+//
+// The first outcome is a control, the second a label, and the difference is
+// deliberate. The card as a whole already opens the summary page, but a click
+// target with no visible edge is one nobody finds: the marker read "Summary"
+// for a release and said what peeq had done, not what you could do about it.
+// Naming the verb and drawing it as a filled chip is what makes the page
+// discoverable — anything quieter is the old label with a handler attached, and
+// hover-reveal is not an option peeq has (a trackpad-driven iPad reports
+// `hover: hover` and would hide it for good).
+//
+// "Summarizing…" stays a span for the same reason inverted: there is nothing to
+// press yet, and a disabled button would be a control that never worked. It
+// keeps the quiet scrim treatment so the two never look interchangeable.
 //
 // The empty-status case splits on auto_summary. On an opted-in channel it means
 // the fetcher has not reached this video yet, which is progress and deserves
@@ -94,9 +107,24 @@ function hasPage(item: PendingItem) {
 // a promise peeq is not going to keep. no_transcript lands in the same silence:
 // YouTube has no captions for it, or they turned out to be music, and neither
 // is something the user can act on.
-function summaryPill(item: PendingItem) {
+function summaryMark(item: PendingItem, onOpen?: (videoID: string) => void) {
   if (item.summary_status === "done") {
-    return <span className="metapill oncover has-summary">Summary</span>;
+    // No onOpen means the host gave the card nowhere to go — App always passes
+    // one, but a caller that does not gets the fact without a dead control.
+    if (!onOpen) {
+      return <span className="metapill oncover has-summary">Summary</span>;
+    }
+    return (
+      <button
+        type="button"
+        className="metapill oncover has-summary summary-open"
+        onClick={() => onOpen(item.video_id)}
+      >
+        <Icon name="alignLeft" size="12px" />
+        Read summary
+        <Icon name="chevronRight" size="12px" />
+      </button>
+    );
   }
   const reading =
     item.summary_status === "pending" ||
@@ -582,15 +610,18 @@ export function Inbox({
                   <span className="dur">
                     {formatDuration(item.duration_seconds)}
                   </span>
-                  {/* Top-left, where the eye starts, since this says whether
-                    there is anything to open. The poster carries only the
-                    runtime, so the corner is free.
+                  {/* Top-left, where the eye starts, since this is the offer to
+                    read before you decide. The poster carries only the runtime,
+                    so the corner is free.
 
                     A text row would be the wrong home either way: at the
                     narrowest card the grid draws, a fourth item on the eyebrow
                     truncates the channel name, while a corner is the same size
-                    on every card. */}
-                  {summaryPill(item)}
+                    on every card. The bar below is no home for it either: three
+                    labelled buttons overrun the 300px card the two-column grid
+                    draws, and on the cards with nothing to read the third one
+                    would vanish and take Download's alignment with it. */}
+                  {summaryMark(item, onOpen)}
                 </div>
                 {/* The pair rode the poster itself for one release. That put
                   chrome over the artwork — squarely over the title creators
