@@ -107,4 +107,12 @@ describe("CategoryPicker", () => {
       screen.getByRole("button", { name: /No category/ }).textContent,
     ).toContain("Uncategorized");
   });
+
+  it("hands its menu a placement for the flip-up CSS to key on", () => {
+    render(<CategoryPicker category="ai" onPick={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Category: AI/ }));
+    // jsdom measures nothing, so the value is always the "down" fallback.
+    // What is under test is that the attribute is wired at all.
+    expect(screen.getByRole("menu")).toHaveAttribute("data-place", "down");
+  });
 });

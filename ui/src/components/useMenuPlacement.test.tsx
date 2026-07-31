@@ -20,8 +20,7 @@ function Harness({ geometry }: { geometry: Geometry | null }) {
 
   function stamp(el: HTMLElement | null) {
     if (!el || !geometry) return;
-    // The menu is measured before it is placed, so offsetHeight is what it
-    // wants, not where it landed.
+    // Stands in for the post-clamp height the hook reads off a laid-out menu.
     Object.defineProperty(el, "offsetHeight", {
       configurable: true,
       value: geometry.menuHeight,

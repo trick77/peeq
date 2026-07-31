@@ -11,9 +11,16 @@ import { useLayoutEffect, useState, type RefObject } from "react";
 // trigger cannot move while the menu is open (an outside mousedown closes it),
 // and the only axis that ever ran out is the vertical one.
 //
+// Scrolling with a menu open is the one case it does not re-answer: the menu
+// stays glued to its trigger, so it never detaches, but a menu flipped up can
+// be scrolled off the top. Re-measuring on scroll would mean a listener per
+// open menu to fix a case that needs a deliberate two-finger scroll on a page
+// whose menu closes on the next tap anyway.
+//
 // Returns "down" when it cannot decide, so anything unmeasurable keeps
-// today's behaviour: jsdom reports every rect as zero, which is also why the
-// flip has no unit test — it is verified in a real browser.
+// today's behaviour. jsdom reports every rect as zero, so the tests feed the
+// geometry in rather than laying anything out — they cover this decision, not
+// the two CSS properties that act on it.
 export function useMenuPlacement(
   open: boolean,
   triggerRef: RefObject<HTMLElement | null>,
