@@ -551,6 +551,51 @@ func TestList_all_keepsRowsOnlyTheLibraryCanRecover(t *testing.T) {
 	}
 }
 
+// TestList_watched_hidesSweptVideos is the other side of the test above. A
+// tombstoned row stays reachable through "all" so it can be re-downloaded, but
+// it must not be under "watched": the sweeper reclaimed it BECAUSE it was
+// watched, so on a library with retention on, that filter would fill with
+// everything ever swept and bury what was actually watched recently.
+//
+// The exclusion belongs in SQL. Those rows are the majority on such a library,
+// and shipping thousands of them for the caller to drop is the cost this test
+// exists to prevent.
+func TestList_watched_hidesSweptVideos(t *testing.T) {
+	s := New(openTestDB(t))
+	for _, id := range []string{"seen", "swept"} {
+		if err := s.Upsert(Video{ID: id, URL: "u"}); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+		if err := s.SetDownloaded(id, DownloadedResult{MediaPath: "/m/" + id + ".mp4"}); err != nil {
+			t.Fatalf("set downloaded %s: %v", id, err)
+		}
+		if _, err := s.SetWatched(id, true); err != nil {
+			t.Fatalf("set watched %s: %v", id, err)
+		}
+	}
+	// Exactly what the retention sweeper does to a watched video.
+	if err := s.Tombstone("swept"); err != nil {
+		t.Fatalf("tombstone: %v", err)
+	}
+
+	watched, err := s.List(ListOptions{Filter: "watched"})
+	if err != nil {
+		t.Fatalf("list watched: %v", err)
+	}
+	if len(watched) != 1 || watched[0].ID != "seen" {
+		t.Fatalf("list watched = %+v, want [seen] — a swept video is not on the shelf", watched)
+	}
+
+	// Still recoverable, which is the whole reason the row was kept.
+	all, err := s.List(ListOptions{Filter: "all"})
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if ids := idsOf(all); !ids["swept"] {
+		t.Fatalf("list all = %+v, want the swept row still reachable", all)
+	}
+}
+
 // TestList_channelScoped_agreesWithArchivedCount pins a mismatch this change
 // closes. channels.Store.Stats and the channel list's archived_count have
 // always counted status='downloaded' only, while the channel page's Archive tab

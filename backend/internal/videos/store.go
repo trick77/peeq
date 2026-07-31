@@ -379,15 +379,21 @@ func escapeLike(s string) string {
 // kept) both stay: the Library grid is the only place either can be recovered
 // from, since VideoCard's re-download button is rendered nowhere else. The rule
 // is "not in the pipeline", not "playable".
+//
+// The individual filters below are free to be stricter, and three of them are:
+// "unwatched" and "in_progress" ask for a file to press play on, and "watched"
+// excludes tombstoned rows for the reason given there. "all" is what keeps the
+// recovery promise above.
 const notInFlight = "v.status NOT IN ('new', 'queued', 'downloading')"
 
 // List returns videos matching opts, ordered by opts.Sort. The status,
 // category, search, and channel dimensions are orthogonal: all that are set
 // apply together.
-//   - Filter: "unwatched" (downloaded and not watched), "watched", "favorites",
-//     or anything else/"" (no further constraint). Every one of them also
-//     applies notInFlight — see that constant for why, and for why error and
-//     tombstoned rows deliberately survive it.
+//   - Filter: "unwatched" (downloaded and not watched), "watched" (seen and
+//     still here — tombstoned rows are excluded), "favorites", or anything
+//     else/"" (no further constraint). Every one of them also applies
+//     notInFlight — see that constant for why, and for which rows survive it
+//     under "all".
 //
 // "downloading" was a filter value until the Library became ready-only. It is
 // gone rather than kept as a no-op alias: the UI type dropped it too, so a
@@ -420,7 +426,18 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 		// split off by a non-zero resume position.
 		conds = append(conds, "v.status = 'downloaded' AND v.watched = 0 AND v.resume_position_seconds > 0")
 	case "watched":
-		conds = append(conds, "v.watched = 1")
+		// Tombstoned rows are excluded, even though notInFlight keeps them.
+		// "Watched" is a shelf of things that are here and have been seen, and a
+		// swept video is no longer here — its media was reclaimed precisely
+		// BECAUSE it was watched. Without this, retention makes the filter fill
+		// with everything the sweeper has ever taken, burying the recently
+		// watched videos it exists to show.
+		//
+		// Excluded in SQL rather than dropped by the caller: on such a library
+		// the swept rows are the majority, and there is no reason to carry
+		// thousands of them across the wire to throw them away. They stay
+		// reachable through "all", which is where a re-download starts.
+		conds = append(conds, "v.watched = 1 AND v.status <> 'tombstoned'")
 	case "favorites":
 		conds = append(conds, "v.favorite = 1")
 	}
