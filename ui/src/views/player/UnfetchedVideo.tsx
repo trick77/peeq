@@ -216,10 +216,22 @@ export function UnfetchedVideo({
           // Deliberately not phrased as captions: the same status covers "there
           // are none" and "they turned out to be music", which is the wording
           // the Player already settled on.
-          <p className="unfetched-empty">
-            No speech in this video, so there is nothing to summarize. The title
-            and the channel are all peeq knows about it.
-          </p>
+          //
+          // has_subtitles is what tells the two apart, and it has to be said
+          // here: the second sentence below is false when a transcript is
+          // sitting in the panel underneath, and this page is now where "Read
+          // transcript" on the Inbox card lands.
+          video.has_subtitles ? (
+            <p className="unfetched-empty">
+              No speech peeq could summarize — the captions turned out to be
+              music. The transcript below is everything they said.
+            </p>
+          ) : (
+            <p className="unfetched-empty">
+              No speech in this video, so there is nothing to summarize. The
+              title and the channel are all peeq knows about it.
+            </p>
+          )
         ) : video.summary_status === "error" ? (
           <p className="unfetched-empty">
             Summarizing this video failed. It will be tried again.
@@ -242,12 +254,24 @@ export function UnfetchedVideo({
 
         No seek prop. There is no media to jump to yet, so the cue rows render
         as text rather than as buttons that would look identical and do
-        nothing. */}
+        nothing.
+
+        Expanded for a no_transcript video, and only for that one: there is no
+        summary coming, the transcript is the entire content of the page, and
+        the Inbox card sent you here on a button that says "Read transcript".
+        A video still being summarized keeps the panel folded — the summary is
+        what that page is waiting to show. Keyed on the video for the same reason the Player
+        keys it: the stepper walks from one inbox video to the next without
+        unmounting this page, and without the key you would land on the next
+        one with the panel still open and the previous video's find term still
+        in the box. */}
       {video.has_subtitles ? (
         <div className="unfetched-transcript">
           <TranscriptCard
+            key={video.id}
             vttUrl={subtitlesUrl(video.id)}
             filenameBase={transcriptFilenameBase(video.title)}
+            defaultOpen={video.summary_status === "no_transcript"}
           />
         </div>
       ) : null}

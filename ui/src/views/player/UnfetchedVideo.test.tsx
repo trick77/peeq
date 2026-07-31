@@ -103,16 +103,44 @@ describe("UnfetchedVideo", () => {
     expect(screen.queryByRole("button", { name: /Transcript/ })).toBeNull();
   });
 
-  // The wording covers both "YouTube has no captions" and "they turned out to
-  // be music", because one status carries both — the same reason the Player's
-  // copy says speech rather than captions.
+  // One status, two videos: has_subtitles is what separates "YouTube has no
+  // captions" from "they turned out to be music". The copy splits on it,
+  // because a page that says the title and the channel are all peeq knows
+  // contradicts the transcript panel sitting right underneath it.
   it("explains a video with no speech instead of showing a spinner", () => {
+    render(
+      <UnfetchedVideo
+        video={video({
+          summary: "",
+          summary_status: "no_transcript",
+          has_subtitles: false,
+        })}
+      />,
+    );
+    expect(screen.getByText(/No speech in this video/)).toBeTruthy();
+  });
+
+  // The music case, which is where the Inbox card's "Read transcript" lands.
+  // The transcript IS the page, so it arrives expanded rather than as a folded
+  // accordion the user has to find and press a second time.
+  it("opens the transcript expanded when there is no summary to read", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => "WEBVTT\n\n00:00:05.000 --> 00:00:07.000\nla la la\n",
+      }),
+    );
     render(
       <UnfetchedVideo
         video={video({ summary: "", summary_status: "no_transcript" })}
       />,
     );
-    expect(screen.getByText(/No speech in this video/)).toBeTruthy();
+
+    expect(await screen.findByText("la la la")).toBeTruthy();
+    expect(screen.queryByText(/all peeq knows about it/)).toBeNull();
+    expect(screen.getByText(/turned out to be music/)).toBeTruthy();
+    vi.unstubAllGlobals();
   });
 
   it("says it is still summarizing a video whose captions have not landed", () => {
