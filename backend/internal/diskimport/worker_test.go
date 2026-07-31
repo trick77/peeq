@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,11 @@ import (
 
 // fakeStore records what the worker stored and how often it went looking.
 type fakeStore struct {
+	// mu guards the maps below. Only TestRun_importsThenStops needs it — that
+	// one drives Run in its own goroutine and watches the result from the test
+	// goroutine — but the lock lives on every method so a future concurrent
+	// test cannot reintroduce the race.
+	mu                   sync.Mutex
 	candidates           []videos.ThumbnailImportCandidate
 	transcriptCandidates []videos.TranscriptImportCandidate
 	stored               map[string][]byte
@@ -38,6 +44,8 @@ func newFakeStore(c ...videos.ThumbnailImportCandidate) *fakeStore {
 // ThumbnaillessVideos mirrors the real query: a video stops being a candidate
 // the moment it has stored bytes.
 func (f *fakeStore) ThumbnaillessVideos(limit int) ([]videos.ThumbnailImportCandidate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listCalls++
 	var out []videos.ThumbnailImportCandidate
 	for _, c := range f.candidates {
@@ -53,12 +61,16 @@ func (f *fakeStore) ThumbnaillessVideos(limit int) ([]videos.ThumbnailImportCand
 }
 
 func (f *fakeStore) SetThumbnail(id, mime string, data []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.stored[id] = data
 	f.mimes[id] = mime
 	return nil
 }
 
 func (f *fakeStore) SetThumbnailPath(id, path string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.paths[id] = path
 	return nil
 }
@@ -66,6 +78,8 @@ func (f *fakeStore) SetThumbnailPath(id, path string) error {
 // TranscriptlessVideos / SetTranscript mirror the thumbnail pair: a video stops
 // being a candidate the moment it has stored text.
 func (f *fakeStore) TranscriptlessVideos(limit int) ([]videos.TranscriptImportCandidate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []videos.TranscriptImportCandidate
 	for _, c := range f.transcriptCandidates {
 		if _, done := f.transcripts[c.ID]; done {
@@ -80,9 +94,20 @@ func (f *fakeStore) TranscriptlessVideos(limit int) ([]videos.TranscriptImportCa
 }
 
 func (f *fakeStore) SetTranscript(id, source, vtt string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.transcripts[id] = vtt
 	f.sources[id] = source
 	return nil
+}
+
+// hasStored reports whether a poster landed, under the lock — the only safe way
+// to look while a worker goroutine is still running.
+func (f *fakeStore) hasStored(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.stored[id]
+	return ok
 }
 
 // writePoster puts a poster file where a download would have left it.
@@ -651,7 +676,7 @@ func TestRun_importsThenStops(t *testing.T) {
 
 	deadline := time.After(2 * time.Second)
 	for {
-		if _, ok := store.stored["v1"]; ok {
+		if store.hasStored("v1") {
 			break
 		}
 		select {
