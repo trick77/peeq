@@ -259,4 +259,23 @@ describe("Settings", () => {
       await screen.findByText(/auto-paused after repeated/i),
     ).toBeInTheDocument();
   });
+
+  // The labels say which preset reaches a TV, so they are the whole point of
+  // the button and not decoration. The selector strings are locked separately
+  // on the Go side (ytdlp/format_test.go).
+  it("offers every format preset by its label", async () => {
+    render(<Settings />);
+    const heading = await screen.findByText("Download format");
+    const section = heading.closest("section") as HTMLElement;
+
+    for (const label of [
+      "Apple AirPlay 1080p",
+      "Apple VP9 4K",
+      "Best available MP4",
+      "Custom…",
+    ]) {
+      expect(within(section).getByText(label)).toBeInTheDocument();
+    }
+    expect(within(section).getAllByRole("button")).toHaveLength(4);
+  });
 });

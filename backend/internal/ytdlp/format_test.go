@@ -12,7 +12,7 @@ func TestResolve_knownPresets(t *testing.T) {
 		want   string
 	}{
 		{"apple-1080p", "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4"},
-		{"apple-720p", "bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4"},
+		{"apple-vp9-4k", "bestvideo[height<=2160][vcodec*=vp9]+bestaudio[acodec*=mp4a]/bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4"},
 		{"best-mp4", "bestvideo+bestaudio/best"},
 	}
 	for _, c := range cases {
@@ -47,5 +47,32 @@ func TestResolve_custom_emptyErrors(t *testing.T) {
 func TestResolve_unknownPresetErrors(t *testing.T) {
 	if _, err := Resolve("does-not-exist", ""); err == nil {
 		t.Fatal("expected error for unknown preset id")
+	}
+}
+
+// A channel's format_override may hold either a preset id or, for rows
+// written before the preset picker existed, a raw selector. IsPreset is
+// what tells the download worker which one it has, so the "custom" case
+// matters as much as the happy path: "custom" resolves a selector that
+// travels beside it, and has none here.
+func TestIsPreset(t *testing.T) {
+	cases := []struct {
+		id   string
+		want bool
+	}{
+		{"apple-1080p", true},
+		{"apple-vp9-4k", true},
+		{"best-mp4", true},
+		{"custom", false},
+		{"", false},
+		{"does-not-exist", false},
+		{"bestvideo[height<=1440]+bestaudio", false},
+	}
+	for _, c := range cases {
+		t.Run(c.id, func(t *testing.T) {
+			if got := IsPreset(c.id); got != c.want {
+				t.Fatalf("IsPreset(%q) = %v, want %v", c.id, got, c.want)
+			}
+		})
 	}
 }

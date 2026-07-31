@@ -12,28 +12,7 @@ import { getYtdlpVersion, updateYtdlp } from "../api/ytdlp";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 import type { Settings as SettingsType } from "../api/types";
 import { DOT } from "../sep";
-
-// PRESETS mirrors ytdlp.Presets exactly (backend/internal/ytdlp/format.go)
-// plus the "custom" id Resolve special-cases — the format string shown
-// under each preset here must stay byte-for-byte in sync with that table.
-const PRESETS: { id: string; label: string; format: string }[] = [
-  {
-    id: "apple-1080p",
-    label: "Apple 1080p",
-    format: "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
-  },
-  {
-    id: "apple-720p",
-    label: "Apple 720p",
-    format: "bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
-  },
-  {
-    id: "best-mp4",
-    label: "Best available MP4",
-    format: "bestvideo+bestaudio/best",
-  },
-  { id: "custom", label: "Custom…", format: "write your own format string" },
-];
+import { PRESETS } from "../formatPresets";
 
 // looksLikeNetscapeCookie is a client-side sanity check only — the
 // authoritative check is cookie.Validate on the backend (see
@@ -559,8 +538,9 @@ export function Settings() {
       <section className="sect">
         <h2>Download format</h2>
         <p className="desc">
-          A yt-dlp format selector. Apple presets pick H.264 / AAC so videos
-          play natively — no transcoding.
+          A yt-dlp format selector. Apple AirPlay 1080p picks H.264 / AAC, the
+          only codecs a TV accepts. Apple VP9 4K goes higher, but won&rsquo;t
+          AirPlay.
         </p>
         <div className="presets">
           {PRESETS.map((preset) => (
@@ -698,7 +678,7 @@ export function Settings() {
             Your TV opens the video itself and can&rsquo;t sign in as you, so
             Peeq creates a private link that works without signing in. Links
             expire after 12 hours, and switching this off kills every one at
-            once. Only Apple 1080p and 720p downloads play on a TV.
+            once. Only Apple AirPlay 1080p downloads play on a TV.
           </p>
         </div>
       </section>
