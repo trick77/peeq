@@ -18,8 +18,7 @@ import (
 
 // Channel mirrors one row of the channels table. A Channel may exist purely
 // as a metadata cache entry: AddedAt is empty for a channel the user has
-// visited but never added. AvatarPath and BannerPath are relative to the
-// media dir (resolve them with media.SafeMediaPath before serving).
+// visited but never added.
 // Subscribers is 0 when YouTube did not report a count (it is hidden, or the
 // channel has never been resolved) — callers must treat 0 as "unknown", not
 // as a real zero. ResolveOk records whether the LAST resolve attempt actually
@@ -30,12 +29,9 @@ type Channel struct {
 	Handle      string
 	Name        string
 	Description string
-	// AvatarPath and BannerPath are where the image FILES lived. Since migration
-	// 0023 the images live in channel_images; the columns survive only as the
-	// import worker's map of where to look. HasAvatar/HasBanner are what every
-	// reader actually wants, answered from the stored bytes.
-	AvatarPath  string
-	BannerPath  string
+	// HasAvatar and HasBanner are whether artwork is stored for this channel.
+	// Migration 0024 took the avatar_path/banner_path columns that used to
+	// stand in for them; the images themselves are rows (0023).
 	HasAvatar   bool
 	HasBanner   bool
 	Subscribers int64
@@ -114,23 +110,24 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
-// VideoRef identifies one of a channel's downloaded videos and the on-disk
-// files that belong to it. It is read BEFORE a cascade delete so the HTTP
-// handler can unlink media/thumbnail files after the videos rows are gone.
+// VideoRef identifies one of a channel's downloaded videos and the video file
+// that belongs to it. It is read BEFORE a cascade delete so the HTTP handler can
+// unlink the file after the rows are gone.
+//
+// Just the media path: the poster, transcript and everything else a video owns
+// are rows that go with it on the cascade (0022, 0023), and whatever a
+// pre-migration library still has beside the file is collected by
+// media.RemoveVideoFiles taking the whole per-video directory.
 type VideoRef struct {
-	VideoID       string
-	MediaPath     string
-	ThumbnailPath string
-	SubtitlePath  string
+	VideoID   string
+	MediaPath string
 }
 
 // VideoRefs returns a VideoRef for every videos row belonging to channelID.
-// Callers read these before DeleteCascade so the media/thumbnail/subtitle
-// paths (lost once the rows are deleted) are still available for unlinking
-// the files.
+// Callers read these before DeleteCascade, while the paths still exist.
 func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT id, media_path, thumbnail_path, subtitle_path FROM videos WHERE channel_id = ?`, channelID)
+		`SELECT id, media_path FROM videos WHERE channel_id = ?`, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("video refs: %w", err)
 	}
@@ -138,7 +135,7 @@ func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 	var out []VideoRef
 	for rows.Next() {
 		var r VideoRef
-		if err := rows.Scan(&r.VideoID, &r.MediaPath, &r.ThumbnailPath, &r.SubtitlePath); err != nil {
+		if err := rows.Scan(&r.VideoID, &r.MediaPath); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -242,16 +239,14 @@ WHERE v.channel_id = ?`, channelID)
 // and MarkResolveAttempted on failure.
 func (s *Store) Upsert(c Channel) error {
 	_, err := s.db.ExecContext(context.Background(), `
-INSERT INTO channels (id, handle, name, description, avatar_path, banner_path, resolved_at)
-VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''))
+INSERT INTO channels (id, handle, name, description, resolved_at)
+VALUES (?, ?, ?, ?, NULLIF(?, ''))
 ON CONFLICT(id) DO UPDATE SET
     handle      = COALESCE(NULLIF(excluded.handle, ''), channels.handle),
     name        = COALESCE(NULLIF(excluded.name, ''), channels.name),
     description = COALESCE(NULLIF(excluded.description, ''), channels.description),
-    avatar_path = COALESCE(NULLIF(excluded.avatar_path, ''), channels.avatar_path),
-    banner_path = COALESCE(NULLIF(excluded.banner_path, ''), channels.banner_path),
     resolved_at = COALESCE(excluded.resolved_at, channels.resolved_at)`,
-		c.ID, c.Handle, c.Name, c.Description, c.AvatarPath, c.BannerPath, c.ResolvedAt,
+		c.ID, c.Handle, c.Name, c.Description, c.ResolvedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert channel %s: %w", c.ID, err)
@@ -274,20 +269,18 @@ ON CONFLICT(id) DO UPDATE SET
 //     and the last real count is better than nothing.
 func (s *Store) SaveResolved(c Channel) error {
 	_, err := s.db.ExecContext(context.Background(), `
-INSERT INTO channels (id, handle, name, description, avatar_path, banner_path,
+INSERT INTO channels (id, handle, name, description,
                       subscriber_count, verified, resolved_at, resolve_ok)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), 1)
+VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), 1)
 ON CONFLICT(id) DO UPDATE SET
     handle           = COALESCE(NULLIF(excluded.handle, ''), channels.handle),
     name             = COALESCE(NULLIF(excluded.name, ''), channels.name),
     description      = COALESCE(NULLIF(excluded.description, ''), channels.description),
-    avatar_path      = COALESCE(NULLIF(excluded.avatar_path, ''), channels.avatar_path),
-    banner_path      = COALESCE(NULLIF(excluded.banner_path, ''), channels.banner_path),
     subscriber_count = COALESCE(NULLIF(excluded.subscriber_count, 0), channels.subscriber_count),
     verified         = excluded.verified,
     resolved_at      = COALESCE(excluded.resolved_at, channels.resolved_at),
     resolve_ok       = 1`,
-		c.ID, c.Handle, c.Name, c.Description, c.AvatarPath, c.BannerPath,
+		c.ID, c.Handle, c.Name, c.Description,
 		c.Subscribers, c.Verified, c.ResolvedAt,
 	)
 	if err != nil {
@@ -347,7 +340,7 @@ func (s *Store) Get(id string) (*Channel, error) {
 // columns already COALESCEd to the empty strings the Channel struct uses.
 // Shared so a reader that joins channels (the metadata claims) cannot drift
 // from Get's column order, which scanChannel depends on.
-const channelColumns = `c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
+const channelColumns = `c.id, c.handle, c.name, c.description,
        EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'avatar') AS has_avatar,
        EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'banner') AS has_banner,
        c.subscriber_count, c.verified,
@@ -362,7 +355,7 @@ type rowScanner interface{ Scan(dest ...any) error }
 func scanChannel(row rowScanner) (*Channel, error) {
 	var c Channel
 	if err := row.Scan(&c.ID, &c.Handle, &c.Name, &c.Description,
-		&c.AvatarPath, &c.BannerPath, &c.HasAvatar, &c.HasBanner, &c.Subscribers, &c.Verified,
+		&c.HasAvatar, &c.HasBanner, &c.Subscribers, &c.Verified,
 		&c.ResolvedAt, &c.ResolveOk, &c.AddedAt, &c.FirstSeenAt, &c.AutoSummary); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -417,7 +410,7 @@ WITH lv AS (
   FROM channel_videos
   GROUP BY channel_id
 )
-SELECT c.id, c.handle, c.name, c.description, c.avatar_path, c.banner_path,
+SELECT c.id, c.handle, c.name, c.description,
        EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'avatar'),
        EXISTS (SELECT 1 FROM channel_images i WHERE i.channel_id = c.id AND i.kind = 'banner'),
        COALESCE(c.resolved_at, ''), COALESCE(c.added_at, ''), c.first_seen_at,
@@ -474,7 +467,7 @@ WHERE (c.added_at IS NOT NULL OR ` + hasDownloadsPredicate + `)`
 	for rows.Next() {
 		var it ListItem
 		if err := rows.Scan(
-			&it.ID, &it.Handle, &it.Name, &it.Description, &it.AvatarPath, &it.BannerPath,
+			&it.ID, &it.Handle, &it.Name, &it.Description,
 			&it.HasAvatar, &it.HasBanner,
 			&it.ResolvedAt, &it.AddedAt, &it.FirstSeenAt,
 			&it.Subscribed, &it.Autodownload, &it.FormatOverride, &it.AutoSummary,

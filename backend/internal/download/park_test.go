@@ -144,7 +144,7 @@ func TestWorker_membersOnly_neverDiscardsAVideoThatOnceDownloaded(t *testing.T) 
 	// Stamp the row the way a completed download would, then tombstone it —
 	// exactly the state the re-download button acts on.
 	if err := h.videos.SetDownloaded("vid", videos.DownloadedResult{
-		MediaPath: "vid.mp4", ThumbnailPath: "vid.jpg", FilesizeBytes: 1,
+		MediaPath: "vid.mp4", FilesizeBytes: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}

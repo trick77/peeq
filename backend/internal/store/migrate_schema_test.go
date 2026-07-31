@@ -34,6 +34,19 @@ func applyThrough(t *testing.T, db *sql.DB, stopAt string) {
 	sort.Strings(names)
 
 	for _, name := range names {
+		// Skip what a previous call already applied, so a test can stop at one
+		// migration, set the database up as that version saw it, and then step
+		// forward to the next.
+		var dummy int
+		switch err := db.QueryRow(`SELECT 1 FROM schema_migrations WHERE version = ?`, name).Scan(&dummy); {
+		case err == nil:
+			if name == stopAt {
+				return
+			}
+			continue
+		case err != sql.ErrNoRows:
+			t.Fatal(err)
+		}
 		body, err := migrationsFS.ReadFile("migrations/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -62,7 +75,7 @@ func TestSchemaHasPhase3Objects(t *testing.T) {
 	}
 
 	// New videos columns exist.
-	for _, col := range []string{"audio_language", "subtitle_path", "summary", "chapters", "key_points", "summary_status", "summary_error", "embed_model", "embed_dim"} {
+	for _, col := range []string{"audio_language", "summary", "chapters", "key_points", "summary_status", "summary_error", "embed_model", "embed_dim"} {
 		var cnt int
 		if err := db.QueryRow(
 			`SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name = ?`, col,
@@ -599,6 +612,10 @@ INSERT INTO videos (id, url, channel_id, channel_name, status) VALUES
 // that 404s. Those files are gone for good, so the migration clears the
 // column and the UI draws its gradient placeholder instead. Rows in any
 // other status keep their path — theirs still points at a real file.
+//
+// It stops AT 0013 rather than running Migrate to the end: 0024 drops the
+// column this is about, and a test of what 0013 did has to look at the database
+// as 0013 left it.
 func TestMigrate_clearsStaleTombstonedThumbnailPath(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -614,9 +631,7 @@ INSERT INTO videos (id, url, status, thumbnail_path) VALUES
   ('e1','u','error','/media/c/e1/e1.jpg')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db); err != nil {
-		t.Fatal(err)
-	}
+	applyThrough(t, db, "0013_tombstone_thumbnail.sql")
 
 	var got string
 	if err := db.QueryRow(`SELECT thumbnail_path FROM videos WHERE id = 't1'`).Scan(&got); err != nil {
@@ -631,6 +646,58 @@ INSERT INTO videos (id, url, status, thumbnail_path) VALUES
 		}
 		if got == "" {
 			t.Fatalf("%s thumbnail_path was cleared, want kept", id)
+		}
+	}
+}
+
+// TestMigrate_dropsAssetPathColumns asserts 0024: the four columns that used to
+// point at files are gone.
+//
+// It also checks that the tables which cascade off videos and channels are still
+// there. That is the real hazard this migration walks past: dropping a COLUMN is
+// harmless, but rebuilding either table — the pattern 0014 uses — would have
+// meant DROP TABLE with foreign_keys on, which fires every ON DELETE CASCADE and
+// empties the library. If someone ever "fixes" 0024 into a rebuild, this is what
+// catches it.
+func TestMigrate_dropsAssetPathColumns(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct{ table, col string }{
+		{"videos", "thumbnail_path"},
+		{"videos", "subtitle_path"},
+		{"channels", "avatar_path"},
+		{"channels", "banner_path"},
+	} {
+		var n int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.col,
+		).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("%s.%s still present after 0024", c.table, c.col)
+		}
+	}
+
+	for _, tbl := range []string{
+		"video_thumbnails", "video_transcripts", "channel_images",
+		"pending_thumbnails", "transcript_chunks", "download_jobs", "share_links",
+	} {
+		var n int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, tbl,
+		).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("%s missing after 0024 — did the migration become a table rebuild?", tbl)
 		}
 	}
 }

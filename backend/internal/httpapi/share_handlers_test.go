@@ -214,14 +214,14 @@ func TestShare_publicVideoNeverLeaksVideoID(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed video: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE videos SET media_path = ?, thumbnail_path = ? WHERE id = ?`, mediaPath, thumbPath, id); err != nil {
+	if _, err := db.Exec(`UPDATE videos SET media_path = ? WHERE id = ?`, mediaPath, id); err != nil {
 		t.Fatalf("set paths: %v", err)
 	}
 	// The share page reads the poster from the row, not from the media tree.
 	if err := deps.Videos.SetThumbnail(id, "image/jpeg", []byte("JPGDATA")); err != nil {
 		t.Fatalf("store thumbnail: %v", err)
 	}
-	if err := deps.Videos.SetSubtitle(id, subPath, "en"); err != nil {
+	if err := deps.Videos.SetAudioLanguage(id, "en"); err != nil {
 		t.Fatalf("set subtitle: %v", err)
 	}
 	if err := deps.Videos.SetTranscript(id, videos.TranscriptSourceDownload,
@@ -459,24 +459,9 @@ func TestShare_publicVideoCarriesExpiry(t *testing.T) {
 }
 
 func TestShare_publicThumbnailAndSubtitles(t *testing.T) {
-	deps, mediaDir, db := shareTestDeps(t)
-	videoDir := filepath.Join(mediaDir, "chan1", "v1")
-	if err := os.MkdirAll(videoDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	thumbPath := filepath.Join(videoDir, "v1.jpg")
-	if err := os.WriteFile(thumbPath, []byte("JPGDATA"), 0o644); err != nil {
-		t.Fatalf("write thumb: %v", err)
-	}
-	vttPath := filepath.Join(videoDir, "v1.en.vtt")
-	if err := os.WriteFile(vttPath, []byte("WEBVTT\n\n"), 0o644); err != nil {
-		t.Fatalf("write vtt: %v", err)
-	}
+	deps, _, _ := shareTestDeps(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
 		t.Fatalf("seed video: %v", err)
-	}
-	if _, err := db.Exec(`UPDATE videos SET thumbnail_path = ? WHERE id = ?`, thumbPath, "v1"); err != nil {
-		t.Fatalf("set thumbnail path: %v", err)
 	}
 	if err := deps.Videos.SetThumbnail("v1", "image/jpeg", []byte("JPGDATA")); err != nil {
 		t.Fatalf("store thumbnail: %v", err)
@@ -484,7 +469,7 @@ func TestShare_publicThumbnailAndSubtitles(t *testing.T) {
 	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT"); err != nil {
 		t.Fatalf("store transcript: %v", err)
 	}
-	if err := deps.Videos.SetSubtitle("v1", vttPath, "en"); err != nil {
+	if err := deps.Videos.SetAudioLanguage("v1", "en"); err != nil {
 		t.Fatalf("set subtitle: %v", err)
 	}
 	h := New(deps)

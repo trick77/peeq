@@ -58,18 +58,20 @@ func TestTombstone_clearsMediaPathSetsStatusKeepsRow(t *testing.T) {
 // is the only source a transcript can be re-chunked or re-embedded from, and
 // the DTO derives has_subtitles from it, so clearing it also hid the transcript
 // view on a video that still had one.
-func TestTombstoneKeepsSubtitlePathAndSummary(t *testing.T) {
+func TestTombstoneKeepsTranscriptAndSummary(t *testing.T) {
 	s := New(openTestDB(t))
 	const id = "vid1"
 	if err := s.Upsert(Video{ID: id, URL: "u"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	if err := s.SetDownloaded(id, DownloadedResult{
-		MediaPath:       "/media/vid1.mp4",
-		FilesizeBytes:   10,
-		SubtitleRelPath: "vid1.en.vtt",
+		MediaPath:     "/media/vid1.mp4",
+		FilesizeBytes: 10,
 	}); err != nil {
 		t.Fatalf("set downloaded: %v", err)
+	}
+	if err := s.SetTranscript(id, TranscriptSourceDownload, "WEBVTT"); err != nil {
+		t.Fatalf("set transcript: %v", err)
 	}
 	if err := s.SetSummary(id, "a summary", `[]`, `[]`); err != nil {
 		t.Fatalf("set summary: %v", err)
@@ -81,8 +83,8 @@ func TestTombstoneKeepsSubtitlePathAndSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if v.SubtitlePath != "vid1.en.vtt" {
-		t.Errorf("subtitle_path = %q, want kept after tombstone", v.SubtitlePath)
+	if !v.HasTranscript {
+		t.Error("the transcript was lost by the tombstone, want kept")
 	}
 	if v.MediaPath != "" {
 		t.Errorf("media_path = %q, want empty after tombstone", v.MediaPath)
@@ -106,7 +108,6 @@ func TestSetDownloaded_recordsResult(t *testing.T) {
 	}
 	if err := s.SetDownloaded("v", DownloadedResult{
 		MediaPath:            "/media/chan/v/v.mp4",
-		ThumbnailPath:        "/media/chan/v/v.jpg",
 		FilesizeBytes:        123456,
 		FormatUsed:           "bv*+ba",
 		SponsorblockSegments: `[{"category":"sponsor"}]`,
@@ -137,9 +138,6 @@ func TestSetDownloaded_recordsResult(t *testing.T) {
 	}
 	if got.DownloadedAt == "" {
 		t.Fatalf("downloaded_at not stamped")
-	}
-	if got.ThumbnailPath != "/media/chan/v/v.jpg" {
-		t.Fatalf("thumbnail_path = %q", got.ThumbnailPath)
 	}
 }
 

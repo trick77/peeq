@@ -32,17 +32,6 @@ const pendingThumbBackoff = 300 * time.Millisecond
 // real network.
 var ytThumbHost = "https://i.ytimg.com"
 
-// PendingThumbDir is where a pending video's thumbnail was cached BEFORE
-// migration 0023 moved it into the database. It survives for the import worker,
-// which reads those files in and unlinks them.
-func PendingThumbDir(videoID string) string {
-	return ".pending/" + videoID
-}
-
-// PendingThumbExts are the extensions the pre-0023 cache was written under, in
-// the order the import worker should look for them.
-var PendingThumbExts = []string{".jpg", ".png", ".webp"}
-
 // FetchPendingThumbnail downloads videoID's inbox poster and returns its mime
 // and bytes for the caller to store.
 //

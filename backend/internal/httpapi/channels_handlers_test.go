@@ -1498,8 +1498,8 @@ func TestChannelDetail_resolveSuccess_imageFetchFailures(t *testing.T) {
 	if c == nil || c.ResolvedAt == "" {
 		t.Fatalf("channel not cached as resolved: %+v", c)
 	}
-	if c.AvatarPath != "" || c.BannerPath != "" {
-		t.Fatalf("expected empty image paths given the fetch failure, got avatar=%q banner=%q", c.AvatarPath, c.BannerPath)
+	if c.HasAvatar || c.HasBanner {
+		t.Fatalf("artwork stored despite the fetch failing: avatar=%v banner=%v", c.HasAvatar, c.HasBanner)
 	}
 }
 
@@ -2887,44 +2887,12 @@ func TestChannelAvatar_noAvatar_404(t *testing.T) {
 	}
 }
 
-// TestChannelAvatar_unsafeStoredPath_404 asserts a stored path that would
-// escape the media dir (however it got into the database) is refused rather
-// than served — the same guarantee media.SafeMediaPath gives video
-// thumbnails.
-func TestChannelAvatar_unsafeStoredPath_404(t *testing.T) {
-	deps, _ := channelImageTestDeps(t, &testResolver{})
-	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X", AvatarPath: "../../etc/passwd"}); err != nil {
-		t.Fatalf("seed channel: %v", err)
-	}
-	h := New(deps)
-	cookie := loginAndGetCookie(t, h)
-
-	rec := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCx/avatar", nil)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404, body = %s", rec.Code, rec.Body.String())
-	}
-}
-
-// TestChannelAvatar_fileMissingOnDisk_404 asserts a stored path whose file
-// no longer exists on disk (deleted out from under the database, e.g. by a
-// manual media-dir cleanup) is a 404 rather than a 500.
-func TestChannelAvatar_fileMissingOnDisk_404(t *testing.T) {
-	deps, _ := channelImageTestDeps(t, &testResolver{})
-	if err := deps.Channels.Upsert(channels.Channel{ID: "UCx", Name: "X", AvatarPath: ".channels/UCx/avatar.jpg"}); err != nil {
-		t.Fatalf("seed channel: %v", err)
-	}
-	h := New(deps)
-	cookie := loginAndGetCookie(t, h)
-
-	rec := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCx/avatar", nil)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404, body = %s", rec.Code, rec.Body.String())
-	}
-}
-
-// TestChannelDetail_publishesYouTubeFacts asserts the channel page is served
-// the numbers YouTube publishes, plus the pair (resolved_at, resolve_ok) that
-// says how current they are.
+// The two tests that used to sit here — one for a stored path escaping the
+// media dir, one for a path whose file had been deleted underneath it — are
+// gone with the column they were about. Since 0024 this endpoint reads bytes
+// off the row and never touches the filesystem, so neither failure exists to
+// guard against; the no-image case above is the whole negative path now. This
+// is the same retirement #282 gave the subtitle endpoint's path-safety pair.
 func TestChannelDetail_publishesYouTubeFacts(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{})
 	h := New(deps)

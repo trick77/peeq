@@ -78,7 +78,7 @@ type Ledger interface {
 type VideoStore interface {
 	Upsert(v videos.Video) error
 	SetStatus(id, status, errMsg string) error
-	SetSubtitle(id, relPath, audioLang string) error
+	SetAudioLanguage(id, audioLang string) error
 	SetTranscript(id, source, vtt string) error
 	SetSummaryStatus(id, status, errMsg string) error
 }
@@ -209,10 +209,12 @@ func (w *Worker) pass(ctx context.Context) {
 		w.d.Logger.Error("captionfetch: save transcript failed", "video_id", c.VideoID, "err", err)
 		return
 	}
-	// audio_language still rides on the subtitle write; the path it records is
-	// now only of interest to the import worker, and is about to be dead.
-	if err := w.d.Videos.SetSubtitle(c.VideoID, relPath, w.d.DefaultSubLang); err != nil {
-		w.d.Logger.Error("captionfetch: save subtitle failed", "video_id", c.VideoID, "err", err)
+	// The language the captions are in still has to be recorded: the next
+	// download asks yt-dlp for it, and the player uses it as the track's
+	// srcLang. It used to ride along on the subtitle-path write, which 0024
+	// took away.
+	if err := w.d.Videos.SetAudioLanguage(c.VideoID, w.d.DefaultSubLang); err != nil {
+		w.d.Logger.Error("captionfetch: save audio language failed", "video_id", c.VideoID, "err", err)
 		return
 	}
 	if err := w.d.Ledger.MarkCaptionSettled(c.VideoID); err != nil {
@@ -291,8 +293,9 @@ func refused(err error) bool {
 //
 // The read is the only part that can fail usefully: if the text does not land
 // in the database there is nothing to summarize, so the caller must not enqueue
-// the analysis. The unlink is best-effort — a file left behind is tidied by the
-// import worker, or by the next caption fetch overwriting it.
+// the analysis. The unlink is best-effort — a file left behind is overwritten
+// by the next caption fetch, or taken by the download worker's .summaries/
+// cleanup if this video is ever approved.
 func (w *Worker) storeTranscript(videoID, relPath string) error {
 	safe, err := media.SafeMediaPath(w.d.MediaDir, relPath)
 	if err != nil {

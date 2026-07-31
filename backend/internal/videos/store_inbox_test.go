@@ -21,8 +21,11 @@ func TestUpsertPreservesAnalysis(t *testing.T) {
 	if err := s.Upsert(Video{ID: "v1", URL: "https://youtu.be/v1", Title: "Original"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.SetSubtitle("v1", ".summaries/v1/v1.en.vtt", "en"); err != nil {
-		t.Fatalf("set subtitle: %v", err)
+	if err := s.SetAudioLanguage("v1", "en"); err != nil {
+		t.Fatalf("set audio language: %v", err)
+	}
+	if err := s.SetTranscript("v1", TranscriptSourceCaption, "WEBVTT"); err != nil {
+		t.Fatalf("set transcript: %v", err)
 	}
 	if err := s.SetSummaryText("v1", "The summary that must survive."); err != nil {
 		t.Fatalf("set summary: %v", err)
@@ -50,8 +53,8 @@ func TestUpsertPreservesAnalysis(t *testing.T) {
 	if v.Summary != "The summary that must survive." {
 		t.Fatalf("summary = %q; the download path must not clear it", v.Summary)
 	}
-	if v.SubtitlePath != ".summaries/v1/v1.en.vtt" {
-		t.Fatalf("subtitle_path = %q; the download path must not clear it", v.SubtitlePath)
+	if !v.HasTranscript {
+		t.Fatal("the transcript was cleared; the download path must not touch it")
 	}
 	if v.SummaryStatus != SummaryDone {
 		t.Fatalf("summary_status = %q, want it left at done", v.SummaryStatus)

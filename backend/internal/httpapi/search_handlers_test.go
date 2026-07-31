@@ -309,12 +309,11 @@ func TestReprocessEnqueues(t *testing.T) {
 	// The reprocess guard requires media + a subtitle to be present, so
 	// seed a normal downloaded-with-subtitle video (the positive path).
 	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
-		MediaPath:       "/media/v1.mp4",
-		SubtitleRelPath: "v1.en.vtt",
+		MediaPath: "/media/v1.mp4",
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
-	// Reprocess gates on the stored transcript, not on subtitle_path.
+	// Reprocess gates on the stored transcript.
 	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
@@ -423,12 +422,11 @@ func TestReprocess_noJobsConfigured503(t *testing.T) {
 	// Media + subtitle present so the new reprocess guard doesn't shadow
 	// the 503-on-unconfigured-SummaryJobs path this test exercises.
 	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
-		MediaPath:       "/media/v1.mp4",
-		SubtitleRelPath: "v1.en.vtt",
+		MediaPath: "/media/v1.mp4",
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
-	// Reprocess gates on the stored transcript, not on subtitle_path.
+	// Reprocess gates on the stored transcript.
 	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
@@ -528,12 +526,11 @@ func TestReprocess_downloadInFlightReturns409(t *testing.T) {
 				t.Fatalf("seed v1: %v", err)
 			}
 			if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
-				MediaPath:       "/media/v1.mp4",
-				SubtitleRelPath: "v1.en.vtt",
+				MediaPath: "/media/v1.mp4",
 			}); err != nil {
 				t.Fatalf("seed downloaded: %v", err)
 			}
-			// Reprocess gates on the stored transcript, not on subtitle_path.
+			// Reprocess gates on the stored transcript.
 			if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
 				t.Fatalf("seed transcript: %v", err)
 			}
@@ -573,12 +570,11 @@ func TestReprocess_tombstonedWithSubtitleReturns202(t *testing.T) {
 		t.Fatalf("seed v1: %v", err)
 	}
 	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
-		MediaPath:       "/media/v1.mp4",
-		SubtitleRelPath: "v1.en.vtt",
+		MediaPath: "/media/v1.mp4",
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
-	// Reprocess gates on the stored transcript, not on subtitle_path.
+	// Reprocess gates on the stored transcript.
 	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
@@ -615,12 +611,11 @@ func TestReprocess_downloadedWithSubtitleReturns202(t *testing.T) {
 		t.Fatalf("seed v1: %v", err)
 	}
 	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
-		MediaPath:       "/media/v1.mp4",
-		SubtitleRelPath: "v1.en.vtt",
+		MediaPath: "/media/v1.mp4",
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
-	// Reprocess gates on the stored transcript, not on subtitle_path.
+	// Reprocess gates on the stored transcript.
 	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
@@ -667,11 +662,10 @@ func TestReprocess_categoryResetFailure500(t *testing.T) {
 		t.Fatalf("seed v1: %v", err)
 	}
 	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
-		MediaPath: "/media/v1.mp4", SubtitleRelPath: "v1.en.vtt",
-	}); err != nil {
+		MediaPath: "/media/v1.mp4"}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
-	// Reprocess gates on the stored transcript, not on subtitle_path.
+	// Reprocess gates on the stored transcript.
 	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
@@ -704,12 +698,11 @@ func TestReprocess_clearSummaryFailureIs500(t *testing.T) {
 		t.Fatalf("seed v1: %v", err)
 	}
 	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
-		MediaPath:       "/media/v1.mp4",
-		SubtitleRelPath: "v1.en.vtt",
+		MediaPath: "/media/v1.mp4",
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
-	// Reprocess gates on the stored transcript, not on subtitle_path.
+	// Reprocess gates on the stored transcript.
 	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
@@ -749,12 +742,11 @@ func TestReprocess_sponsorblockResetFailureIs500(t *testing.T) {
 		t.Fatalf("seed v1: %v", err)
 	}
 	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{
-		MediaPath:       "/media/v1.mp4",
-		SubtitleRelPath: "v1.en.vtt",
+		MediaPath: "/media/v1.mp4",
 	}); err != nil {
 		t.Fatalf("seed downloaded: %v", err)
 	}
-	// Reprocess gates on the stored transcript, not on subtitle_path.
+	// Reprocess gates on the stored transcript.
 	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
@@ -1085,7 +1077,7 @@ func TestReprocessMarksIndexStale(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	if _, err := db.Exec(
-		`UPDATE videos SET media_path='m.mp4', subtitle_path='s.vtt' WHERE id='v1'`); err != nil {
+		`UPDATE videos SET media_path='m.mp4' WHERE id='v1'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {

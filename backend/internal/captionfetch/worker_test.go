@@ -114,10 +114,7 @@ func TestCaptionsArriveQueuesExactlyOneSummary(t *testing.T) {
 	if v.Status != videos.StatusNew {
 		t.Fatalf("status = %q, want new — the video is read, not requested", v.Status)
 	}
-	if v.SubtitlePath != rel {
-		t.Fatalf("subtitle_path = %q, want %q", v.SubtitlePath, rel)
-	}
-	// The text is what matters now, and it is stored as a caption read: an
+	// The text is what matters, and it is stored as a caption read: an
 	// inbox video's analysis stops after the prose.
 	tr, terr := h.videos.GetTranscript("v1")
 	if terr != nil || tr == nil {

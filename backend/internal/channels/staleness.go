@@ -93,7 +93,7 @@ ON CONFLICT(channel_id) DO UPDATE SET reason = excluded.reason, at = excluded.at
 // joined with the reason and timestamp, ordered by most recent first.
 func (s *Store) AutoUnsubscribedList() ([]AutoUnsubscribed, error) {
 	rows, err := s.db.QueryContext(context.Background(), `
-SELECT c.id, c.handle, c.name, c.avatar_path, c.first_seen_at, au.reason, au.at
+SELECT c.id, c.handle, c.name, c.first_seen_at, au.reason, au.at
 FROM auto_unsubscribes au
 JOIN channels c ON c.id = au.channel_id
 ORDER BY au.at DESC, c.id`)
@@ -105,7 +105,7 @@ ORDER BY au.at DESC, c.id`)
 	var out []AutoUnsubscribed
 	for rows.Next() {
 		var a AutoUnsubscribed
-		if err := rows.Scan(&a.ID, &a.Handle, &a.Name, &a.AvatarPath, &a.FirstSeenAt, &a.Reason, &a.At); err != nil {
+		if err := rows.Scan(&a.ID, &a.Handle, &a.Name, &a.FirstSeenAt, &a.Reason, &a.At); err != nil {
 			return nil, fmt.Errorf("scan auto unsubscribed: %w", err)
 		}
 		out = append(out, a)

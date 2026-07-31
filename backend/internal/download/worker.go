@@ -472,14 +472,10 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		video.DurationSeconds = int64(meta.DurationSeconds)
 		video.PublishedAt = meta.PublishedAt
 		video.Description = meta.Description
-		// Only when the row has nothing: meta.Thumbnail is a REMOTE CDN url, and
-		// letting it displace a local path would point the thumbnail import at a
-		// file it can never open. It is kept for the brand-new row, where it is
-		// the only hint that exists before the download runs — hence a guard
-		// rather than a deletion.
-		if video.ThumbnailPath == "" {
-			video.ThumbnailPath = meta.Thumbnail
-		}
+		// meta.Thumbnail is deliberately dropped on the floor. It is a REMOTE
+		// CDN url, and the only thing that ever read it back was the import
+		// worker's fallback; the poster this video ends up showing is the file
+		// yt-dlp writes at download time, stored as bytes by storeThumbnail.
 		video.Availability = videos.NormalizeAvailability(meta.Availability)
 		if err := w.deps.Videos.Upsert(*video); err != nil {
 			// Retry, don't fail: a write that could not land is our
@@ -771,11 +767,9 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 	}
 	if err := w.deps.Videos.SetDownloaded(video.ID, videos.DownloadedResult{
 		MediaPath:            res.MediaPath,
-		ThumbnailPath:        res.ThumbnailPath,
 		FilesizeBytes:        res.FilesizeBytes,
 		FormatUsed:           res.FormatUsed,
 		SponsorblockSegments: marshalSegments(res.SponsorblockSegments),
-		SubtitleRelPath:      res.SubtitleRelPath,
 		AudioLanguage:        res.AudioLanguage,
 		ChaptersJSON:         res.ChaptersJSON,
 		PublishedAt:          res.PublishedAt,
@@ -787,8 +781,8 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 	}); err != nil {
 		w.deps.Logger.Error("download worker: set downloaded failed", "video_id", video.ID, "err", err)
 		// Do not enqueue a summary job: the video row was not updated with
-		// subtitle_path/audio_language/chapters, so a summary job would run
-		// against stale/incomplete data.
+		// audio_language/chapters, so a summary job would run against
+		// stale/incomplete data.
 		return
 	}
 
@@ -802,7 +796,9 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 	// media file; from here on that file is only an import source, and the bytes
 	// in video_thumbnails are what every card and player renders (migration
 	// 0022). Best-effort and never gating: a video with no poster is a cosmetic
-	// loss, and the import worker retries this on its own schedule.
+	// loss, and never worth failing a download that otherwise succeeded. With
+	// the import worker retired (0024) nothing retries it, so the file is left
+	// where it is on a failure rather than unlinked.
 	w.storeThumbnail(video.ID, res.ThumbnailPath)
 
 	// Probe the finished file so the player can show what it actually is.
@@ -810,8 +806,8 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 	// media facts are decoration, and a missing or broken ffprobe must not
 	// cost the user a summary.
 	// The caption peeq fetched to help decide on this video has been superseded:
-	// SetDownloaded above repointed subtitle_path at the copy that came with the
-	// media, so the .summaries/ one is now referenced by nothing. Nothing else
+	// storeTranscript above overwrote the stored text with the copy that came
+	// with the media, so the .summaries/ file is referenced by nothing. Nothing else
 	// would ever collect it — retention works from database rows, and no row
 	// points here any more — so it has to go on this path or not at all.
 	//
@@ -888,11 +884,12 @@ func (w *Worker) probeDownloaded(videoID, mediaPath string) {
 // storeTranscript reads the .vtt yt-dlp wrote into the row, then unlinks every
 // .vtt beside the media file.
 //
-// All of them, not just the one subtitle_path names: yt-dlp may write several
+// All of them, not just the one yt-dlp's result names: it may write several
 // language and auto-caption variants, and both globs that look for them take
 // the FIRST match, so the rest were already unreferenced. Best-effort at every
-// step — the download succeeded either way, and the import worker retries a
-// transcript that did not land.
+// step — the download succeeded either way. Nothing retries a transcript that
+// did not land now that the import worker is gone (0024), which is why every
+// failure below returns BEFORE the unlink rather than after it.
 func (w *Worker) storeTranscript(videoID, subtitleRelPath, mediaPath string) {
 	if w.deps.Videos == nil {
 		return
@@ -927,8 +924,9 @@ func (w *Worker) storeTranscript(videoID, subtitleRelPath, mediaPath string) {
 // storeThumbnail reads the poster yt-dlp wrote and stores its bytes on the
 // video row. Best-effort at every step: no poster, an unreadable file, an
 // oversized image or a failed insert are all logged and shrugged off — the
-// download itself succeeded, and the thumbimport worker will retry the import
-// on its next pass since the row still has no stored poster.
+// download itself succeeded, and a card with no poster draws its gradient
+// placeholder. Nothing retries it since the import worker went with 0024; a
+// re-download is the only way back.
 func (w *Worker) storeThumbnail(videoID, thumbPath string) {
 	if thumbPath == "" || w.deps.Videos == nil {
 		return
@@ -948,8 +946,8 @@ func (w *Worker) storeThumbnail(videoID, thumbPath string) {
 		return
 	}
 	// The file has served its purpose. Removing it only after a successful
-	// store is what makes the failure mode "retry the import later" rather than
-	// "the poster is gone".
+	// store is what leaves the image where it is on a failure, rather than
+	// unlinking the one copy that landed nowhere.
 	_ = os.Remove(safe)
 }
 

@@ -71,7 +71,7 @@ func TestVideosSubtitles_ignoresSubtitlePathEntirely(t *testing.T) {
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
 		t.Fatalf("seed video: %v", err)
 	}
-	if err := deps.Videos.SetSubtitle("v1", "../../../../etc/passwd", "en"); err != nil {
+	if err := deps.Videos.SetAudioLanguage("v1", "en"); err != nil {
 		t.Fatalf("set subtitle path: %v", err)
 	}
 

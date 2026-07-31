@@ -12,13 +12,20 @@ import (
 // TestRemoveTombstonedVideoFilesKeepsEverythingButMedia.)
 func TestRemoveVideoFilesUnlinksSubtitle(t *testing.T) {
 	dir := t.TempDir()
+	media := filepath.Join(dir, "vid.mp4")
+	if err := os.WriteFile(media, []byte("VIDEO"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	sub := filepath.Join(dir, "vid.en.vtt")
 	if err := os.WriteFile(sub, []byte("WEBVTT\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	RemoveVideoFiles(dir, "", "", "vid.en.vtt")
+	RemoveVideoFiles(dir, "vid.mp4")
 	if _, err := os.Stat(sub); !os.IsNotExist(err) {
 		t.Errorf("subtitle file still present, want removed")
+	}
+	if _, err := os.Stat(media); !os.IsNotExist(err) {
+		t.Errorf("media file still present, want removed")
 	}
 }
 
@@ -66,7 +73,7 @@ func TestRemoveVideoFilesRemovesThumbnail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	RemoveVideoFiles(dir, "", "vid.jpg", "")
+	RemoveVideoFiles(dir, "vid.jpg")
 
 	if _, err := os.Stat(thumb); !os.IsNotExist(err) {
 		t.Errorf("thumbnail still present, want removed")
@@ -89,8 +96,8 @@ func TestRemoveVideoFilesSweepsSubtitleSidecars(t *testing.T) {
 		}
 	}
 
-	// subtitlePath deliberately empty: the sidecar must go on the media path alone.
-	RemoveVideoFiles(dir, "vid.mp4", "", "")
+	// The sidecar has to go on the media path alone — nothing names it.
+	RemoveVideoFiles(dir, "vid.mp4")
 
 	if _, err := os.Stat(mediaPath); !os.IsNotExist(err) {
 		t.Errorf("media file still present, want removed")

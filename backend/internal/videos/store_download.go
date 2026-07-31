@@ -10,11 +10,9 @@ import (
 // verbatim in the sponsorblock_segments column.
 type DownloadedResult struct {
 	MediaPath            string
-	ThumbnailPath        string
 	FilesizeBytes        int64
 	FormatUsed           string
 	SponsorblockSegments string
-	SubtitleRelPath      string
 	AudioLanguage        string
 	ChaptersJSON         string
 	// PublishedAt is the release date (YYYY-MM-DD) yt-dlp reported in the
@@ -80,9 +78,9 @@ func (s *Store) SetDownloaded(id string, res DownloadedResult) error {
 	}
 	_, err := s.db.ExecContext(context.Background(), `
 UPDATE videos
-SET media_path = ?, thumbnail_path = COALESCE(NULLIF(?, ''), thumbnail_path),
+SET media_path = ?,
 	filesize_bytes = ?, format_used = ?, sponsorblock_segments = ?,
-	subtitle_path = ?, audio_language = ?,
+	audio_language = ?,
 	chapters = CASE WHEN ? != '' THEN ? ELSE chapters END,
 	published_at = COALESCE(NULLIF(?, ''), published_at),
 	description = COALESCE(NULLIF(?, ''), description),
@@ -93,8 +91,8 @@ SET media_path = ?, thumbnail_path = COALESCE(NULLIF(?, ''), thumbnail_path),
 	sponsorblock_refreshed_at = datetime('now'),
 	status = 'downloaded', error_message = '', downloaded_at = datetime('now')
 WHERE id = ?`,
-		res.MediaPath, res.ThumbnailPath, res.FilesizeBytes, res.FormatUsed, segments,
-		res.SubtitleRelPath, res.AudioLanguage,
+		res.MediaPath, res.FilesizeBytes, res.FormatUsed, segments,
+		res.AudioLanguage,
 		res.ChaptersJSON, res.ChaptersJSON,
 		res.PublishedAt,
 		res.Description,
@@ -151,11 +149,11 @@ func (s *Store) Discard(id string) error {
 // and path-safety checks the store doesn't have) via
 // media.RemoveTombstonedVideoFiles.
 //
-// thumbnail_path and subtitle_path are deliberately NOT cleared: both files
-// survive a tombstone, so the remembered card keeps its poster and the
-// transcript stays readable and re-embeddable. Column and file must stay in
-// step — clearing a column here without keeping the file (or the reverse) is
-// what left tombstoned cards showing a broken image.
+// media_path is the ONLY thing cleared. The poster and the transcript are rows
+// of their own (0022, 0023) and are untouched by a delete, so the remembered
+// card keeps its picture and the video stays searchable and re-analysable with
+// nothing left on disk. There is no longer a column and a file to keep in step,
+// which is what used to leave tombstoned cards showing a broken image.
 func (s *Store) Tombstone(id string) error {
 	ctx := context.Background()
 	tx, err := s.db.BeginTx(ctx, nil)

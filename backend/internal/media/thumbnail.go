@@ -8,10 +8,10 @@ import (
 // ThumbnailExts are the extensions yt-dlp's --write-thumbnail may produce,
 // depending on what format the source thumbnail was served in.
 //
-// This list has one home. Both the downloader (which finds the file yt-dlp just
-// wrote) and the import worker (which goes looking for files written by earlier
-// downloads) walk it, and a copy in either package would be a list two packages
-// must remember to keep in lockstep.
+// This list has one home. The downloader walks it to find the file yt-dlp just
+// wrote, and ThumbnailMime below maps the same set to the Content-Type the
+// stored poster is served as; a copy in the ytdlp package would be a list two
+// packages must remember to keep in lockstep.
 var ThumbnailExts = []string{".jpg", ".jpeg", ".png", ".webp"}
 
 // ThumbnailMime maps a thumbnail file's extension to the Content-Type to serve

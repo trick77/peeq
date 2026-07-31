@@ -95,29 +95,6 @@ func TestDeleteChannel_cascadesToPendingThumbnails(t *testing.T) {
 	}
 }
 
-// The import worker's candidate query: pending items with nothing cached, and
-// only those — a decided item's poster is never rendered again.
-func TestThumbnaillessPendingIDs_onlyPendingWithoutBytes(t *testing.T) {
-	st := newTestStore(t)
-	seedPendingEntry(t, st, "UC1", "wanted")
-	seedPendingEntry(t, st, "UC1", "cached")
-	seedPendingEntry(t, st, "UC1", "decided")
-	if err := st.SetThumbnail("cached", "image/jpeg", []byte("x")); err != nil {
-		t.Fatalf("set thumbnail: %v", err)
-	}
-	if err := st.SetState("decided", StateIgnored); err != nil {
-		t.Fatalf("ignore: %v", err)
-	}
-
-	got, err := st.ThumbnaillessPendingIDs(10)
-	if err != nil {
-		t.Fatalf("list candidates: %v", err)
-	}
-	if len(got) != 1 || got[0] != "wanted" {
-		t.Fatalf("candidates = %v, want only [wanted]", got)
-	}
-}
-
 // seedPendingEntry inserts a channel and one pending ledger row for it.
 func seedPendingEntry(t *testing.T, st *Store, channelID, videoID string) {
 	t.Helper()
@@ -159,19 +136,5 @@ func TestSetPendingThumbnail_guards(t *testing.T) {
 	}
 	if got, err := st.GetThumbnail("p1"); err != nil || got != nil {
 		t.Fatalf("something was stored anyway: %v, %v", got, err)
-	}
-}
-
-// A non-positive limit falls back to a sane page rather than the whole ledger.
-func TestThumbnaillessPendingIDs_defaultsTheLimit(t *testing.T) {
-	st := newTestStore(t)
-	seedPendingEntry(t, st, "UC1", "p1")
-
-	got, err := st.ThumbnaillessPendingIDs(0)
-	if err != nil {
-		t.Fatalf("list candidates: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("candidates = %v, want the one pending item", got)
 	}
 }

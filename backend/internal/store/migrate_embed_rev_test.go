@@ -11,8 +11,8 @@ func TestMigrate0018_existingRowsAreStale(t *testing.T) {
 
 	// A video indexed under the pre-chapter recipe.
 	if _, err := db.Exec(`
-		INSERT INTO videos (id, url, status, subtitle_path, embed_model, embed_dim)
-		VALUES ('v1','u','downloaded','c/v/x.vtt','text-embedding-3-small',1536)`); err != nil {
+		INSERT INTO videos (id, url, status, embed_model, embed_dim)
+		VALUES ('v1','u','downloaded','text-embedding-3-small',1536)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(db); err != nil {
