@@ -1233,18 +1233,11 @@ func (s *Scheduler) enqueueAuto(e ytdlp.ChannelEntry, sub *channels.Subscription
 	// mere presence, or a scan in flight would enqueue a download for a
 	// channel that isn't added anymore. This is not fully atomic across
 	// stores; full atomicity is a documented follow-up.
-	c, err := s.d.Channels.Get(sub.ChannelID)
-	if err != nil || c == nil || c.AddedAt == "" {
+	if c, err := s.d.Channels.Get(sub.ChannelID); err != nil || c == nil || c.AddedAt == "" {
 		return nil
 	}
-	// c.Name comes free from the guard above, so the videos row records the
-	// channel it came from instead of leaning entirely on the read-side join.
-	// It is legitimately empty for a cache row that has not resolved yet;
-	// Upsert's COALESCE guard reads that as "no news" and keeps whatever the
-	// row already has rather than blanking it.
 	if err := s.d.Videos.Upsert(videos.Video{
 		ID: e.ID, URL: e.URL, Title: e.Title, ChannelID: sub.ChannelID,
-		ChannelName:     c.Name,
 		DurationSeconds: int64(e.DurationSeconds), RequestedFormat: sub.FormatOverride,
 	}); err != nil {
 		return err

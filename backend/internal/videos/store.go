@@ -136,10 +136,19 @@ func New(db *sql.DB) *Store {
 // member missing its guard, which made a metadata-poor caller an eraser rather
 // than merely a no-op. Only the download worker's metadata preflight has a name
 // to offer, and it runs solely for a row with an empty title — the add-by-URL
-// path. The scan scheduler and the approve-from-inbox handler now look one up;
-// the inbox caption fetcher still has none to give. So a pasted video that a
-// channel scan later re-saw (revive, or a fresh listing entry) had its real
-// channel name replaced by the empty string.
+// path. Every other caller passes none, so a pasted video that a channel scan
+// later re-saw (revive, or a fresh listing entry) had its real channel name
+// replaced by the empty string.
+//
+// Note what the guard deliberately does NOT come with: a matching effort to
+// POPULATE the column from the channels cache at those callers. That was tried
+// and reverted. An empty column is what lets videoColumns fall through to
+// channels.name, which the weekly metadata refresh keeps current; a populated
+// one wins over the join and then nothing ever updates it, so every card for
+// that video would show the channel's old name forever after a rename. Where
+// the raw column genuinely matters — an unresolved or not-added channel, and
+// the NameFromVideos fallback — the cache has no name to copy anyway. Leaving
+// it empty is the load-bearing behaviour, not an omission.
 //
 // published_at and description are refreshed but never CLEARED: several callers
 // legitimately have no date or description to offer (scan's enqueueAuto seeds
@@ -185,19 +194,20 @@ ON CONFLICT(id) DO UPDATE SET
 // Columns are qualified "v." because these queries LEFT JOIN the channels
 // table (aliased "ch") to resolve the display channel name — see below.
 //
-// channel_name is coalesced, not read raw. The write side now populates it
-// wherever the name is actually known (Upsert's guard keeps it, the scheduler
-// and the approve-from-inbox handler pass it), but this stays for two reasons
-// that a write-side fix cannot reach: every row written before that fix still
-// has an empty column and there is no migration repairing them, and the inbox
-// caption fetcher genuinely has no name to offer at the point it creates a row.
+// channel_name is coalesced, not read raw: a video discovered through a
+// channel scan or subscription has no videos.channel_name of its own (only the
+// add-by-URL path writes one), so the raw column is empty for those rows and
+// the UI would fall back to showing the bare UCxxxx id. The LEFT JOIN pulls the
+// resolved name from the channels metadata cache instead, falling through to
+// the id only when the channel itself is genuinely unresolved (resolve_ok = 0,
+// name still blank). NULLIF guards both an empty videos.channel_name and an
+// empty channels.name so neither shadows the next fallback.
 //
-// So the raw column can still be empty, and the UI would fall back to showing
-// the bare UCxxxx id. The LEFT JOIN pulls the resolved name from the channels
-// metadata cache instead, falling through to the id only when the channel
-// itself is genuinely unresolved (resolve_ok = 0, name still blank). NULLIF
-// guards both an empty videos.channel_name and an empty channels.name so
-// neither shadows the next fallback.
+// This is the PREFERRED state, not a gap waiting to be closed by populating the
+// column at scan time. The cache is what the weekly metadata refresh keeps
+// current, so an empty raw column is what lets a renamed channel show its new
+// name on every card. A populated one wins here and nothing rewrites it — see
+// the note on Upsert.
 //
 // Worth knowing before "simplifying" a test through this: reading a video back
 // with Get or List cannot observe what the raw column holds, because ch.name

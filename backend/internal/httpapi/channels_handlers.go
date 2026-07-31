@@ -1098,23 +1098,11 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	// string, and this is where such an entry becomes a video row — the row is
 	// new here, so cleaning it stays within "new videos only". The ledger row
 	// itself is left as it was.
-	//
-	// The ledger entry carries no channel name — Ledger.Get does not join
-	// channels, unlike the ListPending queries — so it is looked up here and
-	// recorded on the video row. Best-effort: a lookup failure leaves the name
-	// empty, which Upsert's COALESCE guard treats as "no news" rather than as
-	// an instruction to blank the column, and the read-side join still resolves
-	// the display name either way.
-	var channelName string
-	if c, cerr := s.channels.Get(e.ChannelID); cerr == nil && c != nil {
-		channelName = c.Name
-	}
 	if err := s.videos.Upsert(videos.Video{
 		ID:              e.VideoID,
 		URL:             e.URL,
 		Title:           ytdlp.NormalizeTitle(e.Title),
 		ChannelID:       e.ChannelID,
-		ChannelName:     channelName,
 		DurationSeconds: int64(e.DurationSeconds),
 	}); err != nil {
 		serverError(w, r, err, "save video failed")

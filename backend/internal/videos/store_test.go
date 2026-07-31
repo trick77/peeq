@@ -1029,6 +1029,38 @@ func TestList_errorsOnClosedDB(t *testing.T) {
 // arrive through a channel scan/subscription: their own videos.channel_name
 // is never written, so both Get and List must fall back to the resolved name
 // in the channels metadata cache rather than surfacing the raw UCxxxx id.
+// An empty videos.channel_name is load-bearing, not a gap: it is what lets a
+// renamed channel show its new name on every existing card, because the join
+// reads channels.name, which the weekly metadata refresh keeps current.
+//
+// This pins a decision that looks like an oversight and gets "fixed" otherwise.
+// Populating the column from the channels cache at scan time was tried and
+// reverted for exactly this: the raw value wins over the join, and nothing ever
+// rewrites it, so a scan-discovered video would display the pre-rename name
+// forever. If someone adds that write back, this test fails.
+func TestChannelName_followsChannelRename(t *testing.T) {
+	s := newTestStore(t)
+	seedChannel(t, s, "UC1", "Old Name")
+	seedVideo(t, s, Video{
+		ID: "v", URL: "u", Title: "t",
+		ChannelID: "UC1", // ChannelName deliberately empty, as a scan writes it
+		Status:    "downloaded",
+	})
+
+	// The channel renames on YouTube; the metadata refresher updates the cache.
+	if _, err := s.db.Exec(`UPDATE channels SET name = 'New Name' WHERE id = 'UC1'`); err != nil {
+		t.Fatalf("rename channel: %v", err)
+	}
+
+	got, err := s.Get("v")
+	if err != nil || got == nil {
+		t.Fatalf("get: %v (row=%v)", err, got)
+	}
+	if got.ChannelName != "New Name" {
+		t.Fatalf("ChannelName = %q, want %q — an empty raw column must follow the rename", got.ChannelName, "New Name")
+	}
+}
+
 func TestChannelName_resolvesFromChannelsCache(t *testing.T) {
 	s := newTestStore(t)
 	seedChannel(t, s, "UC77UtoyivVHkpApL0wGfH5w", "Real Channel Name")
