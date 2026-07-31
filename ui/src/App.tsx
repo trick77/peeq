@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
+import { SignIn } from "./shell/SignIn";
+import { takeAuthFailed } from "./authError";
 import {
   getMe,
   listDownloads,
@@ -51,6 +53,10 @@ function readRailCollapsed(): boolean {
     return false;
   }
 }
+
+// At module load, before any effect or route read can rewrite the URL — see
+// takeAuthFailed for why it is consumed rather than merely read.
+const AUTH_FAILED = takeAuthFailed();
 
 function writeRailCollapsed(collapsed: boolean) {
   try {
@@ -583,34 +589,11 @@ export function App() {
   }
 
   if (!authChecked) {
-    return (
-      <div
-        style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}
-      >
-        <b>Peeq</b>
-      </div>
-    );
+    return <SignIn checking />;
   }
 
   if (!user) {
-    return (
-      <div
-        style={{
-          display: "grid",
-          placeItems: "center",
-          minHeight: "100vh",
-          gap: 12,
-        }}
-      >
-        <b>Peeq</b>
-        {authError ? (
-          <p style={{ color: "var(--color-danger)" }}>
-            Couldn't reach the server. Try reloading.
-          </p>
-        ) : null}
-        <a href="/api/auth/login">Sign in</a>
-      </div>
-    );
+    return <SignIn unreachable={authError} failed={AUTH_FAILED} />;
   }
 
   function openVideo(id: string) {
