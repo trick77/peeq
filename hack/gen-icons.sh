@@ -21,7 +21,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/ui/icons"
 OUT="$ROOT/ui/public"
-MASTER="$OUT/icon.svg" # the transparent master ships as-is; it is not a copy
+MASTER="$OUT/icon.svg" # the master ships as-is; it is not a copy
 
 for tool in rsvg-convert magick; do
 	if ! command -v "$tool" >/dev/null 2>&1; then
@@ -30,7 +30,10 @@ for tool in rsvg-convert magick; do
 	fi
 done
 
-# --- transparent, from the master -------------------------------------------
+# --- from the master ---------------------------------------------------------
+# -b none stays even though these come out opaque: the ground is the master's
+# own background rect, not something the renderer supplies. Keeping the renderer
+# out of it is what lets the check below catch a master that lost that rect.
 rsvg-convert -b none -w 192 -h 192 "$MASTER" -o "$OUT/icon-192.png"
 rsvg-convert -b none -w 512 -h 512 "$MASTER" -o "$OUT/icon-512.png"
 
@@ -43,9 +46,16 @@ rsvg-convert -w 512 -h 512 "$SRC/icon-maskable.svg" -o "$OUT/icon-maskable-512.p
 
 # --- verify the grounds survived --------------------------------------------
 # Rendering can succeed and still produce the wrong thing — most plausibly a
-# tiled source that lost its background rect, which yields a touch icon iOS then
-# flattens onto black. That fails silently in a viewer and only shows up on a
-# real device, so assert every ground here instead.
+# source that lost its background rect, which yields a touch icon iOS flattens
+# onto black, or a favicon whose corners leak the tab bar's white. That fails
+# silently in a viewer and only shows up on a real device, so assert every
+# ground here instead.
+#
+# ALL FOUR are opaque. icon-192/512 used to be expected transparent, back when
+# ui/public/icon.svg let the browser composite the mark onto the tab; that is
+# what put white in the favicon's corners on Safari, so the master carries its
+# own #1f1f1e now. If either of these two goes back to opaque=false, the master
+# has lost its background rect — do not "fix" it by relaxing the check.
 fail=0
 check_alpha() { # <file> <expected true|false>
 	local got
@@ -57,8 +67,8 @@ check_alpha() { # <file> <expected true|false>
 		fail=1
 	fi
 }
-check_alpha "$OUT/icon-192.png" false
-check_alpha "$OUT/icon-512.png" false
+check_alpha "$OUT/icon-192.png" true
+check_alpha "$OUT/icon-512.png" true
 check_alpha "$OUT/apple-touch-icon.png" true
 check_alpha "$OUT/icon-maskable-512.png" true
 

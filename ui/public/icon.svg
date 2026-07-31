@@ -35,18 +35,36 @@
   same on a light tab, a dark tab and a white bookmark card. The bare triangle
   this replaced needed no fill because a triangle encloses nothing.
 
-  The alpha OUTSIDE the frame stays transparent and is still right — only the
-  enclosed area is filled, so the icon's silhouette is still the frame and not
-  a square. iOS and Android flatten what alpha remains (onto black and onto the
-  launcher's own fill), so apple-touch-icon.png and icon-maskable-512.png are
-  rendered from the opaque sources in ui/icons/ instead. Regenerate the rasters
-  with hack/gen-icons.sh after touching this file.
+  THE CANVAS CARRIES THAT SAME GROUND, edge to edge, and this file is NOT
+  transparent. It used to be, on the reasoning that a browser composites the
+  icon onto the tab and should be allowed to. Filling only the frame's interior
+  left the four corners OUTSIDE its rounded silhouette still transparent, and
+  those corners are not free: measured at 16px, the extreme corner pixel comes
+  out pure #FFFFFF on a light tab bar with 96%-white tints beside it. Four
+  corners of that is a set of pale notches on exactly the chrome the fill was
+  meant to fix. A rounded shape cannot avoid this — anything outside the path
+  is the client's to paint — so the ground goes under the whole 64x64 canvas
+  instead, the way ui/icons/icon-tile.svg has always done it.
+
+  The trade is deliberate: the silhouette is now a square rather than a rounded
+  square. At 96% coverage the frame all but reaches the edge, so what the canvas
+  adds is a corner sliver about one pixel wide at 16px. A square edge that
+  matches peeq's ground beats a rounded one that leaks white.
+
+  With no alpha left, all four rasters are opaque and hack/gen-icons.sh asserts
+  exactly that — its icon-192/512 checks expect opaque=true. iOS and Android
+  never see alpha here either, so nothing depends on the old flattening
+  behaviour. apple-touch-icon.png and icon-maskable-512.png keep being rendered
+  from the sources in ui/icons/ for their own reasons: square corners for the
+  OS mask, and a smaller glyph. Regenerate the rasters with hack/gen-icons.sh
+  after touching this file.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
     <stop offset="0" stop-color="#e08a68"/>
     <stop offset="1" stop-color="#c25f34"/>
   </linearGradient>
+  <rect width="64" height="64" fill="#1f1f1e"/>
   <g transform="translate(-3.965 -3.965) scale(2.9971)" fill="none" stroke="url(#og)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
     <rect x="3" y="3" width="18" height="18" rx="2" fill="#1f1f1e"/>
     <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" fill="url(#og)" stroke="none"/>
