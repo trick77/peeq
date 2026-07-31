@@ -84,6 +84,11 @@ type channelItem struct {
 	// stops dropping them before JSON.
 	HasAvatar bool `json:"has_avatar"`
 	HasBanner bool `json:"has_banner"`
+	// The versions go in the artwork URLs, which is what lets those responses be
+	// cached as immutable and still turn over the moment the refresher stores
+	// new artwork. Omitted when there is no such image.
+	AvatarVersion string `json:"avatar_version,omitempty"`
+	BannerVersion string `json:"banner_version,omitempty"`
 	// Dormant and LastVideoAt surface channels.Store.List's dormancy
 	// columns: Dormant is always present (false for a healthy or
 	// unsubscribed channel), LastVideoAt is omitted when the channel has
@@ -278,6 +283,8 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 			Added:           it.AddedAt != "",
 			HasAvatar:       it.HasAvatar,
 			HasBanner:       it.HasBanner,
+			AvatarVersion:   it.AvatarVersion,
+			BannerVersion:   it.BannerVersion,
 			Dormant:         it.Dormant,
 			LastVideoAt:     it.LastVideoAt,
 			FirstSeenAt:     it.FirstSeenAt,
@@ -322,6 +329,10 @@ type channelDetail struct {
 	Description string `json:"description,omitempty"`
 	HasAvatar   bool   `json:"has_avatar"`
 	HasBanner   bool   `json:"has_banner"`
+	// See the list DTO: these version the artwork URLs so they can be cached
+	// immutably without pinning a refreshed picture.
+	AvatarVersion string `json:"avatar_version,omitempty"`
+	BannerVersion string `json:"banner_version,omitempty"`
 
 	// What YouTube publishes about the channel, as of the last successful
 	// resolve. Subscribers is omitted when unknown — 0 subscribers is not a
@@ -417,6 +428,8 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		out.Description = c.Description
 		out.HasAvatar = c.HasAvatar
 		out.HasBanner = c.HasBanner
+		out.AvatarVersion = c.AvatarVersion
+		out.BannerVersion = c.BannerVersion
 		out.Subscribers = c.Subscribers
 		out.Verified = c.Verified
 		out.ResolvedAt = c.ResolvedAt
@@ -1014,6 +1027,12 @@ type pendingItem struct {
 	// turned out to be music. Only the second leaves something to read, and
 	// only a card that knows which it is can offer the right thing.
 	HasSubtitles bool `json:"has_subtitles"`
+	// ThumbnailVersion versions the poster URL when one has already been cached,
+	// so the card can be served an immutable copy. Omitted when nothing is cached
+	// yet — which is not "there is no poster": the endpoint fetches one on
+	// demand, so the card asks either way and simply gets the revalidating
+	// response on the unversioned URL until a poster lands.
+	ThumbnailVersion string `json:"thumbnail_version,omitempty"`
 }
 
 // handlePendingList returns every ledger entry in state 'pending'. Mirrors
@@ -1039,18 +1058,19 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 	out := make([]pendingItem, 0, len(items))
 	for _, e := range items {
 		out = append(out, pendingItem{
-			VideoID:         e.VideoID,
-			ChannelID:       e.ChannelID,
-			ChannelName:     e.ChannelName,
-			Title:           e.Title,
-			DurationSeconds: e.DurationSeconds,
-			URL:             e.URL,
-			ThumbnailURL:    e.ThumbnailURL,
-			PublishedAt:     e.PublishedAt,
-			DiscoveredAt:    e.DiscoveredAt,
-			SummaryStatus:   e.SummaryStatus,
-			AutoSummary:     e.AutoSummary,
-			HasSubtitles:    e.HasSubtitles,
+			VideoID:          e.VideoID,
+			ChannelID:        e.ChannelID,
+			ChannelName:      e.ChannelName,
+			Title:            e.Title,
+			DurationSeconds:  e.DurationSeconds,
+			URL:              e.URL,
+			ThumbnailURL:     e.ThumbnailURL,
+			PublishedAt:      e.PublishedAt,
+			DiscoveredAt:     e.DiscoveredAt,
+			SummaryStatus:    e.SummaryStatus,
+			AutoSummary:      e.AutoSummary,
+			HasSubtitles:     e.HasSubtitles,
+			ThumbnailVersion: e.ThumbnailVersion,
 		})
 	}
 	writeJSON(w, out)
@@ -1279,7 +1299,7 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 		}
 		t = &channelvideos.Thumbnail{Mime: mime, Bytes: data}
 	}
-	w.Header().Set("Cache-Control", cacheImageDay)
+	imageOwnedDay.apply(w, r)
 	serveStoredImage(w, r, t.Mime, t.Bytes, t.UpdatedAt)
 }
 
@@ -1312,7 +1332,7 @@ func (s *server) serveChannelImage(w http.ResponseWriter, r *http.Request, kind 
 	// Artwork changes at most weekly (the metadata refresher's interval), so a
 	// day of browser caching is safe and saves a request per channel per page.
 	// The pending-thumbnail route has said the same for longer.
-	w.Header().Set("Cache-Control", cacheImageDay)
+	imageOwnedDay.apply(w, r)
 	serveStoredImage(w, r, img.Mime, img.Bytes, img.UpdatedAt)
 }
 

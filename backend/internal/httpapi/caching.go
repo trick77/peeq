@@ -41,6 +41,16 @@ const (
 	// shareImageCacheControl clamps it further against the link's own expiry.
 	shareImageMaxAge = 300
 
+	// cacheImageVersioned is what a request carrying a ?v= stamp gets: the URL
+	// changes whenever the bytes do, so the copy behind THIS url can never go
+	// stale and the browser need not ask again at all. A year is the convention
+	// (RFC 9111 caps max-age there in practice); "immutable" tells a browser not
+	// to revalidate even on an explicit reload.
+	//
+	// Private for the same reason the others are, which is why this is not the
+	// same string the hashed /assets/ bundles get.
+	cacheImageVersioned = "private, max-age=31536000, immutable"
+
 	// cacheImageMissing is the negative cache for an image that genuinely is not
 	// there. The inbox is the reason it exists: its posters are requested
 	// unconditionally so the backend can lazily fetch them from YouTube, so a
@@ -76,6 +86,55 @@ func (s *server) shareImageCacheControl(r *http.Request, videoID string) string 
 		}
 	}
 	return fmt.Sprintf("public, max-age=%d", seconds)
+}
+
+// An imagePolicy is one route's pair of answers to "how long may the browser
+// keep this": the window for a bare URL, and the far longer one for a URL that
+// named a version.
+//
+// The versioned form is the point of the pair. /api/videos/{id}/thumbnail can
+// only ever be cached for as long as we are willing to show a stale poster,
+// because the same URL means different bytes after a re-download. Add ?v= and
+// that stops being true — the URL changes exactly when the bytes do — so the
+// response can say "immutable" and be believed, and the browser stops asking
+// altogether instead of asking and being told 304.
+//
+// The stamp is never checked against the row. A client holding an old ?v= gets
+// the current bytes, which it would have got anyway; the value's only job is to
+// be different when the image is.
+type imagePolicy struct {
+	plain     string
+	versioned string
+}
+
+var (
+	// imageOwnedDay is channel artwork and inbox posters, behind a session.
+	imageOwnedDay = imagePolicy{cacheImageDay, cacheImageVersioned}
+	// imageOwnedHour is a downloaded video's poster, behind a session.
+	imageOwnedHour = imagePolicy{cacheImageHour, cacheImageVersioned}
+)
+
+// shareImagePolicy is the share-token routes' policy. Both halves are the SAME
+// clamped window, and that is the whole point: a version makes a URL safe to
+// cache forever against *staleness*, and says nothing about whether the reader
+// is still allowed to see it. Handing a ?v= share URL an immutable year would
+// undo the clamp above and hand out a picture that outlives its link by twelve
+// months. Versions buy the owner's pages their cache; the public ones keep
+// paying the short window and lean on the ETag instead.
+func (s *server) shareImagePolicy(r *http.Request, videoID string) imagePolicy {
+	cc := s.shareImageCacheControl(r, videoID)
+	return imagePolicy{plain: cc, versioned: cc}
+}
+
+// apply writes the right Cache-Control for this request. A "v" parameter with
+// any non-empty value opts in; the query is otherwise ignored, so a bare URL
+// keeps behaving exactly as it did before versions existed.
+func (p imagePolicy) apply(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("v") != "" {
+		w.Header().Set("Cache-Control", p.versioned)
+		return
+	}
+	w.Header().Set("Cache-Control", p.plain)
 }
 
 // notFoundCached is http.NotFound with the negative cache attached, for an

@@ -156,6 +156,13 @@ describe("channels api", () => {
     expect(channelBannerUrl("UC 1")).toBe("/api/channels/UC%201/banner");
   });
 
+  // Versioned artwork is what makes a weekly metadata refresh visible at once:
+  // new bytes move the stamp, which moves the URL, which sidesteps the cache.
+  it("channelAvatarUrl and channelBannerUrl append the version", () => {
+    expect(channelAvatarUrl("UC1", "42")).toBe("/api/channels/UC1/avatar?v=42");
+    expect(channelBannerUrl("UC1", "42")).toBe("/api/channels/UC1/banner?v=42");
+  });
+
   // A bare skip sends no body at all. An `at` of undefined serialised as
   // `{"at": ""}` would read to the handler as an explicit instant rather than
   // "you pick", which is the difference between skipping and pinning.

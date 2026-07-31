@@ -1,4 +1,5 @@
 import { api } from "./http";
+import { withVersion } from "./videos";
 import type { Chapter, KeyPoint } from "./types";
 import type { SummaryStatus } from "./enums";
 // The segment shape is owned by the Scrubber, which both players render.
@@ -33,6 +34,7 @@ export type PublicVideo = {
   chapters?: Chapter[];
   key_points?: KeyPoint[];
   has_thumbnail: boolean;
+  thumbnail_version?: string;
   has_subtitles: boolean;
   audio_language: string;
   expires_at?: string;
@@ -86,8 +88,8 @@ export async function getSharedVideo(token: string): Promise<PublicVideo> {
 export function shareStreamUrl(token: string): string {
   return `/api/s/${encodeURIComponent(token)}/stream`;
 }
-export function shareThumbnailUrl(token: string): string {
-  return `/api/s/${encodeURIComponent(token)}/thumbnail`;
+export function shareThumbnailUrl(token: string, version?: string): string {
+  return withVersion(`/api/s/${encodeURIComponent(token)}/thumbnail`, version);
 }
 export function shareSubtitlesUrl(token: string): string {
   return `/api/s/${encodeURIComponent(token)}/subtitles`;

@@ -1,5 +1,6 @@
 import { api, ApiError } from "./http";
 import { CookieRequiredError } from "./downloads";
+import { withVersion } from "./videos";
 import type {
   AutoUnsubscribedChannel,
   Channel,
@@ -172,12 +173,17 @@ export async function refreshChannel(id: string): Promise<{ status: string }> {
   }
 }
 
-export function channelAvatarUrl(id: string): string {
-  return `/api/channels/${encodeURIComponent(id)}/avatar`;
+// The optional version is the image's avatar_version/banner_version off the
+// same row. With it the artwork is served immutable and never re-requested;
+// without it the response merely revalidates. Either way the weekly metadata
+// refresh shows up immediately, because storing new artwork moves the stamp and
+// therefore the URL.
+export function channelAvatarUrl(id: string, version?: string): string {
+  return withVersion(`/api/channels/${encodeURIComponent(id)}/avatar`, version);
 }
 
-export function channelBannerUrl(id: string): string {
-  return `/api/channels/${encodeURIComponent(id)}/banner`;
+export function channelBannerUrl(id: string, version?: string): string {
+  return withVersion(`/api/channels/${encodeURIComponent(id)}/banner`, version);
 }
 
 // listAutoUnsubscribedChannels returns every channel peeq unsubscribed on

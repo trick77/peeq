@@ -74,4 +74,8 @@ describe("share api", () => {
     expect(shareThumbnailUrl("a b")).toBe("/api/s/a%20b/thumbnail");
     expect(shareSubtitlesUrl("a b")).toBe("/api/s/a%20b/subtitles");
   });
+
+  it("versions the public poster URL when the payload carries a stamp", () => {
+    expect(shareThumbnailUrl("tok", "42")).toBe("/api/s/tok/thumbnail?v=42");
+  });
 });

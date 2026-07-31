@@ -234,7 +234,9 @@ export function Share({ token }: { token: string | null }) {
               className="sharepage-video"
               controls
               poster={
-                video.has_thumbnail ? shareThumbnailUrl(token) : undefined
+                video.has_thumbnail
+                  ? shareThumbnailUrl(token, video.thumbnail_version)
+                  : undefined
               }
               src={shareStreamUrl(token)}
               onLoadedMetadata={handleLoadedMetadata}

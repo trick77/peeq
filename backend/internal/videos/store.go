@@ -53,7 +53,13 @@ type Video struct {
 	// videoColumns). Migration 0024 took the thumbnail_path column that used to
 	// stand in for this: a string claiming a file exists was something any
 	// metadata write could blank out from under a perfectly good image, and did.
-	HasThumbnail          bool
+	HasThumbnail bool
+	// ThumbnailVersion is the poster's updated_at as a unix stamp, empty when
+	// there is none. It exists so the frontend can put it in the thumbnail URL:
+	// a URL that changes when the bytes change is what lets the response say
+	// "immutable" and be believed, and it is also what makes a re-downloaded
+	// poster appear at once instead of after the cache window.
+	ThumbnailVersion      string
 	MediaPath             string
 	FilesizeBytes         int64
 	FormatUsed            string
@@ -217,7 +223,7 @@ const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name,
 	v.duration_seconds, v.published_at,
 	v.description,
-	EXISTS (SELECT 1 FROM video_thumbnails t WHERE t.video_id = v.id) AS has_thumbnail,
+	(SELECT COALESCE(strftime('%s', t.updated_at), '0') FROM video_thumbnails t WHERE t.video_id = v.id) AS thumbnail_version,
 	v.media_path, v.filesize_bytes, v.format_used, v.requested_format,
 	v.availability, v.status, v.error_message, v.sponsorblock_segments,
 	v.watched, v.watched_at, v.resume_position_seconds, v.state_version, v.favorite, v.favorited_at,
@@ -243,10 +249,14 @@ func scanVideo(rs rowScanner) (Video, error) {
 	var v Video
 	var duration, filesize sql.NullInt64
 	var publishedAt, watchedAt, favoritedAt, downloadedAt, probedAt sql.NullString
-	var watched, favorite, hasThumbnail, hasTranscript int
+	// The thumbnail subquery returns NULL only when there is no poster row, so
+	// its validity IS has_thumbnail — one subquery answers both "is there a
+	// poster" and "which one", and the two can never disagree.
+	var thumbnailVersion sql.NullString
+	var watched, favorite, hasTranscript int
 	err := rs.Scan(
 		&v.ID, &v.URL, &v.Title, &v.ChannelID, &v.ChannelName, &duration, &publishedAt,
-		&v.Description, &hasThumbnail, &v.MediaPath, &filesize, &v.FormatUsed, &v.RequestedFormat,
+		&v.Description, &thumbnailVersion, &v.MediaPath, &filesize, &v.FormatUsed, &v.RequestedFormat,
 		&v.Availability, &v.Status, &v.ErrorMessage, &v.SponsorblockSegments,
 		&watched, &watchedAt, &v.ResumePositionSeconds, &v.StateVersion, &favorite, &favoritedAt,
 		&v.CreatedAt, &downloadedAt,
@@ -259,7 +269,8 @@ func scanVideo(rs rowScanner) (Video, error) {
 		return Video{}, err
 	}
 	v.DurationSeconds = duration.Int64
-	v.HasThumbnail = hasThumbnail != 0
+	v.HasThumbnail = thumbnailVersion.Valid
+	v.ThumbnailVersion = thumbnailVersion.String
 	v.HasTranscript = hasTranscript != 0
 	v.FilesizeBytes = filesize.Int64
 	v.PublishedAt = publishedAt.String

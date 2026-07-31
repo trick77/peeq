@@ -30,9 +30,13 @@ type videoDTO struct {
 	PublishedAt     string `json:"published_at,omitempty"`
 	Description     string `json:"description,omitempty"`
 	HasThumbnail    bool   `json:"has_thumbnail"`
-	HasMedia        bool   `json:"has_media"`
-	FilesizeBytes   int64  `json:"filesize_bytes,omitempty"`
-	FormatUsed      string `json:"format_used,omitempty"`
+	// ThumbnailVersion goes in the poster's URL, which is what lets that
+	// response be cached as immutable: the URL changes exactly when the bytes
+	// do. Omitted when there is no poster, where has_thumbnail already said so.
+	ThumbnailVersion string `json:"thumbnail_version,omitempty"`
+	HasMedia         bool   `json:"has_media"`
+	FilesizeBytes    int64  `json:"filesize_bytes,omitempty"`
+	FormatUsed       string `json:"format_used,omitempty"`
 	// The media facts the player's stat strip shows, as ffprobe reported them
 	// ("mp4", "h264", 1080, "aac"). omitempty on purpose: an unprobed video
 	// omits the columns rather than rendering blanks. Friendly wording
@@ -125,6 +129,7 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		PublishedAt:           v.PublishedAt,
 		Description:           v.Description,
 		HasThumbnail:          v.HasThumbnail,
+		ThumbnailVersion:      v.ThumbnailVersion,
 		HasMedia:              v.MediaPath != "",
 		FilesizeBytes:         v.FilesizeBytes,
 		FormatUsed:            v.FormatUsed,
@@ -493,7 +498,7 @@ func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	serveThumbnail(w, r, s.videos, v.ID, cacheImageHour)
+	serveThumbnail(w, r, s.videos, v.ID, imageOwnedHour)
 }
 
 // serveStoredImage writes one image held in the database — a video poster, a
@@ -525,7 +530,7 @@ func serveStoredImage(w http.ResponseWriter, r *http.Request, mime string, data 
 // share-page endpoints so the two cannot drift. The caller passes its own
 // Cache-Control because that is the one thing the two do not share: the library
 // route is behind a session and the share route is behind a link.
-func serveThumbnail(w http.ResponseWriter, r *http.Request, store *videos.Store, videoID, cacheControl string) {
+func serveThumbnail(w http.ResponseWriter, r *http.Request, store *videos.Store, videoID string, policy imagePolicy) {
 	if store == nil {
 		writeJSONError(w, http.StatusNotFound, "thumbnail not available")
 		return
@@ -539,7 +544,7 @@ func serveThumbnail(w http.ResponseWriter, r *http.Request, store *videos.Store,
 		writeJSONError(w, http.StatusNotFound, "no thumbnail for this video")
 		return
 	}
-	w.Header().Set("Cache-Control", cacheControl)
+	policy.apply(w, r)
 	serveStoredImage(w, r, t.Mime, t.Bytes, t.UpdatedAt)
 }
 

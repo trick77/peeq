@@ -64,9 +64,13 @@ type publicVideoDTO struct {
 	Chapters        json.RawMessage `json:"chapters,omitempty"`
 	KeyPoints       json.RawMessage `json:"key_points,omitempty"`
 	HasThumbnail    bool            `json:"has_thumbnail"`
-	HasSubtitles    bool            `json:"has_subtitles"`
-	AudioLanguage   string          `json:"audio_language"`
-	ExpiresAt       string          `json:"expires_at,omitempty"`
+	// ThumbnailVersion is a unix stamp, exactly as on the owner's DTO. It names
+	// nothing about the video — the token stays the only public identifier — and
+	// it buys the public page the same immutable poster cache the app gets.
+	ThumbnailVersion string `json:"thumbnail_version,omitempty"`
+	HasSubtitles     bool   `json:"has_subtitles"`
+	AudioLanguage    string `json:"audio_language"`
+	ExpiresAt        string `json:"expires_at,omitempty"`
 	// SponsorblockSegments carries the same crowd-sourced segment list the owner's
 	// player gets, so the public page can skip ads and draw the bands. It names
 	// nothing about the video — a category, a start and an end — and it is public
@@ -235,17 +239,18 @@ func (s *server) handleShareVideo(w http.ResponseWriter, r *http.Request) {
 		expiresAt = link.ExpiresAt
 	}
 	writeJSON(w, publicVideoDTO{
-		Title:           v.Title,
-		ChannelName:     v.ChannelName,
-		DurationSeconds: v.DurationSeconds,
-		Summary:         v.Summary,
-		SummaryStatus:   v.SummaryStatus,
-		Chapters:        rawJSONOrNil(v.Chapters),
-		KeyPoints:       rawJSONOrNil(v.KeyPoints),
-		HasThumbnail:    v.HasThumbnail,
-		HasSubtitles:    v.HasTranscript,
-		AudioLanguage:   v.AudioLanguage,
-		ExpiresAt:       expiresAt,
+		Title:            v.Title,
+		ChannelName:      v.ChannelName,
+		DurationSeconds:  v.DurationSeconds,
+		Summary:          v.Summary,
+		SummaryStatus:    v.SummaryStatus,
+		Chapters:         rawJSONOrNil(v.Chapters),
+		KeyPoints:        rawJSONOrNil(v.KeyPoints),
+		HasThumbnail:     v.HasThumbnail,
+		ThumbnailVersion: v.ThumbnailVersion,
+		HasSubtitles:     v.HasTranscript,
+		AudioLanguage:    v.AudioLanguage,
+		ExpiresAt:        expiresAt,
 
 		SponsorblockSegments: parseSponsorblockSegments(v.SponsorblockSegments),
 	})
@@ -274,7 +279,7 @@ func (s *server) handleShareThumbnail(w http.ResponseWriter, r *http.Request) {
 	if v == nil {
 		return
 	}
-	serveThumbnail(w, r, s.videos, v.ID, s.shareImageCacheControl(r, v.ID))
+	serveThumbnail(w, r, s.videos, v.ID, s.shareImagePolicy(r, v.ID))
 }
 
 // handleShareSubtitles serves the shared video's VTT captions. The public page
