@@ -891,6 +891,50 @@ func TestUpsert_neverClearsPublishedAtOrDescription(t *testing.T) {
 	}
 }
 
+// rawChannelName reads videos.channel_name directly. Get and List cannot be
+// used for this: videoColumns COALESCEs the column against channels.name, so a
+// write that blanked it still reads back correctly and the bug hides.
+func rawChannelName(t *testing.T, s *Store, id string) string {
+	t.Helper()
+	var name string
+	if err := s.db.QueryRow(`SELECT channel_name FROM videos WHERE id = ?`, id).Scan(&name); err != nil {
+		t.Fatalf("read raw channel_name: %v", err)
+	}
+	return name
+}
+
+// channel_name used to be the one metadata column in the ON CONFLICT block
+// without a NULLIF guard, which made a metadata-poor caller an eraser rather
+// than merely a no-op. Only the download worker's preflight has a name to
+// offer, and it runs only for the add-by-URL path; when a channel scan later
+// re-saw that video (revive, or a fresh listing entry) it upserted with no
+// name and wiped the real one.
+func TestUpsert_neverClearsChannelName(t *testing.T) {
+	// Given: a pasted video whose real channel name was written by the
+	// download worker's metadata preflight.
+	s := newTestStore(t)
+	seedVideo(t, s, Video{ID: "v1", URL: "u", Title: "T", ChannelID: "UC1", ChannelName: "Real Name"})
+
+	// When: a channel scan re-upserts the same id with no name to offer.
+	if err := s.Upsert(Video{ID: "v1", URL: "u", Title: "T", ChannelID: "UC1"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Then: the name survives in the column itself, not just via the join.
+	if got := rawChannelName(t, s, "v1"); got != "Real Name" {
+		t.Fatalf("channel_name = %q, want it preserved", got)
+	}
+
+	// And: never clearing must not become never writing — a caller that does
+	// have a name still updates it.
+	if err := s.Upsert(Video{ID: "v1", URL: "u", Title: "T", ChannelID: "UC1", ChannelName: "Renamed"}); err != nil {
+		t.Fatalf("upsert with a name: %v", err)
+	}
+	if got := rawChannelName(t, s, "v1"); got != "Renamed" {
+		t.Fatalf("channel_name = %q, want the new value", got)
+	}
+}
+
 // TestList_unknownSort_fallsBackToNewest asserts an unrecognized sort value
 // from a hand-edited URL yields the default order rather than a SQL error or
 // an injected ORDER BY clause.
@@ -985,6 +1029,38 @@ func TestList_errorsOnClosedDB(t *testing.T) {
 // arrive through a channel scan/subscription: their own videos.channel_name
 // is never written, so both Get and List must fall back to the resolved name
 // in the channels metadata cache rather than surfacing the raw UCxxxx id.
+// An empty videos.channel_name is load-bearing, not a gap: it is what lets a
+// renamed channel show its new name on every existing card, because the join
+// reads channels.name, which the weekly metadata refresh keeps current.
+//
+// This pins a decision that looks like an oversight and gets "fixed" otherwise.
+// Populating the column from the channels cache at scan time was tried and
+// reverted for exactly this: the raw value wins over the join, and nothing ever
+// rewrites it, so a scan-discovered video would display the pre-rename name
+// forever. If someone adds that write back, this test fails.
+func TestChannelName_followsChannelRename(t *testing.T) {
+	s := newTestStore(t)
+	seedChannel(t, s, "UC1", "Old Name")
+	seedVideo(t, s, Video{
+		ID: "v", URL: "u", Title: "t",
+		ChannelID: "UC1", // ChannelName deliberately empty, as a scan writes it
+		Status:    "downloaded",
+	})
+
+	// The channel renames on YouTube; the metadata refresher updates the cache.
+	if _, err := s.db.Exec(`UPDATE channels SET name = 'New Name' WHERE id = 'UC1'`); err != nil {
+		t.Fatalf("rename channel: %v", err)
+	}
+
+	got, err := s.Get("v")
+	if err != nil || got == nil {
+		t.Fatalf("get: %v (row=%v)", err, got)
+	}
+	if got.ChannelName != "New Name" {
+		t.Fatalf("ChannelName = %q, want %q — an empty raw column must follow the rename", got.ChannelName, "New Name")
+	}
+}
+
 func TestChannelName_resolvesFromChannelsCache(t *testing.T) {
 	s := newTestStore(t)
 	seedChannel(t, s, "UC77UtoyivVHkpApL0wGfH5w", "Real Channel Name")
