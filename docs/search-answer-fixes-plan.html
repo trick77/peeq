@@ -1,0 +1,238 @@
+<title>peeq — Search: the doubled footnote, and three things beside it</title>
+<style>
+  :root{
+    --bg:#1f1f1e; --panel:#1b1b1a; --border:#323230; --border-soft:#2a2a28;
+    --ink:#faf9f5; --ink-dim:#e4e1d8; --muted:#9c9a92; --faint:#6f6d66;
+    --accent:#c6613f; --accent-strong:#d97757; --accent-dim:#5a3527;
+    --online:#5aa06a; --danger:#c14638; --kept:#d6a15a;
+    --sans:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --r:10px; --r-sm:8px;
+  }
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(120% 80% at 80% -10%,rgba(198,97,63,.06),transparent 60%),
+                     radial-gradient(90% 70% at 8% 110%,rgba(214,161,90,.03),transparent 55%)}
+  .wrap{max-width:1000px;margin:0 auto;padding:46px 26px 110px}
+  h1{font-family:var(--serif);font-weight:600;font-size:2rem;margin:0 0 10px;letter-spacing:-.01em;text-wrap:balance}
+  h2{font-family:var(--serif);font-weight:600;font-size:1.3rem;margin:0 0 8px}
+  h3{font-size:12.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:26px 0 8px}
+  .eyebrow{font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--faint);margin:0 0 6px}
+  .lede{color:var(--muted);max-width:70ch;margin:0 0 4px}
+  p{max-width:74ch;color:var(--ink-dim)}
+  section{margin-top:44px;border-top:1px solid var(--border-soft);padding-top:26px}
+  code{font-family:var(--mono);font-size:12.5px;color:var(--ink-dim);background:var(--panel);
+       border:1px solid var(--border-soft);border-radius:4px;padding:1px 5px}
+  pre{margin:14px 0 0;padding:13px 15px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--panel);
+      overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--ink-dim)}
+  pre code{background:none;border:0;padding:0;font-size:inherit}
+  .c{color:var(--faint)}
+  ul{max-width:74ch;color:var(--ink-dim);padding-left:20px}
+  li{margin:5px 0}
+  table{border-collapse:collapse;width:100%;margin-top:14px;font-size:13.5px}
+  th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
+     font-weight:600;padding:0 12px 8px 0;border-bottom:1px solid var(--border)}
+  td{padding:9px 12px 9px 0;border-bottom:1px solid var(--border-soft);color:var(--ink-dim);vertical-align:top}
+  td.k{color:var(--muted);white-space:nowrap}
+  .scroll{overflow-x:auto}
+  .num{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;
+       border-radius:50%;background:var(--accent-dim);color:var(--accent-strong);
+       font-size:11.5px;font-weight:600;margin-right:9px;vertical-align:2px}
+  .cite{display:inline-block;padding:2px 4px;border:1px solid var(--accent-dim);border-radius:4px;
+        color:var(--accent-strong);font-size:10.5px;font-weight:600;line-height:1;vertical-align:super;margin:0 1px}
+  .panel{border:1px solid var(--border);border-radius:var(--r);background:var(--panel);padding:16px 18px;margin-top:16px}
+  .panel p{margin:0}
+  .panel p + p{margin-top:9px}
+  .tag{display:inline-block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;
+       padding:2px 7px;border-radius:20px;border:1px solid var(--border);color:var(--muted);margin-left:8px;vertical-align:2px}
+  .tag.done{color:var(--online);border-color:color-mix(in srgb,var(--online) 40%,transparent)}
+  .tag.no{color:var(--faint)}
+  .foot{margin-top:52px;color:var(--faint);font-size:12.5px}
+  a{color:var(--accent-strong)}
+</style>
+<div class="wrap">
+  <p class="eyebrow">peeq · search · PR #317</p>
+  <h1>The doubled footnote, and three things beside it</h1>
+  <p class="lede">
+    One Ask answer about the Tour de France turned up four separate problems on
+    the search page. All four are fixed on <code>search-answer-fixes</code>.
+  </p>
+
+  <section>
+    <h2><span class="num">1</span>Why the same footnote appeared twice</h2>
+    <p>
+      The answer read <em>“…rides one of its hardest stages
+      <span class="cite">1</span><span class="cite">1</span>”</em> — two
+      superscript marks side by side, both showing 1. To a reader that is either
+      a typo or the number eleven.
+    </p>
+    <p>
+      Two numbering schemes collided, each of them correct on its own.
+    </p>
+    <div class="scroll">
+      <table>
+        <tr><th>Side</th><th>Numbers what</th><th>Where</th></tr>
+        <tr>
+          <td class="k">Backend</td>
+          <td>Passages. Up to 12 excerpts, numbered positionally, and up to
+              <strong>three from one video</strong>.</td>
+          <td class="k"><code>answer_handlers.go</code> · <code>buildAnswerContext</code></td>
+        </tr>
+        <tr>
+          <td class="k">Frontend</td>
+          <td>Videos. The numeral is keyed on <code>video_id</code>, so a video
+              cited three times shows one source row, not three.</td>
+          <td class="k"><code>answerSources.ts</code> · <code>citedInOrder</code></td>
+        </tr>
+      </table>
+    </div>
+    <p>
+      So the model wrote <code>…stages [1][2]</code>, sources 1 and 2 were two
+      moments of the same video, and both marks rendered as <strong>1</strong>.
+      The Sources list below collapsed correctly to one row — only the inline
+      marks doubled. Nothing tells the model the two excerpts share a numeral,
+      so it had no way to avoid it.
+    </p>
+
+    <h3>The fix</h3>
+    <p>
+      A run of adjacent marks showing the same numeral is drawn once. Adjacent
+      means nothing between them but blank space on one line; that space goes
+      with the dropped mark so no gap hangs before the full stop. The same rule
+      covers the model simply repeating one excerpt (<code>[1][1]</code>),
+      because it matches on the <em>displayed</em> numeral rather than on the
+      backend number.
+    </p>
+    <div class="panel">
+      <p><strong>A line break ends a run.</strong> The first cut treated all
+      whitespace as adjacency, so <code>[1]\n\n[2]</code> collapsed: the second
+      paragraph lost the only mark its claim had, and the break was swallowed
+      into the run, joining two paragraphs into one. Prose between two marks
+      already ended the run and was never at risk; the bare form is now pinned
+      by its own test.</p>
+    </div>
+    <p>
+      Prose between two marks leaves both — a video cited at two separate claims
+      should carry its numeral at each, and there the repetition is the point.
+    </p>
+
+    <h3>What it costs</h3>
+    <p>
+      The dropped mark was a real button with its own seek and its own
+      accessible name, so a keyboard-reachable seek target leaves the answer
+      body. That is deliberate, not free: two marks a reader cannot tell apart
+      are worse than one mark and a second route to the moment. The route
+      survives — <code>groupCited</code> still keeps one entry per cited
+      passage, so both moments stay listed on the video’s card below.
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="num">2</span>The CHAPTER pill is gone<span class="tag done">shipped</span></h2>
+    <p>
+      Every match row already carries a timestamp. A chapter hit and a
+      transcript hit look the same, seek the same way and lead to the same
+      place, so the word drew the eye without ever changing what the reader
+      would do. It follows the TRANSCRIPT badge, which was removed earlier for
+      the same reason.
+    </p>
+    <p>
+      <strong>Summary keeps its label.</strong> It is the one row with no
+      timestamp to show, and the only one that opens the video instead of
+      seeking into it.
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="num">3</span>Moments run by the clock<span class="tag done">shipped</span></h2>
+    <p>
+      Rows arrived in retrieval order — bm25 rank for Find, citation order for
+      Ask. Neither is something a reader can see, and it left a chapter hit at
+      14:02 sitting above a transcript hit at 3:11, with the timestamps down the
+      left of the card in no order at all.
+    </p>
+    <p>
+      <code>summaryFirst</code> became <code>momentOrder</code>: the summary
+      still leads — it describes the whole video and is stored at 0 rather than
+      happening there — and everything below it sorts by timestamp ascending,
+      regardless of which lane found it. The sort is stable, so two moments at
+      the same second keep the order they arrived in.
+    </p>
+    <p>
+      Safe to do here and only here: Ask’s citation order is load-bearing for
+      the numbered source list above, which ascends down the page in that order.
+      The cards render no numbers.
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="num">4</span>Result cards show the air date<span class="tag done">shipped</span></h2>
+    <p>
+      Every other card in the app puts the age in its byline; a search result
+      showed the channel and nothing else. It now reads
+      <code>Channel · aired 3 days ago</code>, in the same words and the same
+      helper the Library card and the Player’s eyebrow use.
+    </p>
+    <p>
+      Air date only — not the date the video entered the archive. That matches
+      #315, which dropped “added” from the card eyebrows for the same reason.
+    </p>
+    <p>
+      Find already carried <code>published_at</code>. Ask did not:
+      <code>answerVideo</code> is deliberately narrow, so the field was added
+      there too, omitted on the wire when the date was never learned.
+    </p>
+    <div class="panel">
+      <p><strong>The one look-at-it call.</strong> The row’s gap dropped from
+      10px to 6px and took the <code>·</code> separator the video card’s eyebrow
+      uses. 10px spaced two unrelated things; this is now a byline that reads as
+      one line. Mocked both ways on the compiled stylesheet before choosing —
+      easy to flip back to gap-only.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Not changed</h2>
+    <p>
+      The same answer ended <em>“…between the top riders
+      <span class="cite">2</span><span class="cite">3</span>”</em>. Those are
+      marks 2 and 3 from two different videos. In a plain-text paste that reads
+      as twenty-three, but on screen each mark is a bordered box with its own
+      margin — as above — so they are already visually separate. Copy artifact,
+      not a rendering defect.<span class="tag no">no change</span>
+    </p>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <p>
+      The tests assert the <em>mapping</em> — which backend number becomes which
+      displayed numeral, and which source each surviving mark seeks to — rather
+      than the absence of “11”, since several different bugs would all make the
+      doubled numeral disappear.
+    </p>
+    <ul>
+      <li><code>answerParts</code> — adjacent <code>[1][2]</code> and
+          <code>[1][1]</code> collapse; whitespace-separated collapses without
+          leaving a gap; different numerals both stay; prose-separated repeats
+          both stay with their own seeks; a line break ends the run; an unknown
+          marker stays literal; stable across streaming; the collapsed run does
+          not thin the card below.</li>
+      <li><code>momentOrder</code> — timestamp sort across kinds, summary
+          hoisted, same-second order preserved.</li>
+      <li>ResultCards and Search — the chapter row is unlabelled but keeps its
+          timestamp; <code>aired …</code> renders, and is absent with no date.</li>
+      <li>Backend — <code>published_at</code> reaches the sources frame, and is
+          omitted when unknown.</li>
+    </ul>
+    <pre><code>cd ui &amp;&amp; npm run build &amp;&amp; npm test &amp;&amp; npm run format:check
+cd backend &amp;&amp; go vet ./... &amp;&amp; go test ./...</code></pre>
+    <p>1041 UI tests pass; backend vet and tests clean.</p>
+  </section>
+
+  <p class="foot">
+    Branch <code>search-answer-fixes</code> ·
+    <a href="https://github.com/trick77/peeq/pull/317">PR #317</a>
+  </p>
+</div>

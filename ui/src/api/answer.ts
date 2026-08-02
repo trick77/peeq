@@ -30,6 +30,9 @@ export type AnswerVideo = {
   // status distinguishes a cited video peeq holds from one it only read: see
   // ResultCardVideo, which this has to keep satisfying.
   status: string;
+  // published_at is the air date the card's byline shows. Optional the same way
+  // Video's is: the backend omits a date it never learned.
+  published_at?: string;
 };
 
 // AnswerEvent is the narrowed stream.
