@@ -85,6 +85,19 @@
 
 html {
   color-scheme: dark;
+  /* Reserve the scrollbar's gutter on every page, whether or not that page is
+     long enough to need one.
+
+     Without it the viewport is a different width on a short page than on a
+     long one, and anything measured from its right edge moves as you navigate.
+     The now-playing dock is position:fixed with right:0 and centres its row
+     inside a max-width, so landing on a page that does not scroll slid the
+     whole bar sideways by the width of a scrollbar. The card grid does the
+     same thing more quietly, by re-flowing a column.
+
+     It costs a strip of background on short pages, and buys a window whose
+     width does not change under you. */
+  scrollbar-gutter: stable;
 }
 
 /* Text inputs follow the UI step of the type scale — except on a touch screen,

@@ -2662,6 +2662,27 @@ describe("Player video host", () => {
     );
   });
 
+  // The dock is gated on this, not on the page being opened: walking into
+  // "Now playing", reading the summary and walking out should leave nothing
+  // behind. Opening a page is not watching.
+  it("reports playback starting, and not merely the page opening", async () => {
+    const onPlaybackStarted = vi.fn();
+    render(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        onPlaybackStarted={onPlaybackStarted}
+      />,
+    );
+    await waitFor(() => expect(document.querySelector("video")).toBeTruthy());
+    // The page has loaded and the element exists — and still nothing is
+    // playing, so nothing has been claimed.
+    expect(onPlaybackStarted).not.toHaveBeenCalled();
+
+    fireEvent.play(document.querySelector("video") as HTMLVideoElement);
+    expect(onPlaybackStarted).toHaveBeenCalledWith("v1");
+  });
+
   it("publishes what is playing", async () => {
     const onNowPlaying = vi.fn();
     render(
