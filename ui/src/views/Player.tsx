@@ -20,7 +20,6 @@ import {
   createPlaybackGrant,
 } from "../api/videos";
 import { reprocess, subtitlesUrl } from "../api/search";
-import { streamDownloads } from "../api/downloads";
 import { getSettings, updateSettings } from "../api/settings";
 import { setPlaybackState } from "../api/playback";
 import { getShareStatus, type ShareStatus } from "../api/share";
@@ -104,6 +103,7 @@ export function Player({
   onOpenInboxVideo,
   visible = true,
   onNowPlaying,
+  summaryEvent,
 }: {
   videoId: string | null;
   // seekTo — the Task 18 jump-to-moment target (Search's onOpen, via App's
@@ -158,6 +158,12 @@ export function Player({
   // dock can label itself. Fired once per video rather than per frame; see
   // NowPlaying. Must be stable, since it is an effect dependency.
   onNowPlaying?: (playing: NowPlaying | null) => void;
+  // summaryEvent — the newest "summary" event off the session's one SSE
+  // stream, forwarded by App. See the effect below for why this page no longer
+  // opens a stream of its own. Events for other videos are handed over too and
+  // ignored here; filtering upstream would mean App tracking which video each
+  // page has open, which is the page's own business.
+  summaryEvent?: { videoId: string; status: SummaryStatus } | null;
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -510,41 +516,39 @@ export function Player({
   // captures summary_status at mount time — without this, a "Summarizing…"
   // placeholder would sit frozen until the user manually reloaded, even
   // though the backend (Task 8) is already pushing "summary" SSE events
-  // {video_id, status, phase} on every phase transition. Subscribes for the
-  // mounted video's lifetime and reacts only to events for this videoId.
-  // Mirrors App.tsx's own streamDownloads "progress" subscription: evt.data
-  // arrives already JSON-parsed by streamSSE, so it's cast, not re-parsed.
+  // {video_id, status, phase} on every phase transition.
+  //
+  // The event arrives as a PROP rather than from a subscription of this
+  // component's own. App is already on that stream and already decodes these
+  // very events for the Queue lane, so a second connection here re-decoded
+  // bytes that had been decoded a moment earlier — and, now that the
+  // now-playing dock keeps this component mounted for the whole session, held
+  // that second connection open for the whole session with it.
+  //
+  // It fires on ARRIVAL, not on change: App hands over a new object per event,
+  // so two events carrying the same status both land.
   useEffect(() => {
+    if (!videoId || summaryEvent?.videoId !== videoId) return;
+    if (summaryEvent.status !== "done") {
+      const status = summaryEvent.status;
+      setVideo((prev) => (prev ? { ...prev, summary_status: status } : prev));
+      return;
+    }
+    // Refetch to pull the finished summary/chapters/key-points. Guarded
+    // against a stale videoId change (v1 -> v2) racing this refetch in,
+    // which would otherwise overwrite v2's video with v1's data.
     let cancelled = false;
-    const controller = new AbortController();
-    streamDownloads((evt) => {
-      if (evt.event !== "summary") return;
-      const payload = evt.data as {
-        video_id?: string;
-        status?: SummaryStatus;
-      };
-      if (payload.video_id !== videoId || !payload.status) return;
-      if (payload.status === "done") {
-        // Refetch to pull the finished summary/chapters/key-points. Guarded
-        // against a stale videoId change (v1 -> v2) racing this refetch in,
-        // which would otherwise overwrite v2's video with v1's data.
-        getVideo(videoId)
-          .then((v) => {
-            if (cancelled) return;
-            setVideo(v);
-            stateVersionRef.current = v.state_version;
-          })
-          .catch(() => {});
-      } else {
-        const status = payload.status;
-        setVideo((prev) => (prev ? { ...prev, summary_status: status } : prev));
-      }
-    }, controller.signal).catch(() => {});
+    getVideo(videoId)
+      .then((v) => {
+        if (cancelled) return;
+        setVideo(v);
+        stateVersionRef.current = v.state_version;
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
-      controller.abort();
     };
-  }, [videoId]);
+  }, [videoId, summaryEvent]);
 
   // Load the global subtitles preference once per mount. A failure is not
   // fatal — playback must work even if settings can't be read — so it falls

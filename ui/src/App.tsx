@@ -15,8 +15,9 @@ import {
   cancelDownload,
   resumeYoutube,
 } from "./api";
-import type { DownloadsStatus } from "./api/downloads";
+import type { DownloadsStatus, SummaryEventData } from "./api/downloads";
 import { getYtdlpVersion, type YtdlpVersion } from "./api/ytdlp";
+import type { SummaryStatus } from "./api/enums";
 import type { ActivityEvent, Job, SummaryJob, User } from "./api/types";
 import { Library } from "./views/Library";
 import { Add } from "./views/Add";
@@ -295,11 +296,21 @@ export function App() {
   const [jobsLoaded, setJobsLoaded] = useState(false);
   const [summariesLoaded, setSummariesLoaded] = useState(false);
   // Live summary phase per video (summarizing → embedding), accumulated from
-  // the same "summary" SSE event the Player consumes, so the Queue lane can
-  // show a job advancing without a reload.
+  // the "summary" SSE event so the Queue lane can show a job advancing without
+  // a reload.
   const [summaryPhaseByVideoId, setSummaryPhaseByVideoId] = useState<
     Record<string, string>
   >({});
+  // The last "summary" event off the stream, forwarded to the open video's
+  // page. It used to subscribe to the stream itself for this — a second
+  // connection re-decoding bytes this one had already decoded, and one that
+  // stayed open for as long as the Player did, which since the now-playing
+  // dock is the whole session. Held as state rather than pushed through a ref
+  // because the page reacts to it in an effect.
+  const [summaryEvent, setSummaryEvent] = useState<{
+    videoId: string;
+    status: SummaryStatus;
+  } | null>(null);
   // A bounded buffer of the newest background-work events, appended from the
   // "activity" SSE event. The Activity page loads its own history and merges
   // these in by id, so the single session SSE subscription stays in App.
@@ -634,16 +645,22 @@ export function App() {
         return;
       }
       if (evt.event === "summary") {
-        const s = evt.data as {
-          video_id?: string;
-          status?: string;
-          phase?: string;
-        };
+        const s = evt.data as SummaryEventData;
         if (s.video_id) {
           setSummaryPhaseByVideoId((prev) => ({
             ...prev,
             [s.video_id as string]: s.phase ?? s.status ?? "",
           }));
+        }
+        // Hand it on to the open video's page, which used to open a second
+        // stream of its own to hear exactly this.
+        //
+        // A NEW object every time, deliberately: two consecutive events can
+        // carry identical values (status "running" twice as only the phase
+        // moves), and the page has to react to the second one as well — what
+        // matters is that an event ARRIVED, not that its value changed.
+        if (s.video_id && s.status) {
+          setSummaryEvent({ videoId: s.video_id, status: s.status });
         }
         // Any phase transition changes the in-flight set — a job just started
         // (running/summarizing) or just left it (done/error/no_transcript) —
@@ -874,6 +891,7 @@ export function App() {
                 // branch below, which is exactly why the two are separate —
                 // and it is what keeps a second <video> out of the shared host.
                 onMediaKnown={handleMediaKnown}
+                summaryEvent={summaryEvent}
               />
             </div>
           ) : null}
@@ -895,6 +913,7 @@ export function App() {
               onSeekConsumed={() => setPendingSeek(undefined)}
               search={search}
               summaryOrigin={readingSummaryFrom}
+              summaryEvent={summaryEvent}
               // The origin is recorded before anyone knows whether the video has a
               // file. Player reports the answer, and a video with media is one
               // being watched — so the marker goes, the rail returns to "Now
@@ -1027,6 +1046,7 @@ function ViewSwitch({
   search,
   summaryOrigin,
   onMediaKnown,
+  summaryEvent,
   setView,
   setPendingCount,
   onQueued,
@@ -1069,6 +1089,7 @@ function ViewSwitch({
   // stepper appears at all.
   summaryOrigin: "inbox" | "search" | null;
   onMediaKnown: (id: string, hasMedia: boolean) => void;
+  summaryEvent: { videoId: string; status: SummaryStatus } | null;
   setView: (v: ViewId) => void;
   // undefined = the count is not known (a failed inbox fetch). The rail draws
   // no pill for it, which is deliberately not the same claim as "empty".
@@ -1128,6 +1149,7 @@ function ViewSwitch({
           onOpenChannel={onOpenChannel}
           onQueued={onQueued}
           onMediaKnown={onMediaKnown}
+          summaryEvent={summaryEvent}
           // Where the summary page goes back to, and what it calls that place.
           // null when this page was not opened from anywhere that offers a way
           // back — a video reached from the Library or from a cold link then
