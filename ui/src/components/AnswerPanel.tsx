@@ -4,7 +4,7 @@ import { formatDuration } from "../format";
 import { splitCitations } from "../citations";
 import { citedInOrder, type CitedSource } from "../answerSources";
 import { splitIntoSegments } from "../streamFade";
-import type { AnswerSource } from "../api/answer";
+import type { AnswerSource, AnswerVideo } from "../api/answer";
 
 // AnswerPanel renders the grounded answer above Ask's moments.
 //
@@ -18,17 +18,31 @@ export type AnswerState = {
   status: "streaming" | "done";
   text: string;
   sources: AnswerSource[];
+  // The videos frame of the same stream. A source carries channel_name but no
+  // channel_id, and the channel name in a source row has to navigate somewhere —
+  // so the id is looked up here by video_id rather than widened onto every
+  // source server-side.
+  videos?: AnswerVideo[];
   failed?: boolean;
 };
 
 export function AnswerPanel({
   state,
   onOpen,
+  onOpenVideo,
+  onOpenChannel,
 }: {
   state: AnswerState;
   onOpen: (videoId: string, startSeconds: number) => void;
+  // A summary source has no timestamp of its own (it is stored at 0), so its row
+  // opens the video where the viewer left it rather than seeking to the start.
+  onOpenVideo: (videoId: string) => void;
+  onOpenChannel: (channelId: string) => void;
 }) {
-  const { status, text, sources, failed } = state;
+  const { status, text, sources, videos, failed } = state;
+  const channelOf = new Map(
+    (videos ?? []).map((v) => [v.id, v.channel_id] as const),
+  );
   // `known` is the FULL retrieved set, not the cited one: that is what keeps a
   // hallucinated [9] rendering as the characters the model produced rather than
   // as a citation pointing nowhere.
@@ -94,23 +108,47 @@ export function AnswerPanel({
       {cited.length && !streaming ? (
         <div className="answer-sources">
           <p className="lbl">Sources</p>
-          {cited.map((s) => (
-            <button
-              key={s.n}
-              type="button"
-              className="srcrow"
-              onClick={() => onOpen(s.video_id, s.start_seconds)}
-            >
-              <span className="n mono">{s.display}</span>
-              <span className="ts mono">
-                {s.kind === "summary" ? "—" : formatDuration(s.start_seconds)}
-              </span>
-              <span className="ttl">{s.title}</span>
-              {s.channel_name ? (
-                <span className="ch">{s.channel_name}</span>
-              ) : null}
-            </button>
-          ))}
+          {/* The row is two controls side by side, not one containing the
+              other: the channel name navigates to the channel, and a button
+              inside a button is invalid markup that no browser agrees on. The
+              moment button keeps the row's whole width minus what the channel
+              takes, so the click target is unchanged for everything except the
+              channel name itself. */}
+          {cited.map((s) => {
+            const channelId = channelOf.get(s.video_id);
+            return (
+              <div className="srcline" key={s.n}>
+                <button
+                  type="button"
+                  className="srcrow"
+                  onClick={() =>
+                    s.kind === "summary"
+                      ? onOpenVideo(s.video_id)
+                      : onOpen(s.video_id, s.start_seconds)
+                  }
+                >
+                  <span className="n mono">{s.display}</span>
+                  <span className="ts mono">
+                    {s.kind === "summary"
+                      ? "—"
+                      : formatDuration(s.start_seconds)}
+                  </span>
+                  <span className="ttl">{s.title}</span>
+                </button>
+                {s.channel_name && channelId ? (
+                  <button
+                    type="button"
+                    className="chan-link"
+                    onClick={() => onOpenChannel(channelId)}
+                  >
+                    {s.channel_name}
+                  </button>
+                ) : s.channel_name ? (
+                  <span className="ch">{s.channel_name}</span>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </div>

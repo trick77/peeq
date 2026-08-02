@@ -867,6 +867,85 @@ describe("Player", () => {
     expect(videoEl.currentTime).toBeCloseTo(560, 0);
   });
 
+  // Landing on a moment is not watching it. The server auto-marks a video
+  // watched the moment a resume ping arrives past 90%, so a jump into the last
+  // stretch used to file a video as seen because the reader peeked at it.
+  describe("a jumped-to moment", () => {
+    async function jumpTo(seekTo: number) {
+      const view = render(
+        <Player videoId="v1" seekTo={seekTo} onDeleted={() => {}} />,
+      );
+      const videoEl = await waitFor(() => {
+        const el = document.querySelector("video");
+        if (!el) throw new Error("video element not mounted yet");
+        return el;
+      });
+      fireEvent.loadedMetadata(videoEl);
+      return { ...view, videoEl };
+    }
+
+    function at(videoEl: HTMLVideoElement, t: number) {
+      Object.defineProperty(videoEl, "currentTime", {
+        value: t,
+        writable: true,
+      });
+      fireEvent.timeUpdate(videoEl);
+    }
+
+    it("writes no position until the video has played on from it", async () => {
+      const { videoEl } = await jumpTo(900);
+
+      at(videoEl, 902);
+      at(videoEl, 908);
+      expect(setResume).not.toHaveBeenCalled();
+    });
+
+    it("is not stored by the unmount flush either", async () => {
+      const { videoEl, unmount } = await jumpTo(900);
+
+      at(videoEl, 903);
+      unmount();
+
+      // This is the path that used to mark a peeked-at video watched.
+      await Promise.resolve();
+      expect(setResume).not.toHaveBeenCalled();
+    });
+
+    it("resumes writing once the jump has been played through", async () => {
+      const { videoEl } = await jumpTo(900);
+
+      at(videoEl, 905);
+      expect(setResume).not.toHaveBeenCalled();
+
+      at(videoEl, 916);
+      await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 916, 1));
+    });
+
+    it("stores the position when the video runs to its end", async () => {
+      const { videoEl, unmount } = await jumpTo(900);
+
+      at(videoEl, 903);
+      fireEvent.ended(videoEl);
+      unmount();
+
+      // Reaching the end is watching it, however short the run-up.
+      await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 903, 1));
+    });
+
+    it("leaves an ordinary open, with no jump, writing as before", async () => {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      const videoEl = await waitFor(() => {
+        const el = document.querySelector("video");
+        if (!el) throw new Error("video element not mounted yet");
+        return el;
+      });
+      fireEvent.loadedMetadata(videoEl);
+
+      at(videoEl, 50);
+      await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 50, 1));
+    });
+  });
+
   it("calls onSeekConsumed exactly once right after applying seekTo", async () => {
     const onSeekConsumed = vi.fn();
     render(

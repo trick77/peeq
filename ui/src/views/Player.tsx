@@ -45,6 +45,23 @@ import { MetaHeader } from "./player/MetaHeader";
 // below), so closing the tab never loses more than this much progress.
 const RESUME_THROTTLE_MS = 5000;
 
+// JUMP_SETTLE_SECONDS — how much playback a jumped-to moment has to survive
+// before the playhead is worth storing.
+//
+// Search can land the playhead anywhere, including inside the last 10% of a
+// video, and the server auto-marks a video watched the moment a resume ping
+// arrives past that line (videos/store_watch.go). So jumping to a match near the
+// end and deciding within a second that it was not what you wanted used to mark
+// the video watched — a video the reader has not seen, filed away as seen, by a
+// click that was meant to be a peek.
+//
+// Landing on a moment is not watching it. This buys the peek: nothing is written
+// until the video has actually played on from where it landed, at which point
+// the position is a real one and the 90% rule can do its job normally. It is a
+// deliberately small number — the cost of getting it wrong in the other
+// direction is a few seconds of resume position, not a wrongly-filed video.
+const JUMP_SETTLE_SECONDS = 15;
+
 // SLEEP_MAX_TICK_MS caps how much wall-clock time a single sleep-timer tick
 // may charge to the budget. `timeupdate` fires ~4x/sec while playing, so a
 // gap this large means playback stopped in between (a pause, a stall, a
@@ -77,7 +94,9 @@ export function Player({
   onDeleted,
   onOpenChannel,
   onQueued,
-  onBackToInbox,
+  onMediaKnown,
+  summaryOrigin,
+  onBackFromSummary,
   inboxOrder,
   onOpenInboxVideo,
 }: {
@@ -103,19 +122,33 @@ export function Player({
   // and poll reflect it at once. Same reason as Library's: the video has just
   // left the ready-only library and the rail is the only thing that will say so.
   onQueued?: () => void;
-  // onBackToInbox — where an inbox video's page goes when the user is done
-  // with it, either by pressing Back or by ignoring it. Only ever used by the
-  // UnfetchedVideo branch; a downloaded video has no inbox to return to.
-  onBackToInbox?: () => void;
+  // onMediaKnown — reports whether the video this page opened has a file, once
+  // the fetch says so. App records where a video was opened FROM before anyone
+  // can know that, because a search result may be either; this is the answer
+  // that lets it drop the marker for a video that turns out to be playable.
+  onMediaKnown?: (id: string, hasMedia: boolean) => void;
+  // summaryOrigin / onBackFromSummary — where this page was reached from, and
+  // the way back there. Only ever used by the UnfetchedVideo branch: a video
+  // with a file is being watched, and has no reading session to leave. Both are
+  // absent for a video opened from the Library or from a cold link, which is
+  // what stops that page offering a back link to somewhere the reader never was.
+  summaryOrigin?: "inbox" | "search" | null;
+  onBackFromSummary?: () => void;
   // inboxOrder / onOpenInboxVideo drive the Prev / Next stepper, and are only
-  // ever used by the UnfetchedVideo branch. Empty until the Inbox has been
-  // opened at least once, which is why both are optional: a cold deep-link to
-  // a video has no inbox position to step from.
+  // ever used by the UnfetchedVideo branch. Passed only for a page reached from
+  // the Inbox, and empty until the Inbox has been opened at least once — which
+  // is why both are optional: a cold deep-link to a video, or a search result,
+  // has no inbox position to step from.
   inboxOrder?: string[];
   onOpenInboxVideo?: (id: string) => void;
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // App passes onMediaKnown as an inline arrow, so its identity changes every
+  // render. Held in a ref so the effect that reports media presence depends on
+  // the ANSWER changing, not on the parent re-rendering.
+  const onMediaKnownRef = useRef(onMediaKnown);
+  onMediaKnownRef.current = onMediaKnown;
   // toast — the transient notice over the video stage. It began as the
   // SponsorBlock skip message and now carries action failures too, hence the
   // icon and tone: tone drives the styling, so a failure stays red even if it
@@ -204,6 +237,12 @@ export function Player({
   // refreshing only from getVideo would 409 against its own threshold crossing.
   const stateVersionRef = useRef<number | null>(null);
   const resumeAppliedRef = useRef(false);
+  // Where a jump put the playhead, or null when this page was not opened at a
+  // moment. While it is set, no resume position is written: see
+  // JUMP_SETTLE_SECONDS. Cleared once the video has played on from there, and by
+  // the video ending — a video watched to its end is watched however little of
+  // it was played after the jump.
+  const jumpAnchorRef = useRef<number | null>(null);
   // ccAppliedForRef holds the video id the subtitles default was last
   // applied to, so it lands exactly once per video. Without it the toggle
   // and the default-applier fight: toggling also updates subtitlesDefault
@@ -242,6 +281,10 @@ export function Player({
     resumeAppliedRef.current = false;
     positionKnownRef.current = false;
     stateVersionRef.current = null;
+    // Belongs to the video that was jumped into, so it goes with that video.
+    // Left set, it would suppress the next video's resume writes until that one
+    // happened to pass the same mark.
+    jumpAnchorRef.current = null;
     openVideoIdRef.current = videoId;
     setVideo(null);
     setError(null);
@@ -307,6 +350,14 @@ export function Player({
     setPlaybackState(video.id).catch(() => {});
   }, [video?.id, video?.has_media]);
 
+  // Tell the shell whether what it navigated to has a file. It records the
+  // origin of a page before that is knowable — a search result may be a video
+  // to watch or a summary to read — and this is what settles it.
+  useEffect(() => {
+    if (!video?.id) return;
+    onMediaKnownRef.current?.(video.id, !!video.has_media);
+  }, [video?.id, video?.has_media]);
+
   // Flush the resume position immediately on tab-hide/unload, so the
   // RESUME_THROTTLE_MS window never costs more than itself worth of
   // progress even if the tab is closed mid-throttle. The cleanup function
@@ -318,6 +369,12 @@ export function Player({
   useEffect(() => {
     function flush() {
       if (!video || !positionKnownRef.current) return;
+      // A jump nobody played on from is not progress worth saving — and past the
+      // 90% line it is worse than nothing, since the server would file the video
+      // as watched (JUMP_SETTLE_SECONDS). This is the path that used to do it:
+      // land on a moment near the end, leave at once, and the unmount flush
+      // marked it.
+      if (jumpAnchorRef.current !== null) return;
       // No 409 branch here, deliberately: this also runs from the unmount
       // cleanup, where there is no component left to toast and no playhead left
       // to rewind. A refused flush simply means the position the server already
@@ -536,9 +593,12 @@ export function Player({
     return (
       <UnfetchedVideo
         video={video}
-        onBack={onBackToInbox}
+        onBack={onBackFromSummary}
+        backLabel={
+          summaryOrigin === "search" ? "Back to search" : "Back to inbox"
+        }
         onQueued={onQueued}
-        onDismissed={onBackToInbox}
+        onDismissed={onBackFromSummary}
         inboxOrder={inboxOrder}
         onOpenInboxVideo={onOpenInboxVideo}
       />
@@ -564,6 +624,9 @@ export function Player({
       el.currentTime = seekTo;
       setCurrentTime(seekTo);
       positionRef.current = seekTo;
+      // Landing here is not watching from here. Nothing is stored until the
+      // video plays on from this point — see JUMP_SETTLE_SECONDS.
+      jumpAnchorRef.current = seekTo;
       onSeekConsumed?.();
     } else if (
       video.resume_position_seconds > 0 &&
@@ -672,6 +735,10 @@ export function Player({
   // a live-looking countdown that can never tick.
   function handleEnded() {
     if (sleepRemainingRef.current !== null) disarmSleep();
+    // Reaching the end is watching it, however short the run-up. Without this a
+    // jump to a moment inside the last JUMP_SETTLE_SECONDS would suppress the
+    // one write that legitimately marks the video watched.
+    jumpAnchorRef.current = null;
   }
 
   function handleTimeUpdate() {
@@ -683,6 +750,16 @@ export function Player({
     setCurrentTime(el.currentTime);
     positionRef.current = el.currentTime;
     positionKnownRef.current = true;
+    // The jump has been played through: from here the playhead means what it
+    // normally means. Any movement away from the landing point counts, in either
+    // direction — scrubbing off it is the reader taking charge of the position
+    // just as much as letting it run is.
+    if (
+      jumpAnchorRef.current !== null &&
+      Math.abs(el.currentTime - jumpAnchorRef.current) >= JUMP_SETTLE_SECONDS
+    ) {
+      jumpAnchorRef.current = null;
+    }
 
     // SponsorBlock auto-skip: jump past whichever AUTO_SKIP segment the
     // playhead has just entered. Segments outside that set (intros, outros,
@@ -705,7 +782,10 @@ export function Player({
     }
 
     const now = Date.now();
-    if (now - lastSentRef.current >= RESUME_THROTTLE_MS) {
+    if (
+      jumpAnchorRef.current === null &&
+      now - lastSentRef.current >= RESUME_THROTTLE_MS
+    ) {
       lastSentRef.current = now;
       const id = video.id;
       setResume(id, el.currentTime, stateVersionRef.current ?? undefined)

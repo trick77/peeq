@@ -4234,6 +4234,33 @@ details.tomb-sect[open] > summary svg {
   padding: 2px 6px;
   background: var(--color-panel);
 }
+/* The box's own clear empties the TEXT, nothing else. Putting the results away
+   is the results header's button below — two controls, because they are two
+   different intentions, and the one you want mid-retype is not the one you want
+   when you are done with a search.
+
+   Rendered only while the box holds something, so nothing rests on screen next
+   to an empty field. Its glyph opts out of `.bigsearch svg`'s accent colour:
+   that accent belongs to the leading mode icon, and a second accent mark at the
+   other end of the same row would read as a second primary action. */
+.bigsearch .clear-query {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  border: none;
+  border-radius: var(--radius-ui-sm);
+  background: none;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.bigsearch .clear-query svg {
+  color: inherit;
+}
+.bigsearch .clear-query:hover {
+  color: var(--color-ink);
+  background: var(--color-active);
+}
 .results-head {
   display: flex;
   align-items: baseline;
@@ -4243,6 +4270,14 @@ details.tomb-sect[open] > summary svg {
 .results-head .n {
   color: var(--color-muted);
   font-size: 13px;
+}
+/* Sits at the right of the header it clears. Deliberately NOT paired with an
+   echo of the query ("Matches for …"): an Ask query is a whole sentence, and a
+   header carrying one wraps or truncates — worst on a phone, where the same row
+   also holds the counts. The box already shows the query, and it scrolls. */
+.results-head .clear-results {
+  margin-left: auto;
+  align-self: center;
 }
 .result {
   display: grid;
@@ -4265,11 +4300,40 @@ details.tomb-sect[open] > summary svg {
   justify-content: center;
   color: rgba(255, 255, 255, 0.85);
 }
+/* The poster and the title are buttons now — they open the video, which the
+   hover border and the play triangle had been advertising while both were inert
+   text. Both shed the UA button box entirely: the card's look is unchanged, and
+   only the cursor and the focus ring say they are controls. .thumb already
+   supplies the frame, so .rthumb adds nothing but the reset. */
+.result .rthumb {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
 .rmeta h3 {
   font-family: var(--font-sans);
   font-weight: 500;
   font-size: 17px;
   margin: 0 0 3px;
+}
+.rmeta h3 .rtitle {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rmeta h3 .rtitle:hover {
+  color: var(--color-accent-strong);
 }
 .rmeta .ch {
   color: var(--color-muted);
@@ -4339,17 +4403,11 @@ details.tomb-sect[open] > summary svg {
 }
 /* .match .score is deliberately gone: the row used to end with the raw vector
    distance, which is retrieval diagnostics rather than something a reader can
-   act on (and is meaningless for a bm25-ranked keyword hit). Its far-right
-   slot is not reused — the replacement `.src` label belongs on the left, with
-   the timestamp, because it says what KIND of thing matched. */
-.match .src {
-  flex: none;
-  align-self: center;
-  font-size: var(--text-micro);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-muted);
-}
+   act on (and is meaningless for a bm25-ranked keyword hit). Its far-right slot
+   was never reused.
+   .match .src went with it — a "TRANSCRIPT" label beside the row's own
+   timestamp said the one thing the timestamp already made obvious, on nearly
+   every row, which is what made the Summary and Chapter badges hard to spot. */
 /* FTS5 hands back the window around the match with the matched terms
    delimited; the UI splits those into <mark> elements (see highlight.ts). */
 .match .snip mark {
@@ -4483,11 +4541,29 @@ details.tomb-sect[open] > summary svg {
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
+/* A source row is two controls side by side: the moment, and the channel name
+   that navigates to the channel. They are siblings because a button inside a
+   button is invalid markup — so the line owns the layout and the moment button
+   takes whatever the channel does not. */
+.srcline {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.srcline > .chan-link,
+.srcline > .ch {
+  flex: none;
+  font-size: 12px;
+}
+.srcline > .ch {
+  color: var(--color-faint);
+}
 .srcrow {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   margin-left: -7px;
   padding: 5px 7px;
   border: none;

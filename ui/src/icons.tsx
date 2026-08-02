@@ -34,6 +34,7 @@ import {
   Ellipsis,
   PanelLeft,
   Share2,
+  X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -95,6 +96,7 @@ const COMPONENTS = {
   // between two layouts, and its aria-label already says which way it goes.
   panelLeft: PanelLeft, // rail collapse/expand toggle
   more: Ellipsis, // the phone tab bar's fifth tab, holding what does not fit
+  x: X, // clear the text in a search box
   spinner: LoaderCircle, // spun by .ui-spin — every async wait spins
 } satisfies Record<string, LucideIcon>;
 

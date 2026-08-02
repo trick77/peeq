@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { Search } from "./Search";
+import { useSearchState } from "../searchState";
 import { HIGHLIGHT_END, HIGHLIGHT_START } from "../highlight";
 
 vi.mock("../api/search", () => ({
@@ -17,6 +19,41 @@ import { streamAnswer } from "../api/answer";
 
 const mockedSearchVideos = vi.mocked(searchVideos);
 const mockedStreamAnswer = vi.mocked(streamAnswer);
+
+// Harness is what App does: it owns the engine (useSearchState) and renders the
+// view against it. Composing them here rather than faking the hook is what makes
+// the persistence test below mean anything — leaving has to unmount Search while
+// the state it was rendering stays alive.
+function Harness({
+  onOpen = vi.fn(),
+  onOpenVideo = vi.fn(),
+  onOpenChannel = vi.fn(),
+}: {
+  onOpen?: (id: string, s: number) => void;
+  onOpenVideo?: (id: string) => void;
+  onOpenChannel?: (id: string) => void;
+}) {
+  const search = useSearchState();
+  const [away, setAway] = useState(false);
+  return (
+    <>
+      {/* Stands in for navigating to a video and back. */}
+      <button type="button" onClick={() => setAway((v) => !v)}>
+        {away ? "return" : "leave"}
+      </button>
+      {away ? (
+        <p>somewhere else</p>
+      ) : (
+        <Search
+          search={search}
+          onOpen={onOpen}
+          onOpenVideo={onOpenVideo}
+          onOpenChannel={onOpenChannel}
+        />
+      )}
+    </>
+  );
+}
 
 // The query box is matched by role rather than by placeholder text: the
 // placeholder is mode-dependent copy now, and these tests should not break
@@ -59,7 +96,7 @@ describe("Search", () => {
   it("shows results and navigates to a moment", async () => {
     mockedSearchVideos.mockResolvedValue(result());
     const onOpen = vi.fn();
-    render(<Search onOpen={onOpen} />);
+    render(<Harness onOpen={onOpen} />);
 
     toFind();
     submit("iphone");
@@ -73,7 +110,7 @@ describe("Search", () => {
     mockedSearchVideos.mockResolvedValue(
       result({ kind: "summary", snippet: "the platypus lives here" }),
     );
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toFind();
     submit("platypus");
     expect(await screen.findByText("Summary")).toBeInTheDocument();
@@ -83,20 +120,23 @@ describe("Search", () => {
     mockedSearchVideos.mockResolvedValue(
       result({ kind: "chapter", snippet: "Electrolytes: the evidence" }),
     );
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toFind();
     submit("electrolytes");
     expect(await screen.findByText("Chapter")).toBeInTheDocument();
   });
 
-  it("labels a transcript match and shows no raw score", async () => {
+  it("leaves a transcript match unlabelled and shows no raw score", async () => {
     // The distance used to render at the end of every row. It is retrieval
-    // diagnostics, not something a reader can act on.
+    // diagnostics, not something a reader can act on. The "TRANSCRIPT" label
+    // that replaced it went the same way, for a different reason: the row's own
+    // timestamp already says what it is.
     mockedSearchVideos.mockResolvedValue(result());
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toFind();
     submit("iphone");
-    expect(await screen.findByText("Transcript")).toBeInTheDocument();
+    expect(await screen.findByText("9:20")).toBeInTheDocument();
+    expect(screen.queryByText("Transcript")).not.toBeInTheDocument();
     expect(screen.queryByText(/^0\.\d\d$/)).not.toBeInTheDocument();
   });
 
@@ -106,7 +146,7 @@ describe("Search", () => {
         snippet: `…replace the ${HIGHLIGHT_START}electrolytes${HIGHLIGHT_END} you lose…`,
       }),
     );
-    const { container } = render(<Search onOpen={vi.fn()} />);
+    const { container } = render(<Harness onOpen={vi.fn()} />);
     toFind();
     submit("electrolytes");
 
@@ -124,7 +164,7 @@ describe("Search", () => {
   // another embedding call to build a list this view no longer shows.
   it("lands on ask and spends a single request on it", async () => {
     mockedSearchVideos.mockResolvedValue([]);
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Ask" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -136,7 +176,7 @@ describe("Search", () => {
 
   it("searches with find once find is selected", async () => {
     mockedSearchVideos.mockResolvedValue([]);
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toFind();
     submit("battery life");
     await waitFor(() =>
@@ -146,7 +186,7 @@ describe("Search", () => {
 
   it("shows FTS operator hints in find mode only", async () => {
     mockedSearchVideos.mockResolvedValue([]);
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     expect(screen.queryByText("sodium OR calcium")).not.toBeInTheDocument();
 
     toFind();
@@ -160,7 +200,7 @@ describe("Search", () => {
   // particular cannot spend a model call on words typed for a keyword search.
   it("keeps a separate query per mode and does not search on a switch", async () => {
     mockedSearchVideos.mockResolvedValue([]);
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
 
     fireEvent.change(box(), { target: { value: "a whole question?" } });
     toFind();
@@ -178,7 +218,7 @@ describe("Search", () => {
 
   it("keeps each mode's results with its own query", async () => {
     mockedSearchVideos.mockResolvedValue(result());
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toFind();
     submit("iphone");
     expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
@@ -192,7 +232,7 @@ describe("Search", () => {
   });
 
   it("does not search on mount or for a blank query", () => {
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     expect(mockedSearchVideos).not.toHaveBeenCalled();
     expect(screen.getByText(/ask peeq about anything/i)).toBeInTheDocument();
   });
@@ -201,7 +241,7 @@ describe("Search", () => {
   // The other tab is already one visible click away with its own text.
   it("says find found nothing, and offers no way out", async () => {
     mockedSearchVideos.mockResolvedValue([]);
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toFind();
     submit("electrolytes");
 
@@ -222,7 +262,7 @@ describe("Search", () => {
       onEvent({ type: "sources", sources: [], videos: [] });
       onEvent({ type: "done" });
     });
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     submit("unicorn husbandry");
     expect(
       await screen.findByText(/nothing in your library covers that/i),
@@ -231,7 +271,7 @@ describe("Search", () => {
 
   it("clears stale results when a later search fails", async () => {
     mockedSearchVideos.mockResolvedValueOnce(result());
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toFind();
     submit("iphone");
     expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
@@ -245,7 +285,7 @@ describe("Search", () => {
 
   it("retires the error line when the box is emptied", async () => {
     mockedSearchVideos.mockRejectedValueOnce(new Error("search backend down"));
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toFind();
     submit("iphone");
     expect(await screen.findByText(/search backend down/i)).toBeInTheDocument();
@@ -257,6 +297,62 @@ describe("Search", () => {
         screen.queryByText(/search backend down/i),
       ).not.toBeInTheDocument(),
     );
+  });
+
+  // The reason the engine lives above the view: opening one of the videos a
+  // search found used to throw the search away, and finding four promising
+  // results and watching two of them is the normal way to use this page.
+  it("keeps the query and the results after leaving the view and coming back", async () => {
+    mockedSearchVideos.mockResolvedValue(result());
+    render(<Harness />);
+    toFind();
+    submit("iphone");
+    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "leave" }));
+    expect(screen.queryByText("iPhone 27 review")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "return" }));
+    expect(screen.getByText("iPhone 27 review")).toBeInTheDocument();
+    expect(box()).toHaveValue("iphone");
+    // Coming back re-renders what was already fetched; it does not re-fetch.
+    expect(mockedSearchVideos).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears only the box text with the box's own clear", async () => {
+    mockedSearchVideos.mockResolvedValue(result());
+    render(<Harness />);
+    toFind();
+    submit("iphone");
+    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear the search box" }),
+    );
+
+    expect(box()).toHaveValue("");
+    // Retyping over a search is not being done with it.
+    expect(screen.getByText("iPhone 27 review")).toBeInTheDocument();
+    // Nothing rests next to an empty field.
+    expect(
+      screen.queryByRole("button", { name: "Clear the search box" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("puts the whole search away with Clear results", async () => {
+    mockedSearchVideos.mockResolvedValue(result());
+    render(<Harness />);
+    toFind();
+    submit("iphone");
+    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
+
+    expect(screen.queryByText("iPhone 27 review")).not.toBeInTheDocument();
+    expect(screen.queryByText("Matches")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Clear results" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -314,7 +410,7 @@ describe("Search — the Ask answer", () => {
   it("does not ask for an answer in find mode", async () => {
     mockedSearchVideos.mockResolvedValue([]);
     mockedStreamAnswer.mockReturnValue(new Promise(() => {}));
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Find" }));
     submit("electrolytes");
     await waitFor(() => expect(mockedSearchVideos).toHaveBeenCalled());
@@ -332,7 +428,7 @@ describe("Search — the Ask answer", () => {
           emit = onEvent;
         }),
     );
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
 
     await screen.findByText(/Reading your library/);
@@ -361,7 +457,7 @@ describe("Search — the Ask answer", () => {
       onEvent({ type: "done" });
     });
     const onOpen = vi.fn();
-    render(<Search onOpen={onOpen} />);
+    render(<Harness onOpen={onOpen} />);
     toAsk();
     submit("electrolytes");
 
@@ -381,7 +477,7 @@ describe("Search — the Ask answer", () => {
       onEvent({ type: "token", text: "Attia covers it[1]." });
       onEvent({ type: "done" });
     });
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
 
     await screen.findAllByText("Why Athletes Cramp");
@@ -400,7 +496,7 @@ describe("Search — the Ask answer", () => {
           emit = onEvent;
         }),
     );
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
 
     await screen.findByText(/Reading your library/);
@@ -420,28 +516,41 @@ describe("Search — the Ask answer", () => {
   // rather than rejecting. Settling only on a done frame left the tab loading
   // for good: come back and it is still spinning over an answer nobody is
   // writing.
-  it("leaves no spinner behind when the tab is left mid-answer", async () => {
+  // Leaving Ask mid-generation no longer throws the answer away. The model call
+  // is already paid for, so it runs to completion and is there when the reader
+  // comes back — where it used to be a paragraph frozen mid-word, or nothing.
+  it("finishes an answer the reader left mid-generation", async () => {
+    let emit: (e: AnswerEvent) => void = () => {};
+    let finish: () => void = () => {};
     mockedStreamAnswer.mockImplementation(
-      (_q, onEvent, signal) =>
+      (_q, onEvent) =>
         new Promise((resolve) => {
+          emit = onEvent;
+          finish = resolve;
           onEvent({ type: "sources", sources: askSources, videos: askVideos });
-          signal?.addEventListener("abort", () => resolve());
         }),
     );
     mockedSearchVideos.mockResolvedValue([]);
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
     await screen.findByText(/Reading your library/);
 
-    fireEvent.click(screen.getByRole("button", { name: "Find" }));
-    toAsk();
+    // Off to a video and back, which unmounts the view entirely.
+    fireEvent.click(screen.getByRole("button", { name: "leave" }));
+    expect(screen.getByText("somewhere else")).toBeInTheDocument();
 
+    // The stream was not aborted, so it keeps arriving while nobody is looking.
+    emit({ type: "token", text: "Yes, twice[1]." });
+    emit({ type: "done" });
+    finish();
+
+    fireEvent.click(screen.getByRole("button", { name: "return" }));
     await waitFor(() =>
-      expect(
-        screen.queryByText(/Reading your library/),
-      ).not.toBeInTheDocument(),
+      expect(document.querySelector(".answer-body")?.textContent).toContain(
+        "Yes, twice",
+      ),
     );
-    expect(screen.queryByText("Searching")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Reading your library/)).not.toBeInTheDocument();
   });
 
   it("shows no moments when the answer names none", async () => {
@@ -450,7 +559,7 @@ describe("Search — the Ask answer", () => {
       onEvent({ type: "token", text: "The excerpts don't say." });
       onEvent({ type: "done" });
     });
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
 
     await screen.findByText(/didn't point at any particular moment/);
@@ -466,7 +575,7 @@ describe("Search — the Ask answer", () => {
       onEvent({ type: "error", message: "answer unavailable" });
       onEvent({ type: "done" });
     });
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
 
     expect(
@@ -481,7 +590,7 @@ describe("Search — the Ask answer", () => {
   // whole retrieved set.
   it("shows no moments when the stream fails outright", async () => {
     mockedStreamAnswer.mockRejectedValue(new Error("stream failed: 503"));
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toAsk();
     submit("electrolytes");
 
@@ -504,7 +613,7 @@ describe("Search — the Ask answer", () => {
       onEvent({ type: "token", text: "Yes — Attia" });
       throw new Error("connection lost");
     });
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toAsk();
     submit("electrolytes");
 
@@ -522,7 +631,7 @@ describe("Search — the Ask answer", () => {
       onEvent({ type: "token", text: "First answer." });
       onEvent({ type: "done" });
     });
-    render(<Search onOpen={vi.fn()} />);
+    render(<Harness onOpen={vi.fn()} />);
     toAsk();
     submit("first");
     await waitFor(() =>
@@ -537,6 +646,49 @@ describe("Search — the Ask answer", () => {
       expect(document.querySelector(".answer-body")?.textContent).not.toContain(
         "First answer.",
       ),
+    );
+  });
+
+  // The two tabs keep their own everything, and that has to include being
+  // cleared: putting Find's results away must not touch what Ask found.
+  it("clears one tab's results and leaves the other tab's alone", async () => {
+    mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
+      onEvent({ type: "sources", sources: askSources, videos: askVideos });
+      onEvent({ type: "token", text: "Yes[1]." });
+      onEvent({ type: "done" });
+    });
+    mockedSearchVideos.mockResolvedValue([
+      {
+        video: { id: "v9", title: "iPhone 27 review" } as never,
+        matches: [
+          {
+            start_seconds: 560,
+            snippet: "the new iPhone",
+            distance: 0.1,
+            kind: "transcript",
+          },
+        ],
+      },
+    ]);
+    render(<Harness onOpen={vi.fn()} />);
+
+    toAsk();
+    submit("electrolytes");
+    await waitFor(() =>
+      expect(document.querySelector(".answer-body")?.textContent).toContain(
+        "Yes",
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    submit("iphone");
+    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
+    expect(screen.queryByText("iPhone 27 review")).not.toBeInTheDocument();
+
+    toAsk();
+    expect(document.querySelector(".answer-body")?.textContent).toContain(
+      "Yes",
     );
   });
 });
