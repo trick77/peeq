@@ -258,7 +258,7 @@ describe("VideoCard lifecycle line", () => {
         onRedownload={noop}
       />,
     );
-    expect(screen.getByText("Deleted")).toBeInTheDocument();
+    expect(screen.getByText("Removed")).toBeInTheDocument();
     expect(screen.getByLabelText("Unwatched")).toBeInTheDocument();
     // The category pill is a fact about the video, not about the file.
     expect(screen.getByText("Science")).toBeInTheDocument();
@@ -295,7 +295,7 @@ describe("VideoCard lifecycle line", () => {
     // Watched, so no unwatched dot: the poster chip is about the file, the dot
     // is about the watching, and the two move separately.
     expect(screen.queryByLabelText("Unwatched")).not.toBeInTheDocument();
-    expect(screen.getByText("Deleted")).toBeInTheDocument();
+    expect(screen.getByText("Removed")).toBeInTheDocument();
   });
 
   it("shows a category badge when categorized, hides it when uncategorized", () => {

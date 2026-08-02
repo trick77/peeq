@@ -1334,8 +1334,13 @@ export function Player({
             >
               <p>
                 <Icon name="trash" size="15px" />
+                {/* "Removed", not "deleted", for the reason the retention
+                    setting spells out: what went is the file, and everything
+                    else on this page — the summary beside it, the transcript
+                    below — is standing proof of that. Same word as the Library
+                    card's chip and the search card's pill. */}
                 {video.status === "tombstoned"
-                  ? "The file was deleted to save space."
+                  ? "The file was removed to save space."
                   : "No file here yet."}
               </p>
               {/* The sentence above used to end "Re-download it to watch
