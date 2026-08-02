@@ -719,7 +719,19 @@ export function Inbox({
                 scan's date is APPROXIMATE, so it can sit a day off the exact
                 one Library shows post-download — identical wording either way.
                 Omitted when unknown; only a real publish date belongs here,
-                never discovered_at. */}
+                never discovered_at.
+
+                Labelled "aired", as the library card labels it. A bare age on
+                an Inbox card reads as "how long this has been sitting here
+                waiting for a decision" — a different fact, and one peeq really
+                does hold (discovered_at). So the number was answering a
+                question nobody asked while looking like the answer to one they
+                might.
+
+                The full-word helper, not the abbreviated one: this is the
+                card's only date, and formatAge's "3 d ago" exists for the
+                second date on a library card, where three parts have to fit
+                the narrowest column. */}
               <div className="by">
                 <ChannelLink
                   channelId={item.channel_id}
@@ -729,7 +741,7 @@ export function Inbox({
                 {item.published_at ? (
                   <>
                     <span className="dot">·</span>
-                    {formatAgo(item.published_at)}
+                    aired {formatAgo(item.published_at)}
                   </>
                 ) : null}
               </div>

@@ -692,7 +692,7 @@ describe("Inbox", () => {
       return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
     }
 
-    it("renders the publish date in the byline, like the library card", async () => {
+    it("labels the publish date 'aired', like the library card", async () => {
       vi.mocked(listPending).mockResolvedValue([
         baseItem({ published_at: daysAgoISO(4) }),
       ]);
@@ -703,7 +703,10 @@ describe("Inbox", () => {
         .closest(".card") as HTMLElement;
       const by = cardA.querySelector(".by") as HTMLElement;
       expect(by.textContent).toContain("Channel One");
-      expect(by.textContent).toContain("4 days ago");
+      // Labelled, not bare: an unlabelled age on an Inbox card reads as how
+      // long the item has been waiting for a decision, which is a different
+      // fact and one peeq separately holds as discovered_at.
+      expect(by.textContent).toContain("aired 4 days ago");
       expect(by.querySelector(".dot")).toBeInTheDocument();
     });
 

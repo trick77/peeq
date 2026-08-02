@@ -161,12 +161,14 @@ export function NewTab({
                   {/* This tab is a dense row list, not the Inbox's card
                       grid, so the date joins the duration on the sub line
                       rather than a card eyebrow — but it is the same
-                      approximate publish date, worded the same way, and is
-                      dropped rather than faked when unknown. */}
+                      approximate publish date, worded the same way — including
+                      the "aired" label, which is the only thing on the row that
+                      says WHICH date it is — and is dropped rather than faked
+                      when unknown. */}
                   <div className="sub">
                     {formatDuration(item.duration_seconds)}
                     {item.published_at
-                      ? `${DOT}${formatAgo(item.published_at)}`
+                      ? `${DOT}aired ${formatAgo(item.published_at)}`
                       : ""}
                   </div>
                 </div>
