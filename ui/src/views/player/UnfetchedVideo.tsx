@@ -29,6 +29,7 @@ import { Button, Spinner } from "../../ui";
 export function UnfetchedVideo({
   video,
   onBack,
+  backLabel = "Back to inbox",
   onQueued,
   onDismissed,
   inboxOrder,
@@ -36,7 +37,15 @@ export function UnfetchedVideo({
   onOpenChannel,
 }: {
   video: Video;
+  // onBack is absent when this page was not reached from anywhere that offers a
+  // way back — opened from the Library, from a channel tab, or from a cold
+  // link. It used to be passed unconditionally, which is how a video reached
+  // from the Library ended up offering "Back to inbox" to a reader who had
+  // never been there.
   onBack?: () => void;
+  // What that place is called. The page is reached from the Inbox and from
+  // Search now, and naming the wrong one is worse than naming none at all.
+  backLabel?: string;
   // onQueued fires after Download succeeds, so App can seed the queue poll
   // exactly as the Inbox's own button does.
   onQueued?: () => void;
@@ -116,7 +125,7 @@ export function UnfetchedVideo({
       <div className="unfetched-nav">
         {onBack ? (
           <button type="button" className="unfetched-back" onClick={onBack}>
-            &larr; Back to inbox
+            &larr; {backLabel}
           </button>
         ) : null}
 

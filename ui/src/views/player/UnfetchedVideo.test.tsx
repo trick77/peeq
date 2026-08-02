@@ -303,6 +303,37 @@ describe("UnfetchedVideo stepper", () => {
     expect(screen.queryByRole("button", { name: /Next/ })).toBeNull();
   });
 
+  // The page is reached from the Inbox and from Search now, and the way back has
+  // to name the place the reader actually came from.
+  it("names where the back link goes", () => {
+    const { rerender } = render(
+      <UnfetchedVideo video={video()} onBack={vi.fn()} />,
+    );
+    expect(
+      screen.getByRole("button", { name: /Back to inbox/ }),
+    ).toBeInTheDocument();
+
+    rerender(
+      <UnfetchedVideo
+        video={video()}
+        onBack={vi.fn()}
+        backLabel="Back to search"
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /Back to search/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Back to inbox/ })).toBeNull();
+  });
+
+  // Opened from the Library, from a channel tab or from a cold link there is
+  // nowhere to go back TO — and the page used to offer "Back to inbox" anyway,
+  // to a reader who had never been there.
+  it("offers no back link when there is no origin", () => {
+    render(<UnfetchedVideo video={video()} />);
+    expect(screen.queryByRole("button", { name: /Back to/ })).toBeNull();
+  });
+
   // Deciding moves you on — that is the point of opening these one after
   // another. Going back to the grid after every decision is precisely the round
   // trip the stepper exists to avoid.
