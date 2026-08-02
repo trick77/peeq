@@ -7,11 +7,14 @@ import { ChannelLink } from "../../components/ChannelLink";
 
 // MetaHeader is the byline, title and share chip above the action row.
 //
-// Presentational, with two exceptions that are not. onOpenChannel is optional
-// and is passed straight through to ChannelLink, which renders plain text when
-// it is absent — the Player is reachable from places that have nowhere to
-// navigate to. onPickCategory is optional for the same shape of reason: without
-// it the byline states the three facts and offers no pill.
+// Presentational, with one exception that is not: onOpenChannel is optional,
+// and it is passed straight through to ChannelLink, which renders plain text
+// when it is absent. The Player is reachable from places that have nowhere to
+// navigate to.
+//
+// onPickCategory is NOT optional, deliberately. The category is the one fact on
+// this line that is always correctable — the Player is the only place it can be
+// — so a header with no way to set it would be a state the app never wants.
 export function MetaHeader({
   video,
   shareStatus,
@@ -21,7 +24,7 @@ export function MetaHeader({
   video: Video;
   shareStatus: ShareStatus;
   onOpenChannel?: (channelId: string) => void;
-  onPickCategory?: (category: string) => void;
+  onPickCategory: (category: string) => void;
 }) {
   return (
     <>
@@ -35,7 +38,9 @@ export function MetaHeader({
           archive, not about the video. "aired" stays conditional because
           published_at is unknown for some live streams and premieres.
 
-          The category pill ends the line. It had a line of its own between the
+          The category pill ends the line, unconditionally — unlike "aired" it
+          is never absent, because an unclassified video still renders the pill
+          reading "Uncategorized" (see CategoryPicker). It had a line of its own between the
           title and the actions, which said what it is not (a verb, like the
           toolbar below) at the cost of a whole row for one chip. The eyebrow is
           where it belonged: this line is already the video's facts — who made
@@ -55,12 +60,8 @@ export function MetaHeader({
             aired {formatAgo(video.published_at)}
           </>
         ) : null}
-        {onPickCategory ? (
-          <>
-            <span className="dot">·</span>
-            <CategoryPicker category={video.category} onPick={onPickCategory} />
-          </>
-        ) : null}
+        <span className="dot">·</span>
+        <CategoryPicker category={video.category} onPick={onPickCategory} />
       </div>
       <div className="playtitle">
         <h1>{video.title}</h1>
