@@ -481,7 +481,7 @@ describe("Player", () => {
 
       expect(document.querySelector("video")).toBeNull();
       expect(document.querySelector(".stage-gone")).not.toBeNull();
-      expect(screen.getByText(/deleted to save space/i)).toBeInTheDocument();
+      expect(screen.getByText(/removed to save space/i)).toBeInTheDocument();
       // No scrubber and no captions toggle: both act on a media element that
       // isn't there.
       expect(document.querySelector(".scrub-wrap")).toBeNull();
@@ -2014,7 +2014,7 @@ describe("Player", () => {
     );
     // And the stage stops claiming the file was deleted: one is on its way.
     expect(
-      screen.queryByText(/deleted to save space/i),
+      screen.queryByText(/removed to save space/i),
     ).not.toBeInTheDocument();
     expect(redownload).toHaveBeenCalledTimes(1);
   });

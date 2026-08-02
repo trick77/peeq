@@ -164,8 +164,18 @@ export function VideoCard({
               favorite/watched buttons in .acts, where a chip would sit
               underneath them. */}
           <span className="thumb-br">
+            {/* "Removed", not "Deleted". The retention setting this is the
+                outcome of already argues the point (Settings.tsx): "delete"
+                reads as the whole video going away, and what goes is the file —
+                the summary, transcript, chapters and poster all stay, and the
+                video keeps turning up in search. Saying "Deleted" here undid
+                that on the one screen where the consequence is visible. It is
+                also the verb the setting is written in, "Remove file after N
+                days", so the card reports the outcome back in the words the
+                setting was chosen in. Same word on the search card and the
+                player stage. */}
             {video.status === "tombstoned" ? (
-              <span className="tag gone">Deleted</span>
+              <span className="tag gone">Removed</span>
             ) : null}
             <span className="dur">
               {formatDuration(video.duration_seconds)}
@@ -304,7 +314,7 @@ function Lifecycle({
       </div>
     );
   }
-  // A tombstone is a lifecycle state, not a watch state: the card says "Deleted"
+  // A tombstone is a lifecycle state, not a watch state: the card says "Removed"
   // on the poster and everything under it reads as it would on any other video.
   // The one thing not carried over is the expiry countdown a watched video
   // shows — there is nothing left to expire — so a swept video's row holds

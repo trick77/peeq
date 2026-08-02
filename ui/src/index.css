@@ -1866,7 +1866,7 @@ body:has(.nowdock) {
   left: 8px;
   top: 8px;
 }
-/* .thumb-br is the poster's bottom-right row: the runtime, with the "Deleted"
+/* .thumb-br is the poster's bottom-right row: the runtime, with the "Removed"
    chip ahead of it when there is one. A row rather than a fourth corner,
    because there is no free corner left — .tag.new holds top-left, the category
    pill bottom-left, and top-right is .acts (favorite / watched), which paints
@@ -1888,8 +1888,8 @@ body:has(.nowdock) {
 /* .tag.gone marks a tombstoned video: the file is gone, everything else about
    the video is not. It sits beside the runtime rather than in a corner of its
    own, so it never competes with .tag.new's top-left dot — the two appear
-   together on an unwatched video that was deleted, which is the whole point of
-   showing watch state and lifecycle state separately. Same scrim family as
+   together on an unwatched video whose file was removed, which is the whole
+   point of showing watch state and lifecycle state separately. Same scrim as
    .dur/.tag.new; faint rather than accented, since "the file left" is a fact
    about the past, not something to act on. */
 .thumb .tag.gone {

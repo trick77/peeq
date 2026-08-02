@@ -78,7 +78,7 @@ describe("ResultCards", () => {
   it("badges a video whose file was reclaimed, and offers no play", () => {
     const { container } = renderCards(group("tombstoned"));
 
-    expect(screen.getByText("Reclaimed")).toBeInTheDocument();
+    expect(screen.getByText("Removed")).toBeInTheDocument();
     // Not "Not downloaded" — this one WAS downloaded, and its page offers
     // Re-download rather than Download.
     expect(screen.queryByText("Not downloaded")).not.toBeInTheDocument();
@@ -94,7 +94,7 @@ describe("ResultCards", () => {
     const { container } = renderCards(group("downloaded"));
 
     expect(screen.queryByText("Not downloaded")).not.toBeInTheDocument();
-    expect(screen.queryByText("Reclaimed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Removed")).not.toBeInTheDocument();
     expect(container.querySelector(".play")).toBeInTheDocument();
     expect(container.querySelector("img.fill")).toHaveAttribute(
       "src",

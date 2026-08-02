@@ -47,14 +47,14 @@ function isUnfetched(video: ResultCardVideo): boolean {
 // says so. Telling a reader "Not downloaded" about a video they watched last
 // month would be the same class of wrong as the "Summary only" pill that sat
 // above a transcript.
-function isReclaimed(video: ResultCardVideo): boolean {
+function isRemoved(video: ResultCardVideo): boolean {
   return video.status === "tombstoned";
 }
 
 // Whether the card may promise playback. Neither kind has a file behind it, so
 // neither gets the play triangle that says there is one.
 function hasNoFile(video: ResultCardVideo): boolean {
-  return isUnfetched(video) || isReclaimed(video);
+  return isUnfetched(video) || isRemoved(video);
 }
 
 export type ResultCardGroup = {
@@ -169,14 +169,18 @@ export function ResultCards({
                   contradict the rows directly below it. What this video is
                   missing is the file, and that is what the pill now says.
 
-                  "Reclaimed" is the other fileless case, and it gets its own
+                  "Removed" is the other fileless case, and it keeps its own
                   word rather than sharing this one: that video WAS downloaded,
                   and telling someone it was never downloaded is the same class
-                  of wrong the "Summary only" pill was. */}
+                  of wrong the "Summary only" pill was. It is the SAME word the
+                  Library card and the player stage use — see VideoCard — and
+                  the same one the retention setting is phrased in ("Remove file
+                  after N days"), so the label reports the outcome back in the
+                  words the setting was chosen in. */}
               {isUnfetched(r.video) ? (
                 <span className="badge">Not downloaded</span>
-              ) : isReclaimed(r.video) ? (
-                <span className="badge">Reclaimed</span>
+              ) : isRemoved(r.video) ? (
+                <span className="badge">Removed</span>
               ) : null}
             </div>
             <div className="matches">
