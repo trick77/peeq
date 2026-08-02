@@ -85,6 +85,13 @@ export function SearchField({
         type="search"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        // The list already filtered itself on every keystroke, so Enter has
+        // nothing left to submit — it means "done typing". Handing the field
+        // back matches the /search box, and on a phone it drops the keyboard
+        // off the results. "/" brings focus back.
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
         placeholder={placeholder}
         aria-label={label}
       />

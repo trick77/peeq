@@ -1,4 +1,4 @@
-import type { FormEvent } from "react";
+import { useRef, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Button, Spinner } from "../ui";
 import type { SearchMode } from "../api/search";
@@ -66,8 +66,15 @@ export function Search({
 }) {
   const { mode, tab, answer } = search;
 
+  const inputRef = useRef<HTMLInputElement>(null);
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    // Submitting hands the box back: the question is asked, the caret has
+    // nothing left to do in it, and on a phone the keyboard covers the results
+    // it was typed to find. Clicking the box returns focus, with the query
+    // still in it to edit.
+    inputRef.current?.blur();
     search.submit();
   }
 
@@ -110,6 +117,7 @@ export function Search({
         <form className="bigsearch" role="search" onSubmit={handleSubmit}>
           <Icon name={mode === "ask" ? "sparkles" : "search"} size="20px" />
           <input
+            ref={inputRef}
             aria-label={mode === "ask" ? "Ask a question" : "Find words"}
             placeholder={copy.placeholder}
             value={query}

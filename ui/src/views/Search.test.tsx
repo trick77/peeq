@@ -231,6 +231,22 @@ describe("Search", () => {
     expect(screen.getByText("iPhone 27 review")).toBeInTheDocument();
   });
 
+  // Submitting is the end of typing. The caret staying in the box after the
+  // results arrive reads as if nothing was sent, and on a phone it keeps the
+  // keyboard over the answer.
+  it("gives up focus when the query is submitted", async () => {
+    mockedSearchVideos.mockResolvedValue(result());
+    render(<Harness onOpen={vi.fn()} />);
+    toFind();
+
+    box().focus();
+    expect(box()).toHaveFocus();
+
+    submit("iphone");
+    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+    expect(box()).not.toHaveFocus();
+  });
+
   it("does not search on mount or for a blank query", () => {
     render(<Harness onOpen={vi.fn()} />);
     expect(mockedSearchVideos).not.toHaveBeenCalled();
