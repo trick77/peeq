@@ -25,11 +25,11 @@ export function MetaHeader({
           library card carries, so a video reads the same way in the grid
           and on the page it opens.
 
-          Both ages spelled out via formatAgo: the card abbreviates the
-          second one only because its column is narrow, and this one is
-          not. "aired" is conditional because published_at is unknown for
-          some live streams and premieres; "added" is conditional because
-          a row can be listed without ever having finished downloading. */}
+          When the video aired, spelled out via formatAgo, and nothing
+          else: the date it entered the archive was also on this line and
+          is gone from every eyebrow above a title — it is a fact about the
+          archive, not about the video. "aired" stays conditional because
+          published_at is unknown for some live streams and premieres. */}
       <div className="by">
         <ChannelLink
           channelId={video.channel_id}
@@ -40,12 +40,6 @@ export function MetaHeader({
           <>
             <span className="dot">·</span>
             aired {formatAgo(video.published_at)}
-          </>
-        ) : null}
-        {video.downloaded_at ? (
-          <>
-            <span className="dot">·</span>
-            added {formatAgo(video.downloaded_at)}
           </>
         ) : null}
       </div>

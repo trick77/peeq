@@ -1401,6 +1401,20 @@ export function Player({
             shareStatus={shareStatus}
             onOpenChannel={onOpenChannel}
           />
+          {/* The category, on a line of its own between the title and the
+              actions. It used to sit in the action row's first segment, and it
+              was the only thing in a row of verbs that isn't one: everything
+              else there does something to the video, this states what the video
+              already is. Unlabelled, because the coloured dot and the caret say
+              pill-you-can-change without a word of chrome, and because the row
+              reads as part of the header above it rather than the toolbar
+              below. */}
+          <div className="playcat">
+            <CategoryPicker
+              category={video.category}
+              onPick={handlePickCategory}
+            />
+          </div>
           {/* The action row splits on one rule: a control keeps its label if
               the label reports the current state (Keep forever / Kept
               forever, Mark watched / Mark unwatched). Controls whose label
@@ -1412,11 +1426,10 @@ export function Player({
                 chrome belongs to the container now — and the segments carry
                 the grouping the two floating hairlines used to strain at. */}
             <div className="playbar">
-              {/* Segment 1 — what this video IS. Kept, watched and filed-as all
-                  outlive the page, which is why the category picker sits here
-                  rather than alone at the far end: it is a control, but the
-                  thing it controls is what the video is, not what this sitting
-                  does with it. */}
+              {/* Segment 1 — what this sitting decides about the video and
+                  every sitting after it: kept and watched both outlive the
+                  page. The category used to ride here too; it moved to its own
+                  line above (see .playcat) because it is a fact, not a verb. */}
               <span className="playseg">
                 <Button
                   type="button"
@@ -1448,10 +1461,6 @@ export function Player({
                   <Icon name="check" size="17px" />{" "}
                   {video.watched ? "Mark unwatched" : "Mark watched"}
                 </Button>
-                <CategoryPicker
-                  category={video.category}
-                  onPick={handlePickCategory}
-                />
               </span>
               {/* Segment 2 — the sleep timer, which acts on this sitting and
                   nothing that outlives it. Gated as a whole rather than around
