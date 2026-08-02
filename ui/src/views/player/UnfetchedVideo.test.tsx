@@ -180,6 +180,28 @@ describe("UnfetchedVideo", () => {
       expect(screen.getByText("Practical Engineering")).toBeTruthy();
     });
 
+    // A channel peeq has not resolved a name for yet still has to be nameable,
+    // and the id is the only handle there is. Both branches carry the fallback,
+    // so both are checked.
+    it("falls back to the channel id when the name is unknown", async () => {
+      const onOpenChannel = vi.fn();
+      const { unmount } = render(
+        <UnfetchedVideo
+          video={video({ channel_name: "" })}
+          onOpenChannel={onOpenChannel}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole("button", { name: "c1" }));
+      expect(onOpenChannel).toHaveBeenCalledWith("c1");
+      unmount();
+
+      const { container } = render(
+        <UnfetchedVideo video={video({ channel_name: "" })} />,
+      );
+      expect(container.querySelector(".chan-name")?.textContent).toBe("c1");
+    });
+
     it("labels the publish date as aired", () => {
       const { container } = render(<UnfetchedVideo video={video()} />);
 
