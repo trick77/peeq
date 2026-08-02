@@ -60,12 +60,11 @@ vi.mock("../api/search", () => ({
   reprocess: vi.fn().mockResolvedValue(undefined),
 }));
 
-// streamDownloads defaults to a never-resolving promise so it doesn't
-// interfere with (or hang) any of the other Player tests, which don't care
-// about the SSE feed at all — individual tests below override this mock to
-// capture the onEvent callback and drive it directly.
+// The Player no longer subscribes to the SSE feed at all: App owns the one
+// stream and hands summary events down as a prop. The module is still mocked
+// so that importing it cannot reach the network from a test.
 vi.mock("../api/downloads", () => ({
-  streamDownloads: vi.fn().mockImplementation(() => new Promise(() => {})),
+  streamDownloads: vi.fn(),
 }));
 
 // Player reads the global subtitles preference on mount, so this mock is
@@ -98,7 +97,6 @@ import { setPlaybackState } from "../api/playback";
 import { getSettings, updateSettings } from "../api/settings";
 import type { Settings } from "../api/types";
 import { gradientClassFor } from "../format";
-import { streamDownloads } from "../api/downloads";
 import { park, resetVideoHostForTests, videoHostNode } from "../videoHost";
 
 function makeVideo(overrides: Partial<Video> = {}): Video {
@@ -166,8 +164,6 @@ describe("Player", () => {
     vi.mocked(setCategory).mockReset();
     vi.mocked(setCategory).mockResolvedValue("ai");
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
-    vi.mocked(streamDownloads).mockReset();
-    vi.mocked(streamDownloads).mockImplementation(() => new Promise(() => {}));
     vi.mocked(getSettings).mockReset();
     vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
     vi.mocked(updateSettings).mockReset();
@@ -1768,7 +1764,10 @@ describe("Player", () => {
     expect(helloRow).not.toHaveClass("hit");
   });
 
-  it("updates live when a summary SSE event arrives for the open video", async () => {
+  // The event arrives as a prop now: App owns the session's one SSE stream and
+  // hands summary events down, rather than this page opening a second
+  // connection to hear what App had already decoded.
+  it("updates live when a summary event arrives for the open video", async () => {
     vi.mocked(getVideo)
       .mockResolvedValueOnce(makeVideo({ id: "v1", summary_status: "running" }))
       .mockResolvedValueOnce(
@@ -1778,24 +1777,131 @@ describe("Player", () => {
           summary: "Fresh summary.",
         }),
       );
-    // streamSSE (the real ../api/downloads dependency) already parses each
-    // frame's JSON body before invoking onEvent — App.tsx's own "progress"
-    // handler consumes evt.data the same way, uncast-and-parsed — so the
-    // mock here hands the callback an already-parsed object, not a string.
-    let emit: (e: { event: string; data: unknown }) => void = () => {};
-    vi.mocked(streamDownloads).mockImplementation((onEvent) => {
-      emit = onEvent as (e: { event: string; data: unknown }) => void;
-      return new Promise(() => {}); // never resolves
-    });
-    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
     expect(await screen.findByText(/summarizing/i)).toBeInTheDocument();
 
-    emit({
-      event: "summary",
-      data: { video_id: "v1", status: "done", phase: "" },
-    });
+    rerender(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        summaryEvent={{ videoId: "v1", status: "done" }}
+      />,
+    );
 
     expect(await screen.findByText(/fresh summary/i)).toBeInTheDocument();
+  });
+
+  it("ignores a summary event for a different video", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", summary_status: "running" }),
+    );
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    expect(await screen.findByText(/summarizing/i)).toBeInTheDocument();
+    vi.mocked(getVideo).mockClear();
+
+    rerender(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        summaryEvent={{ videoId: "v2", status: "done" }}
+      />,
+    );
+
+    // No refetch, and the page still says what it said.
+    expect(getVideo).not.toHaveBeenCalled();
+    expect(screen.getByText(/summarizing/i)).toBeInTheDocument();
+  });
+
+  // A status short of "done" is patched in place. There is nothing new to
+  // fetch yet — the summary does not exist — and a refetch per phase
+  // transition would be a request per step of every job on the box.
+  it("patches a non-final status in place, without refetching", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", summary_status: "error" }),
+    );
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    expect(
+      await screen.findByText(/summarization failed/i),
+    ).toBeInTheDocument();
+    vi.mocked(getVideo).mockClear();
+
+    rerender(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        summaryEvent={{ videoId: "v1", status: "running" }}
+      />,
+    );
+
+    expect(await screen.findByText(/summarizing/i)).toBeInTheDocument();
+    expect(getVideo).not.toHaveBeenCalled();
+  });
+
+  // The refetch a "done" event starts can outlive the video it was started
+  // for. Landing it anyway would paint v1's summary onto v2's page.
+  it("drops a finished refetch that lost its video", async () => {
+    let resolveStale: (v: Video) => void = () => {};
+    vi.mocked(getVideo).mockResolvedValueOnce(
+      makeVideo({ id: "v1", summary_status: "running" }),
+    );
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByText(/summarizing/i);
+
+    // The "done" refetch for v1 hangs...
+    vi.mocked(getVideo).mockImplementationOnce(
+      () => new Promise<Video>((r) => (resolveStale = r)),
+    );
+    rerender(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        summaryEvent={{ videoId: "v1", status: "done" }}
+      />,
+    );
+
+    // ...while the reader moves to v2, which loads normally.
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v2", title: "Second video", summary_status: "error" }),
+    );
+    rerender(<Player videoId="v2" onDeleted={() => {}} />);
+    expect(await screen.findByText("Second video")).toBeInTheDocument();
+
+    // Now v1's answer arrives. It must not land on v2's page.
+    await act(async () => {
+      resolveStale(
+        makeVideo({ id: "v1", title: "First video", summary: "Stale." }),
+      );
+    });
+    expect(screen.getByText("Second video")).toBeInTheDocument();
+    expect(screen.queryByText(/stale\./i)).toBeNull();
+  });
+
+  // App hands over a NEW object per event, so a second event carrying the same
+  // status still lands — the phase moves under a status that does not.
+  it("reacts to a repeated event with an unchanged status", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", summary_status: "pending" }),
+    );
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByText(/summariz|pending/i);
+    vi.mocked(getVideo).mockClear();
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", summary_status: "done", summary: "First." }),
+    );
+
+    const done = { videoId: "v1", status: "done" as const };
+    rerender(<Player videoId="v1" onDeleted={() => {}} summaryEvent={done} />);
+    await waitFor(() => expect(getVideo).toHaveBeenCalledTimes(1));
+
+    // A distinct object with identical values — the arrival is what counts.
+    rerender(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        summaryEvent={{ videoId: "v1", status: "done" }}
+      />,
+    );
+    await waitFor(() => expect(getVideo).toHaveBeenCalledTimes(2));
   });
 
   // Where the chapters came from is a per-video fact, so the Contents header

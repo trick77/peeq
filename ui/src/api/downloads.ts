@@ -1,6 +1,6 @@
 import { api, ApiError } from "./http";
 import { streamSSE, type SSEEvent } from "./stream";
-import type { JobState } from "./enums";
+import type { JobState, SummaryStatus } from "./enums";
 import type { Job } from "./types";
 
 // CookieRequiredError signals the 409 the channel add/refresh handlers return
@@ -89,10 +89,25 @@ export async function resumeYoutube(): Promise<void> {
   );
 }
 
-// streamDownloads subscribes to the SSE download progress/queue feed. The
-// only event name the worker currently publishes is "progress" (job_id,
-// percent, speed, eta); onEvent still receives the raw (event, data) pair
-// so callers aren't broken if the backend adds queue-state events later.
+// SummaryEventData is the payload of the stream's "summary" event, pushed on
+// every phase transition of a summary job. Named here, beside the stream it
+// arrives on, because it used to be cast inline at two call sites — in two
+// slightly different shapes.
+export type SummaryEventData = {
+  video_id?: string;
+  status?: SummaryStatus;
+  phase?: string;
+};
+
+// streamDownloads subscribes to the SSE download progress/queue feed, which
+// carries "progress", "summary" and "activity" events for the whole session
+// (see the shared hub in main.go). onEvent receives the raw (event, data)
+// pair, so a new event name added by the backend does not break callers.
+//
+// EXACTLY ONE subscriber, and it is App. A second consumer opens a second
+// connection to re-decode bytes the first one has already decoded — which is
+// what the Player did for summary events App was parsing anyway. Anything else
+// that needs an event off this stream should be handed it by App.
 export function streamDownloads(
   onEvent: (event: SSEEvent) => void,
   signal?: AbortSignal,
