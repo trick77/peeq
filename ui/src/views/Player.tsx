@@ -103,6 +103,7 @@ export function Player({
   onOpenInboxVideo,
   visible = true,
   onNowPlaying,
+  onPlaybackStarted,
   summaryEvent,
 }: {
   videoId: string | null;
@@ -158,6 +159,13 @@ export function Player({
   // dock can label itself. Fired once per video rather than per frame; see
   // NowPlaying. Must be stable, since it is an effect dependency.
   onNowPlaying?: (playing: NowPlaying | null) => void;
+  // onPlaybackStarted — this video has actually begun playing.
+  //
+  // It is what the now-playing dock is gated on, and the reason opening a page
+  // is not enough: walking into "Now playing", reading the summary and walking
+  // out again should leave nothing behind. Fired on every play, not just the
+  // first — App is setting the same id, which React bails out of.
+  onPlaybackStarted?: (id: string) => void;
   // summaryEvent — the newest "summary" event off the session's one SSE
   // stream, forwarded by App. See the effect below for why this page no longer
   // opens a stream of its own. Events for other videos are handed over too and
@@ -826,6 +834,10 @@ export function Player({
   // The mark is only valid across continuous playback — see tickSleep.
   function handlePlay() {
     sleepLastTickRef.current = Date.now();
+    // Playback starting is what makes this video the one being watched — see
+    // onPlaybackStarted. Deliberately here and not on the page's load: a page
+    // that was opened and left is not something to carry around.
+    if (video?.id) onPlaybackStarted?.(video.id);
   }
 
   // A video that runs out on its own ends the session the timer was counting

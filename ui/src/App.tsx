@@ -154,17 +154,37 @@ export function App() {
   // Deliberately not seeded from the server-side pointer at boot. Doing that
   // would mount a player and start fetching media bytes on every cold load of
   // the Library, for a video nobody asked to watch yet. The pointer keeps its
-  // existing job — telling the rail's "Now playing" where to go — and playback
-  // adopts a video only once a page for it is actually opened.
+  // existing job — telling the rail's "Now playing" where to go.
+  //
+  // Set when the video actually STARTS PLAYING, never merely when its page is
+  // opened. Opening a page is not watching: walk into "Now playing", look at
+  // the summary, and walk out, and there is nothing to carry — a dock that
+  // followed you out of a video you never pressed play on would be announcing
+  // something that is not happening.
+  //
+  // Pausing does not clear it, because a paused video is still the one you are
+  // in the middle of. Only ✕ and opening a different video do.
   const [playbackVideoId, setPlaybackVideoId] = useState<string | null>(null);
   // The page on screen always wins, so the very first render of a player page
   // already knows its video; playbackVideoId only supplies the answer once you
   // have navigated away from it.
   const playingId = playerPageVideoId ?? playbackVideoId;
   const showPlayerPage = !!playerPageVideoId;
+  // Opening another video's page replaces what is loaded in the one shared
+  // element, so whatever was playing is gone — and the newcomer has not been
+  // played yet. Without this the dock would follow you out of the new page
+  // still naming the old video, which is no longer anywhere.
   useEffect(() => {
-    if (playerPageVideoId) setPlaybackVideoId(playerPageVideoId);
+    if (playerPageVideoId && playerPageVideoId !== playbackVideoId) {
+      setPlaybackVideoId(null);
+    }
+    // playbackVideoId is read, not tracked: reacting to it would undo the
+    // adoption that onPlaybackStarted just made, one render later.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerPageVideoId]);
+  const handlePlaybackStarted = useCallback((id: string) => {
+    setPlaybackVideoId(id);
+  }, []);
   // What the dock says it is playing, published by the Player once per video.
   // Held here rather than derived because only the Player has fetched the
   // video, and it is the Player that knows whether it has a file at all.
@@ -891,6 +911,7 @@ export function App() {
                 // branch below, which is exactly why the two are separate —
                 // and it is what keeps a second <video> out of the shared host.
                 onMediaKnown={handleMediaKnown}
+                onPlaybackStarted={handlePlaybackStarted}
                 summaryEvent={summaryEvent}
               />
             </div>
