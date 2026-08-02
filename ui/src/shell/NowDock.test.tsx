@@ -8,8 +8,6 @@ const PLAYING: NowPlaying = {
   id: "vid1",
   title: "Bricklaying with a string line",
   channelName: "Essential Craftsman",
-  channelId: "chan1",
-  hasThumbnail: true,
   durationSeconds: 600,
   segments: [
     { category: "sponsor", start_time: 60, end_time: 90 },

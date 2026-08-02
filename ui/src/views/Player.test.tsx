@@ -2370,6 +2370,40 @@ describe("Player video host", () => {
     dock.remove();
   });
 
+  // The Player stays mounted while hidden, so a 4Hz timeupdate would re-render
+  // the whole page — summary, chapters, transcript — behind whatever the user
+  // is actually looking at. It stops tracking the playhead in state instead,
+  // and catches the scrubber up on the way back in. Position itself keeps
+  // being tracked in positionRef throughout, which is what the resume flush
+  // reads; only the render is skipped.
+  it("catches the scrubber up after tracking it while hidden", async () => {
+    const { rerender } = render(
+      <Player videoId="v1" visible={false} onDeleted={() => {}} />,
+    );
+    await waitFor(() => expect(document.querySelector("video")).toBeTruthy());
+    const el = document.querySelector("video") as HTMLVideoElement;
+
+    await act(async () => {
+      el.currentTime = 300;
+      fireEvent.timeUpdate(el);
+    });
+    // The tree is still rendered — App hides it with the wrapper's `hidden`
+    // attribute rather than unmounting it — but the playhead never reached
+    // state, so nothing re-rendered for it.
+    expect(
+      document.querySelector('[role="slider"]')?.getAttribute("aria-valuenow"),
+    ).toBe("0");
+
+    rerender(<Player videoId="v1" onDeleted={() => {}} />);
+    await waitFor(() =>
+      expect(
+        document
+          .querySelector('[role="slider"]')
+          ?.getAttribute("aria-valuenow"),
+      ).toBe("300"),
+    );
+  });
+
   it("publishes what is playing", async () => {
     const onNowPlaying = vi.fn();
     render(

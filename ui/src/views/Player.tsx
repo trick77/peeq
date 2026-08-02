@@ -374,6 +374,16 @@ export function Player({
   // hit targets smaller than a fingertip. The dock draws its own.
   const parkedAt = useParkedAt();
 
+  // Coming back to the page, catch the scrubber up in one go. handleTimeUpdate
+  // stops tracking the playhead in state while hidden (see there), and a video
+  // that was PAUSED from the dock fires no timeupdate to correct it — so
+  // without this the bar would sit at whatever position you left the page at.
+  useEffect(() => {
+    if (!visible) return;
+    const el = videoRef.current;
+    if (el) setCurrentTime(el.currentTime);
+  }, [visible]);
+
   // Tell App what is playing, so the dock can name it. Guarded the same way
   // the now-playing pointer is — a fileless page is not "what you are
   // watching" — and it reports null in that case so a dock left over from a
@@ -388,9 +398,6 @@ export function Player({
       id: video.id,
       title: video.title,
       channelName: video.channel_name,
-      channelId: video.channel_id,
-      hasThumbnail: video.has_thumbnail,
-      thumbnailVersion: video.thumbnail_version,
       durationSeconds: video.duration_seconds ?? 0,
       segments: video.sponsorblock_segments ?? [],
     });
@@ -778,7 +785,14 @@ export function Player({
     // Checked first, and before the SponsorBlock loop below can break out of
     // the handler: the budget must not skip a tick because a segment did.
     tickSleep(el);
-    setCurrentTime(el.currentTime);
+    // Only while this page is on screen. currentTime feeds exactly one thing —
+    // the Scrubber — and timeupdate fires ~4x/sec, so setting it while hidden
+    // would re-render the whole player page (summary, chapters, transcript)
+    // four times a second behind whatever the user is actually looking at.
+    // That cost did not exist while navigating away unmounted the Player, and
+    // it must not arrive with the dock. positionRef below is NOT gated: the
+    // resume flush reads it, and that has to stay right wherever you are.
+    if (visible) setCurrentTime(el.currentTime);
     positionRef.current = el.currentTime;
     positionKnownRef.current = true;
 
@@ -791,7 +805,7 @@ export function Player({
       if (!AUTO_SKIP.has(seg.category)) continue;
       if (el.currentTime >= seg.start_time && el.currentTime < seg.end_time) {
         el.currentTime = seg.end_time;
-        setCurrentTime(seg.end_time);
+        if (visible) setCurrentTime(seg.end_time);
         positionRef.current = seg.end_time;
         showToast(
           `Skipped ${categoryLabel(seg.category)}${DOT}${formatDuration(seg.end_time - seg.start_time)}`,
