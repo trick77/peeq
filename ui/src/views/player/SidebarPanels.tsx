@@ -1,6 +1,7 @@
 import { Icon } from "../../icons";
 import { Spinner } from "../../ui";
 import { formatDuration } from "../../format";
+import { seekOnClick } from "../../selection";
 import type { Video } from "../../api/types";
 
 // DONE_STATUSES is every summary_status the panel below renders explicitly.
@@ -98,7 +99,7 @@ export function HighlightsCard({
                   key={i}
                   type="button"
                   className="row"
-                  onClick={() => seek(k.ts)}
+                  onClick={seekOnClick(seek, k.ts)}
                 >
                   {body}
                 </button>

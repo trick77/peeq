@@ -9,6 +9,7 @@ import {
   type PublicVideo,
 } from "../api/share";
 import { formatDuration } from "../format";
+import { seekOnClick } from "../selection";
 import { daysUntil } from "../components/ShareControl";
 // The same scrubber the owner's Player draws, and the same skip policy. Like
 // ../vtt, ../components/Scrubber imports nothing from api/, so nothing
@@ -309,7 +310,7 @@ export function Share({ token }: { token: string | null }) {
                       key={i}
                       type="button"
                       className="row"
-                      onClick={() => seek(c.ts)}
+                      onClick={seekOnClick(seek, c.ts)}
                     >
                       <span className="ts mono">{fmt(c.ts)}</span>
                       <span>
@@ -379,7 +380,7 @@ export function Share({ token }: { token: string | null }) {
                       key={i}
                       type="button"
                       className="row"
-                      onClick={() => seek(k.ts)}
+                      onClick={seekOnClick(seek, k.ts)}
                     >
                       <span className="ts mono">{fmt(k.ts)}</span>
                       <span className="txt">{k.text}</span>

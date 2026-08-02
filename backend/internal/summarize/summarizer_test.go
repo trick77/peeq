@@ -305,3 +305,67 @@ func TestKeyPoints_doesNotThink(t *testing.T) {
 		t.Error("key points reasoned; it is an extractive step that must not be allowed to spiral")
 	}
 }
+
+// A key point is rendered verbatim in the Player's Highlights panel and on the
+// share page, so the debris the prompt already forbids is also taken out of the
+// reply: a ">>" speaker marker copied out of the captions, a leading bullet, and
+// quotes wrapped around the whole line.
+func TestKeyPoints_sanitizesModelText(t *testing.T) {
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		return `{"chapters":[{"ts":0,"title":">> Intro"}],` +
+			`"key_points":[{"ts":9,"text":"- >>  Explains the \"weight drop\" here."},` +
+			`{"ts":20,"text":"\"A quoted line on its own.\""}]}`, nil
+	}))
+	cues := []subtitles.Cue{{StartSeconds: 9, Text: "intro"}}
+
+	chapters, keyPoints, err := s.KeyPoints(context.Background(), "A summary.", cues, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keyPoints) != 2 {
+		t.Fatalf("expected 2 key points, got %+v", keyPoints)
+	}
+	// The inner quotes around "weight drop" survive: a quoted phrase inside the
+	// sentence is the point, only a wrapping pair is stripped.
+	if got, want := keyPoints[0].Text, `Explains the "weight drop" here.`; got != want {
+		t.Errorf("key point 0 = %q, want %q", got, want)
+	}
+	if got, want := keyPoints[1].Text, "A quoted line on its own."; got != want {
+		t.Errorf("key point 1 = %q, want %q", got, want)
+	}
+	if len(chapters) != 1 || chapters[0].Title != "Intro" {
+		t.Errorf("model-written chapter title kept its speaker marker: %+v", chapters)
+	}
+}
+
+// The cue index is the model's input, so the speaker markers come out there
+// rather than in ParseVTT — the transcript panel shows the captions as written,
+// and vtt.go has to stay in lockstep with ui/src/vtt.tsx.
+func TestFormatCues_stripsSpeakerMarkers(t *testing.T) {
+	got := formatCues([]subtitles.Cue{
+		{StartSeconds: 0, Text: ">> Welcome back."},
+		{StartSeconds: 7, Text: ">>> And now the news >> over to you."},
+		{StartSeconds: 12, Text: "5 > 3 is still true."},
+	})
+	want := "0: Welcome back.\n7: And now the news over to you.\n12: 5 > 3 is still true.\n"
+	if got != want {
+		t.Errorf("formatCues =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// SummarizeText reads the same captions, so it strips the same markers: leaving
+// them in one prompt and not the other would have the two calls disagree about
+// the text they are describing.
+func TestSummarizeText_stripsSpeakerMarkers(t *testing.T) {
+	var seen string
+	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		seen = m[1].Content
+		return "A summary.", nil
+	}))
+	if _, err := s.SummarizeText(context.Background(), ">> Hello there. >> Hello to you."); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(seen, ">>") {
+		t.Errorf("transcript reached the model with speaker markers: %q", seen)
+	}
+}

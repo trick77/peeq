@@ -4,6 +4,7 @@ import { SearchField } from "../components/SearchField";
 import { ThumbFill } from "../components/ThumbFill";
 import { ChannelLink } from "../components/ChannelLink";
 import { Icon } from "../icons";
+import { isSelectingText } from "../selection";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
 import { pendingThumbnailUrl } from "../api/videos";
 import type { PendingItem, VideoSort } from "../api/types";
@@ -386,7 +387,7 @@ export function Inbox({
   function handleCardClick(e: MouseEvent<HTMLElement>, item: PendingItem) {
     if (!onOpen || !hasPage(item)) return;
     if ((e.target as HTMLElement).closest('button, a, [role="button"]')) return;
-    if (window.getSelection()?.toString()) return;
+    if (isSelectingText()) return;
     onOpen(item.video_id);
   }
 

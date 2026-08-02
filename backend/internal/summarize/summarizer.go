@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/trick77/peeq/internal/llm"
@@ -157,6 +158,9 @@ const reduceSystemPrompt = "Combine these section summaries of one video into a 
 // resumable worker's first step, persisted on its own so a later failure never
 // discards it.
 func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (string, error) {
+	// The cue index the key-points call sees has its ">>" speaker markers taken
+	// out; stripping them here too keeps both prompts reading the same text.
+	transcript = stripSpeakerMarkers(transcript)
 	// budget is always positive — New defaults it and WithSummaryChunkTokens
 	// ignores a non-positive override.
 	budget := s.summaryChunkTokens
@@ -232,6 +236,32 @@ func finalizeSummary(raw, stage string) (string, error) {
 	return "", fmt.Errorf("summarize %s: model returned an empty summary", stage)
 }
 
+// keyPointRules is the tail of BOTH key-points prompts (with and without
+// chapters), so a rule added here can never miss the chapter-producing path.
+//
+// Every rule below answers a highlight that actually shipped: one row carried
+// three unrelated claims about a bike race in ~70 words with stray reference
+// digits glued to the sentence ends — a mini-summary, not a moment. The model
+// reads the SUMMARY as well as the cue index, so without "one claim, one
+// timestamp" it recaps the video instead of pointing at an instant, and without
+// a count cap it pads the list.
+//
+// The length and count limits name key_points explicitly: chapter titles ride
+// the same call, and a bare "keep each entry short" would bind those too.
+//
+// "Describe, never quote" is the other half of the same idea: a row pasted
+// straight out of the transcript reads as a fragment with no context, so a key
+// point says what is happening at that moment in the summarizer's own words.
+const keyPointRules = " Each key point DESCRIBES what happens at one moment: one timestamp, one claim, in your own words. " +
+	"Never merge several claims into one key point and never summarize the video — the summary already exists. " +
+	"Each key_points text is a single sentence of at most 25 words, plain third-person prose. " +
+	"Return at most 10 key points for the whole video, the most notable ones. " +
+	"Never make a key point a verbatim transcript quote and nothing else: always say what is being said, " +
+	"claimed, or shown — a short quoted phrase inside that sentence is fine, a quoted line on its own is not. " +
+	"The text is prose only: no speaker markers such as '>>', no reference, citation or footnote numbers, " +
+	"and no surrounding quotes, brackets, bullets or markdown. " +
+	"Use only timestamps that appear in the cue index. Output JSON only."
+
 // KeyPoints extracts key points — and chapters, when yt-dlp did not supply them
 // — from the already-computed summary plus the cue index. It is the worker's
 // fragile last step, split out so a failure here retries only this call and
@@ -239,10 +269,10 @@ func finalizeSummary(raw, stage string) (string, error) {
 func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subtitles.Cue, ytdlpChapters []Chapter) (chapters []Chapter, keyPoints []KeyPoint, err error) {
 	cueIndex := formatCues(cues)
 	wantChapters := len(ytdlpChapters) == 0
-	kpPrompt := "From the video, extract notable/surprising/quotable moments as JSON " +
+	kpPrompt := "From the summary and cue index below, extract the notable or surprising moments as JSON " +
 		`{"key_points":[{"ts":<seconds>,"text":"..."}]}`
 	if wantChapters {
-		kpPrompt = "From the video, produce a timestamped chapter list AND key points as JSON " +
+		kpPrompt = "From the summary and cue index below, produce a timestamped chapter list AND key points as JSON " +
 			`{"chapters":[{"ts":<seconds>,"title":"..."}],"key_points":[{"ts":<seconds>,"text":"..."}]}`
 	}
 	// Thinking OFF, and a max-tokens backstop: this is an extractive JSON step,
@@ -252,7 +282,7 @@ func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subti
 	// quality drops, WithReasoningEffort(ctx, "low") is the middle ground.
 	kpCtx := llm.WithMaxTokens(llm.WithoutThinking(ctx), keypointsMaxTokens)
 	raw, err := s.c.Complete(kpCtx, []llm.Message{
-		{Role: "system", Content: kpPrompt + " Use only timestamps that appear in the cue index. Output JSON only."},
+		{Role: "system", Content: kpPrompt + keyPointRules},
 		{Role: "user", Content: "SUMMARY:\n" + summary + "\n\nCUE INDEX (seconds: text):\n" + cueIndex},
 	})
 	if err != nil {
@@ -268,18 +298,77 @@ func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subti
 	if wantChapters {
 		for i := range parsed.Chapters {
 			parsed.Chapters[i].Source = "mimo"
+			// A model-written title picks up the same debris a key point does.
+			// yt-dlp's own chapters are left alone: they are YouTube's labels,
+			// not the model's.
+			parsed.Chapters[i].Title = sanitizeKeyPointText(parsed.Chapters[i].Title)
 		}
 		chapters = parsed.Chapters
 	} else {
 		chapters = ytdlpChapters
 	}
+	for i := range parsed.KeyPoints {
+		parsed.KeyPoints[i].Text = sanitizeKeyPointText(parsed.KeyPoints[i].Text)
+	}
 	return chapters, parsed.KeyPoints, nil
+}
+
+// leadingListMarkerRe matches the bullet or dash a model sometimes keeps at the
+// front of an extracted line. Anchored, and it never touches a hyphen inside a
+// word or a minus in the middle of a sentence.
+var leadingListMarkerRe = regexp.MustCompile(`^[-–—*•·]+\s*`)
+
+// keyPointSpaceRe collapses the whitespace a stripped marker leaves behind.
+// Go's \s is ASCII-only, so a no-break space has to be named (the cue text this
+// is derived from can carry one — see subtitles.spaceRe).
+var keyPointSpaceRe = regexp.MustCompile(`[\s\x{00A0}]+`)
+
+// sanitizeKeyPointText cleans one model-written line for display. The prompt
+// already forbids all of this; the model does it anyway often enough that the
+// panel showed rows starting with ">>", and a row is rendered verbatim in the
+// Player and on the share page.
+//
+// Nothing here shortens the text: an over-long key point is a prompt problem,
+// and truncating mid-sentence would look like a bug rather than a fix.
+func sanitizeKeyPointText(s string) string {
+	s = stripSpeakerMarkers(s)
+	s = leadingListMarkerRe.ReplaceAllString(strings.TrimSpace(s), "")
+	s = strings.TrimSpace(keyPointSpaceRe.ReplaceAllString(s, " "))
+	// Wrapping quotes only: a quoted phrase INSIDE the sentence is the
+	// "quotable moment" the prompt asks for and must survive.
+	if len(s) >= 2 {
+		for _, q := range []struct{ open, close string }{
+			{`"`, `"`}, {"'", "'"}, {"“", "”"}, {"‘", "’"},
+		} {
+			if strings.HasPrefix(s, q.open) && strings.HasSuffix(s, q.close) {
+				s = strings.TrimSpace(s[len(q.open) : len(s)-len(q.close)])
+				break
+			}
+		}
+	}
+	return s
+}
+
+// speakerMarkerRe matches the WebVTT speaker marker. Broadcast and manual
+// caption tracks open a new speaker's line with ">>" (and a new SPEAKER's turn
+// with ">>>"), which ParseVTT keeps on purpose — the transcript panel shows the
+// captions as they were written, and vtt.go stays in lockstep with the
+// TypeScript mirror in ui/src/vtt.tsx. It is only the LLM input that wants them
+// gone, so the stripping lives here rather than in the parser.
+var speakerMarkerRe = regexp.MustCompile(`>>+\s*`)
+
+// stripSpeakerMarkers removes those markers from text on its way to the model.
+func stripSpeakerMarkers(s string) string {
+	if !strings.Contains(s, ">>") {
+		return s
+	}
+	return strings.TrimSpace(speakerMarkerRe.ReplaceAllString(s, ""))
 }
 
 func formatCues(cues []subtitles.Cue) string {
 	var b strings.Builder
 	for _, c := range cues {
-		fmt.Fprintf(&b, "%d: %s\n", c.StartSeconds, c.Text)
+		fmt.Fprintf(&b, "%d: %s\n", c.StartSeconds, stripSpeakerMarkers(c.Text))
 	}
 	return b.String()
 }

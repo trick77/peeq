@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../icons";
 import { formatDuration } from "../format";
+import { seekOnClick } from "../selection";
 import {
   parseVtt,
   matchesFind,
@@ -204,7 +205,7 @@ export function TranscriptCard({
                       key={i}
                       type="button"
                       className={`cue${matchesFind(cue.text, find) ? " hit" : ""}`}
-                      onClick={() => seek(cue.ts)}
+                      onClick={seekOnClick(seek, cue.ts)}
                     >
                       <span className="ts mono">{formatDuration(cue.ts)}</span>
                       <span className="line">
