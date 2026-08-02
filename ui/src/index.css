@@ -1133,16 +1133,14 @@ button.srow:not(:disabled):hover {
    .listbar (see .searchfield below), beside the sort control it works with.
 
    32px on top, not 24: no view sits under a top bar any more, and 24px read as
-   cramped against the window edge once the header went away. */
+   cramped against the window edge once the header went away.
+
+   The now-playing dock is fixed, so it takes up no space of its own and the
+   last row of any grid would otherwise sit under it. --dock-h is 0 until the
+   dock is on screen (see the block below), so a page with nothing playing
+   keeps exactly the padding it always had. */
 .page {
-  padding: 32px 34px 90px;
-}
-/* The dock is fixed, so it takes no space of its own: without this the last
-   row of any grid would sit under it. --dock-h is 0 until the dock is on
-   screen (set on <body> by NowDock's own rule below), so a page with nothing
-   playing keeps exactly the padding it always had. */
-.page {
-  padding-bottom: calc(90px + var(--dock-h, 0px));
+  padding: 32px 34px calc(90px + var(--dock-h, 0px));
 }
 
 /* ── Now-playing dock ───────────────────────────────────────────────────────
@@ -1170,10 +1168,23 @@ button.srow:not(:disabled):hover {
   left: var(--rail-w, 0px);
   right: 0;
   bottom: 0;
-  z-index: 60;
+  /* Above the page and the phone's tab bar (40), below the tab bar's own sheet
+     (45) and every modal (.modal-overlay, 60). A dock at 60 would tie with the
+     confirm dialog and win on DOM order — it renders after <main> — leaving a
+     sharp, clickable bar on top of that dialog's blurred scrim. */
+  z-index: 42;
   background: color-mix(in srgb, var(--color-panel) 94%, transparent);
   backdrop-filter: blur(14px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
+  /* Follows the rail's collapse instead of jumping to the new edge halfway
+     through it. Same duration and curve as the shell's own track transition,
+     and answers to the same preference. */
+  transition: left 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nowdock {
+    transition: none;
+  }
 }
 /* Published back to the page so its bottom padding can clear the bar. 80px is
    the row's own height (56px tile + 12px above and below) plus the 3px

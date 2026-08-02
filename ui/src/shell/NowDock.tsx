@@ -141,12 +141,13 @@ export function NowDock({
           here all the same, because the stage toast that announces a skip has
           nowhere to appear once you have left, and a jump with no warning and
           no explanation reads as a bug. */}
-      <div
-        className="nowdock-progress"
-        onClick={scrub}
-        role="presentation"
-        title="Seek"
-      >
+      {/* No role and no keyboard handler, deliberately. It is a 3px line: a
+          focus ring on it would be unreadable, and role="presentation" on
+          something that takes a click lies to assistive tech about what it is.
+          Nothing here is keyboard-only — the transport buttons beside it are
+          focusable, and the position it reports is spoken by the time readout
+          below. */}
+      <div className="nowdock-progress" onClick={scrub} title="Seek">
         <i style={{ width: `${pct}%` }} />
         {total > 0 &&
           playing.segments
@@ -164,7 +165,13 @@ export function NowDock({
       <div className="nowdock-row">
         {/* The tile is the slot the real <video> parks into, and it is also
             the button back to the player: what you are looking at is what you
-            would be taken to. */}
+            would be taken to.
+
+            A <video> inside a <button> is only valid while the video is not
+            itself interactive — which is exactly why the element drops its
+            native controls in the dock (see Player). Putting controls back
+            here would make the markup invalid and bury this click target
+            under them. */}
         <button
           type="button"
           className="nowdock-vid"
