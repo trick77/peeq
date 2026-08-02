@@ -31,6 +31,7 @@ import { formatDuration, gradientClassFor } from "../format";
 // Only the download filename helper is needed here now: parsing, finding and
 // copying all moved into components/TranscriptCard with the markup.
 import { transcriptFilenameBase } from "../vtt";
+import { centerCuesRef } from "../captions";
 import { DOT } from "../sep";
 import { MediaStats } from "./player/MediaStats";
 import { ContentsCard } from "./player/ContentsCard";
@@ -1309,6 +1310,7 @@ export function Player({
                 >
                   {video.has_subtitles && subtitlesReadyFor === video.id && (
                     <track
+                      ref={centerCuesRef}
                       kind="subtitles"
                       srcLang={video.audio_language || "en"}
                       src={subtitlesUrl(video.id)}
