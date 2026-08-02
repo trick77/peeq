@@ -105,6 +105,7 @@ export function Player({
   visible = true,
   onNowPlaying,
   onPlaybackStarted,
+  onPlaybackEnded,
   summaryEvent,
 }: {
   videoId: string | null;
@@ -167,6 +168,16 @@ export function Player({
   // out again should leave nothing behind. Fired on every play, not just the
   // first — App is setting the same id, which React bails out of.
   onPlaybackStarted?: (id: string) => void;
+  // onPlaybackEnded — this video ran out on its own.
+  //
+  // It undoes what onPlaybackStarted claimed: the dock exists to say what you
+  // are in the middle of, and a video that has finished is not that. Leaving
+  // it docked would park a bar at 100% announcing something that is over, and
+  // follow you around with it.
+  //
+  // Only reaching the end counts. Pausing does not, because a paused video is
+  // still one you are part-way through.
+  onPlaybackEnded?: (id: string) => void;
   // summaryEvent — the newest "summary" event off the session's one SSE
   // stream, forwarded by App. See the effect below for why this page no longer
   // opens a stream of its own. Events for other videos are handed over too and
@@ -850,6 +861,10 @@ export function Player({
     // jump to a moment inside the last JUMP_SETTLE_SECONDS would suppress the
     // one write that legitimately marks the video watched.
     jumpAnchorRef.current = null;
+    // A video that has run out is no longer one you are in the middle of, so
+    // it stops being what playback carries — see onPlaybackEnded. Pressing
+    // play again adopts it back, through handlePlay, like any other video.
+    if (video?.id) onPlaybackEnded?.(video.id);
   }
 
   function handleTimeUpdate() {

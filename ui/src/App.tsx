@@ -185,6 +185,11 @@ export function App() {
   const handlePlaybackStarted = useCallback((id: string) => {
     setPlaybackVideoId(id);
   }, []);
+  // Guarded on the id so a late "ended" from a video that has already been
+  // replaced cannot drop the one that replaced it.
+  const handlePlaybackEnded = useCallback((id: string) => {
+    setPlaybackVideoId((cur) => (cur === id ? null : cur));
+  }, []);
   // What the dock says it is playing, published by the Player once per video.
   // Held here rather than derived because only the Player has fetched the
   // video, and it is the Player that knows whether it has a file at all.
@@ -912,6 +917,7 @@ export function App() {
                 // and it is what keeps a second <video> out of the shared host.
                 onMediaKnown={handleMediaKnown}
                 onPlaybackStarted={handlePlaybackStarted}
+                onPlaybackEnded={handlePlaybackEnded}
                 summaryEvent={summaryEvent}
               />
             </div>

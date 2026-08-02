@@ -2683,6 +2683,34 @@ describe("Player video host", () => {
     expect(onPlaybackStarted).toHaveBeenCalledWith("v1");
   });
 
+  // A video that has run out is not one you are in the middle of, so it stops
+  // being what the dock carries. Pressing play again adopts it back.
+  it("gives the video up when it ends, and takes it back on replay", async () => {
+    const onPlaybackStarted = vi.fn();
+    const onPlaybackEnded = vi.fn();
+    render(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        onPlaybackStarted={onPlaybackStarted}
+        onPlaybackEnded={onPlaybackEnded}
+      />,
+    );
+    await waitFor(() => expect(document.querySelector("video")).toBeTruthy());
+    const el = document.querySelector("video") as HTMLVideoElement;
+
+    fireEvent.play(el);
+    expect(onPlaybackStarted).toHaveBeenCalledWith("v1");
+    expect(onPlaybackEnded).not.toHaveBeenCalled();
+
+    fireEvent.ended(el);
+    expect(onPlaybackEnded).toHaveBeenCalledWith("v1");
+
+    onPlaybackStarted.mockClear();
+    fireEvent.play(el);
+    expect(onPlaybackStarted).toHaveBeenCalledWith("v1");
+  });
+
   it("publishes what is playing", async () => {
     const onNowPlaying = vi.fn();
     render(
