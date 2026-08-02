@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
 import { AUTO_SKIP, Scrubber, categoryLabel } from "../components/Scrubber";
@@ -38,6 +39,8 @@ import { TranscriptCard } from "../components/TranscriptCard";
 import { UnfetchedVideo } from "./player/UnfetchedVideo";
 import { SummaryCard, HighlightsCard } from "./player/SidebarPanels";
 import { MetaHeader } from "./player/MetaHeader";
+import { park, useParkedAt, videoHostNode } from "../videoHost";
+import type { NowPlaying } from "../nowPlaying";
 
 // RESUME_THROTTLE_MS bounds how often `timeupdate` (which fires ~4x/sec)
 // is allowed to actually POST the resume position — see handleTimeUpdate.
@@ -99,6 +102,8 @@ export function Player({
   onBackFromSummary,
   inboxOrder,
   onOpenInboxVideo,
+  visible = true,
+  onNowPlaying,
 }: {
   videoId: string | null;
   // seekTo — the Task 18 jump-to-moment target (Search's onOpen, via App's
@@ -141,6 +146,18 @@ export function Player({
   // has no inbox position to step from.
   inboxOrder?: string[];
   onOpenInboxVideo?: (id: string) => void;
+  // visible — whether this Player is the page currently on screen.
+  //
+  // It exists because the Player is no longer unmounted when you navigate
+  // away: the <video> lives in its tree, and unmounting would stop playback,
+  // which is the whole point of the now-playing dock. App hides it instead and
+  // says so here, and the only thing that changes is where the video parks —
+  // the stage while visible, the dock while not.
+  visible?: boolean;
+  // onNowPlaying — publishes what is playing (or null when nothing is) so the
+  // dock can label itself. Fired once per video rather than per frame; see
+  // NowPlaying. Must be stable, since it is an effect dependency.
+  onNowPlaying?: (playing: NowPlaying | null) => void;
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -213,6 +230,11 @@ export function Player({
     null,
   );
   const videoRef = useRef<HTMLVideoElement>(null);
+  // stageSlotRef is the empty box on the player page the shared <video> parks
+  // into. The element is not a child of this component's tree in the DOM sense
+  // — it is portalled into videoHost's node, which this effect relocates — so
+  // the stage renders a slot rather than the video itself.
+  const stageSlotRef = useRef<HTMLDivElement>(null);
   const lastSentRef = useRef(0);
   // positionRef tracks the latest known playhead position independent of
   // the <video> DOM node itself. On unmount, React nulls out videoRef
@@ -350,9 +372,80 @@ export function Player({
     setPlaybackState(video.id).catch(() => {});
   }, [video?.id, video?.has_media]);
 
+  // showsStage mirrors the render below: a video with a file, on a page that
+  // is actually on screen. Everything the early returns catch — no id, a load
+  // error, a video peeq has read but not downloaded — draws no stage, and a
+  // hidden Player draws one that nobody can see.
+  const showsStage =
+    visible &&
+    !error &&
+    !!video &&
+    video.status !== "new" &&
+    video.has_media &&
+    !!videoId;
+
+  // Park the video on the stage while this page is showing it, and release it
+  // when it is not — the dock picks it up from there (videoHost prefers the
+  // stage whenever both are registered, so the handover needs no coordination
+  // between the two components).
+  //
+  // The cleanup releases rather than parks: on a real unmount there is no
+  // stage left, and leaving a stale node registered would have videoHost keep
+  // appending the host into a detached box, which is exactly the
+  // removed-from-the-document pause this whole mechanism exists to avoid.
+  useEffect(() => {
+    if (!showsStage) {
+      park("stage", null);
+      return;
+    }
+    park("stage", stageSlotRef.current);
+    return () => park("stage", null);
+  }, [showsStage]);
+
+  // parkedAt drives the native controls: full transport on the stage, none in
+  // a 100x56 dock tile where they would cover the picture entirely and offer
+  // hit targets smaller than a fingertip. The dock draws its own.
+  const parkedAt = useParkedAt();
+
+  // Coming back to the page, catch the scrubber up in one go. handleTimeUpdate
+  // stops tracking the playhead in state while hidden (see there), and a video
+  // that was PAUSED from the dock fires no timeupdate to correct it — so
+  // without this the bar would sit at whatever position you left the page at.
+  useEffect(() => {
+    if (!visible) return;
+    const el = videoRef.current;
+    if (el) setCurrentTime(el.currentTime);
+  }, [visible]);
+
+  // Tell App what is playing, so the dock can name it. Guarded the same way
+  // the now-playing pointer is — a fileless page is not "what you are
+  // watching" — and it reports null in that case so a dock left over from a
+  // previous video does not outlive it.
+  useEffect(() => {
+    if (!onNowPlaying) return;
+    if (!video || !video.has_media || video.status === "new") {
+      onNowPlaying(null);
+      return;
+    }
+    onNowPlaying({
+      id: video.id,
+      title: video.title,
+      channelName: video.channel_name,
+      durationSeconds: video.duration_seconds ?? 0,
+      segments: video.sponsorblock_segments ?? [],
+    });
+    // On `video` as a whole rather than its fields: it is replaced wholesale
+    // on every change (the SSE refetch, the optimistic toggles), so this fires
+    // when any published field moves and stays put when none does.
+  }, [onNowPlaying, video]);
+
   // Tell the shell whether what it navigated to has a file. It records the
   // origin of a page before that is knowable — a search result may be a video
   // to watch or a summary to read — and this is what settles it.
+  //
+  // It is also what keeps two Players from rendering a <video> into the one
+  // shared host: a summary page whose download lands stops being a summary,
+  // and the page is handed to the Player that owns playback.
   useEffect(() => {
     if (!video?.id) return;
     onMediaKnownRef.current?.(video.id, !!video.has_media);
@@ -748,7 +841,14 @@ export function Player({
     // Checked first, and before the SponsorBlock loop below can break out of
     // the handler: the budget must not skip a tick because a segment did.
     tickSleep(el);
-    setCurrentTime(el.currentTime);
+    // Only while this page is on screen. currentTime feeds exactly one thing —
+    // the Scrubber — and timeupdate fires ~4x/sec, so setting it while hidden
+    // would re-render the whole player page (summary, chapters, transcript)
+    // four times a second behind whatever the user is actually looking at.
+    // That cost did not exist while navigating away unmounted the Player, and
+    // it must not arrive with the dock. positionRef below is NOT gated: the
+    // resume flush reads it, and that has to stay right wherever you are.
+    if (visible) setCurrentTime(el.currentTime);
     positionRef.current = el.currentTime;
     positionKnownRef.current = true;
     // The jump has been played through: from here the playhead means what it
@@ -771,7 +871,7 @@ export function Player({
       if (!AUTO_SKIP.has(seg.category)) continue;
       if (el.currentTime >= seg.start_time && el.currentTime < seg.end_time) {
         el.currentTime = seg.end_time;
-        setCurrentTime(seg.end_time);
+        if (visible) setCurrentTime(seg.end_time);
         positionRef.current = seg.end_time;
         showToast(
           `Skipped ${categoryLabel(seg.category)}${DOT}${formatDuration(seg.end_time - seg.start_time)}`,
@@ -1167,32 +1267,44 @@ export function Player({
               the poster and says what happened. Re-download lives in the ⋮ menu,
               where it does for a failed download too. */}
           {video.has_media ? (
-            <video
-              ref={videoRef}
-              className={
-                video.has_thumbnail ? undefined : gradientClassFor(video.id)
-              }
-              src={playbackSrc}
-              poster={
-                video.has_thumbnail
-                  ? thumbnailUrl(video.id, video.thumbnail_version)
-                  : undefined
-              }
-              controls
-              onLoadedMetadata={handleLoadedMetadata}
-              onTimeUpdate={handleTimeUpdate}
-              onPlay={handlePlay}
-              onEnded={handleEnded}
-            >
-              {video.has_subtitles && subtitlesReadyFor === video.id && (
-                <track
-                  kind="subtitles"
-                  srcLang={video.audio_language || "en"}
-                  src={subtitlesUrl(video.id)}
-                  default={false}
-                />
+            <>
+              {/* The stage is an empty box; the <video> is portalled into
+                  videoHost's node and that node is appended in here. Rendering
+                  the element directly would tie it to this page's lifetime,
+                  which is what used to stop playback on every navigation. */}
+              <div className="stage-slot" ref={stageSlotRef} />
+              {createPortal(
+                <video
+                  ref={videoRef}
+                  className={
+                    video.has_thumbnail ? undefined : gradientClassFor(video.id)
+                  }
+                  src={playbackSrc}
+                  poster={
+                    video.has_thumbnail
+                      ? thumbnailUrl(video.id, video.thumbnail_version)
+                      : undefined
+                  }
+                  // Native controls belong to the stage. In the dock the tile
+                  // is 100x56 and the bar draws its own transport.
+                  controls={parkedAt !== "dock"}
+                  onLoadedMetadata={handleLoadedMetadata}
+                  onTimeUpdate={handleTimeUpdate}
+                  onPlay={handlePlay}
+                  onEnded={handleEnded}
+                >
+                  {video.has_subtitles && subtitlesReadyFor === video.id && (
+                    <track
+                      kind="subtitles"
+                      srcLang={video.audio_language || "en"}
+                      src={subtitlesUrl(video.id)}
+                      default={false}
+                    />
+                  )}
+                </video>,
+                videoHostNode(),
               )}
-            </video>
+            </>
           ) : (
             <div
               className={`stage-gone${

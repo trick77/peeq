@@ -5,6 +5,7 @@ import {
   waitFor,
   fireEvent,
   within,
+  act,
 } from "@testing-library/react";
 import { Player } from "./Player";
 import { parseVtt } from "../vtt";
@@ -98,6 +99,7 @@ import { getSettings, updateSettings } from "../api/settings";
 import type { Settings } from "../api/types";
 import { gradientClassFor } from "../format";
 import { streamDownloads } from "../api/downloads";
+import { park, resetVideoHostForTests, videoHostNode } from "../videoHost";
 
 function makeVideo(overrides: Partial<Video> = {}): Video {
   return { ...mockVideo, ...overrides };
@@ -2382,6 +2384,160 @@ describe("Player", () => {
         screen.getByRole("button", { name: /sleep timer: 30 minutes/i }),
       ).toBeInTheDocument();
     });
+  });
+});
+
+// The <video> no longer belongs to this page: it is portalled into the shared
+// host so that leaving the player does not stop playback. These cover that
+// seam — everything the Player does WITH the element is exercised above and is
+// deliberately unchanged by it.
+describe("Player video host", () => {
+  beforeEach(() => {
+    vi.mocked(getVideo).mockReset();
+    vi.mocked(getVideo).mockResolvedValue(makeVideo());
+    vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
+  });
+  afterEach(() => {
+    resetVideoHostForTests();
+  });
+
+  it("renders the video into the shared host, then parks it on the stage", async () => {
+    const { container } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    await waitFor(() => expect(document.querySelector("video")).toBeTruthy());
+    // React renders it into the host, not straight into this page's tree…
+    expect(videoHostNode().querySelector("video")).toBeTruthy();
+    // …and the host is then parked in the stage's slot, so on the player page
+    // the video still sits exactly where it always did. Both hold at once, and
+    // that is the whole trick: the element's owner and its location came apart.
+    expect(videoHostNode().parentElement).toBe(
+      container.querySelector(".stage-slot"),
+    );
+  });
+
+  // The regression this whole change exists to prevent: navigating away used
+  // to unmount the element. Now the page merely hides, the element is the same
+  // object, and it is still in the document — the two conditions under which
+  // the UA leaves playback alone.
+  it("keeps the same element when the page is hidden", async () => {
+    const { container, rerender } = render(
+      <Player videoId="v1" onDeleted={() => {}} />,
+    );
+    await waitFor(() => expect(document.querySelector("video")).toBeTruthy());
+    const first = document.querySelector("video");
+    rerender(<Player videoId="v1" visible={false} onDeleted={() => {}} />);
+    expect(document.querySelector("video")).toBe(first);
+    expect(document.body.contains(first)).toBe(true);
+    // Released, so the dock can take it.
+    expect(videoHostNode().parentElement).not.toBe(
+      container.querySelector(".stage-slot"),
+    );
+  });
+
+  // Native controls are the stage's. In a 100x56 dock tile they would cover
+  // the picture and offer targets smaller than a fingertip.
+  it("drops the native controls once the video is in the dock", async () => {
+    const dock = document.createElement("div");
+    document.body.appendChild(dock);
+    render(<Player videoId="v1" visible={false} onDeleted={() => {}} />);
+    await waitFor(() => expect(document.querySelector("video")).toBeTruthy());
+    await act(async () => {
+      park("dock", dock);
+    });
+    expect((document.querySelector("video") as HTMLVideoElement).controls).toBe(
+      false,
+    );
+    dock.remove();
+  });
+
+  // The Player stays mounted while hidden, so a 4Hz timeupdate would re-render
+  // the whole page — summary, chapters, transcript — behind whatever the user
+  // is actually looking at. It stops tracking the playhead in state instead,
+  // and catches the scrubber up on the way back in. Position itself keeps
+  // being tracked in positionRef throughout, which is what the resume flush
+  // reads; only the render is skipped.
+  it("catches the scrubber up after tracking it while hidden", async () => {
+    const { rerender } = render(
+      <Player videoId="v1" visible={false} onDeleted={() => {}} />,
+    );
+    await waitFor(() => expect(document.querySelector("video")).toBeTruthy());
+    const el = document.querySelector("video") as HTMLVideoElement;
+
+    await act(async () => {
+      el.currentTime = 300;
+      fireEvent.timeUpdate(el);
+    });
+    // The tree is still rendered — App hides it with the wrapper's `hidden`
+    // attribute rather than unmounting it — but the playhead never reached
+    // state, so nothing re-rendered for it.
+    expect(
+      document.querySelector('[role="slider"]')?.getAttribute("aria-valuenow"),
+    ).toBe("0");
+
+    rerender(<Player videoId="v1" onDeleted={() => {}} />);
+    await waitFor(() =>
+      expect(
+        document
+          .querySelector('[role="slider"]')
+          ?.getAttribute("aria-valuenow"),
+      ).toBe("300"),
+    );
+  });
+
+  it("publishes what is playing", async () => {
+    const onNowPlaying = vi.fn();
+    render(
+      <Player videoId="v1" onDeleted={() => {}} onNowPlaying={onNowPlaying} />,
+    );
+    await waitFor(() =>
+      expect(onNowPlaying).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "v1",
+          title: mockVideo.title,
+          channelName: "Veritasium",
+        }),
+      ),
+    );
+  });
+
+  // A page with no file is not "what you are watching" — the same rule the
+  // server-side now-playing pointer follows. Reporting null rather than
+  // nothing matters: a dock left over from the previous video must not outlive
+  // it.
+  it("reports nothing playing for a video with no file", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ has_media: false, status: "tombstoned" }),
+    );
+    const onNowPlaying = vi.fn();
+    render(
+      <Player videoId="v1" onDeleted={() => {}} onNowPlaying={onNowPlaying} />,
+    );
+    await waitFor(() => expect(onNowPlaying).toHaveBeenCalledWith(null));
+    expect(document.querySelector("video")).toBeNull();
+  });
+
+  // Whether a page has a file is what settles what the page IS. App records
+  // where a video was opened from before that is knowable — a search result may
+  // be either — and a video with media is one being watched. That is also what
+  // keeps two Players from rendering a <video> into the one shared host: the
+  // marker goes, and the page is handed to the Player that owns playback.
+  it("reports whether the page it opened has a file", async () => {
+    const onMediaKnown = vi.fn();
+    render(
+      <Player videoId="v1" onDeleted={() => {}} onMediaKnown={onMediaKnown} />,
+    );
+    await waitFor(() => expect(onMediaKnown).toHaveBeenCalledWith("v1", true));
+
+    onMediaKnown.mockClear();
+    // A tombstoned page has no file and never gets one back on its own, so it
+    // stays whatever it already was — a summary being read, if that is how it
+    // was opened.
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v2", has_media: false, status: "tombstoned" }),
+    );
+    render(
+      <Player videoId="v2" onDeleted={() => {}} onMediaKnown={onMediaKnown} />,
+    );
+    await waitFor(() => expect(onMediaKnown).toHaveBeenCalledWith("v2", false));
   });
 });
 

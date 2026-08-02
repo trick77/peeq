@@ -33,7 +33,11 @@ import { Share } from "./views/Share";
 import { useRoute } from "./route";
 import { Button } from "./ui";
 import { TabBar } from "./shell/TabBar";
+import { NowDock } from "./shell/NowDock";
 import { MOBILE_QUERY, useMediaQuery } from "./shell/useMediaQuery";
+import { hostedVideo } from "./videoHost";
+import type { NowPlaying } from "./nowPlaying";
+import { setPlaybackState } from "./api/playback";
 
 // Where the rail's collapsed/expanded choice is kept. It is a preference about
 // this browser's window, not about the account, so it lives in localStorage
@@ -136,6 +140,51 @@ export function App() {
       ? summaryOrigin.from
       : null;
   const readingSummary = readingSummaryFrom !== null;
+  // playerPageVideoId — the video the player PAGE is showing right now, or
+  // null when the page on screen is not one. A summary being read is not one:
+  // it shares the route but has no file to play.
+  const playerPageVideoId =
+    view === "player" && !readingSummary ? nowPlayingId : null;
+  // playbackVideoId — the video PLAYBACK owns, which outlives the page that
+  // started it. This split is the whole feature: the <video> element used to
+  // die with the player view, so opening the Inbox to deal with one new upload
+  // stopped whatever you were in the middle of.
+  //
+  // Deliberately not seeded from the server-side pointer at boot. Doing that
+  // would mount a player and start fetching media bytes on every cold load of
+  // the Library, for a video nobody asked to watch yet. The pointer keeps its
+  // existing job — telling the rail's "Now playing" where to go — and playback
+  // adopts a video only once a page for it is actually opened.
+  const [playbackVideoId, setPlaybackVideoId] = useState<string | null>(null);
+  // The page on screen always wins, so the very first render of a player page
+  // already knows its video; playbackVideoId only supplies the answer once you
+  // have navigated away from it.
+  const playingId = playerPageVideoId ?? playbackVideoId;
+  const showPlayerPage = !!playerPageVideoId;
+  useEffect(() => {
+    if (playerPageVideoId) setPlaybackVideoId(playerPageVideoId);
+  }, [playerPageVideoId]);
+  // What the dock says it is playing, published by the Player once per video.
+  // Held here rather than derived because only the Player has fetched the
+  // video, and it is the Player that knows whether it has a file at all.
+  const [nowPlaying, setNowPlaying] = useState<NowPlaying | null>(null);
+  const handleNowPlaying = useCallback((p: NowPlaying | null) => {
+    setNowPlaying(p);
+  }, []);
+  useEffect(() => {
+    if (!playingId) setNowPlaying(null);
+  }, [playingId]);
+  // The origin is recorded before anyone knows whether the video has a file.
+  // Player reports the answer, and a video with media is one being watched — so
+  // the marker goes, the rail returns to "Now playing", and setView's
+  // short-circuit starts treating this page as what it is.
+  //
+  // It is also what keeps two Players from rendering a <video> into the one
+  // shared host: dropping the marker promotes the page to the Player that owns
+  // playback, and the other one stops being rendered at all.
+  function handleMediaKnown(id: string, hasMedia: boolean) {
+    if (hasMedia && summaryOrigin?.id === id) setSummaryOrigin(null);
+  }
   // setView keeps every existing call site (the rail, the banner's "fix
   // cookie", ViewSwitch's back/deleted handlers) unchanged — it just pushes a
   // new URL. navigate is stable, so this is too.
@@ -711,6 +760,31 @@ export function App() {
     navigate({ view: "channel", channelId: id });
   }
 
+  // stopPlayback — the dock's ✕. Ends the sitting rather than pausing it, so
+  // it also drops the server-side now-playing pointer: leaving it would have
+  // the rail keep offering to reopen the thing you just closed, on this device
+  // and on every other one.
+  //
+  // The element is paused before the state change rather than left to the
+  // unmount, so the sound stops on the click instead of on the next commit.
+  function stopPlayback() {
+    hostedVideo()?.pause();
+    setPlaybackVideoId(null);
+    setNowPlaying(null);
+    setPersistedVideoId(null);
+    setPlaybackState(null).catch(() => {});
+  }
+
+  // The dock's tile, title and chevron all lead back to the player page. It is
+  // the same navigation the rail's "Now playing" performs, minus the pointer
+  // re-read: the dock is showing what is playing in this tab right now, so
+  // there is nothing to go and ask the server about.
+  function openPlayingVideo() {
+    setPendingSeek(undefined);
+    setSummaryOrigin(null);
+    navigate({ view: "player", videoId: playbackVideoId });
+  }
+
   // The rail and the phone's tab bar are the same navigation in two shapes, so
   // they are handed the same three answers rather than each working them out.
   //
@@ -767,65 +841,110 @@ export function App() {
               setDownloadStatus(await downloadsStatus());
             }}
           />
-          <ViewSwitch
-            inboxOrder={inboxOrder}
-            setInboxOrder={setInboxOrder}
-            view={view}
-            selectedVideoId={nowPlayingId}
-            selectedChannelId={selectedChannelId}
-            pendingSeek={pendingSeek}
-            onOpenVideo={openVideo}
-            onOpenInboxSummary={openInboxSummary}
-            onOpenVideoAt={openVideoAt}
-            onOpenVideoFromSearch={openVideoFromSearch}
-            onOpenChannel={openChannel}
-            onSeekConsumed={() => setPendingSeek(undefined)}
-            search={search}
-            summaryOrigin={readingSummaryFrom}
-            // The origin is recorded before anyone knows whether the video has a
-            // file. Player reports the answer, and a video with media is one
-            // being watched — so the marker goes, the rail returns to "Now
-            // playing", and setView's short-circuit starts treating this page as
-            // what it is.
-            onMediaKnown={(id, hasMedia) => {
-              if (hasMedia && summaryOrigin?.id === id) setSummaryOrigin(null);
-            }}
-            setView={setView}
-            setPendingCount={setPendingCount}
-            onQueued={refreshQueue}
-            librarySearch={librarySearch}
-            channelSearch={channelSearch}
-            historySearch={historySearch}
-            upNextSearch={upNextSearch}
-            inboxSearch={inboxSearch}
-            onLibrarySearchChange={setLibrarySearch}
-            onChannelSearchChange={setChannelSearch}
-            onHistorySearchChange={setHistorySearch}
-            onUpNextSearchChange={setUpNextSearch}
-            onInboxSearchChange={setInboxSearch}
-            queueSignal={queueSignal}
-            jobs={jobs}
-            progressByJobId={progressByJobId}
-            summaries={summaries}
-            summaryPhaseByVideoId={summaryPhaseByVideoId}
-            onCancelDownload={onCancelDownload}
-            liveActivity={liveActivity}
-            // Same precedence the banner uses: the kill-switch outranks a full
-            // disk, which outranks the cookie pause. Up next names the cause
-            // because each one has a different way out — only the kill-switch
-            // has a Resume button.
-            stalled={
-              downloadStatus.youtube_paused
-                ? "youtube"
-                : downloadStatus.low_disk
-                  ? "disk"
-                  : downloadStatus.paused
-                    ? "cookie"
-                    : undefined
-            }
-          />
+          {/* The player is mounted OUTSIDE the view switch and stays mounted
+              once a video is open, because the <video> element lives in its
+              tree: unmounting it on navigation is exactly what used to stop
+              playback. Hidden rather than removed when the page on screen is
+              something else, with the video itself relocated into the dock by
+              videoHost.
+
+              `hidden` and not a class: it has to keep the page out of the
+              accessibility tree and out of tab order too, and one attribute
+              says all three. */}
+          {playingId ? (
+            <div hidden={!showPlayerPage}>
+              <Player
+                videoId={playingId}
+                visible={showPlayerPage}
+                onNowPlaying={handleNowPlaying}
+                seekTo={pendingSeek}
+                onSeekConsumed={() => setPendingSeek(undefined)}
+                onDeleted={() => {
+                  // The file is gone, so there is nothing left to play or to
+                  // dock — and the backend has already dropped the pointer.
+                  setPlaybackVideoId(null);
+                  setNowPlaying(null);
+                  setPersistedVideoId(null);
+                  setView("library");
+                }}
+                onOpenChannel={openChannel}
+                onQueued={refreshQueue}
+                // No summaryOrigin and no back link: this Player is only ever
+                // the video being watched. A page being READ is the other
+                // branch below, which is exactly why the two are separate —
+                // and it is what keeps a second <video> out of the shared host.
+                onMediaKnown={handleMediaKnown}
+              />
+            </div>
+          ) : null}
+          {/* Skipped entirely while the player page is the page: rendering it
+              would draw a second Player for the same video. */}
+          {showPlayerPage ? null : (
+            <ViewSwitch
+              inboxOrder={inboxOrder}
+              setInboxOrder={setInboxOrder}
+              view={view}
+              selectedVideoId={nowPlayingId}
+              selectedChannelId={selectedChannelId}
+              pendingSeek={pendingSeek}
+              onOpenVideo={openVideo}
+              onOpenInboxSummary={openInboxSummary}
+              onOpenVideoAt={openVideoAt}
+              onOpenVideoFromSearch={openVideoFromSearch}
+              onOpenChannel={openChannel}
+              onSeekConsumed={() => setPendingSeek(undefined)}
+              search={search}
+              summaryOrigin={readingSummaryFrom}
+              // The origin is recorded before anyone knows whether the video has a
+              // file. Player reports the answer, and a video with media is one
+              // being watched — so the marker goes, the rail returns to "Now
+              // playing", and setView's short-circuit starts treating this page as
+              // what it is.
+              onMediaKnown={handleMediaKnown}
+              setView={setView}
+              setPendingCount={setPendingCount}
+              onQueued={refreshQueue}
+              librarySearch={librarySearch}
+              channelSearch={channelSearch}
+              historySearch={historySearch}
+              upNextSearch={upNextSearch}
+              inboxSearch={inboxSearch}
+              onLibrarySearchChange={setLibrarySearch}
+              onChannelSearchChange={setChannelSearch}
+              onHistorySearchChange={setHistorySearch}
+              onUpNextSearchChange={setUpNextSearch}
+              onInboxSearchChange={setInboxSearch}
+              queueSignal={queueSignal}
+              jobs={jobs}
+              progressByJobId={progressByJobId}
+              summaries={summaries}
+              summaryPhaseByVideoId={summaryPhaseByVideoId}
+              onCancelDownload={onCancelDownload}
+              liveActivity={liveActivity}
+              // Same precedence the banner uses: the kill-switch outranks a full
+              // disk, which outranks the cookie pause. Up next names the cause
+              // because each one has a different way out — only the kill-switch
+              // has a Resume button.
+              stalled={
+                downloadStatus.youtube_paused
+                  ? "youtube"
+                  : downloadStatus.low_disk
+                    ? "disk"
+                    : downloadStatus.paused
+                      ? "cookie"
+                      : undefined
+              }
+            />
+          )}
         </section>
       </main>
+      {/* Outside <main>, because it is not part of the page: it is fixed to
+          the floor of the shell and outlives every view. */}
+      <NowDock
+        playing={nowPlaying}
+        onOpenPlayer={openPlayingVideo}
+        onStop={stopPlayback}
+      />
     </div>
   );
 }

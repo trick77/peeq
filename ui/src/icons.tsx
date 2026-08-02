@@ -26,6 +26,10 @@ import {
   ChevronRight,
   ChevronDown,
   ChevronLeft,
+  ChevronUp,
+  Pause,
+  RotateCcw,
+  RotateCw,
   BadgeCheck,
   RefreshCw,
   Copy,
@@ -86,6 +90,16 @@ const COMPONENTS = {
   chevronRight: ChevronRight,
   chevronDown: ChevronDown,
   chevronLeft: ChevronLeft,
+  chevronUp: ChevronUp, // the dock's "back to the player" affordance
+  // The dock's transport. pauseFilled matches playFilled: at 15px an outline
+  // pause reads as two hairlines on an accent disc, where the solid bars the
+  // native controls use read instantly.
+  pause: Pause,
+  pauseFilled: Pause,
+  // Skip back / forward. The circular-arrow pair, not chevrons: a chevron says
+  // "next item", and these move within one video.
+  rotateCcw: RotateCcw,
+  rotateCw: RotateCw,
   verified: BadgeCheck, // YouTube's channel checkmark, not a peeq state
   refresh: RefreshCw,
   copy: Copy,
@@ -96,14 +110,14 @@ const COMPONENTS = {
   // between two layouts, and its aria-label already says which way it goes.
   panelLeft: PanelLeft, // rail collapse/expand toggle
   more: Ellipsis, // the phone tab bar's fifth tab, holding what does not fit
-  x: X, // clear the text in a search box
+  x: X, // clear a search box; stop and close the now-playing dock
   spinner: LoaderCircle, // spun by .ui-spin — every async wait spins
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof COMPONENTS;
 
 /** Names rendered as a solid (filled) glyph rather than an outline. */
-const FILLED = new Set<IconName>(["starFilled", "playFilled"]);
+const FILLED = new Set<IconName>(["starFilled", "playFilled", "pauseFilled"]);
 
 export function Icon({
   name,

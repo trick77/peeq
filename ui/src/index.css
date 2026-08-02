@@ -242,13 +242,24 @@ button {
   grid-template-columns: 1fr;
   min-height: 100vh;
   transition: grid-template-columns 200ms ease-out;
+  /* --rail-w mirrors the first track, for the now-playing dock: it is
+     position:fixed and so cannot sit in a grid column, but it must still start
+     exactly where the page does.
+
+     Deliberately a copy of the number rather than the source of it. Feeding it
+     into grid-template-columns would break the collapse animation — an
+     unregistered custom property does not interpolate, so the track would jump
+     instead of slide. The two must be edited together. */
+  --rail-w: 0px;
 }
 @media (min-width: 768px) {
   .app-shell {
     grid-template-columns: 248px 1fr;
+    --rail-w: 248px;
   }
   .app-shell.collapsed {
     grid-template-columns: 64px 1fr;
+    --rail-w: 64px;
   }
 }
 /* The track is the only thing that animates, and it still answers to the same
@@ -1123,9 +1134,224 @@ button.srow:not(:disabled):hover {
    .listbar (see .searchfield below), beside the sort control it works with.
 
    32px on top, not 24: no view sits under a top bar any more, and 24px read as
-   cramped against the window edge once the header went away. */
+   cramped against the window edge once the header went away.
+
+   The now-playing dock is fixed, so it takes up no space of its own and the
+   last row of any grid would otherwise sit under it. --dock-h is 0 until the
+   dock is on screen (see the block below), so a page with nothing playing
+   keeps exactly the padding it always had. */
 .page {
-  padding: 32px 34px 90px;
+  padding: 32px 34px calc(90px + var(--dock-h, 0px));
+}
+
+/* ── Now-playing dock ───────────────────────────────────────────────────────
+
+   The bar along the floor of the page column that keeps a video playing while
+   you use the rest of the app. The <video> element itself parks in
+   .nowdock-vid — it is the film, not a picture of it — see src/videoHost.ts
+   for how it gets there and why it survives the trip. */
+:root {
+  --dock-h: 0px;
+}
+.videohost-limbo {
+  /* Where the video waits for the single commit between the stage letting go
+     and the dock picking up. Off-screen but IN the document: detaching a media
+     element is what pauses it. */
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+.nowdock {
+  position: fixed;
+  left: var(--rail-w, 0px);
+  right: 0;
+  bottom: 0;
+  /* Above the page and the phone's tab bar (40), below the tab bar's own sheet
+     (45) and every modal (.modal-overlay, 60). A dock at 60 would tie with the
+     confirm dialog and win on DOM order — it renders after <main> — leaving a
+     sharp, clickable bar on top of that dialog's blurred scrim. */
+  z-index: 42;
+  background: color-mix(in srgb, var(--color-panel) 94%, transparent);
+  backdrop-filter: blur(14px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  /* Follows the rail's collapse instead of jumping to the new edge halfway
+     through it. Same duration and curve as the shell's own track transition,
+     and answers to the same preference. */
+  transition: left 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nowdock {
+    transition: none;
+  }
+}
+/* Published back to the page so its bottom padding can clear the bar. 80px is
+   the row's own height (56px tile + 12px above and below) plus the 3px
+   progress line, rounded up. */
+body:has(.nowdock) {
+  --dock-h: 80px;
+}
+/* No border. The page fades into the dock instead, which keeps a scrolling
+   grid from ending on a hard line two thirds of the way up a card. */
+.nowdock::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -28px;
+  height: 28px;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--color-panel) 94%, transparent)
+  );
+}
+/* 3px, not a scrubber: it reports position and takes a click to move it, and
+   the real bar with its labelled bands lives on the player page. */
+.nowdock-progress {
+  position: relative;
+  height: 3px;
+  background: var(--color-border);
+  cursor: pointer;
+}
+.nowdock-progress i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  background: var(--color-accent-fill);
+}
+/* The SponsorBlock segments that will be skipped automatically. They are drawn
+   here and nowhere else off the player page: the stage toast that announces a
+   skip has no surface once you have navigated away, and a playhead that jumps
+   with no warning reads as a fault. */
+.nowdock-progress s {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--color-kept);
+  opacity: 0.85;
+}
+.nowdock-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px 12px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.nowdock-vid {
+  flex: none;
+  width: 100px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-ui-sm);
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--color-border);
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+}
+.nowdock-vid video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.nowdock-vid:hover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+}
+.nowdock-txt {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Same recipe as the card, the player and the share page: 1.40 line height,
+   450 weight, --color-ink-dim. One title look everywhere. */
+.nowdock-title {
+  font: 450 var(--text-ui) / 1.4 var(--font-sans);
+  color: var(--color-ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.nowdock-title:hover {
+  color: var(--color-ink);
+}
+.nowdock-sub {
+  font: 400 var(--text-label) / 1.2 var(--font-sans);
+  color: var(--color-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nowdock-time {
+  font: 400 var(--text-label) / 1 var(--font-mono);
+  color: var(--color-faint);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.nowdock-acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.nowdock-btn {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  color: var(--color-muted);
+  border-radius: var(--radius-ui-sm);
+  cursor: pointer;
+}
+.nowdock-btn:hover {
+  background: var(--color-active);
+  color: var(--color-ink);
+}
+.nowdock-play {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: var(--color-accent-fill);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  border: 0;
+  cursor: pointer;
+  flex: none;
+}
+.nowdock-div {
+  width: 1px;
+  height: 22px;
+  background: var(--color-border);
+  margin: 0 6px;
+  flex: none;
+}
+/* The stage's slot. It reserves the video's box so the page below does not
+   shift during the one commit where the element is in transit. */
+.stage-slot {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
 }
 
 /* ── Library (Task 14): filter chips + video grid. ──────────────────────── */
@@ -4711,9 +4937,34 @@ details.tomb-sect[open] > summary svg {
   }
   /* The page's own 90px bottom padding is what the last row of cards used to
      clear the viewport with; the bar now sits in that space, so the page owes
-     it its full height on top. */
+     it its full height on top. Plus the dock's, when one is playing. */
   .page {
-    padding: 20px 16px calc(90px + 57px + env(safe-area-inset-bottom, 0px));
+    padding: 20px 16px
+      calc(90px + 57px + var(--dock-h, 0px) + env(safe-area-inset-bottom, 0px));
+  }
+  /* The dock stands ON the tab bar rather than over it: burying the whole
+     navigation the moment a video is playing — which for a returning user is
+     the normal state — would cost more than it gives. The tab bar's height
+     already includes the safe-area inset, so the dock drops its own padding
+     here instead of counting it twice. */
+  .nowdock {
+    bottom: calc(57px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: 0;
+  }
+  /* 430px of phone will not hold six controls, a clock and a title. The skip
+     pair and the clock go first: the progress line already says where you
+     are, and the title is the one thing the bar exists to tell you. */
+  .nowdock .skip,
+  .nowdock-time,
+  .nowdock-div {
+    display: none;
+  }
+  .nowdock-vid {
+    width: 76px;
+  }
+  .nowdock-row {
+    gap: 10px;
+    padding: 8px 12px 10px;
   }
 }
 .tabbar-item {
