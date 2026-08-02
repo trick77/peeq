@@ -649,6 +649,46 @@ describe("Search — the Ask answer", () => {
     );
   });
 
+  // Searching in Find must not quietly bin the answer Ask is still writing.
+  // Nothing aborts that stream any more, so a shared run ticket would leave the
+  // model call running to completion and then throw its answer away — paying
+  // for it twice over when the reader switches back and has to ask again.
+  it("keeps an Ask answer that finished while Find was being used", async () => {
+    let emit: (e: AnswerEvent) => void = () => {};
+    let finish: () => void = () => {};
+    mockedStreamAnswer.mockImplementation(
+      (_q, onEvent) =>
+        new Promise((resolve) => {
+          emit = onEvent;
+          finish = resolve;
+          onEvent({ type: "sources", sources: askSources, videos: askVideos });
+        }),
+    );
+    mockedSearchVideos.mockResolvedValue([]);
+    render(<Harness onOpen={vi.fn()} />);
+
+    toAsk();
+    submit("electrolytes");
+    await screen.findByText(/Reading your library/);
+
+    // Off to the other tab, and a keyword search there.
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    submit("iphone");
+    await waitFor(() => expect(mockedSearchVideos).toHaveBeenCalled());
+
+    // The answer lands while Find is on screen.
+    emit({ type: "token", text: "Yes, twice[1]." });
+    emit({ type: "done" });
+    finish();
+
+    toAsk();
+    await waitFor(() =>
+      expect(document.querySelector(".answer-body")?.textContent).toContain(
+        "Yes, twice",
+      ),
+    );
+  });
+
   // The two tabs keep their own everything, and that has to include being
   // cleared: putting Find's results away must not touch what Ask found.
   it("clears one tab's results and leaves the other tab's alone", async () => {

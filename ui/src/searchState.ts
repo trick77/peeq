@@ -82,7 +82,15 @@ export function useSearchState(): SearchState {
   // in the hook rather than in the view is what makes that true across a detour
   // into a video: a ticket counter that resets on remount would let a stream
   // started before the detour overwrite a search started after it.
-  const runId = useRef(0);
+  //
+  // ONE TICKET PER TAB. A single shared counter looks equivalent — only one
+  // search runs at a time from the reader's point of view — but the two tabs
+  // hold separate state and can genuinely be in flight together, and a Find
+  // search would then invalidate an Ask answer still being written. Nothing
+  // aborts that stream any more, so it would run to completion and have its
+  // answer thrown away on arrival: the model call paid for, the tab still empty,
+  // and asking again the only way to see it.
+  const runIds = useRef<Record<SearchMode, number>>({ find: 0, ask: 0 });
 
   function patchTab(m: SearchMode, patch: Partial<TabState>) {
     setTabs((prev) => ({ ...prev, [m]: { ...prev[m], ...patch } }));
@@ -90,7 +98,7 @@ export function useSearchState(): SearchState {
 
   function runSearch(q: string, m: SearchMode) {
     const trimmed = q.trim();
-    const id = ++runId.current;
+    const id = ++runIds.current[m];
     if (m === "ask") {
       answerAbort.current?.abort();
       setAnswer(null);
@@ -118,11 +126,11 @@ export function useSearchState(): SearchState {
     }
     searchVideos(trimmed, m)
       .then((r) => {
-        if (id !== runId.current) return;
+        if (id !== runIds.current[m]) return;
         patchTab(m, { results: r, searchedQuery: trimmed, loading: false });
       })
       .catch((err: Error) => {
-        if (id !== runId.current) return;
+        if (id !== runIds.current[m]) return;
         // Clear any previous query's results so the error state doesn't
         // render stale result cards underneath the error line.
         patchTab(m, {
@@ -134,8 +142,9 @@ export function useSearchState(): SearchState {
       });
   }
 
-  // runAnswer streams the grounded answer for one search. It shares runId with
-  // the search so a superseded run cannot write over a newer one's answer.
+  // runAnswer streams the grounded answer for one search. It shares the Ask
+  // tab's ticket with the search that started it, so a superseded run cannot
+  // write over a newer one's answer.
   function runAnswer(q: string, id: number) {
     const ac = new AbortController();
     answerAbort.current = ac;
@@ -174,7 +183,7 @@ export function useSearchState(): SearchState {
     streamAnswer(
       q,
       (e) => {
-        if (id !== runId.current) return;
+        if (id !== runIds.current.ask) return;
         switch (e.type) {
           case "sources":
             sources = e.sources;
@@ -215,11 +224,11 @@ export function useSearchState(): SearchState {
       // An abort is not a failure: starting a newer search rejects this promise
       // on purpose, and that does not owe the reader an error.
       .catch((err: Error) => {
-        if (id !== runId.current || ac.signal.aborted) return;
+        if (id !== runIds.current.ask || ac.signal.aborted) return;
         patchTab("ask", { error: err.message });
       })
       .finally(() => {
-        if (id !== runId.current) return;
+        if (id !== runIds.current.ask) return;
         // Every way the stream can end comes through here: a done frame, a
         // broken connection, or an abort when a newer search starts. Settling
         // only on `done` left the other two streaming forever — a blinking
@@ -256,12 +265,17 @@ export function useSearchState(): SearchState {
     submit: () => runSearch(tab.query, mode),
     clearQuery: () => patchTab(mode, { query: "" }),
     clearResults: () => {
-      // A search still being written is part of what is being put away, so the
-      // generation is abandoned here — unlike leaving the view, this says the
-      // reader is done with it.
+      // Retiring this tab's ticket is what makes the clear stick: a request
+      // still in flight would otherwise land afterwards and repopulate the page
+      // the reader just emptied. Both modes, not just Ask — the header only
+      // offers this button once results are on screen, so the race is not
+      // reachable today, but "cleared" has to mean cleared whatever the button
+      // is wired to next.
+      runIds.current[mode]++;
+      // A generation still being written is part of what is being put away.
+      // Unlike leaving the view, this says the reader is done with it.
       if (mode === "ask") {
         answerAbort.current?.abort();
-        runId.current++;
         setAnswer(null);
       }
       patchTab(mode, {
