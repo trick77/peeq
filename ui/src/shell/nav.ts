@@ -40,11 +40,15 @@ export const SECTIONS: { label: string; items: NavItem[] }[] = [
   {
     label: "Watch",
     items: [
+      // First, above Library. Now that playback survives leaving the player
+      // page, this is the way back to something already in progress rather
+      // than a place you go to start one — and what you are half-way through
+      // is a better default destination than the shelf it came off.
+      { id: "player", label: "Now playing", icon: "circlePlay" },
       { id: "library", label: "Library", icon: "library" },
       // Channels sits directly under Library: it is the other way you browse
       // what you already have, not part of collecting more.
       { id: "channels", label: "Channels", icon: "tv" },
-      { id: "player", label: "Now playing", icon: "circlePlay" },
       { id: "search", label: "Search", icon: "search" },
     ],
   },

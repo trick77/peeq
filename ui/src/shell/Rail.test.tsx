@@ -54,12 +54,16 @@ describe("Rail", () => {
     expect(html).toMatch(/rail-nav-item active"[^>]*>[\s\S]*?Library/);
   });
 
-  it("puts Channels directly under Library", () => {
+  // Now playing leads, because playback outlives the page that started it: the
+  // thing you are half-way through is a likelier destination than the shelf it
+  // came off. Channels still sits directly under Library — the two are the same
+  // question ("what do I already have") asked two ways.
+  it("leads with Now playing, then Library and Channels", () => {
     const labels = navItems({
       active: "library",
       onNavigate: () => {},
     }).map((i) => i.label);
-    expect(labels.slice(0, 2)).toEqual(["Library", "Channels"]);
+    expect(labels.slice(0, 3)).toEqual(["Now playing", "Library", "Channels"]);
   });
 
   // No rail item ever dims. Emptiness is said by the missing count pill and by
