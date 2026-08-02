@@ -19,10 +19,22 @@ import type { SearchMatch } from "./api/search";
 // carries the backend's numbering, since it was streamed before anyone knew
 // which sources would be cited; `display` is the first-mention number the
 // superscript and the sources row both show.
+//
+// That number belongs to the VIDEO, not the passage. Retrieval hands the model
+// up to three passages from one video, so an answer leaning on a single video
+// listed it three times over — same title, three timestamps — and nothing told
+// the reader those three were one thing. Two citations of the same video now
+// carry the same numeral and collapse to one row; each mark still seeks to its
+// own moment.
 export type CitedSource = AnswerSource & { display: number };
 
 // citedInOrder returns the sources the answer actually cited, in order of first
-// mention, renumbered from 1.
+// mention, numbered by video from 1.
+//
+// One entry per cited number, NOT per video: the panel resolves every bracket in
+// the text through this list, and groupCited gathers the moments a video was
+// cited at. Collapsing here would strand a citation on a missing source and thin
+// every card below to a single moment. Deduping to rows is the panel's job.
 //
 // It reuses splitCitations rather than running its own regex over the text: the
 // bracket rules there are subtle — "[note and [1]" yields a citation, a
@@ -44,10 +56,17 @@ export function citedInOrder(
   const known = new Set(byNumber.keys());
   const out: CitedSource[] = [];
   const taken = new Set<number>();
+  const numberOf = new Map<string, number>();
   for (const part of splitCitations(text, known)) {
     if (part.kind !== "cite" || taken.has(part.n)) continue;
     taken.add(part.n);
-    out.push({ ...byNumber.get(part.n)!, display: out.length + 1 });
+    const source = byNumber.get(part.n)!;
+    let display = numberOf.get(source.video_id);
+    if (display === undefined) {
+      display = numberOf.size + 1;
+      numberOf.set(source.video_id, display);
+    }
+    out.push({ ...source, display });
   }
   return out;
 }
