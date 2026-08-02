@@ -2681,13 +2681,19 @@ button.sleeppick.armed {
    shape as the library card's kicker (.card.video-card .by) so a video reads
    identically in the grid and on the page it opens.
 
-   Scoped to .playmeta rather than restyling bare .by, which Library, Decide
+   Shared with .unfetched-ident, the same eyebrow on the summary page a
+   not-yet-downloaded video opens to. That page carries only the channel and
+   "aired" — there is no downloaded_at to report — but the line has to be set
+   the same way, and it was previously left with no rule of its own at all.
+
+   Scoped to those two rather than restyling bare .by, which Library, Inbox
    and Channels all share — see the card's own block for the other end of
    that contract. Unlike the card's, this one may wrap: the player's column is
    wide, but "aired 11 months ago · added 11 months ago" plus a long channel
    name still overflows a narrow stage, and wrapping beats truncating here
    because nothing else on the line is competing for the space. */
-.playmeta .by {
+.playmeta .by,
+.unfetched-ident .by {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2698,7 +2704,9 @@ button.sleeppick.armed {
   min-width: 0;
 }
 .playmeta .by .chan-link,
-.playmeta .by .chan-name {
+.playmeta .by .chan-name,
+.unfetched-ident .by .chan-link,
+.unfetched-ident .by .chan-name {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 500;
@@ -2708,7 +2716,8 @@ button.sleeppick.armed {
   min-width: 0;
   flex: 0 1 auto;
 }
-.playmeta .by .dot {
+.playmeta .by .dot,
+.unfetched-ident .by .dot {
   color: var(--color-faint);
   flex: none;
 }
@@ -5806,11 +5815,18 @@ details.tomb-sect[open] > summary svg {
 .unfetched-ident {
   min-width: 0;
 }
+/* Weight 450 in ink-dim, the same ink a video title carries in the library
+   grid (.card.video-card h3) and on the Player (.playmeta h1). Weight 500 in
+   full ink halates on the warm dark ground at any size — see the card's block
+   for the long form of that argument — and this page had been the one place
+   still setting it that way. The size stays its own: this title has a wide
+   column and no video above it to say what you are looking at. */
 .unfetched-ident h1 {
   margin: 6px 0 0;
   font-family: var(--font-sans);
   font-size: var(--text-title);
-  font-weight: 500;
+  font-weight: 450;
+  color: var(--color-ink-dim);
   line-height: 1.35;
   text-wrap: balance;
 }

@@ -152,6 +152,53 @@ describe("UnfetchedVideo", () => {
     );
     expect(screen.getByText(/Summarizing this video/)).toBeTruthy();
   });
+
+  // The eyebrow above the title is the same line the library card and the
+  // Player carry, and it has to behave the same way in all three: the channel
+  // navigates, and the date says what kind of date it is. Only "aired" can
+  // appear here — nothing has been downloaded, which is the point of the page.
+  describe("the eyebrow above the title", () => {
+    it("navigates to the channel when onOpenChannel is provided", async () => {
+      const onOpenChannel = vi.fn();
+      render(<UnfetchedVideo video={video()} onOpenChannel={onOpenChannel} />);
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Practical Engineering" }),
+      );
+
+      expect(onOpenChannel).toHaveBeenCalledWith("c1");
+    });
+
+    // The page is reachable from places with nowhere to navigate to, so the
+    // name has to survive as plain text rather than a dead button.
+    it("renders the channel as plain text when onOpenChannel is absent", () => {
+      render(<UnfetchedVideo video={video()} />);
+
+      expect(
+        screen.queryByRole("button", { name: "Practical Engineering" }),
+      ).toBeNull();
+      expect(screen.getByText("Practical Engineering")).toBeTruthy();
+    });
+
+    it("labels the publish date as aired", () => {
+      const { container } = render(<UnfetchedVideo video={video()} />);
+
+      expect(container.querySelector(".by")?.textContent).toContain("aired");
+    });
+
+    // published_at is unknown for some live streams and premieres, and a bare
+    // "aired" with no date behind it is worse than no fragment at all.
+    it("drops the date fragment when published_at is unknown", () => {
+      const { container } = render(
+        <UnfetchedVideo video={video({ published_at: undefined })} />,
+      );
+
+      const by = container.querySelector(".by");
+      expect(by?.textContent).toContain("Practical Engineering");
+      expect(by?.textContent).not.toContain("aired");
+      expect(by?.querySelector(".dot")).toBeNull();
+    });
+  });
 });
 
 // The stepper is what makes reading a backlog bearable: open, read, decide,
