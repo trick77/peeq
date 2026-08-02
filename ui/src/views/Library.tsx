@@ -405,7 +405,7 @@ export function Library({
           label="Search titles"
         />
         <select
-          className={`${controlClass} push-end`}
+          className={`${controlClass} sortsel push-end`}
           style={{ maxWidth: 190 }}
           value={sort}
           onChange={(e) => setSort(e.target.value as VideoSort)}
@@ -418,21 +418,23 @@ export function Library({
           ))}
         </select>
       </div>
-      <div className="chips">
-        {CHIPS.map((chip) => (
-          <button
-            key={chip.id}
-            type="button"
-            className={`chip${filter === chip.id ? " on" : ""}`}
-            onClick={() => setFilter(chip.id)}
-          >
-            {chip.label}{" "}
-            <span className="n">
-              {allVideos.filter((v) => matchesFilter(v, chip.id)).length}
-            </span>
-          </button>
-        ))}
-      </div>
+      <PillStrip lead>
+        <div className="chips">
+          {CHIPS.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              className={`chip${filter === chip.id ? " on" : ""}`}
+              onClick={() => setFilter(chip.id)}
+            >
+              {chip.label}{" "}
+              <span className="n">
+                {allVideos.filter((v) => matchesFilter(v, chip.id)).length}
+              </span>
+            </button>
+          ))}
+        </div>
+      </PillStrip>
       <PillStrip>
         <div className="catchips">
           <button

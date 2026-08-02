@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { listActivity, type ActivityEvent } from "../api";
 import { SearchField } from "../components/SearchField";
 import { Icon } from "../icons";
+import { PillStrip } from "../components/PillStrip";
 import { DOT } from "../sep";
 import {
   clockOf,
@@ -371,25 +372,27 @@ export function History({
           label="Search history"
         />
       </div>
-      <div className="chips">
-        {FILTERS.map((f) => (
-          <button
-            key={f.id}
-            type="button"
-            className={`chip${filter === f.id ? " on" : ""}`}
-            onClick={() => setFilter(f.id)}
-          >
-            {f.label}{" "}
-            {/* The number waits for the fetch, the chip does not. `header`
-                renders on the failed and not-yet-loaded branches too (see
-                above), where `past` is still empty — so an unconditional count
-                printed a full row of zeros beside "couldn't load the log",
-                stating that the log is empty when it had only failed to
-                arrive. */}
-            {loaded ? <span className="n">{counts[f.id]}</span> : null}
-          </button>
-        ))}
-      </div>
+      <PillStrip lead>
+        <div className="chips">
+          {FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              className={`chip${filter === f.id ? " on" : ""}`}
+              onClick={() => setFilter(f.id)}
+            >
+              {f.label}{" "}
+              {/* The number waits for the fetch, the chip does not. `header`
+                  renders on the failed and not-yet-loaded branches too (see
+                  above), where `past` is still empty — so an unconditional count
+                  printed a full row of zeros beside "couldn't load the log",
+                  stating that the log is empty when it had only failed to
+                  arrive. */}
+              {loaded ? <span className="n">{counts[f.id]}</span> : null}
+            </button>
+          ))}
+        </div>
+      </PillStrip>
     </>
   );
 
