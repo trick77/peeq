@@ -44,7 +44,7 @@ export function ContentsCard({
 }) {
   const sources = sourceLabels(video.chapters);
   return (
-    <div className="card full">
+    <div className="card full contentspanel">
       <div className="hd hd-wrap">
         <Icon name="listTree" size="16px" />
         <span className="lbl">Contents</span>

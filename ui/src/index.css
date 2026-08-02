@@ -2739,28 +2739,34 @@ button.sleeppick.armed {
   gap: 26px;
   align-items: start;
 }
-/* Single column: the sidebar stops being a sidebar, so its Summary has to earn
-   its place in the reading order instead of inheriting one from the markup. In
-   source order the whole left column comes first, which put Summary below
-   Contents and the transcript — a long way down the page on a phone. Dissolving
-   .leftcol's box (its children become items of this container) lets Summary sit
-   directly under the video block it describes, with Contents and the transcript
-   after it. DOM order is untouched, so nothing about the desktop layout, focus
-   order or the panels themselves changes. */
+/* Single column: the sidebar stops being a sidebar, so its panels have to earn
+   their place in the reading order instead of inheriting one from the markup.
+   In source order the whole left column comes first, which put Summary below
+   Contents and the transcript — a long way down the page on a phone.
+   Dissolving the three wrapper boxes (.leftcol, .side, .belowvideo — their
+   children become items of this container) lets the four panels be ordered one
+   by one: Summary under the video it describes, then Contents, then the
+   Highlights that point into those chapters, then the transcript. DOM order is
+   untouched, so nothing about the desktop layout, focus order or the panels
+   themselves changes. The share page runs the same sequence at its own
+   collapse (see .sharepage-main). */
 @media (max-width: 1040px) {
   .playgrid {
     display: flex;
     flex-direction: column;
     /* .leftcol's own gap, not .playgrid's 26 — this now governs every seam in
-       the column, including the ones it used to space. */
+       the column, including the ones .side and .belowvideo used to space (16
+       each; the column reads as one rhythm now rather than three). */
     gap: 20px;
     /* The grid rule above sets align-items: start, which in a column flexbox
        means the cross axis — it would shrink every panel to fit its text. */
     align-items: stretch;
   }
-  /* Qualified: .leftcol's own `display: flex` is declared further down this
-     file, and at equal specificity the later rule would win. */
-  .playgrid > .leftcol {
+  /* Qualified: each of these carries its own `display` further down this file,
+     and at equal specificity the later rule would win. */
+  .playgrid > .leftcol,
+  .playgrid > .side,
+  .playgrid .belowvideo {
     display: contents;
   }
   .playgrid .stage-wrap {
@@ -2769,17 +2775,24 @@ button.sleeppick.armed {
   .playgrid .playmeta {
     order: 2;
   }
-  .playgrid .side {
+  .playgrid .summarypanel {
     order: 3;
   }
-  .playgrid .belowvideo {
+  .playgrid .contentspanel {
     order: 4;
+  }
+  .playgrid .hlpanel {
+    order: 5;
+  }
+  .playgrid .transcriptpanel {
+    order: 6;
   }
   /* .leftcol carried min-width: 0 to stop a long unbroken transcript line
      widening the column; with its box gone, the panels it held carry it. */
   .playgrid .stage-wrap,
   .playgrid .playmeta,
-  .playgrid .belowvideo {
+  .playgrid .contentspanel,
+  .playgrid .transcriptpanel {
     min-width: 0;
   }
 }
@@ -5939,23 +5952,26 @@ details.tomb-sect[open] > summary svg {
    primary column comes first — which left the Summary below the chapters, the
    transcript and even the footer, a long way from the video it describes. The
    player page read the same way at its own collapse (see .playgrid), and this
-   is the same remedy: dissolving .sharepage-primary's box makes its children
-   items of this container, so `order` can lift the aside up behind the title.
-   The markup is untouched. */
+   is the same remedy: dissolving both wrappers makes their children items of
+   this container, so `order` can run the panels in reading order — Summary,
+   Chapters, Highlights, Transcript. The markup is untouched. */
 @media (max-width: 860px) {
   .sharepage-main {
     display: flex;
     flex-direction: column;
     /* This column's seams are its children's own margin-top
        (.sharepage-meta, .sharepage-chapters, .sharepage-foot), which a gap
-       would stack on top of rather than replace. The aside carries the 28 it
-       used to take from the grid gap as a margin of its own. */
+       would stack on top of rather than replace. The two aside panels, which
+       had none, are given theirs below. */
     gap: 0;
     /* The grid rule above sets align-items: start, which in a column flexbox
        means the cross axis — it would shrink every panel to fit its text. */
     align-items: stretch;
   }
-  .sharepage-main > .sharepage-primary {
+  /* Both wrappers dissolve, so the panels can be ordered one by one rather
+     than a column at a time — the Player's sequence exactly. */
+  .sharepage-main > .sharepage-primary,
+  .sharepage-main > .sharepage-side {
     display: contents;
   }
   .sharepage-main .stage-wrap {
@@ -5964,24 +5980,25 @@ details.tomb-sect[open] > summary svg {
   .sharepage-main .sharepage-meta {
     order: 2;
   }
-  .sharepage-main .sharepage-side {
+  .sharepage-main .summarypanel {
     order: 3;
+    /* The seam the aside used to take from the grid gap. Its two cards had no
+       margins of their own — the aside spaced them with a flex gap that no
+       longer applies to them. */
     margin-top: 28px;
-  }
-  /* A video with neither a summary nor highlights renders the aside with
-     nothing in it. Last on the page that was invisible; between the title and
-     the chapters its margin would read as a gap with no cause. */
-  .sharepage-main .sharepage-side:empty {
-    display: none;
   }
   .sharepage-main .sharepage-chapters {
     order: 4;
   }
-  .sharepage-main .sharepage-transcript {
+  .sharepage-main .hlpanel {
     order: 5;
+    margin-top: 20px;
+  }
+  .sharepage-main .sharepage-transcript {
+    order: 6;
   }
   .sharepage-main .sharepage-foot {
-    order: 6;
+    order: 7;
   }
   /* .sharepage-primary carried min-width: 0 to stop a long unbroken transcript
      line widening the column; with its box gone, the panels it held carry it. */
