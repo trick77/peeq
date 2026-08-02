@@ -1812,6 +1812,70 @@ describe("Player", () => {
     expect(screen.getByText(/summarizing/i)).toBeInTheDocument();
   });
 
+  // A status short of "done" is patched in place. There is nothing new to
+  // fetch yet — the summary does not exist — and a refetch per phase
+  // transition would be a request per step of every job on the box.
+  it("patches a non-final status in place, without refetching", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", summary_status: "error" }),
+    );
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    expect(
+      await screen.findByText(/summarization failed/i),
+    ).toBeInTheDocument();
+    vi.mocked(getVideo).mockClear();
+
+    rerender(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        summaryEvent={{ videoId: "v1", status: "running" }}
+      />,
+    );
+
+    expect(await screen.findByText(/summarizing/i)).toBeInTheDocument();
+    expect(getVideo).not.toHaveBeenCalled();
+  });
+
+  // The refetch a "done" event starts can outlive the video it was started
+  // for. Landing it anyway would paint v1's summary onto v2's page.
+  it("drops a finished refetch that lost its video", async () => {
+    let resolveStale: (v: Video) => void = () => {};
+    vi.mocked(getVideo).mockResolvedValueOnce(
+      makeVideo({ id: "v1", summary_status: "running" }),
+    );
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByText(/summarizing/i);
+
+    // The "done" refetch for v1 hangs...
+    vi.mocked(getVideo).mockImplementationOnce(
+      () => new Promise<Video>((r) => (resolveStale = r)),
+    );
+    rerender(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        summaryEvent={{ videoId: "v1", status: "done" }}
+      />,
+    );
+
+    // ...while the reader moves to v2, which loads normally.
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v2", title: "Second video", summary_status: "error" }),
+    );
+    rerender(<Player videoId="v2" onDeleted={() => {}} />);
+    expect(await screen.findByText("Second video")).toBeInTheDocument();
+
+    // Now v1's answer arrives. It must not land on v2's page.
+    await act(async () => {
+      resolveStale(
+        makeVideo({ id: "v1", title: "First video", summary: "Stale." }),
+      );
+    });
+    expect(screen.getByText("Second video")).toBeInTheDocument();
+    expect(screen.queryByText(/stale\./i)).toBeNull();
+  });
+
   // App hands over a NEW object per event, so a second event carrying the same
   // status still lands — the phase moves under a status that does not.
   it("reacts to a repeated event with an unchanged status", async () => {
