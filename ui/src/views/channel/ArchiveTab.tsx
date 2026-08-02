@@ -117,6 +117,11 @@ export function ArchiveTab({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          // Enter means "done typing" here too — the list filtered as the words
+          // were typed. Same gesture as SearchField, which this box predates.
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
           placeholder="Search this channel"
           aria-label="Search this channel"
         />
