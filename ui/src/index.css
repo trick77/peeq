@@ -2226,32 +2226,36 @@ body:has(.nowdock) {
    shape, plus a caret and a hover state. .catpick keeps its own selectors so
    the read-only pill on the card is never dragged into button styling.
 
-   It is also drawn a size up from the card's pill. On a card the pill is a
-   caption on a thumbnail; here it sits at the end of a row of 32px icon
-   buttons and 40px labelled ones, where the card's 11px/19px chip reads as a
-   crumb rather than a control. The type steps to the row's own --text-label
-   and the box to 30px, so the row has one centreline. */
+   It is drawn at the byline's size, not a control's. It was a size up from the
+   card's pill — --text-label type in a 30px box — for as long as it sat in a
+   row of 32px icon buttons and 40px labelled ones, where anything smaller read
+   as a crumb rather than a control. It now ends the eyebrow instead, among
+   11px text, and the same 30px box read there as a button someone had parked
+   on the line. So it goes back to the card's 11px type and a 20px box: two
+   pixels of lead over the text it sits in, which is enough to stay a pill and
+   little enough to stay part of the sentence. The caret comes down with it
+   (13px → 11px, in CategoryPicker). */
 .catwrap {
   position: relative;
   display: inline-flex;
 }
 button.catpick {
   cursor: pointer;
-  min-height: 30px;
-  padding: 0 7px 0 11px;
-  gap: 7px;
-  border-radius: 15px;
-  font-size: var(--text-label);
+  min-height: 20px;
+  padding: 0 5px 0 8px;
+  gap: 5px;
+  border-radius: 10px;
+  font-size: 11px;
   transition:
     background 120ms ease,
     border-color 120ms ease,
     color 120ms ease;
 }
-/* The colour dot grows with the pill; at 6px it looked like dust on the
-   larger chip. */
+/* Back to the card pill's 6px with the box: at 7px the dot was sized for a
+   chip half again as tall. */
 button.catpick .dotc {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
 }
 button.catpick:hover,
 button.catpick[aria-expanded="true"] {
@@ -3083,17 +3087,9 @@ button.sleeppick.armed {
   color: var(--color-ink-dim);
   background: var(--color-panel);
 }
-/* The category pill's own line, between the title and the actions. The two
-   gaps are deliberately unequal — 18px above (the title's own 8px margin plus
-   10 here) against 14px below — so the pill reads as the last line of the
-   header rather than the first control of the toolbar, which is the whole
-   reason it left the toolbar. A flex row rather than a bare block so the line
-   does not inherit a text baseline it has no text to sit on. */
-.playcat {
-  display: flex;
-  align-items: center;
-  margin-top: 10px;
-}
+/* (.playcat, the category pill's own line between the title and the actions,
+   lived here. The pill moved up onto the byline — see `.playmeta .by .catpick`
+   — and a row holding nothing else went with it.) */
 .playacts {
   display: flex;
   /* Positioning context for the share popover on narrow screens — see the

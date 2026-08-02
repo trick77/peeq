@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
 import { AUTO_SKIP, Scrubber, categoryLabel } from "../components/Scrubber";
-import { CategoryPicker } from "../components/CategoryPicker";
 import { SleepTimer } from "../components/SleepTimer";
 import { RowMenu, type RowMenuAction } from "../components/RowMenu";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -1413,25 +1412,19 @@ export function Player({
           )}
         </div>
         <div className="playmeta">
+          {/* The category pill rides the byline, at the end of the video's
+              other two facts — see MetaHeader. It has been in three places now:
+              the action row's first segment (wrong, a row of verbs), a line of
+              its own beneath the title (right idea, a whole row for one chip),
+              and the eyebrow it belongs on. Unlabelled throughout, because the
+              coloured dot and the caret say pill-you-can-change without a word
+              of chrome. */}
           <MetaHeader
             video={video}
             shareStatus={shareStatus}
             onOpenChannel={onOpenChannel}
+            onPickCategory={handlePickCategory}
           />
-          {/* The category, on a line of its own between the title and the
-              actions. It used to sit in the action row's first segment, and it
-              was the only thing in a row of verbs that isn't one: everything
-              else there does something to the video, this states what the video
-              already is. Unlabelled, because the coloured dot and the caret say
-              pill-you-can-change without a word of chrome, and because the row
-              reads as part of the header above it rather than the toolbar
-              below. */}
-          <div className="playcat">
-            <CategoryPicker
-              category={video.category}
-              onPick={handlePickCategory}
-            />
-          </div>
           {/* The action row splits on one rule: a control keeps its label if
               the label reports the current state (Keep forever / Kept
               forever, Mark watched / Mark unwatched). Controls whose label
@@ -1445,8 +1438,8 @@ export function Player({
             <div className="playbar">
               {/* Segment 1 — what this sitting decides about the video and
                   every sitting after it: kept and watched both outlive the
-                  page. The category used to ride here too; it moved to its own
-                  line above (see .playcat) because it is a fact, not a verb. */}
+                  page. The category used to ride here too; it moved up to the
+                  byline (see MetaHeader) because it is a fact, not a verb. */}
               <span className="playseg">
                 <Button
                   type="button"

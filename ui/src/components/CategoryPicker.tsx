@@ -104,7 +104,10 @@ export function CategoryPicker({ category, onPick }: Props) {
           <span className="dotc" style={{ background: meta.color }} />
         ) : null}
         {meta ? meta.label : "Uncategorized"}
-        <Icon name="chevronDown" size="13px" />
+        {/* 11px, the pill's own type size. The caret only has to say "this
+            one opens"; at 13px it was the loudest thing on a byline set in
+            11px text. */}
+        <Icon name="chevronDown" size="11px" />
       </button>
       {open ? (
         <div
