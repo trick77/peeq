@@ -55,7 +55,12 @@ export function AnswerPanel({
   // and the moment cards below both need that — but a video is ONE source
   // however many of its passages the answer leaned on. First mention wins, and
   // it is already the entry whose number the whole video carries.
-  const rows = [...new Map(cited.map((s) => [s.video_id, s])).values()];
+  const seen = new Set<string>();
+  const rows = cited.filter((s) => {
+    if (seen.has(s.video_id)) return false;
+    seen.add(s.video_id);
+    return true;
+  });
   const streaming = status === "streaming";
 
   // Nothing to show at all — the parent renders whatever it has rather than an
