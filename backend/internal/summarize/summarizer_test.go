@@ -346,8 +346,12 @@ func TestFormatCues_stripsSpeakerMarkers(t *testing.T) {
 		{StartSeconds: 0, Text: ">> Welcome back."},
 		{StartSeconds: 7, Text: ">>> And now the news >> over to you."},
 		{StartSeconds: 12, Text: "5 > 3 is still true."},
+		// A marker stands on its own; an operator wedged against its operands
+		// is not one, so a coding video's captions come through intact.
+		{StartSeconds: 20, Text: "cout>>x reads a word."},
 	})
-	want := "0: Welcome back.\n7: And now the news over to you.\n12: 5 > 3 is still true.\n"
+	want := "0: Welcome back.\n7: And now the news over to you.\n" +
+		"12: 5 > 3 is still true.\n20: cout>>x reads a word.\n"
 	if got != want {
 		t.Errorf("formatCues =\n%q\nwant\n%q", got, want)
 	}
@@ -367,5 +371,20 @@ func TestSummarizeText_stripsSpeakerMarkers(t *testing.T) {
 	}
 	if strings.Contains(seen, ">>") {
 		t.Errorf("transcript reached the model with speaker markers: %q", seen)
+	}
+}
+
+// A sentence that both opens and closes on a quoted phrase is not a quoted
+// line: stripping its ends would move the quotes onto the wrong words.
+func TestSanitizeKeyPointText_keepsQuotesItDidNotWrap(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`"Weight drop" beats "frame stiffness".`, `"Weight drop" beats "frame stiffness".`},
+		{`"A quoted line on its own."`, "A quoted line on its own."},
+		{"'Don't quote me', he says", "'Don't quote me', he says"},
+		{">>Tight marker, no space.", "Tight marker, no space."},
+	} {
+		if got := sanitizeKeyPointText(tc.in); got != tc.want {
+			t.Errorf("sanitizeKeyPointText(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

@@ -313,10 +313,12 @@ func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subti
 	return chapters, parsed.KeyPoints, nil
 }
 
-// leadingListMarkerRe matches the bullet or dash a model sometimes keeps at the
-// front of an extracted line. Anchored, and it never touches a hyphen inside a
-// word or a minus in the middle of a sentence.
-var leadingListMarkerRe = regexp.MustCompile(`^[-–—*•·]+\s*`)
+// leadingListMarkerRe matches the bullet, dash or speaker marker a model
+// sometimes keeps at the front of an extracted line. Anchored, so it never
+// touches a hyphen inside a word or a minus in the middle of a sentence, and it
+// catches the tight ">>Hello" spelling that stripSpeakerMarkers deliberately
+// leaves alone mid-sentence.
+var leadingListMarkerRe = regexp.MustCompile(`^(?:[-–—*•·]|>>+)+\s*`)
 
 // keyPointSpaceRe collapses the whitespace a stripped marker leaves behind.
 // Go's \s is ASCII-only, so a no-break space has to be named (the cue text this
@@ -336,14 +338,24 @@ func sanitizeKeyPointText(s string) string {
 	s = strings.TrimSpace(keyPointSpaceRe.ReplaceAllString(s, " "))
 	// Wrapping quotes only: a quoted phrase INSIDE the sentence is the
 	// "quotable moment" the prompt asks for and must survive.
+	//
+	// The inner text has to be quote-free for the pair to count as wrapping.
+	// Without that check, `"Weight drop" beats "frame stiffness"` also starts
+	// and ends with a quote, and stripping its ends would leave a mangled
+	// sentence with the quotes around the wrong words.
 	if len(s) >= 2 {
 		for _, q := range []struct{ open, close string }{
 			{`"`, `"`}, {"'", "'"}, {"“", "”"}, {"‘", "’"},
 		} {
-			if strings.HasPrefix(s, q.open) && strings.HasSuffix(s, q.close) {
-				s = strings.TrimSpace(s[len(q.open) : len(s)-len(q.close)])
+			if !strings.HasPrefix(s, q.open) || !strings.HasSuffix(s, q.close) {
+				continue
+			}
+			inner := s[len(q.open) : len(s)-len(q.close)]
+			if strings.Contains(inner, q.open) || strings.Contains(inner, q.close) {
 				break
 			}
+			s = strings.TrimSpace(inner)
+			break
 		}
 	}
 	return s
@@ -355,14 +367,20 @@ func sanitizeKeyPointText(s string) string {
 // captions as they were written, and vtt.go stays in lockstep with the
 // TypeScript mirror in ui/src/vtt.tsx. It is only the LLM input that wants them
 // gone, so the stripping lives here rather than in the parser.
-var speakerMarkerRe = regexp.MustCompile(`>>+\s*`)
+//
+// A marker stands on its own: it opens a line or follows a space, and a space
+// follows it. Requiring that boundary is what keeps a right-shift out of the
+// blast radius — "cout>>x" is left alone, and a caption that spells out an
+// operator keeps whatever sits tight against it. The captured leading space is
+// put back so the two speakers' sentences do not run together.
+var speakerMarkerRe = regexp.MustCompile(`(^|\s)>>+(\s|$)`)
 
 // stripSpeakerMarkers removes those markers from text on its way to the model.
 func stripSpeakerMarkers(s string) string {
 	if !strings.Contains(s, ">>") {
 		return s
 	}
-	return strings.TrimSpace(speakerMarkerRe.ReplaceAllString(s, ""))
+	return strings.TrimSpace(speakerMarkerRe.ReplaceAllString(s, "$1"))
 }
 
 func formatCues(cues []subtitles.Cue) string {
