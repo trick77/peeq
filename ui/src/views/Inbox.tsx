@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { PillStrip } from "../components/PillStrip";
 import { SearchField } from "../components/SearchField";
 import { ThumbFill } from "../components/ThumbFill";
+import { ChannelLink } from "../components/ChannelLink";
 import { Icon } from "../icons";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
 import { pendingThumbnailUrl } from "../api/videos";
@@ -720,19 +721,11 @@ export function Inbox({
                 Omitted when unknown; only a real publish date belongs here,
                 never discovered_at. */}
               <div className="by">
-                {onOpenChannel && item.channel_id ? (
-                  <button
-                    type="button"
-                    className="chan-link"
-                    onClick={() => onOpenChannel(item.channel_id)}
-                  >
-                    {item.channel_name || item.channel_id}
-                  </button>
-                ) : (
-                  <span className="chan-name">
-                    {item.channel_name || item.channel_id}
-                  </span>
-                )}
+                <ChannelLink
+                  channelId={item.channel_id}
+                  name={item.channel_name}
+                  onOpenChannel={onOpenChannel}
+                />
                 {item.published_at ? (
                   <>
                     <span className="dot">·</span>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ThumbFill } from "../../components/ThumbFill";
+import { ChannelLink } from "../../components/ChannelLink";
 import { Icon } from "../../icons";
 import { downloadPending, ignorePending } from "../../api/pending";
 import { pendingThumbnailUrl } from "../../api/videos";
@@ -174,19 +175,11 @@ export function UnfetchedVideo({
               the page. It stays conditional because published_at is unknown for
               some live streams and premieres. */}
           <div className="by">
-            {onOpenChannel && video.channel_id ? (
-              <button
-                type="button"
-                className="chan-link"
-                onClick={() => onOpenChannel(video.channel_id)}
-              >
-                {video.channel_name || video.channel_id}
-              </button>
-            ) : (
-              <span className="chan-name">
-                {video.channel_name || video.channel_id}
-              </span>
-            )}
+            <ChannelLink
+              channelId={video.channel_id}
+              name={video.channel_name}
+              onOpenChannel={onOpenChannel}
+            />
             {video.published_at ? (
               <>
                 <span className="dot">·</span>

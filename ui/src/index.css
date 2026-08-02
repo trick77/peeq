@@ -907,8 +907,9 @@ button.srow:not(:disabled):hover {
   text-overflow: ellipsis;
 }
 /* A channel name in the agenda links to its page. Deliberately its OWN class
-   rather than reusing .chan-link: that one is shared by Library, Decide, Player
-   and Channels, so restyling it bleeds across four views. Same visual contract,
+   rather than reusing .chan-link: that one is shared by Library, Inbox, Player,
+   the unfetched summary page (the first four via the ChannelLink component) and
+   Channels, so restyling it bleeds across five views. Same visual contract,
    scoped to the agenda — and it must inherit .ag-subject's ellipsis, since a
    long channel name is exactly as likely to overflow here as a plain one. */
 .ag-link {
@@ -1906,9 +1907,13 @@ button.srow:not(:disabled):hover {
 .card .by .dot {
   color: var(--color-faint);
 }
-/* The kicker line — channel · date — sits above the title on the library/
-   archive video card as a small eyebrow. Scoped to .video-card so the shared
-   .card/.by used by other pages (e.g. Inbox) keeps its plain treatment.
+/* The kicker line — channel · date — sits above the title on a video card as a
+   small eyebrow. The rule above is the base every .card .by gets; this one
+   narrows it for the video grids. Both of them — Library/archive and Inbox —
+   carry .video-card, so the scoping now layers rather than excludes: it once
+   held Inbox out, and no longer does. The byline rows that genuinely want the
+   plain treatment are the band and tombstone ones, which are not .card at all
+   and have their own rule further down.
    Kept to a single line so a long channel name can't wrap and knock the titles
    below it out of row alignment. */
 .card.video-card .by {

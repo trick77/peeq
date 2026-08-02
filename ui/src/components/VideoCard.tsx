@@ -2,6 +2,7 @@ import type { MouseEvent } from "react";
 import { Icon } from "../icons";
 import { Button } from "../ui";
 import { ThumbFill } from "./ThumbFill";
+import { ChannelLink } from "./ChannelLink";
 import type { Video } from "../api/types";
 import {
   daysSince,
@@ -236,18 +237,12 @@ export function VideoCard({
           >
             {shortWatchLink(video.id)}
           </a>
-        ) : onOpenChannel && video.channel_id ? (
-          <button
-            type="button"
-            className="chan-link"
-            onClick={() => onOpenChannel(video.channel_id)}
-          >
-            {video.channel_name || video.channel_id}
-          </button>
         ) : (
-          <span className="chan-name">
-            {video.channel_name || video.channel_id}
-          </span>
+          <ChannelLink
+            channelId={video.channel_id}
+            name={video.channel_name}
+            onOpenChannel={onOpenChannel}
+          />
         )}
         {/* Added date first, because it is what the grid's default order ranks
             by — an eyebrow leading with the air date would make that order
