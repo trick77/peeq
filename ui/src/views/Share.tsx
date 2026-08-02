@@ -352,7 +352,10 @@ export function Share({ token }: { token: string | null }) {
 
         <aside className="sharepage-side">
           {video.summary_status === "done" && video.summary.trim() ? (
-            <div className="card">
+            /* summarypanel/hlpanel are placement hooks, not styles: in one
+               column the panels are ordered individually, and the Player names
+               its two the same way. */
+            <div className="card summarypanel">
               <div className="hd">
                 <Icon name="alignLeft" size="16px" />
                 <span className="lbl">Summary</span>
@@ -367,7 +370,7 @@ export function Share({ token }: { token: string | null }) {
               column, above the Transcript, exactly as the Player has them. This
               aside carries Summary and Highlights, which is the Player's split. */}
           {highlights.length > 0 && (
-            <div className="card">
+            <div className="card hlpanel">
               <div className="hd">
                 <Icon name="listTree" size="16px" />
                 <span className="lbl">Highlights</span>

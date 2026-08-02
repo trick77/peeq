@@ -1586,6 +1586,9 @@ export function Player({
               vttUrl={subtitlesUrl(video.id)}
               filenameBase={transcriptFilenameBase(video.title)}
               seek={video.has_media ? seek : undefined}
+              /* "full" is the default this prop already carried; the second
+                 class is the placement hook the single-column order uses. */
+              className="full transcriptpanel"
             />
           )}
         </div>
