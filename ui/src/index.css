@@ -2735,9 +2735,48 @@ button.sleeppick.armed {
   gap: 26px;
   align-items: start;
 }
+/* Single column: the sidebar stops being a sidebar, so its Summary has to earn
+   its place in the reading order instead of inheriting one from the markup. In
+   source order the whole left column comes first, which put Summary below
+   Contents and the transcript — a long way down the page on a phone. Dissolving
+   .leftcol's box (its children become items of this container) lets Summary sit
+   directly under the video block it describes, with Contents and the transcript
+   after it. DOM order is untouched, so nothing about the desktop layout, focus
+   order or the panels themselves changes. */
 @media (max-width: 1040px) {
   .playgrid {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    /* .leftcol's own gap, not .playgrid's 26 — this now governs every seam in
+       the column, including the ones it used to space. */
+    gap: 20px;
+    /* The grid rule above sets align-items: start, which in a column flexbox
+       means the cross axis — it would shrink every panel to fit its text. */
+    align-items: stretch;
+  }
+  /* Qualified: .leftcol's own `display: flex` is declared further down this
+     file, and at equal specificity the later rule would win. */
+  .playgrid > .leftcol {
+    display: contents;
+  }
+  .playgrid .stage-wrap {
+    order: 1;
+  }
+  .playgrid .playmeta {
+    order: 2;
+  }
+  .playgrid .side {
+    order: 3;
+  }
+  .playgrid .belowvideo {
+    order: 4;
+  }
+  /* .leftcol carried min-width: 0 to stop a long unbroken transcript line
+     widening the column; with its box gone, the panels it held carry it. */
+  .playgrid .stage-wrap,
+  .playgrid .playmeta,
+  .playgrid .belowvideo {
+    min-width: 0;
   }
 }
 .stage {
