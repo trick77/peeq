@@ -541,6 +541,7 @@ export function Player({
         onDismissed={onBackToInbox}
         inboxOrder={inboxOrder}
         onOpenInboxVideo={onOpenInboxVideo}
+        onOpenChannel={onOpenChannel}
       />
     );
   }

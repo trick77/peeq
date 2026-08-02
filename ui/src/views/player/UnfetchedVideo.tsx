@@ -32,6 +32,7 @@ export function UnfetchedVideo({
   onDismissed,
   inboxOrder,
   onOpenInboxVideo,
+  onOpenChannel,
 }: {
   video: Video;
   onBack?: () => void;
@@ -51,6 +52,10 @@ export function UnfetchedVideo({
   // is no stepper.
   inboxOrder?: string[];
   onOpenInboxVideo?: (id: string) => void;
+  // onOpenChannel is optional for the same reason it is on MetaHeader: this
+  // page is reachable from places that have nowhere to navigate to, and there
+  // the channel renders as plain text rather than a dead link.
+  onOpenChannel?: (channelId: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -162,14 +167,30 @@ export function UnfetchedVideo({
         </div>
 
         <div className="unfetched-ident">
+          {/* The same eyebrow the library card and the Player carry, down to
+              the markup — see MetaHeader, and .playmeta/.unfetched-ident .by in
+              index.css for the rule the two share. Only "aired" appears here:
+              there is no downloaded_at to report, which is the whole point of
+              the page. It stays conditional because published_at is unknown for
+              some live streams and premieres. */}
           <div className="by">
-            <span className="chan-name">
-              {video.channel_name || video.channel_id}
-            </span>
+            {onOpenChannel && video.channel_id ? (
+              <button
+                type="button"
+                className="chan-link"
+                onClick={() => onOpenChannel(video.channel_id)}
+              >
+                {video.channel_name || video.channel_id}
+              </button>
+            ) : (
+              <span className="chan-name">
+                {video.channel_name || video.channel_id}
+              </span>
+            )}
             {video.published_at ? (
               <>
                 <span className="dot">·</span>
-                {formatAgo(video.published_at)}
+                aired {formatAgo(video.published_at)}
               </>
             ) : null}
           </div>
