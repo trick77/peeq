@@ -2165,24 +2165,31 @@ describe("Player", () => {
     ).toBeInTheDocument();
   });
 
-  // The pill states what the video IS; the toolbar below it is verbs only. It
-  // therefore sits on its own line between the title and the action row, and
-  // the DOM order is the requirement, not the class.
-  it("puts the category pill between the title and the action row", async () => {
-    vi.mocked(getVideo).mockResolvedValue(makeVideo({ category: "gaming" }));
+  // The pill states what the video IS, so it rides the byline with the video's
+  // other facts rather than the toolbar, which is verbs only. Being INSIDE .by
+  // is the requirement — that is what makes the pill part of the sentence
+  // rather than a control parked near it — and it comes after the aired date,
+  // the fact it is appended to.
+  it("puts the category pill on the byline, after the aired date", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({
+        category: "gaming",
+        published_at: new Date(Date.now() - 3 * 86400_000).toISOString(),
+      }),
+    );
     render(<Player videoId="v1" onDeleted={() => {}} />);
     await screen.findByRole("button", { name: /Category: Gaming/ });
 
-    const row = document.querySelector(".playmeta .playcat")!;
-    expect(row.querySelector(".catpick")).not.toBeNull();
+    const by = document.querySelector(".playmeta .by")!;
+    const pill = by.querySelector(".catpick");
+    expect(pill).not.toBeNull();
+    expect(by.textContent).toMatch(/aired 3 days ago·\s*Gaming$/);
 
+    // …and no longer on a line of its own between the title and the actions.
+    expect(document.querySelector(".playcat")).toBeNull();
     const title = document.querySelector(".playmeta .playtitle")!;
-    const acts = document.querySelector(".playmeta .playacts")!;
     expect(
-      title.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      row.compareDocumentPosition(acts) & Node.DOCUMENT_POSITION_FOLLOWING,
+      pill!.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
