@@ -331,6 +331,59 @@ func TestAnswerVideosAppearOncePerVideo(t *testing.T) {
 	}
 }
 
+// A cited card carries the same byline every other card in the app does, so the
+// air date has to travel with the video record. answerVideo is deliberately
+// narrow, and a field the card renders that is missing from it leaves Ask's
+// cards reading differently from Find's for the same video.
+func TestAnswerVideosCarryTheAirDate(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{
+		ID: "v1", URL: "u", Title: "Why Athletes Cramp", PublishedAt: "2026-04-09",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "the electrolytes you replace", StartSeconds: 10},
+	})
+	deps.Ask = &fakeAsk{deltas: []string{"x"}}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	frame := firstEvent(t, doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil).Body.String(), "sources")
+
+	var got struct {
+		Videos []answerVideo `json:"videos"`
+	}
+	if err := json.Unmarshal([]byte(frame), &got); err != nil {
+		t.Fatalf("sources frame: %v — %s", err, frame)
+	}
+	if len(got.Videos) != 1 {
+		t.Fatalf("expected one video, got %d", len(got.Videos))
+	}
+	if got.Videos[0].PublishedAt != "2026-04-09" {
+		t.Errorf("published_at = %q, want 2026-04-09", got.Videos[0].PublishedAt)
+	}
+}
+
+// A video whose date was never learned sends no field at all rather than an
+// empty one, and the card's byline then stops at the channel.
+func TestAnswerVideosOmitAnUnknownAirDate(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "Why Athletes Cramp"}); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "the electrolytes you replace", StartSeconds: 10},
+	})
+	deps.Ask = &fakeAsk{deltas: []string{"x"}}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	frame := firstEvent(t, doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil).Body.String(), "sources")
+
+	if strings.Contains(frame, "published_at") {
+		t.Errorf("an unknown air date still took a field on the wire: %s", frame)
+	}
+}
+
 // The video record on the wire is answerVideo, not videoDTO. This pins that
 // down: videoDTO carries the whole summary, the chapter and key-point blobs and
 // the probe set, and twelve of those would dominate a stream whose point is to

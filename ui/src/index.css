@@ -4618,13 +4618,21 @@ details.tomb-sect[open] > summary svg {
 .rmeta h3 .rtitle:hover {
   color: var(--color-accent-strong);
 }
+/* Channel · aired date, then the badge. The gap dropped from 10px to 6px when
+   the date joined: 10px spaced two unrelated things, and this is now a byline
+   that reads as one line — separated by the same dot the video card's eyebrow
+   uses rather than by air. */
 .rmeta .ch {
   color: var(--color-muted);
   font-size: 12.5px;
   margin-bottom: 10px;
   display: flex;
-  gap: 10px;
+  gap: 6px;
   align-items: center;
+}
+.rmeta .ch .dot {
+  color: var(--color-faint);
+  flex: none;
 }
 /* "Summary only": this result is a video peeq read but never downloaded, so
    the card leads to its summary rather than to a player. Same treatment as the
