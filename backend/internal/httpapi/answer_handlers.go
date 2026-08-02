@@ -63,6 +63,10 @@ type answerVideo struct {
 	// read this video but never downloaded it, so the card badges it and drops
 	// the play affordance rather than promising a file that does not exist.
 	Status string `json:"status"`
+	// PublishedAt is the air date, YYYY-MM-DD, so a cited card carries the same
+	// byline every other card in the app does. Omitted for a video whose date
+	// was never learned; the card then simply shows the channel.
+	PublishedAt string `json:"published_at,omitempty"`
 }
 
 const (
@@ -228,6 +232,7 @@ func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVid
 				HasThumbnail:     v.HasThumbnail,
 				ThumbnailVersion: v.ThumbnailVersion,
 				Status:           v.Status,
+				PublishedAt:      v.PublishedAt,
 			})
 		}
 		perVideo[h.VideoID]++

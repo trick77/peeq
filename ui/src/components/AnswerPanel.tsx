@@ -1,8 +1,7 @@
 import { Icon } from "../icons";
 import { Spinner } from "../ui";
 import { formatDuration } from "../format";
-import { splitCitations } from "../citations";
-import { citedInOrder, type CitedSource } from "../answerSources";
+import { answerParts, citedInOrder, type CitedSource } from "../answerSources";
 import { splitIntoSegments } from "../streamFade";
 import type { AnswerSource, AnswerVideo } from "../api/answer";
 
@@ -45,12 +44,11 @@ export function AnswerPanel({
   const channelOf = new Map(
     (videos ?? []).map((v) => [v.id, v.channel_id] as const),
   );
-  // `known` is the FULL retrieved set, not the cited one: that is what keeps a
-  // hallucinated [9] rendering as the characters the model produced rather than
-  // as a citation pointing nowhere.
-  const known = new Set(sources.map((s) => s.n));
+  // The body's parts come from answerSources too, so the marks above and the
+  // rows below cannot disagree about what a numeral means. It is what resolves
+  // each mark to its source and collapses a run of adjacent same-numeral marks.
+  const parts = answerParts(text, sources);
   const cited = citedInOrder(text, sources);
-  const display = new Map(cited.map((s) => [s.n, s]));
   // One row per video. `cited` stays one entry per citation — the marks above
   // and the moment cards below both need that — but a video is ONE source
   // however many of its passages the answer leaned on. First mention wins, and
@@ -88,9 +86,9 @@ export function AnswerPanel({
       </div>
 
       <div className="answer-body" aria-live="polite" aria-busy={streaming}>
-        {splitCitations(text, known).map((part, i) =>
+        {parts.map((part, i) =>
           part.kind === "cite" ? (
-            <CiteMark key={i} source={display.get(part.n)!} onOpen={onOpen} />
+            <CiteMark key={i} source={part.source} onOpen={onOpen} />
           ) : (
             <FadedText key={i} text={part.text} />
           ),

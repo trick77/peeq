@@ -1,7 +1,7 @@
 import { Icon } from "../icons";
 import { ThumbFill } from "./ThumbFill";
 import { pendingThumbnailUrl } from "../api/videos";
-import { formatDuration } from "../format";
+import { formatAgo, formatDuration } from "../format";
 import { splitHighlights } from "../highlight";
 import type { SearchMatch } from "../api/search";
 
@@ -23,6 +23,9 @@ export type ResultCardVideo = {
   duration_seconds?: number;
   has_thumbnail: boolean;
   thumbnail_version?: string;
+  // published_at is the air date. Optional because Video's is: the backend omits
+  // a date it never learned, and the byline then stops at the channel.
+  published_at?: string;
   // status is here for the two ways a search hit can have no file to play.
   // 'new' means peeq read this video — fetched its captions, summarized and
   // indexed them — but never downloaded it; Search is the only place such a
@@ -62,12 +65,23 @@ export type ResultCardGroup = {
   matches: SearchMatch[];
 };
 
-// summaryFirst hoists the summary moment to the top of a card's list.
+// momentOrder puts a card's rows in the order they happen: the summary first,
+// then every other moment by timestamp ascending.
 //
 // The summary describes the whole video, so it belongs above the moments rather
 // than wherever its retrieval score happened to land it: a card whose middle row
 // says "this video is about X" between moments at 4:12 and 11:38 reads as three
-// unrelated findings, with timestamps running backwards down the page.
+// unrelated findings, with timestamps running backwards down the page. It has no
+// timestamp of its own — it is stored at 0 — so sorting alone would put it first
+// by accident rather than on purpose, and only while nothing else sat at 0.
+//
+// Below it, kind stops mattering. Retrieval order left a chapter hit at 14:02
+// above a transcript hit at 3:11: which lane found a moment is not something a
+// reader can see, and is not a reason for one row to outrank another. What they
+// can see is the timestamps, and those now read downward.
+//
+// The sort is stable, so two moments at the same second keep the order they
+// arrived in rather than swapping between renders.
 //
 // Deliberately NOT done in the sources the cards come from. Find's order is bm25
 // rank and Ask's is citation order (answerSources.groupCited), and Ask's is
@@ -75,12 +89,15 @@ export type ResultCardGroup = {
 // page in exactly that order. The cards render no numbers, so only they reorder.
 //
 // The backend allows at most one summary hit per video (`admits`, search
-// handlers), so this is a single hoist and everything else keeps its order.
-function summaryFirst(matches: SearchMatch[]): SearchMatch[] {
+// handlers), so the hoist is a single row.
+function momentOrder(matches: SearchMatch[]): SearchMatch[] {
   if (matches.length < 2) return matches;
-  const at = matches.findIndex((m) => m.kind === "summary");
-  if (at <= 0) return matches;
-  return [matches[at], ...matches.slice(0, at), ...matches.slice(at + 1)];
+  return [
+    ...matches.filter((m) => m.kind === "summary"),
+    ...matches
+      .filter((m) => m.kind !== "summary")
+      .sort((a, b) => a.start_seconds - b.start_seconds),
+  ];
 }
 
 export function ResultCards({
@@ -163,6 +180,17 @@ export function ResultCards({
               ) : (
                 r.video.channel_name
               )}
+              {/* When the video aired, in the same words and the same helper
+                  the Library card, the Inbox card and the Player's eyebrow use,
+                  so a video reads identically wherever it appears. The date it
+                  entered the archive is deliberately not here — see VideoCard,
+                  which dropped it for the same reason. */}
+              {r.video.published_at ? (
+                <>
+                  <span className="dot">·</span>
+                  <span>aired {formatAgo(r.video.published_at)}</span>
+                </>
+              ) : null}
               {/* "Not downloaded", not "Summary only": peeq keeps a kept read's
                   transcript indefinitely, so such a card routinely lists
                   transcript moments underneath — which made the old wording
@@ -184,7 +212,7 @@ export function ResultCards({
               ) : null}
             </div>
             <div className="matches">
-              {summaryFirst(r.matches).map((m, i) => (
+              {momentOrder(r.matches).map((m, i) => (
                 <button
                   key={i}
                   type="button"
@@ -219,8 +247,14 @@ export function ResultCards({
 //
 // A transcript moment carries no label at all. It used to say "TRANSCRIPT"
 // beside its own timestamp — the one thing a timestamp already makes obvious —
-// and repeating it on nearly every row made the two kinds that DO need saying
-// harder to spot. Summary and Chapter stay for exactly that reason.
+// and repeating it on nearly every row made the kinds that DO need saying harder
+// to spot.
+//
+// Chapter has since followed it, for the same reason and one more: a chapter hit
+// and a transcript hit carry a timestamp, seek the same way and read the same,
+// so the word drew the eye without ever changing what the reader would do. Only
+// Summary is left, and it earns the label — it is the one row with no timestamp
+// to show, and the only one that opens the video instead of seeking into it.
 //
 // This replaces the raw vector distance that used to sit at the end of the row.
 // That number was retrieval diagnostics — it is meaningless for a bm25-ranked
@@ -229,12 +263,7 @@ function MatchLead({ match }: { match: SearchMatch }) {
   if (match.kind === "summary") {
     return <span className="badge">Summary</span>;
   }
-  return (
-    <>
-      <span className="ts mono">{formatDuration(match.start_seconds)}</span>
-      {match.kind === "chapter" ? <span className="badge">Chapter</span> : null}
-    </>
-  );
+  return <span className="ts mono">{formatDuration(match.start_seconds)}</span>;
 }
 
 // Snippet renders a search preview, marking the terms that matched. The

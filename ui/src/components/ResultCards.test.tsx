@@ -168,7 +168,7 @@ describe("ResultCards", () => {
     );
 
     // Retrieval ranked the summary second; the card leads with it, and the rest
-    // keep the order they arrived in.
+    // follow by timestamp.
     const rows = Array.from(container.querySelectorAll(".match .snip")).map(
       (n) => n.textContent,
     );
@@ -185,8 +185,11 @@ describe("ResultCards", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
-  it("labels a chapter and a summary but never a transcript moment", () => {
-    renderCards(
+  // The timestamp says what a chapter row and a transcript row are; the label
+  // said it again, in a word that never changed what the reader would do. Only
+  // the summary keeps one, and it is the row with no timestamp to show.
+  it("labels a summary but never a chapter or a transcript moment", () => {
+    const { container } = renderCards(
       group("downloaded", [
         {
           start_seconds: 0,
@@ -210,8 +213,103 @@ describe("ResultCards", () => {
     );
 
     expect(screen.getByText("Summary")).toBeInTheDocument();
-    expect(screen.getByText("Chapter")).toBeInTheDocument();
-    // The timestamp beside it already says what the row is.
+    expect(screen.queryByText("Chapter")).not.toBeInTheDocument();
     expect(screen.queryByText("Transcript")).not.toBeInTheDocument();
+    // The chapter row lost the word, not its timestamp.
+    expect(container).toHaveTextContent("5:00");
+  });
+
+  // Retrieval order is bm25 rank or citation order — neither of which the
+  // reader can see. The timestamps they CAN see were running backwards: a
+  // chapter hit late in the video sat above a transcript hit near the start.
+  it("orders moments by timestamp regardless of which lane found them", () => {
+    const { container } = renderCards(
+      group("downloaded", [
+        {
+          start_seconds: 842,
+          snippet: "the chapter",
+          distance: 0.1,
+          kind: "chapter",
+        },
+        {
+          start_seconds: 191,
+          snippet: "an early moment",
+          distance: 0.2,
+          kind: "transcript",
+        },
+        {
+          start_seconds: 0,
+          snippet: "the summary",
+          distance: 0.3,
+          kind: "summary",
+        },
+        {
+          start_seconds: 402,
+          snippet: "a middle moment",
+          distance: 0.4,
+          kind: "transcript",
+        },
+      ]),
+    );
+
+    const rows = Array.from(container.querySelectorAll(".match .snip")).map(
+      (n) => n.textContent,
+    );
+    // The summary has no timestamp of its own — it is stored at 0 — so it is
+    // hoisted rather than sorted into place.
+    expect(rows).toEqual([
+      "the summary",
+      "an early moment",
+      "a middle moment",
+      "the chapter",
+    ]);
+  });
+
+  // Two moments at the same second keep the order they arrived in rather than
+  // swapping between renders.
+  it("keeps retrieval order for moments at the same second", () => {
+    const { container } = renderCards(
+      group("downloaded", [
+        {
+          start_seconds: 120,
+          snippet: "found first",
+          distance: 0.1,
+          kind: "chapter",
+        },
+        {
+          start_seconds: 120,
+          snippet: "found second",
+          distance: 0.2,
+          kind: "transcript",
+        },
+      ]),
+    );
+
+    const rows = Array.from(container.querySelectorAll(".match .snip")).map(
+      (n) => n.textContent,
+    );
+    expect(rows).toEqual(["found first", "found second"]);
+  });
+
+  // The same byline every other card in the app carries. The date the video
+  // entered the archive is deliberately absent — see VideoCard.
+  it("shows when the video aired, and nothing when it never learned", () => {
+    const aired = group("downloaded");
+    aired[0].video.published_at = new Date(
+      Date.now() - 3 * 86400 * 1000,
+    ).toISOString();
+    const { container } = renderCards(aired);
+
+    expect(container.querySelector(".ch")).toHaveTextContent(
+      "aired 3 days ago",
+    );
+    expect(container.querySelector(".ch")).not.toHaveTextContent("added");
+  });
+
+  it("stops the byline at the channel when there is no air date", () => {
+    const { container } = renderCards(group("downloaded"));
+
+    expect(container.querySelector(".ch")).not.toHaveTextContent("aired");
+    expect(container.querySelector(".ch .dot")).toBeNull();
   });
 });

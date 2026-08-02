@@ -116,14 +116,21 @@ describe("Search", () => {
     expect(await screen.findByText("Summary")).toBeInTheDocument();
   });
 
-  it("badges a chapter-kind match", async () => {
+  // A chapter match carries a timestamp, seeks like a transcript match and
+  // reads like one, so the badge said nothing the row did not already. It went
+  // the way the "Transcript" badge went; only the summary, which has no
+  // timestamp of its own, still earns a word.
+  it("leaves a chapter-kind match unlabelled", async () => {
     mockedSearchVideos.mockResolvedValue(
       result({ kind: "chapter", snippet: "Electrolytes: the evidence" }),
     );
     render(<Harness onOpen={vi.fn()} />);
     toFind();
     submit("electrolytes");
-    expect(await screen.findByText("Chapter")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Electrolytes: the evidence"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Chapter")).not.toBeInTheDocument();
   });
 
   it("leaves a transcript match unlabelled and shows no raw score", async () => {
