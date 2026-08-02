@@ -1576,6 +1576,27 @@ describe("Player", () => {
     expect(seekSpy).toHaveBeenCalledWith(12);
   });
 
+  // Copying a highlight's text is a drag that ends inside the row, and the row
+  // is the seek button — without the guard the player jumps away from what the
+  // reader was reading. Same shape as the Library card's selection guard.
+  it("does not seek when the click merely ended a text selection", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ key_points: [{ ts: 12, text: "wow moment" }] }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const hlBtn = await screen.findByRole("button", { name: /wow moment/ });
+    const vid = document.querySelector("video") as HTMLVideoElement;
+    const seekSpy = vi.spyOn(vid, "currentTime", "set");
+    const selection = vi
+      .spyOn(window, "getSelection")
+      .mockReturnValue({ toString: () => "wow moment" } as Selection);
+
+    fireEvent.click(hlBtn);
+
+    expect(seekSpy).not.toHaveBeenCalled();
+    selection.mockRestore();
+  });
+
   it("toggles the CC track mode between hidden and showing", async () => {
     // jsdom never populates HTMLMediaElement.textTracks from a <track> child,
     // so the mode flip is exercised against a stubbed TextTrackList.

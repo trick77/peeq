@@ -1,5 +1,6 @@
 import { Icon } from "../../icons";
 import { formatDuration } from "../../format";
+import { seekOnClick } from "../../selection";
 import { tocGridStyle } from "../../ui";
 import type { Video } from "../../api/types";
 
@@ -79,7 +80,7 @@ export function ContentsCard({
                   key={i}
                   type="button"
                   className="row"
-                  onClick={() => seek(c.ts)}
+                  onClick={seekOnClick(seek, c.ts)}
                 >
                   {body}
                 </button>

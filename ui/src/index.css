@@ -3475,6 +3475,18 @@ button.sleeppick.armed {
   flex-direction: column;
   gap: 12px;
 }
+/* A seek row is a <button> that SHOWS text, and WebKit's UA stylesheet refuses
+   to let a form control's text be selected — so the words in a highlight, a
+   chapter title or a transcript cue could not be copied at all in Safari.
+   Chrome and Firefox already allow it; this is what makes Safari agree. The
+   other half of the fix is in selection.ts: a drag that ends inside the row
+   would otherwise fire a click and seek the video out from under the copy. */
+.hl .row,
+.toc .row,
+.transcript .cue {
+  user-select: text;
+  -webkit-user-select: text;
+}
 .hl .row {
   display: flex;
   gap: 12px;

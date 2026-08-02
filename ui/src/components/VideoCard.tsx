@@ -1,5 +1,6 @@
 import type { MouseEvent } from "react";
 import { Icon } from "../icons";
+import { isSelectingText } from "../selection";
 import { Button } from "../ui";
 import { ThumbFill } from "./ThumbFill";
 import { ChannelLink } from "./ChannelLink";
@@ -114,7 +115,7 @@ export function VideoCard({
   // that ends a text selection is a selection, not a tap.
   function handleCardClick(e: MouseEvent<HTMLElement>) {
     if ((e.target as HTMLElement).closest('button, a, [role="button"]')) return;
-    if (window.getSelection()?.toString()) return;
+    if (isSelectingText()) return;
     onOpen(video.id);
   }
 
