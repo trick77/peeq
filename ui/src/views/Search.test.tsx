@@ -370,6 +370,26 @@ describe("Search", () => {
       screen.queryByRole("button", { name: "Clear results" }),
     ).not.toBeInTheDocument();
   });
+
+  // The button that was just clicked disappears with the results it cleared,
+  // so focus has to be put somewhere deliberately. The box is the only thing
+  // left to act on, and the query is still in it: the caret sits at the end,
+  // ready to amend the words rather than retype them.
+  it("puts focus back in the box after Clear results", async () => {
+    mockedSearchVideos.mockResolvedValue(result());
+    render(<Harness />);
+    toFind();
+    submit("iphone");
+    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
+
+    const input = box() as HTMLInputElement;
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("iphone");
+    expect(input.selectionStart).toBe("iphone".length);
+    expect(input.selectionEnd).toBe("iphone".length);
+  });
 });
 
 describe("Search — the Ask answer", () => {

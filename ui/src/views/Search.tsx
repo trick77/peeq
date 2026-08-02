@@ -78,6 +78,19 @@ export function Search({
     search.submit();
   }
 
+  function handleClearResults() {
+    search.clearResults();
+    // Clearing puts the page away, and the button doing it disappears with the
+    // results — leaving focus on nothing. It belongs back in the box, which is
+    // the only thing left to act on. The query stays, with the caret at its
+    // end: the usual next move is to amend the words that came up short, not
+    // to start over.
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+
   const copy = MODE_COPY[mode];
   const { query, results, loading, error } = tab;
   // In Ask, everything BELOW the streaming answer waits for it to finish.
@@ -200,7 +213,7 @@ export function Search({
               type="button"
               variant="ghost"
               className="clear-results"
-              onClick={search.clearResults}
+              onClick={handleClearResults}
             >
               Clear results
             </Button>
