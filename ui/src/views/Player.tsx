@@ -1209,9 +1209,27 @@ export function Player({
               <p>
                 <Icon name="trash" size="15px" />
                 {video.status === "tombstoned"
-                  ? "The file was deleted to save space. Re-download it to watch again."
+                  ? "The file was deleted to save space."
                   : "No file here yet."}
               </p>
+              {/* The sentence above used to end "Re-download it to watch
+                  again" — naming an action whose only control was three dots at
+                  the other end of the page. Telling someone what to do and
+                  hiding the way to do it is worse than not mentioning it, so the
+                  button stands where the explanation is. It stays in the ⋮ menu
+                  too, alongside the other rarely-used actions, and both go
+                  through the same guarded handler. */}
+              {video.status === "tombstoned" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={redownloading}
+                  onClick={handleRedownload}
+                >
+                  <Icon name="download" size="15px" />
+                  {redownloading ? "Queueing" : "Re-download"}
+                </Button>
+              ) : null}
             </div>
           )}
           <div

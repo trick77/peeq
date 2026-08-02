@@ -72,10 +72,29 @@ describe("ResultCards", () => {
     );
   });
 
+  // The other fileless hit: downloaded once, then swept to reclaim the disk.
+  // Everything but the media survives, which is why it is still findable here —
+  // and why its card must not draw a play triangle over a file that is gone.
+  it("badges a video whose file was reclaimed, and offers no play", () => {
+    const { container } = renderCards(group("tombstoned"));
+
+    expect(screen.getByText("Reclaimed")).toBeInTheDocument();
+    // Not "Not downloaded" — this one WAS downloaded, and its page offers
+    // Re-download rather than Download.
+    expect(screen.queryByText("Not downloaded")).not.toBeInTheDocument();
+    expect(container.querySelector(".play")).toBeNull();
+    // It keeps its own poster, unlike a video peeq only ever read.
+    expect(container.querySelector("img.fill")).toHaveAttribute(
+      "src",
+      "/api/videos/v1/thumbnail",
+    );
+  });
+
   it("leaves a downloaded video's card alone", () => {
     const { container } = renderCards(group("downloaded"));
 
     expect(screen.queryByText("Not downloaded")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reclaimed")).not.toBeInTheDocument();
     expect(container.querySelector(".play")).toBeInTheDocument();
     expect(container.querySelector("img.fill")).toHaveAttribute(
       "src",

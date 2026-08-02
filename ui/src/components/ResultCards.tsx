@@ -23,9 +23,11 @@ export type ResultCardVideo = {
   duration_seconds?: number;
   has_thumbnail: boolean;
   thumbnail_version?: string;
-  // status is here for one distinction: 'new' means peeq read this video —
-  // fetched its captions, summarized and indexed them — but never downloaded
-  // it. Search is the only place such a video appears at all.
+  // status is here for the two ways a search hit can have no file to play.
+  // 'new' means peeq read this video — fetched its captions, summarized and
+  // indexed them — but never downloaded it; Search is the only place such a
+  // video appears at all. 'tombstoned' means it HAD a file and the sweep
+  // reclaimed the space, keeping everything else.
   status: string;
 };
 
@@ -33,6 +35,26 @@ export type ResultCardVideo = {
 // says so instead of offering a play button that leads to a summary page.
 function isUnfetched(video: ResultCardVideo): boolean {
   return video.status === "new";
+}
+
+// A tombstoned video is the other kind of fileless hit: downloaded once, then
+// swept to reclaim the disk. Everything except the media survives — transcript,
+// summary, poster — which is exactly why it is still findable here.
+//
+// Kept apart from isUnfetched rather than folded into one "has no file" test,
+// because the two are different situations and lead to different pages. One was
+// never fetched and offers Download; this one offers Re-download, and its page
+// says so. Telling a reader "Not downloaded" about a video they watched last
+// month would be the same class of wrong as the "Summary only" pill that sat
+// above a transcript.
+function isReclaimed(video: ResultCardVideo): boolean {
+  return video.status === "tombstoned";
+}
+
+// Whether the card may promise playback. Neither kind has a file behind it, so
+// neither gets the play triangle that says there is one.
+function hasNoFile(video: ResultCardVideo): boolean {
+  return isUnfetched(video) || isReclaimed(video);
 }
 
 export type ResultCardGroup = {
@@ -105,7 +127,9 @@ export function ResultCards({
                   : undefined
               }
             />
-            {isUnfetched(r.video) ? null : (
+            {/* The play triangle says "there is a file behind this". A reclaimed
+                video has none either, and its card was still drawing one. */}
+            {hasNoFile(r.video) ? null : (
               <div className="play">
                 <Icon name="play" size="30px" />
               </div>
@@ -143,9 +167,16 @@ export function ResultCards({
                   transcript indefinitely, so such a card routinely lists
                   transcript moments underneath — which made the old wording
                   contradict the rows directly below it. What this video is
-                  missing is the file, and that is what the pill now says. */}
+                  missing is the file, and that is what the pill now says.
+
+                  "Reclaimed" is the other fileless case, and it gets its own
+                  word rather than sharing this one: that video WAS downloaded,
+                  and telling someone it was never downloaded is the same class
+                  of wrong the "Summary only" pill was. */}
               {isUnfetched(r.video) ? (
                 <span className="badge">Not downloaded</span>
+              ) : isReclaimed(r.video) ? (
+                <span className="badge">Reclaimed</span>
               ) : null}
             </div>
             <div className="matches">

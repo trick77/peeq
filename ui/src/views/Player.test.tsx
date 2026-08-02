@@ -1856,6 +1856,46 @@ describe("Player", () => {
     });
   });
 
+  // The stage of a reclaimed video says why there is nothing to play. It used to
+  // end "Re-download it to watch again" while the only control for that sat
+  // behind three dots at the other end of the page.
+  it("offers Re-download on the stage of a reclaimed video", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", status: "tombstoned", has_media: false }),
+    );
+    vi.mocked(redownload).mockResolvedValue(undefined);
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const stage = await waitFor(() => {
+      const el = document.querySelector(".stage-gone");
+      if (!el) throw new Error("stage not rendered yet");
+      return el as HTMLElement;
+    });
+    fireEvent.click(
+      within(stage).getByRole("button", { name: /re-download/i }),
+    );
+
+    await waitFor(() => expect(redownload).toHaveBeenCalledWith("v1"));
+  });
+
+  // The same stage serves a video whose file has simply not arrived yet. There
+  // is nothing to re-download there — the first download is still coming.
+  it("offers no Re-download on the stage of a video still being fetched", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", status: "downloading", has_media: false }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const stage = await waitFor(() => {
+      const el = document.querySelector(".stage-gone");
+      if (!el) throw new Error("stage not rendered yet");
+      return el as HTMLElement;
+    });
+    expect(
+      within(stage).queryByRole("button", { name: /re-download/i }),
+    ).toBeNull();
+  });
+
   it("shows Re-download in the ⋮ menu for an errored video and queues it", async () => {
     vi.mocked(getVideo).mockResolvedValue(
       makeVideo({ id: "v1", status: "error" }),
