@@ -8,10 +8,11 @@ import type { AnswerSource, AnswerVideo } from "../api/answer";
 
 // AnswerPanel renders the grounded answer above Ask's moments.
 //
-// Sources are the ones the answer CITED, numbered from 1 in the order it
-// mentions them. Retrieval hands the model twelve passages; the ones it did not
-// use are a working set, not findings, and listing them made the answer look
-// like it was skipping numbered evidence ("[2] [4] [5]", no [1] in sight).
+// Sources are the videos the answer CITED, numbered from 1 in the order it
+// mentions them — one row per video, not per passage. Retrieval hands the model
+// twelve passages; the ones it did not use are a working set, not findings, and
+// listing them made the answer look like it was skipping numbered evidence
+// ("[2] [4] [5]", no [1] in sight).
 // See answerSources.ts — the same derivation feeds the moments below.
 
 export type AnswerState = {
@@ -34,8 +35,9 @@ export function AnswerPanel({
 }: {
   state: AnswerState;
   onOpen: (videoId: string, startSeconds: number) => void;
-  // A summary source has no timestamp of its own (it is stored at 0), so its row
-  // opens the video where the viewer left it rather than seeking to the start.
+  // Every source row opens its video where the viewer left it: a row stands for
+  // the video, not for one of the moments cited inside it. Seeking is what the
+  // inline numerals do.
   onOpenVideo: (videoId: string) => void;
   onOpenChannel: (channelId: string) => void;
 }) {
@@ -49,6 +51,11 @@ export function AnswerPanel({
   const known = new Set(sources.map((s) => s.n));
   const cited = citedInOrder(text, sources);
   const display = new Map(cited.map((s) => [s.n, s]));
+  // One row per video. `cited` stays one entry per citation — the marks above
+  // and the moment cards below both need that — but a video is ONE source
+  // however many of its passages the answer leaned on. First mention wins, and
+  // it is already the entry whose number the whole video carries.
+  const rows = [...new Map(cited.map((s) => [s.video_id, s])).values()];
   const streaming = status === "streaming";
 
   // Nothing to show at all — the parent renders whatever it has rather than an
@@ -69,8 +76,8 @@ export function AnswerPanel({
               <Spinner size="12px" />
               Reading your library
             </>
-          ) : !streaming && cited.length ? (
-            `${cited.length} source${cited.length === 1 ? "" : "s"}`
+          ) : !streaming && rows.length ? (
+            `${rows.length} source${rows.length === 1 ? "" : "s"}`
           ) : null}
         </span>
       </div>
@@ -114,25 +121,22 @@ export function AnswerPanel({
               moment button keeps the row's whole width minus what the channel
               takes, so the click target is unchanged for everything except the
               channel name itself. */}
-          {cited.map((s) => {
+          {rows.map((s) => {
             const channelId = channelOf.get(s.video_id);
             return (
-              <div className="srcline" key={s.n}>
+              <div className="srcline" key={s.video_id}>
+                {/* A row stands for the whole video, so it opens the video where
+                    the viewer left it rather than seeking. It carries no
+                    timestamp for the same reason: the row can cover several
+                    cited moments, and one of them printed beside the title reads
+                    like the only one. The numerals in the answer are what seek
+                    to a particular moment. */}
                 <button
                   type="button"
                   className="srcrow"
-                  onClick={() =>
-                    s.kind === "summary"
-                      ? onOpenVideo(s.video_id)
-                      : onOpen(s.video_id, s.start_seconds)
-                  }
+                  onClick={() => onOpenVideo(s.video_id)}
                 >
                   <span className="n mono">{s.display}</span>
-                  <span className="ts mono">
-                    {s.kind === "summary"
-                      ? "—"
-                      : formatDuration(s.start_seconds)}
-                  </span>
                   <span className="ttl">{s.title}</span>
                 </button>
                 {s.channel_name && channelId ? (

@@ -45,6 +45,22 @@ describe("citedInOrder", () => {
     expect(got.map((s) => s.display)).toEqual([1, 2]);
   });
 
+  // The number names the video, so a second passage from a video already cited
+  // reuses its number instead of claiming the next one — and the video after it
+  // gets 2, not 3.
+  it("numbers by video, not by passage", () => {
+    const got = citedInOrder("A[1] B[2] C[3]", [
+      src(1, { video_id: "va" }),
+      src(2, { video_id: "va" }),
+      src(3, { video_id: "vb" }),
+    ]);
+    expect(got.map((s) => [s.n, s.display])).toEqual([
+      [1, 1],
+      [2, 1],
+      [3, 2],
+    ]);
+  });
+
   it("leaves out a passage the answer never cited", () => {
     const got = citedInOrder("Only this[1].", [src(1), src(2), src(3)]);
     expect(got).toHaveLength(1);

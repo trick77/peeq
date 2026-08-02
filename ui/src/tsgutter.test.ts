@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 import { formatDuration } from "./format";
 
 // Every list that puts a timestamp in front of a line — chapters, highlights,
-// transcript cues, search matches, answer sources — reserves a fixed gutter for
-// it so the lines all start on one left edge. That alignment is pure layout,
+// transcript cues, search matches — reserves a fixed gutter for it so the lines
+// all start on one left edge. (Answer sources are not one of them: a source row
+// stands for a whole video, several of whose moments the answer may have cited,
+// so it prints no stamp at all.) That alignment is pure layout,
 // and jsdom does none, so a rule that went back to min-width (which lets an
 // h:mm:ss stamp push its own line across, and only that line) would pass every
 // component test. The CSS is read instead, the way gridlayout.test.ts and
@@ -22,7 +24,6 @@ const GUTTERS = [
   { sel: ".hl .ts", size: 12.5, stamp: 52.7 },
   { sel: ".transcript .ts", size: 11.5, stamp: 48.5 },
   { sel: ".match .ts", size: 12, stamp: 50.6 },
-  { sel: ".srcrow .ts", size: 12, stamp: 50.6 },
 ];
 
 const block = (sel: string) =>

@@ -4,8 +4,10 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { AnswerPanel, type AnswerState } from "./AnswerPanel";
 
-// Three retrieved passages, of which an answer typically uses some. The panel
-// shows what it used — see answerSources.ts.
+// Four retrieved passages, of which an answer typically uses some. The panel
+// shows what it used — see answerSources.ts. Passages 1 and 4 come from the SAME
+// video, which is the ordinary case: retrieval hands the model up to three
+// passages per video.
 const sources = [
   {
     n: 1,
@@ -33,6 +35,15 @@ const sources = [
     start_seconds: 40,
     kind: "transcript",
     snippet: "sodium losses in sweat",
+  },
+  {
+    n: 4,
+    video_id: "v1",
+    title: "Why Athletes Cramp",
+    channel_name: "Peter Attia MD",
+    start_seconds: 1140,
+    kind: "transcript",
+    snippet: "and the cramp comes back",
   },
 ];
 
@@ -129,7 +140,7 @@ describe("AnswerPanel", () => {
       />,
     );
     expect(screen.queryByText(/Reading your library/)).not.toBeInTheDocument();
-    // Three were retrieved; two were used.
+    // Four were retrieved; two videos were used.
     expect(screen.getByText("2 sources")).toBeInTheDocument();
   });
 
@@ -154,22 +165,10 @@ describe("AnswerPanel", () => {
     expect(onOpen).toHaveBeenCalledWith("v3", 40);
   });
 
-  it("lists the cited sources as resting rows that jump on click", () => {
-    const onOpen = vi.fn();
-    render(
-      <Panel state={state({ text: "One[1] and two[2]." })} onOpen={onOpen} />,
-    );
-    const list = document.querySelector(".answer-sources") as HTMLElement;
-    const rows = list.querySelectorAll(".srcrow");
-    expect(rows).toHaveLength(2);
-    fireEvent.click(rows[0]);
-    expect(onOpen).toHaveBeenCalledWith("v1", 872);
-  });
-
-  // Source 2 is a summary: it is stored at start_seconds 0 and describes the
-  // whole video, so its row opens the video where the viewer left it rather
-  // than seeking to the start and storing that zero.
-  it("opens a summary source without a seek", () => {
+  // A row stands for the whole video — it may cover several cited moments — so
+  // it opens the video where the viewer left it rather than seeking to whichever
+  // moment happened to be cited first.
+  it("lists the cited sources as resting rows that open the video on click", () => {
     const onOpen = vi.fn();
     const onOpenVideo = vi.fn();
     render(
@@ -179,10 +178,50 @@ describe("AnswerPanel", () => {
         onOpenVideo={onOpenVideo}
       />,
     );
-    const rows = document.querySelectorAll(".answer-sources .srcrow");
-    fireEvent.click(rows[1]);
-    expect(onOpenVideo).toHaveBeenCalledWith("v2");
+    const list = document.querySelector(".answer-sources") as HTMLElement;
+    const rows = list.querySelectorAll(".srcrow");
+    expect(rows).toHaveLength(2);
+    fireEvent.click(rows[0]);
+    expect(onOpenVideo).toHaveBeenCalledWith("v1");
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  // Passages 1 and 4 are two moments of the same video. It is ONE source: one
+  // row, one numeral — however many of its passages the answer leaned on.
+  it("lists a video cited twice as a single source", () => {
+    render(
+      <Panel
+        state={state({ text: "Early on[1], and later[4]; also[3]." })}
+        onOpen={vi.fn()}
+      />,
+    );
+    const list = document.querySelector(".answer-sources") as HTMLElement;
+    expect(list.querySelectorAll(".srcrow")).toHaveLength(2);
+    expect(within(list).getAllByText("Why Athletes Cramp")).toHaveLength(1);
+    expect(screen.getByText("2 sources")).toBeInTheDocument();
+  });
+
+  // Both marks say 1 because both are that video. They are still two different
+  // controls seeking to two different places, which only their accessible names
+  // can say — so the moment stays in the name even though the row drops it.
+  it("gives two moments of one video the same numeral and their own seeks", () => {
+    const onOpen = vi.fn();
+    render(
+      <Panel
+        state={state({ text: "Early on[1], and later[4]." })}
+        onOpen={onOpen}
+      />,
+    );
+    const marks = document.querySelectorAll(".answer-body .cite");
+    expect(marks).toHaveLength(2);
+    expect(marks[0]).toHaveTextContent("1");
+    expect(marks[1]).toHaveTextContent("1");
+    expect(marks[1]).toHaveAccessibleName(
+      "Source 1: Why Athletes Cramp at 19:00",
+    );
+
+    fireEvent.click(marks[1]);
+    expect(onOpen).toHaveBeenCalledWith("v1", 1140);
   });
 
   // The channel name navigates, and it is a SIBLING of the moment button rather
@@ -231,10 +270,20 @@ describe("AnswerPanel", () => {
     expect(screen.queryByText("Sodium and Sport")).not.toBeInTheDocument();
   });
 
-  it("shows a summary source without a timestamp", () => {
-    render(<Panel state={state({ text: "x[2]" })} onOpen={vi.fn()} />);
+  // No row carries a timestamp — not the transcript passages, and not the em
+  // dash the summary row used to stand in with. A row that can cover several
+  // moments has no one moment to print, and one printed beside the title reads
+  // like the only one.
+  it("shows no timestamp on any source row", () => {
+    render(
+      <Panel
+        state={state({ text: "One[1], two[2], later[4]." })}
+        onOpen={vi.fn()}
+      />,
+    );
     const list = document.querySelector(".answer-sources") as HTMLElement;
-    expect(within(list).getByText("—")).toBeInTheDocument();
+    expect(list.querySelector(".ts")).toBeNull();
+    expect(list.textContent).not.toMatch(/\d+:\d\d|—/);
   });
 
   // Nothing was cited, so there is nothing below either — say why rather than
