@@ -5935,10 +5935,61 @@ details.tomb-sect[open] > summary svg {
   gap: 40px;
   align-items: start;
 }
+/* Single column: the aside stops being an aside, and in source order the whole
+   primary column comes first — which left the Summary below the chapters, the
+   transcript and even the footer, a long way from the video it describes. The
+   player page read the same way at its own collapse (see .playgrid), and this
+   is the same remedy: dissolving .sharepage-primary's box makes its children
+   items of this container, so `order` can lift the aside up behind the title.
+   The markup is untouched. */
 @media (max-width: 860px) {
   .sharepage-main {
-    grid-template-columns: 1fr;
-    gap: 28px;
+    display: flex;
+    flex-direction: column;
+    /* This column's seams are its children's own margin-top
+       (.sharepage-meta, .sharepage-chapters, .sharepage-foot), which a gap
+       would stack on top of rather than replace. The aside carries the 28 it
+       used to take from the grid gap as a margin of its own. */
+    gap: 0;
+    /* The grid rule above sets align-items: start, which in a column flexbox
+       means the cross axis — it would shrink every panel to fit its text. */
+    align-items: stretch;
+  }
+  .sharepage-main > .sharepage-primary {
+    display: contents;
+  }
+  .sharepage-main .stage-wrap {
+    order: 1;
+  }
+  .sharepage-main .sharepage-meta {
+    order: 2;
+  }
+  .sharepage-main .sharepage-side {
+    order: 3;
+    margin-top: 28px;
+  }
+  /* A video with neither a summary nor highlights renders the aside with
+     nothing in it. Last on the page that was invisible; between the title and
+     the chapters its margin would read as a gap with no cause. */
+  .sharepage-main .sharepage-side:empty {
+    display: none;
+  }
+  .sharepage-main .sharepage-chapters {
+    order: 4;
+  }
+  .sharepage-main .sharepage-transcript {
+    order: 5;
+  }
+  .sharepage-main .sharepage-foot {
+    order: 6;
+  }
+  /* .sharepage-primary carried min-width: 0 to stop a long unbroken transcript
+     line widening the column; with its box gone, the panels it held carry it. */
+  .sharepage-main .stage-wrap,
+  .sharepage-main .sharepage-meta,
+  .sharepage-main .sharepage-chapters,
+  .sharepage-main .sharepage-transcript {
+    min-width: 0;
   }
 }
 .sharepage-primary {
