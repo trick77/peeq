@@ -28,6 +28,7 @@ import { Inbox } from "./views/Inbox";
 import { UpNext } from "./views/UpNext";
 import { History } from "./views/History";
 import { Search } from "./views/Search";
+import { useSearchState, type SearchState } from "./searchState";
 import { Share } from "./views/Share";
 import { useRoute } from "./route";
 import { Button } from "./ui";
@@ -110,28 +111,40 @@ export function App() {
   // Which video "Now playing" means: the one in the URL, else the persisted
   // pointer. This is the whole read side of the feature.
   const nowPlayingId = selectedVideoId ?? persistedVideoId;
-  // The video opened from the Inbox to read its summary, if that is the page
-  // currently showing. An inbox video has no media yet, so /video/<id> renders
-  // what peeq read of it rather than a player — deliberately the same URL the
-  // Library opens, so that nothing changes when the file later arrives
-  // (Inbox.tsx). That sharing is what this exists to disambiguate: the route
-  // alone cannot say whether /video/<id> is a video playing or a summary being
-  // read, and the two want different things from the rail and from "Now
-  // playing".
+  // The video opened to READ rather than to watch, and where it was opened
+  // from. A video with no media yet renders /video/<id> as what peeq read of it
+  // rather than as a player — deliberately the same URL the Library opens, so
+  // that nothing changes when the file later arrives (Inbox.tsx). That sharing
+  // is what this exists to disambiguate: the route alone cannot say whether
+  // /video/<id> is a video playing or a summary being read, and the two want
+  // different things from the rail and from "Now playing".
   //
-  // Held as the video's id rather than a bare "came from the Inbox" flag, so it
-  // is a claim about one specific page instead of a mode the app is left in.
-  // That makes it self-expiring: navigating to another video simply stops
-  // matching, and walking back to the summary with the browser's back button
-  // starts matching again, with no clearing logic to keep in step.
-  const [inboxSummaryId, setInboxSummaryId] = useState<string | null>(null);
-  const readingInboxSummary =
-    view === "player" && !!route.videoId && route.videoId === inboxSummaryId;
+  // Held as the video's id rather than a bare flag, so it is a claim about one
+  // specific page instead of a mode the app is left in. That makes it
+  // self-expiring: navigating to another video simply stops matching, and
+  // walking back to the summary with the browser's back button starts matching
+  // again, with no clearing logic to keep in step.
+  //
+  // `from` is the origin, because such a page is now reachable from two places
+  // and they owe the reader different things. From the Inbox it is one of a
+  // stack to work through: the back link returns to the grid and a stepper walks
+  // to the next one. From Search it is a single result: there is no inbox
+  // position to step through, and the way back is the results — which are still
+  // there, because the search survives the trip (searchState.ts).
+  const [summaryOrigin, setSummaryOrigin] = useState<{
+    id: string;
+    from: "inbox" | "search";
+  } | null>(null);
+  const readingSummaryFrom =
+    view === "player" && !!route.videoId && route.videoId === summaryOrigin?.id
+      ? summaryOrigin.from
+      : null;
+  const readingSummary = readingSummaryFrom !== null;
   // playerPageVideoId — the video the player PAGE is showing right now, or
-  // null when the page on screen is not one. A summary read from the Inbox is
-  // not one: it shares the route but has no file to play.
+  // null when the page on screen is not one. A summary being read is not one:
+  // it shares the route but has no file to play.
   const playerPageVideoId =
-    view === "player" && !readingInboxSummary ? nowPlayingId : null;
+    view === "player" && !readingSummary ? nowPlayingId : null;
   // playbackVideoId — the video PLAYBACK owns, which outlives the page that
   // started it. This split is the whole feature: the <video> element used to
   // die with the player view, so opening the Inbox to deal with one new upload
@@ -161,12 +174,17 @@ export function App() {
   useEffect(() => {
     if (!playingId) setNowPlaying(null);
   }, [playingId]);
-  // A summary page whose download finished under it is no longer a summary.
-  // Dropping the marker promotes the page to the player that owns playback,
-  // which is what keeps a second <video> from being rendered into the shared
-  // host. Stable, because Player uses it as an effect dependency; setting the
-  // same null twice is a no-op React bails out of.
-  const clearSummaryMarker = useCallback(() => setInboxSummaryId(null), []);
+  // The origin is recorded before anyone knows whether the video has a file.
+  // Player reports the answer, and a video with media is one being watched — so
+  // the marker goes, the rail returns to "Now playing", and setView's
+  // short-circuit starts treating this page as what it is.
+  //
+  // It is also what keeps two Players from rendering a <video> into the one
+  // shared host: dropping the marker promotes the page to the Player that owns
+  // playback, and the other one stops being rendered at all.
+  function handleMediaKnown(id: string, hasMedia: boolean) {
+    if (hasMedia && summaryOrigin?.id === id) setSummaryOrigin(null);
+  }
   // setView keeps every existing call site (the rail, the banner's "fix
   // cookie", ViewSwitch's back/deleted handlers) unchanged — it just pushes a
   // new URL. navigate is stable, so this is too.
@@ -189,20 +207,24 @@ export function App() {
   // "Of its own to show" is narrower than "route.videoId is set", and the
   // difference is a bug this once had. navigate merges onto the current route
   // (route.ts), so videoId survives leaving the Player — that is what lets "Now
-  // playing" return to your video after a detour through Channels. But once an
-  // inbox summary could occupy /video/<id>, that memory could hold a video with
+  // playing" return to your video after a detour through Channels. But once a
+  // summary page could occupy /video/<id>, that memory could hold a video with
   // no file, and skipping the re-read on it made a fileless video shadow the
   // real pointer for the rest of the session: read one summary, go anywhere,
   // and "Now playing" reopened the summary rather than the video you were
   // actually watching. The pointer is already guarded — the backend only ever
   // points at a downloaded video (playback.Store) — so the fix is to consult it
   // rather than the memory whenever the memory is not a video being watched.
+  //
+  // "A summary being read" means from EITHER origin. Testing only the inbox one
+  // would let a summary opened from Search shadow the pointer in exactly the way
+  // described above.
   const setView = useCallback(
     (v: ViewId) => {
       // The URL already shows a video being watched: this click is a no-op, and
       // must stay one. Re-reading here would let a pointer another device moved
       // navigate you out of what you are watching.
-      const watchingAVideo = !!route.videoId && !readingInboxSummary;
+      const watchingAVideo = !!route.videoId && !readingSummary;
       if (v !== "player" || (view === "player" && watchingAVideo)) {
         navigate({ view: v });
         return;
@@ -212,12 +234,12 @@ export function App() {
           const fresh = p.video_id || null;
           setPersistedVideoId(fresh);
           // The pointer only ever names a downloaded video (playback.Store), so
-          // a pointer naming the video remembered as an inbox summary is that
-          // video after its file arrived — it is being watched now, not read.
-          // Dropping the marker keeps the rail off Inbox on the page this click
-          // opens, and keeps the next click on this item short-circuiting the
-          // way it does for any other video being watched.
-          if (fresh && fresh === inboxSummaryId) setInboxSummaryId(null);
+          // a pointer naming the video remembered as a summary being read is
+          // that video after its file arrived — it is being watched now, not
+          // read. Dropping the marker keeps the rail off Inbox (or Search) on
+          // the page this click opens, and keeps the next click on this item
+          // short-circuiting the way it does for any other video being watched.
+          if (fresh && fresh === summaryOrigin?.id) setSummaryOrigin(null);
           navigate({ view: "player", videoId: fresh });
         })
         // A failed read must be no worse than not asking, and off the Player
@@ -227,15 +249,15 @@ export function App() {
         // Player, a click here returned to it without asking anything. The
         // bootstrap copy can easily be null on a tab that cold-loaded "/" —
         // dropping to "Nothing playing" because one GET failed would lose the
-        // video you were watching a moment ago. An inbox summary sitting in
-        // that memory is excluded by id, the same thing readingInboxSummary
-        // checks and the reason this can't just reuse it (that flag is false
-        // off the Player, where this runs).
+        // video you were watching a moment ago. A summary page sitting in that
+        // memory is excluded by id, the same thing readingSummary checks and the
+        // reason this can't just reuse it (that flag is false off the Player,
+        // where this runs).
         .catch(() =>
           navigate({
             view: "player",
             videoId:
-              (route.videoId !== inboxSummaryId ? route.videoId : null) ??
+              (route.videoId !== summaryOrigin?.id ? route.videoId : null) ??
               persistedVideoId,
           }),
         );
@@ -244,8 +266,8 @@ export function App() {
       navigate,
       view,
       route.videoId,
-      readingInboxSummary,
-      inboxSummaryId,
+      readingSummary,
+      summaryOrigin,
       persistedVideoId,
     ],
   );
@@ -308,6 +330,11 @@ export function App() {
   const [historySearch, setHistorySearch] = useState("");
   const [upNextSearch, setUpNextSearch] = useState("");
   const [inboxSearch, setInboxSearch] = useState("");
+  // The global Search view is lifted for the same reason, and then some: it is
+  // not one string but a query, its results, and (on Ask) a streamed answer that
+  // cost an embedding, a keyword ladder and a model call. Opening two of the
+  // videos it found used to buy all of that twice. See searchState.ts.
+  const search = useSearchState();
   // The rail's width, remembered across reloads. Two flags rather than one:
   // sidebarCollapsed is what the user chose on a desktop and the only thing
   // written to storage, railCollapsed is what the shell actually renders. On a
@@ -684,28 +711,46 @@ export function App() {
 
   function openVideo(id: string) {
     setPendingSeek(undefined);
-    setInboxSummaryId(null);
+    setSummaryOrigin(null);
     navigate({ view: "player", videoId: id });
   }
 
   // openInboxSummary — the Inbox's onOpen. Same destination as openVideo, and
   // deliberately so: an inbox video's page is the video's page, it just has no
   // file to play yet. The one difference is that this records which video it
-  // was, so the shell can tell a summary being read from a video being watched
-  // (see inboxSummaryId).
+  // was and where from, so the shell can tell a summary being read from a video
+  // being watched (see summaryOrigin).
   function openInboxSummary(id: string) {
     setPendingSeek(undefined);
-    setInboxSummaryId(id);
+    setSummaryOrigin({ id, from: "inbox" });
     navigate({ view: "player", videoId: id });
   }
 
-  // openVideoAt — Search's onOpen: jumps into the Player at a specific
-  // moment (a matched transcript/summary chunk's start_seconds). The seek
-  // target stays in App state, not the URL — it is transient sub-page state,
-  // out of the deep-link scope.
+  // openVideoFromSearch — Search's plain open: the card's title, its thumbnail,
+  // and a summary match, all of which mean "this video" rather than "this
+  // moment in it". No seek at all, which is NOT the same as a seek to 0: Player
+  // applies any seekTo that is not undefined, so a zero would rewind a
+  // half-watched video and then have the next resume flush store that zero.
+  //
+  // The origin is recorded OPTIMISTICALLY — at this point nobody knows whether
+  // this video has a file. A search result frequently does not (peeq indexes
+  // what it read as well as what it downloaded), and that page's back link and
+  // stepper are the whole reason the origin exists. Player clears it the moment
+  // it learns there IS media: what it opened is then a video being watched, not
+  // a summary being read.
+  function openVideoFromSearch(id: string) {
+    setPendingSeek(undefined);
+    setSummaryOrigin({ id, from: "search" });
+    navigate({ view: "player", videoId: id });
+  }
+
+  // openVideoAt — Search's moment open: jumps into the Player at a matched
+  // transcript or chapter chunk's start_seconds. The seek target stays in App
+  // state, not the URL — it is transient sub-page state, out of the deep-link
+  // scope.
   function openVideoAt(id: string, startSeconds: number) {
     setPendingSeek(startSeconds);
-    setInboxSummaryId(null);
+    setSummaryOrigin({ id, from: "search" });
     navigate({ view: "player", videoId: id });
   }
 
@@ -736,18 +781,17 @@ export function App() {
   // there is nothing to go and ask the server about.
   function openPlayingVideo() {
     setPendingSeek(undefined);
-    setInboxSummaryId(null);
+    setSummaryOrigin(null);
     navigate({ view: "player", videoId: playbackVideoId });
   }
 
   // The rail and the phone's tab bar are the same navigation in two shapes, so
   // they are handed the same three answers rather than each working them out.
   //
-  // Reading an inbox video's summary keeps the nav on Inbox. The page is
-  // reached from there and nowhere else, so lighting "Now playing" for it told
-  // you both where you weren't and something untrue — nothing is playing, there
-  // is no file yet.
-  const navActive = readingInboxSummary ? "inbox" : view;
+  // Reading a video's summary keeps the nav on the page it was reached from.
+  // Lighting "Now playing" for it says both where you aren't and something
+  // untrue — nothing is playing, there is no file yet.
+  const navActive = readingSummaryFrom ?? view;
   const navUpNextCount =
     jobsLoaded && summariesLoaded
       ? activeDownloads + summaries.length
@@ -825,9 +869,11 @@ export function App() {
                 }}
                 onOpenChannel={openChannel}
                 onQueued={refreshQueue}
-                onBackToInbox={() => setView("inbox")}
-                inboxOrder={inboxOrder}
-                onOpenInboxVideo={openInboxSummary}
+                // No summaryOrigin and no back link: this Player is only ever
+                // the video being watched. A page being READ is the other
+                // branch below, which is exactly why the two are separate —
+                // and it is what keeps a second <video> out of the shared host.
+                onMediaKnown={handleMediaKnown}
               />
             </div>
           ) : null}
@@ -843,10 +889,18 @@ export function App() {
               pendingSeek={pendingSeek}
               onOpenVideo={openVideo}
               onOpenInboxSummary={openInboxSummary}
-              onSummaryPlayable={clearSummaryMarker}
               onOpenVideoAt={openVideoAt}
+              onOpenVideoFromSearch={openVideoFromSearch}
               onOpenChannel={openChannel}
               onSeekConsumed={() => setPendingSeek(undefined)}
+              search={search}
+              summaryOrigin={readingSummaryFrom}
+              // The origin is recorded before anyone knows whether the video has a
+              // file. Player reports the answer, and a video with media is one
+              // being watched — so the marker goes, the rail returns to "Now
+              // playing", and setView's short-circuit starts treating this page as
+              // what it is.
+              onMediaKnown={handleMediaKnown}
               setView={setView}
               setPendingCount={setPendingCount}
               onQueued={refreshQueue}
@@ -966,10 +1020,13 @@ function ViewSwitch({
   pendingSeek,
   onOpenVideo,
   onOpenInboxSummary,
-  onSummaryPlayable,
   onOpenVideoAt,
+  onOpenVideoFromSearch,
   onOpenChannel,
   onSeekConsumed,
+  search,
+  summaryOrigin,
+  onMediaKnown,
   setView,
   setPendingCount,
   onQueued,
@@ -1000,10 +1057,18 @@ function ViewSwitch({
   pendingSeek: number | undefined;
   onOpenVideo: (id: string) => void;
   onOpenInboxSummary: (id: string) => void;
-  onSummaryPlayable: () => void;
   onOpenVideoAt: (id: string, startSeconds: number) => void;
+  onOpenVideoFromSearch: (id: string) => void;
   onOpenChannel: (id: string) => void;
   onSeekConsumed: () => void;
+  // The Search view's whole engine, held above it so a search survives being
+  // left for a video and comes back intact (searchState.ts).
+  search: SearchState;
+  // Where the summary page currently showing was opened from, or null when the
+  // page showing is not one. It decides the back link and whether the inbox
+  // stepper appears at all.
+  summaryOrigin: "inbox" | "search" | null;
+  onMediaKnown: (id: string, hasMedia: boolean) => void;
   setView: (v: ViewId) => void;
   // undefined = the count is not known (a failed inbox fetch). The rail draws
   // no pill for it, which is deliberately not the same claim as "empty".
@@ -1062,24 +1127,39 @@ function ViewSwitch({
           onDeleted={() => setView("library")}
           onOpenChannel={onOpenChannel}
           onQueued={onQueued}
-          onBackToInbox={() => setView("inbox")}
-          inboxOrder={inboxOrder}
-          // The summary page's Prev/Next stepper, and the hop a decision makes
-          // to the item after it. Both stay inside the Inbox, so they open the
-          // next video the same way the grid did — openVideo would clear
-          // inboxSummaryId and leave the stepped-to video reading as one being
-          // watched: the rail would announce "Now playing" over a file that
-          // does not exist yet, and "Now playing" would be a dead click.
+          onMediaKnown={onMediaKnown}
+          // Where the summary page goes back to, and what it calls that place.
+          // null when this page was not opened from anywhere that offers a way
+          // back — a video reached from the Library or from a cold link then
+          // gets no back link at all, rather than the "Back to inbox" it used to
+          // claim regardless of how it was reached.
+          summaryOrigin={summaryOrigin}
+          onBackFromSummary={
+            summaryOrigin ? () => setView(summaryOrigin) : undefined
+          }
+          // The Prev/Next stepper walks the Inbox, so it is passed only when
+          // that is where this page came from. A search result that happens to
+          // also sit in the inbox would otherwise show "3 of 40" and offer to
+          // step through a list the reader never opened.
+          inboxOrder={summaryOrigin === "inbox" ? inboxOrder : undefined}
+          // The stepper, and the hop a decision makes to the item after it. Both
+          // stay inside the Inbox, so they open the next video the same way the
+          // grid did — openVideo would clear the origin and leave the stepped-to
+          // video reading as one being watched: the rail would announce "Now
+          // playing" over a file that does not exist yet, and "Now playing"
+          // would be a dead click.
           onOpenInboxVideo={onOpenInboxSummary}
-          // Reached only for a video with no file — a summary being read, or
-          // "Nothing playing". The moment its download lands it stops being
-          // either, and this hands it over to the Player that owns playback,
-          // which is also the only one allowed to render the shared <video>.
-          onHasMedia={onSummaryPlayable}
         />
       );
     case "search":
-      return <Search onOpen={onOpenVideoAt} />;
+      return (
+        <Search
+          search={search}
+          onOpen={onOpenVideoAt}
+          onOpenVideo={onOpenVideoFromSearch}
+          onOpenChannel={onOpenChannel}
+        />
+      );
     case "add":
       // Stay on the Add page after queuing (per the mockup — the preview
       // card confirms the queue, it doesn't jump into Player before the

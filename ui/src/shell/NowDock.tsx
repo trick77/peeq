@@ -243,7 +243,7 @@ export function NowDock({
             onClick={onStop}
             aria-label="Stop and close"
           >
-            <Icon name="close" size="18px" />
+            <Icon name="x" size="18px" />
           </button>
         </div>
       </div>

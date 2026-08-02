@@ -30,7 +30,6 @@ import {
   Pause,
   RotateCcw,
   RotateCw,
-  X,
   BadgeCheck,
   RefreshCw,
   Copy,
@@ -39,6 +38,7 @@ import {
   Ellipsis,
   PanelLeft,
   Share2,
+  X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -100,7 +100,6 @@ const COMPONENTS = {
   // "next item", and these move within one video.
   rotateCcw: RotateCcw,
   rotateCw: RotateCw,
-  close: X,
   verified: BadgeCheck, // YouTube's channel checkmark, not a peeq state
   refresh: RefreshCw,
   copy: Copy,
@@ -111,6 +110,7 @@ const COMPONENTS = {
   // between two layouts, and its aria-label already says which way it goes.
   panelLeft: PanelLeft, // rail collapse/expand toggle
   more: Ellipsis, // the phone tab bar's fifth tab, holding what does not fit
+  x: X, // clear a search box; stop and close the now-playing dock
   spinner: LoaderCircle, // spun by .ui-spin — every async wait spins
 } satisfies Record<string, LucideIcon>;
 

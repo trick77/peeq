@@ -2,12 +2,14 @@ import { formatAgo } from "../../format";
 import { ShareChip } from "../../components/ShareControl";
 import type { ShareStatus } from "../../api/share";
 import type { Video } from "../../api/types";
+import { ChannelLink } from "../../components/ChannelLink";
 
 // MetaHeader is the byline, title and share chip above the action row.
 //
 // Presentational, with one exception that is not: onOpenChannel is optional,
-// and when it is absent the channel renders as plain text rather than a link.
-// The Player is reachable from places that have nowhere to navigate to.
+// and it is passed straight through to ChannelLink, which renders plain text
+// when it is absent. The Player is reachable from places that have nowhere to
+// navigate to.
 export function MetaHeader({
   video,
   shareStatus,
@@ -29,19 +31,11 @@ export function MetaHeader({
           some live streams and premieres; "added" is conditional because
           a row can be listed without ever having finished downloading. */}
       <div className="by">
-        {onOpenChannel && video.channel_id ? (
-          <button
-            type="button"
-            className="chan-link"
-            onClick={() => onOpenChannel(video.channel_id)}
-          >
-            {video.channel_name || video.channel_id}
-          </button>
-        ) : (
-          <span className="chan-name">
-            {video.channel_name || video.channel_id}
-          </span>
-        )}
+        <ChannelLink
+          channelId={video.channel_id}
+          name={video.channel_name}
+          onOpenChannel={onOpenChannel}
+        />
         {video.published_at ? (
           <>
             <span className="dot">·</span>
