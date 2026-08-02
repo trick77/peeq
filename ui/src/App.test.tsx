@@ -344,6 +344,80 @@ describe("App deep links", () => {
     expect(window.location.pathname).toBe("/video/v1");
   });
 
+  // The now-playing dock's whole lifecycle, at the level it actually lives at.
+  // Each of these was a bug report: the dock followed you out of a page you
+  // never played, and it followed you out of a video that had finished.
+  describe("now-playing dock", () => {
+    const dock = () => document.querySelector(".nowdock");
+    const leaveToLibrary = async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Library" }));
+      await screen.findByPlaceholderText("Search titles");
+    };
+
+    it("stays away when the page was opened but never played", async () => {
+      window.history.replaceState(null, "", "/video/v1");
+      render(<App />);
+      await waitFor(() =>
+        expect(document.querySelector("video")).not.toBeNull(),
+      );
+      await leaveToLibrary();
+      expect(dock()).toBeNull();
+    });
+
+    it("appears once the video has actually played", async () => {
+      window.history.replaceState(null, "", "/video/v1");
+      render(<App />);
+      await waitFor(() =>
+        expect(document.querySelector("video")).not.toBeNull(),
+      );
+      fireEvent.play(document.querySelector("video") as HTMLVideoElement);
+      await leaveToLibrary();
+      expect(dock()).not.toBeNull();
+    });
+
+    // Pausing is not finishing: a paused video is still the one you are
+    // part-way through, which is exactly what the dock is for.
+    it("stays through a pause", async () => {
+      window.history.replaceState(null, "", "/video/v1");
+      render(<App />);
+      await waitFor(() =>
+        expect(document.querySelector("video")).not.toBeNull(),
+      );
+      const el = document.querySelector("video") as HTMLVideoElement;
+      fireEvent.play(el);
+      fireEvent.pause(el);
+      await leaveToLibrary();
+      expect(dock()).not.toBeNull();
+    });
+
+    it("lets go when the video runs out", async () => {
+      window.history.replaceState(null, "", "/video/v1");
+      render(<App />);
+      await waitFor(() =>
+        expect(document.querySelector("video")).not.toBeNull(),
+      );
+      const el = document.querySelector("video") as HTMLVideoElement;
+      fireEvent.play(el);
+      fireEvent.ended(el);
+      await leaveToLibrary();
+      expect(dock()).toBeNull();
+    });
+
+    it("takes the video back on a replay", async () => {
+      window.history.replaceState(null, "", "/video/v1");
+      render(<App />);
+      await waitFor(() =>
+        expect(document.querySelector("video")).not.toBeNull(),
+      );
+      const el = document.querySelector("video") as HTMLVideoElement;
+      fireEvent.play(el);
+      fireEvent.ended(el);
+      fireEvent.play(el);
+      await leaveToLibrary();
+      expect(dock()).not.toBeNull();
+    });
+  });
+
   it("a cold / lands on the Library", async () => {
     render(<App />);
     await screen.findByPlaceholderText("Search titles");
