@@ -3316,10 +3316,19 @@ button.sleeppick.armed {
     grid-template-columns: 1fr;
   }
 }
+/* The row sets the type it actually contains rather than inheriting the body's.
+   Its title sits inside a wrapper span that carries no font of its own, so at
+   the body's 15px/1.5 that span struck a 22.5px line box around a title whose
+   own box is 18.2px — four invisible pixels per row, on top of a stamp gutter
+   struck at the same 22.5px. The rows measured 34.75px to show 16px of ink and
+   the list read as a column of gaps. Declaring the title's own size and leading
+   here lands every strut on the same 18.2px, so the padding below is the only
+   thing left adding height. Both must come after `font: inherit` — the
+   shorthand resets line-height, so an earlier declaration would be wiped. */
 .toc .row {
   display: flex;
   gap: 12px;
-  padding: 5px 10px;
+  padding: 3px 10px;
   border-radius: 8px;
   border: 1px solid transparent;
   text-align: left;
@@ -3328,6 +3337,8 @@ button.sleeppick.armed {
   align-items: baseline;
   color: inherit;
   font: inherit;
+  font-size: 13.5px;
+  line-height: 1.35;
 }
 .toc .row:hover {
   background: var(--color-active);
