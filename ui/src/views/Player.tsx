@@ -1163,6 +1163,15 @@ export function Player({
     setRedownloading(true);
     try {
       await redownload(video.id);
+      // The video is 'queued' now. Nothing refetches this page's record — the
+      // SSE subscription above only carries summary events — so without this
+      // the stage would go on saying the file was deleted and go on offering
+      // the button, and a second press would hit the endpoint's 409 ("only
+      // failed or removed videos can be re-downloaded") and surface it as a
+      // page error. Functional form: `video` is a stale closure by now.
+      setVideo((prev) =>
+        prev && prev.id === video.id ? { ...prev, status: "queued" } : prev,
+      );
       onQueued?.();
     } catch (e) {
       setError((e as Error).message);
@@ -1264,8 +1273,9 @@ export function Player({
               opening — title, summary, chapters, transcript, every fact it ever
               had — but a <video> pointed at a file that was reclaimed offers
               transport controls that can only fail, so the stage falls back to
-              the poster and says what happened. Re-download lives in the ⋮ menu,
-              where it does for a failed download too. */}
+              the poster and says what happened — with Re-download underneath,
+              since that is where the explanation is. It stays in the ⋮ menu
+              too, where it also serves a failed download. */}
           {video.has_media ? (
             <>
               {/* The stage is an empty box; the <video> is portalled into
@@ -1321,9 +1331,27 @@ export function Player({
               <p>
                 <Icon name="trash" size="15px" />
                 {video.status === "tombstoned"
-                  ? "The file was deleted to save space. Re-download it to watch again."
+                  ? "The file was deleted to save space."
                   : "No file here yet."}
               </p>
+              {/* The sentence above used to end "Re-download it to watch
+                  again" — naming an action whose only control was three dots at
+                  the other end of the page. Telling someone what to do and
+                  hiding the way to do it is worse than not mentioning it, so the
+                  button stands where the explanation is. It stays in the ⋮ menu
+                  too, alongside the other rarely-used actions, and both go
+                  through the same guarded handler. */}
+              {video.status === "tombstoned" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  busy={redownloading}
+                  onClick={handleRedownload}
+                >
+                  <Icon name="refresh" size="15px" />
+                  Re-download
+                </Button>
+              ) : null}
             </div>
           )}
           <div

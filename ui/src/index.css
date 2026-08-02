@@ -2729,14 +2729,20 @@ button.sleeppick.armed {
    shift: the poster fills it, scrimmed so the sentence over it stays readable
    on a bright thumbnail, and a g1..g6 gradient class paints through when there
    is no local poster at all — exactly as the real stage does. */
+/* A column, so a reclaimed video's Re-download button sits under the sentence
+   explaining why it is offered rather than beside it. With only the sentence to
+   show — a video whose file has not arrived yet — this renders exactly as the
+   centred row it replaces. */
 .stage-gone {
   width: 100%;
   aspect-ratio: 16 / 9;
   background-position: center;
   background-size: cover;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   padding: 20px;
 }
 .stage-gone p {
