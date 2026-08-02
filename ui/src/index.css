@@ -1637,7 +1637,13 @@ body:has(.nowdock) {
      list keeps its default order. display:none rather than a JS breakpoint, so
      it leaves the layout, the tab order and the a11y tree together. The class
      is what is targeted, not `.listbar select` — the Archive tab has a Category
-     select in the same row that does narrow the list, and that one stays. */
+     select in the same row that does narrow the list, and that one stays.
+
+     620px is deliberately below every iPad width — 768 portrait on the small
+     one, 810/834 on the Air and Pro, 1024+ landscape — so a tablet keeps the
+     sort control at full width. Only a phone, or a split view already narrower
+     than a phone, loses it. Nothing keys this off `pointer: coarse`, which
+     would take the iPad with it. */
   .listbar .sortsel {
     display: none;
   }
