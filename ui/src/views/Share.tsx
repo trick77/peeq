@@ -18,6 +18,7 @@ import { TranscriptCard } from "../components/TranscriptCard";
 // Shared with the Player's Transcript card. ../vtt is deliberately free of any
 // api/ import, so nothing session-gated can reach this page through it.
 import { transcriptFilenameBase } from "../vtt";
+import { centerCuesRef } from "../captions";
 import { DOT } from "../sep";
 
 // Highlight timestamps use the same m:ss / h:mm:ss formatter as the rest of the
@@ -244,6 +245,7 @@ export function Share({ token }: { token: string | null }) {
             >
               {video.has_subtitles && subtitlesReadyFor === token && (
                 <track
+                  ref={centerCuesRef}
                   kind="subtitles"
                   srcLang={video.audio_language || "en"}
                   src={shareSubtitlesUrl(token)}
