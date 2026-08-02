@@ -1063,6 +1063,15 @@ export function Player({
     setRedownloading(true);
     try {
       await redownload(video.id);
+      // The video is 'queued' now. Nothing refetches this page's record — the
+      // SSE subscription above only carries summary events — so without this
+      // the stage would go on saying the file was deleted and go on offering
+      // the button, and a second press would hit the endpoint's 409 ("only
+      // failed or removed videos can be re-downloaded") and surface it as a
+      // page error. Functional form: `video` is a stale closure by now.
+      setVideo((prev) =>
+        prev && prev.id === video.id ? { ...prev, status: "queued" } : prev,
+      );
       onQueued?.();
     } catch (e) {
       setError((e as Error).message);
@@ -1164,8 +1173,9 @@ export function Player({
               opening — title, summary, chapters, transcript, every fact it ever
               had — but a <video> pointed at a file that was reclaimed offers
               transport controls that can only fail, so the stage falls back to
-              the poster and says what happened. Re-download lives in the ⋮ menu,
-              where it does for a failed download too. */}
+              the poster and says what happened — with Re-download underneath,
+              since that is where the explanation is. It stays in the ⋮ menu
+              too, where it also serves a failed download. */}
           {video.has_media ? (
             <video
               ref={videoRef}
@@ -1223,11 +1233,11 @@ export function Player({
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={redownloading}
+                  busy={redownloading}
                   onClick={handleRedownload}
                 >
-                  <Icon name="download" size="15px" />
-                  {redownloading ? "Queueing" : "Re-download"}
+                  <Icon name="refresh" size="15px" />
+                  Re-download
                 </Button>
               ) : null}
             </div>
