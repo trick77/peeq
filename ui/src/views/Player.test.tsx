@@ -189,21 +189,30 @@ describe("Player", () => {
       });
     }
 
-    it("shows the air date and the added date, both in full words", async () => {
+    it("shows the air date in full words", async () => {
       const text = await subLine({
         published_at: daysAgo(90),
         downloaded_at: daysAgo(3),
       });
       expect(text).toContain("aired 3 months ago");
-      expect(text).toContain("added 3 days ago");
     });
 
-    it("shows only the added date when the air date is unknown", async () => {
+    // The date a video entered the archive is a fact about the archive, not
+    // about the video, and it is gone from every eyebrow above a title.
+    it("never reports the date the video was added", async () => {
+      const text = await subLine({
+        published_at: daysAgo(90),
+        downloaded_at: daysAgo(3),
+      });
+      expect(text).not.toContain("added");
+    });
+
+    it("carries the channel alone when the air date is unknown", async () => {
       const text = await subLine({
         published_at: undefined,
         downloaded_at: daysAgo(3),
       });
-      expect(text).toContain("added 3 days ago");
+      expect(text).toContain("Veritasium");
       expect(text).not.toContain("aired");
     });
 
@@ -312,7 +321,7 @@ describe("Player", () => {
   });
 
   describe("action toolbar", () => {
-    it("groups the six controls into four segments of one shell", async () => {
+    it("groups the five controls into four segments of one shell", async () => {
       vi.mocked(getVideo).mockResolvedValue(
         makeVideo({ has_media: true, has_subtitles: true }),
       );
@@ -324,10 +333,9 @@ describe("Player", () => {
       const segs = bars[0].querySelectorAll(":scope > .playseg");
       expect(segs).toHaveLength(4);
 
-      // What this video IS: kept, watched, filed-as. The category picker moved
-      // here from the far end of the row, so assert its segment, not just that
-      // it rendered.
-      expect(segs[0].querySelector(".catpick")).not.toBeNull();
+      // Kept and watched, and no category pill: the shell holds verbs only.
+      expect(segs[0].querySelectorAll(".ui-btn")).toHaveLength(2);
+      expect(bars[0].querySelector(".catpick")).toBeNull();
       expect(
         segs[0].querySelector("button[aria-pressed][aria-label]"),
       ).toBeNull();
@@ -379,7 +387,7 @@ describe("Player", () => {
 
       const segs = document.querySelectorAll(".playbar > .playseg");
       expect(segs).toHaveLength(2);
-      expect(segs[0].querySelector(".catpick")).not.toBeNull();
+      expect(segs[0].querySelectorAll(".ui-btn")).toHaveLength(2);
       expect(segs[1].querySelector(".kebab")).not.toBeNull();
     });
   });
@@ -2155,6 +2163,27 @@ describe("Player", () => {
     expect(
       screen.getByRole("button", { name: /Copy text/i }),
     ).toBeInTheDocument();
+  });
+
+  // The pill states what the video IS; the toolbar below it is verbs only. It
+  // therefore sits on its own line between the title and the action row, and
+  // the DOM order is the requirement, not the class.
+  it("puts the category pill between the title and the action row", async () => {
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ category: "gaming" }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByRole("button", { name: /Category: Gaming/ });
+
+    const row = document.querySelector(".playmeta .playcat")!;
+    expect(row.querySelector(".catpick")).not.toBeNull();
+
+    const title = document.querySelector(".playmeta .playtitle")!;
+    const acts = document.querySelector(".playmeta .playacts")!;
+    expect(
+      title.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      row.compareDocumentPosition(acts) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("writes a picked category and shows it at once", async () => {

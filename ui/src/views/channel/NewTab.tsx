@@ -166,7 +166,7 @@ export function NewTab({
                   <div className="sub">
                     {formatDuration(item.duration_seconds)}
                     {item.published_at
-                      ? `${DOT}${formatAgo(item.published_at)}`
+                      ? `${DOT}aired ${formatAgo(item.published_at)}`
                       : ""}
                   </div>
                 </div>

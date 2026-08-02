@@ -715,11 +715,13 @@ export function Inbox({
                 </div>
               </div>
               {/* Kicker line above the title, exactly like the library card:
-                channel · relative publish date, same markup, same helper. The
-                scan's date is APPROXIMATE, so it can sit a day off the exact
-                one Library shows post-download — identical wording either way.
-                Omitted when unknown; only a real publish date belongs here,
-                never discovered_at. */}
+                channel · aired <date>, same markup, same helper, same word. A
+                bare date here said nothing about which date it was — aired,
+                found, added were all plausible readings of it. The scan's date
+                is APPROXIMATE, so it can sit a day off the exact one Library
+                shows post-download — identical wording either way. Omitted when
+                unknown; only a real publish date belongs here, never
+                discovered_at. */}
               <div className="by">
                 <ChannelLink
                   channelId={item.channel_id}
@@ -729,7 +731,7 @@ export function Inbox({
                 {item.published_at ? (
                   <>
                     <span className="dot">·</span>
-                    {formatAgo(item.published_at)}
+                    aired {formatAgo(item.published_at)}
                   </>
                 ) : null}
               </div>

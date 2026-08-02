@@ -58,32 +58,31 @@ describe("VideoCard channel/date eyebrow", () => {
     return document.querySelector(".by")?.textContent ?? "";
   }
 
-  // Added date leads because it is what the grid's default order ranks by; an
-  // eyebrow leading with the air date would make that order look broken.
-  it("leads with the added date and follows with the abbreviated air date", () => {
+  // Channel and air date, in the same full words the Player's eyebrow uses.
+  // The abbreviated form was only there so a third part would fit.
+  it("carries the channel and the air date in full words", () => {
     const text = eyebrow(
       baseVideo({ downloaded_at: daysAgo(3), published_at: daysAgo(90) }),
     );
     expect(text).toContain("Test Channel");
-    expect(text).toContain("added 3 days ago");
-    expect(text).toContain("aired 3 mo ago");
-    expect(text.indexOf("added")).toBeLessThan(text.indexOf("aired"));
+    expect(text).toContain("aired 3 months ago");
   });
 
-  // Both halves are independently optional: published_at is unknown for some
-  // live streams, and a row can be listed without ever having downloaded.
+  // The date a video entered the archive is a fact about the archive, not
+  // about the video, and it is gone from every eyebrow above a title.
+  it("never reports the date the video was added", () => {
+    const text = eyebrow(
+      baseVideo({ downloaded_at: daysAgo(3), published_at: daysAgo(90) }),
+    );
+    expect(text).not.toContain("added");
+  });
+
+  // published_at is unknown for some live streams, so the channel can end up
+  // alone on the line.
   it("drops the air date when the video has none", () => {
     const text = eyebrow(baseVideo({ downloaded_at: daysAgo(3) }));
-    expect(text).toContain("added 3 days ago");
+    expect(text).toContain("Test Channel");
     expect(text).not.toContain("aired");
-  });
-
-  it("drops the added date for a row that never downloaded", () => {
-    const text = eyebrow(
-      baseVideo({ status: "error", published_at: daysAgo(90) }),
-    );
-    expect(text).toContain("aired 3 mo ago");
-    expect(text).not.toContain("added");
   });
 });
 

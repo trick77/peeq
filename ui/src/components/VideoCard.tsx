@@ -6,7 +6,6 @@ import { ChannelLink } from "./ChannelLink";
 import type { Video } from "../api/types";
 import {
   daysSince,
-  formatAge,
   formatAgo,
   formatDuration,
   shortWatchLink,
@@ -254,21 +253,18 @@ export function VideoCard({
             onOpenChannel={onOpenChannel}
           />
         )}
-        {/* Added date first, because it is what the grid's default order ranks
-            by — an eyebrow leading with the air date would make that order
-            look broken. The two ages use different helpers on purpose: the
-            primary gets formatAgo's full words, the secondary formatAge's
-            abbreviations, so three parts still fit the narrowest column. */}
-        {video.downloaded_at ? (
-          <>
-            <span className="dot">·</span>
-            added {formatAgo(video.downloaded_at)}
-          </>
-        ) : null}
+        {/* When the video aired, and nothing else. The date it entered the
+            archive used to lead this line — the grid's default order ranks by
+            it — but it is not a fact anyone reads a card for, and it was the
+            reason the line needed two date helpers. With one date left it gets
+            formatAgo's full words: formatAge's abbreviations existed only so
+            three parts would fit the narrowest column. Same wording as the
+            Player's eyebrow and the Inbox card, so a video reads identically
+            wherever it appears. */}
         {video.published_at ? (
           <>
             <span className="dot">·</span>
-            aired {formatAge(video.published_at)}
+            aired {formatAgo(video.published_at)}
           </>
         ) : null}
       </div>
