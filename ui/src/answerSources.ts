@@ -93,10 +93,16 @@ export type RenderedPart =
 //     no way to avoid this. Both marks then drew "1", and "…stages ¹¹" reads as
 //     a typo, or as eleven.
 //
-// Adjacent means nothing between the marks but whitespace; that whitespace goes
-// with the dropped mark so no gap is left hanging. Separated by any prose, both
-// marks stay — a video cited at two different claims should carry its numeral at
-// each, and there the repetition is the point rather than a stutter.
+// Adjacent means nothing between the marks but blank space on ONE line; that
+// space goes with the dropped mark so no gap is left hanging. Separated by any
+// prose, both marks stay — a video cited at two different claims should carry
+// its numeral at each, and there the repetition is the point rather than a
+// stutter.
+//
+// A line break ends a run even though it is whitespace. "[1]\n\n[2]" is two
+// paragraphs, the second of which happens to open on its citation, and treating
+// it as a stutter would drop a claim's only mark AND swallow the break that
+// separated them into one paragraph.
 //
 // The dropped mark of a "[1][2]" run takes a seek with it, which is the cost
 // here: it was a button onto its own moment. That moment stays reachable on the
@@ -130,7 +136,7 @@ export function answerParts(
 
   for (const part of splitCitations(text, known)) {
     if (part.kind === "text") {
-      if (lastCite && !part.text.trim()) {
+      if (lastCite && !part.text.trim() && !part.text.includes("\n")) {
         held += part.text;
         continue;
       }

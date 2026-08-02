@@ -169,6 +169,27 @@ describe("answerParts", () => {
     ).toEqual([70, 640]);
   });
 
+  // A line break is whitespace, but it is not a stutter. Collapsing here would
+  // leave the second paragraph's only claim unsourced and join the two
+  // paragraphs into one on the way.
+  it("does not collapse across a line break", () => {
+    expect(shape("Hardest stages[1]\n\n[2] and more.", oneVideo)).toEqual([
+      "Hardest stages",
+      "[1]",
+      "\n\n",
+      "[1]",
+      " and more.",
+    ]);
+  });
+
+  // The same break with prose after it was never at risk — the prose ends the
+  // run on its own — but it is the shape a real answer takes, so it is pinned.
+  it("keeps both marks when a paragraph of prose separates them", () => {
+    expect(
+      shape("Hardest stages[1]\n\nThe hosts argued[2].", oneVideo),
+    ).toEqual(["Hardest stages", "[1]", "\n\nThe hosts argued", "[1]", "."]);
+  });
+
   // A hallucinated number is text the model produced, and stays that way — it
   // must not be swallowed as part of a run.
   it("leaves an unknown marker as literal text", () => {
