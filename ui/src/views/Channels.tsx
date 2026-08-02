@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
+import { PillStrip } from "../components/PillStrip";
 import {
   listChannels,
   subscribeChannel,
@@ -432,7 +433,7 @@ export function Channels({
           label="Search channels"
         />
         <select
-          className={`${controlClass} push-end`}
+          className={`${controlClass} sortsel push-end`}
           style={{ maxWidth: 190 }}
           value={sort}
           onChange={(e) => setSort(e.target.value as ChannelSort)}
@@ -445,18 +446,20 @@ export function Channels({
           ))}
         </select>
       </div>
-      <div className="chips">
-        {CHIPS.map((chip) => (
-          <button
-            key={chip.id}
-            type="button"
-            className={`chip${filter === chip.id ? " on" : ""}`}
-            onClick={() => setFilter(chip.id)}
-          >
-            {chip.label} <span className="n">{chipCount(chip.id)}</span>
-          </button>
-        ))}
-      </div>
+      <PillStrip lead>
+        <div className="chips">
+          {CHIPS.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              className={`chip${filter === chip.id ? " on" : ""}`}
+              onClick={() => setFilter(chip.id)}
+            >
+              {chip.label} <span className="n">{chipCount(chip.id)}</span>
+            </button>
+          ))}
+        </div>
+      </PillStrip>
       {error ? <div className="errline">{error}</div> : null}
       {notice ? <div className="hint">{notice}</div> : null}
       <ReviewBand

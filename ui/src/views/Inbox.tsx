@@ -541,7 +541,7 @@ export function Inbox({
               </Button>
             ) : null}
             <select
-              className={`${controlClass}${visible.length > 0 ? "" : " push-end"}`}
+              className={`${controlClass} sortsel${visible.length > 0 ? "" : " push-end"}`}
               style={{ maxWidth: 190 }}
               value={sort}
               onChange={(e) => setSort(e.target.value as VideoSort)}

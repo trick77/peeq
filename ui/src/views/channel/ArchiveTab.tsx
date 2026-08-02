@@ -143,7 +143,7 @@ export function ArchiveTab({
           ))}
         </select>
         <select
-          className={controlClass}
+          className={`${controlClass} sortsel`}
           style={{ maxWidth: 190 }}
           value={sort}
           onChange={(e) => setSort(e.target.value as VideoSort)}

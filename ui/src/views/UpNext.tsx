@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../ui";
+import { PillStrip } from "../components/PillStrip";
 import {
   listUpcoming,
   skipScheduledMeta,
@@ -491,18 +492,20 @@ export function UpNext({
           label="Search up next"
         />
       </div>
-      <div className="chips">
-        {FILTERS.map((f) => (
-          <button
-            key={f.id}
-            type="button"
-            className={`chip${filter === f.id ? " on" : ""}`}
-            onClick={() => setFilter(f.id)}
-          >
-            {f.label} <span className="n">{countFor(f.id)}</span>
-          </button>
-        ))}
-      </div>
+      <PillStrip lead>
+        <div className="chips">
+          {FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              className={`chip${filter === f.id ? " on" : ""}`}
+              onClick={() => setFilter(f.id)}
+            >
+              {f.label} <span className="n">{countFor(f.id)}</span>
+            </button>
+          ))}
+        </div>
+      </PillStrip>
     </>
   );
 

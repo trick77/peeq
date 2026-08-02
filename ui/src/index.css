@@ -1419,13 +1419,14 @@ body:has(.nowdock) {
   flex-wrap: wrap;
   margin: -10px 0 22px;
 }
-/* …but on the Inbox this row IS the page's first chip row — there are no status
-   chips above it, only the .listbar — and the pull was closing the gap under the
-   search box to 8px, where every other list sits 18px clear of its toolbar. The
-   modifier hands the row the spacing .chips has, so the Inbox's toolbar-to-chips
-   gap matches the Library's, the Channels list's and History's. Both the bare
-   row and the .pillstrip wrapper carry it, because inside a strip the wrapper
-   owns the outer margin and the row's own is zeroed. */
+/* …but a row that IS the page's first chip row — every .chips row, and on the
+   Inbox the channel row, which has no status chips above it, only the .listbar
+   — was having the pull close the gap under the search box to 8px, where every
+   other list sits 18px clear of its toolbar. The modifier hands the row the
+   spacing .chips has, so the Inbox's toolbar-to-chips gap matches the Library's,
+   the Channels list's and History's. Both the bare row and the .pillstrip
+   wrapper carry it, because inside a strip the wrapper owns the outer margin and
+   the row's own is zeroed. */
 .catchips.lead,
 .pillstrip.lead {
   margin-top: 0;
@@ -1462,11 +1463,12 @@ body:has(.nowdock) {
   opacity: 0.65;
 }
 
-/* PillStrip — keeps the category row on a single line and scrolls it sideways
-   instead of wrapping. The wrapper carries the row's old outer margin; the
-   inner .catchips switches to nowrap. A `<`/`>` chevron button (plus an edge
-   fade) shows on each side only while there is more to scroll that way — the
-   .l / .r classes are toggled by the component from scroll position. */
+/* PillStrip — keeps a pill row on a single line and scrolls it sideways instead
+   of wrapping. It wraps both kinds of row: the status .chips row and the
+   category/channel .catchips row. The wrapper carries the row's old outer
+   margin; the inner row switches to nowrap. A `<`/`>` chevron button (plus an
+   edge fade) shows on each side only while there is more to scroll that way —
+   the .l / .r classes are toggled by the component from scroll position. */
 .pillstrip {
   position: relative;
   margin: -10px 0 22px;
@@ -1478,15 +1480,18 @@ body:has(.nowdock) {
 .pillstrip-scroll::-webkit-scrollbar {
   display: none;
 }
-.pillstrip .catchips {
+.pillstrip .catchips,
+.pillstrip .chips {
   flex-wrap: nowrap;
   width: max-content;
   margin: 0;
 }
-.pillstrip.l .catchips {
+.pillstrip.l .catchips,
+.pillstrip.l .chips {
   padding-left: 44px;
 }
-.pillstrip.r .catchips {
+.pillstrip.r .catchips,
+.pillstrip.r .chips {
   padding-right: 44px;
 }
 .pillstrip.l::before,
@@ -1626,6 +1631,15 @@ body:has(.nowdock) {
   }
   .listbar .push-end {
     margin-left: 0;
+  }
+  /* A phone has no width to spare for a control that only reorders what is
+     already on screen: the sort dropdown goes, everywhere it appears, and each
+     list keeps its default order. display:none rather than a JS breakpoint, so
+     it leaves the layout, the tab order and the a11y tree together. The class
+     is what is targeted, not `.listbar select` — the Archive tab has a Category
+     select in the same row that does narrow the list, and that one stays. */
+  .listbar .sortsel {
+    display: none;
   }
 }
 

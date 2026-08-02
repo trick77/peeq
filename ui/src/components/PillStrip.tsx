@@ -13,8 +13,13 @@ import { Icon } from "../icons";
 // chrome at all. The scroll position drives the `l`/`r` classes the CSS uses
 // for the chevrons and the edge fades (see .pillstrip in index.css).
 //
-// `lead` is for a page where this row is the page's first chip row rather than
-// a refinement of a status row above it (the Inbox): it drops the negative top
+// It wraps both kinds of pill row: a page's status `.chips` row and the
+// category/channel `.catchips` row beneath it. Neither may wrap to a second
+// line on a phone — the wrap is what pushed the grid down half a screen.
+//
+// `lead` is for a row that is the page's FIRST chip row rather than a
+// refinement of a status row above it — every `.chips` row, plus the Inbox's
+// channel row, which has no status row above it. It drops the negative top
 // margin the wrapper otherwise uses to tuck under those status chips.
 export function PillStrip({
   children,
