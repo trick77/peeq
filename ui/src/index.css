@@ -4893,6 +4893,13 @@ details.tomb-sect[open] > summary svg {
   vertical-align: super;
   cursor: pointer;
 }
+/* Against a comma or a full stop the mark needs no gap of its own: the
+   punctuation already leaves one, and the two together read as a space the
+   sentence did not ask for. The pull is the mark's own left margin, so the
+   numeral sits against the stop rather than overlapping it. */
+.cite.tight {
+  margin-left: -1px;
+}
 .cite:hover {
   background: var(--color-accent-dim);
   color: var(--color-ink);
