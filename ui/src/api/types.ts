@@ -112,6 +112,13 @@ export type Video = {
   chapters: Chapter[];
   key_points: KeyPoint[];
   summary_status: SummaryStatus;
+  // indexed is whether Search can currently find this video. Separate from
+  // summary_status on purpose: the embedding step runs after the summary is
+  // written and marked done, so it can fail on its own — leaving a finished,
+  // readable summary on a video nothing can search for. Reporting that as
+  // summary_status="error" made the Player claim the summary had failed while
+  // rendering it.
+  indexed: boolean;
   audio_language: string;
   has_subtitles: boolean;
   // category mirrors the Task 7 classification field — always present,

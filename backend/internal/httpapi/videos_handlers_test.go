@@ -15,6 +15,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/media"
+	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
 )
@@ -1957,5 +1958,28 @@ func TestVideosCategory_writeFailure500(t *testing.T) {
 	rec := doReq(t, h, cookie, http.MethodPost, "/api/videos/v1/category", []byte(`{"category":"ai"}`))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// `indexed` is derived, not stored, and both halves of the test matter: a video
+// embedded against an older chunk recipe is not findable in any useful sense,
+// and embed_model is set once and never cleared, so it cannot answer alone.
+func TestVideoDTO_indexedNeedsBothAModelAndACurrentRecipe(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		video videos.Video
+		want  bool
+	}{
+		{"never embedded", videos.Video{}, false},
+		{"embedded, current recipe", videos.Video{EmbedModel: "e5", EmbedRev: rag.ChunkRecipeRev}, true},
+		{"embedded, stale recipe", videos.Video{EmbedModel: "e5", EmbedRev: rag.ChunkRecipeRev - 1}, false},
+		{"recipe current but never embedded", videos.Video{EmbedRev: rag.ChunkRecipeRev}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := tc.video
+			if got := toVideoDTO(&v).Indexed; got != tc.want {
+				t.Errorf("indexed = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

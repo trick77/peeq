@@ -6,11 +6,19 @@ import type { Job, SummaryJob } from "../api/types";
 
 vi.mock("../api", () => ({
   listUpcoming: vi.fn(),
+  listFailedSummaries: vi.fn(),
+  retryFailedSummaries: vi.fn(),
   skipScheduledScan: vi.fn(),
   skipScheduledMeta: vi.fn(),
 }));
 
-import { listUpcoming, skipScheduledMeta, skipScheduledScan } from "../api";
+import {
+  listFailedSummaries,
+  listUpcoming,
+  retryFailedSummaries,
+  skipScheduledMeta,
+  skipScheduledScan,
+} from "../api";
 
 function job(overrides: Partial<Job> = {}): Job {
   return {
@@ -46,6 +54,10 @@ describe("UpNext", () => {
   beforeEach(() => {
     vi.mocked(listUpcoming).mockReset();
     vi.mocked(listUpcoming).mockResolvedValue({ items: [], truncated: 0 });
+    vi.mocked(listFailedSummaries).mockReset();
+    vi.mocked(listFailedSummaries).mockResolvedValue([]);
+    vi.mocked(retryFailedSummaries).mockReset();
+    vi.mocked(retryFailedSummaries).mockResolvedValue({ requeued: 0 });
   });
 
   it("names what happens next when there is no work and no schedule", async () => {
@@ -668,6 +680,10 @@ describe("UpNext schedule rows", () => {
   beforeEach(() => {
     vi.mocked(listUpcoming).mockReset();
     vi.mocked(listUpcoming).mockResolvedValue({ items: [], truncated: 0 });
+    vi.mocked(listFailedSummaries).mockReset();
+    vi.mocked(listFailedSummaries).mockResolvedValue([]);
+    vi.mocked(retryFailedSummaries).mockReset();
+    vi.mocked(retryFailedSummaries).mockResolvedValue({ requeued: 0 });
   });
 
   // The row says what is about to happen, in the worker's own words, on a
@@ -945,6 +961,10 @@ describe("UpNext skip", () => {
   beforeEach(() => {
     vi.mocked(listUpcoming).mockReset();
     vi.mocked(listUpcoming).mockResolvedValue({ items: [], truncated: 0 });
+    vi.mocked(listFailedSummaries).mockReset();
+    vi.mocked(listFailedSummaries).mockResolvedValue([]);
+    vi.mocked(retryFailedSummaries).mockReset();
+    vi.mocked(retryFailedSummaries).mockResolvedValue({ requeued: 0 });
     vi.mocked(skipScheduledScan).mockReset();
     vi.mocked(skipScheduledMeta).mockReset();
   });
@@ -1123,5 +1143,69 @@ describe("UpNext skip", () => {
     await screen.findByText("Veritasium");
     const row = screen.getByText("Veritasium").closest(".ag-row");
     expect(row).toHaveClass("planned");
+  });
+
+  // The gave-up section is the only surface these jobs have anywhere: they are
+  // gone from the lanes, the boot sweep skips them on purpose, and one that
+  // failed after the summary step left its video reading "done" everywhere else.
+  describe("summaries that gave up", () => {
+    const failed = () =>
+      summary({ id: 9, video_id: "gone", state: "failed" }) as SummaryJob;
+
+    it("lists them under their own heading, apart from the queue", async () => {
+      vi.mocked(listFailedSummaries).mockResolvedValue([failed()]);
+      render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+
+      expect(await screen.findByText("Gave up")).toBeInTheDocument();
+    });
+
+    it("stays off the page when nothing has failed", async () => {
+      render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+
+      await screen.findByText(/subscribe to a channel/i);
+      expect(screen.queryByText("Gave up")).toBeNull();
+    });
+
+    // A summary row is a summary row: filtering to Downloads must take these
+    // with it, or the chip would claim to have narrowed the page and not have.
+    it("hides under the Downloads filter", async () => {
+      vi.mocked(listFailedSummaries).mockResolvedValue([failed()]);
+      render(
+        <UpNext
+          jobs={[job()]}
+          summaries={[]}
+          onCancel={noop}
+          onSearchChange={noop}
+        />,
+      );
+      await screen.findByText("Gave up");
+
+      await userEvent.click(screen.getByRole("button", { name: /Downloads/ }));
+
+      expect(screen.queryByText("Gave up")).toBeNull();
+    });
+
+    it("retries every one of them, then re-reads what is left", async () => {
+      vi.mocked(listFailedSummaries).mockResolvedValue([failed()]);
+      render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+      await screen.findByText("Gave up");
+      // The retry empties the section: the rows moved back to the queue.
+      vi.mocked(listFailedSummaries).mockResolvedValue([]);
+
+      await userEvent.click(screen.getByRole("button", { name: "Retry all" }));
+
+      await waitFor(() => expect(retryFailedSummaries).toHaveBeenCalled());
+      await waitFor(() => expect(screen.queryByText("Gave up")).toBeNull());
+    });
+
+    // A supplementary list that cannot load must not put an error where the
+    // page's real news goes.
+    it("says nothing when the list itself fails to load", async () => {
+      vi.mocked(listFailedSummaries).mockRejectedValue(new Error("boom"));
+      render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+
+      await screen.findByText(/subscribe to a channel/i);
+      expect(screen.queryByText("Gave up")).toBeNull();
+    });
   });
 });

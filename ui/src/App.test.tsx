@@ -83,6 +83,10 @@ vi.mock("./api", () => ({
   // rail click away, so the barrel needs them even in tests that never open
   // those pages.
   listUpcoming: vi.fn().mockResolvedValue({ items: [], truncated: 0 }),
+  // Up next fetches the gave-up list itself, for the same reason: it is not
+  // in-flight work, so App does not poll it.
+  listFailedSummaries: vi.fn().mockResolvedValue([]),
+  retryFailedSummaries: vi.fn().mockResolvedValue({ requeued: 0 }),
   // Up next's skip action on a scheduled row. App never calls these itself, but
   // UpNext resolves them at module scope, so the mock has to carry them.
   skipScheduledScan: vi.fn(),
@@ -115,6 +119,7 @@ const mockVideo = vi.hoisted<Video>(() => ({
   chapters: [],
   key_points: [],
   summary_status: "pending",
+  indexed: true,
   audio_language: "",
   has_subtitles: false,
   category: "uncategorized",

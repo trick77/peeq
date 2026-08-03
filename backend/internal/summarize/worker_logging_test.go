@@ -364,7 +364,7 @@ func TestWorkerLogsRetryAttemptWhenKeyPointsFail(t *testing.T) {
 	}
 
 	recs := buf.records(t)
-	rec := findRec(recs, "summarize worker: key-points step failed")
+	rec := findRec(recs, "summarize worker: keypoints step failed")
 	if rec == nil {
 		t.Fatal("no retry record")
 	}
@@ -401,7 +401,7 @@ func TestWorkerLogsExhaustedRetryAsFinal(t *testing.T) {
 		t.Fatal("expected the key-points failure to surface")
 	}
 	recs := buf.records(t)
-	rec := findRec(recs, "summarize worker: key-points step failed")
+	rec := findRec(recs, "summarize worker: keypoints step failed")
 	if rec["will_retry"] != false {
 		t.Errorf("retry.will_retry = %v, want false", rec["will_retry"])
 	}
@@ -414,7 +414,12 @@ func TestWorkerLogsExhaustedRetryAsFinal(t *testing.T) {
 	}
 }
 
-func TestWorkerLogsEmbedFailureAsErrorOutcome(t *testing.T) {
+// An embedding failure is named as such and stays retryable. It used to log
+// outcome=error — the same word a summary failure uses — because it went through
+// failJob, which also marked the video summary_status='error' with a finished
+// summary sitting on it. Both halves of that were wrong: what failed is the
+// index, and it has attempts left.
+func TestWorkerLogsEmbedFailureAsItsOwnRetryableOutcome(t *testing.T) {
 	h := newWorkerHarness(t)
 	seedVideo(t, h, "v4")
 	log, buf := captureLogger()
@@ -425,9 +430,20 @@ func TestWorkerLogsEmbedFailureAsErrorOutcome(t *testing.T) {
 	if _, err := w.processOne(context.Background()); err == nil {
 		t.Fatal("expected processOne to surface the embed failure")
 	}
-	fin := findRec(buf.records(t), "summarize worker: analysis finished")
-	if fin == nil || fin["outcome"] != "error" {
+	recs := buf.records(t)
+	fin := findRec(recs, "summarize worker: analysis finished")
+	if fin == nil || fin["outcome"] != "embedding_failed" {
 		t.Fatalf("finished record = %v", fin)
+	}
+	if fin["will_retry"] != true {
+		t.Errorf("finished.will_retry = %v, want true — two attempts remain", fin["will_retry"])
+	}
+	rec := findRec(recs, "summarize worker: embedding step failed")
+	if rec == nil {
+		t.Fatal("no embedding retry record")
+	}
+	if rec["attempt"] != "1/3" {
+		t.Errorf("retry.attempt = %v, want 1/3", rec["attempt"])
 	}
 }
 

@@ -344,7 +344,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		// Reading video.EmbedRev is safe here: the only writer that raises it
 		// mid-attempt is the embed below, and a second attempt that sees the
 		// raised value has genuinely already been indexed from this summary.
-		if video.EmbedModel == "" || video.EmbedRev < rag.ChunkRecipeRev {
+		if !video.Indexed() {
 			if eerr := w.embedAndStore(kctx, video.ID, parsed, summary, ytChapters); eerr != nil {
 				w.d.Logger.Warn("summarize worker: fallback embedding failed",
 					append(run.ident(), "err", eerr)...)
@@ -353,10 +353,10 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 					run.ident()...)
 			}
 		}
-		return true, w.requeueJob(job, video, run, err.Error())
+		return true, w.requeueJob(job, video, run, "keypoints", err.Error())
 	}
 	if err := w.d.Videos.SetKeyPoints(video.ID, encodeChapters(chapters), encodeKeyPoints(keyPoints)); err != nil {
-		return true, w.requeueJob(job, video, run, err.Error())
+		return true, w.requeueJob(job, video, run, "keypoints", err.Error())
 	}
 	done("chapters", len(chapters), "key_points", len(keyPoints))
 
@@ -385,7 +385,13 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	w.emit(video.ID, videos.SummaryDone, PhaseEmbedding)
 	ectx, edone := run.step("embedding")
 	if err := w.embedAndStore(ectx, video.ID, parsed, summary, chapters); err != nil {
-		return true, w.failJob(job, video, run, err.Error())
+		// requeueJob, not failJob: the summary is written, marked done and already
+		// rendering in the Player. Failing the job here used to set
+		// summary_status='error', so the Player said "Summarization failed" above
+		// the finished summary text — an endpoint outage made that the common case.
+		// What actually failed is the index, and the video reports that through
+		// `indexed` on its DTO instead.
+		return true, w.requeueJob(job, video, run, "embedding", err.Error())
 	}
 	edone("chapters", len(chapters))
 	w.emit(video.ID, videos.SummaryDone, "")
@@ -751,25 +757,44 @@ func (w *Worker) failJob(job *summaryjobs.Job, video *videos.Video, run *analysi
 }
 
 // requeueJob records a retryable failure and requeues the job WITHOUT touching
-// summary_status. It is used for the key-points step, which runs after the
-// summary is already marked done: a failure there must retry only that step and
-// must NOT regress a usable summary to "error". If retries run out the job is
-// marked failed but the video keeps its summary and search.
-func (w *Worker) requeueJob(job *summaryjobs.Job, video *videos.Video, run *analysisRun, msg string) error {
+// summary_status. It is used for the steps that run AFTER the summary is marked
+// done — key points and embedding — where a failure must retry only that step
+// and must NOT regress a usable summary to "error". If retries run out the job
+// is marked failed but the video keeps the summary it has.
+//
+// step names which one failed, in both the log and the Activity row. Passing it
+// in rather than hardcoding one is what lets embedding share this path: before,
+// embedding called failJob and so reported "Summarization failed" on a video
+// whose summary was finished and on screen.
+func (w *Worker) requeueJob(job *summaryjobs.Job, video *videos.Video, run *analysisRun, step, msg string) error {
 	// will_retry=false means Jobs.Fail is about to mark this failed for good
 	// rather than requeue it — same vocabulary as the finished line.
-	w.d.Logger.Warn("summarize worker: key-points step failed",
+	w.d.Logger.Warn("summarize worker: "+step+" step failed",
 		append(run.ident(), "attempt", attemptLabel(job),
 			"will_retry", job.Attempts < job.MaxAttempts,
 			"step_duration_ms", run.stepElapsedMs(), "err", msg)...)
-	run.finished("keypoints_failed")
-	// No Activity row even when this exhausts retries: a key-points failure keeps
-	// summary_status="done" and usable search, so it is not a summary failure the
-	// user needs to see in the feed (that is what failJob records).
-	if _, err := w.d.Jobs.Fail(job.ID, job.Attempts, msg); err != nil {
-		return fmt.Errorf("summarize job %d key-points failed (%s); also fail-record error: %w", job.ID, msg, err)
+	run.finished(step + "_failed")
+	terminal, ferr := w.d.Jobs.Fail(job.ID, job.Attempts, msg)
+	if ferr != nil {
+		return fmt.Errorf("summarize job %d %s failed (%s); also fail-record error: %w", job.ID, step, msg, ferr)
 	}
-	return fmt.Errorf("summarize job %d key-points failed: %s", job.ID, msg)
+	// One row, only once retries are genuinely exhausted — a row per retry would
+	// flood the feed, which is why the terminal flag exists.
+	//
+	// OutcomeWarn, not OutcomeFail: the summary is finished and readable, so this
+	// is not the "summary failed" event failJob records. But it does need to be
+	// SOMEWHERE. A job that dies here leaves summary_status="done", drops off the
+	// active queue, and is skipped by the boot sweep — so without this the video
+	// reads as complete forever while its chapters, highlights or search index are
+	// permanently missing, with no trace anywhere but the log.
+	if terminal {
+		w.recordActivity(activity.Event{
+			Kind: activity.KindSummary, Outcome: activity.OutcomeWarn,
+			SubjectID: video.ID, Subject: video.Title,
+			Summary: step + " failed", Detail: msg,
+		})
+	}
+	return fmt.Errorf("summarize job %d %s failed: %s", job.ID, step, msg)
 }
 
 // embedAndStore rebuilds the video's chunks from the finished analysis and
