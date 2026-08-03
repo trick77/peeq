@@ -99,8 +99,8 @@ describe("answerParts", () => {
     src(2, { video_id: "va", start_seconds: 640 }),
   ];
 
-  function shape(text: string, sources: AnswerSource[]) {
-    return answerParts(text, sources).map((p) =>
+  function shape(text: string, sources: AnswerSource[], streaming = false) {
+    return answerParts(text, sources, streaming).map((p) =>
       p.kind === "text" ? p.text : `[${p.source.display}]`,
     );
   }
@@ -108,9 +108,8 @@ describe("answerParts", () => {
   it("collapses two passages of one video cited back to back", () => {
     const got = answerParts("Hardest stages[1][2].", oneVideo);
     expect(shape("Hardest stages[1][2].", oneVideo)).toEqual([
-      "Hardest stages",
+      "Hardest stages.",
       "[1]",
-      ".",
     ]);
     // The mark that survives is the FIRST of the run, so it seeks where the
     // reader's eye was told to look.
@@ -123,20 +122,15 @@ describe("answerParts", () => {
   // goes with it rather than being left hanging before the full stop.
   it("collapses across whitespace without leaving a gap", () => {
     expect(shape("Hardest stages[1] [2].", oneVideo)).toEqual([
-      "Hardest stages",
+      "Hardest stages.",
       "[1]",
-      ".",
     ]);
   });
 
   // The model repeating one excerpt. Simpler than the two-passage case — both
   // marks were always the same passage — and it collapsed for the same reason.
   it("collapses a repeated citation", () => {
-    expect(shape("As noted[1][1].", [src(1)])).toEqual([
-      "As noted",
-      "[1]",
-      ".",
-    ]);
+    expect(shape("As noted[1][1].", [src(1)])).toEqual(["As noted.", "[1]"]);
   });
 
   // Two videos. The numerals differ, so there is nothing to stutter and both
@@ -146,7 +140,7 @@ describe("answerParts", () => {
       src(1, { video_id: "va" }),
       src(2, { video_id: "vb" }),
     ]);
-    expect(got).toEqual(["The riders", "[1]", "[2]", "."]);
+    expect(got).toEqual(["The riders.", "[1]", "[2]"]);
   });
 
   // One video cited at two different claims. The numeral repeats because each
@@ -158,9 +152,8 @@ describe("answerParts", () => {
     expect(shape(text, oneVideo)).toEqual([
       "Early on",
       "[1]",
-      ", and later",
+      ", and later.",
       "[1]",
-      ".",
     ]);
     // Still two seeks, to two different moments.
     const marks = answerParts(text, oneVideo).filter((p) => p.kind === "cite");
@@ -187,7 +180,7 @@ describe("answerParts", () => {
   it("keeps both marks when a paragraph of prose separates them", () => {
     expect(
       shape("Hardest stages[1]\n\nThe hosts argued[2].", oneVideo),
-    ).toEqual(["Hardest stages", "[1]", "\n\nThe hosts argued", "[1]", "."]);
+    ).toEqual(["Hardest stages", "[1]", "\n\nThe hosts argued.", "[1]"]);
   });
 
   // A hallucinated number is text the model produced, and stays that way — it
@@ -206,11 +199,105 @@ describe("answerParts", () => {
     const first = shape("Hardest stages[1][2]", oneVideo);
     expect(first).toEqual(["Hardest stages", "[1]"]);
     expect(shape("Hardest stages[1][2]. Then more[2].", oneVideo)).toEqual([
+      "Hardest stages.",
+      "[1]",
+      " Then more.",
+      "[1]",
+    ]);
+  });
+
+  // The reported bug: the model writes the mark in front of the full stop, so
+  // the answer read "…hardest stages ¹." The mark moves past the stop and the
+  // space before it goes with the move.
+  it("moves a mark past the full stop it was written before", () => {
+    expect(shape("Hardest stages [1]. Then more.", oneVideo)).toEqual([
+      "Hardest stages.",
+      "[1]",
+      " Then more.",
+    ]);
+  });
+
+  it("moves a mark past a question mark and an exclamation", () => {
+    expect(shape("Was it hard[1]? Yes[1]!", [src(1)])).toEqual([
+      "Was it hard?",
+      "[1]",
+      " Yes!",
+      "[1]",
+    ]);
+  });
+
+  // A mark already in the right place is left exactly as it is.
+  it("leaves a mark that already follows the full stop", () => {
+    expect(shape("Hardest stages.[1] Then more.", oneVideo)).toEqual([
+      "Hardest stages.",
+      "[1]",
+      " Then more.",
+    ]);
+  });
+
+  // Mid-sentence punctuation is not a sentence ending. The mark sits on the
+  // claim it backs, and moving it past a comma would strand it on the next one.
+  it("does not move a mark past a comma", () => {
+    expect(shape("Early on [1], and later.", oneVideo)).toEqual([
+      "Early on ",
+      "[1]",
+      ", and later.",
+    ]);
+  });
+
+  // The whole run moves together, and what is left is the run's first mark.
+  it("moves a run of marks past the stop as one", () => {
+    expect(shape("Hardest stages [1][2].", oneVideo)).toEqual([
+      "Hardest stages.",
+      "[1]",
+    ]);
+  });
+
+  // The move can put two marks of one video side by side that the full stop had
+  // separated. That is the stutter the collapse exists to prevent, and it runs
+  // after the move for exactly this case.
+  it("collapses a run the move itself created", () => {
+    expect(shape("Hardest stages [1]. [2] And more.", oneVideo)).toEqual([
+      "Hardest stages.",
+      "[1]",
+      " And more.",
+    ]);
+  });
+
+  // A mark opening a paragraph has nothing in front of it on its own line, so
+  // the stop stays where the model put it rather than being orphaned at the end
+  // of the paragraph above.
+  it("does not move a stop back across a line break", () => {
+    expect(shape("Hardest stages[1]\n\n[2]. And more.", oneVideo)).toEqual([
       "Hardest stages",
       "[1]",
-      ". Then more",
+      "\n\n",
       "[1]",
-      ".",
+      ". And more.",
+    ]);
+  });
+
+  // A hallucinated number is literal text, so the stop after it is nothing to
+  // move — the sentence keeps the characters the model produced.
+  it("does not move a stop past an unknown marker", () => {
+    expect(shape("Real[1] but invented [9].", [src(1)])).toEqual([
+      "Real",
+      "[1]",
+      " but invented [9].",
+    ]);
+  });
+
+  // While the answer streams, a mark with nothing after it is held back: the
+  // character that decides its side of the stop has not arrived. Rendering it
+  // and shifting it a frame later is the motion this avoids.
+  it("holds back a trailing mark while streaming, then places it", () => {
+    const streamed = (text: string) => shape(text, oneVideo, true);
+    expect(streamed("Hardest stages [1]")).toEqual(["Hardest stages "]);
+    expect(streamed("Hardest stages [1].")).toEqual(["Hardest stages.", "[1]"]);
+    expect(streamed("Hardest stages [1]. Then")).toEqual([
+      "Hardest stages.",
+      "[1]",
+      " Then",
     ]);
   });
 

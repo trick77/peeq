@@ -47,7 +47,10 @@ export function AnswerPanel({
   // The body's parts come from answerSources too, so the marks above and the
   // rows below cannot disagree about what a numeral means. It is what resolves
   // each mark to its source and collapses a run of adjacent same-numeral marks.
-  const parts = answerParts(text, sources);
+  const streaming = status === "streaming";
+  // `streaming` is what lets answerParts hold back a mark whose sentence has not
+  // finished arriving — see marksAfterSentenceEnd.
+  const parts = answerParts(text, sources, streaming);
   const cited = citedInOrder(text, sources);
   // One row per video. `cited` stays one entry per citation — the marks above
   // and the moment cards below both need that — but a video is ONE source
@@ -59,7 +62,6 @@ export function AnswerPanel({
     seen.add(s.video_id);
     return true;
   });
-  const streaming = status === "streaming";
 
   // Nothing to show at all — the parent renders whatever it has rather than an
   // empty box.
