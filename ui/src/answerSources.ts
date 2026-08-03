@@ -1,4 +1,4 @@
-import { splitCitations } from "./citations";
+import { splitCitations, type AnswerPart } from "./citations";
 import type { AnswerSource, AnswerVideo } from "./api/answer";
 import type { SearchMatch } from "./api/search";
 
@@ -109,12 +109,19 @@ export type RenderedPart =
 // video's card below (groupCited keeps one entry per cited passage), and two
 // marks a reader cannot tell apart are worse than one mark and a second route.
 //
+// A mark that the model wrote INSIDE a sentence — "…hardest stages [1]." — is
+// moved past the punctuation that ends it, and the space before it is dropped:
+// "…hardest stages.¹". See marksAfterSentenceEnd.
+//
 // Stable while streaming: text only ever grows at the end, so a run already
 // collapsed stays collapsed and no mark appears, disappears, or renumbers under
-// the reader.
+// the reader. `streaming` is what keeps that true of the move as well — a mark
+// with nothing after it yet is held back until the character that decides its
+// side of the full stop has arrived.
 export function answerParts(
   text: string,
   sources: AnswerSource[],
+  streaming = false,
 ): RenderedPart[] {
   const cited = citedInOrder(text, sources);
   const display = new Map(cited.map((s) => [s.n, s]));
@@ -134,7 +141,14 @@ export function answerParts(
     held = "";
   };
 
-  for (const part of splitCitations(text, known)) {
+  // The move runs BEFORE the collapse, on the raw marks. Punctuation lands in
+  // front of a whole run, and the mark a run collapses to is its first — so the
+  // two orders place the punctuation identically, and this one also lets the
+  // collapse see a run the move itself created ("[1]. [2]" -> "[1] [2]").
+  for (const part of marksAfterSentenceEnd(
+    splitCitations(text, known),
+    streaming,
+  )) {
     if (part.kind === "text") {
       if (lastCite && !part.text.trim() && !part.text.includes("\n")) {
         held += part.text;
@@ -156,6 +170,93 @@ export function answerParts(
   }
   flushHeld();
   return out;
+}
+
+// Punctuation a mark belongs after rather than before. Kept to what ends a
+// sentence — a mark inside a clause, "the riders[1], and later…", is sitting on
+// the claim it backs and stays where it is.
+const SENTENCE_END = /^[.!?]+/;
+// Whitespace on ONE line. A newline is a paragraph, not a gap before a mark.
+const SAME_LINE_SPACE = /^[^\S\n]*$/;
+
+// marksAfterSentenceEnd moves a citation past the full stop it was written in
+// front of, so an answer reads "…hardest stages.¹" rather than "…hardest
+// stages ¹." The space the model left before the mark goes with the move; the
+// space after the full stop stays, which is what closes the mark up against the
+// sentence it belongs to.
+//
+// The model is asked to place the mark after the punctuation, but that is a
+// request, not a guarantee, and a mark stranded before the stop is the most
+// visible thing on the page. Doing it here rather than in splitCitations keeps
+// numbering, display numbers and the accessible names provably untouched: this
+// reorders tokens and rewrites whitespace, and never invents, drops or renumbers
+// a mark.
+//
+// Two rules keep the move from moving anything under the reader mid-stream:
+//
+//   - `streaming` holds back a mark with nothing but blank space after it. The
+//     character that decides which side of the full stop it belongs on has not
+//     arrived. Rendering it now and shifting it a frame later is the one thing
+//     this function must not do, and withholding a trailing marker is already
+//     what splitCitations does with an unfinished "[1".
+//   - A mark that IS rendered is followed by settled text, so its side of the
+//     punctuation is decided once and never revised.
+//
+// Idempotent: "stages.[1]" has no punctuation after the mark and comes through
+// untouched.
+function marksAfterSentenceEnd(
+  parts: AnswerPart[],
+  streaming: boolean,
+): AnswerPart[] {
+  const out = parts.slice();
+  if (streaming) {
+    // Trailing marks — everything after the last text that carries a character.
+    let last = out.length - 1;
+    while (last >= 0 && (out[last].kind === "cite" || isBlank(out[last])))
+      last--;
+    out.length = last + 1;
+  }
+
+  for (let start = 0; start < out.length; start++) {
+    if (out[start].kind !== "cite") continue;
+    // The end of the run of marks this one opens: "[1][2]" and "[1] [2]" are one
+    // run, and the punctuation goes in front of all of it.
+    let end = start;
+    for (let j = start + 1; j < out.length; j++) {
+      if (out[j].kind === "cite") {
+        end = j;
+        continue;
+      }
+      if (isBlank(out[j])) continue;
+      break;
+    }
+
+    const beforeIndex = start - 1;
+    const before = out[beforeIndex];
+    const after = out[end + 1];
+    start = end;
+    // Nothing to move (no punctuation on the far side), or nowhere to move it
+    // to (a mark opening the answer): leave the run alone.
+    if (after === undefined || after.kind !== "text") continue;
+    const stop = SENTENCE_END.exec(after.text);
+    if (!stop) continue;
+    if (before === undefined || before.kind !== "text") continue;
+    // A mark that OPENS a paragraph has nothing in front of it on its own line,
+    // and moving the stop back would leave a period orphaned at the end of the
+    // paragraph above.
+    if (/\n[^\S\n]*$/.test(before.text)) continue;
+
+    out[end + 1] = { kind: "text", text: after.text.slice(stop[0].length) };
+    out[beforeIndex] = {
+      kind: "text",
+      text: before.text.replace(/[^\S\n]+$/, "") + stop[0],
+    };
+  }
+  return out;
+}
+
+function isBlank(part: AnswerPart): boolean {
+  return part.kind === "text" && SAME_LINE_SPACE.test(part.text);
 }
 
 // CitedResult is one video and the cited moments within it, in the shape the
