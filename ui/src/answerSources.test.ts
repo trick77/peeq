@@ -150,9 +150,9 @@ describe("answerParts", () => {
     // Both marks show 1 — it is one video — and that is exactly what a reader
     // needs at each claim. Only side by side does it read as a stutter.
     expect(shape(text, oneVideo)).toEqual([
-      "Early on",
+      "Early on,",
       "[1]",
-      ", and later.",
+      " and later.",
       "[1]",
     ]);
     // Still two seeks, to two different moments.
@@ -235,13 +235,23 @@ describe("answerParts", () => {
     ]);
   });
 
-  // Mid-sentence punctuation is not a sentence ending. The mark sits on the
-  // claim it backs, and moving it past a comma would strand it on the next one.
-  it("does not move a mark past a comma", () => {
+  // A comma strands a mark the same way a full stop does: "Early on ¹, and
+  // later" leaves the numeral between two clauses, belonging to neither.
+  it("moves a mark past a comma", () => {
     expect(shape("Early on [1], and later.", oneVideo)).toEqual([
-      "Early on ",
+      "Early on,",
       "[1]",
-      ", and later.",
+      " and later.",
+    ]);
+  });
+
+  it("moves a mark past a semicolon and a colon", () => {
+    expect(shape("First [1]; second [1]: third.", [src(1)])).toEqual([
+      "First;",
+      "[1]",
+      " second:",
+      "[1]",
+      " third.",
     ]);
   });
 
