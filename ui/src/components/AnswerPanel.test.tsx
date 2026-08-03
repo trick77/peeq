@@ -224,6 +224,23 @@ describe("AnswerPanel", () => {
     expect(onOpen).toHaveBeenCalledWith("v1", 1140);
   });
 
+  // A mark against a comma or a full stop drops its own gap: the punctuation
+  // already leaves one, and both together read as a stray space.
+  it("closes a mark up against the comma or full stop it follows", () => {
+    render(<Panel state={state({ text: "Early on[1], and later[4]." })} />);
+    const marks = document.querySelectorAll(".answer-body .cite");
+    expect(marks[0]).toHaveClass("tight");
+    expect(marks[1]).toHaveClass("tight");
+  });
+
+  // After a word there is nothing to close up against, so the mark keeps the gap
+  // that separates the numeral from the letters.
+  it("keeps the gap on a mark that follows a word", () => {
+    render(<Panel state={state({ text: "Early on[1] and later." })} />);
+    const mark = document.querySelector(".answer-body .cite")!;
+    expect(mark).not.toHaveClass("tight");
+  });
+
   // The channel name navigates, and it is a SIBLING of the moment button rather
   // than a child: a button inside a button is invalid markup no browser agrees
   // on, and clicking the channel must not also open the video.

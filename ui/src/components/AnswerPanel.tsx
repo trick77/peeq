@@ -1,7 +1,12 @@
 import { Icon } from "../icons";
 import { Spinner } from "../ui";
 import { formatDuration } from "../format";
-import { answerParts, citedInOrder, type CitedSource } from "../answerSources";
+import {
+  answerParts,
+  citedInOrder,
+  type CitedSource,
+  type RenderedPart,
+} from "../answerSources";
 import { splitIntoSegments } from "../streamFade";
 import type { AnswerSource, AnswerVideo } from "../api/answer";
 
@@ -90,7 +95,12 @@ export function AnswerPanel({
       <div className="answer-body" aria-live="polite" aria-busy={streaming}>
         {parts.map((part, i) =>
           part.kind === "cite" ? (
-            <CiteMark key={i} source={part.source} onOpen={onOpen} />
+            <CiteMark
+              key={i}
+              source={part.source}
+              onOpen={onOpen}
+              tight={followsPunctuation(parts[i - 1])}
+            />
           ) : (
             <FadedText key={i} text={part.text} />
           ),
@@ -180,6 +190,15 @@ function FadedText({ text }: { text: string }) {
   );
 }
 
+// A mark that lands right after a comma or a full stop closes up against it —
+// see the .tight rule in the stylesheet. The punctuation leaves its own visual
+// gap, so the mark's usual one reads as a space the sentence did not ask for.
+// Only these two: a colon or a semicolon is a heavier mark that still wants the
+// room, and after a word the gap is what separates the numeral from the letters.
+function followsPunctuation(before: RenderedPart | undefined): boolean {
+  return before?.kind === "text" && /[.,]$/.test(before.text);
+}
+
 // CiteMark is an inline citation. It rests visible — a bordered superscript
 // numeral, not something that appears on hover — and carries the moment it
 // points at in its accessible name, since the numeral alone says nothing.
@@ -190,9 +209,11 @@ function FadedText({ text }: { text: string }) {
 function CiteMark({
   source,
   onOpen,
+  tight,
 }: {
   source: CitedSource;
   onOpen: (videoId: string, startSeconds: number) => void;
+  tight: boolean;
 }) {
   const at =
     source.kind === "summary"
@@ -201,7 +222,7 @@ function CiteMark({
   return (
     <button
       type="button"
-      className="cite"
+      className={tight ? "cite tight" : "cite"}
       title={`${source.title} · ${at}`}
       aria-label={`Source ${source.display}: ${source.title} at ${at}`}
       onClick={() => onOpen(source.video_id, source.start_seconds)}

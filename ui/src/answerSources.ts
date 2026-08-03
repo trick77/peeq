@@ -110,14 +110,14 @@ export type RenderedPart =
 // marks a reader cannot tell apart are worse than one mark and a second route.
 //
 // A mark that the model wrote INSIDE a sentence — "…hardest stages [1]." — is
-// moved past the punctuation that ends it, and the space before it is dropped:
-// "…hardest stages.¹". See marksAfterSentenceEnd.
+// moved past the punctuation that follows it — a full stop or a comma — and the
+// space before it is dropped: "…hardest stages.¹". See marksAfterPunctuation.
 //
 // Stable while streaming: text only ever grows at the end, so a run already
 // collapsed stays collapsed and no mark appears, disappears, or renumbers under
 // the reader. `streaming` is what keeps that true of the move as well — a mark
 // with nothing after it yet is held back until the character that decides its
-// side of the full stop has arrived.
+// side of the punctuation has arrived.
 export function answerParts(
   text: string,
   sources: AnswerSource[],
@@ -145,7 +145,7 @@ export function answerParts(
   // front of a whole run, and the mark a run collapses to is its first — so the
   // two orders place the punctuation identically, and this one also lets the
   // collapse see a run the move itself created ("[1]. [2]" -> "[1] [2]").
-  for (const part of marksAfterSentenceEnd(
+  for (const part of marksAfterPunctuation(
     splitCitations(text, known),
     streaming,
   )) {
@@ -172,18 +172,19 @@ export function answerParts(
   return out;
 }
 
-// Punctuation a mark belongs after rather than before. Kept to what ends a
-// sentence — a mark inside a clause, "the riders[1], and later…", is sitting on
-// the claim it backs and stays where it is.
-const SENTENCE_END = /^[.!?]+/;
+// Punctuation a mark belongs after rather than before: what ends a sentence, and
+// what ends a clause inside one. A comma strands a mark exactly the way a full
+// stop does — "the riders ¹, and later" leaves the numeral floating between two
+// clauses, belonging to neither.
+const TRAILING_PUNCT = /^[.!?,;:]+/;
 // Whitespace on ONE line. A newline is a paragraph, not a gap before a mark.
 const SAME_LINE_SPACE = /^[^\S\n]*$/;
 
-// marksAfterSentenceEnd moves a citation past the full stop it was written in
+// marksAfterPunctuation moves a citation past the punctuation it was written in
 // front of, so an answer reads "…hardest stages.¹" rather than "…hardest
 // stages ¹." The space the model left before the mark goes with the move; the
-// space after the full stop stays, which is what closes the mark up against the
-// sentence it belongs to.
+// space after the punctuation stays, which is what closes the mark up against
+// the words it belongs to.
 //
 // The model is asked to place the mark after the punctuation, but that is a
 // request, not a guarantee, and a mark stranded before the stop is the most
@@ -195,7 +196,7 @@ const SAME_LINE_SPACE = /^[^\S\n]*$/;
 // Two rules keep the move from moving anything under the reader mid-stream:
 //
 //   - `streaming` holds back a mark with nothing but blank space after it. The
-//     character that decides which side of the full stop it belongs on has not
+//     character that decides which side of the punctuation it belongs on has not
 //     arrived. Rendering it now and shifting it a frame later is the one thing
 //     this function must not do, and withholding a trailing marker is already
 //     what splitCitations does with an unfinished "[1".
@@ -204,7 +205,7 @@ const SAME_LINE_SPACE = /^[^\S\n]*$/;
 //
 // Idempotent: "stages.[1]" has no punctuation after the mark and comes through
 // untouched.
-function marksAfterSentenceEnd(
+function marksAfterPunctuation(
   parts: AnswerPart[],
   streaming: boolean,
 ): AnswerPart[] {
@@ -238,7 +239,7 @@ function marksAfterSentenceEnd(
     // Nothing to move (no punctuation on the far side), or nowhere to move it
     // to (a mark opening the answer): leave the run alone.
     if (after === undefined || after.kind !== "text") continue;
-    const stop = SENTENCE_END.exec(after.text);
+    const stop = TRAILING_PUNCT.exec(after.text);
     if (!stop) continue;
     if (before === undefined || before.kind !== "text") continue;
     // A mark that OPENS a paragraph has nothing in front of it on its own line,
