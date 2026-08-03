@@ -317,6 +317,15 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("User-Agent", chatUserAgent)
+	// Session headers pin the many calls one video costs to a single upstream
+	// node. Both names carry the same value; the upstream sends the pair too.
+	// Accept-Encoding is left unset on purpose so net/http keeps negotiating and
+	// decompressing gzip transparently — setting it by hand would hand us a
+	// compressed body to decode ourselves, mid-stream.
+	sessionID := chatSessionID(info.VideoID)
+	req.Header.Set("X-Session-Id", sessionID)
+	req.Header.Set("X-Session-Affinity", sessionID)
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
