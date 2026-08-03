@@ -55,6 +55,13 @@ export function SummaryCard({ video }: { video: Video }) {
         {video.summary_status === "error" && (
           <p className="errline">Summarization failed.</p>
         )}
+        {/* The summary is finished and printed above, but the indexing step
+            behind it did not get through. Said here rather than as a summary
+            failure, which is what this used to report: the text is right there
+            on the page, so calling it failed reads as a bug in the page. */}
+        {video.summary_status === "done" && !video.indexed && (
+          <p className="placeholder">Not searchable yet.</p>
+        )}
         {!DONE_STATUSES.has(video.summary_status) && (
           <p className="placeholder">No summary yet.</p>
         )}

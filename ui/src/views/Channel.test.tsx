@@ -94,6 +94,7 @@ function archiveVideo(overrides: Partial<Video> = {}): Video {
     chapters: [],
     key_points: [],
     summary_status: "pending",
+    indexed: true,
     audio_language: "",
     has_subtitles: false,
     category: "uncategorized",

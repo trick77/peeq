@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../ui";
 import { PillStrip } from "../components/PillStrip";
 import {
+  listFailedSummaries,
   listUpcoming,
+  retryFailedSummaries,
   skipScheduledMeta,
   skipScheduledScan,
   type UpcomingItem,
@@ -297,6 +299,45 @@ export function UpNext({
     };
   }, [laneSignature, scheduleNonce]);
 
+  // Summaries that ran out of attempts. Fetched here rather than threaded down
+  // from App like `summaries`, for the same reason `upcoming` is: App polls the
+  // active lanes to drive the rail's Queue badge, and a failed job is not
+  // in-flight work — it is a list you read once, after something broke.
+  //
+  // Keyed on laneSignature so it refreshes when a job settles, and on
+  // failedNonce for the change the lanes cannot see: retrying them all.
+  const [failedSummaries, setFailedSummaries] = useState<SummaryJob[]>([]);
+  const [failedNonce, setFailedNonce] = useState(0);
+  const [retrying, setRetrying] = useState(false);
+  useEffect(() => {
+    let active = true;
+    listFailedSummaries()
+      .then((f) => {
+        if (active) setFailedSummaries(f);
+      })
+      .catch(() => {
+        // Silent: this is a supplementary list, and a failure to load it must
+        // not put an error where the page's real news goes.
+        if (active) setFailedSummaries([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [laneSignature, failedNonce]);
+
+  // retryAllFailed puts every failed job back with a fresh attempt budget. The
+  // refetch afterwards is what proves it landed — and it empties this section,
+  // because the rows have moved back into the waiting lane above.
+  const retryAllFailed = useCallback(() => {
+    setRetrying(true);
+    retryFailedSummaries()
+      .catch(() => {})
+      .finally(() => {
+        setRetrying(false);
+        setFailedNonce((n) => n + 1);
+      });
+  }, []);
+
   // skipRow pushes one scheduled occurrence out and remembers where it was, so
   // the row can offer an undo. The refetch is deliberately NOT awaited into the
   // same state update: the server decides the new instant, and re-reading the
@@ -474,7 +515,14 @@ export function UpNext({
   const laneEmpty =
     (!showDownloads || (running.length === 0 && waiting.length === 0)) &&
     (!showSummaries || summaries.length === 0);
-  const nothingToShow = laneEmpty && scheduled.length === 0;
+  // Failures count as something to show, or the page would answer an outage —
+  // the case where every summary job died and the queue is therefore empty —
+  // with "nothing here, subscribe to a channel", while holding the one list
+  // that says what happened.
+  const nothingToShow =
+    laneEmpty &&
+    scheduled.length === 0 &&
+    (!showSummaries || failedSummaries.length === 0);
 
   // The toolbar renders on EVERY branch below, including the empty ones. An
   // early return without it would strand anyone who filtered or searched their
@@ -654,6 +702,45 @@ export function UpNext({
                   />
                 ),
               )}
+            </div>
+          ) : null}
+
+          {/* GAVE UP — summaries that spent every attempt. Below the lanes
+              because it is not upcoming work; on this page because this is
+              where summary work is accounted for, and nowhere else shows these
+              at all: they are gone from the lanes, the boot sweep skips them on
+              purpose, and one that died after the summary step left its video
+              reading "done" everywhere in the UI.
+
+              Each row keeps its last error, which is the only record of which
+              bound failed ("stream idle for 1m30s") and the only way to tell a
+              summary that never arrived from highlights that did not.
+
+              Under the summary chip, not "all" only: these are summary rows, so
+              filtering to Downloads must hide them like any other. */}
+          {showSummaries && failedSummaries.length > 0 ? (
+            <div className="ag-day">
+              <div className="ag-daysep">
+                <span>Gave up</span>
+                <i />
+                <Button
+                  variant="ghost"
+                  onClick={retryAllFailed}
+                  disabled={retrying}
+                >
+                  {retrying ? "Retrying…" : "Retry all"}
+                </Button>
+              </div>
+              {failedSummaries.map((job) => (
+                <SummaryRow
+                  key={`f${job.id}`}
+                  job={job}
+                  phase={undefined}
+                  live={false}
+                  onOpenVideo={onOpenVideo}
+                  channelBit={channelBit}
+                />
+              ))}
             </div>
           ) : null}
 

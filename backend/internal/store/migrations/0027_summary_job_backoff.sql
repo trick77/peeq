@@ -1,0 +1,28 @@
+-- Space out summary retries, so an endpoint outage cannot burn a video's whole
+-- retry budget in a minute and a half.
+--
+-- A failed summary job is requeued to 'pending' with enqueued_at untouched, and
+-- ClaimNext orders by enqueued_at -- so the job that just failed is still the
+-- oldest pending row and is re-claimed on the very next turn of the worker
+-- loop, roughly VideoDelay later. With max_attempts=3 and a chat endpoint that
+-- fails fast (connection refused, an instant 5xx, no response headers within
+-- the minute the client allows), all three attempts are spent in about ninety
+-- seconds. An outage that resolves itself in an hour therefore terminally fails
+-- every video that happens to be in the queue, and nothing retries those: the
+-- boot sweep in EnqueueMissing deliberately skips rows that reached 'failed'.
+--
+-- next_attempt_at is the same mechanism channel_videos.next_caption_attempt_at
+-- already uses for caption fetches (migration 0020) -- a wall-clock floor the
+-- claim query filters on, so the wait survives a restart. An in-process sleep
+-- would not: the row is already back to 'pending' before the worker waits, so a
+-- process killed during the pause loses it.
+--
+-- NULL means claimable now, which is what a freshly enqueued job wants -- both
+-- Enqueue and EnqueueMissing leave it unset, and so does the manual Reprocess
+-- path, which inserts a new row rather than reviving the old one. Only Fail
+-- sets it.
+--
+-- No index. Same reasoning migration 0020 gives for the caption claim: this
+-- table is small, the claim already scans a state-filtered subset, and an index
+-- on a column that is NULL for every claimable row would earn nothing.
+ALTER TABLE summary_jobs ADD COLUMN next_attempt_at TEXT;

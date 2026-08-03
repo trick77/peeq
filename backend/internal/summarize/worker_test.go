@@ -117,9 +117,12 @@ func newWorkerHarness(t *testing.T) *workerHarness {
 	t.Cleanup(func() { _ = db.Close() })
 
 	return &workerHarness{
-		db:       db,
-		videos:   videos.New(db),
-		jobs:     summaryjobs.New(db),
+		db:     db,
+		videos: videos.New(db),
+		// No backoff ladder: these tests drive attempt 2 straight after attempt 1
+		// and assert on what the retry does, not on how long it waits. The ladder
+		// itself is covered in summaryjobs/store_test.go.
+		jobs:     summaryjobs.NewWithBackoff(db, nil),
 		rag:      rag.NewStore(db),
 		mediaDir: t.TempDir()}
 }
@@ -375,8 +378,19 @@ func TestProcessOneReturnsErrorOnEmbedFailure(t *testing.T) {
 	if getErr != nil {
 		t.Fatalf("get video: %v", getErr)
 	}
-	if v.SummaryStatus != "error" {
-		t.Errorf("summary_status = %q, want error", v.SummaryStatus)
+	// The summary itself is finished and readable, so it keeps "done". Marking
+	// it 'error' here — which this path used to do — made the Player print
+	// "Summarization failed" directly above the summary it was rendering.
+	if v.SummaryStatus != "done" {
+		t.Errorf("summary_status = %q, want done — the summary succeeded, the index did not", v.SummaryStatus)
+	}
+	if v.Summary == "" {
+		t.Error("summary was discarded on an embedding failure — it must be kept")
+	}
+	// What DID fail is reported here instead, and this is what the Player reads
+	// to say the video is not searchable yet.
+	if v.Indexed() {
+		t.Error("Indexed() = true after the embedding failed")
 	}
 }
 
@@ -386,11 +400,21 @@ type fakeActivityRecorder struct{ events []activity.Event }
 
 func (f *fakeActivityRecorder) Record(e activity.Event) { f.events = append(f.events, e) }
 
-// seedFailingVideo enqueues a summarizable video whose embedding will fail, so
-// processOne drives it through failJob. maxAttempts controls whether that
-// failure is terminal (1) or a retry (>1). It returns the recorder wired onto
-// the worker so the test can inspect what was recorded.
-func seedFailingVideo(t *testing.T, id string, maxAttempts int) *fakeActivityRecorder {
+// summaryErrCompleter fails the very first LLM call — the prose summary — so a
+// test can drive the failJob path rather than the post-summary requeue path.
+type summaryErrCompleter struct{}
+
+func (summaryErrCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	return "", errors.New("summary boom")
+}
+
+// seedFailingVideo enqueues a summarizable video and fails one step of its
+// analysis, so processOne drives it through failJob or requeueJob. summarizer
+// nil means "fail at the embedding step"; pass one to fail earlier instead.
+// maxAttempts controls whether that failure is terminal (1) or a retry (>1). It
+// returns the recorder wired onto the worker so the test can inspect what was
+// recorded.
+func seedFailingVideo(t *testing.T, id string, maxAttempts int, completer Completer) *fakeActivityRecorder {
 	t.Helper()
 	h := newWorkerHarness(t)
 
@@ -417,45 +441,69 @@ func seedFailingVideo(t *testing.T, id string, maxAttempts int) *fakeActivityRec
 		t.Fatalf("set max_attempts: %v", err)
 	}
 
+	if completer == nil {
+		completer = fakeWorkerCompleter{}
+	}
 	rec := &fakeActivityRecorder{}
 	w := NewWorker(WorkerDeps{
 		Jobs:       h.jobs,
 		Videos:     h.videos,
 		Rag:        h.rag,
-		Summarizer: New(fakeWorkerCompleter{}),
+		Summarizer: New(completer),
 		Embedder:   failingEmbedder{},
 		EmbedModel: "test-model",
 		EmbedDim:   1536,
 		Activity:   rec})
 	if _, err := w.processOne(context.Background()); err == nil {
-		t.Fatal("processOne err = nil, want non-nil (the embed failure)")
+		t.Fatal("processOne err = nil, want non-nil (the seeded failure)")
 	}
 	return rec
 }
 
-// TestFailJobRecordsActivityOnlyWhenTerminal proves failJob writes exactly one
-// summary/fail Activity row when the job exhausts its attempts, and nothing when
-// the failure merely requeues the job for another try (the retry is not news).
-func TestFailJobRecordsActivityOnlyWhenTerminal(t *testing.T) {
-	t.Run("terminal failure records one row", func(t *testing.T) {
-		rec := seedFailingVideo(t, "term", 1)
-		if len(rec.events) != 1 {
-			t.Fatalf("recorded %d rows, want 1: %+v", len(rec.events), rec.events)
-		}
-		e := rec.events[0]
-		if e.Kind != activity.KindSummary || e.Outcome != activity.OutcomeFail {
-			t.Fatalf("event kind/outcome = %q/%q, want summary/fail", e.Kind, e.Outcome)
-		}
-		if e.SubjectID != "term" || e.Subject != "Test term" || e.Summary != "summary failed" {
-			t.Fatalf("event subject/summary = %+v, want subject term/'Test term' summary 'summary failed'", e)
-		}
-	})
-	t.Run("requeued failure records nothing", func(t *testing.T) {
-		rec := seedFailingVideo(t, "retry", 3)
-		if len(rec.events) != 0 {
-			t.Fatalf("recorded %d rows on a retry, want 0: %+v", len(rec.events), rec.events)
-		}
-	})
+// A terminally failed job writes exactly one Activity row, naming the step that
+// failed, and a merely-requeued one writes none (a retry is not news).
+//
+// The post-summary steps are the point. A job that dies at key points or
+// embedding leaves summary_status='done' behind, drops off the active queue, and
+// is skipped by the boot sweep — so the video reads as complete everywhere while
+// its highlights or its search index are permanently missing. This row is the
+// only trace such a video leaves outside the log. It is a warn rather than a
+// fail because the summary really did succeed.
+func TestTerminalFailureRecordsExactlyOneActivityRow(t *testing.T) {
+	cases := []struct {
+		name      string
+		completer Completer
+		outcome   string
+		summary   string
+	}{
+		{"summary", summaryErrCompleter{}, activity.OutcomeFail, "summary failed"},
+		{"keypoints", keypointsErrCompleter{}, activity.OutcomeWarn, "keypoints failed"},
+		{"embedding", nil, activity.OutcomeWarn, "embedding failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" terminal records one row", func(t *testing.T) {
+			rec := seedFailingVideo(t, "term-"+tc.name, 1, tc.completer)
+			if len(rec.events) != 1 {
+				t.Fatalf("recorded %d rows, want 1: %+v", len(rec.events), rec.events)
+			}
+			e := rec.events[0]
+			if e.Kind != activity.KindSummary || e.Outcome != tc.outcome {
+				t.Fatalf("event kind/outcome = %q/%q, want summary/%s", e.Kind, e.Outcome, tc.outcome)
+			}
+			if e.SubjectID != "term-"+tc.name || e.Summary != tc.summary {
+				t.Fatalf("event = %+v, want subject term-%s summary %q", e, tc.name, tc.summary)
+			}
+			if e.Detail == "" {
+				t.Error("event detail is empty — it carries the failing bound, which is the only place it is recorded")
+			}
+		})
+		t.Run(tc.name+" requeue records nothing", func(t *testing.T) {
+			rec := seedFailingVideo(t, "retry-"+tc.name, 3, tc.completer)
+			if len(rec.events) != 0 {
+				t.Fatalf("recorded %d rows on a retry, want 0: %+v", len(rec.events), rec.events)
+			}
+		})
+	}
 }
 
 // TestProcessOneIndexesSummaryChunk asserts the video's overall summary is

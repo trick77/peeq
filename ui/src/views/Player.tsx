@@ -1252,7 +1252,14 @@ export function Player({
         label: "Reprocess video",
         icon: "refresh",
         onClick: handleReprocess,
-        flag: video.summary_status === "error" ? "failed" : undefined,
+        // A finished summary that never got indexed is worth the same attention
+        // dot: reprocessing is what repairs it, and nothing else on this page
+        // would send you here.
+        flag:
+          video.summary_status === "error" ||
+          (video.summary_status === "done" && !video.indexed)
+            ? "failed"
+            : undefined,
       });
     }
     // Re-download re-fetches the media from YouTube — only meaningful when the

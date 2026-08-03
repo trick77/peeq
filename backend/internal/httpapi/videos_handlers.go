@@ -64,9 +64,15 @@ type videoDTO struct {
 	Chapters             json.RawMessage          `json:"chapters,omitempty"`
 	KeyPoints            json.RawMessage          `json:"key_points,omitempty"`
 	SummaryStatus        string                   `json:"summary_status"`
-	Category             string                   `json:"category"`
-	AudioLanguage        string                   `json:"audio_language"`
-	HasSubtitles         bool                     `json:"has_subtitles"`
+	// Indexed is whether search can currently find this video, derived from
+	// videos.Video.Indexed(). It is separate from SummaryStatus on purpose: an
+	// embedding failure leaves a finished, readable summary behind, so reporting
+	// it as summary_status='error' made the Player claim the summary had failed
+	// while displaying it. The two states are independent and now say so.
+	Indexed       bool   `json:"indexed"`
+	Category      string `json:"category"`
+	AudioLanguage string `json:"audio_language"`
+	HasSubtitles  bool   `json:"has_subtitles"`
 	// MediaType/LiveStatus/YTTags/YTCategories are YouTube's own facts about
 	// the video, straight from yt-dlp. Note Category (peeq's classification
 	// enum) and YTCategories (YouTube's labels) are different things that
@@ -151,6 +157,7 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		Chapters:              rawJSONOrNil(v.Chapters),
 		KeyPoints:             rawJSONOrNil(v.KeyPoints),
 		SummaryStatus:         v.SummaryStatus,
+		Indexed:               v.Indexed(),
 		Category:              v.Category,
 		AudioLanguage:         v.AudioLanguage,
 		HasSubtitles:          v.HasTranscript,

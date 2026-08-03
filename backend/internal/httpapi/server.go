@@ -369,6 +369,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsPost)))
 	mux.Handle("GET /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsList)))
 	mux.Handle("GET /api/summaries", s.requireAuth(http.HandlerFunc(s.handleSummariesList)))
+	mux.Handle("GET /api/summaries/failed", s.requireAuth(http.HandlerFunc(s.handleSummariesFailedList)))
+	mux.Handle("POST /api/summaries/retry-failed", s.requireAuth(http.HandlerFunc(s.handleSummariesRetryFailed)))
 	mux.Handle("GET /api/activity", s.requireAuth(http.HandlerFunc(s.handleActivityList)))
 	mux.Handle("GET /api/activity/upcoming", s.requireAuth(http.HandlerFunc(s.handleActivityUpcoming)))
 	mux.Handle("GET /api/downloads/status", s.requireAuth(http.HandlerFunc(s.handleDownloadsStatus)))

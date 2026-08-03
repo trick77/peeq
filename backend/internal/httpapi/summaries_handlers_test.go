@@ -130,3 +130,104 @@ func TestSummaries_listStoreError(t *testing.T) {
 		t.Fatalf("status = %d, want 500 (body %s)", rec.Code, rec.Body.String())
 	}
 }
+
+// The failed list is the only surface these jobs have: gone from the active
+// lane, skipped by the boot sweep, and — when the job died after the summary
+// step — sitting on a video that still reads "done" everywhere else.
+func TestSummariesFailed_listsOnlyExhaustedJobsWithTheirError(t *testing.T) {
+	deps, sj, vids, db := summariesTestDeps(t)
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	if err := vids.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "Gave up", ChannelName: "Chan One"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := vids.Upsert(videos.Video{ID: "v2", URL: "u2", Title: "Still going", ChannelName: "Chan Two"}); err != nil {
+		t.Fatal(err)
+	}
+	id1, err := sj.Enqueue("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sj.Enqueue("v2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE summary_jobs SET state='failed', last_error='stream idle for 1m30s' WHERE id=?`, id1); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/summaries/failed", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var items []summaryItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1: %+v", len(items), items)
+	}
+	if items[0].VideoID != "v1" || items[0].Title != "Gave up" {
+		t.Errorf("item = %+v, want v1 joined with its title", items[0])
+	}
+	// The bound that failed is recorded nowhere else once the job is terminal.
+	if items[0].LastError != "stream idle for 1m30s" {
+		t.Errorf("last_error = %q, want the recorded bound", items[0].LastError)
+	}
+
+	// The active lane is unchanged by any of this.
+	var active []summaryItem
+	if err := json.Unmarshal(getSummaries(t, h, sessionCookie).Body.Bytes(), &active); err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].VideoID != "v2" {
+		t.Fatalf("active lane = %+v, want just v2", active)
+	}
+}
+
+// Retry-all is the recovery path after the endpoint that broke them is fixed:
+// every failed job returns to the queue, and the count says how many moved.
+func TestSummariesRetryFailed_requeuesThemAll(t *testing.T) {
+	deps, sj, vids, db := summariesTestDeps(t)
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	if err := vids.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "Gave up"}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := sj.Enqueue("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE summary_jobs SET state='failed', attempts=3 WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/summaries/retry-failed", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]int64
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["requeued"] != 1 {
+		t.Fatalf("requeued = %d, want 1", got["requeued"])
+	}
+
+	// It is claimable again, with its whole budget back — the budget went on an
+	// outage, not on anything about this video.
+	job, err := sj.ClaimNext()
+	if err != nil || job == nil {
+		t.Fatalf("claim after retry: %v, %v", job, err)
+	}
+	if job.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1", job.Attempts)
+	}
+}

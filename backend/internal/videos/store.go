@@ -35,6 +35,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/trick77/peeq/internal/rag"
 )
 
 // Video mirrors the columns of the videos table this package reads or
@@ -94,6 +96,7 @@ type Video struct {
 	// EmbedRev is the CONTENT recipe the stored chunks follow (which kinds of
 	// chunk exist), as opposed to EmbedModel/EmbedDim which describe the model.
 	// Below rag.ChunkRecipeRev means the index is stale and needs rebuilding.
+	// Ask Indexed() rather than comparing here — see the note on that method.
 	EmbedRev int
 	Category string
 	// MediaContainer, VideoCodec, VideoHeight and AudioCodec are what the
@@ -122,6 +125,24 @@ type Video struct {
 	// struct touches it, and COALESCE makes a video whose channel row was never
 	// created read as off.
 	ChannelKeepReads bool
+}
+
+// Indexed reports whether the video's stored chunks are usable by search right
+// now: embedded at all, and against the current chunk recipe.
+//
+// Both halves are needed, and this is the single definition of that pair. Model
+// alone is not enough because embed_model is set once and never cleared, so a
+// video whose chapters changed under it (SetKeyPoints zeroes embed_rev in the
+// same statement that writes them) would still claim to be indexed while search
+// served chunks built from an older analysis. Rev alone is not enough because a
+// video that was never embedded has rev 0 for a different reason.
+//
+// The summarize worker asks this before its fallback embed, and the video DTO
+// reports it to the Player — which needs it because an embedding failure no
+// longer shows up as a summary failure, and "here is your summary, but this
+// video is not findable yet" is otherwise unsayable.
+func (v Video) Indexed() bool {
+	return v.EmbedModel != "" && v.EmbedRev >= rag.ChunkRecipeRev
 }
 
 // Store persists video rows.
