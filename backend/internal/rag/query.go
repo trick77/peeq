@@ -25,6 +25,20 @@ import (
 // truncated rather than rejected.
 const maxTerms = 32
 
+// minPrefixRunes is the shortest content term the prefix rungs will widen. Below
+// it a shared opening says nothing about a shared meaning, and the point of those
+// rungs is inflection, not any word that starts the same.
+//
+// Five rather than four because the damaging collisions are all four-rune stems
+// of ordinary words: "star" reaches start and started, "main" reaches maintain,
+// "back" reaches backup and background, "form" reaches formula. None is a
+// stopword, so none is filtered out before it gets here. The cost is losing the
+// plural of a four-letter noun, and that is the cheaper side: the prefix rung
+// weighs 0.7, ABOVE the semantic lane's 0.6, and excerpt selection now walks the
+// whole fused list — so a collision does not rank low, it takes one of the twelve
+// slots the model reads.
+const minPrefixRunes = 5
+
 // ParseFTSQuery turns a Find-mode query into an FTS5 MATCH expression,
 // preserving the operators a full-text search is expected to support:
 //
@@ -122,7 +136,15 @@ type FTSTier struct {
 //
 //	every term ANDed          — identical to BuildFTSMatch(q)  (WeightKeywordStrict)
 //	content terms ANDed       — function words dropped         (WeightKeywordContent)
-//	content terms ORed        — recall floor                   (WeightKeywordAny)
+//	content prefixes ANDed    — inflection tolerated           (WeightKeywordPrefix)
+//	content prefixes ORed     — recall floor                   (WeightKeywordAny)
+//
+// The floor is a PREFIX or, not a literal one. The index has no stemming — plain
+// fts5(text), default unicode61 — so "transients" and "transient" are unrelated
+// tokens, and a question written in the plural could not reach a video that says
+// the singular. On the library this was tuned against that cost five of eleven
+// videos on one word. A prefix floor is a strict superset of the literal floor at
+// the same weight, so nothing it used to find is lost.
 //
 // Redundant rungs are dropped, so a query with no stopwords yields fewer
 // entries and costs exactly what it costs today. Returns nil for unusable
@@ -153,14 +175,43 @@ func BuildFTSQueries(q string) []FTSTier {
 	if len(content) == 0 {
 		return tiers
 	}
-	if and := strings.Join(content, " "); and != strict {
+	and := strings.Join(content, " ")
+	if and != strict {
 		tiers = append(tiers, FTSTier{Match: and, Weight: WeightKeywordContent})
+	}
+	// Prefixes of the SAME content terms, still ANDed. Widens the content rung to
+	// every inflection of each word without loosening the requirement that all of
+	// them appear.
+	//
+	// A short term is left literal. "car*" reaches carbon, cardiac and career —
+	// unrelated words, not inflections — and the floor these rungs feed is walked
+	// in full when the answer picks its excerpts, so a rung's noise is no longer
+	// something that merely ranks low. minPrefixRunes is where inflection stops
+	// being the likely reason two words share an opening: "stars" and "orbit"
+	// clear it, "car" and "gps" do not.
+	prefixed := make([]string, len(content))
+	for i, t := range content {
+		if len([]rune(strings.Trim(t, `"`))) < minPrefixRunes {
+			prefixed[i] = t
+			continue
+		}
+		prefixed[i] = t + "*"
+	}
+	// Every content term was too short to widen, so this rung is one of the two
+	// above it verbatim. The ladder only reaches a rung when the one before it
+	// returned nothing, which makes a duplicate a guaranteed-empty round-trip.
+	prefixedAnd := strings.Join(prefixed, " ")
+	if prefixedAnd != strict && prefixedAnd != and {
+		tiers = append(tiers, FTSTier{
+			Match:  prefixedAnd,
+			Weight: WeightKeywordPrefix,
+		})
 	}
 	// ORing a single term reproduces the AND tier exactly; only add the recall
 	// floor when it actually widens the match.
 	if len(content) > 1 {
 		tiers = append(tiers, FTSTier{
-			Match:  strings.Join(content, " OR "),
+			Match:  strings.Join(prefixed, " OR "),
 			Weight: WeightKeywordAny,
 		})
 	}

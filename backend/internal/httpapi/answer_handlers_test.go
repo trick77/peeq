@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -267,6 +269,143 @@ func TestAnswerCapsSourcesPerVideo(t *testing.T) {
 	prompt := ask.messages[len(ask.messages)-1].Content
 	if n := strings.Count(prompt, `"chatty"`); n > answerMaxSourcesPerVideo {
 		t.Errorf("one video contributed %d excerpts, want at most %d", n, answerMaxSourcesPerVideo)
+	}
+}
+
+// The reported bug: a reader searched "transients" in Find and got six videos,
+// asked the same thing in Ask and got a handful. Retrieval was not at fault — the
+// keyword lane's top twelve chunks were all on the topic, but they sat on only
+// FOUR videos, and three passages per video made those four the whole evidence
+// set. Breadth-first selection spends the same twelve slots on twelve videos.
+func TestChooseExcerptsSpreadsAcrossVideos(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	// Six videos, five candidate passages each, ranked video by video — the shape
+	// that concentrated the evidence.
+	hits := make([]rag.Hit, 0, 30)
+	for v := 1; v <= 6; v++ {
+		id := fmt.Sprintf("v%d", v)
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+		for i := range 5 {
+			hits = append(hits, rag.Hit{
+				VideoID: id, Ordinal: i, Text: "transients",
+				Kind: rag.KindTranscript, StartSeconds: i * 600,
+			})
+		}
+	}
+
+	testee := &server{videos: deps.Videos}
+	got := testee.chooseExcerpts(hits)
+
+	if len(got) != answerMaxSources {
+		t.Fatalf("chose %d excerpts, want %d", len(got), answerMaxSources)
+	}
+	perVideo := map[string]int{}
+	for _, c := range got {
+		perVideo[c.hit.VideoID]++
+	}
+	if len(perVideo) != 6 {
+		t.Errorf("evidence covers %d videos, want all 6: %v", len(perVideo), perVideo)
+	}
+	for id, n := range perVideo {
+		if n > answerMaxSourcesPerVideo {
+			t.Errorf("%s contributed %d excerpts, want at most %d", id, n, answerMaxSourcesPerVideo)
+		}
+	}
+}
+
+// Unlimited breadth is the same bug mirrored: with twelve or more matching videos
+// every one gets a single passage, so the video that actually answers the question
+// is quoted no more deeply than the twelfth-best that merely mentions it. Pass 1
+// is capped so depth always has slots left.
+func TestChooseExcerptsKeepsSlotsForDepth(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	// Fourteen videos — more than the twelve slots — each with three passages.
+	hits := make([]rag.Hit, 0, 42)
+	for v := 1; v <= 14; v++ {
+		id := fmt.Sprintf("v%02d", v)
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+		for i := range 3 {
+			hits = append(hits, rag.Hit{
+				VideoID: id, Ordinal: i, Text: "transients",
+				Kind: rag.KindTranscript, StartSeconds: i * 600,
+			})
+		}
+	}
+
+	testee := &server{videos: deps.Videos}
+	got := testee.chooseExcerpts(hits)
+
+	if len(got) != answerMaxSources {
+		t.Fatalf("chose %d excerpts, want %d", len(got), answerMaxSources)
+	}
+	perVideo := map[string]int{}
+	for _, c := range got {
+		perVideo[c.hit.VideoID]++
+	}
+	// The best-ranked video must be quoted more than once, which is the whole
+	// point: one passage each across twelve videos is the failure being avoided.
+	if perVideo["v01"] < 2 {
+		t.Errorf("top video contributed %d excerpts, want depth: %v", perVideo["v01"], perVideo)
+	}
+	if len(perVideo) < 2 || len(perVideo) > answerBreadthSources {
+		t.Errorf("evidence covers %d videos, want between 2 and %d: %v",
+			len(perVideo), answerBreadthSources, perVideo)
+	}
+}
+
+// Breadth first must not mean breadth only: a question the library answers from
+// one video should still get several passages of it rather than one.
+func TestChooseExcerptsFillsUpWhenFewVideosMatch(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "only"}); err != nil {
+		t.Fatal(err)
+	}
+	hits := make([]rag.Hit, 0, 10)
+	for i := range 10 {
+		hits = append(hits, rag.Hit{
+			VideoID: "v1", Ordinal: i, Text: "transients",
+			Kind: rag.KindTranscript, StartSeconds: i * 600,
+		})
+	}
+
+	testee := &server{videos: deps.Videos}
+	got := testee.chooseExcerpts(hits)
+
+	if len(got) != answerMaxSourcesPerVideo {
+		t.Fatalf("chose %d excerpts from one video, want %d", len(got), answerMaxSourcesPerVideo)
+	}
+}
+
+// Citation [1] must still be the best passage retrieval found. The two passes
+// pick out of order by design, so the result is sorted back into fused rank.
+func TestChooseExcerptsKeepsFusedOrder(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	for _, id := range []string{"va", "vb"} {
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// va ranks first and third, vb second: pass 1 takes ranks 0 and 1, pass 2
+	// takes rank 2, so the picks are found in the order 0, 1, 2 only after sorting.
+	hits := []rag.Hit{
+		{VideoID: "va", Ordinal: 0, Text: "a", Kind: rag.KindTranscript, StartSeconds: 0},
+		{VideoID: "vb", Ordinal: 0, Text: "b", Kind: rag.KindTranscript, StartSeconds: 600},
+		{VideoID: "va", Ordinal: 1, Text: "c", Kind: rag.KindTranscript, StartSeconds: 1200},
+	}
+
+	testee := &server{videos: deps.Videos}
+	got := testee.chooseExcerpts(hits)
+
+	gotOrder := make([]string, 0, len(got))
+	for _, c := range got {
+		gotOrder = append(gotOrder, c.hit.Text)
+	}
+	if !reflect.DeepEqual(gotOrder, []string{"a", "b", "c"}) {
+		t.Errorf("excerpts came back as %v, want fused order [a b c]", gotOrder)
 	}
 }
 

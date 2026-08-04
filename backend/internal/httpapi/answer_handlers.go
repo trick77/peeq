@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/sse"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // StreamCompleter is the slice of llm.Client the answer endpoint uses:
@@ -77,6 +79,15 @@ const (
 	// answerMaxSourcesPerVideo stops one thorough video from being the entire
 	// evidence set for a question the library answers from several angles.
 	answerMaxSourcesPerVideo = 3
+	// answerBreadthSources is how many of the slots the breadth pass may claim
+	// before depth gets the rest. See chooseExcerpts: without it, a library with
+	// twelve or more matching videos gives every one of them a single passage and
+	// the best-matching video no more than the twelfth-best, which is the same
+	// failure as concentrating on four videos, mirrored.
+	//
+	// Eight leaves four slots for depth and still shows more videos than the plain
+	// keyword search does for the query this was measured on.
+	answerBreadthSources = 8
 	// answerExcerptRunes truncates a single passage. A chunk is ~600 tokens;
 	// the model needs the gist, not every word, and 12 untruncated chunks would
 	// dominate the request.
@@ -209,19 +220,125 @@ func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVid
 	sources := make([]answerSource, 0, answerMaxSources)
 	vids := make([]answerVideo, 0, answerMaxSources)
 	excerpts := make([]string, 0, answerMaxSources)
-	perVideo := make(map[string]int)
+	seenVideo := make(map[string]bool)
+
+	for _, c := range s.chooseExcerpts(hits) {
+		if !seenVideo[c.hit.VideoID] {
+			seenVideo[c.hit.VideoID] = true
+			vids = append(vids, answerVideo{
+				ID: c.video.ID, Title: c.video.Title, ChannelID: c.video.ChannelID,
+				ChannelName: c.video.ChannelName, DurationSeconds: c.video.DurationSeconds,
+				HasThumbnail:     c.video.HasThumbnail,
+				ThumbnailVersion: c.video.ThumbnailVersion,
+				Status:           c.video.Status,
+				PublishedAt:      c.video.PublishedAt,
+			})
+		}
+
+		n := len(sources) + 1
+		sources = append(sources, answerSource{
+			N: n, VideoID: c.hit.VideoID, Title: c.video.Title,
+			ChannelName:  c.video.ChannelName,
+			StartSeconds: c.hit.StartSeconds, Kind: c.hit.Kind,
+			Snippet: matchSnippet(c.hit),
+		})
+		// Sanitize BEFORE truncating, never after: stripping a sentinel out of
+		// already-shortened text can leave a dangling "</excerp" that whatever is
+		// written next completes.
+		excerpts = append(excerpts, fmt.Sprintf("<excerpt n=\"%d\" title=%q at=\"%ds\">\n%s\n</excerpt>",
+			n, stripExcerptTags(c.video.Title), c.hit.StartSeconds,
+			truncateRunes(stripExcerptTags(c.hit.Text), answerExcerptRunes)))
+	}
+	return sources, vids, excerpts
+}
+
+// excerptCandidate is a hit that could be an excerpt, paired with the video
+// record the citation table needs. Resolving the video once here is also what
+// keeps the two selection passes below from hitting the store twice per hit.
+type excerptCandidate struct {
+	hit   rag.Hit
+	video *videos.Video
+}
+
+// videoLookup resolves a video id at most once per request.
+//
+// It exists because of what breadth-first selection costs. The old loop stopped
+// at answerMaxSources, so it resolved a dozen videos; this one has to consider
+// every fused hit — up to searchCandidates of them — before it knows which
+// twelve to keep. Resolving per hit would put 200 joined queries in front of the
+// sources frame, which is the first thing the reader waits for. Hits cluster
+// heavily by video (200 chunks came from ~32 videos on the library this was
+// measured against), so caching turns that back into a few dozen.
+//
+// A video that is GONE is cached as gone: that answer cannot change within a
+// request, and re-asking once per chunk is the cost this type exists to avoid.
+//
+// An ERROR is not cached. A busy database is a transient answer, and caching it
+// would drop every remaining chunk of that video from the evidence set on the
+// strength of one failed query. Retrying costs at most one query per chunk of one
+// video — what the code did before this cache existed.
+type videoLookup struct {
+	store *videos.Store
+	seen  map[string]*videos.Video
+}
+
+func (l *videoLookup) get(id string) *videos.Video {
+	if v, ok := l.seen[id]; ok {
+		return v
+	}
+	v, err := l.store.Get(id)
+	if err != nil {
+		slog.Warn("answer: video lookup failed", "err", err, "video_id", id)
+		return nil
+	}
+	l.seen[id] = v
+	return v
+}
+
+// chooseExcerpts picks the passages the model reads, in fused-rank order.
+//
+// It runs TWO passes over the candidates, and that is the whole point:
+//
+//	pass 1 — at most one passage per video
+//	pass 2 — fill what is left, up to answerMaxSourcesPerVideo per video
+//
+// Taking the top answerMaxSources by score alone concentrates the evidence on
+// whichever videos happen to rank highest, and measurably so: on the library this
+// was tuned against, a question about "transients" had its keyword lane's top
+// twelve chunks spread across just FOUR videos, and with three passages allowed
+// per video those four were the entire evidence set. The plain keyword search the
+// same reader ran found six videos, so Ask looked like it knew less than the
+// search box did — which is exactly the complaint that produced this function.
+//
+// A breadth-first pass fixes that without widening retrieval or spending more
+// context: the same twelve slots now reach up to answerBreadthSources distinct
+// videos, and pass 2 hands the rest back as depth. A narrow question still gets
+// three passages from one video.
+//
+// Pass 1 is capped rather than unlimited because unlimited breadth is the same
+// bug mirrored. Let it claim all twelve and a library with twelve or more
+// matching videos gives each exactly one passage — so the lecture that actually
+// answers the question is quoted no more deeply than the twelfth-best video that
+// merely mentions it, and the prefix floor makes reaching twelve marginal videos
+// easier than it used to be. Eight for breadth, four for depth: more videos than
+// the keyword search shows, and the top of the ranking still gets quoted properly.
+//
+// It also fixes something the lane weights could not. WeightKeywordAny (0.4) sits
+// below WeightSemantic (0.6), so on a question that falls through to the OR floor
+// the fused top twelve can be entirely semantic — the keyword lane's best row
+// scores 0.4/61, which loses to a semantic row all the way down to rank 31. Pass 1
+// walks the whole fused list rather than its head, so a keyword-lane video ranked
+// below the semantic block still reaches the model. Doing it here rather than by
+// re-tuning the weights leaves the ranking contract in rag/relevance_test.go
+// intact: this changes which passages are SELECTED, not how any of them rank.
+func (s *server) chooseExcerpts(hits []rag.Hit) []excerptCandidate {
 	// A chapter chunk repeats the transcript of its own span, so the same words
 	// can arrive twice under two kinds. Spending two of twelve slots on one
 	// passage would crowd out a genuinely different one.
 	seen := make(map[string]bool)
-
+	lookup := &videoLookup{store: s.videos, seen: make(map[string]*videos.Video)}
+	cands := make([]excerptCandidate, 0, len(hits))
 	for _, h := range hits {
-		if len(sources) >= answerMaxSources {
-			break
-		}
-		if perVideo[h.VideoID] >= answerMaxSourcesPerVideo {
-			continue
-		}
 		// A summary chunk describes the whole video and is stored at second 0
 		// (rag.buildRows), so it is exempt from the moment bucket in BOTH
 		// directions: it is never suppressed by an earlier hit, and it must
@@ -232,38 +349,47 @@ func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVid
 		if !isSummary && seen[key] {
 			continue
 		}
-		v, err := s.videos.Get(h.VideoID)
-		if err != nil || v == nil {
+		v := lookup.get(h.VideoID)
+		if v == nil {
 			continue
 		}
 		if !isSummary {
 			seen[key] = true
 		}
-		if perVideo[h.VideoID] == 0 {
-			vids = append(vids, answerVideo{
-				ID: v.ID, Title: v.Title, ChannelID: v.ChannelID,
-				ChannelName: v.ChannelName, DurationSeconds: v.DurationSeconds,
-				HasThumbnail:     v.HasThumbnail,
-				ThumbnailVersion: v.ThumbnailVersion,
-				Status:           v.Status,
-				PublishedAt:      v.PublishedAt,
-			})
-		}
-		perVideo[h.VideoID]++
-
-		n := len(sources) + 1
-		sources = append(sources, answerSource{
-			N: n, VideoID: h.VideoID, Title: v.Title, ChannelName: v.ChannelName,
-			StartSeconds: h.StartSeconds, Kind: h.Kind, Snippet: matchSnippet(h),
-		})
-		// Sanitize BEFORE truncating, never after: stripping a sentinel out of
-		// already-shortened text can leave a dangling "</excerp" that whatever is
-		// written next completes.
-		excerpts = append(excerpts, fmt.Sprintf("<excerpt n=\"%d\" title=%q at=\"%ds\">\n%s\n</excerpt>",
-			n, stripExcerptTags(v.Title), h.StartSeconds,
-			truncateRunes(stripExcerptTags(h.Text), answerExcerptRunes)))
+		cands = append(cands, excerptCandidate{hit: h, video: v})
 	}
-	return sources, vids, excerpts
+
+	perVideo := make(map[string]int)
+	taken := make([]bool, len(cands))
+	picked := make([]int, 0, answerMaxSources)
+	// Each pass has its own per-video limit AND its own ceiling on the slots it
+	// may fill. Sharing one cap check keeps pass 2 inside answerMaxSourcesPerVideo
+	// and stops pass 1 from ever being the reason that cap is reached.
+	for _, pass := range [2]struct{ perVideoLimit, slots int }{
+		{perVideoLimit: 1, slots: answerBreadthSources},
+		{perVideoLimit: answerMaxSourcesPerVideo, slots: answerMaxSources},
+	} {
+		for i, c := range cands {
+			if len(picked) >= pass.slots {
+				break
+			}
+			if taken[i] || perVideo[c.hit.VideoID] >= pass.perVideoLimit {
+				continue
+			}
+			taken[i] = true
+			perVideo[c.hit.VideoID]++
+			picked = append(picked, i)
+		}
+	}
+
+	// Back into fused-rank order, so citation [1] is still the best passage
+	// retrieval found rather than whichever video pass 1 happened to reach first.
+	sort.Ints(picked)
+	out := make([]excerptCandidate, 0, len(picked))
+	for _, i := range picked {
+		out = append(out, cands[i])
+	}
+	return out
 }
 
 // answerMomentBucket is how coarsely two passages count as the same moment when
