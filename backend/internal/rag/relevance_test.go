@@ -304,3 +304,50 @@ func TestWithinSpreadDegenerateInputs(t *testing.T) {
 		t.Errorf("a zero spread should pass everything through, kept %d", len(got))
 	}
 }
+
+// The Ask ladder keeps EVERY rung that returned rows as its own lane now, rather
+// than only the first (see httpapi.retrieveAsk). That stacks weights on a chunk
+// several rungs found, so the contract above needs restating for more than two
+// lanes: a chunk only the floor found must still not outrank a semantic hit, no
+// matter how many keyword lanes are in the fuse.
+func TestStackedKeywordLanesDoNotFloatTheFloor(t *testing.T) {
+	// The shape the ladder produces on a natural question: the precise rungs match
+	// one chunk, the floor matches that one plus a chunk sharing a single word.
+	precise := []Hit{{VideoID: "precise", Ordinal: 1, Text: "electrolyte replacement in heat"}}
+	floor := []Hit{
+		{VideoID: "precise", Ordinal: 1, Text: "electrolyte replacement in heat"},
+		{VideoID: "shares-a-word", Ordinal: 1, Text: "a talk about sport"},
+	}
+	onTopic := []Hit{{VideoID: "on-topic", Ordinal: 1, Text: "salt and cramping", Distance: l2(0.55)}}
+
+	got := FuseWeighted([]Lane{
+		{Hits: precise, Weight: WeightKeywordContent},
+		{Hits: precise, Weight: WeightKeywordPrefix},
+		{Hits: floor, Weight: WeightKeywordAny},
+		{Hits: onTopic, Weight: WeightSemantic},
+	}, 10)
+
+	// Stacking is allowed to lift the chunk three rungs agreed on — that is more
+	// evidence, not less — and it must lift it above the semantic hit.
+	if got[0].VideoID != "precise" {
+		t.Errorf("the chunk every rung found is not first: %+v", got)
+	}
+	// But the floor-only chunk appears in exactly ONE lane at the floor weight, so
+	// it must still sit below the semantic hit.
+	var floorAt, semanticAt = -1, -1
+	for i, h := range got {
+		switch h.VideoID {
+		case "shares-a-word":
+			floorAt = i
+		case "on-topic":
+			semanticAt = i
+		}
+	}
+	if floorAt < 0 || semanticAt < 0 {
+		t.Fatalf("expected both the floor and semantic hits in the fuse: %+v", got)
+	}
+	if floorAt < semanticAt {
+		t.Errorf("a chunk sharing one word outranked a semantic hit (%d < %d): %+v",
+			floorAt, semanticAt, got)
+	}
+}
