@@ -146,6 +146,11 @@ const (
 	// answers with a single id. It was the one call site with no cap at all, so an
 	// endpoint that ignored the prompt and started explaining itself had nothing
 	// to stop it but its own default.
+	//
+	// 32 has headroom twice over: the longest id is one word ('entertainment'),
+	// and loom caps its own classifier at the same 32 against the same non-Pro
+	// deployment. Worth stating because a cut here is silent — a truncated id is
+	// not an error, it is 'uncategorized' via NormalizeCategory.
 	classifyMaxTokens = 32
 )
 
