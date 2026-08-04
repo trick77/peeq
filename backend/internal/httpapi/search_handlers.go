@@ -262,7 +262,14 @@ func (s *server) retrieveFind(r *http.Request, q string) []rag.Hit {
 // merely-nearest ones. The vector lane is distance-bounded: without that it
 // returns k rows for any query whatsoever, which is why an unrelated question
 // used to come back full of confident nonsense.
+// retrieveAsk fuses the lanes askLanes built. A caller that needs to know WHICH
+// lane a hit came from — the answer's coverage list does, so it can keep the
+// recall floor out — uses askLanes directly.
 func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
+	return rag.FuseWeighted(s.askLanes(r, q), searchCandidates)
+}
+
+func (s *server) askLanes(r *http.Request, q string) []rag.Lane {
 	lanes := make([]rag.Lane, 0, 5)
 
 	// Keyword lane, relaxed in steps: a natural question ANDs its function words
@@ -357,9 +364,8 @@ func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
 		}
 	}
 
-	fused := rag.FuseWeighted(lanes, searchCandidates)
-	diag.log(q, fused)
-	return fused
+	diag.log(q, rag.FuseWeighted(lanes, searchCandidates))
+	return lanes
 }
 
 // askDiag is what one Ask retrieval did, gathered so it can be logged as a

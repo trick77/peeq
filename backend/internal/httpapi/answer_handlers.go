@@ -148,11 +148,12 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hits := s.retrieveAsk(r, q)
+	lanes := s.askLanes(r, q)
+	hits := rag.FuseWeighted(lanes, searchCandidates)
 	sources, vids, excerpts := s.buildAnswerContext(hits)
 	if !send("sources", map[string]any{
 		"sources": sources, "videos": vids,
-		"coverage": s.coverageVideos(hits),
+		"coverage": s.coverageVideos(hits, relevantVideos(lanes)),
 	}) {
 		return // client gone
 	}
@@ -277,7 +278,31 @@ const coverageMaxVideos = 20
 // subtracting the excerpt set here would strand a video that was sent to the
 // model and then not cited in neither list. The client owns that subtraction,
 // because only the client has the finished answer.
-func (s *server) coverageVideos(hits []rag.Hit) []answerVideo {
+// relevantVideos is the set of videos some lane ABOVE the recall floor found.
+//
+// The floor rung matches any one content word, which is a net for fusion and not
+// a claim about a video. Treated as one, it fills a list of "also in your library"
+// with whatever shares a word: a question about bike geometry listed eighteen
+// videos, one of them about skateboards, because the transcript says "bike".
+//
+// Every other lane is a real signal — the semantic lane placed the chunk near the
+// question, and the strict, content and prefix rungs mean every content word is
+// present. WeightKeywordAny is the lowest weight of the five, so "above the floor"
+// is the test, and it stays correct if a rung is added.
+func relevantVideos(lanes []rag.Lane) map[string]bool {
+	out := make(map[string]bool)
+	for _, lane := range lanes {
+		if lane.Weight <= rag.WeightKeywordAny {
+			continue
+		}
+		for _, h := range lane.Hits {
+			out[h.VideoID] = true
+		}
+	}
+	return out
+}
+
+func (s *server) coverageVideos(hits []rag.Hit, relevant map[string]bool) []answerVideo {
 	lookup := &videoLookup{store: s.videos, seen: make(map[string]*videos.Video)}
 	seen := make(map[string]bool)
 	out := make([]answerVideo, 0, coverageMaxVideos)
@@ -289,6 +314,12 @@ func (s *server) coverageVideos(hits []rag.Hit) []answerVideo {
 			continue
 		}
 		seen[h.VideoID] = true
+		// Ranked by the fused list, but admitted only on a signal stronger than
+		// sharing one word. Ordering still comes from the fusion, so the list reads
+		// strongest-first among the videos that qualify.
+		if !relevant[h.VideoID] {
+			continue
+		}
 		v := lookup.get(h.VideoID)
 		if v == nil {
 			continue

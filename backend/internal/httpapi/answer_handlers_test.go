@@ -709,7 +709,7 @@ func TestCoverageVideosCollapsesAndOrders(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.coverageVideos(hits)
+	got := testee.coverageVideos(hits, allRelevant(hits))
 
 	ids := make([]string, 0, len(got))
 	for _, v := range got {
@@ -736,7 +736,7 @@ func TestCoverageVideosCapsVideosNotChunks(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.coverageVideos(hits)
+	got := testee.coverageVideos(hits, allRelevant(hits))
 
 	if len(got) != coverageMaxVideos {
 		t.Fatalf("coverage carried %d videos, want %d", len(got), coverageMaxVideos)
@@ -761,7 +761,81 @@ func TestCoverageVideosKeepsTheExcerptVideos(t *testing.T) {
 	hits := []rag.Hit{{VideoID: "cited", Ordinal: 0}}
 
 	testee := &server{videos: deps.Videos}
-	if got := testee.coverageVideos(hits); len(got) != 1 || got[0].ID != "cited" {
+	if got := testee.coverageVideos(hits, allRelevant(hits)); len(got) != 1 || got[0].ID != "cited" {
 		t.Errorf("coverage = %+v, want the excerpt video kept for the client to subtract", got)
+	}
+}
+
+// allRelevant marks every hit's video as coming from a lane above the floor, for
+// the tests whose subject is the collapse and the cap rather than the bar.
+func allRelevant(hits []rag.Hit) map[string]bool {
+	out := make(map[string]bool, len(hits))
+	for _, h := range hits {
+		out[h.VideoID] = true
+	}
+	return out
+}
+
+// The reported bug: a question about bike geometry listed eighteen videos under
+// "Also in your library", one of them about skateboards. The keyword lane had
+// fallen to its recall floor — any ONE content word — so "bike" in a transcript
+// was enough. The floor is a net for fusion, not a claim about a video.
+func TestCoverageVideosExcludesFloorOnlyVideos(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	for _, id := range []string{"geometry", "skateboard"} {
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The floor found both; only the semantic lane found the one about geometry.
+	floor := []rag.Hit{{VideoID: "skateboard", Ordinal: 0}, {VideoID: "geometry", Ordinal: 0}}
+	semantic := []rag.Hit{{VideoID: "geometry", Ordinal: 0, Distance: 0.98}}
+	lanes := []rag.Lane{
+		{Hits: floor, Weight: rag.WeightKeywordAny},
+		{Hits: semantic, Weight: rag.WeightSemantic},
+	}
+	hits := rag.FuseWeighted(lanes, searchCandidates)
+
+	testee := &server{videos: deps.Videos}
+	got := testee.coverageVideos(hits, relevantVideos(lanes))
+
+	if len(got) != 1 || got[0].ID != "geometry" {
+		t.Errorf("coverage = %+v, want only the video a lane above the floor found", got)
+	}
+}
+
+// A strict, content or prefix rung IS a real signal — every content word is in
+// the chunk — so a video only those found still belongs in the list.
+func TestCoverageVideosKeepsStrongKeywordRungs(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "exact", URL: "u", Title: "exact"}); err != nil {
+		t.Fatal(err)
+	}
+	lanes := []rag.Lane{
+		{Hits: []rag.Hit{{VideoID: "exact", Ordinal: 0}}, Weight: rag.WeightKeywordContent},
+	}
+	hits := rag.FuseWeighted(lanes, searchCandidates)
+
+	testee := &server{videos: deps.Videos}
+	if got := testee.coverageVideos(hits, relevantVideos(lanes)); len(got) != 1 {
+		t.Errorf("coverage = %+v, want the content-rung video kept", got)
+	}
+}
+
+// Nothing but the floor ran, so nothing has been shown to be about the topic and
+// the list stays empty rather than being filled with word matches.
+func TestCoverageVideosEmptyWhenOnlyTheFloorRan(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "shares", URL: "u", Title: "shares"}); err != nil {
+		t.Fatal(err)
+	}
+	lanes := []rag.Lane{
+		{Hits: []rag.Hit{{VideoID: "shares", Ordinal: 0}}, Weight: rag.WeightKeywordAny},
+	}
+	hits := rag.FuseWeighted(lanes, searchCandidates)
+
+	testee := &server{videos: deps.Videos}
+	if got := testee.coverageVideos(hits, relevantVideos(lanes)); len(got) != 0 {
+		t.Errorf("coverage = %+v, want empty", got)
 	}
 }
