@@ -433,6 +433,40 @@ describe("also in your library", () => {
     expect(row.querySelector(".n")).toBeNull();
   });
 
+  // The channel name navigates to the channel, not to the video — the row is two
+  // controls side by side, same as a cited row.
+  it("opens the channel from an uncited row", () => {
+    const onOpenChannel = vi.fn();
+    const onOpenVideo = vi.fn();
+    render(
+      <Panel
+        state={state({ text: "Cited.[1]", coverage: [...videos, uncited] })}
+        onOpenChannel={onOpenChannel}
+        onOpenVideo={onOpenVideo}
+      />,
+    );
+    fireEvent.click(screen.getByText("Dr. Becky"));
+    expect(onOpenChannel).toHaveBeenCalledWith("c4");
+    expect(onOpenVideo).not.toHaveBeenCalled();
+  });
+
+  // A video whose channel id never reached the frame still names its channel, as
+  // plain text rather than a link to nowhere — the same fallback a cited row has.
+  it("names the channel without linking when the id is missing", () => {
+    const noChannelId = { ...uncited, channel_id: "" };
+    render(
+      <Panel
+        state={state({
+          text: "Cited.[1]",
+          coverage: [...videos, noChannelId],
+        })}
+      />,
+    );
+    const row = screen.getByText("Dr. Becky");
+    expect(row.tagName).toBe("SPAN");
+    expect(row).toHaveClass("ch");
+  });
+
   // It opens the video rather than seeking. A retrieved chunk does sit behind the
   // row, but the model never vouched for it, so a timestamp would assert more
   // than is known.
