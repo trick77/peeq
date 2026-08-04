@@ -334,6 +334,7 @@ Rules:
 - Never invent a video, a title, a timestamp, or a fact that is not in the excerpts.
 - If the excerpts disagree with each other, say so and cite both.
 - Answer in at most six sentences. Write plainly, in the reader's own terms.
+- Write flowing prose. No bullet lists, no headings, no markdown formatting of any kind.
 - Do not list the sources at the end; the interface renders them.`
 
 // answerMessages puts the rules in a system message and the question and the
