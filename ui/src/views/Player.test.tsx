@@ -1119,6 +1119,115 @@ describe("Player", () => {
     await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 40, 9));
   });
 
+  it("flips the button to Mark unwatched when a ping crosses the auto-watch line", async () => {
+    // The server auto-marks watched at 90% inside this Player's own ping, so no
+    // 409 ever announces it. The button used to go on saying "Mark watched" on a
+    // video the server already had down as watched, and pressing it re-sent
+    // watched:true instead of un-watching.
+    vi.mocked(setResume).mockReset();
+    vi.mocked(setResume).mockResolvedValue({
+      position: 95,
+      state_version: 9,
+      watched: true,
+    });
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    await screen.findByRole("button", { name: "Mark watched" });
+
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 95,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+
+    const btn = await screen.findByRole("button", { name: "Mark unwatched" });
+    expect(btn).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("lets an un-watch beat a ping that was already in flight", async () => {
+    // The inverse of the bug above: the auto-mark flips the button, the user
+    // presses it to un-watch, and the ping that was in the air still carries
+    // watched:true. Adopting it would flip the label back under their hand.
+    vi.mocked(setResume).mockReset();
+    let landPing: (() => void) | undefined;
+    vi.mocked(setResume).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          landPing = () =>
+            resolve({ position: 95, state_version: 9, watched: true });
+        }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 95,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+    await waitFor(() => expect(setResume).toHaveBeenCalled());
+
+    // Marked watched by hand while that ping is still unanswered, then undone.
+    const btn = await screen.findByRole("button", { name: "Mark watched" });
+    fireEvent.click(btn);
+    await screen.findByRole("button", { name: "Mark unwatched" });
+    fireEvent.click(screen.getByRole("button", { name: "Mark unwatched" }));
+    await screen.findByRole("button", { name: "Mark watched" });
+
+    landPing?.();
+    await waitFor(() => expect(setWatched).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: "Mark watched" })).toBeTruthy();
+  });
+
+  it("writes the end position the moment a video runs out, without waiting for the throttle", async () => {
+    // A video shorter than the throttle window's worth of last-10% would
+    // otherwise run out between pings and never cross the threshold.
+    vi.mocked(setResume).mockReset();
+    vi.mocked(setResume).mockResolvedValue({
+      position: 25,
+      state_version: 1,
+      watched: false,
+    });
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 25,
+      writable: true,
+    });
+    // One ordinary ping, short of the line, then the video ends inside the same
+    // throttle window — the case the throttle alone would swallow.
+    fireEvent.timeUpdate(videoEl);
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 25, 1));
+
+    vi.mocked(setResume).mockResolvedValue({
+      position: 30,
+      state_version: 9,
+      watched: true,
+    });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 30,
+      writable: true,
+    });
+    fireEvent.ended(videoEl);
+
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 30, 1));
+    await screen.findByRole("button", { name: "Mark unwatched" });
+  });
+
   it("pauses, rewinds and says so when a resume ping is refused as stale", async () => {
     // Issue #97 from this client's side: the video was marked watched
     // somewhere this Player never saw, so its position was refused with a 409.
