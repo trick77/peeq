@@ -36,9 +36,18 @@ const rrfK = 60
 // WeightKeywordAny sits BELOW WeightSemantic deliberately. A chunk that happens
 // to share a word is worse evidence than one the embedding places near the
 // question.
+// WeightKeywordPrefix sits just below the content rung. A prefix rung means every
+// content word appears in this chunk in SOME inflection — "transient" for a query
+// that said "transients" — which is very nearly what the content rung means, and
+// far more than the OR floor's "any one of these words".
+//
+// Measured on the library this was tuned against: 'transient*' matches exactly
+// what '"transient" OR "transients"' matches, chunk for chunk. The width it buys
+// is inflection, not noise, which is why it earns 0.7 rather than floor money.
 const (
 	WeightKeywordStrict  = 1.0
 	WeightKeywordContent = 0.9
+	WeightKeywordPrefix  = 0.7
 	WeightKeywordAny     = 0.4
 	WeightSemantic       = 0.6
 )

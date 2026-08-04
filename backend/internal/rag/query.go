@@ -122,7 +122,15 @@ type FTSTier struct {
 //
 //	every term ANDed          — identical to BuildFTSMatch(q)  (WeightKeywordStrict)
 //	content terms ANDed       — function words dropped         (WeightKeywordContent)
-//	content terms ORed        — recall floor                   (WeightKeywordAny)
+//	content prefixes ANDed    — inflection tolerated           (WeightKeywordPrefix)
+//	content prefixes ORed     — recall floor                   (WeightKeywordAny)
+//
+// The floor is a PREFIX or, not a literal one. The index has no stemming — plain
+// fts5(text), default unicode61 — so "transients" and "transient" are unrelated
+// tokens, and a question written in the plural could not reach a video that says
+// the singular. On the library this was tuned against that cost five of eleven
+// videos on one word. A prefix floor is a strict superset of the literal floor at
+// the same weight, so nothing it used to find is lost.
 //
 // Redundant rungs are dropped, so a query with no stopwords yields fewer
 // entries and costs exactly what it costs today. Returns nil for unusable
@@ -156,11 +164,22 @@ func BuildFTSQueries(q string) []FTSTier {
 	if and := strings.Join(content, " "); and != strict {
 		tiers = append(tiers, FTSTier{Match: and, Weight: WeightKeywordContent})
 	}
+	// Prefixes of the SAME content terms, still ANDed. Widens the content rung to
+	// every inflection of each word without loosening the requirement that all of
+	// them appear.
+	prefixed := make([]string, len(content))
+	for i, t := range content {
+		prefixed[i] = t + "*"
+	}
+	tiers = append(tiers, FTSTier{
+		Match:  strings.Join(prefixed, " "),
+		Weight: WeightKeywordPrefix,
+	})
 	// ORing a single term reproduces the AND tier exactly; only add the recall
 	// floor when it actually widens the match.
 	if len(content) > 1 {
 		tiers = append(tiers, FTSTier{
-			Match:  strings.Join(content, " OR "),
+			Match:  strings.Join(prefixed, " OR "),
 			Weight: WeightKeywordAny,
 		})
 	}

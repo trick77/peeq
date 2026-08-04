@@ -115,8 +115,8 @@ func TestBuildFTSQueriesRelaxesAQuestion(t *testing.T) {
 	// The query from the bug report: every function word ANDed matches nothing,
 	// so the keyword lane used to abstain entirely and leave pure vector search.
 	got := BuildFTSQueries("Did someone ever talk about electrolytes being useful in endurance sport?")
-	if len(got) != 3 {
-		t.Fatalf("want 3 tiers, got %d: %+v", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("want 4 tiers, got %d: %+v", len(got), got)
 	}
 	if got[0].Match != BuildFTSMatch("Did someone ever talk about electrolytes being useful in endurance sport?") {
 		t.Errorf("tier 0 must equal BuildFTSMatch, got %q", got[0].Match)
@@ -131,10 +131,20 @@ func TestBuildFTSQueriesRelaxesAQuestion(t *testing.T) {
 			t.Errorf("tier 1 %q dropped content term %s", got[1].Match, kept)
 		}
 	}
-	if !strings.Contains(got[2].Match, " OR ") {
-		t.Errorf("tier 2 %q should be the OR recall floor", got[2].Match)
+	// The prefix rung keeps the content rung's requirement that every word appears
+	// and widens each one to its inflections, so it must still be ANDed.
+	if strings.Contains(got[2].Match, " OR ") || !strings.Contains(got[2].Match, `"electrolytes"*`) {
+		t.Errorf("tier 2 %q should be the content terms ANDed as prefixes", got[2].Match)
 	}
-	want := []float64{WeightKeywordStrict, WeightKeywordContent, WeightKeywordAny}
+	// The floor is a PREFIX or. Without stemming in the index, a literal floor
+	// cannot reach a video that wrote the singular of a word the question pluralised.
+	if !strings.Contains(got[3].Match, " OR ") || !strings.Contains(got[3].Match, `"sport"*`) {
+		t.Errorf("tier 3 %q should be the prefix OR recall floor", got[3].Match)
+	}
+	want := []float64{
+		WeightKeywordStrict, WeightKeywordContent,
+		WeightKeywordPrefix, WeightKeywordAny,
+	}
 	for i, w := range want {
 		if got[i].Weight != w {
 			t.Errorf("tier %d weight = %v, want %v", i, got[i].Weight, w)
@@ -143,29 +153,35 @@ func TestBuildFTSQueriesRelaxesAQuestion(t *testing.T) {
 }
 
 func TestBuildFTSQueriesSkipsRedundantTiers(t *testing.T) {
-	// No stopwords and one term: relaxing would reproduce the strict tier, so
-	// the ladder must not cost an extra round-trip.
-	if got := BuildFTSQueries("electrolytes"); !reflect.DeepEqual(got,
-		[]FTSTier{{Match: `"electrolytes"`, Weight: WeightKeywordStrict}}) {
-		t.Errorf("single content term should yield one tier, got %+v", got)
+	// No stopwords and one term: the content-ANDed rung would reproduce the strict
+	// tier, so it is dropped. The prefix rung is NOT a duplicate — it is what
+	// reaches "electrolyte" — so it stays, and the OR floor of one term would
+	// reproduce it, so that goes.
+	if got := BuildFTSQueries("electrolytes"); !reflect.DeepEqual(got, []FTSTier{
+		{Match: `"electrolytes"`, Weight: WeightKeywordStrict},
+		{Match: `"electrolytes"*`, Weight: WeightKeywordPrefix},
+	}) {
+		t.Errorf("single content term should yield strict + prefix, got %+v", got)
 	}
-	// No stopwords, several terms: the AND tier duplicates strict, so only the
-	// OR floor is added.
+	// No stopwords, several terms: the AND tier duplicates strict, so the ladder is
+	// strict, prefixes ANDed, prefixes ORed.
 	got := BuildFTSQueries("electrolytes endurance")
-	if len(got) != 2 || got[0].Match != `"electrolytes" "endurance"` || got[1].Match != `"electrolytes" OR "endurance"` {
+	if len(got) != 3 || got[0].Match != `"electrolytes" "endurance"` ||
+		got[1].Match != `"electrolytes"* "endurance"*` ||
+		got[2].Match != `"electrolytes"* OR "endurance"*` {
 		t.Fatalf("unexpected tiers: %+v", got)
 	}
-	// The rung that matters: with no stopwords the ladder has two rungs, so the
-	// OR floor lands in SECOND position. Weighing by slice position would give
-	// it the content-tier weight and float it above the semantic lane — exactly
-	// the burial this ladder exists to prevent.
-	if got[1].Weight != WeightKeywordAny {
+	// The rung that matters: with no stopwords the OR floor lands in THIRD
+	// position, where the content tier would sit on a query that had stopwords.
+	// Weighing by slice position would hand it the content weight and float it
+	// above the semantic lane — exactly the burial this ladder exists to prevent.
+	if got[2].Weight != WeightKeywordAny {
 		t.Errorf("the OR floor weighs %v, want the floor %v — its position in the "+
-			"ladder must not decide its weight", got[1].Weight, WeightKeywordAny)
+			"ladder must not decide its weight", got[2].Weight, WeightKeywordAny)
 	}
-	if got[1].Weight >= WeightSemantic {
+	if got[2].Weight >= WeightSemantic {
 		t.Errorf("the OR floor (%v) must weigh less than the semantic lane (%v)",
-			got[1].Weight, WeightSemantic)
+			got[2].Weight, WeightSemantic)
 	}
 }
 
