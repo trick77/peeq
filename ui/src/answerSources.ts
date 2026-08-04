@@ -289,11 +289,19 @@ function isBlank(part: AnswerPart): boolean {
 // order and the collapse still keeps the FIRST of them — which is the one whose
 // moment the surviving button seeks to.
 //
-// Mid-stream a numeral can still move: a run's last mark has not necessarily
-// arrived, so "…[3]" paints "2" and becomes "1 2" when "[1]" follows. That is one
-// glyph shifting one place, and the alternative — withholding a whole run until
-// the sentence settles — would leave finished claims visibly uncited for as long
-// as the model kept writing.
+// Mid-stream a run can still be resorted under the reader, and it is worth being
+// precise about what that costs. A run's later marks have not necessarily arrived,
+// so in "Alpha[1]. Beta[3]…" the mark after Beta paints "2" and seeks vb; when
+// "[1]" lands the run sorts to "1 2" and that same position now paints "1", seeks
+// va, and carries va's accessible name. It is not only a numeral moving — a reader
+// already reaching for that mark can click through to a different moment than the
+// one they read.
+//
+// Accepted, because the alternatives are worse. Withholding a run until its
+// sentence settles leaves finished claims visibly uncited for as long as the model
+// keeps writing. Sorting only once streaming ends leaves a descending run on
+// screen for the whole answer rather than for the gap between two tokens — which
+// is the bug, just slower. The window here is one token wide.
 function sortRunsAscending(
   parts: AnswerPart[],
   display: Map<number, CitedSource>,
