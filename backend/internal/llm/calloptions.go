@@ -23,7 +23,7 @@ type reasoningEffortKey struct{}
 // and the plumbing is three lines — not because it currently does anything.
 //
 // To make a call cheaper or faster, use WithoutThinking (which does work:
-// reasoning drops to a measured zero) and, for a short gate, NonReasoning.
+// reasoning drops to a measured zero) and, for a short gate, ShortGate.
 func WithReasoningEffort(ctx context.Context, effort string) context.Context {
 	return context.WithValue(ctx, reasoningEffortKey{}, effort)
 }
@@ -37,26 +37,31 @@ func reasoningEffortFrom(ctx context.Context) string {
 
 // --- model --------------------------------------------------------------------
 
-type nonReasoningKey struct{}
+type shortGateKey struct{}
 
-// NonReasoning routes the calls made with ctx to the non-Pro deployment
-// (nonReasoningModel). It is for the short gates: a step whose answer is one id
+// ShortGate routes the calls made with ctx to the non-Pro deployment
+// (shortGateModel). It is for the short gates: a step whose answer is one id
 // from a list the prompt already spells out needs a fast answer, not a deep one,
 // and Pro is where the long thinking calls queue.
 //
 // Pair it with WithoutThinking — the two say different things. WithoutThinking
 // asks the model not to reason; this asks for a deployment that answers sooner.
-// Deliberately NOT for anything that writes text a reader sees: "no reasoning
-// needed" is the bar here, not "thinking happens to be off". The summary, the
-// coarse section map, the reduce and the Ask answer all stay on Pro — as do the
-// keypoints and chapters, whose titles carry a MiMo attribution in the Player.
-func NonReasoning(ctx context.Context) context.Context {
-	return context.WithValue(ctx, nonReasoningKey{}, true)
+// It is not a switch between a reasoning and a non-reasoning model: mimo-v2.5
+// reasons as readily as Pro, which is exactly why the gates disable thinking as
+// well rather than relying on the deployment to stay shallow.
+//
+// Deliberately NOT for anything that writes text a reader sees. The bar is what
+// the call produces — an id or a label that lands in a filter — not "thinking
+// happens to be off". The summary, the coarse section map, the reduce and the
+// Ask answer all stay on Pro, as do the keypoints and chapters, whose titles
+// carry a MiMo attribution in the Player.
+func ShortGate(ctx context.Context) context.Context {
+	return context.WithValue(ctx, shortGateKey{}, true)
 }
 
 func modelFrom(ctx context.Context) string {
-	if v, ok := ctx.Value(nonReasoningKey{}).(bool); ok && v {
-		return nonReasoningModel
+	if v, ok := ctx.Value(shortGateKey{}).(bool); ok && v {
+		return shortGateModel
 	}
 	return model
 }
