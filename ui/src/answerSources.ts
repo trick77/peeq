@@ -113,16 +113,21 @@ export type RenderedPart =
 // moved past the punctuation that follows it — a full stop or a comma — and the
 // space before it is dropped: "…hardest stages.¹". See marksAfterPunctuation.
 //
+// Two more passes run before the collapse, each with its own note below: a
+// markdown bullet the model opened a line with is stripped (stripListMarkers),
+// and the marks of a run are put in ascending order (sortRunsAscending).
+//
 // Stable while streaming: text only ever grows at the end, so a run already
 // collapsed stays collapsed and no mark appears, disappears, or renumbers under
 // the reader. `streaming` is what keeps that true of the move as well — a mark
 // with nothing after it yet is held back until the character that decides its
 // side of the punctuation has arrived.
 export function answerParts(
-  text: string,
+  rawText: string,
   sources: AnswerSource[],
   streaming = false,
 ): RenderedPart[] {
+  const text = stripListMarkers(rawText, streaming);
   const cited = citedInOrder(text, sources);
   const display = new Map(cited.map((s) => [s.n, s]));
   // The FULL retrieved set, same as citedInOrder uses: that is what keeps a
@@ -145,9 +150,12 @@ export function answerParts(
   // front of a whole run, and the mark a run collapses to is its first — so the
   // two orders place the punctuation identically, and this one also lets the
   // collapse see a run the move itself created ("[1]. [2]" -> "[1] [2]").
-  for (const part of marksAfterPunctuation(
-    splitCitations(text, known),
-    streaming,
+  //
+  // The ascending sort runs between the two, on the runs the move has finished
+  // assembling, and before the collapse can act on adjacency.
+  for (const part of sortRunsAscending(
+    marksAfterPunctuation(splitCitations(text, known), streaming),
+    display,
   )) {
     if (part.kind === "text") {
       if (lastCite && !part.text.trim() && !part.text.includes("\n")) {
@@ -258,6 +266,121 @@ function marksAfterPunctuation(
 
 function isBlank(part: AnswerPart): boolean {
   return part.kind === "text" && SAME_LINE_SPACE.test(part.text);
+}
+
+// sortRunsAscending puts the marks of a run in ascending numeral order, so a run
+// reads "² ⁴" and never "⁴ ²".
+//
+// The out-of-order run is not the model misbehaving. `display` numbers the VIDEO
+// at its first mention, so a video mentioned early and again later keeps its low
+// number — and an answer that cites a new video and then returns to an earlier
+// one writes a perfectly sensible "[3][1]" that renders as "2 1". Nothing was
+// wrong with the text; the numbering the reader sees is ours, so putting it in
+// order is ours too.
+//
+// Only the marks move. The blank space between them keeps its position, since a
+// run's gaps belong to the run's shape rather than to any one mark.
+//
+// Running before the collapse is what makes the collapse strictly better rather
+// than merely undisturbed: "[1][3][2]" where 1 and 2 are one video renders
+// "1 2 1" today, sorts to "1 1 2", and collapses to "1 2".
+//
+// The sort is stable, so two marks showing the same numeral keep their written
+// order and the collapse still keeps the FIRST of them — which is the one whose
+// moment the surviving button seeks to.
+//
+// Mid-stream a run can still be resorted under the reader, and it is worth being
+// precise about what that costs. A run's later marks have not necessarily arrived,
+// so in "Alpha[1]. Beta[3]…" the mark after Beta paints "2" and seeks vb; when
+// "[1]" lands the run sorts to "1 2" and that same position now paints "1", seeks
+// va, and carries va's accessible name. It is not only a numeral moving — a reader
+// already reaching for that mark can click through to a different moment than the
+// one they read.
+//
+// Accepted, because the alternatives are worse. Withholding a run until its
+// sentence settles leaves finished claims visibly uncited for as long as the model
+// keeps writing. Sorting only once streaming ends leaves a descending run on
+// screen for the whole answer rather than for the gap between two tokens — which
+// is the bug, just slower. The window here is one token wide.
+function sortRunsAscending(
+  parts: AnswerPart[],
+  display: Map<number, CitedSource>,
+): AnswerPart[] {
+  const out = parts.slice();
+  for (let start = 0; start < out.length; start++) {
+    if (out[start].kind !== "cite") continue;
+    // Where the marks of this run sit. Same adjacency rule as everywhere else:
+    // blank space on one line does not end a run, anything else does.
+    const at = [start];
+    let end = start;
+    for (let j = start + 1; j < out.length; j++) {
+      if (out[j].kind === "cite") {
+        at.push(j);
+        end = j;
+        continue;
+      }
+      if (isBlank(out[j])) continue;
+      break;
+    }
+    start = end;
+    if (at.length < 2) continue;
+
+    const marks = at.map((i) => out[i]);
+    marks.sort((a, b) => numeralOf(a, display) - numeralOf(b, display));
+    at.forEach((i, k) => {
+      out[i] = marks[k];
+    });
+  }
+  return out;
+}
+
+// numeralOf is the number a mark is RENDERED as, which is what the order the
+// reader sees is built from — never the backend number the model wrote.
+function numeralOf(
+  part: AnswerPart,
+  display: Map<number, CitedSource>,
+): number {
+  return part.kind === "cite" ? display.get(part.n)!.display : 0;
+}
+
+// A list marker opening a line: the bullet and the space after it. Anchored to a
+// line start, and a following space is required, so nothing inside a sentence is
+// ever touched.
+const LIST_MARKER = /(^|\n)([^\S\n]*)[-*•][^\S\n]+/g;
+// The same marker with nothing after it yet — only meaningful mid-stream.
+const TRAILING_LIST_MARKER = /(^|\n)[^\S\n]*[-*•][^\S\n]*$/;
+
+// stripListMarkers removes a markdown bullet the model opened a line with.
+//
+// The answer body renders as plain text and does not set `white-space`, so a
+// bulleted list arrives as a paragraph with its markers still in it: the newline
+// collapses to a space and the reader sees "…real stars.³ ⁴ - Hypotheses
+// proposing…", a hyphen that belongs to nothing. The prompt now asks for prose,
+// but a prompt is a request, and this is the second half of that fix.
+//
+// What it must NOT touch is the reason for both anchors. An em dash is prose and
+// a hyphen inside "well-known" is a word; only a bullet at the head of a line,
+// with space after it, is a marker. The newline itself stays — it is the
+// paragraph break, and marksAfterPunctuation reads it to tell a mark that opens
+// a paragraph from one that follows a sentence.
+//
+// The trailing case exists for the same reason splitCitations withholds an
+// unfinished "[1": mid-stream the marker's space has not arrived yet, so matching
+// only the completed form would render the hyphen for one frame and swallow it
+// the next. Stripping it while it is still the last thing in the buffer means it
+// never appears at all.
+//
+// That trade runs the other way for a line opening on a negative number: "\n-"
+// is withheld, and the hyphen appears once "40" settles it. Rare enough to be
+// the better side of the trade — every bulleted answer hits the first case.
+//
+// A NUMBERED marker ("1. ") is deliberately left alone. Stripping it would mean
+// deleting digits and a full stop on the strength of a guess, and a sentence
+// opening on a year — "2019. That season…" — is prose the reader wrote nothing
+// to lose. The prompt asking for prose is what covers that shape.
+export function stripListMarkers(text: string, streaming = false): string {
+  const out = text.replace(LIST_MARKER, "$1$2");
+  return streaming ? out.replace(TRAILING_LIST_MARKER, "$1") : out;
 }
 
 // CitedResult is one video and the cited moments within it, in the shape the

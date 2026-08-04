@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { answerParts, citedInOrder, groupCited } from "./answerSources";
+import {
+  answerParts,
+  citedInOrder,
+  groupCited,
+  stripListMarkers,
+} from "./answerSources";
 import type { AnswerSource, AnswerVideo } from "./api/answer";
 
 function src(n: number, over: Partial<AnswerSource> = {}): AnswerSource {
@@ -162,6 +167,55 @@ describe("answerParts", () => {
     ).toEqual([70, 640]);
   });
 
+  // The reported bug: a run rendered "2 1". `display` numbers the video at its
+  // first mention, so an answer that cites a new video and then returns to an
+  // earlier one writes a sensible "[3][1]" whose numerals come out descending.
+  it("puts a descending run in ascending order", () => {
+    const sources = [src(1, { video_id: "va" }), src(3, { video_id: "vb" })];
+    expect(shape("Alpha[1]. Beta[3][1].", sources)).toEqual([
+      "Alpha.",
+      "[1]",
+      " Beta.",
+      "[1]",
+      "[2]",
+    ]);
+  });
+
+  // Sorting makes the collapse strictly better rather than merely undisturbed:
+  // 1 and 2 are one video, so "1 2 1" becomes "1 1 2" and then "1 2".
+  it("lets the sort feed the collapse", () => {
+    const sources = [
+      src(1, { video_id: "va", start_seconds: 70 }),
+      src(2, { video_id: "va", start_seconds: 640 }),
+      src(3, { video_id: "vb" }),
+    ];
+    expect(shape("Both[1][3][2].", sources)).toEqual(["Both.", "[1]", "[2]"]);
+  });
+
+  // The sort is stable, so the mark that survives a collapsed pair is still the
+  // one the reader's eye was sent to.
+  it("keeps the first of two marks showing one numeral", () => {
+    const got = answerParts("Both[1][3][2].", [
+      src(1, { video_id: "va", start_seconds: 70 }),
+      src(2, { video_id: "va", start_seconds: 640 }),
+      src(3, { video_id: "vb" }),
+    ]);
+    const first = got.find((p) => p.kind === "cite")!;
+    expect(first.kind === "cite" && first.source.start_seconds).toBe(70);
+  });
+
+  // Prose between the marks means there is no run to sort. Each claim keeps the
+  // numeral it was written with, in the order it was written.
+  it("does not reorder marks that prose separates", () => {
+    const sources = [src(1, { video_id: "va" }), src(3, { video_id: "vb" })];
+    expect(shape("Beta[3] and then alpha[1].", sources)).toEqual([
+      "Beta",
+      "[1]",
+      " and then alpha.",
+      "[2]",
+    ]);
+  });
+
   // A line break is whitespace, but it is not a stutter. Collapsing here would
   // leave the second paragraph's only claim unsourced and join the two
   // paragraphs into one on the way.
@@ -318,6 +372,68 @@ describe("answerParts", () => {
     expect(cited).toHaveLength(2);
     const cards = groupCited(cited, [vid("va")]);
     expect(cards[0].matches.map((m) => m.start_seconds)).toEqual([70, 640]);
+  });
+});
+
+describe("stripListMarkers", () => {
+  // The reported bug: the answer body is plain text and sets no `white-space`,
+  // so a bulleted list arrives as one paragraph and the reader sees
+  // "…real stars. 3 4 - Hypotheses proposing…" — a hyphen belonging to nothing.
+  it("removes a bullet the model opened a line with", () => {
+    expect(stripListMarkers("Real stars.[3][4]\n- Hypotheses propose X.")).toBe(
+      "Real stars.[3][4]\nHypotheses propose X.",
+    );
+  });
+
+  it("removes an asterisk and a bullet character too", () => {
+    expect(stripListMarkers("First.\n* Second.\n• Third.")).toBe(
+      "First.\nSecond.\nThird.",
+    );
+  });
+
+  it("removes a marker opening the answer", () => {
+    expect(stripListMarkers("- Only point.")).toBe("Only point.");
+  });
+
+  // Indented markers are the same marker. The indent stays, since it is
+  // whitespace the paragraph was written with.
+  it("keeps the indent and the line break", () => {
+    expect(stripListMarkers("Lead.\n  - Point.")).toBe("Lead.\n  Point.");
+  });
+
+  // The two anchors exist for these. An em dash is prose and a hyphen inside a
+  // word is part of the word; only a bullet at the head of a line is a marker.
+  it("leaves em dashes and hyphens inside prose alone", () => {
+    const text = "It is well-known — and load-bearing — that 3-4 holds.";
+    expect(stripListMarkers(text)).toBe(text);
+  });
+
+  // A hyphen at a line start with no space after it is a word, not a marker.
+  it("leaves a line-leading hyphen with no space after it", () => {
+    expect(stripListMarkers("Lead.\n-40 degrees.")).toBe("Lead.\n-40 degrees.");
+  });
+
+  // Mid-stream the marker's space has not arrived yet. Matching only the
+  // completed form would flash the hyphen for one frame and swallow it the next,
+  // which is what splitCitations avoids for an unfinished "[1".
+  it("withholds a trailing marker while streaming", () => {
+    expect(stripListMarkers("Real stars.\n-", true)).toBe("Real stars.\n");
+    expect(stripListMarkers("Real stars.\n- ", true)).toBe("Real stars.\n");
+    expect(stripListMarkers("Real stars.\n- Hy", true)).toBe("Real stars.\nHy");
+  });
+
+  // Once the answer has settled a lone trailing hyphen is something the model
+  // meant to write, so it is left alone.
+  it("keeps a trailing hyphen once the answer is settled", () => {
+    expect(stripListMarkers("Real stars.\n-")).toBe("Real stars.\n-");
+  });
+
+  // The strip runs inside answerParts, so the body never renders the marker.
+  it("keeps the marker out of the rendered parts", () => {
+    const parts = answerParts("Real stars.[1]\n- Next point.", [src(1)]);
+    const text = parts.map((p) => (p.kind === "text" ? p.text : "")).join("");
+    expect(text).not.toContain("-");
+    expect(text).toContain("\nNext point.");
   });
 });
 
