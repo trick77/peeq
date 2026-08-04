@@ -185,6 +185,27 @@ func TestBuildFTSQueriesSkipsRedundantTiers(t *testing.T) {
 	}
 }
 
+// A prefix on a short term reaches unrelated words rather than inflections, and
+// the rungs it feeds are now walked in full when the answer picks its excerpts,
+// so that noise would become evidence rather than merely ranking low.
+func TestBuildFTSQueriesLeavesShortTermsLiteral(t *testing.T) {
+	got := BuildFTSQueries("car gps stars orbit")
+	if len(got) != 3 {
+		t.Fatalf("want 3 tiers, got %d: %+v", len(got), got)
+	}
+	// "car" and "gps" are under minPrefixRunes; "stars" and "orbit" clear it.
+	want := `"car" "gps" "stars"* "orbit"*`
+	if got[1].Match != want {
+		t.Errorf("prefix rung = %q, want %q", got[1].Match, want)
+	}
+	if strings.Contains(got[2].Match, `"car"*`) || strings.Contains(got[2].Match, `"gps"*`) {
+		t.Errorf("floor %q widened a short term", got[2].Match)
+	}
+	if !strings.Contains(got[2].Match, `"stars"*`) {
+		t.Errorf("floor %q should still widen a long term", got[2].Match)
+	}
+}
+
 func TestBuildFTSQueriesAllStopwords(t *testing.T) {
 	// Nothing survives the stopword filter, so the strict tier must stand alone
 	// rather than relaxing to an empty (and invalid) expression.

@@ -25,6 +25,11 @@ import (
 // truncated rather than rejected.
 const maxTerms = 32
 
+// minPrefixRunes is the shortest content term the prefix rungs will widen. Below
+// it a shared opening says nothing about a shared meaning — "car" and "carbon" —
+// and the point of those rungs is inflection, not any word that starts the same.
+const minPrefixRunes = 4
+
 // ParseFTSQuery turns a Find-mode query into an FTS5 MATCH expression,
 // preserving the operators a full-text search is expected to support:
 //
@@ -167,8 +172,19 @@ func BuildFTSQueries(q string) []FTSTier {
 	// Prefixes of the SAME content terms, still ANDed. Widens the content rung to
 	// every inflection of each word without loosening the requirement that all of
 	// them appear.
+	//
+	// A short term is left literal. "car*" reaches carbon, cardiac and career —
+	// unrelated words, not inflections — and the floor these rungs feed is walked
+	// in full when the answer picks its excerpts, so a rung's noise is no longer
+	// something that merely ranks low. minPrefixRunes is where inflection stops
+	// being the likely reason two words share an opening: "stars" and "orbit"
+	// clear it, "car" and "gps" do not.
 	prefixed := make([]string, len(content))
 	for i, t := range content {
+		if len([]rune(strings.Trim(t, `"`))) < minPrefixRunes {
+			prefixed[i] = t
+			continue
+		}
 		prefixed[i] = t + "*"
 	}
 	tiers = append(tiers, FTSTier{

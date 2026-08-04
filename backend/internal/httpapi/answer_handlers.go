@@ -251,6 +251,36 @@ type excerptCandidate struct {
 	video *videos.Video
 }
 
+// videoLookup resolves a video id at most once per request.
+//
+// It exists because of what breadth-first selection costs. The old loop stopped
+// at answerMaxSources, so it resolved a dozen videos; this one has to consider
+// every fused hit — up to searchCandidates of them — before it knows which
+// twelve to keep. Resolving per hit would put 200 joined queries in front of the
+// sources frame, which is the first thing the reader waits for. Hits cluster
+// heavily by video (200 chunks came from ~32 videos on the library this was
+// measured against), so caching turns that back into a few dozen.
+//
+// A nil entry is cached too: a hit whose video is gone must not be retried once
+// per chunk.
+type videoLookup struct {
+	store *videos.Store
+	seen  map[string]*videos.Video
+}
+
+func (l *videoLookup) get(id string) *videos.Video {
+	if v, ok := l.seen[id]; ok {
+		return v
+	}
+	v, err := l.store.Get(id)
+	if err != nil || v == nil {
+		l.seen[id] = nil
+		return nil
+	}
+	l.seen[id] = v
+	return v
+}
+
 // chooseExcerpts picks the passages the model reads, in fused-rank order.
 //
 // It runs TWO passes over the candidates, and that is the whole point:
@@ -284,6 +314,7 @@ func (s *server) chooseExcerpts(hits []rag.Hit) []excerptCandidate {
 	// can arrive twice under two kinds. Spending two of twelve slots on one
 	// passage would crowd out a genuinely different one.
 	seen := make(map[string]bool)
+	lookup := &videoLookup{store: s.videos, seen: make(map[string]*videos.Video)}
 	cands := make([]excerptCandidate, 0, len(hits))
 	for _, h := range hits {
 		// A summary chunk describes the whole video and is stored at second 0
@@ -296,8 +327,8 @@ func (s *server) chooseExcerpts(hits []rag.Hit) []excerptCandidate {
 		if !isSummary && seen[key] {
 			continue
 		}
-		v, err := s.videos.Get(h.VideoID)
-		if err != nil || v == nil {
+		v := lookup.get(h.VideoID)
+		if v == nil {
 			continue
 		}
 		if !isSummary {
