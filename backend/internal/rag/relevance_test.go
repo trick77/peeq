@@ -351,3 +351,57 @@ func TestStackedKeywordLanesDoNotFloatTheFloor(t *testing.T) {
 			floorAt, semanticAt, got)
 	}
 }
+
+// The regression this constant was raised for, in the shape it was measured in.
+//
+// On a 137-video library, "transients" produced a vector lane of 40 rows across
+// 11 videos spanning L2 0.995 to 1.213, and every video behind it was on topic.
+// A 0.12 spread kept 5 of those rows, taking the fused result from 13 videos back
+// to 6 — because related passages here cluster at the FAR end of the band, so a
+// window measured from the best hit catches a twentieth of the lane rather than
+// its better half.
+//
+// 0.20 reaches 1.195 from a 0.995 best, so it keeps that band's body and still
+// trims its extreme edge. That is the intended split rather than a shortfall:
+// DefaultMaxDistance decides what is admissible at all, and the spread's job is
+// only to say where the merely-nearest rows begin. A spread wide enough to keep
+// every row measured here would keep every row on this library, which is a
+// constant that has stopped doing anything.
+//
+// Distances are the real ones, not cosine-derived, since the point is the band's
+// observed shape.
+func TestWithinSpreadKeepsAFlatFarBand(t *testing.T) {
+	hits := []Hit{
+		{VideoID: "a", Ordinal: 1, Distance: 0.995},
+		{VideoID: "b", Ordinal: 1, Distance: 1.061},
+		{VideoID: "c", Ordinal: 1, Distance: 1.114}, // 0.12 cut everything from here
+		{VideoID: "d", Ordinal: 1, Distance: 1.168},
+		{VideoID: "e", Ordinal: 1, Distance: 1.213}, // the edge 0.20 still trims
+	}
+	got := WithinSpread(hits, SemanticSpread)
+	if len(got) != 4 {
+		t.Fatalf("kept %d of 5 rows in the band this constant was measured against, want 4: %+v",
+			len(got), got)
+	}
+	// The row at 1.168 is the regression: a 0.12 spread dropped it, and the videos
+	// behind rows like it were on topic.
+	if got[3].VideoID != "d" {
+		t.Errorf("the row a 0.12 spread would have cut is still missing: %+v", got)
+	}
+}
+
+// The other half of the same trade: the spread has to keep biting when a query
+// DOES have a close best hit, or it has stopped doing anything.
+func TestWithinSpreadStillCutsWhenTheBestHitIsClose(t *testing.T) {
+	hits := []Hit{
+		{VideoID: "a", Ordinal: 1, Distance: 0.70}, // genuinely close
+		{VideoID: "b", Ordinal: 1, Distance: 0.85},
+		{VideoID: "c", Ordinal: 1, Distance: 1.10}, // merely nearest
+		{VideoID: "d", Ordinal: 1, Distance: 1.20},
+	}
+	got := WithinSpread(hits, SemanticSpread)
+	if len(got) != 2 {
+		t.Errorf("kept %d rows, want 2 — a close best hit must still cut its tail: %+v",
+			len(got), got)
+	}
+}
