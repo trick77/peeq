@@ -195,9 +195,12 @@ const reduceSystemPrompt = "Combine these section summaries of one video into a 
 // resumable worker's first step, persisted on its own so a later failure never
 // discards it.
 func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (string, error) {
-	// The cue index the key-points call sees has its ">>" speaker markers taken
-	// out; stripping them here too keeps both prompts reading the same text.
-	transcript = stripSpeakerMarkers(transcript)
+	// ParseVTT already strips ">>" speaker markers, so this is a no-op for a
+	// transcript that came straight from it. It stays because this takes arbitrary
+	// text: the coarse map-reduce below re-feeds its own section summaries, and
+	// those are model output, which imitates any marker it was shown. Narrowing
+	// the contract to "parser output only" would be a silent trap.
+	transcript = subtitles.StripSpeakerMarkers(transcript)
 	// budget is always positive — New defaults it and WithSummaryChunkTokens
 	// ignores a non-positive override.
 	budget := s.summaryChunkTokens
@@ -382,7 +385,9 @@ var keyPointSpaceRe = regexp.MustCompile(`[\s\x{00A0}]+`)
 // Nothing here shortens the text: an over-long key point is a prompt problem,
 // and truncating mid-sentence would look like a bug rather than a fix.
 func sanitizeKeyPointText(s string) string {
-	s = stripSpeakerMarkers(s)
+	// Still needed even though ParseVTT strips markers now: this cleans what the
+	// model wrote, not what the parser produced.
+	s = subtitles.StripSpeakerMarkers(s)
 	s = leadingListMarkerRe.ReplaceAllString(strings.TrimSpace(s), "")
 	s = strings.TrimSpace(keyPointSpaceRe.ReplaceAllString(s, " "))
 	// Wrapping quotes only: a quoted phrase INSIDE the sentence is the
@@ -410,32 +415,12 @@ func sanitizeKeyPointText(s string) string {
 	return s
 }
 
-// speakerMarkerRe matches the WebVTT speaker marker. Broadcast and manual
-// caption tracks open a new speaker's line with ">>" (and a new SPEAKER's turn
-// with ">>>"), which ParseVTT keeps on purpose — the transcript panel shows the
-// captions as they were written, and vtt.go stays in lockstep with the
-// TypeScript mirror in ui/src/vtt.tsx. It is only the LLM input that wants them
-// gone, so the stripping lives here rather than in the parser.
-//
-// A marker stands on its own: it opens a line or follows a space, and a space
-// follows it. Requiring that boundary is what keeps a right-shift out of the
-// blast radius — "cout>>x" is left alone, and a caption that spells out an
-// operator keeps whatever sits tight against it. The captured leading space is
-// put back so the two speakers' sentences do not run together.
-var speakerMarkerRe = regexp.MustCompile(`(^|\s)>>+(\s|$)`)
-
-// stripSpeakerMarkers removes those markers from text on its way to the model.
-func stripSpeakerMarkers(s string) string {
-	if !strings.Contains(s, ">>") {
-		return s
-	}
-	return strings.TrimSpace(speakerMarkerRe.ReplaceAllString(s, "$1"))
-}
-
 func formatCues(cues []subtitles.Cue) string {
 	var b strings.Builder
 	for _, c := range cues {
-		fmt.Fprintf(&b, "%d: %s\n", c.StartSeconds, stripSpeakerMarkers(c.Text))
+		// No speaker-marker strip here: a Cue can only come from ParseVTT, which
+		// takes the markers out at the source.
+		fmt.Fprintf(&b, "%d: %s\n", c.StartSeconds, c.Text)
 	}
 	return b.String()
 }

@@ -130,6 +130,62 @@ describe("parseVtt rolling-window dedup", () => {
   });
 });
 
+// These mirror TestParseVTTStripsSpeakerMarkers and TestStripSpeakerMarkers in
+// backend/internal/subtitles/vtt_test.go. stripSpeakerMarkers is not exported,
+// so it is exercised through parseVtt the same way the sound-event rules are.
+describe("parseVtt speaker markers", () => {
+  const texts = (vtt: string) => parseVtt(vtt).map((c) => c.text);
+  const cue = (text: string) =>
+    `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n${text}\n`;
+
+  it("strips the marker opening a line, spaced or tight", () => {
+    expect(texts(cue(">> Good evening and welcome"))).toEqual([
+      "Good evening and welcome",
+    ]);
+    expect(texts(cue(">>Thanks for having me"))).toEqual([
+      "Thanks for having me",
+    ]);
+    expect(texts(cue(">>> And now the news"))).toEqual(["And now the news"]);
+  });
+
+  it("decodes the escaped &gt;&gt; spelling before stripping it", () => {
+    expect(texts(cue("&gt;&gt; Good evening"))).toEqual(["Good evening"]);
+  });
+
+  it("separates two speakers sharing one cue", () => {
+    expect(texts(cue("I agree entirely >> So do I"))).toEqual([
+      "I agree entirely So do I",
+    ]);
+    expect(texts(cue(">> >> hello"))).toEqual(["hello"]);
+  });
+
+  it("drops a cue that was nothing but a marker", () => {
+    const vtt =
+      "WEBVTT\n\n" +
+      "00:00:01.000 --> 00:00:03.000\n>>>\n\n" +
+      "00:00:03.000 --> 00:00:05.000\n>> Real words here\n";
+    expect(texts(vtt)).toEqual(["Real words here"]);
+  });
+
+  it("leaves a right-shift operator spoken on screen alone", () => {
+    expect(texts(cue("So you write cout>>x to shift it"))).toEqual([
+      "So you write cout>>x to shift it",
+    ]);
+    expect(texts(cue("and >>= does the same in place"))).toEqual([
+      "and >>= does the same in place",
+    ]);
+  });
+
+  it("collapses a rolling window whose lines differ only past the marker", () => {
+    const vtt =
+      "WEBVTT\n\n" +
+      "00:00:00.000 --> 00:00:02.000\n>> I play\n\n" +
+      "00:00:02.000 --> 00:00:04.000\n>> I play games\n\n" +
+      "00:00:04.000 --> 00:00:06.000\n>> I play games with\n";
+    expect(texts(vtt)).toEqual(["I play games with"]);
+  });
+});
+
 describe("transcriptFilenameBase", () => {
   it("makes a filesystem-safe name from the title", () => {
     expect(transcriptFilenameBase("How the CIA writes: a threat!")).toBe(

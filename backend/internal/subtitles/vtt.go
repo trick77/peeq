@@ -3,11 +3,12 @@
 // inline tags and collapses YouTube auto-caption rolling duplicates (each line is
 // re-emitted with the next word appended, so naive concatenation triples length).
 // It also strips non-speech sound-event markers ([Music], (applause), music
-// notes) and can report that a track carries no real speech at all.
+// notes) and the ">>" speaker markers broadcast tracks open a line with, and it
+// can report that a track carries no real speech at all.
 //
 // The UI has its own forgiving WebVTT parser for the transcript panel
-// (ui/src/vtt.tsx parseVtt); the sound-event and entity rules below are
-// mirrored there and the two must stay in lockstep.
+// (ui/src/vtt.tsx parseVtt); the sound-event, entity and speaker-marker rules
+// below are mirrored there and the two must stay in lockstep.
 package subtitles
 
 import (
@@ -58,7 +59,36 @@ var (
 	// entityRe matches the HTML entities YouTube escapes caption text with. A
 	// single pass, so "&amp;lt;" decodes to "&lt;" and not to "<".
 	entityRe = regexp.MustCompile(`&(?:amp|lt|gt|quot|apos|nbsp|#39|#[xX]27);`)
+
+	// leadingSpeakerRe matches the WebVTT speaker marker where caption tracks
+	// almost always put it: opening the line. Broadcast and manual tracks open a
+	// new speaker's line with ">>" and a new SPEAKER's turn with ">>>", tight
+	// (">>Hello") as often as spaced (">> Hello"), so no space is required here.
+	leadingSpeakerRe = regexp.MustCompile(`^>>+\s*`)
+	// midSpeakerRe matches the same marker standing alone mid-line, which happens
+	// when two speakers share one cue.
+	//
+	// A marker stands on its own: it follows a space, and a space or the end of
+	// the line follows it. Requiring that boundary is what keeps a right-shift
+	// out of the blast radius — "cout>>x" is left alone, and so is ">>=", because
+	// a caption that spells out an operator keeps whatever sits tight against it.
+	// The captured leading space is put back so the two speakers' sentences do
+	// not run together.
+	midSpeakerRe = regexp.MustCompile(`(^|\s)>>+(\s|$)`)
 )
+
+// StripSpeakerMarkers removes ">>" speaker markers from one line of text.
+//
+// Exported because the same rule has to reach text that never came through
+// ParseVTT: summarize sanitizes the model's own output, which imitates the
+// markers it was shown.
+func StripSpeakerMarkers(s string) string {
+	if !strings.Contains(s, ">>") {
+		return s
+	}
+	s = leadingSpeakerRe.ReplaceAllString(s, "")
+	return strings.TrimSpace(midSpeakerRe.ReplaceAllString(s, "$1"))
+}
 
 // entities is the decode table for entityRe. Kept as an explicit closed list
 // rather than html.UnescapeString so the TypeScript mirror in ui/src/vtt.tsx
@@ -276,6 +306,12 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 		// "&lt;c&gt;" spoken on screen into a real tag and tagRe would eat it.
 		clean := unescapeEntities(tagRe.ReplaceAllString(line, ""))
 		clean = strings.TrimSpace(clean)
+		// Speaker markers go after the entity decode above and never before it:
+		// YouTube escapes them as "&gt;&gt;", so entityRe is what turns them back
+		// into something this can match. Before stripSoundEvents, so that
+		// function's hadMarker keeps meaning "carried a sound event" — which is
+		// what IsNonSpeech counts.
+		clean = StripSpeakerMarkers(clean)
 		// Strip non-speech markers before the rolling-duplicate collapse below
 		// sees the line: YouTube re-emits "[Music] I play" then "[Music] I play
 		// games", and the collapse only works on the words that remain.
