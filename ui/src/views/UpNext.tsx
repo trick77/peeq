@@ -1037,8 +1037,9 @@ function SummaryRow({
   // thing rather than one of them falling back to a bare id.
   const label = videoLabel(job.title);
   return (
-    <div className={`ag-row${live ? " live" : ""}`}>
-      <span className="ag-clock">{live ? "now" : "then"}</span>
+    <div className={`ag-row${live ? " live" : ""}${gaveUp ? " fail" : ""}`}>
+      {/* Not "then": there is no later for this row. */}
+      <span className="ag-clock">{gaveUp ? "" : live ? "now" : "then"}</span>
       <span className="ag-node">
         <Icon name="alignLeft" size="12px" />
       </span>
@@ -1070,9 +1071,15 @@ function SummaryRow({
             ("stream idle for 1m30s", "exceeded the 15m0s call cap"). The job row
             is the only place that text is kept, so a row without it can say a
             video failed but never which thing failed — and the three bounds have
-            three different answers. */}
+            three different answers.
+
+            A plain detail line, tinted by .ag-row.fail above rather than boxed:
+            these rows are a quiet list, and History already says a failure this
+            way. (.errline is the form-error box — padding, border and a bottom
+            margin sized to stack above a sign-in form — which would break the
+            row's geometry as well as its voice.) */}
         {gaveUp && job.last_error ? (
-          <div className="ag-detail errline">{job.last_error}</div>
+          <div className="ag-detail">{job.last_error}</div>
         ) : null}
         {live ? (
           <>

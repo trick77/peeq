@@ -1184,6 +1184,21 @@ describe("UpNext skip", () => {
       expect(screen.getByText("stream idle for 1m30s")).toBeInTheDocument();
     });
 
+    // Tinted through the row modifier History already uses, not the form-error
+    // box: these rows are a quiet list, and .errline carries padding, a border
+    // and a bottom margin sized to stack above a sign-in form.
+    it("marks the row failed rather than boxing the error", async () => {
+      vi.mocked(listFailedSummaries).mockResolvedValue([
+        { ...failed(), last_error: "stream idle for 1m30s" },
+      ]);
+      render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+      await screen.findByText("Gave up");
+
+      const line = screen.getByText("stream idle for 1m30s");
+      expect(line).not.toHaveClass("errline");
+      expect(line.closest(".ag-row")).toHaveClass("fail");
+    });
+
     // A queued row must not grow an error line from a rule written for the
     // gave-up section: its last_error is from an attempt still being retried,
     // so showing it would report a settled failure that has not happened.
