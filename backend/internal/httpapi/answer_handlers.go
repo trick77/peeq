@@ -160,9 +160,18 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 
 	// Pro, with thinking on: this is the one call a person waits on, and it
 	// writes cited prose from a dozen excerpts — the deduction the deeper
-	// deployment is for. The lever here is depth, not deployment
-	// (llm.WithReasoningEffort), and it wants a measured before/after on
-	// time-to-first-token, since answerMaxTokens above is sized for reasoning.
+	// deployment is for.
+	//
+	// An earlier note here guessed that reasoning_effort was the lever for that
+	// wait. Measured (ask_latency_probe_test.go), it is not: high and low return
+	// the same reasoning-token distribution, so llm.WithReasoningEffort changes
+	// nothing on this endpoint. The lever that does work is thinking:disabled,
+	// worth ~3.8s of time-to-first-token — and it is not free. Without thinking
+	// the answers stay grounded and still refuse a question the excerpts cannot
+	// answer, but they run thinner and drift on citation placement, landing the
+	// marker before the full stop rather than after it. That is a call about
+	// answer quality, not a tuning knob, so it stays as it is until someone
+	// makes it deliberately.
 	ctx := llm.WithMaxTokens(r.Context(), answerMaxTokens)
 	ctx = llm.WithCall(ctx, llm.CallInfo{Step: "answer"})
 	answer, err := s.ask.CompleteStream(ctx, answerMessages(q, excerpts), func(delta string) {

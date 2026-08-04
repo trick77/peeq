@@ -13,8 +13,17 @@ type reasoningEffortKey struct{}
 
 // WithReasoningEffort overrides the reasoning_effort sent for calls made with
 // ctx. Absent an override the package default (reasoningEffort, "high") is used,
-// so callers that never opt in are unchanged. Pair it with WithoutThinking off /
-// a low effort to keep a cheap extractive call from over-reasoning.
+// so callers that never opt in are unchanged.
+//
+// MEASURED INERT — see httpapi/ask_latency_probe_test.go. Against this endpoint,
+// "high" and "low" return the same reasoning-token distribution and the same
+// latency; the parameter appears to be ignored in favour of MiMo's native
+// thinking field. It has no production callers and, on today's evidence, adding
+// one would change nothing. It stays because the endpoint may start honouring it
+// and the plumbing is three lines — not because it currently does anything.
+//
+// To make a call cheaper or faster, use WithoutThinking (which does work:
+// reasoning drops to a measured zero) and, for a short gate, NonReasoning.
 func WithReasoningEffort(ctx context.Context, effort string) context.Context {
 	return context.WithValue(ctx, reasoningEffortKey{}, effort)
 }

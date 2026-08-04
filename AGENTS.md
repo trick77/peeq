@@ -44,6 +44,9 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   deployment queues less. Bar is "no reasoning needed", NOT "thinking is off". Text that reaches the
   page stays on Pro — summary, map, reduce, keypoints, Ask, whatever their thinking switch says.
 - `WithoutThinking` and `NonReasoning` are separate switches; don't couple them.
+- `reasoning_effort` is MEASURED INERT on this endpoint (`httpapi/ask_latency_probe_test.go`): high
+  and low behave identically. Never propose `WithReasoningEffort` as a speed or cost fix —
+  `WithoutThinking` is the lever that works (reasoning → a measured zero).
 - Cap a new call (`llm.WithMaxTokens`) unless a cut answer would be worse than a long one — with
   thinking on the cap counts reasoning tokens too, and a truncated reply is rarely an error.
 
