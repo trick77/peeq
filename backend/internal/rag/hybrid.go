@@ -56,7 +56,7 @@ const (
 // "not actually about this" and dropped before ranking.
 //
 // The embedding vectors are unit length, so L2 and cosine rank identically and
-// convert exactly: L2 = sqrt(2 - 2*cos). 1.05 is cosine ~0.45. For
+// convert exactly: L2 = sqrt(2 - 2*cos). 1.25 is cosine ~0.22. For
 // text-embedding-3-small, unrelated text pairs sit around cosine 0.0-0.15
 // (L2 1.31-1.41) and genuinely related passages above cosine 0.3.
 //
@@ -102,10 +102,32 @@ const DefaultMaxDistance = 1.25
 // a query nothing covers. The question worth asking is relative: is this hit
 // close to the best thing the query found, or merely closer than the floor?
 //
-// 0.12 in L2 is roughly a tenth of a cosine point at this end of the range —
-// wide enough to keep a paraphrase that the top hit states outright, narrow
-// enough that "nearest available" cannot ride in behind a genuine match.
-const SemanticSpread = 0.12
+// This was 0.12, and it was covering for a mis-calibrated absolute bound. With
+// DefaultMaxDistance at 1.05 the lane arrived pre-truncated, so a tight spread
+// cost nothing visible; once the bound was set against the embedding model's real
+// range, the spread became the binding constraint and a severe one. Measured on a
+// 137-video library, "transients": the bound admitted 40 rows across 11 videos,
+// spanning 0.995 to 1.213 — and a 0.12 spread cut that to 5 rows across 3, taking
+// the fused result from 13 videos back to 6. Thirty-five of forty rows dropped,
+// and the videos behind them were on topic.
+//
+// The reason is the band's shape. Related passages here run 0.995-1.213, about
+// 0.218 wide, and they cluster at the FAR end — so a window measured from the
+// best hit catches a twentieth of the lane rather than the top half of it. A
+// ~600-token chunk against a short query scores low by construction, so the best
+// hit is rarely close in absolute terms and the gradient is flat.
+//
+// 0.20 reaches 1.195 from a 0.995 best: it keeps such a band's body and still trims
+// its extreme edge, while staying meaningful where the mechanism earns its place —
+// a query whose best hit is genuinely close, say 0.70, still cuts at 0.90 rather
+// than waving through everything the bound allowed. 0.22 would have kept every row
+// on the library this was measured against, which is a constant doing nothing.
+//
+// The division of labour is now the clean one. DefaultMaxDistance rejects "not
+// about anything at all" — unrelated text sits at cosine 0.0-0.15, L2 1.31-1.41,
+// well outside 1.25 — which leaves the spread only its own question: is this much
+// worse than the best thing this query found?
+const SemanticSpread = 0.20
 
 // WithinSpread drops semantic hits more than SemanticSpread past the closest
 // one, and is what lets the vector lane return FEWER rows than it was asked
