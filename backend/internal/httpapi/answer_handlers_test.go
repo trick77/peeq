@@ -689,3 +689,79 @@ func firstEvent(t *testing.T, body, name string) string {
 	t.Fatalf("no %q frame in: %s", name, body)
 	return ""
 }
+
+// The panel's "Also in your library" list comes from this. The fused list is
+// CHUNKS, so the collapse and the ordering are the whole job.
+func TestCoverageVideosCollapsesAndOrders(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	for _, id := range []string{"v1", "v2", "v3"} {
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// v2 owns three chunks and ranks second; the list must name it once, after v1.
+	hits := []rag.Hit{
+		{VideoID: "v1", Ordinal: 0},
+		{VideoID: "v2", Ordinal: 0},
+		{VideoID: "v2", Ordinal: 1},
+		{VideoID: "v2", Ordinal: 2},
+		{VideoID: "v3", Ordinal: 0},
+	}
+
+	testee := &server{videos: deps.Videos}
+	got := testee.coverageVideos(hits)
+
+	ids := make([]string, 0, len(got))
+	for _, v := range got {
+		ids = append(ids, v.ID)
+	}
+	if !reflect.DeepEqual(ids, []string{"v1", "v2", "v3"}) {
+		t.Errorf("coverage = %v, want each video once in fused order [v1 v2 v3]", ids)
+	}
+}
+
+// The cap counts VIDEOS and is applied after collapsing. Counting chunks would
+// return a handful of videos whenever one of them is chatty.
+func TestCoverageVideosCapsVideosNotChunks(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	hits := make([]rag.Hit, 0, 150)
+	for v := range 30 {
+		id := fmt.Sprintf("v%02d", v)
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+		for i := range 5 {
+			hits = append(hits, rag.Hit{VideoID: id, Ordinal: i})
+		}
+	}
+
+	testee := &server{videos: deps.Videos}
+	got := testee.coverageVideos(hits)
+
+	if len(got) != coverageMaxVideos {
+		t.Fatalf("coverage carried %d videos, want %d", len(got), coverageMaxVideos)
+	}
+	seen := map[string]bool{}
+	for _, v := range got {
+		if seen[v.ID] {
+			t.Errorf("%s appears twice", v.ID)
+		}
+		seen[v.ID] = true
+	}
+}
+
+// It must NOT subtract the excerpt set. The frame goes out before generation, so
+// the server cannot know what will be cited; a video sent to the model and then
+// not cited has to still reach the client, or it lands in neither list.
+func TestCoverageVideosKeepsTheExcerptVideos(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "cited", URL: "u", Title: "cited"}); err != nil {
+		t.Fatal(err)
+	}
+	hits := []rag.Hit{{VideoID: "cited", Ordinal: 0}}
+
+	testee := &server{videos: deps.Videos}
+	if got := testee.coverageVideos(hits); len(got) != 1 || got[0].ID != "cited" {
+		t.Errorf("coverage = %+v, want the excerpt video kept for the client to subtract", got)
+	}
+}

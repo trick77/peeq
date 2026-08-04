@@ -148,8 +148,12 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sources, vids, excerpts := s.buildAnswerContext(s.retrieveAsk(r, q))
-	if !send("sources", map[string]any{"sources": sources, "videos": vids}) {
+	hits := s.retrieveAsk(r, q)
+	sources, vids, excerpts := s.buildAnswerContext(hits)
+	if !send("sources", map[string]any{
+		"sources": sources, "videos": vids,
+		"coverage": s.coverageVideos(hits),
+	}) {
 		return // client gone
 	}
 
@@ -250,6 +254,55 @@ func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVid
 			truncateRunes(stripExcerptTags(c.hit.Text), answerExcerptRunes)))
 	}
 	return sources, vids, excerpts
+}
+
+// coverageMaxVideos caps the retrieved-video list the panel shows under its
+// citations. Twenty mirrors defaultSearchK, so "what else do I have on this"
+// answers with the same breadth the search box would.
+const coverageMaxVideos = 20
+
+// coverageVideos is every video retrieval found, best-ranked first, one entry
+// each — the answer to "what else is in here", which the citation list cannot
+// give because the model only cites what it used.
+//
+// Three dedups, and all three are needed. The fused list is 200 CHUNKS and one
+// video routinely owns many of them (58 chunks across 6 videos for one word on
+// the library this was built against), so it collapses by video; the cap counts
+// videos rather than chunks, and is applied AFTER collapsing, since truncating
+// chunks first would yield far fewer than twenty videos; and ordering follows the
+// fused rank of each video's best chunk, so the list reads strongest-first.
+//
+// It deliberately includes the videos that won excerpt slots. The frame goes out
+// BEFORE generation, so the server cannot know what the model will cite —
+// subtracting the excerpt set here would strand a video that was sent to the
+// model and then not cited in neither list. The client owns that subtraction,
+// because only the client has the finished answer.
+func (s *server) coverageVideos(hits []rag.Hit) []answerVideo {
+	lookup := &videoLookup{store: s.videos, seen: make(map[string]*videos.Video)}
+	seen := make(map[string]bool)
+	out := make([]answerVideo, 0, coverageMaxVideos)
+	for _, h := range hits {
+		if len(out) >= coverageMaxVideos {
+			break
+		}
+		if seen[h.VideoID] {
+			continue
+		}
+		seen[h.VideoID] = true
+		v := lookup.get(h.VideoID)
+		if v == nil {
+			continue
+		}
+		out = append(out, answerVideo{
+			ID: v.ID, Title: v.Title, ChannelID: v.ChannelID,
+			ChannelName: v.ChannelName, DurationSeconds: v.DurationSeconds,
+			HasThumbnail:     v.HasThumbnail,
+			ThumbnailVersion: v.ThumbnailVersion,
+			Status:           v.Status,
+			PublishedAt:      v.PublishedAt,
+		})
+	}
+	return out
 }
 
 // excerptCandidate is a hit that could be an excerpt, paired with the video

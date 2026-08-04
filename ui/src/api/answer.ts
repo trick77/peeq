@@ -43,7 +43,17 @@ export type AnswerVideo = {
 // `error` replaces the tokens when there is no answer to give — it is not a
 // transport failure, and the sources that preceded it are still good.
 export type AnswerEvent =
-  | { type: "sources"; sources: AnswerSource[]; videos: AnswerVideo[] }
+  | {
+      type: "sources";
+      sources: AnswerSource[];
+      videos: AnswerVideo[];
+      // Every video retrieval found, best-ranked first, one entry each — not just
+      // the ones that won an excerpt slot. The panel subtracts what the answer
+      // cited to get "Also in your library", and it has to happen HERE rather than
+      // on the server: this frame is sent before generation, so at that point
+      // nothing knows what will be cited.
+      coverage: AnswerVideo[];
+    }
   | { type: "token"; text: string }
   | { type: "done" }
   | { type: "error"; message: string };
@@ -65,11 +75,13 @@ export async function streamAnswer(
           const d = data as {
             sources?: AnswerSource[];
             videos?: AnswerVideo[];
+            coverage?: AnswerVideo[];
           };
           onEvent({
             type: "sources",
             sources: d.sources ?? [],
             videos: d.videos ?? [],
+            coverage: d.coverage ?? [],
           });
           break;
         }
