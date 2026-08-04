@@ -329,8 +329,11 @@ export function Share({ token }: { token: string | null }) {
               rail. */}
           {highlights.length > 0 && (
             <div className="card hlpanel">
+              {/* star, not listTree: this card wore the Chapters glyph, which
+                  left the share page's Chapters and Highlights headers
+                  identical while the Player's Highlights showed a star. */}
               <div className="hd">
-                <Icon name="listTree" size="16px" />
+                <Icon name="star" size="16px" />
                 <span className="lbl">Highlights</span>
               </div>
               <div className="tabbody">

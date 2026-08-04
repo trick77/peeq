@@ -3472,11 +3472,22 @@ button.sleeppick.armed {
   color: var(--color-ink);
   line-height: 1.35;
 }
-/* Highlights */
+/* Highlights
+
+   A flat divided list, not ten bordered boxes. Ten key points of up to 25
+   words each — the summarizer's own ceiling — is the normal case, and giving
+   every one of them its own border, background and 12px moat made the card
+   taller than the video it annotates. Hairline dividers separate the rows for
+   a quarter of the height, and nothing is hidden or moved to buy it.
+
+   The card header's star is gold here rather than the accent every other card
+   header wears: the rows' timestamps are already --color-kept, and a header
+   icon in a different warm hue than the list under it read as an oversight.
+   See .card.hlpanel .hd svg. */
 .hl {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
 }
 /* A seek row is a <button> that SHOWS text, and WebKit's UA stylesheet refuses
    to let a form control's text be selected — so the words in a highlight, a
@@ -3492,23 +3503,39 @@ button.sleeppick.armed {
 }
 .hl .row {
   display: flex;
-  gap: 12px;
+  gap: 11px;
   align-items: flex-start;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 9px;
-  padding: 12px 13px;
+  background: none;
+  /* Divider, not a box: a top border only, and the first row does without one
+     because .tabbody's padding already separates it from the header. */
+  border: none;
+  border-top: 1px solid var(--color-border-soft);
+  border-radius: 0;
+  padding: 9px 2px;
   text-align: left;
   width: 100%;
   color: inherit;
   font: inherit;
 }
+.hl .row:first-child {
+  border-top: none;
+  padding-top: 2px;
+}
+/* With no border of its own to light up, a row answers the pointer by filling
+   instead — the same --color-active a transcript cue uses on hover, since the
+   two are now the same kind of thing: a line in a list rather than a card. */
 .hl .row:hover {
-  border-color: var(--color-accent);
+  background: var(--color-active);
+}
+.hl .row:hover .txt {
+  color: var(--color-ink);
 }
 /* See .toc .row.inert. */
 .hl .row.inert:hover {
-  border-color: var(--color-border);
+  background: none;
+}
+.hl .row.inert:hover .txt {
+  color: var(--color-ink-dim);
 }
 .hl .ts {
   color: var(--color-kept);
@@ -3521,6 +3548,20 @@ button.sleeppick.armed {
   font-size: 13.5px;
   color: var(--color-ink-dim);
   line-height: 1.55;
+}
+/* The rows carry their own vertical rhythm now, so the body's 16px would read
+   as a gap above the first divider and below the last. The 16px sides stay:
+   they line the text up with every other card's. */
+.card.hlpanel .tabbody {
+  padding: 6px 16px 8px;
+}
+/* Gold, where every other card header icon is --color-accent-strong. Qualified
+   with .card so it outranks `.card .hd svg`. Highlights is the one card whose
+   list already speaks in --color-kept (the timestamps), and the two warm hues
+   sitting 12 hex points apart in one card looked like a mistake rather than a
+   distinction. */
+.card.hlpanel .hd svg {
+  color: var(--color-kept);
 }
 
 /* Transcript search + cues */

@@ -93,13 +93,12 @@ export function HighlightsCard({
         ) : (
           <div className="hl">
             {video.key_points.map((k, i) => {
+              // No per-row star: it was identical on all ten rows and said
+              // only what the header's star says once, while costing every
+              // row 26px of the width its sentence wanted. The gold survives
+              // in the timestamp, which is the row's own gutter.
               const body = (
                 <>
-                  <Icon
-                    name="starFilled"
-                    size="15px"
-                    style={{ color: "var(--color-kept)" }}
-                  />
                   <span className="ts mono">{formatDuration(k.ts)}</span>
                   <span className="txt">{k.text}</span>
                 </>
