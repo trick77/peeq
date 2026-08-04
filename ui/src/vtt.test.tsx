@@ -179,6 +179,34 @@ describe("parseVtt speaker markers", () => {
     expect(texts(cue("a >>\u00a0b"))).toEqual(["a b"]);
   });
 
+  // Mirrors TestParseVTTKeepsAnEchoAcrossASpeakerChange. A speaker echoing the
+  // words before them is not a rolling window, and the marker is what tells the
+  // two apart — so the collapse compares text that still carries it.
+  it("keeps an echo across a speaker change", () => {
+    expect(
+      parseVtt(
+        "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nYeah\n\n" +
+          "00:00:03.000 --> 00:00:06.000\n>> Yeah, exactly.\n",
+      ),
+    ).toEqual([
+      { ts: 0, text: "Yeah" },
+      { ts: 3, text: "Yeah, exactly." },
+    ]);
+    expect(
+      parseVtt(
+        "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nI think so.\n\n" +
+          "00:00:03.000 --> 00:00:06.000\n>> I think so.\n",
+      ),
+    ).toEqual([
+      { ts: 0, text: "I think so." },
+      { ts: 3, text: "I think so." },
+    ]);
+  });
+
+  it("strips a marker wedged tight against a sound event", () => {
+    expect(texts(cue("[MUSIC]>> Hello there"))).toEqual(["Hello there"]);
+  });
+
   it("leaves a right-shift operator spoken on screen alone", () => {
     expect(texts(cue("So you write cout>>x to shift it"))).toEqual([
       "So you write cout>>x to shift it",

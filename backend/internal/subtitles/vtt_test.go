@@ -388,6 +388,60 @@ func TestParseVTTCollapsesRollingDuplicatesAcrossMarkers(t *testing.T) {
 	}
 }
 
+// A speaker echoing the words before them is not a rolling window. The marker
+// is what tells the two apart, so the collapse has to compare text that still
+// carries it — strip first and one speaker's line, and its start second, are
+// silently swallowed. Mirrored in ui/src/vtt.test.tsx.
+func TestParseVTTKeepsAnEchoAcrossASpeakerChange(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		vtt  string
+		want []Cue
+	}{
+		{
+			name: "the next speaker extends the words before them",
+			vtt: "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nYeah\n\n" +
+				"00:00:03.000 --> 00:00:06.000\n>> Yeah, exactly.\n",
+			want: []Cue{{StartSeconds: 0, Text: "Yeah"}, {StartSeconds: 3, Text: "Yeah, exactly."}},
+		},
+		{
+			name: "the next speaker repeats them outright",
+			vtt: "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nI think so.\n\n" +
+				"00:00:03.000 --> 00:00:06.000\n>> I think so.\n",
+			want: []Cue{{StartSeconds: 0, Text: "I think so."}, {StartSeconds: 3, Text: "I think so."}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := ParseVTT(strings.NewReader(tc.vtt))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.Cues) != len(tc.want) {
+				t.Fatalf("got %+v, want %+v", p.Cues, tc.want)
+			}
+			for i := range tc.want {
+				if p.Cues[i] != tc.want[i] {
+					t.Errorf("cue %d = %+v, want %+v", i, p.Cues[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// A marker wedged against a sound event has no whitespace in front of it, so
+// the mid-line rule cannot see it until the bracket is gone. Stripping after
+// the sound-event pass is what catches this.
+func TestParseVTTStripsAMarkerTightAgainstASoundEvent(t *testing.T) {
+	p, err := ParseVTT(strings.NewReader(
+		"WEBVTT\n\n00:00:00.000 --> 00:00:03.000\n[MUSIC]>> Hello there\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Cues) != 1 || p.Cues[0].Text != "Hello there" {
+		t.Fatalf("got %+v, want one cue %q", p.Cues, "Hello there")
+	}
+}
+
 // TestIsNonSpeechSurvivesMarkerStripping guards a regression the strip could
 // otherwise introduce silently.
 //
