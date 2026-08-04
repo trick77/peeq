@@ -283,6 +283,12 @@ export function Player({
   // getVideo: the resume POST's own >=90% auto-watch bumps it, so a client
   // refreshing only from getVideo would 409 against its own threshold crossing.
   const stateVersionRef = useRef<number | null>(null);
+  // Bumped by the watched toggle, captured by every resume write, checked in
+  // adoptWatched: it invalidates whatever was already in flight when the button
+  // was pressed. Without it, un-watching a video the auto-mark had just flipped
+  // would be reversed a moment later by the very response that flipped it — the
+  // label snapping back under the user's hand.
+  const watchedEpochRef = useRef(0);
   const resumeAppliedRef = useRef(false);
   // Where a jump put the playhead, or null when this page was not opened at a
   // moment. While it is set, no resume position is written: see
@@ -507,10 +513,12 @@ export function Player({
       // openVideoIdRef so a late response can't write this video's version into
       // the ref after the user has moved to another one.
       const id = video.id;
+      const epoch = watchedEpochRef.current;
       setResume(id, positionRef.current, stateVersionRef.current ?? undefined)
         .then((res) => {
           if (openVideoIdRef.current !== id) return;
           stateVersionRef.current = res.state_version;
+          adoptWatched(id, res.watched, epoch);
         })
         .catch(() => {});
     }
@@ -860,6 +868,30 @@ export function Player({
     // jump to a moment inside the last JUMP_SETTLE_SECONDS would suppress the
     // one write that legitimately marks the video watched.
     jumpAnchorRef.current = null;
+    // …and write that end position out now rather than waiting for the next
+    // throttle window or the unmount flush. RESUME_THROTTLE_MS can leave the
+    // last ping up to five seconds short of the end, which on a short video is
+    // the whole last 10%: it would run out without ever crossing the server's
+    // threshold, and the video would sit there unwatched with the credits up.
+    const endEl = videoRef.current;
+    if (video?.id && endEl) {
+      const id = video.id;
+      const epoch = watchedEpochRef.current;
+      lastSentRef.current = Date.now();
+      positionRef.current = endEl.currentTime;
+      positionKnownRef.current = true;
+      setResume(id, endEl.currentTime, stateVersionRef.current ?? undefined)
+        .then((res) => {
+          if (openVideoIdRef.current !== id) return;
+          stateVersionRef.current = res.state_version;
+          adoptWatched(id, res.watched, epoch);
+        })
+        .catch((e: unknown) => {
+          if (e instanceof ApiError && e.status === 409) {
+            void handleStaleState(id);
+          }
+        });
+    }
     // A video that has run out is no longer one you are in the middle of, so
     // it stops being what playback carries — see onPlaybackEnded. Pressing
     // play again adopts it back, through handlePlay, like any other video.
@@ -920,10 +952,12 @@ export function Player({
     ) {
       lastSentRef.current = now;
       const id = video.id;
+      const epoch = watchedEpochRef.current;
       setResume(id, el.currentTime, stateVersionRef.current ?? undefined)
         .then((res) => {
           if (openVideoIdRef.current !== id) return;
           stateVersionRef.current = res.state_version;
+          adoptWatched(id, res.watched, epoch);
         })
         .catch((e: unknown) => {
           if (e instanceof ApiError && e.status === 409) {
@@ -931,6 +965,36 @@ export function Player({
           }
         });
     }
+  }
+
+  // adoptWatched carries the watched flag every resume response hands back into
+  // the state the page renders from. It is the auto-mark that needs it: once a
+  // resume write crosses the server's 90% line (watchedThreshold, store_watch.go)
+  // the row is watched, but that happens inside this Player's OWN ping, so it
+  // never 409s and handleStaleState never runs. Without adopting it the button
+  // would go on saying "Mark watched" on a video the server already files as
+  // watched — and pressing it would re-send watched:true, a no-op that also
+  // zeroes the resume position, instead of the un-watch the label promises.
+  //
+  // Only the flag is adopted, deliberately: the auto-mark keeps the resume
+  // position (unlike the manual toggle), and there is no reason to yank the
+  // playhead of someone still watching the last 10%.
+  //
+  // And only a true is adopted. Writing a position can never un-watch a video
+  // server-side, so a false carries no news — while a response that was already
+  // in flight when the user pressed the button carries a stale one, and adopting
+  // it would flip the label back under their hand. Un-watching stays what it has
+  // always been: the toggle, or handleStaleState answering a 409 (SetWatched
+  // bumps state_version in BOTH directions, so a cross-device un-watch does
+  // reach this Player).
+  //
+  // epoch is the other half of that guard, for the in-flight case the true-only
+  // rule cannot see: a ping sent before the toggle answers after it, still
+  // carrying the watched:true the toggle has just undone.
+  function adoptWatched(id: string, watched: boolean, epoch: number) {
+    if (!watched) return;
+    if (epoch !== watchedEpochRef.current) return;
+    setVideo((v) => (v && v.id === id && !v.watched ? { ...v, watched } : v));
   }
 
   // handleStaleState answers a 409 from a resume ping: the video's watched state
@@ -1050,6 +1114,9 @@ export function Player({
     const previousSleepMs = sleepRemainingRef.current;
     const previousSleepMinutes = sleepMinutes;
 
+    // Pressing the button is the last word on watched-ness: everything already
+    // in flight stops being able to speak for it (see adoptWatched).
+    watchedEpochRef.current += 1;
     setVideo({ ...video, watched: next, resume_position_seconds: 0 });
     el?.pause();
     seek(0);
