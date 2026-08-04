@@ -14,19 +14,36 @@
      and a 2-unit outline is the first thing to vanish at 16px. The wedge is a
      closed path, so filling it costs nothing, and it is what peeq already did
      with the bare play triangle.
-  2. Stroke is 2.5, not lucide's 2. At 16px a 2-unit frame washes out and a
-     3.5-unit one closes the gap to the wedge; 2.5 keeps both readable. It is
-     given in glyph units, so it scales with the glyph and stays proportional
-     in the two tiled sources.
+  2. Stroke is 2 — lucide's own weight, and the same as music's and mimostats'.
+     It was 2.5 on the finding that a 2-unit frame washes out at 16px while a
+     3.5-unit one closes the gap to the wedge. The first half of that did not
+     survive being looked at next to the other two apps in a real Safari tab
+     bar: at 2.5 peeq's frame simply read heavier than theirs, and 2 does not
+     wash out. The gap-to-wedge half still holds and is the thing to watch —
+     going the other way, not this way, is what closes it. It is given in glyph
+     units, so it scales with the glyph and stays proportional in the two tiled
+     sources.
 
   Sized off the outer rect's TRUE bbox — x[3,21] y[3,21], grown by half the
-  stroke to 20.5 square — not the nominal 24x24 box the paths only partly fill.
-  Scaling by the box is what makes a glyph read as a dot at favicon sizes. Here
-  it spans 96% of the tile, near enough edge to edge: a tab already sets the
-  icon in padding of its own, so a margin inside the tile only shrinks the mark
-  for nothing. The two tiled sources inset their glyph instead, because there
-  the tile itself is visible. No optical nudge: unlike a bare triangle, the
-  frame is symmetric, so its bbox centre is also its visual centre.
+  stroke to 20 square (it was 20.5 at the old 2.5 stroke) — not the nominal
+  24x24 box the paths only partly fill. Scaling by the box is what makes a glyph
+  read as a dot at favicon sizes. Here it spans the canvas EXACTLY: coverage
+  1.0, the frame's outer stroke edge landing on 0 and 64.
+
+  It was 96%, "near enough edge to edge" on the reasoning that a tab already
+  sets the icon in padding of its own. Near enough turned out to be visible: at
+  96% the frame sits ~1.28px of 64 inside the canvas, and against music and
+  mimostats in the same tab bar peeq read as the smaller mark. All three now
+  run flush. The two tiled sources inset their glyph instead, because there the
+  tile itself is visible. No optical nudge: unlike a bare triangle, the frame is
+  symmetric, so its bbox centre is also its visual centre.
+
+  THE TRANSFORM IS DERIVED, not typed: scale = 64*C/(18+stroke) and
+  translate = 32 - 12*scale, where C is that file's coverage — 1.0 here and in
+  icon-favicon.svg, 0.60 in icon-tile.svg, 0.46 in icon-maskable.svg. Change the
+  stroke OR a coverage and every affected transform has to be recomputed, or the
+  mark silently stops filling the coverage its own comment claims. music and
+  mimostats carry the same formula; keep the three in step.
 
   NOTHING HERE IS PAINTED BUT THE MARK. No canvas rect, no fill inside the
   frame — only the orange stroke and the orange wedge. The silhouette is what
@@ -81,7 +98,7 @@
     <stop offset="0" stop-color="#e08a68"/>
     <stop offset="1" stop-color="#c25f34"/>
   </linearGradient>
-  <g transform="translate(-3.965 -3.965) scale(2.9971)" fill="none" stroke="url(#og)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  <g transform="translate(-6.4000 -6.4000) scale(3.20000)" fill="none" stroke="url(#og)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <rect x="3" y="3" width="18" height="18" rx="2"/>
     <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" fill="url(#og)" stroke="none"/>
   </g>

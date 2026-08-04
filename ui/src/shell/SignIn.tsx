@@ -5,7 +5,7 @@ import { Spinner, buttonClass } from "../ui";
  *
  * Same geometry as the favicon (ui/public/icon.svg): lucide `square-play` with
  * the wedge filled rather than stroked, and a viewBox set to the frame's true
- * outline at stroke 2.5 — 1.75 1.75 20.5 20.5 — not the nominal 24x24, which is
+ * outline at stroke 2 — 2 2 20 20 — not the nominal 24x24, which is
  * two thirds empty and would draw the mark small inside its own box.
  *
  * The rail dropped its copy of this in #286 (loom's header carries a word and
@@ -18,7 +18,7 @@ function SignInMark() {
   return (
     <svg
       className="signin-logo"
-      viewBox="1.75 1.75 20.5 20.5"
+      viewBox="2 2 20 20"
       aria-hidden="true"
     >
       <linearGradient id="signin-mark-grad" x1="0" y1="0" x2="0.72" y2="1">
@@ -33,7 +33,7 @@ function SignInMark() {
         rx="2"
         fill="none"
         stroke="url(#signin-mark-grad)"
-        strokeWidth="2.5"
+        strokeWidth="2"
         strokeLinejoin="round"
       />
       <path
