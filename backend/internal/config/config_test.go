@@ -381,3 +381,38 @@ func TestComposeForwardsEverySettingConfigReads(t *testing.T) {
 			"it in .env does nothing — add it to the environment block", m)
 	}
 }
+
+// Compose warns "variable is not set. Defaulting to a blank string" for every
+// "${VAR}" it cannot resolve, on every command — so an OPTIONAL setting written
+// without a default turns `docker compose up` into a wall of warnings about
+// variables nobody was required to set. "${VAR:-}" forwards the same empty
+// string silently.
+//
+// Only settings with no default belong in the bare form: a missing
+// BACKEND_SESSION_SECRET is worth shouting about, and does. This pins the ones
+// that are genuinely optional.
+func TestComposeGivesOptionalSettingsADefault(t *testing.T) {
+	optional := []string{
+		"BACKEND_SEARCH_MAX_DISTANCE",
+		"BACKEND_ASK_CALL_TIMEOUT",
+		"BACKEND_CHAT_CALL_TIMEOUT",
+		"BACKEND_CHAT_STREAM_IDLE_TIMEOUT",
+		"BACKEND_SUMMARIZE_REQUEST_DELAY",
+		"BACKEND_SUMMARIZE_VIDEO_DELAY",
+		"BACKEND_SUMMARIZE_SUMMARY_TOKENS",
+		"BACKEND_ALLOW_ANONYMOUS_YOUTUBE",
+	}
+	compose, err := os.ReadFile(filepath.Join("..", "..", "..", "compose.yaml"))
+	if err != nil {
+		t.Fatalf("read compose.yaml: %v", err)
+	}
+	for _, name := range optional {
+		if strings.Contains(string(compose), "${"+name+"}") {
+			t.Errorf("%s is interpolated as ${%s} with no default, so compose warns "+
+				"about it on every command — write ${%s:-}", name, name, name)
+		}
+		if !strings.Contains(string(compose), "${"+name+":-") {
+			t.Errorf("%s is not forwarded with a default; expected ${%s:-}", name, name)
+		}
+	}
+}
