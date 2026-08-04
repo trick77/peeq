@@ -227,7 +227,8 @@ export function Search({
                 shows it, and scrolls. */}
             <Button
               type="button"
-              variant="ghost"
+              variant="secondary"
+              small
               className="clear-results"
               onClick={handleClearResults}
             >

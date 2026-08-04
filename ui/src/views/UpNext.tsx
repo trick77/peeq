@@ -723,12 +723,19 @@ export function UpNext({
               <div className="ag-daysep">
                 <span>Gave up</span>
                 <i />
+                {/* secondary, and small to sit on a day separator without
+                    towering over the 10.5px label beside it. A bulk action
+                    needs the fill and border every standalone action carries
+                    — ghost put it at transparent-on-transparent, which reads
+                    as a stray word at the end of the rule. Busy spins rather
+                    than swapping in an ellipsis label, per Spinner's rule. */}
                 <Button
-                  variant="ghost"
+                  variant="secondary"
+                  small
                   onClick={retryAllFailed}
-                  disabled={retrying}
+                  busy={retrying}
                 >
-                  {retrying ? "Retrying…" : "Retry all"}
+                  Retry all
                 </Button>
               </div>
               {failedSummaries.map((job) => (

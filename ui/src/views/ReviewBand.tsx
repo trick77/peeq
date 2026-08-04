@@ -1,4 +1,5 @@
 import type { Channel } from "../api/types";
+import { Button } from "../ui";
 
 // ReviewBand — the "needs review" surface for dormant subscriptions (no new
 // video in 6+ months). It sits ABOVE the main channel list but BELOW the
@@ -34,9 +35,9 @@ export function ReviewBand({
         </h3>
         <span className="why">No new videos in over 6 months</span>
         <span className="spacer" />
-        <button type="button" className="abtn" onClick={onKeepAll}>
+        <Button type="button" variant="secondary" small onClick={onKeepAll}>
           Dismiss all
-        </button>
+        </Button>
       </div>
       <div className="channel-list">
         {channels.map((c) => (
@@ -55,16 +56,22 @@ export function ReviewBand({
               </div>
             </div>
             <div className="channel-actions">
-              <button type="button" className="abtn" onClick={() => onKeep(c)}>
-                Keep subscribed
-              </button>
-              <button
+              <Button
                 type="button"
-                className="abtn danger"
+                variant="secondary"
+                small
+                onClick={() => onKeep(c)}
+              >
+                Keep subscribed
+              </Button>
+              <Button
+                type="button"
+                variant="dangerQuiet"
+                small
                 onClick={() => onUnsubscribe(c)}
               >
                 Unsubscribe
-              </button>
+              </Button>
             </div>
           </div>
         ))}
