@@ -20,13 +20,22 @@ import (
 // the queue at the time.
 //
 // The rungs are sized against the thing that actually goes wrong: a chat
-// endpoint that is down, overloaded, or crawling. Half an hour covers a deploy
-// or a rate-limit window; the second rung puts the last attempt far enough out
-// that a longer incident has usually resolved. Beyond that, waiting is not the
-// answer and the failed list is.
+// endpoint that is down, overloaded, or crawling. Fifteen minutes covers a
+// deploy or a rate-limit window. The second rung is hours rather than minutes
+// because the failure this ladder exists for is an endpoint having a bad day,
+// and spending the last attempt inside the first hour of one wastes it — the
+// job is marked failed for good at that point, and the only way back is someone
+// noticing the list and pressing Retry all.
+//
+// Waiting costs nothing worth saving: ClaimNext skips a deferred job rather than
+// blocking on it, so nothing else in the queue is held up, and a video nobody
+// has watched yet is not made worse by being summarized four hours later. The
+// case this trades against is a genuinely poison video, which now takes ~4h15m
+// to reach the failed list instead of ~35m — it was never going to succeed
+// either way, and nothing waits on it.
 var Backoff = []time.Duration{
-	5 * time.Minute,
-	30 * time.Minute,
+	15 * time.Minute,
+	4 * time.Hour,
 	// The 3rd attempt has no successor — a failure there marks the job failed.
 }
 

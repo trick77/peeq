@@ -1159,6 +1159,64 @@ describe("UpNext skip", () => {
       expect(await screen.findByText("Gave up")).toBeInTheDocument();
     });
 
+    // A failed job carries no phase, so it used to take the queued branch and
+    // read "waiting" — under a heading saying it gave up, on a row nothing will
+    // move again.
+    it("says the row gave up rather than that it is waiting", async () => {
+      vi.mocked(listFailedSummaries).mockResolvedValue([failed()]);
+      render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+      await screen.findByText("Gave up");
+
+      expect(screen.getByText("gave up")).toBeInTheDocument();
+      expect(screen.queryByText("waiting")).toBeNull();
+    });
+
+    // The bound that failed is kept on the job row and nowhere else, and the
+    // three bounds have three different answers — so a row that omits it can
+    // say a video failed but never which thing did.
+    it("shows the bound that failed", async () => {
+      vi.mocked(listFailedSummaries).mockResolvedValue([
+        { ...failed(), last_error: "stream idle for 1m30s" },
+      ]);
+      render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+      await screen.findByText("Gave up");
+
+      expect(screen.getByText("stream idle for 1m30s")).toBeInTheDocument();
+    });
+
+    // Tinted through the row modifier History already uses, not the form-error
+    // box: these rows are a quiet list, and .errline carries padding, a border
+    // and a bottom margin sized to stack above a sign-in form.
+    it("marks the row failed rather than boxing the error", async () => {
+      vi.mocked(listFailedSummaries).mockResolvedValue([
+        { ...failed(), last_error: "stream idle for 1m30s" },
+      ]);
+      render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
+      await screen.findByText("Gave up");
+
+      const line = screen.getByText("stream idle for 1m30s");
+      expect(line).not.toHaveClass("errline");
+      expect(line.closest(".ag-row")).toHaveClass("fail");
+    });
+
+    // A queued row must not grow an error line from a rule written for the
+    // gave-up section: its last_error is from an attempt still being retried,
+    // so showing it would report a settled failure that has not happened.
+    it("keeps the error line off a job that is still being retried", async () => {
+      render(
+        <UpNext
+          jobs={[]}
+          summaries={[
+            summary({ state: "pending", last_error: "stream idle for 1m30s" }),
+          ]}
+          onCancel={noop}
+        />,
+      );
+
+      await screen.findByText("waiting");
+      expect(screen.queryByText("stream idle for 1m30s")).toBeNull();
+    });
+
     it("stays off the page when nothing has failed", async () => {
       render(<UpNext jobs={[]} summaries={[]} onCancel={noop} />);
 

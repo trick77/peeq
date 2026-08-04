@@ -194,9 +194,11 @@ export type Job = {
   enqueued_at?: string;
 };
 
-// SummaryJob mirrors httpapi.summaryItem — one in-flight summary job (pending
-// or running), optionally joined with its video's title/channel for display.
-// The queue only ever surfaces active jobs; a done/failed job leaves this list.
+// SummaryJob mirrors httpapi.summaryItem — one summary job, optionally joined
+// with its video's title/channel for display. GET /api/summaries carries the
+// active ones (pending or running); GET /api/summaries/failed carries the ones
+// that spent every attempt, where last_error names the bound that failed and is
+// the only record of it anywhere.
 export type SummaryJob = {
   id: number;
   video_id: string;
