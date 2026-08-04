@@ -1362,7 +1362,7 @@ func TestSearchAskStopsAtTheSpread(t *testing.T) {
 	}{
 		{"onpoint", 1.0},   // distance 0
 		{"related", 0.995}, // distance ~0.10, inside the spread
-		{"nearest", 0.875}, // distance ~0.50: past the spread, still inside 1.05
+		{"nearest", 0.875}, // distance ~0.50: past the spread, well inside the bound
 	} {
 		if err := deps.Videos.Upsert(videos.Video{ID: v.id, URL: "u", Title: v.id}); err != nil {
 			t.Fatalf("seed %s: %v", v.id, err)

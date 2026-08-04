@@ -64,8 +64,34 @@ const (
 // behaviour and never measured against a real library. It was too permissive to
 // do its job: a question with six good chunks still came back with twenty
 // moments, the last fourteen being whatever was least distant among the
-// irrelevant. Tunable via BACKEND_SEARCH_MAX_DISTANCE.
-const DefaultMaxDistance = 1.05
+// irrelevant. So #265 tightened it to 1.05 and added SemanticSpread in the same
+// commit — belt and braces against the same padding.
+//
+// Measured on a real library, the pair over-corrected and this half is the one
+// doing the damage. On a 137-video library, "transients" — a word 58 indexed
+// chunks contain — got a vector lane of ONE row out of the 40 requested, and the
+// nearest chunk in the entire corpus sat at 0.995 (cosine 0.505). A natural
+// question fared no better: 5 rows, everything between 0.917 and 1.049, hugging
+// this ceiling with 35 rows discarded just past it. The lane was contributing two
+// videos while the keyword floor carried thirty.
+//
+// The reason is that absolute cosine means less here than it looks. A ~600-token
+// chunk's vector averages a lot of content, so a short query against a long
+// passage scores low BY CONSTRUCTION, and text-embedding-3-small compresses the
+// range further — related passages land around 0.25-0.50, not the 0.7+ that
+// older models gave. A bound at cosine 0.45 therefore sits at the TOP of this
+// model's relevant band rather than below it.
+//
+// 1.25 is cosine ~0.22: under the ~0.3 where related passages start, so genuine
+// matches survive, and well clear of unrelated text at cosine 0.0-0.15
+// (L2 1.31-1.41). The padding this used to prevent is now prevented by things
+// better suited to it — SemanticSpread judges a hit against the best the query
+// actually found rather than against a constant, and the answer's breadth pass
+// (httpapi.answerBreadthSources) spends its slots one video at a time, so
+// "nearest available" cannot fill an evidence set the way it once filled twenty
+// moments. Tunable via BACKEND_SEARCH_MAX_DISTANCE; negative disables both this
+// and the spread.
+const DefaultMaxDistance = 1.25
 
 // SemanticSpread is how much worse than the BEST hit of this query a semantic
 // hit may be and still count as evidence.
