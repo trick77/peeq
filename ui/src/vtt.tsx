@@ -25,7 +25,8 @@ export function transcriptFilenameBase(title: string): string {
 // PAREN_SOUND_EVENTS / stripSoundEvents mirror the sound-event stripping in
 // backend/internal/subtitles/vtt.go — the backend copy feeds the summary and the
 // embeddings, this one draws the transcript panel, and a rule added to one has
-// to be added to the other or the two views disagree. Square brackets are
+// to be added to the other or the two views disagree. The same goes for
+// stripSpeakerMarkers below. Square brackets are
 // stripped outright (YouTube uses them only for sound events and speaker
 // labels); parentheses only when the inner text is in this closed list, because
 // real speech does use parentheses.
@@ -86,6 +87,27 @@ function unescapeEntities(s: string): string {
   );
 }
 
+// stripSpeakerMarkers mirrors StripSpeakerMarkers in
+// backend/internal/subtitles/vtt.go. Broadcast and manual caption tracks open a
+// new speaker's line with ">>" and a new SPEAKER's turn with ">>>", tight
+// (">>Hello") as often as spaced (">> Hello"), so the leading form requires no
+// space — which does mean a line OPENING with a right-shift (">>= is bind")
+// loses its operator, a trade both sides take. Mid-line the marker has to stand
+// alone — a space before, a space or the line end after — which is what leaves
+// "cout>>x" and a mid-line ">>=" intact when a caption spells out a
+// right-shift. The captured leading space is put back so two speakers'
+// sentences do not run together.
+//
+// Written without lookahead so the pair stays comparable by eye with Go's RE2,
+// which has none.
+function stripSpeakerMarkers(s: string): string {
+  if (!s.includes(">>")) return s;
+  return s
+    .replace(/^>>+\s*/, "")
+    .replace(/(^|\s)>>+(\s|$)/g, "$1")
+    .trim();
+}
+
 // sameLines reports whether two line slices hold the same strings in order.
 function sameLines(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((s, i) => s === b[i]);
@@ -105,6 +127,10 @@ function sameLines(a: string[], b: string[]): boolean {
 // below mirror ParseVTT's flush() in backend/internal/subtitles/vtt.go — the
 // backend copy feeds the summary and the embeddings, this one draws the panel,
 // and the two must agree on what the transcript actually says.
+//
+// The raw ".vtt" download and the <track> element the browser renders captions
+// from both still carry the markers this strips: they get the stored file
+// byte-for-byte, which is deliberate (see migration 0023).
 export function parseVtt(text: string): Cue[] {
   const lines = text.split(/\r?\n/);
   const timingRe =
@@ -132,6 +158,7 @@ export function parseVtt(text: string): Cue[] {
     while (i < lines.length && lines[i].trim() !== "") {
       // Tags first, then entities: decoding first would turn an escaped
       // "&lt;c&gt;" spoken on screen into a real tag and the strip would eat it.
+      // Speaker markers are NOT taken out here — see the note at the emit below.
       const clean = stripSoundEvents(
         unescapeEntities(lines[i].replace(/<[^>]+>/g, "")).trim(),
       );
@@ -162,14 +189,27 @@ export function parseVtt(text: string): Cue[] {
     // Whole-cue collapse, for a caption that re-grows one line word by word:
     // keep only the longest form, dropping the partial repeats around it.
     if (last !== "" && cueText.startsWith(last)) {
-      if (cues.length > 0) cues[cues.length - 1].text = cueText;
+      if (cues.length > 0)
+        cues[cues.length - 1].text = stripSpeakerMarkers(cueText);
       last = cueText;
       lastLines = cueLines;
       continue;
     }
     if (last !== "" && last.startsWith(cueText)) continue;
 
-    cues.push({ ts, text: cueText });
+    // Speaker markers come out HERE, on the way into the cue, and not per line
+    // with the sound events. Both collapses above compare text that still
+    // carries them, which keeps their decisions identical to what they were
+    // before any stripping existed — and mirrors flush() in vtt.go.
+    //
+    // Stripping earlier silently merged two speakers: "Yeah" followed by
+    // ">> Yeah, exactly." is a plain prefix once the marker is gone, so the
+    // whole-cue collapse above swallowed the first speaker's line and its
+    // timestamp. The marker is the thing that says these are different turns.
+    const spoken = stripSpeakerMarkers(cueText);
+    if (!spoken) continue; // the cue was nothing but a marker
+
+    cues.push({ ts, text: spoken });
     last = cueText;
     lastLines = cueLines;
   }

@@ -389,16 +389,14 @@ func TestKeyPoints_sanitizesModelText(t *testing.T) {
 	}
 }
 
-// The cue index is the model's input, so the speaker markers come out there
-// rather than in ParseVTT — the transcript panel shows the captions as written,
-// and vtt.go has to stay in lockstep with ui/src/vtt.tsx.
-func TestFormatCues_stripsSpeakerMarkers(t *testing.T) {
+// A Cue can only come from ParseVTT, which takes the speaker markers out at the
+// source, so formatCues renders the text it is handed verbatim. What it must not
+// do is mangle an operator a coding video's captions spell out.
+func TestFormatCues_rendersCueTextVerbatim(t *testing.T) {
 	got := formatCues([]subtitles.Cue{
-		{StartSeconds: 0, Text: ">> Welcome back."},
-		{StartSeconds: 7, Text: ">>> And now the news >> over to you."},
+		{StartSeconds: 0, Text: "Welcome back."},
+		{StartSeconds: 7, Text: "And now the news over to you."},
 		{StartSeconds: 12, Text: "5 > 3 is still true."},
-		// A marker stands on its own; an operator wedged against its operands
-		// is not one, so a coding video's captions come through intact.
 		{StartSeconds: 20, Text: "cout>>x reads a word."},
 	})
 	want := "0: Welcome back.\n7: And now the news over to you.\n" +
@@ -408,9 +406,10 @@ func TestFormatCues_stripsSpeakerMarkers(t *testing.T) {
 	}
 }
 
-// SummarizeText reads the same captions, so it strips the same markers: leaving
-// them in one prompt and not the other would have the two calls disagree about
-// the text they are describing.
+// SummarizeText takes arbitrary text, not just parser output: the coarse
+// map-reduce re-feeds its own section summaries, and model output imitates any
+// marker it was shown. So the strip stays here even though ParseVTT now runs
+// one too.
 func TestSummarizeText_stripsSpeakerMarkers(t *testing.T) {
 	var seen string
 	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {

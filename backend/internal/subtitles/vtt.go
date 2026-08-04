@@ -3,11 +3,12 @@
 // inline tags and collapses YouTube auto-caption rolling duplicates (each line is
 // re-emitted with the next word appended, so naive concatenation triples length).
 // It also strips non-speech sound-event markers ([Music], (applause), music
-// notes) and can report that a track carries no real speech at all.
+// notes) and the ">>" speaker markers broadcast tracks open a line with, and it
+// can report that a track carries no real speech at all.
 //
 // The UI has its own forgiving WebVTT parser for the transcript panel
-// (ui/src/vtt.tsx parseVtt); the sound-event and entity rules below are
-// mirrored there and the two must stay in lockstep.
+// (ui/src/vtt.tsx parseVtt); the sound-event, entity and speaker-marker rules
+// below are mirrored there and the two must stay in lockstep.
 package subtitles
 
 import (
@@ -58,6 +59,31 @@ var (
 	// entityRe matches the HTML entities YouTube escapes caption text with. A
 	// single pass, so "&amp;lt;" decodes to "&lt;" and not to "<".
 	entityRe = regexp.MustCompile(`&(?:amp|lt|gt|quot|apos|nbsp|#39|#[xX]27);`)
+
+	// leadingSpeakerRe matches the WebVTT speaker marker where caption tracks
+	// almost always put it: opening the line. Broadcast and manual tracks open a
+	// new speaker's line with ">>" and a new SPEAKER's turn with ">>>", tight
+	// (">>Hello") as often as spaced (">> Hello"), so no space is required here.
+	// The price of that is a line that OPENS with a right-shift: ">>= is bind"
+	// loses its operator. Opening a caption line with an operator is rarer than
+	// opening it with a tight speaker marker, so this takes the trade.
+	leadingSpeakerRe = regexp.MustCompile(`^>>+[\s\x{00A0}]*`)
+	// midSpeakerRe matches the same marker standing alone mid-line, which happens
+	// when two speakers share one cue.
+	//
+	// A marker stands on its own: it follows a space, and a space or the end of
+	// the line follows it. Requiring that boundary is what keeps a right-shift
+	// out of the blast radius mid-line — "cout>>x" is left alone, and so is a
+	// mid-line ">>=", because a caption that spells out an operator keeps
+	// whatever sits tight against it. Only mid-line: at the start of a line
+	// leadingSpeakerRe above wins, by design.
+	// The captured leading space is put back so the two speakers' sentences do
+	// not run together.
+	//
+	// Both patterns name \x{00A0} for the same reason spaceRe does: Go's \s is
+	// ASCII-only and the JS mirror's is not, so a caption with a no-break space
+	// against the marker would have the panel drop it and this keep it.
+	midSpeakerRe = regexp.MustCompile(`(^|[\s\x{00A0}])>>+([\s\x{00A0}]|$)`)
 )
 
 // entities is the decode table for entityRe. Kept as an explicit closed list
@@ -92,6 +118,19 @@ func unescapeEntities(s string) string {
 		}
 		return m
 	})
+}
+
+// StripSpeakerMarkers removes ">>" speaker markers from one line of text.
+//
+// Exported because the same rule has to reach text that never came through
+// ParseVTT: summarize sanitizes the model's own output, which imitates the
+// markers it was shown.
+func StripSpeakerMarkers(s string) string {
+	if !strings.Contains(s, ">>") {
+		return s
+	}
+	s = leadingSpeakerRe.ReplaceAllString(s, "")
+	return strings.TrimSpace(midSpeakerRe.ReplaceAllString(s, "$1"))
 }
 
 // parenSoundEvents is the closed list of parenthesised annotations treated as
@@ -242,7 +281,7 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 		// text with more appended (or identical), keep only the longer form.
 		if last != "" && (text == last || strings.HasPrefix(text, last)) {
 			if len(cues) > 0 {
-				cues[len(cues)-1].Text = text
+				cues[len(cues)-1].Text = StripSpeakerMarkers(text)
 				markers[len(markers)-1] = markers[len(markers)-1] || hadMarker
 			}
 			last = text
@@ -253,7 +292,25 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 			// this cue is a prefix of the last one — drop it as a partial repeat
 			return
 		}
-		cues = append(cues, Cue{StartSeconds: curStart, Text: text})
+		// Speaker markers come out HERE, on the way into the cue, and not up in the
+		// scan loop with the sound events. Both collapses above compare text that
+		// still carries them, which is what keeps their decisions identical to what
+		// they were before any of this stripping existed.
+		//
+		// Stripping earlier silently merged two speakers: "Yeah" followed by
+		// ">> Yeah, exactly." becomes a plain prefix once the marker is gone, so the
+		// whole-cue collapse above swallowed the first speaker's line and its start
+		// second with it. The marker is the very thing that says these are different
+		// turns, so the comparison has to still be able to see it.
+		//
+		// Running after stripSoundEvents also catches a marker wedged against a
+		// sound event ("[MUSIC]>> Hello"), which the mid-line rule cannot match
+		// while the bracket is still there.
+		spoken := StripSpeakerMarkers(text)
+		if spoken == "" {
+			return // the cue was nothing but a marker
+		}
+		cues = append(cues, Cue{StartSeconds: curStart, Text: spoken})
 		markers = append(markers, hadMarker)
 		last = text
 		lastLines = lines

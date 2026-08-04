@@ -269,3 +269,229 @@ func TestIsNonSpeechSpares(t *testing.T) {
 		t.Error("nothing parsed at all is the caller's empty-transcript case, not this one")
 	}
 }
+
+// speakerSample is a broadcast-style track: ">>" opening most lines, spaced and
+// tight, one line carrying two speakers, one cue that is nothing but a marker,
+// and a right-shift operator spoken on screen.
+const speakerSample = `WEBVTT
+
+00:00:00.000 --> 00:00:03.000
+&gt;&gt; Good evening and welcome
+
+00:00:03.000 --> 00:00:06.000
+>>Thanks for having me
+
+00:00:06.000 --> 00:00:09.000
+>>>
+
+00:00:09.000 --> 00:00:12.000
+So you write cout>>x to shift it
+
+00:00:12.000 --> 00:00:15.000
+and >>= does the same in place
+
+00:00:15.000 --> 00:00:18.000
+I agree entirely >> So do I
+`
+
+func TestParseVTTStripsSpeakerMarkers(t *testing.T) {
+	p, err := ParseVTT(strings.NewReader(speakerSample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		// Escaped as "&gt;&gt;" in the file — the entity decode has to run first
+		// or there is nothing for the strip to match.
+		"Good evening and welcome",
+		// Tight spelling, no space after the marker.
+		"Thanks for having me",
+		// A right-shift spoken on screen keeps whatever sits tight against it.
+		"So you write cout>>x to shift it",
+		"and >>= does the same in place",
+		// Two speakers in one cue: the marker goes, the sentences stay apart.
+		"I agree entirely So do I",
+	}
+	got := make([]string, len(p.Cues))
+	for i, c := range p.Cues {
+		got[i] = c.Text
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d cues, want %d:\n%q", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("cue %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// The ">>>"-only cue carried no words, so it must be dropped rather than
+	// emitted empty — the same way a marker-only sound-event line is.
+	for _, c := range p.Cues {
+		if strings.TrimSpace(c.Text) == "" {
+			t.Fatalf("emitted an empty cue: %+v", p.Cues)
+		}
+	}
+}
+
+func TestStripSpeakerMarkers(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{">> Hello there", "Hello there"},
+		{">>Hello there", "Hello there"},
+		{">>> Hello there", "Hello there"},
+		{">>", ""},
+		{">>>", ""},
+		{"one >> two", "one two"},
+		{"trailing marker >>", "trailing marker"},
+		// A run of markers separated by a space: the leading rule stops at the
+		// space, and the mid-line rule finishes the job.
+		{">> >> hello", "hello"},
+		// The boundary rule: a right-shift keeps whatever sits tight against it.
+		{"cout>>x", "cout>>x"},
+		{"a >>= b", "a >>= b"},
+		{"no markers here", "no markers here"},
+		// A no-break space counts as the boundary. Go's \s does not cover one and
+		// the JS mirror's does, so leaving it out here would have the transcript
+		// panel drop a marker this kept — the divergence spaceRe's comment warns
+		// about. These three are shared verbatim with the "no-break space" cases
+		// in ui/src/vtt.test.tsx.
+		{"one\u00a0>> two", "one\u00a0two"},
+		{">>\u00a0Hello", "Hello"},
+		{"a >>\u00a0b", "a b"},
+	}
+	for _, c := range cases {
+		if got := StripSpeakerMarkers(c.in); got != c.want {
+			t.Errorf("StripSpeakerMarkers(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestParseVTTCollapsesRollingDuplicatesAcrossMarkers(t *testing.T) {
+	// YouTube re-emits a line with the next words appended, marker and all. The
+	// collapse only sees the words that survive stripping, so the strip has to
+	// run first or these three land as three separate cues.
+	const sample = `WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+>> I play
+
+00:00:02.000 --> 00:00:04.000
+>> I play games
+
+00:00:04.000 --> 00:00:06.000
+>> I play games with
+`
+	p, err := ParseVTT(strings.NewReader(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Cues) != 1 || p.Cues[0].Text != "I play games with" {
+		t.Fatalf("expected one collapsed cue %q, got %+v", "I play games with", p.Cues)
+	}
+}
+
+// A speaker echoing the words before them is not a rolling window. The marker
+// is what tells the two apart, so the collapse has to compare text that still
+// carries it — strip first and one speaker's line, and its start second, are
+// silently swallowed. Mirrored in ui/src/vtt.test.tsx.
+func TestParseVTTKeepsAnEchoAcrossASpeakerChange(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		vtt  string
+		want []Cue
+	}{
+		{
+			name: "the next speaker extends the words before them",
+			vtt: "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nYeah\n\n" +
+				"00:00:03.000 --> 00:00:06.000\n>> Yeah, exactly.\n",
+			want: []Cue{{StartSeconds: 0, Text: "Yeah"}, {StartSeconds: 3, Text: "Yeah, exactly."}},
+		},
+		{
+			name: "the next speaker repeats them outright",
+			vtt: "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nI think so.\n\n" +
+				"00:00:03.000 --> 00:00:06.000\n>> I think so.\n",
+			want: []Cue{{StartSeconds: 0, Text: "I think so."}, {StartSeconds: 3, Text: "I think so."}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := ParseVTT(strings.NewReader(tc.vtt))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.Cues) != len(tc.want) {
+				t.Fatalf("got %+v, want %+v", p.Cues, tc.want)
+			}
+			for i := range tc.want {
+				if p.Cues[i] != tc.want[i] {
+					t.Errorf("cue %d = %+v, want %+v", i, p.Cues[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// A marker wedged against a sound event has no whitespace in front of it, so
+// the mid-line rule cannot see it until the bracket is gone. Stripping after
+// the sound-event pass is what catches this.
+func TestParseVTTStripsAMarkerTightAgainstASoundEvent(t *testing.T) {
+	p, err := ParseVTT(strings.NewReader(
+		"WEBVTT\n\n00:00:00.000 --> 00:00:03.000\n[MUSIC]>> Hello there\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Cues) != 1 || p.Cues[0].Text != "Hello there" {
+		t.Fatalf("got %+v, want one cue %q", p.Cues, "Hello there")
+	}
+}
+
+// TestIsNonSpeechSurvivesMarkerStripping guards a regression the strip could
+// otherwise introduce silently.
+//
+// IsNonSpeech divides by len(strings.Fields(Transcript)), and every ">>" used
+// to be its own whitespace-delimited field — it counted as a word. Now that the
+// parser removes them, the word count of every marker-carrying track drops. A
+// sparse interview that also has [Music] in at least a quarter of its cues has
+// the marker half of the test already satisfied, so if the word drop pushes it
+// under 25 WPM it silently becomes summary_status=no_transcript, "no speech
+// (music only)".
+//
+// If this ever fails, the thresholds in vtt.go are the thing to look at, not
+// this test — they are documented as deliberately conservative on purpose.
+func TestIsNonSpeechSurvivesMarkerStripping(t *testing.T) {
+	const sample = `WEBVTT
+
+00:00:00.000 --> 00:00:15.000
+>> [Music] Welcome back to the show tonight everyone
+
+00:00:15.000 --> 00:00:30.000
+>> Thanks very much for having me here again
+
+00:00:30.000 --> 00:00:45.000
+>> [Music] So tell us how the new album came together
+
+00:00:45.000 --> 00:01:00.000
+>> It took the better part of two years to finish
+
+00:01:00.000 --> 00:01:15.000
+>> [Music] And then the band toured right through the winter
+
+00:01:15.000 --> 00:01:30.000
+>> That sounds completely exhausting to me honestly
+
+00:01:30.000 --> 00:01:45.000
+>> [Music] We loved every single minute of all of it
+
+00:01:45.000 --> 00:02:00.000
+>> Wonderful, thank you so much for coming in
+`
+	p, err := ParseVTT(strings.NewReader(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.SoundEventCues*4 < len(p.Cues) {
+		t.Fatalf("sample no longer exercises the marker guard: %d of %d cues marked",
+			p.SoundEventCues, len(p.Cues))
+	}
+	if p.IsNonSpeech(120) {
+		t.Fatalf("a sparse interview must keep its summary; %d words over %d cues (%d marked)",
+			len(strings.Fields(p.Transcript)), len(p.Cues), p.SoundEventCues)
+	}
+}
