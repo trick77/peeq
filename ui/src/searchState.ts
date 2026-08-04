@@ -151,6 +151,7 @@ export function useSearchState(): SearchState {
     setAnswer({ status: "streaming", text: "", sources: [] });
     let sources: AnswerSource[] = [];
     let videos: AnswerVideo[] = [];
+    let coverage: AnswerVideo[] = [];
     let text = "";
     let failed = false;
     // Whether retrieval reported at all. An empty source list means the library
@@ -188,6 +189,7 @@ export function useSearchState(): SearchState {
           case "sources":
             sources = e.sources;
             videos = e.videos;
+            coverage = e.coverage;
             retrieved = true;
             break;
           case "token":
@@ -204,6 +206,7 @@ export function useSearchState(): SearchState {
           text,
           sources,
           videos,
+          coverage,
           failed,
         });
         // The done frame is the normal end, and acting on it rather than
@@ -239,7 +242,7 @@ export function useSearchState(): SearchState {
         // it would leave a page that says nothing happened.
         setAnswer(
           text || failed
-            ? { status: "done", text, sources, videos, failed }
+            ? { status: "done", text, sources, videos, coverage, failed }
             : null,
         );
         settle();

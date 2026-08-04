@@ -362,3 +362,92 @@ describe("AnswerPanel", () => {
     expect(body).toHaveAttribute("aria-busy", "true");
   });
 });
+
+describe("also in your library", () => {
+  // A fourth video that retrieval reached and the answer never cited.
+  const uncited = {
+    id: "v4",
+    title: "Cramp Myths, Debunked",
+    channel_id: "c4",
+    channel_name: "Dr. Becky",
+    duration_seconds: 900,
+    has_thumbnail: true,
+    status: "downloaded",
+  };
+
+  // The reported gap: retrieval reached thirteen videos, the answer cited three,
+  // and the panel showed three — so Ask looked like it knew less than the search
+  // box beside it.
+  it("lists retrieved videos the answer did not cite", () => {
+    render(
+      <Panel
+        state={state({
+          text: "Only the first one matters.[1]",
+          coverage: [...videos, uncited],
+        })}
+      />,
+    );
+    expect(screen.getByText("Also in your library (3)")).toBeInTheDocument();
+    expect(screen.getByText("Cramp Myths, Debunked")).toBeInTheDocument();
+    // v1 was cited, so it belongs to Sources and must not repeat here.
+    expect(
+      within(document.querySelector(".also-list")!).queryByText(
+        "Why Athletes Cramp",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  // Nothing left over means no group at all, rather than an empty heading.
+  it("renders nothing when every retrieved video was cited", () => {
+    render(
+      <Panel
+        state={state({ text: "All three.[1][2][3]", coverage: videos })}
+      />,
+    );
+    expect(screen.queryByText(/Also in your library/)).not.toBeInTheDocument();
+  });
+
+  // Same settled-answer gate as the citations: a list of what was NOT used, above
+  // a half-written answer, describes an answer that does not exist yet.
+  it("stays hidden while the answer streams", () => {
+    render(
+      <Panel
+        state={state({
+          status: "streaming",
+          text: "Only the first[1]",
+          coverage: [...videos, uncited],
+        })}
+      />,
+    );
+    expect(screen.queryByText(/Also in your library/)).not.toBeInTheDocument();
+  });
+
+  // No numeral: a number says "cited as [n]", and these were not cited.
+  it("gives an uncited row no numeral", () => {
+    render(
+      <Panel
+        state={state({ text: "Cited.[1]", coverage: [...videos, uncited] })}
+      />,
+    );
+    const row = screen.getByText("Cramp Myths, Debunked").closest("button")!;
+    expect(row.querySelector(".n")).toBeNull();
+  });
+
+  // It opens the video rather than seeking. A retrieved chunk does sit behind the
+  // row, but the model never vouched for it, so a timestamp would assert more
+  // than is known.
+  it("opens the video without seeking", () => {
+    const onOpenVideo = vi.fn();
+    const onOpen = vi.fn();
+    render(
+      <Panel
+        state={state({ text: "Cited.[1]", coverage: [...videos, uncited] })}
+        onOpenVideo={onOpenVideo}
+        onOpen={onOpen}
+      />,
+    );
+    fireEvent.click(screen.getByText("Cramp Myths, Debunked"));
+    expect(onOpenVideo).toHaveBeenCalledWith("v4");
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+});

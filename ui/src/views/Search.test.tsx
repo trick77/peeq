@@ -282,7 +282,7 @@ describe("Search", () => {
     // which is what tells the view "the library covers nothing" apart from
     // "the request never got that far".
     mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
-      onEvent({ type: "sources", sources: [], videos: [] });
+      onEvent({ type: "sources", sources: [], videos: [], coverage: [] });
       onEvent({ type: "done" });
     });
     render(<Harness onOpen={vi.fn()} />);
@@ -475,7 +475,12 @@ describe("Search — the Ask answer", () => {
     submit("electrolytes");
 
     await screen.findByText(/Reading your library/);
-    emit!({ type: "sources", sources: askSources, videos: askVideos });
+    emit!({
+      type: "sources",
+      sources: askSources,
+      videos: askVideos,
+      coverage: [],
+    });
     emit!({ type: "token", text: "Yes — Attia covers it[1]." });
 
     // Mid-stream: the answer text is there, its evidence is not.
@@ -495,7 +500,12 @@ describe("Search — the Ask answer", () => {
 
   it("streams tokens into the panel and links a citation", async () => {
     mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
-      onEvent({ type: "sources", sources: askSources, videos: askVideos });
+      onEvent({
+        type: "sources",
+        sources: askSources,
+        videos: askVideos,
+        coverage: [],
+      });
       onEvent({ type: "token", text: "Yes — Attia covers it[1]." });
       onEvent({ type: "done" });
     });
@@ -516,7 +526,12 @@ describe("Search — the Ask answer", () => {
   // under an answer whose first citation was [2].
   it("shows only the moments the answer cited", async () => {
     mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
-      onEvent({ type: "sources", sources: askSources, videos: askVideos });
+      onEvent({
+        type: "sources",
+        sources: askSources,
+        videos: askVideos,
+        coverage: [],
+      });
       onEvent({ type: "token", text: "Attia covers it[1]." });
       onEvent({ type: "done" });
     });
@@ -545,7 +560,12 @@ describe("Search — the Ask answer", () => {
     await screen.findByText(/Reading your library/);
     expect(screen.queryByText("Searching")).not.toBeInTheDocument();
 
-    emit!({ type: "sources", sources: askSources, videos: askVideos });
+    emit!({
+      type: "sources",
+      sources: askSources,
+      videos: askVideos,
+      coverage: [],
+    });
     emit!({ type: "token", text: "Yes — " });
     await waitFor(() =>
       expect(
@@ -570,7 +590,12 @@ describe("Search — the Ask answer", () => {
         new Promise((resolve) => {
           emit = onEvent;
           finish = resolve;
-          onEvent({ type: "sources", sources: askSources, videos: askVideos });
+          onEvent({
+            type: "sources",
+            sources: askSources,
+            videos: askVideos,
+            coverage: [],
+          });
         }),
     );
     mockedSearchVideos.mockResolvedValue([]);
@@ -598,7 +623,12 @@ describe("Search — the Ask answer", () => {
 
   it("shows no moments when the answer names none", async () => {
     mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
-      onEvent({ type: "sources", sources: askSources, videos: askVideos });
+      onEvent({
+        type: "sources",
+        sources: askSources,
+        videos: askVideos,
+        coverage: [],
+      });
       onEvent({ type: "token", text: "The excerpts don't say." });
       onEvent({ type: "done" });
     });
@@ -614,7 +644,12 @@ describe("Search — the Ask answer", () => {
   // the page still has to say what happened rather than going quiet.
   it("says the answer failed when the model is unavailable", async () => {
     mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
-      onEvent({ type: "sources", sources: askSources, videos: askVideos });
+      onEvent({
+        type: "sources",
+        sources: askSources,
+        videos: askVideos,
+        coverage: [],
+      });
       onEvent({ type: "error", message: "answer unavailable" });
       onEvent({ type: "done" });
     });
@@ -652,7 +687,7 @@ describe("Search — the Ask answer", () => {
   // Truncated is more use than blank.
   it("keeps partial text when the stream breaks mid-answer", async () => {
     mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
-      onEvent({ type: "sources", sources: [], videos: [] });
+      onEvent({ type: "sources", sources: [], videos: [], coverage: [] });
       onEvent({ type: "token", text: "Yes — Attia" });
       throw new Error("connection lost");
     });
@@ -670,7 +705,7 @@ describe("Search — the Ask answer", () => {
   it("clears the previous answer when a new search starts", async () => {
     mockedSearchVideos.mockResolvedValue([]);
     mockedStreamAnswer.mockImplementationOnce(async (_q, onEvent) => {
-      onEvent({ type: "sources", sources: [], videos: [] });
+      onEvent({ type: "sources", sources: [], videos: [], coverage: [] });
       onEvent({ type: "token", text: "First answer." });
       onEvent({ type: "done" });
     });
@@ -704,7 +739,12 @@ describe("Search — the Ask answer", () => {
         new Promise((resolve) => {
           emit = onEvent;
           finish = resolve;
-          onEvent({ type: "sources", sources: askSources, videos: askVideos });
+          onEvent({
+            type: "sources",
+            sources: askSources,
+            videos: askVideos,
+            coverage: [],
+          });
         }),
     );
     mockedSearchVideos.mockResolvedValue([]);
@@ -736,7 +776,12 @@ describe("Search — the Ask answer", () => {
   // cleared: putting Find's results away must not touch what Ask found.
   it("clears one tab's results and leaves the other tab's alone", async () => {
     mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
-      onEvent({ type: "sources", sources: askSources, videos: askVideos });
+      onEvent({
+        type: "sources",
+        sources: askSources,
+        videos: askVideos,
+        coverage: [],
+      });
       onEvent({ type: "token", text: "Yes[1]." });
       onEvent({ type: "done" });
     });

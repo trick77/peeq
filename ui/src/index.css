@@ -5067,6 +5067,51 @@ details.tomb-sect[open] > summary svg {
   font-size: 12px;
 }
 
+/* "Also in your library" — what retrieval found and the answer did not use.
+   Retrieval reaches far more videos than a six-sentence answer can cite, and the
+   citation list alone made Ask look like it knew less than the search box beside
+   it: a question the library covered from thirteen videos showed three.
+
+   A real list, not rows that lost their numbers. These carry no numeral because
+   no numeral means anything for them — a number says "cited as [n]", and faking
+   one would claim the answer leaned on a video it never mentioned. The label sits
+   at the same x as Sources with nothing to its left, and no control: the group is
+   simply there, so nothing about it has to be discovered. */
+.also {
+  margin-top: 14px;
+}
+.also-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* The marker is DRAWN. A "•" or "-" is whatever the font decides — a hyphen reads
+   as a stray dash, a bullet's weight swings with the typeface, and U+25B8 is not
+   in this webfont at all. An explicit diameter is the same dot everywhere. An
+   empty flex item baselines on its bottom edge, so it needs lifting into the
+   letter body rather than sitting under it. */
+.also-list > li::before {
+  content: "";
+  flex: none;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-faint);
+  position: relative;
+  top: -3px;
+}
+.also-list > li:hover::before {
+  background: var(--color-muted);
+}
+/* Dimmer than a cited title, since the answer did not lean on it — but it
+   brightens on hover, because it opens a video like every row here. */
+.also .ttl {
+  color: var(--color-muted);
+}
+.also .srcrow:hover .ttl {
+  color: var(--color-ink);
+}
+
 /* Mode switch — Find vs Ask. Segmented, both options always visible, so the
    box announces that it does two different things before anything is typed. */
 .modeswitch {
