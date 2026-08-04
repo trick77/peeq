@@ -167,6 +167,18 @@ describe("parseVtt speaker markers", () => {
     expect(texts(vtt)).toEqual(["Real words here"]);
   });
 
+  // Shared verbatim with the no-break-space cases in
+  // backend/internal/subtitles/vtt_test.go. Go's \s is ASCII-only and this
+  // one's is not, so the Go pair names \x{00A0} explicitly to match — without
+  // that the panel would drop a marker the summary kept.
+  it("treats a no-break space as the boundary, like the Go side", () => {
+    // The no-break space itself is then collapsed to a plain one by the
+    // sound-event pass, which both sides do \u2014 Go's spaceRe names \x{00A0} too.
+    expect(texts(cue("one\u00a0>> two"))).toEqual(["one two"]);
+    expect(texts(cue(">>\u00a0Hello"))).toEqual(["Hello"]);
+    expect(texts(cue("a >>\u00a0b"))).toEqual(["a b"]);
+  });
+
   it("leaves a right-shift operator spoken on screen alone", () => {
     expect(texts(cue("So you write cout>>x to shift it"))).toEqual([
       "So you write cout>>x to shift it",

@@ -348,6 +348,14 @@ func TestStripSpeakerMarkers(t *testing.T) {
 		{"cout>>x", "cout>>x"},
 		{"a >>= b", "a >>= b"},
 		{"no markers here", "no markers here"},
+		// A no-break space counts as the boundary. Go's \s does not cover one and
+		// the JS mirror's does, so leaving it out here would have the transcript
+		// panel drop a marker this kept — the divergence spaceRe's comment warns
+		// about. These three are shared verbatim with the "no-break space" cases
+		// in ui/src/vtt.test.tsx.
+		{"one\u00a0>> two", "one\u00a0two"},
+		{">>\u00a0Hello", "Hello"},
+		{"a >>\u00a0b", "a b"},
 	}
 	for _, c := range cases {
 		if got := StripSpeakerMarkers(c.in); got != c.want {

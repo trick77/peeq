@@ -64,7 +64,7 @@ var (
 	// almost always put it: opening the line. Broadcast and manual tracks open a
 	// new speaker's line with ">>" and a new SPEAKER's turn with ">>>", tight
 	// (">>Hello") as often as spaced (">> Hello"), so no space is required here.
-	leadingSpeakerRe = regexp.MustCompile(`^>>+\s*`)
+	leadingSpeakerRe = regexp.MustCompile(`^>>+[\s\x{00A0}]*`)
 	// midSpeakerRe matches the same marker standing alone mid-line, which happens
 	// when two speakers share one cue.
 	//
@@ -74,21 +74,12 @@ var (
 	// a caption that spells out an operator keeps whatever sits tight against it.
 	// The captured leading space is put back so the two speakers' sentences do
 	// not run together.
-	midSpeakerRe = regexp.MustCompile(`(^|\s)>>+(\s|$)`)
+	//
+	// Both patterns name \x{00A0} for the same reason spaceRe does: Go's \s is
+	// ASCII-only and the JS mirror's is not, so a caption with a no-break space
+	// against the marker would have the panel drop it and this keep it.
+	midSpeakerRe = regexp.MustCompile(`(^|[\s\x{00A0}])>>+([\s\x{00A0}]|$)`)
 )
-
-// StripSpeakerMarkers removes ">>" speaker markers from one line of text.
-//
-// Exported because the same rule has to reach text that never came through
-// ParseVTT: summarize sanitizes the model's own output, which imitates the
-// markers it was shown.
-func StripSpeakerMarkers(s string) string {
-	if !strings.Contains(s, ">>") {
-		return s
-	}
-	s = leadingSpeakerRe.ReplaceAllString(s, "")
-	return strings.TrimSpace(midSpeakerRe.ReplaceAllString(s, "$1"))
-}
 
 // entities is the decode table for entityRe. Kept as an explicit closed list
 // rather than html.UnescapeString so the TypeScript mirror in ui/src/vtt.tsx
@@ -122,6 +113,19 @@ func unescapeEntities(s string) string {
 		}
 		return m
 	})
+}
+
+// StripSpeakerMarkers removes ">>" speaker markers from one line of text.
+//
+// Exported because the same rule has to reach text that never came through
+// ParseVTT: summarize sanitizes the model's own output, which imitates the
+// markers it was shown.
+func StripSpeakerMarkers(s string) string {
+	if !strings.Contains(s, ">>") {
+		return s
+	}
+	s = leadingSpeakerRe.ReplaceAllString(s, "")
+	return strings.TrimSpace(midSpeakerRe.ReplaceAllString(s, "$1"))
 }
 
 // parenSoundEvents is the closed list of parenthesised annotations treated as
