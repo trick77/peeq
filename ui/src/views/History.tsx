@@ -4,6 +4,7 @@ import { SearchField } from "../components/SearchField";
 import { Icon } from "../icons";
 import { PillStrip } from "../components/PillStrip";
 import { DOT } from "../sep";
+import { Button } from "../ui";
 import {
   clockOf,
   kindOf,
@@ -485,14 +486,19 @@ export function History({
               while you read it is hard to keep your place in. */}
           {hasMore ? (
             <div className="ag-edge">
-              <button
+              {/* A button, not a .chip. The chips on this page are filters —
+                  they toggle and stay pressed — and borrowing that class made
+                  a one-shot action look like a filter that never latched.
+                  Busy spins rather than swapping in an ellipsis label. */}
+              <Button
                 type="button"
-                className="chip"
+                variant="secondary"
+                small
                 onClick={loadMore}
-                disabled={loadingMore}
+                busy={loadingMore}
               >
-                {loadingMore ? "Loading…" : `Load ${PAGE_SIZE} more`}
-              </button>
+                Load {PAGE_SIZE} more
+              </Button>
               {moreError ? (
                 <span className="ag-edge-err">{moreError}</span>
               ) : null}

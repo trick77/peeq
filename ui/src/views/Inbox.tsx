@@ -552,28 +552,25 @@ export function Inbox({
               label="Search the inbox"
             />
             {visible.length > 0 ? (
-              /* ghost, not secondary: this is the only listbar on the app with
-                 a button beside the sort control, and a filled ink-dim button
-                 next to a muted-grey dropdown made the pair read as two
-                 different tiers of the same row. Ghost is the same
-                 --color-muted the sort control uses, so the toolbar's
-                 right-hand end reads as one quiet group. The confirm step still
-                 goes primary — that one is meant to be loud.
+              /* secondary, not ghost: this used to go quiet so it would sit as
+                 one group with the muted-grey sort control beside it, but ghost
+                 sets a transparent background on top of .ui-btn's transparent
+                 border, which leaves a bulk action reading as bare label text
+                 rather than as a button. It now carries the same fill and
+                 border as Cancel on /up-next, which is the resting shape every
+                 standalone action in the app is measured against. The confirm
+                 step still goes primary — that one is meant to be loud.
 
-                 Ghost is a REST-only state, though. `busy` disables the button,
-                 and .ui-btn:disabled drops it to opacity 0.6 — on a variant with
-                 no fill and no border that leaves faint grey text and a spinner
-                 floating in the row, at the one moment the control most needs to
-                 be visible. It borrows secondary's fill for the duration, which
-                 is what it looked like before this went quiet. A batch of ten or
-                 fewer skips the confirm step entirely, so without this the only
-                 feedback for the common case would be a fade. */
+                 One variant across rest and busy also drops the ghost-era
+                 special case: `busy` disables the button and .ui-btn:disabled
+                 drops it to opacity 0.6, which on a fill-less variant left
+                 faint grey text and a spinner floating in the row at the one
+                 moment the control most needs to be visible. Secondary has a
+                 fill to fade, so there is nothing left to compensate for. */
               <Button
                 type="button"
                 className="push-end"
-                variant={
-                  confirmBulk ? "primary" : bulkBusy ? "secondary" : "ghost"
-                }
+                variant={confirmBulk ? "primary" : "secondary"}
                 busy={bulkBusy}
                 onClick={handleDownloadAll}
                 onBlur={() => setConfirmBulk(false)}
