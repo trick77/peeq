@@ -3406,6 +3406,21 @@ button.sleeppick.armed {
      toc-grid — they are the same card in the same place on both pages. */
   gap: 1px 14px;
 }
+/* Contents and Highlights stack one above the other, so their timestamp
+   gutters read as one column and have to start on one left edge. A highlight
+   row carries its own 16px inset (its divider and hover band are full-bleed,
+   so the body gives up its sides); a chapter row is a floating rounded fill,
+   so its 10px lives on the row and the body still pays 16 — 26px in, ten
+   further right than the highlights below it, and ten of the leftmost
+   column's width spent on nothing. Five here plus the row's transparent 1px
+   border plus its 10px is the same 16, and the row keeps its own padding, so
+   its hover fill still stands off the text. Both cards that use toc-grid get
+   it: the Player's Contents and the share page's Chapters are the same
+   card. */
+.card.contentspanel .tabbody,
+.card.sharepage-chapters .tabbody {
+  padding: 16px 5px;
+}
 @media (max-width: 620px) {
   .toc.toc-grid {
     grid-auto-flow: row;
@@ -3503,7 +3518,11 @@ button.sleeppick.armed {
 }
 .hl .row {
   display: flex;
-  gap: 11px;
+  /* 12, not 11: the same stamp-to-text distance .toc .row uses. That one is
+     measured against the widest stamp there is (see .toc .ts), and with the
+     two cards' gutters now starting on one edge, a highlight's text has to
+     start where a chapter title does or the pair reads as two lists. */
+  gap: 12px;
   align-items: flex-start;
   background: none;
   /* Divider, not a box: a top border only, and the first row does without one
