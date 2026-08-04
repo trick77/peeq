@@ -113,6 +113,10 @@ export type RenderedPart =
 // moved past the punctuation that follows it — a full stop or a comma — and the
 // space before it is dropped: "…hardest stages.¹". See marksAfterPunctuation.
 //
+// Two more passes run before the collapse, each with its own note below: a
+// markdown bullet the model opened a line with is stripped (stripListMarkers),
+// and the marks of a run are put in ascending order (sortRunsAscending).
+//
 // Stable while streaming: text only ever grows at the end, so a run already
 // collapsed stays collapsed and no mark appears, disappears, or renumbers under
 // the reader. `streaming` is what keeps that true of the move as well — a mark
@@ -357,6 +361,15 @@ const TRAILING_LIST_MARKER = /(^|\n)[^\S\n]*[-*•][^\S\n]*$/;
 // only the completed form would render the hyphen for one frame and swallow it
 // the next. Stripping it while it is still the last thing in the buffer means it
 // never appears at all.
+//
+// That trade runs the other way for a line opening on a negative number: "\n-"
+// is withheld, and the hyphen appears once "40" settles it. Rare enough to be
+// the better side of the trade — every bulleted answer hits the first case.
+//
+// A NUMBERED marker ("1. ") is deliberately left alone. Stripping it would mean
+// deleting digits and a full stop on the strength of a guess, and a sentence
+// opening on a year — "2019. That season…" — is prose the reader wrote nothing
+// to lose. The prompt asking for prose is what covers that shape.
 export function stripListMarkers(text: string, streaming = false): string {
   const out = text.replace(LIST_MARKER, "$1$2");
   return streaming ? out.replace(TRAILING_LIST_MARKER, "$1") : out;
