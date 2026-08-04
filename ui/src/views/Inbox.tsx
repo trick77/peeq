@@ -91,10 +91,13 @@ function compareBy(
 //                                                   one — whether or not a .vtt
 //                                                   exists behind it
 //   "" + opted out         —                inert   never will be
-//   error                  —                inert   the page's only news is
+//   error, retry pending   —                inert   the page's only news is
 //                                                   that it will be retried
+//   error, gave up         Summary failed   opens   nothing will retry it, so
+//                                                   the card sends you to the
+//                                                   Player, where Reprocess is
 type Offer = {
-  mark: "summary" | "reading" | null;
+  mark: "summary" | "reading" | "failed" | null;
   opens: boolean;
 };
 
@@ -124,6 +127,23 @@ function offer(item: PendingItem): Offer {
       return { mark: null, opens: false };
     case "":
       return { mark: item.auto_summary ? "reading" : null, opens: false };
+    // 'error' is two cards, and only the job's own state tells them apart. The
+    // status is written on EVERY summary failure, so on its own it means "the
+    // last attempt failed" — with the ladder at 15m then 4h, a card that will
+    // be picked up again wears it for hours.
+    //
+    // Still to be retried, it stays inert: the page's only news would be that
+    // something is going to happen, which is what the queue is for.
+    //
+    // Once nothing will retry it, silence is the wrong answer. An inert card is
+    // indistinguishable from one with no captions, so a video whose summary
+    // died sinks into the list unmarked and unmentioned — the exact
+    // disappearance the marker exists to prevent. It opens, because the Player
+    // is where Reprocess lives and there is nowhere else to send you.
+    case "error":
+      return item.summary_gave_up
+        ? { mark: "failed", opens: true }
+        : { mark: null, opens: false };
     default:
       return { mark: null, opens: false };
   }
@@ -151,6 +171,27 @@ function summaryMark(item: PendingItem, onOpen?: (videoID: string) => void) {
   if (mark === null) return null;
   if (mark === "reading") {
     return <span className="metapill oncover is-reading">Summarizing…</span>;
+  }
+  // A summary that gave up. A button, not a span, and for the same reason
+  // "Read summary" is one: the card is offering somewhere to go — the Player,
+  // where Reprocess is — and a mark that says a thing failed while leading
+  // nowhere is the dead end this rule exists to prevent. It says what happened
+  // rather than what to do, because what to do is on the page it opens.
+  if (mark === "failed") {
+    if (!onOpen) {
+      return <span className="metapill oncover is-failed">Summary failed</span>;
+    }
+    return (
+      <button
+        type="button"
+        className="metapill oncover is-failed summary-open"
+        onClick={() => onOpen(item.video_id)}
+      >
+        <Icon name="warning" size="12px" />
+        Summary failed
+        <Icon name="chevronRight" size="12px" />
+      </button>
+    );
   }
   // Two ways the mark can be readable with nowhere to press, both answered the
   // same way: state the fact, draw no control. `!opens` is belt and braces —

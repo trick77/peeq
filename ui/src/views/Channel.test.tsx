@@ -726,6 +726,7 @@ describe("Channel", () => {
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
+        summary_gave_up: false,
         has_subtitles: false,
       },
     ]);
@@ -758,6 +759,7 @@ describe("Channel", () => {
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
+        summary_gave_up: false,
         has_subtitles: false,
       },
     ]);
@@ -791,6 +793,7 @@ describe("Channel", () => {
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
+        summary_gave_up: false,
         has_subtitles: false,
       },
     ]);
@@ -823,6 +826,7 @@ describe("Channel", () => {
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
+        summary_gave_up: false,
         has_subtitles: false,
       },
     ]);

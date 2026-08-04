@@ -230,3 +230,48 @@ func TestLedger_listPendingOrdersByPublishedDate(t *testing.T) {
 		}
 	}
 }
+
+// SummaryGaveUp reads the LATEST summary job, not any of them. The Player's
+// Reprocess inserts a new job row rather than reviving the old one, so a video
+// repaired that way keeps its old 'failed' row forever — an EXISTS over all of
+// them would mark it failed for the rest of its life.
+func TestLedger_summaryGaveUpReadsTheLatestJobOnly(t *testing.T) {
+	st := newTestStore(t)
+	seedChannel(t, st, "UCa")
+	for _, id := range []string{"vNone", "vRetrying", "vGaveUp", "vRepaired", "vDone"} {
+		if err := st.Insert(Entry{VideoID: id, ChannelID: "UCa", State: "pending"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.Exec(`INSERT INTO videos (id, url) VALUES (?, 'u')`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// vNone has no job at all. The rest carry one or more, newest last.
+	st.db.Exec(`INSERT INTO summary_jobs (video_id, state) VALUES
+		('vRetrying','pending'),
+		('vGaveUp','failed'),
+		('vRepaired','failed'),
+		('vRepaired','pending'),
+		('vDone','done')`)
+
+	got, err := st.ListPending()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"vNone":     false,
+		"vRetrying": false,
+		"vGaveUp":   true,
+		// The failed row is still there; a newer one supersedes it.
+		"vRepaired": false,
+		"vDone":     false,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d", len(got), len(want))
+	}
+	for _, e := range got {
+		if e.SummaryGaveUp != want[e.VideoID] {
+			t.Errorf("%s SummaryGaveUp = %v, want %v", e.VideoID, e.SummaryGaveUp, want[e.VideoID])
+		}
+	}
+}

@@ -43,6 +43,7 @@ const inboxItem: PendingItem = {
   discovered_at: "2026-07-29 09:00:00",
   summary_status: "done",
   auto_summary: true,
+  summary_gave_up: false,
   has_subtitles: true,
 };
 

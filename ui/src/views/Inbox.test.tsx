@@ -17,6 +17,7 @@ function baseItem(overrides: Partial<PendingItem> = {}): PendingItem {
     discovered_at: "2026-07-21 09:00:00",
     summary_status: "done",
     auto_summary: true,
+    summary_gave_up: false,
     has_subtitles: true,
     ...overrides,
   };
@@ -984,9 +985,17 @@ describe("Inbox summaries", () => {
 
   // Same rule, the state that used to slip through it: a failed summary drew no
   // marker and still opened a page whose only news was that it would be retried.
-  it("does not open a video whose summary failed", async () => {
+  //
+  // Still true while a retry is coming — and with the ladder at 15m then 4h,
+  // that is most of the time a card wears this status.
+  it("does not open a video whose summary failed and will be retried", async () => {
     vi.mocked(listPending).mockResolvedValue([
-      baseItem({ video_id: "bad", title: "Failed", summary_status: "error" }),
+      baseItem({
+        video_id: "bad",
+        title: "Failed",
+        summary_status: "error",
+        summary_gave_up: false,
+      }),
     ]);
     const onOpen = vi.fn();
     render(<Inbox onOpen={onOpen} />);
@@ -998,6 +1007,61 @@ describe("Inbox summaries", () => {
 
     expect(onOpen).not.toHaveBeenCalled();
     expect(card.className).toContain("is-inert");
+  });
+
+  // Once nothing will retry it, silence is the wrong answer: an inert unmarked
+  // card is indistinguishable from one with no captions, so the video sinks
+  // into the list with no sign that anything went wrong.
+  describe("a summary that gave up", () => {
+    const gaveUp = () =>
+      baseItem({
+        video_id: "bad",
+        title: "Failed",
+        summary_status: "error",
+        summary_gave_up: true,
+      });
+
+    it("says so on the card", async () => {
+      vi.mocked(listPending).mockResolvedValue([gaveUp()]);
+      render(<Inbox onOpen={vi.fn()} />);
+
+      expect(await screen.findByText("Summary failed")).toBeInTheDocument();
+    });
+
+    // The marker leads to the Player, because that is where Reprocess lives and
+    // there is nowhere else to send you. A mark naming a failure and leading
+    // nowhere would be the dead end the marker rule exists to prevent.
+    it("opens the player, where the repair is", async () => {
+      vi.mocked(listPending).mockResolvedValue([gaveUp()]);
+      const onOpen = vi.fn();
+      render(<Inbox onOpen={onOpen} />);
+
+      const card = (await screen.findByText("Failed")).closest(
+        "article",
+      ) as HTMLElement;
+      await userEvent.click(card.querySelector(".thumb") as HTMLElement);
+
+      expect(onOpen).toHaveBeenCalledWith("bad");
+      expect(card.className).not.toContain("is-inert");
+    });
+
+    // A video whose summary arrived and whose LATER step died keeps its summary
+    // status, so it must still offer the summary. The job gave up, but there is
+    // something to read, and saying so is the card's whole job.
+    it("still offers a summary whose key points or index failed", async () => {
+      vi.mocked(listPending).mockResolvedValue([
+        baseItem({
+          video_id: "kp",
+          title: "Half done",
+          summary_status: "done",
+          summary_gave_up: true,
+        }),
+      ]);
+      render(<Inbox onOpen={vi.fn()} />);
+
+      expect(await screen.findByText("Read summary")).toBeInTheDocument();
+      expect(screen.queryByText("Summary failed")).toBeNull();
+    });
   });
 
   it("opens the summary from the marker", async () => {
