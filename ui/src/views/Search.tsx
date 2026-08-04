@@ -1,4 +1,4 @@
-import { useRef, type FormEvent } from "react";
+import { useEffect, useRef, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Button, Spinner } from "../ui";
 import type { SearchMode } from "../api/search";
@@ -93,6 +93,22 @@ export function Search({
 
   const copy = MODE_COPY[mode];
   const { query, results, loading, error } = tab;
+
+  // Landing on this view, the box is the only thing there is to do — so it
+  // takes the caret rather than making you click it first. The dependency list
+  // is empty on purpose: this view renders only on the search route, so the
+  // effect runs once per arrival and the `query` it reads is the one that was
+  // there on arrival, not whatever gets typed afterwards.
+  //
+  // Not when the box already holds something. A query and its results survive
+  // navigation, so a non-empty box means coming BACK to an answer left behind
+  // — and focusing then would scroll the page to the top and, on a phone, put
+  // the keyboard over the thing being returned to.
+  useEffect(() => {
+    if (query) return;
+    inputRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // In Ask, everything BELOW the streaming answer waits for it to finish.
   // Retrieval returns long before generation does, so showing the moments and
   // the citation list first puts the evidence on screen ahead of the thing that

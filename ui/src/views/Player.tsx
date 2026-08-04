@@ -1576,6 +1576,14 @@ export function Player({
             video={video}
             seek={video.has_media ? seek : undefined}
           />
+          {/* Highlights are timestamps into the chapters directly above them,
+              so they belong under that list rather than in the rail beside the
+              video. Only the Summary stays in the rail — it is prose about the
+              video as a whole, and it reads at a narrow measure. */}
+          <HighlightsCard
+            video={video}
+            seek={video.has_media ? seek : undefined}
+          />
           {video.has_subtitles && (
             /* seek is withheld for a fileless video, exactly as ContentsCard
                above withholds it: with nothing to seek, a cue is text to read,
@@ -1603,10 +1611,6 @@ export function Player({
 
       <aside className="side">
         <SummaryCard video={video} />
-        <HighlightsCard
-          video={video}
-          seek={video.has_media ? seek : undefined}
-        />
       </aside>
       {video ? (
         <ConfirmDialog

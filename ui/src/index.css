@@ -2733,62 +2733,68 @@ button.sleeppick.armed {
 
 /* ── Player (Task 14): stage + scrubber + side panels. ───────────────────── */
 
-/* One column at every width. There is no sidebar: the panels that used to sit
-   in a 316px rail beside the video now run underneath it, so their place in the
-   reading order has to be stated rather than inherited from the markup. In
-   source order the whole left column comes first, which would put Summary below
-   Contents and the transcript. Dissolving the three wrapper boxes (.leftcol,
-   .side, .belowvideo — their children become items of this container) lets the
-   four panels be ordered one by one: Summary under the video it describes, then
-   Contents, then the Highlights that point into those chapters, then the
-   transcript. DOM order is untouched, so focus order and the panels themselves
-   are unchanged. The share page runs the same sequence (see .sharepage-main).
-
-   Still a grid, single-track, rather than a column flexbox: `order` and
-   `display: contents` behave the same either way, and in grid the inherited
-   `align-items: start` stays on the block axis. In a column flexbox it would be
-   the cross axis and shrink every panel to fit its text. */
 .playgrid {
   display: grid;
-  grid-template-columns: 1fr;
-  /* .leftcol's own gap, not the 26 the two-column grid used — this governs
-     every seam in the column, including the ones .side and .belowvideo used to
-     space (16 each; the column reads as one rhythm now rather than three). */
-  gap: 20px;
+  grid-template-columns: 1fr 316px;
+  gap: 26px;
   align-items: start;
 }
-/* Qualified: each of these carries its own `display` further down this file,
-   and at equal specificity the later rule would win. */
-.playgrid > .leftcol,
-.playgrid > .side,
-.playgrid .belowvideo {
-  display: contents;
-}
-.playgrid .stage-wrap {
-  order: 1;
-}
-.playgrid .playmeta {
-  order: 2;
-}
-.playgrid .summarypanel {
-  order: 3;
-}
-.playgrid .contentspanel {
-  order: 4;
-}
-.playgrid .hlpanel {
-  order: 5;
-}
-.playgrid .transcriptpanel {
-  order: 6;
-}
-/* .leftcol carried min-width: 0 to stop a long unbroken transcript line
-   widening the column; with its box gone, the panels it held carry it. */
-.playgrid .stage-wrap,
-.playgrid .playmeta,
-.playgrid .contentspanel,
-.playgrid .transcriptpanel {
-  min-width: 0;
+/* Single column: the sidebar stops being a sidebar, so its panels have to earn
+   their place in the reading order instead of inheriting one from the markup.
+   In source order the whole left column comes first, which put Summary below
+   Contents and the transcript — a long way down the page on a phone.
+   Dissolving the three wrapper boxes (.leftcol, .side, .belowvideo — their
+   children become items of this container) lets the four panels be ordered one
+   by one: Summary under the video it describes, then Contents, then the
+   Highlights that point into those chapters, then the transcript. DOM order is
+   untouched, so nothing about the desktop layout, focus order or the panels
+   themselves changes. The share page runs the same sequence at its own
+   collapse (see .sharepage-main). */
+@media (max-width: 1040px) {
+  .playgrid {
+    display: flex;
+    flex-direction: column;
+    /* .leftcol's own gap, not .playgrid's 26 — this now governs every seam in
+       the column, including the ones .side and .belowvideo used to space (16
+       each; the column reads as one rhythm now rather than three). */
+    gap: 20px;
+    /* The grid rule above sets align-items: start, which in a column flexbox
+       means the cross axis — it would shrink every panel to fit its text. */
+    align-items: stretch;
+  }
+  /* Qualified: each of these carries its own `display` further down this file,
+     and at equal specificity the later rule would win. */
+  .playgrid > .leftcol,
+  .playgrid > .side,
+  .playgrid .belowvideo {
+    display: contents;
+  }
+  .playgrid .stage-wrap {
+    order: 1;
+  }
+  .playgrid .playmeta {
+    order: 2;
+  }
+  .playgrid .summarypanel {
+    order: 3;
+  }
+  .playgrid .contentspanel {
+    order: 4;
+  }
+  .playgrid .hlpanel {
+    order: 5;
+  }
+  .playgrid .transcriptpanel {
+    order: 6;
+  }
+  /* .leftcol carried min-width: 0 to stop a long unbroken transcript line
+     widening the column; with its box gone, the panels it held carry it. */
+  .playgrid .stage-wrap,
+  .playgrid .playmeta,
+  .playgrid .contentspanel,
+  .playgrid .transcriptpanel {
+    min-width: 0;
+  }
 }
 .stage {
   border-radius: var(--radius-ui);
@@ -3263,13 +3269,13 @@ button.sleeppick.armed {
   font-style: italic;
 }
 
-/* ── Player intelligence panels (Task 17): Summary, Contents, Highlights and
-   the collapsible Transcript, all full-width below the video. The three
-   wrappers that used to shape them into a mixed layout — .side as a 316px rail
-   for Summary + Highlights, .leftcol/.belowvideo full-width underneath — are
-   dissolved by .playgrid above and their `display` below never applies; the
-   boxes are kept so the markup still names what it groups. Ported from the
-   approved mockup's `.card`/`.toc-grid`/`.hl`/`.transcript` rules, reusing
+/* ── Player intelligence panels (Task 17): mixed layout — the Summary alone
+   sits beside the video in the sidebar (.side, above), being prose about the
+   video as a whole and happy at a narrow measure; Contents, Highlights and the
+   collapsible Transcript run full-width below it (.leftcol/.belowvideo).
+   Highlights are timestamps into the chapter list directly above them, so they
+   read as part of that column rather than as a note in the rail. Ported from
+   the approved mockup's `.card`/`.toc-grid`/`.hl`/`.transcript` rules, reusing
    peeq's existing tokens. ── */
 
 .leftcol {
@@ -5947,24 +5953,12 @@ details.tomb-sect[open] > summary svg {
 }
 /* 1500px, not the 1020 this shipped with: the share page carries no 248px rail,
    so at that cap a 16:9 video got ~580px of width on a window where the Player
-   gave it ~1070 — it read as a preview rather than a player. It stays a cap,
-   not a fixed width: below it the column shrinks with the window. (Those two
-   numbers were measured against the two-column layout; in one column the video
-   takes the whole measure on both pages — ~1436 here at a 1728px window against
-   the Player's ~1412, so the cap still keeps the two within a hair of each
-   other.)
-
-   One column at every width, matching the Player (see .playgrid). The aside is
-   not an aside any more, and in source order the whole primary column comes
-   first — which would leave the Summary below the chapters, the transcript and
-   even the footer, a long way from the video it describes. Dissolving both
-   wrappers makes their children items of this container, so `order` can run the
-   panels in reading order — Summary, Chapters, Highlights, Transcript. The
-   markup is untouched.
-
-   Still a grid, single-track, rather than a column flexbox: `align-items: start`
-   stays on the block axis here. In a column flexbox it would be the cross axis
-   and shrink every panel to fit its text. */
+   gives it ~1070 — it read as a preview rather than a player. Measured in the
+   browser at a 1728px window: 1500 puts the shared video at ~1060 against the
+   Player's 1068. It stays a cap, not a fixed width — below it the 1fr column
+   shrinks with the window (and, having no rail to pay for, the share page is
+   then the wider of the two), and under 860px the aside drops beneath the video
+   and the video takes the full measure. */
 .sharepage-main {
   max-width: 1500px;
   margin: 0 auto;
@@ -5972,53 +5966,78 @@ details.tomb-sect[open] > summary svg {
      inset is the only thing keeping the video off the window edge. */
   padding: 60px 32px 60px;
   display: grid;
-  grid-template-columns: 1fr;
-  /* This column's seams are its children's own margin-top (.sharepage-meta,
-     .sharepage-chapters, .sharepage-foot), which a gap would stack on top of
-     rather than replace. The two aside panels, which had none, are given theirs
-     below. */
-  gap: 0;
+  grid-template-columns: 1fr 336px;
+  gap: 40px;
   align-items: start;
 }
-/* Both wrappers dissolve, so the panels can be ordered one by one rather
-   than a column at a time — the Player's sequence exactly. */
-.sharepage-main > .sharepage-primary,
-.sharepage-main > .sharepage-side {
-  display: contents;
+/* The aside holds the Summary and nothing else now that Highlights have moved
+   into the primary column, and the Summary is conditional — a share of a video
+   that was never summarized renders an empty <aside>. `display: none` on it
+   would not help: the 336px track is declared on the container, so the gutter
+   would simply stand empty. Collapse the track instead. */
+.sharepage-main:has(> .sharepage-side:empty) {
+  grid-template-columns: 1fr;
 }
-.sharepage-main .stage-wrap {
-  order: 1;
-}
-.sharepage-main .sharepage-meta {
-  order: 2;
-}
-.sharepage-main .summarypanel {
-  order: 3;
-  /* The seam the aside used to take from the grid gap. Its two cards had no
-     margins of their own — the aside spaced them with a flex gap that no
-     longer applies to them. */
-  margin-top: 28px;
-}
-.sharepage-main .sharepage-chapters {
-  order: 4;
-}
-.sharepage-main .hlpanel {
-  order: 5;
-  margin-top: 20px;
-}
-.sharepage-main .sharepage-transcript {
-  order: 6;
-}
-.sharepage-main .sharepage-foot {
-  order: 7;
-}
-/* .sharepage-primary carried min-width: 0 to stop a long unbroken transcript
-   line widening the column; with its box gone, the panels it held carry it. */
-.sharepage-main .stage-wrap,
-.sharepage-main .sharepage-meta,
-.sharepage-main .sharepage-chapters,
-.sharepage-main .sharepage-transcript {
-  min-width: 0;
+/* Single column: the aside stops being an aside, and in source order the whole
+   primary column comes first — which left the Summary below the chapters, the
+   transcript and even the footer, a long way from the video it describes. The
+   player page read the same way at its own collapse (see .playgrid), and this
+   is the same remedy: dissolving both wrappers makes their children items of
+   this container, so `order` can run the panels in reading order — Summary,
+   Chapters, Highlights, Transcript. The markup is untouched. */
+@media (max-width: 860px) {
+  .sharepage-main {
+    display: flex;
+    flex-direction: column;
+    /* This column's seams are its children's own margin-top
+       (.sharepage-meta, .sharepage-chapters, .sharepage-foot), which a gap
+       would stack on top of rather than replace. The two aside panels, which
+       had none, are given theirs below. */
+    gap: 0;
+    /* The grid rule above sets align-items: start, which in a column flexbox
+       means the cross axis — it would shrink every panel to fit its text. */
+    align-items: stretch;
+  }
+  /* Both wrappers dissolve, so the panels can be ordered one by one rather
+     than a column at a time — the Player's sequence exactly. */
+  .sharepage-main > .sharepage-primary,
+  .sharepage-main > .sharepage-side {
+    display: contents;
+  }
+  .sharepage-main .stage-wrap {
+    order: 1;
+  }
+  .sharepage-main .sharepage-meta {
+    order: 2;
+  }
+  .sharepage-main .summarypanel {
+    order: 3;
+    /* The seam the aside used to take from the grid gap. Its two cards had no
+       margins of their own — the aside spaced them with a flex gap that no
+       longer applies to them. */
+    margin-top: 28px;
+  }
+  .sharepage-main .sharepage-chapters {
+    order: 4;
+  }
+  .sharepage-main .hlpanel {
+    order: 5;
+    margin-top: 20px;
+  }
+  .sharepage-main .sharepage-transcript {
+    order: 6;
+  }
+  .sharepage-main .sharepage-foot {
+    order: 7;
+  }
+  /* .sharepage-primary carried min-width: 0 to stop a long unbroken transcript
+     line widening the column; with its box gone, the panels it held carry it. */
+  .sharepage-main .stage-wrap,
+  .sharepage-main .sharepage-meta,
+  .sharepage-main .sharepage-chapters,
+  .sharepage-main .sharepage-transcript {
+    min-width: 0;
+  }
 }
 .sharepage-primary {
   min-width: 0;
@@ -6080,12 +6099,14 @@ details.tomb-sect[open] > summary svg {
   flex-direction: column;
   gap: 20px;
 }
-/* The Chapters and Transcript cards under the video. Both reuse the Player's
-   global rules verbatim (.toc/.toc-grid, .tsearch/.transcript/.cue); only their
-   placement in this column is share-specific, so only that is scoped here.
-   .sharepage-primary spaces its children with margins (see .sharepage-meta),
-   not a flex gap. */
+/* The Chapters, Highlights and Transcript cards under the video. All three
+   reuse the Player's global rules verbatim (.toc/.toc-grid, .hl,
+   .tsearch/.transcript/.cue); only their placement in this column is
+   share-specific, so only that is scoped here. .sharepage-primary spaces its
+   children with margins (see .sharepage-meta), not a flex gap — .hlpanel came
+   over from the aside, which spaced it with one, so it needs its own here. */
 .sharepage-chapters,
+.sharepage-primary > .hlpanel,
 .sharepage-transcript {
   margin-top: 20px;
 }
