@@ -1045,6 +1045,32 @@ describe("Inbox summaries", () => {
       expect(card.className).not.toContain("is-inert");
     });
 
+    // The marker is itself the control, not just a label the card happens to
+    // sit under — pressing it has to work on its own.
+    it("opens from the marker itself", async () => {
+      vi.mocked(listPending).mockResolvedValue([gaveUp()]);
+      const onOpen = vi.fn();
+      render(<Inbox onOpen={onOpen} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: /Summary failed/ }),
+      );
+
+      expect(onOpen).toHaveBeenCalledWith("bad");
+    });
+
+    // Same rule the readable marker follows: a host that gave the card nowhere
+    // to go gets the fact stated, never a control that could only do nothing.
+    it("states the fact without a control when there is nowhere to go", async () => {
+      vi.mocked(listPending).mockResolvedValue([gaveUp()]);
+      render(<Inbox />);
+
+      expect(await screen.findByText("Summary failed")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Summary failed/ }),
+      ).toBeNull();
+    });
+
     // A video whose summary arrived and whose LATER step died keeps its summary
     // status, so it must still offer the summary. The job gave up, but there is
     // something to read, and saying so is the card's whole job.
