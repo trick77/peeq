@@ -18,9 +18,9 @@ const DONE_STATUSES = new Set([
 // SummaryCard renders the prose summary and every non-done state it can be in.
 export function SummaryCard({ video }: { video: Video }) {
   return (
-    /* summarypanel is a placement hook, not a style: in one column the four
-       panels are ordered individually (see .playgrid's media query), and both
-       this page and the share page name them the same way. */
+    /* summarypanel is a placement hook, not a style: the four panels are
+       ordered individually in the one column (see .playgrid), and both this
+       page and the share page name them the same way. */
     <div className="card summarypanel">
       <div className="hd">
         <Icon name="alignLeft" size="16px" />
