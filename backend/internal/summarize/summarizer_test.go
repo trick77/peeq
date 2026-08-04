@@ -2,7 +2,11 @@ package summarize
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -32,6 +36,52 @@ func (f *fakeCompleter) Complete(ctx context.Context, m []llm.Message) (string, 
 	}
 	f.i++
 	return f.replies[0], nil
+}
+
+// Classify is the one step routed to the non-Pro deployment, and this test runs
+// a real client at a stub endpoint rather than a fake completer because the
+// choice only exists on the wire — a fake sees a context, not a model name.
+//
+// The summary half is the guard that matters: it is the prose a reader sees, and
+// it stays on Pro. "No reasoning needed" is the bar for the swap, not "thinking
+// happens to be off", which is true of several calls that must not move.
+func TestClassifyRunsOnTheNonProDeploymentAndTheSummaryDoesNot(t *testing.T) {
+	var models []string
+	var maxTokens []any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &body)
+		models = append(models, body["model"].(string))
+		maxTokens = append(maxTokens, body["max_tokens"])
+		io.WriteString(w, "data: "+
+			`{"choices":[{"delta":{"content":"science","role":"assistant"},"finish_reason":null,"index":0}]}`+"\n\n"+
+			"data: "+`{"choices":[{"delta":{"content":null},"finish_reason":"stop","index":0}],"usage":null}`+"\n\n"+
+			"data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	s := New(llm.NewClient(llm.Config{BaseURL: srv.URL}, srv.Client()))
+
+	if _, err := s.Classify(context.Background(), "A title", "A summary.",
+		[]videos.Category{{ID: "science", Label: "Science"}}); err != nil {
+		t.Fatal(err)
+	}
+	if models[0] != "mimo-v2.5" {
+		t.Fatalf("classify ran on %q, want the non-Pro deployment", models[0])
+	}
+	// The cap it went without until now: one id needs a couple of tokens, and an
+	// endpoint that starts explaining itself instead had nothing to stop it.
+	if got, ok := maxTokens[0].(float64); !ok || int(got) != classifyMaxTokens {
+		t.Fatalf("classify max_tokens = %v, want %d", maxTokens[0], classifyMaxTokens)
+	}
+
+	if _, err := s.SummarizeText(context.Background(), "a short transcript"); err != nil {
+		t.Fatal(err)
+	}
+	if models[1] != "mimo-v2.5-pro" {
+		t.Fatalf("the summary ran on %q, want Pro", models[1])
+	}
 }
 
 func TestSummarizeThenKeyPointsPrefersYtdlpChapters(t *testing.T) {

@@ -75,6 +75,55 @@ func TestComplete_withoutThinkingDisablesItOnTheWire(t *testing.T) {
 	}
 }
 
+// The short gate goes to the non-Pro deployment, and nothing else does. The
+// second half is the point of the test: NonReasoning is opt-in per call, and a
+// leak would move the summary and the Ask answer off Pro without anyone asking.
+func TestComplete_nonReasoningRoutesToTheNonProDeployment(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		io.WriteString(w, sseStream("news", ""))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	if _, err := c.Complete(NonReasoning(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["model"] != "mimo-v2.5" {
+		t.Fatalf("model = %v, want the non-Pro deployment", gotBody["model"])
+	}
+
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["model"] != "mimo-v2.5-pro" {
+		t.Fatalf("model = %v, want Pro for a call that did not opt in", gotBody["model"])
+	}
+}
+
+// The deployment and the thinking switch are separate choices, and either can be
+// made without the other: disabling thinking must not silently move a call off
+// Pro, which is what keeps the summary and the forced Ask answer where they are.
+func TestComplete_withoutThinkingStaysOnPro(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		io.WriteString(w, sseStream("news", ""))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	if _, err := c.Complete(WithoutThinking(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["model"] != "mimo-v2.5-pro" {
+		t.Fatalf("model = %v, want Pro: thinking off is not the same as the non-Pro deployment", gotBody["model"])
+	}
+}
+
 // thinkingType digs the switch out of a decoded request body, failing the test
 // when the field is missing entirely — an absent object is exactly the bug this
 // pair of tests exists to catch, and it would otherwise read as an empty type.

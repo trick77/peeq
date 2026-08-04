@@ -103,7 +103,19 @@ func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowe
 	// No thinking: the answer is one id picked from a list the prompt already
 	// spells out, and letting the model reason spends several hundred
 	// completion tokens to emit a single word.
-	return s.c.Complete(llm.WithoutThinking(ctx), []llm.Message{
+	//
+	// And on the non-Pro deployment, which is a separate point: this call wants a
+	// fast answer rather than a deep one, and Pro is where the long summary calls
+	// queue. The category ids never reach a reader as prose — they land in the
+	// Library filter after NormalizeCategory — so the step that stands to gain
+	// most from a shorter queue is also the one where the deployment matters
+	// least. The backlog sweep fires it in bulk, which is where that adds up.
+	//
+	// The cap is a runaway backstop, not a length target: one id is a token or
+	// two, and with thinking off the whole budget is output, so 32 cannot
+	// truncate a real answer.
+	ctx = llm.WithMaxTokens(llm.NonReasoning(llm.WithoutThinking(ctx)), classifyMaxTokens)
+	return s.c.Complete(ctx, []llm.Message{
 		{Role: "system", Content: sys},
 		{Role: "user", Content: "TITLE: " + title + "\n\nSUMMARY:\n" + summary},
 	})
@@ -129,6 +141,31 @@ const (
 	// (hundreds of them) so it never truncates legitimate JSON, which would parse
 	// as empty and silently drop every point.
 	keypointsMaxTokens = 16000
+
+	// classifyMaxTokens bounds the category call, which runs with thinking off and
+	// answers with a single id. It went without a cap until now (the coarse map in
+	// SummarizeText is the one that still does), so an endpoint that ignored the
+	// prompt and started explaining itself had nothing to stop it but its own
+	// default.
+	//
+	// It is deliberately far above what an obedient answer needs — the longest id
+	// is one word ('entertainment') — because a cut here is silent and NOT always
+	// silent in the harmless direction. A truncated id is junk and falls through
+	// to 'uncategorized', which stays retryable. Truncated *prose* is worse: it
+	// keeps whatever ids it already contains, so NormalizeCategory's
+	// last-valid-id scan picks one of the echoed options instead of the verdict
+	// the cut removed ("choosing from ai, tech, science: history" cut to its
+	// preamble answers 'science'). That is a valid but wrong category, which
+	// SetCategoryIfUnset persists and the backlog sweep never offers again.
+	//
+	// So the cap is sized for the failure it must not cause rather than the one
+	// it exists to stop. A tight 32 fits the answer and truncates every padded
+	// reply, turning a rare disobedience into permanent wrong data; 256 lets any
+	// realistic padded reply reach its verdict while still bounding a genuine
+	// runaway. loom runs its own classifier at 32 against this same deployment,
+	// but its replies land in a different normalizer, so that is not a licence to
+	// match it here.
+	classifyMaxTokens = 256
 )
 
 // wholeVideoSystemPrompt drives the single-pass summary: the full transcript in,
@@ -196,6 +233,11 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 	// already in front of the model) then reduce (thinking on — the reader's
 	// summary). Sequential: it is a handful of sections, and pace() serializes
 	// call starts regardless of goroutines, so concurrency would buy nothing.
+	//
+	// Both stay on Pro. The map's prose is not shown to anyone, but it is what
+	// the reduce writes the reader's summary from, so its quality reaches the
+	// page one step later. Only videos long enough to need chunking come here
+	// anyway, so there is little queue time to win.
 	mapCtx := llm.WithoutThinking(ctx)
 	sections := make([]string, 0, len(chunks))
 	for _, ch := range chunks {
@@ -280,6 +322,13 @@ func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subti
 	// nothing (max_tokens counts reasoning, so a thinking-on cap would still hand
 	// back empty — disabling reasoning is what guarantees output). If extraction
 	// quality drops, WithReasoningEffort(ctx, "low") is the middle ground.
+	//
+	// Thinking off, but NOT llm.NonReasoning: this call stays on Pro. Chapter
+	// titles and key-point text are what a reader sees in the Player, and the
+	// chapters it invents are even labelled MiMo there. Moving it is a quality
+	// question that wants a before/after over real videos, not a swap made
+	// because the switch above happens to be off — which is exactly the mistake
+	// NonReasoning's doc warns against.
 	kpCtx := llm.WithMaxTokens(llm.WithoutThinking(ctx), keypointsMaxTokens)
 	raw, err := s.c.Complete(kpCtx, []llm.Message{
 		{Role: "system", Content: kpPrompt + keyPointRules},
