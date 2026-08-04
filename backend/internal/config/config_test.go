@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -333,5 +335,49 @@ func TestLoad_searchMaxDistance(t *testing.T) {
 		if _, err := Load(); err == nil {
 			t.Errorf("want an error for BACKEND_SEARCH_MAX_DISTANCE=%q", bad)
 		}
+	}
+}
+
+// Compose forwards environment variables one by one, and reads .env only for
+// ${} interpolation — so a setting this package honours but compose.yaml never
+// names is unreachable in a deployed stack, silently. That cost a diagnosis
+// cycle: BACKEND_SEARCH_MAX_DISTANCE was set in .env, read by nobody, and the
+// backend kept its compiled default while the logs looked identical.
+//
+// Rather than duplicate the list, this reads both files: every BACKEND_ name
+// mentioned in config.go has to appear in compose.yaml, except the dev-auth
+// ones, which belong to `go run` and not to a container.
+func TestComposeForwardsEverySettingConfigReads(t *testing.T) {
+	devOnly := map[string]bool{
+		"BACKEND_DEV_USER_SUBJECT":  true,
+		"BACKEND_DEV_USER_USERNAME": true,
+		"BACKEND_DEV_USER_EMAIL":    true,
+		"BACKEND_DEV_USER_NAME":     true,
+	}
+
+	source, err := os.ReadFile("config.go")
+	if err != nil {
+		t.Fatalf("read config.go: %v", err)
+	}
+	compose, err := os.ReadFile(filepath.Join("..", "..", "..", "compose.yaml"))
+	if err != nil {
+		t.Fatalf("read compose.yaml: %v", err)
+	}
+
+	name := regexp.MustCompile(`BACKEND_[A-Z0-9_]+`)
+	forwarded := map[string]bool{}
+	for _, m := range name.FindAllString(string(compose), -1) {
+		forwarded[m] = true
+	}
+
+	missing := map[string]bool{}
+	for _, m := range name.FindAllString(string(source), -1) {
+		if !devOnly[m] && !forwarded[m] {
+			missing[m] = true
+		}
+	}
+	for m := range missing {
+		t.Errorf("%s is read by config but compose.yaml never forwards it, so setting "+
+			"it in .env does nothing — add it to the environment block", m)
 	}
 }

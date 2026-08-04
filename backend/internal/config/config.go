@@ -18,7 +18,7 @@ import (
 // one float would drag rag -> store (sqlite, sqlite-vec) and llm in with it.
 // config_test.go asserts the two stay equal, so the coupling lives in the test
 // rather than in the binary.
-const defaultSearchMaxDistance = 1.05
+const defaultSearchMaxDistance = 1.25
 
 // AuthMode selects how peeq signs users in.
 type AuthMode string
