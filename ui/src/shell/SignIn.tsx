@@ -16,11 +16,7 @@ import { Spinner, buttonClass } from "../ui";
  */
 function SignInMark() {
   return (
-    <svg
-      className="signin-logo"
-      viewBox="2 2 20 20"
-      aria-hidden="true"
-    >
+    <svg className="signin-logo" viewBox="2 2 20 20" aria-hidden="true">
       <linearGradient id="signin-mark-grad" x1="0" y1="0" x2="0.72" y2="1">
         <stop className="s0" offset="0" />
         <stop className="s1" offset="1" />
