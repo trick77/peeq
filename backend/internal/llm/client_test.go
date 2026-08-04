@@ -76,9 +76,9 @@ func TestComplete_withoutThinkingDisablesItOnTheWire(t *testing.T) {
 }
 
 // The short gate goes to the non-Pro deployment, and nothing else does. The
-// second half is the point of the test: NonReasoning is opt-in per call, and a
+// second half is the point of the test: ShortGate is opt-in per call, and a
 // leak would move the summary and the Ask answer off Pro without anyone asking.
-func TestComplete_nonReasoningRoutesToTheNonProDeployment(t *testing.T) {
+func TestComplete_shortGateRoutesToTheNonProDeployment(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -88,7 +88,7 @@ func TestComplete_nonReasoningRoutesToTheNonProDeployment(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
-	if _, err := c.Complete(NonReasoning(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
+	if _, err := c.Complete(ShortGate(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
 	if gotBody["model"] != "mimo-v2.5" {

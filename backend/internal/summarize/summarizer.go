@@ -114,7 +114,7 @@ func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowe
 	// The cap is a runaway backstop, not a length target: one id is a token or
 	// two, and with thinking off the whole budget is output, so 32 cannot
 	// truncate a real answer.
-	ctx = llm.WithMaxTokens(llm.NonReasoning(llm.WithoutThinking(ctx)), classifyMaxTokens)
+	ctx = llm.WithMaxTokens(llm.ShortGate(llm.WithoutThinking(ctx)), classifyMaxTokens)
 	return s.c.Complete(ctx, []llm.Message{
 		{Role: "system", Content: sys},
 		{Role: "user", Content: "TITLE: " + title + "\n\nSUMMARY:\n" + summary},
@@ -323,12 +323,12 @@ func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subti
 	// back empty — disabling reasoning is what guarantees output). If extraction
 	// quality drops, WithReasoningEffort(ctx, "low") is the middle ground.
 	//
-	// Thinking off, but NOT llm.NonReasoning: this call stays on Pro. Chapter
+	// Thinking off, but NOT llm.ShortGate: this call stays on Pro. Chapter
 	// titles and key-point text are what a reader sees in the Player, and the
 	// chapters it invents are even labelled MiMo there. Moving it is a quality
 	// question that wants a before/after over real videos, not a swap made
 	// because the switch above happens to be off — which is exactly the mistake
-	// NonReasoning's doc warns against.
+	// ShortGate's doc warns against.
 	kpCtx := llm.WithMaxTokens(llm.WithoutThinking(ctx), keypointsMaxTokens)
 	raw, err := s.c.Complete(kpCtx, []llm.Message{
 		{Role: "system", Content: kpPrompt + keyPointRules},

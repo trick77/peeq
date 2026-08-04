@@ -33,18 +33,20 @@ import (
 // reads too, so it would cut a legitimately long stream mid-answer.
 const (
 	model = "mimo-v2.5-pro"
-	// nonReasoningModel is MiMo's non-Pro deployment, used by the steps whose
-	// answer is a lookup rather than a deduction (see NonReasoning). It is not a
-	// weaker model picked to save money — it is the same family, and it is picked
-	// because it queues less: Pro is where the long thinking calls sit, so a
-	// 64-token classification behind them waits for work it has nothing to do
-	// with. Mirrors loom, which routes its short gates the same way after
-	// measuring a Pro that spent 78s queueing on a routing call.
+	// shortGateModel is MiMo's non-Pro deployment, used by the steps whose answer
+	// is a lookup rather than a deduction (see ShortGate). It is neither a weaker
+	// model picked to save money nor a non-reasoning one — it is the same
+	// reasoning family as Pro and thinks when asked to. It is picked because it
+	// queues less: Pro is where the long thinking calls sit, so a 64-token
+	// classification behind them waits for work it has nothing to do with.
+	// Mirrors loom, which routes its short gates the same way after measuring a
+	// Pro that spent 78s queueing on a routing call.
 	//
-	// Named apart from model rather than derived from it so a future change to
-	// either use moves one without silently moving the other.
-	nonReasoningModel = "mimo-v2.5"
-	reasoningEffort   = "high"
+	// Named for the use rather than for a model class, and apart from model
+	// rather than derived from it, so a future change to either use moves one
+	// without silently moving the other.
+	shortGateModel  = "mimo-v2.5"
+	reasoningEffort = "high"
 	// defaultHeaderTimeout is how long the endpoint may take to send response
 	// headers. Generous next to the ~2.5s observed, because it competes with
 	// nothing — a stall costs a minute now instead of five.
