@@ -43,8 +43,9 @@ func (f *fakeCompleter) Complete(ctx context.Context, m []llm.Message) (string, 
 // choice only exists on the wire — a fake sees a context, not a model name.
 //
 // The summary half is the guard that matters: it is the prose a reader sees, and
-// it stays on Pro. "No reasoning needed" is the bar for the swap, not "thinking
-// happens to be off", which is true of several calls that must not move.
+// it stays on Pro. The bar for the swap is what the call produces — an id or a
+// label — not "thinking happens to be off", which is true of several calls that
+// must not move, and not "the other deployment cannot reason", which is false.
 func TestClassifyRunsOnTheNonProDeploymentAndTheSummaryDoesNot(t *testing.T) {
 	var models []string
 	var maxTokens []any
