@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -297,6 +298,7 @@ func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
 	// reader can see six in the search box next to it. The failure being fixed —
 	// answering from one chunk — was far worse than the dilution being accepted.
 	// Widening the bar is what to revisit if focused answers turn out to suffer.
+	diag := askDiag{}
 	videosSeen := make(map[string]bool)
 	for _, tier := range rag.BuildFTSQueries(q) {
 		hits, err := s.rag.SearchFTS(r.Context(), tier.Match, searchCandidates)
@@ -315,6 +317,8 @@ func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
 		for _, h := range hits {
 			videosSeen[h.VideoID] = true
 		}
+		diag.rungs = append(diag.rungs,
+			fmt.Sprintf("w%.1f=%dh/%dv", tier.Weight, len(hits), distinctVideos(hits)))
 		if len(videosSeen) >= keywordVideoTarget {
 			break
 		}
@@ -338,9 +342,12 @@ func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
 				// bounding the vector lane, so it opts out of BOTH: an operator
 				// who asks for unbounded KNN gets unbounded KNN, not a floor
 				// they cannot see in any setting.
+				diag.semBounded, diag.semBoundedVideos = len(semHits), distinctVideos(semHits)
+				diag.nearest, diag.farthest = semHits[0].Distance, semHits[len(semHits)-1].Distance
 				if s.searchMaxDistance > 0 {
 					semHits = rag.WithinSpread(semHits, rag.SemanticSpread)
 				}
+				diag.semKept, diag.semKeptVideos = len(semHits), distinctVideos(semHits)
 				lanes = append(lanes, rag.Lane{Hits: semHits, Weight: rag.WeightSemantic})
 			}
 		} else if err != nil {
@@ -350,7 +357,61 @@ func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
 		}
 	}
 
-	return rag.FuseWeighted(lanes, searchCandidates)
+	fused := rag.FuseWeighted(lanes, searchCandidates)
+	diag.log(q, fused)
+	return fused
+}
+
+// askDiag is what one Ask retrieval did, gathered so it can be logged as a
+// single line.
+//
+// It exists because this hybrid is genuinely hard to reason about from the
+// outside, and reasoning about it from the outside is exactly how it went wrong:
+// three rounds of tuning were aimed at the keyword lane because fts_chunks can be
+// read with the sqlite CLI, while vec_chunks needs the sqlite-vec module that is
+// compiled into this binary and cannot. The keyword side got measured because it
+// was measurable, not because it was the problem.
+//
+// So the vector lane's numbers are the point of this: how many rows the KNN
+// returned inside the distance bound, how many the spread then kept, and the
+// distances at both ends. Those say whether the embedding already finds the
+// library's coverage and is merely outvoted at fusion — WeightSemantic is 0.6
+// against a strict rung's 1.0 — or whether it is weak because the raw question,
+// conversational framing and all, is what gets embedded.
+type askDiag struct {
+	rungs                        []string
+	semBounded, semBoundedVideos int
+	semKept, semKeptVideos       int
+	nearest, farthest            float64
+}
+
+// log writes the line. Info rather than Debug: an Ask is user-initiated and rare,
+// one line per retrieval is not noise, and a diagnostic nobody can see without
+// redeploying at a different level is a diagnostic nobody uses.
+func (d askDiag) log(q string, fused []rag.Hit) {
+	rungs := "none"
+	if len(d.rungs) > 0 {
+		rungs = strings.Join(d.rungs, " ")
+	}
+	slog.Info("ask retrieval",
+		"q", q,
+		"keyword_rungs", rungs,
+		"semantic_bounded", fmt.Sprintf("%dh/%dv", d.semBounded, d.semBoundedVideos),
+		"semantic_kept", fmt.Sprintf("%dh/%dv", d.semKept, d.semKeptVideos),
+		"distance_range", fmt.Sprintf("%.3f..%.3f", d.nearest, d.farthest),
+		"fused", fmt.Sprintf("%dh/%dv", len(fused), distinctVideos(fused)),
+	)
+}
+
+// distinctVideos counts how many different videos a set of hits covers, which is
+// the number that matters for every bound in this file: hits are cheap, videos
+// are what the reader sees.
+func distinctVideos(hits []rag.Hit) int {
+	seen := make(map[string]struct{}, len(hits))
+	for _, h := range hits {
+		seen[h.VideoID] = struct{}{}
+	}
+	return len(seen)
 }
 
 // matchSnippet prefers the keyword lane's match-centred window and falls back

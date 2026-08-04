@@ -1460,3 +1460,16 @@ func TestSearchAskDoesNotStopOnAOneVideoRung(t *testing.T) {
 		t.Errorf("only %d of 9 single-word videos came back; the ladder stopped early: %s", found, body)
 	}
 }
+
+func TestDistinctVideosCountsVideosNotHits(t *testing.T) {
+	hits := []rag.Hit{
+		{VideoID: "a", Ordinal: 0}, {VideoID: "a", Ordinal: 1},
+		{VideoID: "b", Ordinal: 0}, {VideoID: "a", Ordinal: 2},
+	}
+	if got := distinctVideos(hits); got != 2 {
+		t.Errorf("distinctVideos = %d, want 2", got)
+	}
+	if got := distinctVideos(nil); got != 0 {
+		t.Errorf("distinctVideos(nil) = %d, want 0", got)
+	}
+}
