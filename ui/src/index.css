@@ -3472,11 +3472,22 @@ button.sleeppick.armed {
   color: var(--color-ink);
   line-height: 1.35;
 }
-/* Highlights */
+/* Highlights
+
+   A flat divided list, not ten bordered boxes. Ten key points of up to 25
+   words each — the summarizer's own ceiling — is the normal case, and giving
+   every one of them its own border, background and 12px moat made the card
+   taller than the video it annotates. Hairline dividers separate the rows for
+   a quarter of the height, and nothing is hidden or moved to buy it.
+
+   The card header's star is gold here rather than the accent every other card
+   header wears: the rows' timestamps are already --color-kept, and a header
+   icon in a different warm hue than the list under it read as an oversight.
+   See .card.hlpanel .hd svg. */
 .hl {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
 }
 /* A seek row is a <button> that SHOWS text, and WebKit's UA stylesheet refuses
    to let a form control's text be selected — so the words in a highlight, a
@@ -3492,23 +3503,59 @@ button.sleeppick.armed {
 }
 .hl .row {
   display: flex;
-  gap: 12px;
+  gap: 11px;
   align-items: flex-start;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 9px;
-  padding: 12px 13px;
+  background: none;
+  /* Divider, not a box: a top border only, and the first row does without one
+     because .tabbody's padding already separates it from the header. */
+  border: none;
+  border-top: 1px solid var(--color-border-soft);
+  border-radius: 0;
+  /* The 16px that would normally be .tabbody's sides lives on the row instead,
+     so the divider and the hover fill reach the card's edges while the text
+     still lines up with every other card's. A row padded 2px inside a padded
+     body gets the same fill as a floating rectangle with its text flush to the
+     edge — see .band .channel-row, the same card-to-divided-list conversion,
+     which zeroes its horizontal padding for this reason. */
+  padding: 9px 16px;
   text-align: left;
   width: 100%;
   color: inherit;
   font: inherit;
 }
+/* Only the border goes — the padding stays, exactly as .band .channel-row's
+   own :first-child does it. A shortened top inset here would leave the first
+   row's text 7px closer to the header rule than the last row's is to the card
+   edge, and its hover band 2px above the words against 9px below. */
+.hl .row:first-child {
+  border-top: none;
+}
+/* With no border of its own to light up, a row answers the pointer by filling
+   instead — the same --color-active a transcript cue uses on hover, since the
+   two are now the same kind of thing: a line in a list rather than a card. The
+   cue tints a rounded inset pill; a highlight is a full-bleed band, because its
+   text wraps to two lines and a pill around two lines reads as a box, which is
+   what this card just stopped being. */
 .hl .row:hover {
-  border-color: var(--color-accent);
+  background: var(--color-active);
+}
+.hl .row:hover .txt {
+  color: var(--color-ink);
+}
+/* The row's border box is now exactly the card's content box, and .card clips
+   with overflow: hidden — so the global ring's +2px offset would put both of
+   its vertical strokes outside the clip and delete them. Inset instead. (The
+   transcript cue this list is otherwise modelled on is a rounded pill with
+   room around it, so it never had to answer this.) */
+.hl .row:focus-visible {
+  outline-offset: -2px;
 }
 /* See .toc .row.inert. */
 .hl .row.inert:hover {
-  border-color: var(--color-border);
+  background: none;
+}
+.hl .row.inert:hover .txt {
+  color: var(--color-ink-dim);
 }
 .hl .ts {
   color: var(--color-kept);
@@ -3521,6 +3568,31 @@ button.sleeppick.armed {
   font-size: 13.5px;
   color: var(--color-ink-dim);
   line-height: 1.55;
+}
+/* The rows carry their own padding now, all four sides: the body's 16px would
+   read as a gap above the first divider and below the last, and its sides
+   would stop the dividers short of the card's edges. Scoped to .hlpanel so
+   the empty state ("No highlights.") is the only thing left that would notice
+   — it keeps its own inset below. 7px, because the row adds its own 9: the
+   first and last lines end up the 16px from the card's edges that every other
+   tabbody gives its content. */
+.card.hlpanel .tabbody {
+  padding: 7px 0;
+}
+/* "No highlights." has no padding of its own — it lived entirely inside the
+   16px this card just gave away. 7 + 9 is that 16 on top and bottom, and the
+   sides are the row's own, so an empty Highlights card is still the same box
+   as an empty Contents one. */
+.card.hlpanel .tabbody .placeholder {
+  padding: 9px 16px;
+}
+/* Gold, where every other card header icon is --color-accent-strong. Qualified
+   with .card so it outranks `.card .hd svg`. Highlights is the one card whose
+   list already speaks in --color-kept (the timestamps), and the two warm hues
+   sitting 12 hex points apart in one card looked like a mistake rather than a
+   distinction. */
+.card.hlpanel .hd svg {
+  color: var(--color-kept);
 }
 
 /* Transcript search + cues */
