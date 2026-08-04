@@ -3511,7 +3511,13 @@ button.sleeppick.armed {
   border: none;
   border-top: 1px solid var(--color-border-soft);
   border-radius: 0;
-  padding: 9px 2px;
+  /* The 16px that would normally be .tabbody's sides lives on the row instead,
+     so the divider and the hover fill reach the card's edges while the text
+     still lines up with every other card's. A row padded 2px inside a padded
+     body gets the same fill as a floating rectangle with its text flush to the
+     edge — see .band .channel-row, the same card-to-divided-list conversion,
+     which zeroes its horizontal padding for this reason. */
+  padding: 9px 16px;
   text-align: left;
   width: 100%;
   color: inherit;
@@ -3523,7 +3529,10 @@ button.sleeppick.armed {
 }
 /* With no border of its own to light up, a row answers the pointer by filling
    instead — the same --color-active a transcript cue uses on hover, since the
-   two are now the same kind of thing: a line in a list rather than a card. */
+   two are now the same kind of thing: a line in a list rather than a card. The
+   cue tints a rounded inset pill; a highlight is a full-bleed band, because its
+   text wraps to two lines and a pill around two lines reads as a box, which is
+   what this card just stopped being. */
 .hl .row:hover {
   background: var(--color-active);
 }
@@ -3549,11 +3558,20 @@ button.sleeppick.armed {
   color: var(--color-ink-dim);
   line-height: 1.55;
 }
-/* The rows carry their own vertical rhythm now, so the body's 16px would read
-   as a gap above the first divider and below the last. The 16px sides stay:
-   they line the text up with every other card's. */
+/* The rows carry their own padding now, all four sides: the body's 16px would
+   read as a gap above the first divider and below the last, and its sides
+   would stop the dividers short of the card's edges. Scoped to .hlpanel so
+   the empty state ("No highlights.") is the only thing left that would notice
+   — it keeps its own inset below. */
 .card.hlpanel .tabbody {
-  padding: 6px 16px 8px;
+  padding: 6px 0 8px;
+}
+/* "No highlights." has no padding of its own — it lived entirely inside the
+   16px this card just gave away. These three numbers add back to exactly that
+   on every side (6 + 10 top, 8 + 8 bottom), so an empty Highlights card is
+   still the same box as an empty Contents one. */
+.card.hlpanel .tabbody .placeholder {
+  padding: 10px 16px 8px;
 }
 /* Gold, where every other card header icon is --color-accent-strong. Qualified
    with .card so it outranks `.card .hd svg`. Highlights is the one card whose
