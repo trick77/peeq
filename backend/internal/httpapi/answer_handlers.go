@@ -79,6 +79,15 @@ const (
 	// answerMaxSourcesPerVideo stops one thorough video from being the entire
 	// evidence set for a question the library answers from several angles.
 	answerMaxSourcesPerVideo = 3
+	// answerBreadthSources is how many of the slots the breadth pass may claim
+	// before depth gets the rest. See chooseExcerpts: without it, a library with
+	// twelve or more matching videos gives every one of them a single passage and
+	// the best-matching video no more than the twelfth-best, which is the same
+	// failure as concentrating on four videos, mirrored.
+	//
+	// Eight leaves four slots for depth and still shows more videos than the plain
+	// keyword search does for the query this was measured on.
+	answerBreadthSources = 8
 	// answerExcerptRunes truncates a single passage. A chunk is ~600 tokens;
 	// the model needs the gist, not every word, and 12 untruncated chunks would
 	// dominate the request.
@@ -261,8 +270,13 @@ type excerptCandidate struct {
 // heavily by video (200 chunks came from ~32 videos on the library this was
 // measured against), so caching turns that back into a few dozen.
 //
-// A nil entry is cached too: a hit whose video is gone must not be retried once
-// per chunk.
+// A video that is GONE is cached as gone: that answer cannot change within a
+// request, and re-asking once per chunk is the cost this type exists to avoid.
+//
+// An ERROR is not cached. A busy database is a transient answer, and caching it
+// would drop every remaining chunk of that video from the evidence set on the
+// strength of one failed query. Retrying costs at most one query per chunk of one
+// video — what the code did before this cache existed.
 type videoLookup struct {
 	store *videos.Store
 	seen  map[string]*videos.Video
@@ -273,8 +287,8 @@ func (l *videoLookup) get(id string) *videos.Video {
 		return v
 	}
 	v, err := l.store.Get(id)
-	if err != nil || v == nil {
-		l.seen[id] = nil
+	if err != nil {
+		slog.Warn("answer: video lookup failed", "err", err, "video_id", id)
 		return nil
 	}
 	l.seen[id] = v
@@ -297,9 +311,17 @@ func (l *videoLookup) get(id string) *videos.Video {
 // search box did — which is exactly the complaint that produced this function.
 //
 // A breadth-first pass fixes that without widening retrieval or spending more
-// context: the same twelve slots now reach up to twelve distinct videos, and pass
-// 2 hands the leftovers back when the library genuinely has fewer than twelve to
-// offer. A narrow question still gets three passages from one video.
+// context: the same twelve slots now reach up to answerBreadthSources distinct
+// videos, and pass 2 hands the rest back as depth. A narrow question still gets
+// three passages from one video.
+//
+// Pass 1 is capped rather than unlimited because unlimited breadth is the same
+// bug mirrored. Let it claim all twelve and a library with twelve or more
+// matching videos gives each exactly one passage — so the lecture that actually
+// answers the question is quoted no more deeply than the twelfth-best video that
+// merely mentions it, and the prefix floor makes reaching twelve marginal videos
+// easier than it used to be. Eight for breadth, four for depth: more videos than
+// the keyword search shows, and the top of the ranking still gets quoted properly.
 //
 // It also fixes something the lane weights could not. WeightKeywordAny (0.4) sits
 // below WeightSemantic (0.6), so on a question that falls through to the OR floor
@@ -340,14 +362,18 @@ func (s *server) chooseExcerpts(hits []rag.Hit) []excerptCandidate {
 	perVideo := make(map[string]int)
 	taken := make([]bool, len(cands))
 	picked := make([]int, 0, answerMaxSources)
-	// Both passes share one cap check, so pass 2 can never exceed the per-video
-	// limit and pass 1 can never be the reason it is reached.
-	for _, limit := range [2]int{1, answerMaxSourcesPerVideo} {
+	// Each pass has its own per-video limit AND its own ceiling on the slots it
+	// may fill. Sharing one cap check keeps pass 2 inside answerMaxSourcesPerVideo
+	// and stops pass 1 from ever being the reason that cap is reached.
+	for _, pass := range [2]struct{ perVideoLimit, slots int }{
+		{perVideoLimit: 1, slots: answerBreadthSources},
+		{perVideoLimit: answerMaxSourcesPerVideo, slots: answerMaxSources},
+	} {
 		for i, c := range cands {
-			if len(picked) >= answerMaxSources {
+			if len(picked) >= pass.slots {
 				break
 			}
-			if taken[i] || perVideo[c.hit.VideoID] >= limit {
+			if taken[i] || perVideo[c.hit.VideoID] >= pass.perVideoLimit {
 				continue
 			}
 			taken[i] = true

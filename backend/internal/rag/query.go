@@ -26,9 +26,18 @@ import (
 const maxTerms = 32
 
 // minPrefixRunes is the shortest content term the prefix rungs will widen. Below
-// it a shared opening says nothing about a shared meaning — "car" and "carbon" —
-// and the point of those rungs is inflection, not any word that starts the same.
-const minPrefixRunes = 4
+// it a shared opening says nothing about a shared meaning, and the point of those
+// rungs is inflection, not any word that starts the same.
+//
+// Five rather than four because the damaging collisions are all four-rune stems
+// of ordinary words: "star" reaches start and started, "main" reaches maintain,
+// "back" reaches backup and background, "form" reaches formula. None is a
+// stopword, so none is filtered out before it gets here. The cost is losing the
+// plural of a four-letter noun, and that is the cheaper side: the prefix rung
+// weighs 0.7, ABOVE the semantic lane's 0.6, and excerpt selection now walks the
+// whole fused list — so a collision does not rank low, it takes one of the twelve
+// slots the model reads.
+const minPrefixRunes = 5
 
 // ParseFTSQuery turns a Find-mode query into an FTS5 MATCH expression,
 // preserving the operators a full-text search is expected to support:
@@ -166,7 +175,8 @@ func BuildFTSQueries(q string) []FTSTier {
 	if len(content) == 0 {
 		return tiers
 	}
-	if and := strings.Join(content, " "); and != strict {
+	and := strings.Join(content, " ")
+	if and != strict {
 		tiers = append(tiers, FTSTier{Match: and, Weight: WeightKeywordContent})
 	}
 	// Prefixes of the SAME content terms, still ANDed. Widens the content rung to
@@ -187,10 +197,16 @@ func BuildFTSQueries(q string) []FTSTier {
 		}
 		prefixed[i] = t + "*"
 	}
-	tiers = append(tiers, FTSTier{
-		Match:  strings.Join(prefixed, " "),
-		Weight: WeightKeywordPrefix,
-	})
+	// Every content term was too short to widen, so this rung is one of the two
+	// above it verbatim. The ladder only reaches a rung when the one before it
+	// returned nothing, which makes a duplicate a guaranteed-empty round-trip.
+	prefixedAnd := strings.Join(prefixed, " ")
+	if prefixedAnd != strict && prefixedAnd != and {
+		tiers = append(tiers, FTSTier{
+			Match:  prefixedAnd,
+			Weight: WeightKeywordPrefix,
+		})
+	}
 	// ORing a single term reproduces the AND tier exactly; only add the recall
 	// floor when it actually widens the match.
 	if len(content) > 1 {

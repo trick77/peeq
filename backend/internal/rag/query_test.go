@@ -206,6 +206,24 @@ func TestBuildFTSQueriesLeavesShortTermsLiteral(t *testing.T) {
 	}
 }
 
+// Every content term too short to widen makes the prefix rung a copy of a rung
+// above it. The ladder only reaches a rung when the one before it returned
+// nothing, so a duplicate is a guaranteed-empty round-trip on every such Ask.
+func TestBuildFTSQueriesSkipsAPrefixRungThatWidensNothing(t *testing.T) {
+	// No stopwords: the prefix rung would duplicate the strict rung.
+	if got := BuildFTSQueries("car gps"); len(got) != 2 ||
+		got[0].Weight != WeightKeywordStrict || got[1].Weight != WeightKeywordAny {
+		t.Errorf("want strict + floor only, got %+v", got)
+	}
+	// With stopwords: it would duplicate the content rung instead.
+	got := BuildFTSQueries("what is the car gps")
+	for _, tier := range got {
+		if tier.Weight == WeightKeywordPrefix {
+			t.Errorf("prefix rung %q widens nothing and should be dropped: %+v", tier.Match, got)
+		}
+	}
+}
+
 func TestBuildFTSQueriesAllStopwords(t *testing.T) {
 	// Nothing survives the stopword filter, so the strict tier must stand alone
 	// rather than relaxing to an empty (and invalid) expression.

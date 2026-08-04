@@ -315,6 +315,48 @@ func TestChooseExcerptsSpreadsAcrossVideos(t *testing.T) {
 	}
 }
 
+// Unlimited breadth is the same bug mirrored: with twelve or more matching videos
+// every one gets a single passage, so the video that actually answers the question
+// is quoted no more deeply than the twelfth-best that merely mentions it. Pass 1
+// is capped so depth always has slots left.
+func TestChooseExcerptsKeepsSlotsForDepth(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	// Fourteen videos — more than the twelve slots — each with three passages.
+	hits := make([]rag.Hit, 0, 42)
+	for v := 1; v <= 14; v++ {
+		id := fmt.Sprintf("v%02d", v)
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+		for i := range 3 {
+			hits = append(hits, rag.Hit{
+				VideoID: id, Ordinal: i, Text: "transients",
+				Kind: rag.KindTranscript, StartSeconds: i * 600,
+			})
+		}
+	}
+
+	testee := &server{videos: deps.Videos}
+	got := testee.chooseExcerpts(hits)
+
+	if len(got) != answerMaxSources {
+		t.Fatalf("chose %d excerpts, want %d", len(got), answerMaxSources)
+	}
+	perVideo := map[string]int{}
+	for _, c := range got {
+		perVideo[c.hit.VideoID]++
+	}
+	// The best-ranked video must be quoted more than once, which is the whole
+	// point: one passage each across twelve videos is the failure being avoided.
+	if perVideo["v01"] < 2 {
+		t.Errorf("top video contributed %d excerpts, want depth: %v", perVideo["v01"], perVideo)
+	}
+	if len(perVideo) < 2 || len(perVideo) > answerBreadthSources {
+		t.Errorf("evidence covers %d videos, want between 2 and %d: %v",
+			len(perVideo), answerBreadthSources, perVideo)
+	}
+}
+
 // Breadth first must not mean breadth only: a question the library answers from
 // one video should still get several passages of it rather than one.
 func TestChooseExcerptsFillsUpWhenFewVideosMatch(t *testing.T) {
