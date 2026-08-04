@@ -2733,6 +2733,42 @@ describe("Player", () => {
   });
 });
 
+// Which panel sits where. The rail is for prose about the video as a whole;
+// anything that points INTO the video by timestamp belongs in the column under
+// it, next to the chapter list it indexes. The share page runs the same split
+// (see Share.test.tsx).
+describe("Player panel placement", () => {
+  beforeEach(() => {
+    vi.mocked(getVideo).mockReset();
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({
+        summary: "What it is about.",
+        summary_status: "done",
+        chapters: [{ ts: 0, title: "Cold open", source: "yt-dlp" }],
+        key_points: [{ ts: 12, text: "The claim" }],
+        has_subtitles: true,
+      }),
+    );
+    vi.mocked(getSettings).mockReset();
+    vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
+  });
+
+  it("keeps the Summary alone in the rail and puts Highlights under Contents", async () => {
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByText("Highlights");
+
+    const labels = (sel: string) =>
+      [...document.querySelectorAll(`${sel} .lbl`)].map((el) => el.textContent);
+
+    expect(labels(".side")).toEqual(["Summary"]);
+    expect(labels(".belowvideo")).toEqual([
+      "Contents",
+      "Highlights",
+      "Transcript",
+    ]);
+  });
+});
+
 // The <video> no longer belongs to this page: it is portalled into the shared
 // host so that leaving the player does not stop playback. These cover that
 // seam — everything the Player does WITH the element is exercised above and is

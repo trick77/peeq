@@ -775,3 +775,39 @@ describe("Search — the Ask answer", () => {
     );
   });
 });
+
+describe("Search — the caret on arrival", () => {
+  beforeEach(() => {
+    mockedSearchVideos.mockReset();
+    mockedStreamAnswer.mockReset();
+    mockedStreamAnswer.mockReturnValue(new Promise(() => {}));
+  });
+
+  // Arriving on the view, the box is the only thing there is to do.
+  it("takes the caret while the box is empty", async () => {
+    render(<Harness />);
+
+    // waitFor, not a bare assertion: React 19 runs passive effects after paint,
+    // so the box existing does not mean the focus effect has run yet.
+    await waitFor(() => expect(document.activeElement).toBe(box()));
+  });
+
+  it("leaves focus alone when returning to a query already in the box", async () => {
+    mockedSearchVideos.mockResolvedValue(result());
+    render(<Harness />);
+
+    toFind();
+    submit("iphone");
+    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+
+    // Away and back. The query and its results survive the trip, so the box is
+    // not empty on the way in — focusing it would scroll to the top and, on a
+    // phone, raise the keyboard over the results being returned to.
+    fireEvent.click(screen.getByRole("button", { name: "leave" }));
+    fireEvent.click(screen.getByRole("button", { name: "return" }));
+
+    expect(await screen.findByText("iPhone 27 review")).toBeInTheDocument();
+    expect(box()).toHaveValue("iphone");
+    await waitFor(() => expect(document.activeElement).not.toBe(box()));
+  });
+});

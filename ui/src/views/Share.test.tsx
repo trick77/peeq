@@ -161,7 +161,7 @@ describe("Share (public page)", () => {
     expect(screen.getByText(/shared via/i)).toBeInTheDocument();
   });
 
-  it("puts Chapters full-width under the video, not in the aside — the Player's layout", async () => {
+  it("puts Chapters and Highlights full-width under the video, leaving the aside to the Summary — the Player's layout", async () => {
     vi.mocked(getSharedVideo).mockResolvedValue({
       ...mockVideo,
       has_subtitles: true,
@@ -170,17 +170,18 @@ describe("Share (public page)", () => {
     render(<Share token="3xK9raPb" />);
 
     await screen.findByText("Chapters");
-    // The aside carries Summary and Highlights only, exactly as the Player's
-    // sidebar does; Chapters sits in the primary column beside them.
+    // The aside carries the Summary alone, exactly as the Player's sidebar
+    // does. Highlights are timestamps into the chapter list, so they belong
+    // under it in the primary column rather than in the rail.
     const asideLabels = [
       ...document.querySelectorAll(".sharepage-side .lbl"),
     ].map((el) => el.textContent);
-    expect(asideLabels).toEqual(["Summary", "Highlights"]);
+    expect(asideLabels).toEqual(["Summary"]);
 
     const primaryLabels = [
       ...document.querySelectorAll(".sharepage-primary .lbl"),
     ].map((el) => el.textContent);
-    expect(primaryLabels).toEqual(["Chapters", "Transcript"]);
+    expect(primaryLabels).toEqual(["Chapters", "Highlights", "Transcript"]);
     // Two columns, like the Player's Contents card — not the aside's single one.
     expect(
       document.querySelector(".sharepage-chapters .toc-grid"),

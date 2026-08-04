@@ -162,7 +162,8 @@ export function TranscriptCard({
             </div>
             {cues.length > 0 && (
               <div className="transcript-dl">
-                <span className="meta">Download</span>
+                {/* No "Download" label: both pills already carry the download
+                    icon, and the only thing left to say is which format. */}
                 <button type="button" className="pill" onClick={downloadTxt}>
                   <Icon name="download" size="14px" /> .txt
                 </button>

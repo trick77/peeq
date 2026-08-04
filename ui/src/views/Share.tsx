@@ -323,6 +323,34 @@ export function Share({ token }: { token: string | null }) {
             </div>
           )}
 
+          {/* Highlights are timestamps into the chapters directly above them,
+              so they belong under that list rather than in the rail beside the
+              video — the Player's split exactly. Only the Summary stays in the
+              rail. */}
+          {highlights.length > 0 && (
+            <div className="card hlpanel">
+              <div className="hd">
+                <Icon name="listTree" size="16px" />
+                <span className="lbl">Highlights</span>
+              </div>
+              <div className="tabbody">
+                <div className="hl">
+                  {highlights.map((k, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="row"
+                      onClick={seekOnClick(seek, k.ts)}
+                    >
+                      <span className="ts mono">{fmt(k.ts)}</span>
+                      <span className="txt">{k.text}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {video.has_subtitles && (
             /* Keyed on the token for the same reason the Player is keyed on
                the video id: this page is not remounted when the token changes,
@@ -367,32 +395,10 @@ export function Share({ token }: { token: string | null }) {
             </div>
           ) : null}
 
-          {/* Chapters are NOT here — they are a full-width card in the primary
-              column, above the Transcript, exactly as the Player has them. This
-              aside carries Summary and Highlights, which is the Player's split. */}
-          {highlights.length > 0 && (
-            <div className="card hlpanel">
-              <div className="hd">
-                <Icon name="listTree" size="16px" />
-                <span className="lbl">Highlights</span>
-              </div>
-              <div className="tabbody">
-                <div className="hl">
-                  {highlights.map((k, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      className="row"
-                      onClick={seekOnClick(seek, k.ts)}
-                    >
-                      <span className="ts mono">{fmt(k.ts)}</span>
-                      <span className="txt">{k.text}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Chapters and Highlights are NOT here — they are full-width cards
+              in the primary column, above the Transcript, exactly as the Player
+              has them. This aside carries the Summary alone, which is the
+              Player's split. */}
         </aside>
       </main>
     </div>
