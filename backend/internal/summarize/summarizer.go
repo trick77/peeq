@@ -143,15 +143,29 @@ const (
 	keypointsMaxTokens = 16000
 
 	// classifyMaxTokens bounds the category call, which runs with thinking off and
-	// answers with a single id. It was the one call site with no cap at all, so an
-	// endpoint that ignored the prompt and started explaining itself had nothing
-	// to stop it but its own default.
+	// answers with a single id. It went without a cap until now (the coarse map in
+	// SummarizeText is the one that still does), so an endpoint that ignored the
+	// prompt and started explaining itself had nothing to stop it but its own
+	// default.
 	//
-	// 32 has headroom twice over: the longest id is one word ('entertainment'),
-	// and loom caps its own classifier at the same 32 against the same non-Pro
-	// deployment. Worth stating because a cut here is silent — a truncated id is
-	// not an error, it is 'uncategorized' via NormalizeCategory.
-	classifyMaxTokens = 32
+	// It is deliberately far above what an obedient answer needs — the longest id
+	// is one word ('entertainment') — because a cut here is silent and NOT always
+	// silent in the harmless direction. A truncated id is junk and falls through
+	// to 'uncategorized', which stays retryable. Truncated *prose* is worse: it
+	// keeps whatever ids it already contains, so NormalizeCategory's
+	// last-valid-id scan picks one of the echoed options instead of the verdict
+	// the cut removed ("choosing from ai, tech, science: history" cut to its
+	// preamble answers 'science'). That is a valid but wrong category, which
+	// SetCategoryIfUnset persists and the backlog sweep never offers again.
+	//
+	// So the cap is sized for the failure it must not cause rather than the one
+	// it exists to stop. A tight 32 fits the answer and truncates every padded
+	// reply, turning a rare disobedience into permanent wrong data; 256 lets any
+	// realistic padded reply reach its verdict while still bounding a genuine
+	// runaway. loom runs its own classifier at 32 against this same deployment,
+	// but its replies land in a different normalizer, so that is not a licence to
+	// match it here.
+	classifyMaxTokens = 256
 )
 
 // wholeVideoSystemPrompt drives the single-pass summary: the full transcript in,

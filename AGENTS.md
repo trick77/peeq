@@ -44,7 +44,8 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   deployment queues less. Bar is "no reasoning needed", NOT "thinking is off". Text that reaches the
   page stays on Pro — summary, map, reduce, keypoints, Ask, whatever their thinking switch says.
 - `WithoutThinking` and `NonReasoning` are separate switches; don't couple them.
-- Cap every call (`llm.WithMaxTokens`); with thinking on the cap counts reasoning tokens too.
+- Cap a new call (`llm.WithMaxTokens`) unless a cut answer would be worse than a long one — with
+  thinking on the cap counts reasoning tokens too, and a truncated reply is rarely an error.
 
 ## Config
 - All runtime config comes from `BACKEND_*` env vars — see `.env.example`.
