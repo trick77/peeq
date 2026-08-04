@@ -51,6 +51,20 @@ type Entry struct {
 	// card shows a progress marker or nothing at all.
 	SummaryStatus string
 	AutoSummary   bool
+	// SummaryGaveUp is whether this video's most recent summary job spent every
+	// attempt. Populated by the ListPending queries only, like the two above.
+	//
+	// SummaryStatus cannot answer this. failJob writes 'error' on EVERY summary
+	// failure, retryable or not, so 'error' means "the last attempt failed" and
+	// says nothing about whether another is coming — and with the retry ladder
+	// at 15m then 4h, a card can wear that status for hours while the queue is
+	// still working on it. The job's own state is the only thing that knows the
+	// difference.
+	//
+	// Most recent, not any: the Player's Reprocess inserts a NEW job row rather
+	// than reviving the old one, so a video repaired that way keeps its old
+	// 'failed' row forever and an EXISTS over all of them would never clear.
+	SummaryGaveUp bool
 	// HasSubtitles is whether captions are already on disk for this video.
 	//
 	// It is not implied by SummaryStatus. 'no_transcript' covers two different
@@ -253,6 +267,7 @@ func (s *Store) ListPending() ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
+       COALESCE((SELECT j.state FROM summary_jobs j WHERE j.video_id = cv.video_id ORDER BY j.id DESC LIMIT 1) = 'failed', 0),
        EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id),
        (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt WHERE pt.video_id = cv.video_id)
 FROM channel_videos cv
@@ -273,6 +288,7 @@ func (s *Store) ListPendingForChannel(channelID string) ([]Entry, error) {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
+       COALESCE((SELECT j.state FROM summary_jobs j WHERE j.video_id = cv.video_id ORDER BY j.id DESC LIMIT 1) = 'failed', 0),
        EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id),
        (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt WHERE pt.video_id = cv.video_id)
 FROM channel_videos cv
@@ -346,8 +362,9 @@ func scanPendingEntries(rows *sql.Rows) ([]Entry, error) {
 
 // scanPendingRow scans one ListPending row: the selectColumns set (in Entry
 // field order, minus ChannelName) followed by the joined channel_name, the
-// video's summary_status, its channel's auto_summary flag, whether captions
-// are on disk, and the cached poster's version.
+// video's summary_status, its channel's auto_summary flag, whether its latest
+// summary job gave up, whether captions are on disk, and the cached poster's
+// version.
 func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 	var e Entry
 	var duration sql.NullInt64
@@ -361,7 +378,7 @@ func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 		&e.VideoID, &e.ChannelID, &e.Title, &duration, &e.URL, &e.ThumbnailURL,
 		&e.State, &e.DiscoveredAt, &decidedAt, &publishedAt, &e.UnavailableReason,
 		&unavailableAt, &e.ChannelName, &e.SummaryStatus, &e.AutoSummary,
-		&e.HasSubtitles, &thumbnailVersion,
+		&e.SummaryGaveUp, &e.HasSubtitles, &thumbnailVersion,
 	); err != nil {
 		return Entry{}, err
 	}

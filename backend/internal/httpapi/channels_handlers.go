@@ -1059,6 +1059,12 @@ type pendingItem struct {
 	// different cards.
 	SummaryStatus string `json:"summary_status"`
 	AutoSummary   bool   `json:"auto_summary"`
+	// SummaryGaveUp is whether the latest summary job for this video spent every
+	// attempt. SummaryStatus cannot stand in for it: 'error' is written on every
+	// summary failure, retryable or not, so it says the last attempt failed and
+	// nothing about whether another is coming — and the ladder now waits 15m then
+	// 4h, which is hours of a card looking abandoned while the queue still has it.
+	SummaryGaveUp bool `json:"summary_gave_up"`
 	// HasSubtitles is whether captions are on disk. The card needs it because
 	// 'no_transcript' means two things: no captions exist, or the ones that do
 	// turned out to be music. Only the second leaves something to read, and
@@ -1106,6 +1112,7 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 			DiscoveredAt:     e.DiscoveredAt,
 			SummaryStatus:    e.SummaryStatus,
 			AutoSummary:      e.AutoSummary,
+			SummaryGaveUp:    e.SummaryGaveUp,
 			HasSubtitles:     e.HasSubtitles,
 			ThumbnailVersion: e.ThumbnailVersion,
 		})

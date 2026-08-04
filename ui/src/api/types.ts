@@ -358,6 +358,12 @@ export type PendingItem = {
   // progress marker versus nothing at all.
   summary_status: SummaryStatus | "";
   auto_summary: boolean;
+  // summary_gave_up is whether the latest summary job for this video spent
+  // every attempt. summary_status cannot answer it: 'error' is written on every
+  // summary failure, retryable or not, so it means "the last attempt failed"
+  // and says nothing about whether another is coming — and the retry ladder
+  // waits 15m then 4h, so that is hours in which the two look identical.
+  summary_gave_up: boolean;
   // has_subtitles is whether captions are on disk. 'no_transcript' covers both
   // "YouTube had none" and "they turned out to be music"; only the second
   // leaves a transcript to read, and this is what tells them apart.
