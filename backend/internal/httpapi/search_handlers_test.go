@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -1408,5 +1409,54 @@ func TestSearchAskFindsTheTopicInBothQueryShapes(t *testing.T) {
 		if !strings.Contains(body, `"id":"v1"`) {
 			t.Errorf("query %q missed the only matching video: %s", q, body)
 		}
+	}
+}
+
+// The reported bug: "what are transients and what material do we have on them?"
+// returned two videos in Ask where the plain keyword search returned six.
+//
+// The ladder stopped at the first rung returning ANY row. Every function word
+// went into the strict rung, which matched nothing; the next rung — "transients"
+// AND "material" — matched exactly one chunk in one video, and the ladder took
+// that for an answer. The floor that finds the rest never ran.
+func TestSearchAskDoesNotStopOnAOneVideoRung(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	// One video says both content words, so the content-ANDed rung matches it and
+	// nothing else. Nine more say only one of them — the videos a reader searching
+	// "transients" would see, and the ones Ask was dropping.
+	if err := deps.Videos.Upsert(videos.Video{ID: "both", URL: "u", Title: "both words"}); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "both", []rag.ChunkRow{
+		{Ordinal: 0, Text: "the material here concerns transients", StartSeconds: 10},
+	})
+	for i := range 9 {
+		id := fmt.Sprintf("only%d", i)
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+		seedChunks(t, ragStore, id, []rag.ChunkRow{
+			{Ordinal: 0, Text: "these transients decay quickly", StartSeconds: 30},
+		})
+	}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	body := doReq(t, h, cookie, http.MethodGet,
+		"/api/search?q=what+are+transients+and+what+material+do+we+have+on+them&mode=ask", nil).Body.String()
+
+	if !strings.Contains(body, `"id":"both"`) {
+		t.Errorf("the precise match was dropped: %s", body)
+	}
+	found := 0
+	for i := range 9 {
+		if strings.Contains(body, fmt.Sprintf(`"id":"only%d"`, i)) {
+			found++
+		}
+	}
+	// Before this fix exactly one video came back. The floor has to contribute the
+	// rest rather than being skipped.
+	if found < 5 {
+		t.Errorf("only %d of 9 single-word videos came back; the ladder stopped early: %s", found, body)
 	}
 }

@@ -148,6 +148,17 @@ const (
 	// renderings of one moment, crowding out the genuinely different places the
 	// topic came up.
 	minMomentGapSeconds = 30
+	// keywordVideoTarget is how many DISTINCT VIDEOS the keyword lane has to offer
+	// before the Ask ladder stops relaxing. See retrieveAsk: the ladder used to
+	// stop at the first rung returning any row at all, which let a rung matching
+	// one chunk in one video pass for an answered query and kept the recall floor
+	// from ever running.
+	//
+	// It IS what the answer's breadth pass can spend (eight) — below that the lane
+	// cannot fill the evidence set even if every video it found were used — so it
+	// is spelled as that constant rather than as another 8 that would silently stop
+	// meaning the same thing the moment the breadth pass is retuned.
+	keywordVideoTarget = answerBreadthSources
 )
 
 // handleSearch answers GET /api/search?q=&k=&mode=: blank q short-circuits to
@@ -251,24 +262,60 @@ func (s *server) retrieveFind(r *http.Request, q string) []rag.Hit {
 // returns k rows for any query whatsoever, which is why an unrelated question
 // used to come back full of confident nonsense.
 func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
-	lanes := make([]rag.Lane, 0, 2)
+	lanes := make([]rag.Lane, 0, 5)
 
-	// Keyword lane, relaxed in steps: a natural question ANDs its function
-	// words and matches nothing, so fall through to content-terms-only and
-	// finally to OR. First tier with a row wins, so a precise query still gets
-	// a precise lane and pays for exactly one round-trip.
+	// Keyword lane, relaxed in steps: a natural question ANDs its function words
+	// and matches nothing, so fall through to content-terms-only, to prefixes, and
+	// finally to OR.
+	//
+	// The ladder used to stop at the first rung returning ANY row, and "any" is far
+	// too weak a test of whether a rung has answered. Measured: "what are
+	// transients and what material do we have on them?" puts every function word in
+	// the strict rung (0 rows), falls to "transients" AND "material" — and that
+	// matches exactly ONE chunk in ONE video. The ladder declared victory there, so
+	// the floor that finds 56 videos never ran, and Ask answered from a single
+	// keyword chunk while the plain keyword search beside it showed six videos.
+	//
+	// So a rung counts as having answered when it offers enough DISTINCT VIDEOS to
+	// be evidence, not when it offers a row. Every rung that runs is kept as its
+	// own lane at its own weight, and FuseWeighted dedups on video and ordinal — so
+	// a chunk two rungs both found outscores one only the floor found, and a
+	// precise query's precise chunk stays on top with the floor's videos underneath
+	// it rather than in place of it.
+	//
+	// Be precise about what this costs, because it is not free. Only a rung that
+	// reaches keywordVideoTarget on its own stops the descent — so a question whose
+	// precise rung matches, say, three genuinely relevant videos now runs the
+	// prefix and floor rungs too, and the breadth pass in chooseExcerpts spends
+	// five of its eight slots on floor videos that merely share one prefixed word.
+	// The precise videos keep the top of the ranking and the depth pass, so the
+	// evidence is still mostly theirs (7 of 12 excerpts in that shape), but they no
+	// longer have the set to themselves the way they did before.
+	//
+	// Taken deliberately, in this direction: a question the library answers from
+	// three videos is not well served by being told about three videos when the
+	// reader can see six in the search box next to it. The failure being fixed —
+	// answering from one chunk — was far worse than the dilution being accepted.
+	// Widening the bar is what to revisit if focused answers turn out to suffer.
+	videosSeen := make(map[string]bool)
 	for _, tier := range rag.BuildFTSQueries(q) {
 		hits, err := s.rag.SearchFTS(r.Context(), tier.Match, searchCandidates)
 		if err != nil {
 			slog.Warn("search: FTS degraded", "err", err)
 			break
 		}
-		if len(hits) > 0 {
-			// The rung that answered decides how much the lane counts: a query
-			// that only matched once relaxed to "any one content word" is a
-			// recall floor, not evidence. The weight rides on the rung itself,
-			// since the ladder skips rungs that would repeat one another.
-			lanes = append(lanes, rag.Lane{Hits: hits, Weight: tier.Weight})
+		if len(hits) == 0 {
+			continue
+		}
+		// The rung decides how much its lane counts: a query that only matched
+		// once relaxed to "any one content word" is a recall floor, not evidence.
+		// The weight rides on the rung itself, since the ladder skips rungs that
+		// would repeat one another.
+		lanes = append(lanes, rag.Lane{Hits: hits, Weight: tier.Weight})
+		for _, h := range hits {
+			videosSeen[h.VideoID] = true
+		}
+		if len(videosSeen) >= keywordVideoTarget {
 			break
 		}
 	}

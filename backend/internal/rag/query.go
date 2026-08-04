@@ -130,9 +130,10 @@ type FTSTier struct {
 }
 
 // BuildFTSQueries returns the Ask-mode ladder, strictest rung first. The caller
-// runs the rungs in order and keeps the first that returns any row, so a
-// precise query still gets a precise keyword lane and only a query that would
-// otherwise match nothing pays for a second round-trip:
+// runs the rungs in order, keeps every rung that returned rows as its own lane,
+// and stops descending once the rungs it has run offer enough distinct videos to
+// be evidence (see retrieveAsk's keywordVideoTarget) — so a query whose strict
+// rung already covers the library pays for exactly one round-trip:
 //
 //	every term ANDed          — identical to BuildFTSMatch(q)  (WeightKeywordStrict)
 //	content terms ANDed       — function words dropped         (WeightKeywordContent)
@@ -198,8 +199,10 @@ func BuildFTSQueries(q string) []FTSTier {
 		prefixed[i] = t + "*"
 	}
 	// Every content term was too short to widen, so this rung is one of the two
-	// above it verbatim. The ladder only reaches a rung when the one before it
-	// returned nothing, which makes a duplicate a guaranteed-empty round-trip.
+	// above it verbatim. A duplicate rung is worth dropping twice over: it is a
+	// wasted round-trip, and since the caller keeps every rung that returned rows
+	// as its own lane, it would also fuse the same rows in twice and double-count
+	// them against the other lanes.
 	prefixedAnd := strings.Join(prefixed, " ")
 	if prefixedAnd != strict && prefixedAnd != and {
 		tiers = append(tiers, FTSTier{
