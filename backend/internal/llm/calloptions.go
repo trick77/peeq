@@ -26,6 +26,32 @@ func reasoningEffortFrom(ctx context.Context) string {
 	return reasoningEffort
 }
 
+// --- model --------------------------------------------------------------------
+
+type nonReasoningKey struct{}
+
+// NonReasoning routes the calls made with ctx to the non-Pro deployment
+// (nonReasoningModel). It is for the short gates: a step whose answer is one id
+// from a list the prompt already spells out needs a fast answer, not a deep one,
+// and Pro is where the long thinking calls queue.
+//
+// Pair it with WithoutThinking — the two say different things. WithoutThinking
+// asks the model not to reason; this asks for a deployment that answers sooner.
+// Deliberately NOT for anything that writes text a reader sees: "no reasoning
+// needed" is the bar here, not "thinking happens to be off". The summary, the
+// coarse section map, the reduce and the Ask answer all stay on Pro — as do the
+// keypoints and chapters, whose titles carry a MiMo attribution in the Player.
+func NonReasoning(ctx context.Context) context.Context {
+	return context.WithValue(ctx, nonReasoningKey{}, true)
+}
+
+func modelFrom(ctx context.Context) string {
+	if v, ok := ctx.Value(nonReasoningKey{}).(bool); ok && v {
+		return nonReasoningModel
+	}
+	return model
+}
+
 // --- max tokens ---------------------------------------------------------------
 
 type maxTokensKey struct{}

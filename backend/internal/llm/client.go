@@ -32,8 +32,19 @@ import (
 // A whole-request http.Client.Timeout is deliberately NOT set: it caps body
 // reads too, so it would cut a legitimately long stream mid-answer.
 const (
-	model           = "mimo-v2.5-pro"
-	reasoningEffort = "high"
+	model = "mimo-v2.5-pro"
+	// nonReasoningModel is MiMo's non-Pro deployment, used by the steps whose
+	// answer is a lookup rather than a deduction (see NonReasoning). It is not a
+	// weaker model picked to save money — it is the same family, and it is picked
+	// because it queues less: Pro is where the long thinking calls sit, so a
+	// 64-token classification behind them waits for work it has nothing to do
+	// with. Mirrors loom, which routes its short gates the same way after
+	// measuring a Pro that spent 78s queueing on a routing call.
+	//
+	// Named apart from model rather than derived from it so a future change to
+	// either use moves one without silently moving the other.
+	nonReasoningModel = "mimo-v2.5"
+	reasoningEffort   = "high"
 	// defaultHeaderTimeout is how long the endpoint may take to send response
 	// headers. Generous next to the ~2.5s observed, because it competes with
 	// nothing — a stall costs a minute now instead of five.
@@ -294,7 +305,7 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 		c.log.Debug("llm: paced", append(info.LogAttrs(), "waited_ms", pacedFor.Milliseconds())...)
 	}
 	body, err := json.Marshal(chatRequest{
-		Model: model, Messages: messages, ReasoningEffort: reasoningEffortFrom(ctx),
+		Model: modelFrom(ctx), Messages: messages, ReasoningEffort: reasoningEffortFrom(ctx),
 		Thinking: thinkingOptionFor(ctx), MaxTokens: maxTokensFrom(ctx), Stream: true,
 		StreamOptions: &streamOptions{IncludeUsage: true},
 	})
@@ -332,7 +343,8 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 
 	started := time.Now()
 	c.log.Debug("llm: request start", append(info.LogAttrs(),
-		"messages", len(messages), "request_bytes", len(body), "thinking", ThinkingFrom(ctx))...)
+		"model", modelFrom(ctx), "messages", len(messages), "request_bytes", len(body),
+		"thinking", ThinkingFrom(ctx))...)
 
 	var counters streamCounters
 	stop := StartHeartbeatFunc(ctx, c.log, c.heartbeat, "llm: still waiting for response",

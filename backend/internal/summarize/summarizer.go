@@ -103,7 +103,19 @@ func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowe
 	// No thinking: the answer is one id picked from a list the prompt already
 	// spells out, and letting the model reason spends several hundred
 	// completion tokens to emit a single word.
-	return s.c.Complete(llm.WithoutThinking(ctx), []llm.Message{
+	//
+	// And on the non-Pro deployment, which is a separate point: this call wants a
+	// fast answer rather than a deep one, and Pro is where the long summary calls
+	// queue. The category ids never reach a reader as prose — they land in the
+	// Library filter after NormalizeCategory — so the step that stands to gain
+	// most from a shorter queue is also the one where the deployment matters
+	// least. The backlog sweep fires it in bulk, which is where that adds up.
+	//
+	// The cap is a runaway backstop, not a length target: one id is a token or
+	// two, and with thinking off the whole budget is output, so 32 cannot
+	// truncate a real answer.
+	ctx = llm.WithMaxTokens(llm.NonReasoning(llm.WithoutThinking(ctx)), classifyMaxTokens)
+	return s.c.Complete(ctx, []llm.Message{
 		{Role: "system", Content: sys},
 		{Role: "user", Content: "TITLE: " + title + "\n\nSUMMARY:\n" + summary},
 	})
@@ -129,6 +141,12 @@ const (
 	// (hundreds of them) so it never truncates legitimate JSON, which would parse
 	// as empty and silently drop every point.
 	keypointsMaxTokens = 16000
+
+	// classifyMaxTokens bounds the category call, which runs with thinking off and
+	// answers with a single id. It was the one call site with no cap at all, so an
+	// endpoint that ignored the prompt and started explaining itself had nothing
+	// to stop it but its own default.
+	classifyMaxTokens = 32
 )
 
 // wholeVideoSystemPrompt drives the single-pass summary: the full transcript in,
