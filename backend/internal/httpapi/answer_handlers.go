@@ -158,6 +158,11 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pro, with thinking on: this is the one call a person waits on, and it
+	// writes cited prose from a dozen excerpts — the deduction the deeper
+	// deployment is for. The lever here is depth, not deployment
+	// (llm.WithReasoningEffort), and it wants a measured before/after on
+	// time-to-first-token, since answerMaxTokens above is sized for reasoning.
 	ctx := llm.WithMaxTokens(r.Context(), answerMaxTokens)
 	ctx = llm.WithCall(ctx, llm.CallInfo{Step: "answer"})
 	answer, err := s.ask.CompleteStream(ctx, answerMessages(q, excerpts), func(delta string) {

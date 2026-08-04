@@ -38,6 +38,14 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   `yt-dlp`, both needing a real userland. See the comment in `backend/Containerfile` for why this
   deviates from loom's distroless-static runtime.
 
+## Chat model
+- Two MiMo deployments, hardcoded in `internal/llm/client.go`, never env vars. New call site → Pro.
+- Answer is a lookup no reader sees (an id, a label) → also `llm.NonReasoning(ctx)`: the non-Pro
+  deployment queues less. Bar is "no reasoning needed", NOT "thinking is off". Text that reaches the
+  page stays on Pro — summary, map, reduce, keypoints, Ask, whatever their thinking switch says.
+- `WithoutThinking` and `NonReasoning` are separate switches; don't couple them.
+- Cap every call (`llm.WithMaxTokens`); with thinking on the cap counts reasoning tokens too.
+
 ## Config
 - All runtime config comes from `BACKEND_*` env vars — see `.env.example`.
 - Secrets via env only; never commit them.

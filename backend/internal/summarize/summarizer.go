@@ -214,6 +214,11 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 	// already in front of the model) then reduce (thinking on — the reader's
 	// summary). Sequential: it is a handful of sections, and pace() serializes
 	// call starts regardless of goroutines, so concurrency would buy nothing.
+	//
+	// Both stay on Pro. The map's prose is not shown to anyone, but it is what
+	// the reduce writes the reader's summary from, so its quality reaches the
+	// page one step later. Only videos long enough to need chunking come here
+	// anyway, so there is little queue time to win.
 	mapCtx := llm.WithoutThinking(ctx)
 	sections := make([]string, 0, len(chunks))
 	for _, ch := range chunks {
@@ -298,6 +303,13 @@ func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subti
 	// nothing (max_tokens counts reasoning, so a thinking-on cap would still hand
 	// back empty — disabling reasoning is what guarantees output). If extraction
 	// quality drops, WithReasoningEffort(ctx, "low") is the middle ground.
+	//
+	// Thinking off, but NOT llm.NonReasoning: this call stays on Pro. Chapter
+	// titles and key-point text are what a reader sees in the Player, and the
+	// chapters it invents are even labelled MiMo there. Moving it is a quality
+	// question that wants a before/after over real videos, not a swap made
+	// because the switch above happens to be off — which is exactly the mistake
+	// NonReasoning's doc warns against.
 	kpCtx := llm.WithMaxTokens(llm.WithoutThinking(ctx), keypointsMaxTokens)
 	raw, err := s.c.Complete(kpCtx, []llm.Message{
 		{Role: "system", Content: kpPrompt + keyPointRules},
