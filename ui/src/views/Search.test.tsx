@@ -5,6 +5,7 @@ import "@testing-library/jest-dom/vitest";
 import { Search } from "./Search";
 import { useSearchState } from "../searchState";
 import { HIGHLIGHT_END, HIGHLIGHT_START } from "../highlight";
+import { DOT } from "../sep";
 
 vi.mock("../api/search", () => ({
   searchVideos: vi.fn(),
@@ -545,6 +546,217 @@ describe("Search — the Ask answer", () => {
     // The title now appears twice — once as a source row, once as a card.
     expect(await screen.findAllByText("Why Athletes Cramp")).toHaveLength(2);
     expect(document.querySelector(".answer-sources")).not.toBeNull();
+  });
+
+  // Retrieval reaches far more videos than a six-sentence answer can cite, and
+  // the citation list alone made Ask look like it knew less than the search box
+  // beside it. These used to be a bulleted text list inside the answer panel;
+  // they are a tier of compact cards under the matches now, because they ARE
+  // videos of the same kind as the ones above and a text row could not say so.
+  describe("also in your library", () => {
+    const uncited = {
+      id: "v9",
+      title: "Cramp Myths, Debunked",
+      channel_id: "c9",
+      channel_name: "Dr. Becky",
+      duration_seconds: 900,
+      has_thumbnail: true,
+      status: "downloaded",
+    };
+
+    // Emits a whole settled answer that cites v1 only, with `coverage` on it.
+    function answerWith(coverage: object[], text = "Attia covers it[1].") {
+      mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
+        onEvent({
+          type: "sources",
+          sources: askSources,
+          videos: askVideos,
+          coverage: coverage as never,
+        });
+        if (text) onEvent({ type: "token", text });
+        onEvent({ type: "done" });
+      });
+    }
+
+    it("shows what retrieval found and the answer did not cite", async () => {
+      answerWith([...askVideos, uncited]);
+      render(<Harness onOpen={vi.fn()} />);
+      submit("electrolytes");
+
+      expect(
+        await screen.findByText("Also in your library"),
+      ).toBeInTheDocument();
+      // The answer cited [1] only, so v2 is retrieved-but-uncited too and joins
+      // the fourth video down here.
+      const tier = document.querySelectorAll(".result.compact");
+      expect(tier).toHaveLength(2);
+      const titles = [...tier].map(
+        (c) => c.querySelector(".rtitle")!.textContent,
+      );
+      expect(titles).toEqual(["Hydration Protocols", "Cramp Myths, Debunked"]);
+      // v1 WAS cited, so it is a full card above and must not repeat down here.
+      expect(titles).not.toContain("Why Athletes Cramp");
+    });
+
+    // The whole point of the move: these are real cards, with the poster and the
+    // byline that let a reader recognise a video, not a line of text.
+    it("renders them as cards, compact", async () => {
+      answerWith([...askVideos, uncited]);
+      render(<Harness onOpen={vi.fn()} />);
+      submit("electrolytes");
+
+      const card = await waitFor(() => {
+        const c = document.querySelector(".result.compact");
+        expect(c).not.toBeNull();
+        return c!;
+      });
+      expect(card.querySelector(".rthumb")).not.toBeNull();
+      expect(card.querySelector(".rtitle")).not.toBeNull();
+      // No moments were matched in it, so it has no moment rows to show.
+      expect(card.querySelectorAll(".match")).toHaveLength(0);
+    });
+
+    // The counts above say what the ANSWER stood on. coverageMaxVideos is 20 and
+    // an answer typically cites two or three, so folding these in would overstate
+    // that header by an order of magnitude. This tier carries its own number.
+    it("stays out of the matches count", async () => {
+      answerWith([...askVideos, uncited]);
+      render(<Harness onOpen={vi.fn()} />);
+      submit("electrolytes");
+
+      await screen.findByText("Also in your library");
+      expect(document.querySelector(".results-head .n")?.textContent).toContain(
+        "1 video",
+      );
+      // Leading DOT, the same separator the matches header puts between its own
+      // counts — see sep.ts, which owns the spacing around it.
+      expect(document.querySelector(".also-head .n")?.textContent).toBe(
+        `${DOT}2 videos`,
+      );
+    });
+
+    it("shows nothing when every retrieved video was cited", async () => {
+      answerWith(askVideos, "Attia[1] and Huberman[2] both cover it.");
+      render(<Harness onOpen={vi.fn()} />);
+      submit("electrolytes");
+
+      await screen.findByText("Matches");
+      expect(
+        screen.queryByText("Also in your library"),
+      ).not.toBeInTheDocument();
+    });
+
+    // Same settled-answer gate the citations have: a list of what was NOT used,
+    // above a half-written answer, describes an answer that does not exist yet.
+    it("stays hidden while the answer streams", async () => {
+      let emit: ((e: AnswerEvent) => void) | null = null;
+      mockedStreamAnswer.mockImplementation(
+        (_q, onEvent) =>
+          new Promise(() => {
+            emit = onEvent;
+          }),
+      );
+      render(<Harness onOpen={vi.fn()} />);
+      submit("electrolytes");
+      await screen.findByText(/Understanding your question/);
+
+      emit!({
+        type: "sources",
+        sources: askSources,
+        videos: askVideos,
+        coverage: [...askVideos, uncited] as never,
+      });
+      emit!({ type: "token", text: "Attia covers it[1]." });
+      await waitFor(() =>
+        expect(document.querySelector(".answer-body")?.textContent).toContain(
+          "Attia",
+        ),
+      );
+      expect(
+        screen.queryByText("Also in your library"),
+      ).not.toBeInTheDocument();
+
+      emit!({ type: "done" });
+      expect(
+        await screen.findByText("Also in your library"),
+      ).toBeInTheDocument();
+    });
+
+    // The case the move could have lost: an answer that cites nothing renders no
+    // matches block at all, and these videos are then the only thing left on the
+    // page saying retrieval found anything. They must still show.
+    it("shows even when the answer cited nothing", async () => {
+      answerWith([...askVideos, uncited], "Nothing specific comes to mind.");
+      render(<Harness onOpen={vi.fn()} />);
+      submit("electrolytes");
+
+      expect(
+        await screen.findByText("Also in your library"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Matches")).not.toBeInTheDocument();
+      // Every retrieved video is uncited now, so all three are down here.
+      expect(document.querySelectorAll(".result.compact")).toHaveLength(3);
+    });
+
+    // The way out of a search lives in the matches header — which is the very
+    // thing missing when the answer cited nothing. Without a control here the
+    // reader is left with up to coverageMaxVideos cards and no way to put them
+    // away, and it clears the whole page rather than just this tier.
+    it("offers a way out when it is the only block on the page", async () => {
+      answerWith([...askVideos, uncited], "Nothing specific comes to mind.");
+      render(<Harness onOpen={vi.fn()} />);
+      submit("electrolytes");
+      await screen.findByText("Also in your library");
+      expect(screen.queryByText("Matches")).not.toBeInTheDocument();
+
+      const clear = screen.getByRole("button", { name: "Clear results" });
+      fireEvent.click(clear);
+      await waitFor(() =>
+        expect(
+          screen.queryByText("Also in your library"),
+        ).not.toBeInTheDocument(),
+      );
+      expect(document.querySelectorAll(".result")).toHaveLength(0);
+    });
+
+    // ...and exactly one of them on the ordinary page, where the matches header
+    // already carries it.
+    it("leaves the clear control to the matches header when there is one", async () => {
+      answerWith([...askVideos, uncited]);
+      render(<Harness onOpen={vi.fn()} />);
+      submit("electrolytes");
+
+      await screen.findByText("Also in your library");
+      expect(screen.getByText("Matches")).toBeInTheDocument();
+      expect(
+        screen.getAllByRole("button", { name: "Clear results" }),
+      ).toHaveLength(1);
+    });
+
+    // It opens the video rather than seeking. A retrieved chunk does sit behind
+    // each card, but the model never vouched for it, so a timestamp would assert
+    // more than is known.
+    it("opens the video without seeking", async () => {
+      const onOpenVideo = vi.fn();
+      const onOpen = vi.fn();
+      answerWith([...askVideos, uncited]);
+      render(<Harness onOpen={onOpen} onOpenVideo={onOpenVideo} />);
+      submit("electrolytes");
+
+      fireEvent.click(await screen.findByText("Cramp Myths, Debunked"));
+      expect(onOpenVideo).toHaveBeenCalledWith("v9");
+      expect(onOpen).not.toHaveBeenCalled();
+    });
+
+    it("opens the channel from the byline", async () => {
+      const onOpenChannel = vi.fn();
+      answerWith([...askVideos, uncited]);
+      render(<Harness onOpen={vi.fn()} onOpenChannel={onOpenChannel} />);
+      submit("electrolytes");
+
+      fireEvent.click(await screen.findByText("Dr. Becky"));
+      expect(onOpenChannel).toHaveBeenCalledWith("c9");
+    });
   });
 
   it("streams tokens into the panel and links a citation", async () => {

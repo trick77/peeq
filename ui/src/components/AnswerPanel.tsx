@@ -46,9 +46,11 @@ export type AnswerState = {
   // source server-side.
   videos?: AnswerVideo[];
   // Every video retrieval found, one entry each, best-ranked first — including
-  // the ones the answer went on to cite. The cited set is subtracted here to get
-  // "Also in your library"; it cannot be subtracted server-side, because the
-  // frame carrying this is sent before the model has written anything.
+  // the ones the answer went on to cite. The panel does not render these: Search
+  // subtracts the cited set and shows what is left as its own tier of cards under
+  // the matches. It is carried on this state anyway because this is where the
+  // answer stream's frames land, and the subtraction cannot happen server-side —
+  // the frame carrying it is sent before the model has written anything.
   coverage?: AnswerVideo[];
   // The constraints the question named and the search applied — "unwatched",
   // "Veritasium". Shown for the same reason `topic` is, and with more at stake:
@@ -195,13 +197,6 @@ export function AnswerPanel({
     return true;
   });
 
-  // What retrieval found and the answer did not use. `seen` is the cited videos,
-  // so subtracting it is the whole derivation — and it has to happen here because
-  // the coverage frame goes out before generation, when nothing yet knows what
-  // will be cited. A video sent to the model and then left uncited belongs in this
-  // list, which is exactly what a server-side subtraction would have lost.
-  const alsoRows = (state.coverage ?? []).filter((v) => !seen.has(v.id));
-
   // Nothing to show at all — the parent renders whatever it has rather than an
   // empty box.
   if (!text && !sources.length && !streaming) return null;
@@ -345,50 +340,6 @@ export function AnswerPanel({
               </div>
             );
           })}
-
-          {/* Retrieved and not cited. Held to the same settled-answer gate as the
-              citations above, and rendered as a real list rather than as rows
-              that lost their numbers: these carry no numeral because no numeral
-              means anything for them — the numbers say "cited as [n]", and
-              inventing one would claim the answer leaned on a video it never
-              mentioned.
-
-              Each row opens its video without seeking, like a cited row. There IS
-              a retrieved chunk behind each one, so seeking would be possible, but
-              the model never vouched for that chunk — jumping to a timestamp on
-              the strength of a distance score asserts more than is known. */}
-          {alsoRows.length ? (
-            <div className="also">
-              <p className="lbl">Also in your library ({alsoRows.length})</p>
-              <ul className="also-list">
-                {alsoRows.map((v) => (
-                  /* The li KEEPS srcline: the channel rules are direct-child
-                     selectors (.srcline > .ch), so a row that merely looked like
-                     one would lose the channel styling entirely. */
-                  <li className="srcline" key={v.id}>
-                    <button
-                      type="button"
-                      className="srcrow"
-                      onClick={() => onOpenVideo(v.id)}
-                    >
-                      <span className="ttl">{v.title}</span>
-                    </button>
-                    {v.channel_name && v.channel_id ? (
-                      <button
-                        type="button"
-                        className="chan-link"
-                        onClick={() => onOpenChannel(v.channel_id)}
-                      >
-                        {v.channel_name}
-                      </button>
-                    ) : v.channel_name ? (
-                      <span className="ch">{v.channel_name}</span>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
         </div>
       ) : null}
     </div>

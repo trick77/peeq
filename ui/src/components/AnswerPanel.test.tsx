@@ -471,8 +471,11 @@ describe("AnswerPanel", () => {
   });
 });
 
-describe("also in your library", () => {
-  // A fourth video that retrieval reached and the answer never cited.
+// The coverage list moved OUT of this panel: it is a tier of compact video cards
+// under the matches now, not a bulleted text list in here. See Search.test.tsx
+// for what it does there. What is asserted here is only that the panel no longer
+// draws it — a state carrying coverage must produce no list of its own.
+describe("retrieved but uncited videos", () => {
   const uncited = {
     id: "v4",
     title: "Cramp Myths, Debunked",
@@ -483,10 +486,7 @@ describe("also in your library", () => {
     status: "downloaded",
   };
 
-  // The reported gap: retrieval reached thirteen videos, the answer cited three,
-  // and the panel showed three — so Ask looked like it knew less than the search
-  // box beside it.
-  it("lists retrieved videos the answer did not cite", () => {
+  it("are not rendered by the panel", () => {
     render(
       <Panel
         state={state({
@@ -495,102 +495,10 @@ describe("also in your library", () => {
         })}
       />,
     );
-    expect(screen.getByText("Also in your library (3)")).toBeInTheDocument();
-    expect(screen.getByText("Cramp Myths, Debunked")).toBeInTheDocument();
-    // v1 was cited, so it belongs to Sources and must not repeat here.
-    expect(
-      within(document.querySelector(".also-list")!).queryByText(
-        "Why Athletes Cramp",
-      ),
-    ).not.toBeInTheDocument();
-  });
-
-  // Nothing left over means no group at all, rather than an empty heading.
-  it("renders nothing when every retrieved video was cited", () => {
-    render(
-      <Panel
-        state={state({ text: "All three.[1][2][3]", coverage: videos })}
-      />,
-    );
     expect(screen.queryByText(/Also in your library/)).not.toBeInTheDocument();
-  });
-
-  // Same settled-answer gate as the citations: a list of what was NOT used, above
-  // a half-written answer, describes an answer that does not exist yet.
-  it("stays hidden while the answer streams", () => {
-    render(
-      <Panel
-        state={state({
-          status: "generating",
-          text: "Only the first[1]",
-          coverage: [...videos, uncited],
-        })}
-      />,
-    );
-    expect(screen.queryByText(/Also in your library/)).not.toBeInTheDocument();
-  });
-
-  // No numeral: a number says "cited as [n]", and these were not cited.
-  it("gives an uncited row no numeral", () => {
-    render(
-      <Panel
-        state={state({ text: "Cited.[1]", coverage: [...videos, uncited] })}
-      />,
-    );
-    const row = screen.getByText("Cramp Myths, Debunked").closest("button")!;
-    expect(row.querySelector(".n")).toBeNull();
-  });
-
-  // The channel name navigates to the channel, not to the video — the row is two
-  // controls side by side, same as a cited row.
-  it("opens the channel from an uncited row", () => {
-    const onOpenChannel = vi.fn();
-    const onOpenVideo = vi.fn();
-    render(
-      <Panel
-        state={state({ text: "Cited.[1]", coverage: [...videos, uncited] })}
-        onOpenChannel={onOpenChannel}
-        onOpenVideo={onOpenVideo}
-      />,
-    );
-    fireEvent.click(screen.getByText("Dr. Becky"));
-    expect(onOpenChannel).toHaveBeenCalledWith("c4");
-    expect(onOpenVideo).not.toHaveBeenCalled();
-  });
-
-  // A video whose channel id never reached the frame still names its channel, as
-  // plain text rather than a link to nowhere — the same fallback a cited row has.
-  it("names the channel without linking when the id is missing", () => {
-    const noChannelId = { ...uncited, channel_id: "" };
-    render(
-      <Panel
-        state={state({
-          text: "Cited.[1]",
-          coverage: [...videos, noChannelId],
-        })}
-      />,
-    );
-    const row = screen.getByText("Dr. Becky");
-    expect(row.tagName).toBe("SPAN");
-    expect(row).toHaveClass("ch");
-  });
-
-  // It opens the video rather than seeking. A retrieved chunk does sit behind the
-  // row, but the model never vouched for it, so a timestamp would assert more
-  // than is known.
-  it("opens the video without seeking", () => {
-    const onOpenVideo = vi.fn();
-    const onOpen = vi.fn();
-    render(
-      <Panel
-        state={state({ text: "Cited.[1]", coverage: [...videos, uncited] })}
-        onOpenVideo={onOpenVideo}
-        onOpen={onOpen}
-      />,
-    );
-    fireEvent.click(screen.getByText("Cramp Myths, Debunked"));
-    expect(onOpenVideo).toHaveBeenCalledWith("v4");
-    expect(onOpen).not.toHaveBeenCalled();
+    expect(screen.queryByText("Cramp Myths, Debunked")).not.toBeInTheDocument();
+    // The citations it DOES own are untouched by the move.
+    expect(screen.getByText("Sources")).toBeInTheDocument();
   });
 });
 

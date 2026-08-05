@@ -102,11 +102,21 @@ function momentOrder(matches: SearchMatch[]): SearchMatch[] {
 
 export function ResultCards({
   results,
+  compact = false,
   onOpen,
   onOpenVideo,
   onOpenChannel,
 }: {
   results: ResultCardGroup[];
+  // compact is the half-height card: a smaller poster, a smaller title, and no
+  // room set aside for moment rows. It is for a group that HAS no moments —
+  // Ask's retrieved-but-uncited videos — where a full-height card is a 168px
+  // poster beside a title and then empty space where the evidence would be.
+  //
+  // Presentational on purpose. The card does not know why it is smaller; the
+  // heading above the group is what says that. Keeping the reason out of here is
+  // what stops Ask's vocabulary leaking into the component Find renders through.
+  compact?: boolean;
   // onOpen jumps into a video AT a moment. onOpenVideo opens it with no seek at
   // all, which is not the same as onOpen(id, 0): Player applies any seekTo that
   // is not undefined, so a 0 would rewind the playhead to the start and the next
@@ -120,7 +130,7 @@ export function ResultCards({
   return (
     <>
       {results.map((r) => (
-        <div className="result" key={r.video.id}>
+        <div className={compact ? "result compact" : "result"} key={r.video.id}>
           {/* The thumbnail opens the video, as it does on every other card in
               the app. It was inert here while .result:hover and the play
               overlay both advertised a click that did nothing. */}

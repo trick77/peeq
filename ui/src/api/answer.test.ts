@@ -132,9 +132,9 @@ describe("streamAnswer", () => {
     expect(got[0]).toMatchObject({ type: "sources", sources: [] });
   });
 
-  // coverage is what the panel's "Also in your library" list is derived from, so
-  // a frame that omits it must still parse to an empty list rather than undefined
-  // — the panel filters it, and filtering undefined throws.
+  // coverage is what the "Also in your library" tier is derived from, so a frame
+  // that omits it must still parse to an empty list rather than undefined —
+  // Search filters it, and filtering undefined throws.
   it("defaults missing coverage to an empty list", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       makeStreamResponse(frames(`event: sources\ndata: {}`)),
