@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/rag"
+	"github.com/trick77/peeq/internal/summarize"
 	"github.com/trick77/peeq/internal/videos"
 )
 
@@ -224,10 +225,16 @@ func TestAnswerKeepsSayingNothingWhenNothingCovers(t *testing.T) {
 
 // An inventory question is answered with a count, not with an estimate from
 // whatever twelve excerpts happened to be chosen.
+// The question a SQL count can actually answer: structural, no subject.
+//
+// Note what such a question does to retrieval. It names nothing to search FOR,
+// so the lanes come back empty and the model is never called — the count IS the
+// answer, and it has to be written here or the page says "nothing covers that"
+// directly above a count line reading "2 videos".
 func TestAnswerCountsForAnInventoryQuestion(t *testing.T) {
 	deps, _, ask, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"ontology","intent":"inventory","filters":{}}`
-	body := askFor(t, deps, "how+many+videos+about+ontology+do+I+have")
+	understand.reply = `{"topic":"","intent":"inventory","filters":{"category":"science"}}`
+	body := askFor(t, deps, "how+many+science+videos+do+I+have")
 
 	counts, ok := frame(t, body, "sources")["counts"].(map[string]any)
 	if !ok {
@@ -236,18 +243,72 @@ func TestAnswerCountsForAnInventoryQuestion(t *testing.T) {
 	if counts["videos"] != float64(2) || counts["channels"] != float64(2) {
 		t.Fatalf("counts = %+v", counts)
 	}
-	if !strings.Contains(ask.messages[1].Content, "Library counts") {
-		t.Errorf("the counts never reached the model:\n%s", ask.messages[1].Content)
+	text := tokens(t, body)
+	if strings.Contains(text, "Nothing in your library covers that") {
+		t.Fatalf("the prose contradicts the count beside it: %q", text)
+	}
+	if !strings.Contains(text, "You have 2 videos matching Science & Research") {
+		t.Fatalf("the count was not stated as the answer: %q", text)
+	}
+	if ask.called {
+		t.Error("a structural count needs no model call")
+	}
+}
+
+// A counted question whose count is zero says so, rather than reporting that
+// the library covers nothing — the reader asked what they HOLD, not what is
+// written about a subject.
+func TestAnswerCountOfZeroSaysNothingMatches(t *testing.T) {
+	deps, _, _, understand := filteredAnswerDeps(t)
+	understand.reply = `{"topic":"","intent":"inventory","filters":{"category":"gaming"}}`
+	body := askFor(t, deps, "how+many+gaming+videos+do+I+have")
+
+	text := tokens(t, body)
+	if !strings.Contains(text, "You have nothing matching Gaming.") {
+		t.Fatalf("want a plain zero, got %q", text)
+	}
+}
+
+// The count is SQL over the videos table and NO COLUMN HOLDS "is about
+// ontology". A question carrying a topic must get no count at all — otherwise
+// "how many unwatched videos about ontology" is answered with the size of the
+// whole unwatched shelf, printed above the answer and handed to the model under
+// a rule saying it is authoritative.
+//
+// Note this case HAS a filter, so gating on the filter alone would not catch
+// it. The topic is what makes the number unanswerable.
+func TestAnswerSkipsCountsForATopicalQuestion(t *testing.T) {
+	deps, _, ask, understand := filteredAnswerDeps(t)
+	understand.reply = `{"topic":"ontology","intent":"inventory","filters":{"watched":"unwatched"}}`
+	body := askFor(t, deps, "how+many+unwatched+videos+about+ontology+do+I+have")
+
+	if _, present := frame(t, body, "sources")["counts"]; present {
+		t.Fatal("a topical question got a count SQL cannot compute")
+	}
+	if strings.Contains(ask.messages[1].Content, "Library counts") {
+		t.Errorf("a topic-blind count reached the model:\n%s", ask.messages[1].Content)
+	}
+}
+
+// And with no constraint either there is no scope row saying what was counted,
+// so the number would just be the size of the library.
+func TestAnswerSkipsCountsWithoutAFilter(t *testing.T) {
+	deps, _, _, understand := filteredAnswerDeps(t)
+	understand.reply = `{"topic":"","intent":"inventory","filters":{}}`
+	body := askFor(t, deps, "how+many+videos+do+I+have")
+
+	if _, present := frame(t, body, "sources")["counts"]; present {
+		t.Fatal("an unfiltered count is a library size, not an answer")
 	}
 }
 
 // The count answers the question that was ASKED, not the one that was
-// eventually searched. "How many unwatched" is zero even while the sources
-// below it show the watched ones, and the relaxation note reconciles them.
+// eventually searched. "How many gaming videos" is zero even while the sources
+// below it show the science ones, and the relaxation note reconciles them.
 func TestAnswerCountsUseTheOriginalFilterNotTheRelaxedOne(t *testing.T) {
 	deps, _, _, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"ontology","intent":"inventory","filters":{"category":"gaming"}}`
-	body := askFor(t, deps, "how+many+gaming+videos+about+ontology")
+	understand.reply = `{"topic":"","intent":"inventory","filters":{"category":"gaming"}}`
+	body := askFor(t, deps, "how+many+gaming+videos+do+I+have")
 
 	counts := frame(t, body, "sources")["counts"].(map[string]any)
 	if counts["videos"] != float64(0) {
@@ -301,9 +362,9 @@ func TestRelaxationReusesTheEmbedding(t *testing.T) {
 }
 
 func TestChapterAt(t *testing.T) {
-	v := &videos.Video{Chapters: `[{"title":"Intro","start_seconds":0},
-		{"title":"Aristotle's categories","start_seconds":600},
-		{"title":"Modern usage","start_seconds":1800}]`}
+	v := &videos.Video{Chapters: `[{"title":"Intro","ts":0},
+		{"title":"Aristotle's categories","ts":600},
+		{"title":"Modern usage","ts":1800}]`}
 	cases := map[int]string{
 		0:    "Intro",
 		599:  "Intro",
@@ -318,7 +379,7 @@ func TestChapterAt(t *testing.T) {
 	}
 	// A moment before the first chapter, a video with none, and a malformed
 	// list all mean "no chapter" rather than an error on the answer path.
-	if got := chapterAt(&videos.Video{Chapters: `[{"title":"Later","start_seconds":60}]`}, 10); got != "" {
+	if got := chapterAt(&videos.Video{Chapters: `[{"title":"Later","ts":60}]`}, 10); got != "" {
 		t.Errorf("before the first chapter = %q, want empty", got)
 	}
 	if got := chapterAt(&videos.Video{Chapters: "[]"}, 10); got != "" {
@@ -331,7 +392,7 @@ func TestChapterAt(t *testing.T) {
 		t.Errorf("nil video = %q", got)
 	}
 	// Unordered lists must not label every moment with chapter one.
-	unordered := &videos.Video{Chapters: `[{"title":"Second","start_seconds":600},{"title":"First","start_seconds":0}]`}
+	unordered := &videos.Video{Chapters: `[{"title":"Second","ts":600},{"title":"First","ts":0}]`}
 	if got := chapterAt(unordered, 700); got != "Second" {
 		t.Errorf("unordered chapters = %q, want Second", got)
 	}
@@ -340,7 +401,7 @@ func TestChapterAt(t *testing.T) {
 func TestAnswerExcerptsCarryTheChapter(t *testing.T) {
 	deps, db, ask, understand := filteredAnswerDeps(t)
 	if _, err := db.Exec(`UPDATE videos SET chapters = ? WHERE id = 'v1'`,
-		`[{"title":"Aristotle's categories","start_seconds":60}]`); err != nil {
+		`[{"title":"Aristotle's categories","ts":60}]`); err != nil {
 		t.Fatal(err)
 	}
 	understand.reply = `{"topic":"ontology","intent":"content","filters":{}}`
@@ -374,16 +435,31 @@ func TestDeterministicNote(t *testing.T) {
 }
 
 func TestEmptyAnswerNamesTheConstraint(t *testing.T) {
-	if got := emptyAnswer(nil, nil); got != "Nothing in your library covers that." {
+	if got := emptyAnswer(nil, nil, nil); got != "Nothing in your library covers that." {
 		t.Errorf("unfiltered = %q", got)
 	}
-	if got := emptyAnswer([]string{"unwatched"}, nil); got != "Nothing in your library covers that, within unwatched." {
+	if got := emptyAnswer([]string{"unwatched"}, nil, nil); got != "Nothing in your library covers that, within unwatched." {
 		t.Errorf("filtered = %q", got)
 	}
 	// After a relaxation the search WAS the whole library, so the unqualified
 	// sentence is the true one.
-	if got := emptyAnswer([]string{"unwatched"}, []string{"unwatched"}); got != "Nothing in your library covers that." {
+	if got := emptyAnswer([]string{"unwatched"}, []string{"unwatched"}, nil); got != "Nothing in your library covers that." {
 		t.Errorf("relaxed = %q", got)
+	}
+	// A count overrides all of it: the reader asked what they hold, and
+	// retrieval finding nothing to quote does not make the answer zero.
+	got := emptyAnswer([]string{"unwatched"}, nil,
+		&rag.LibraryCount{Videos: 12, DurationSeconds: 5400, Channels: 3})
+	if got != "You have 12 videos matching unwatched, 1 h 30 min in all." {
+		t.Errorf("counted = %q", got)
+	}
+	got = emptyAnswer([]string{"unwatched"}, nil, &rag.LibraryCount{})
+	if got != "You have nothing matching unwatched." {
+		t.Errorf("counted zero = %q", got)
+	}
+	if got := emptyAnswer(nil, nil,
+		&rag.LibraryCount{Videos: 1, DurationSeconds: 600, Channels: 1}); !strings.Contains(got, "1 video ") {
+		t.Errorf("singular = %q", got)
 	}
 }
 
@@ -445,5 +521,43 @@ func TestChooseExcerptsPrefersSummariesWhenComparing(t *testing.T) {
 	// Transcript passages are still there — a comparison is not summaries only.
 	if len(compare) <= 2 {
 		t.Fatalf("comparison dropped the transcript evidence: %d excerpts", len(compare))
+	}
+}
+
+// chapterAt reads a column WRITTEN BY ANOTHER PACKAGE, and this test is the only
+// thing that keeps the two in step.
+//
+// The first version of chapterAt decoded `json:"start_seconds"`. The column
+// actually holds summarize.Chapter, whose timestamp marshals as `ts`. Every
+// chapter therefore parsed with a zero timestamp, and the "last chapter at or
+// before this moment" loop then always chose the LAST chapter in the array — so
+// every excerpt from a chaptered video was labelled with the title of that
+// video's final chapter, and the answer prompt tells the model to use that label
+// to say where in a long video something is covered.
+//
+// It passed every test, because the fixtures were hand-written with the same
+// wrong key. Hand-written fixtures cannot catch a wrong key: they encode the
+// author's belief about the format twice and agree with themselves. So this one
+// marshals the producer's own type — if summarize.Chapter ever renames a field,
+// this fails instead of quietly mislabelling every chapter again.
+func TestChapterAtReadsWhatSummarizeWrites(t *testing.T) {
+	stored, err := json.Marshal([]summarize.Chapter{
+		{TS: 0, Title: "Intro", Source: "yt-dlp"},
+		{TS: 600, Title: "Aristotle's categories", Source: "yt-dlp"},
+		{TS: 1800, Title: "Modern usage", Source: "yt-dlp"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := &videos.Video{Chapters: string(stored)}
+	for at, want := range map[int]string{
+		0:    "Intro",
+		599:  "Intro",
+		600:  "Aristotle's categories",
+		5000: "Modern usage",
+	} {
+		if got := chapterAt(v, at); got != want {
+			t.Errorf("chapterAt(%d) = %q, want %q — chapterAt and summarize.Chapter have drifted apart", at, got, want)
+		}
 	}
 }

@@ -230,7 +230,12 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sources, vids, excerpts, chosen := s.buildAnswerContext(hits, len(u.Filters.Channels) > 1)
+	// A comparison is two channels the library actually HAS, named deliberately.
+	// Counting the model's names instead would switch to summary-first selection
+	// for "Veritasium and Numberphile" on a library holding only the first —
+	// which is not a comparison at all — and channelResolution.Ambiguous keeps
+	// one uncertain name that matched several channels out of it.
+	sources, vids, excerpts, chosen := s.buildAnswerContext(hits, len(ch.Matched) > 1 && !ch.Ambiguous)
 	// Logged HERE rather than inside askLanes, because only now is it known which
 	// passages the model was actually given — the number that says whether a lane
 	// changed what was read, not merely what was found.
@@ -242,7 +247,14 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// ORIGINAL filter — a relaxed search still has to report zero unwatched
 	// videos, with the disclosure below reconciling that against the watched ones
 	// it is showing.
-	counts := s.inventoryCount(r.Context(), u.Intent, filter)
+	//
+	// Only for a question that NARROWED something, though. The count is over the
+	// filter and knows nothing about the topic, so on "how many videos about
+	// ontology do we have" an unfiltered count is the size of the whole library —
+	// a number with no relation to the question, handed to the model as
+	// authoritative and printed above the answer. A count is meaningful exactly
+	// when there is a scope row beside it saying what it counts.
+	counts := s.inventoryCount(r.Context(), u.Intent, u.Topic, filter)
 
 	payload := map[string]any{
 		"sources": sources, "videos": vids,
@@ -270,7 +282,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// something — cannot depend on the model choosing to admit it. It also costs
 	// nothing, which matters when Ask is the mode the page lands on.
 	if len(sources) == 0 {
-		send("token", map[string]string{"text": emptyAnswer(applied, relaxed)})
+		send("token", map[string]string{"text": emptyAnswer(applied, relaxed, counts)})
 		return
 	}
 
@@ -664,8 +676,28 @@ func (s *server) chooseExcerpts(hits []rag.Hit, compare bool) []excerptCandidate
 // every one of those means the answer is written from the excerpts alone, which
 // is what it did before counting existed. A count that cannot be trusted is
 // worse than no count, because the prompt tells the model to believe it.
-func (s *server) inventoryCount(ctx context.Context, intent string, f rag.Filter) *rag.LibraryCount {
+func (s *server) inventoryCount(ctx context.Context, intent, topic string, f rag.Filter) *rag.LibraryCount {
 	if intent != intentInventory || s.rag == nil {
+		return nil
+	}
+	// THE COUNT CANNOT SEE THE TOPIC. It is SQL over the videos table, and no
+	// column holds "is about ontology" — only retrieval knows that, and only
+	// approximately, bounded by the candidate cap and the distance floor.
+	//
+	// So a question carrying a topic gets no count. "How many videos about
+	// ontology do I have" would otherwise be answered with the size of the whole
+	// unwatched shelf, printed above the answer and handed to the model under a
+	// rule saying it is authoritative and must not be contradicted. A confidently
+	// wrong number is far worse than none.
+	//
+	// What is left is the question this was built for and the one that is
+	// genuinely answerable: "how many unwatched Veritasium videos do I have" —
+	// structural, no subject, exact.
+	//
+	// The filter check earns its place separately: with no constraint either,
+	// the count is just "how big is my library", and there would be no scope row
+	// above it saying what it counted.
+	if topic != "" || f.Empty() {
 		return nil
 	}
 	c, err := s.rag.CountVideos(ctx, f)
@@ -709,11 +741,33 @@ func deterministicNote(unresolved, relaxed []string, sources int) string {
 // emptyAnswer is the "found nothing" sentence, told in terms of what was
 // actually searched. Under a filter the unqualified version is a lie: the
 // library may well cover the subject, just not in the slice that was looked at.
-func emptyAnswer(applied, relaxed []string) string {
+//
+// A counted question is the exception, and it is not a rare one. "How many
+// unwatched Veritasium videos do I have" is PURELY STRUCTURAL — it names no
+// subject, so retrieval has nothing to search for and legitimately returns
+// nothing. Saying "nothing covers that" there would sit directly beside a count
+// line reading "12 videos" and flatly contradict it. The count is the answer, so
+// it is what gets said.
+func emptyAnswer(applied, relaxed []string, counts *rag.LibraryCount) string {
+	if counts != nil {
+		if counts.Videos == 0 {
+			return "You have nothing matching " + strings.Join(applied, ", ") + "."
+		}
+		return fmt.Sprintf("You have %d %s matching %s, %s in all.",
+			counts.Videos, plural(counts.Videos, "video", "videos"),
+			strings.Join(applied, ", "), humanDuration(counts.DurationSeconds))
+	}
 	if len(applied) == 0 || len(relaxed) > 0 {
 		return "Nothing in your library covers that."
 	}
 	return "Nothing in your library covers that, within " + strings.Join(applied, ", ") + "."
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func quoteList(ss []string) string {
@@ -749,13 +803,18 @@ func humanDuration(seconds int) string {
 // chapters or the moment sits before the first one. Chapters are stored as the
 // JSON array the summarize step produced; a malformed one is simply no chapter,
 // never an error on the answer path.
+//
+// The timestamp key is "ts", which is what summarize.Chapter marshals and what
+// every other reader of videos.chapters expects. Decoding it as "start_seconds"
+// would leave every chapter at 0 and silently label every excerpt with the LAST
+// chapter of its video.
 func chapterAt(v *videos.Video, startSeconds int) string {
 	if v == nil || strings.TrimSpace(v.Chapters) == "" {
 		return ""
 	}
 	var chapters []struct {
-		Title        string `json:"title"`
-		StartSeconds int    `json:"start_seconds"`
+		Title string `json:"title"`
+		TS    int    `json:"ts"`
 	}
 	if err := json.Unmarshal([]byte(v.Chapters), &chapters); err != nil {
 		return ""
@@ -766,8 +825,8 @@ func chapterAt(v *videos.Video, startSeconds int) string {
 		// The LAST chapter starting at or before the moment, not the first —
 		// chapters are usually ordered but nothing guarantees it, and an
 		// unordered list would otherwise label every moment with chapter one.
-		if c.StartSeconds <= startSeconds && c.StartSeconds >= best {
-			best, title = c.StartSeconds, strings.TrimSpace(c.Title)
+		if c.TS <= startSeconds && c.TS >= best {
+			best, title = c.TS, strings.TrimSpace(c.Title)
 		}
 	}
 	return title
@@ -876,8 +935,15 @@ func answerMessages(q string, excerpts []string, applied, relaxed []string, coun
 			stripExcerptTags(strings.Join(applied, ", ")) + ".")
 	}
 	if counts != nil {
-		b.WriteString(fmt.Sprintf("\n\nLibrary counts, under those constraints: %d videos across %d channels, %s in total.",
-			counts.Videos, counts.Channels, humanDuration(counts.DurationSeconds)))
+		// Zero gets no runtime. humanDuration(0) is "under a minute", which
+		// reads as "there is a little of it" when the truth is there is none —
+		// the same reason the panel drops the duration at a count of zero.
+		if counts.Videos == 0 {
+			b.WriteString("\n\nLibrary counts, under those constraints: no videos at all.")
+		} else {
+			b.WriteString(fmt.Sprintf("\n\nLibrary counts, under those constraints: %d videos across %d channels, %s in total.",
+				counts.Videos, counts.Channels, humanDuration(counts.DurationSeconds)))
+		}
 	}
 	b.WriteString("\n\nExcerpts:\n\n")
 	for _, e := range excerpts {

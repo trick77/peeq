@@ -75,6 +75,10 @@ func (s *server) resolveChannels(names []string) channelResolution {
 
 	seenID := map[string]bool{}
 	seenName := map[string]bool{}
+	// Matched is deduped too: two spellings of one channel ("Veritasium",
+	// "veritaseum") resolve to the same row, and listing it twice would put the
+	// same chip on screen twice under the same React key.
+	seenMatched := map[string]bool{}
 	for _, name := range names {
 		matches := matchChannels(dir, name)
 		if len(matches) == 0 {
@@ -96,7 +100,10 @@ func (s *server) resolveChannels(names []string) channelResolution {
 				seenName[m.Name] = true
 				out.Names = append(out.Names, m.Name)
 			}
-			out.Matched = append(out.Matched, m.Name)
+			if !seenMatched[m.Name] {
+				seenMatched[m.Name] = true
+				out.Matched = append(out.Matched, m.Name)
+			}
 		}
 	}
 	return out

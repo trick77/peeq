@@ -110,10 +110,16 @@ func TestParseUnderstandingFilters(t *testing.T) {
 			wantDropped: []string{"channels:too-many"},
 		},
 		{
-			name: "blank and overlong channel names are skipped silently",
+			// A blank entry is nothing to report. An overlong one is a constraint
+			// the reader may have asked for and did not get, so it is named in
+			// the log rather than vanishing.
+			name: "blank channel names are skipped, overlong ones are named",
 			raw: `{"topic":"x","intent":"content","filters":{"channels":["  ","` +
 				strings.Repeat("z", understandMaxChannelRunes+1) + `","Veritasium"]}}`,
 			want: queryFilters{Channels: []string{"Veritasium"}},
+			wantDropped: []string{
+				"channel:" + strings.Repeat("z", understandMaxChannelRunes) + "…",
+			},
 		},
 		{
 			name: "control characters are stripped from a channel name",

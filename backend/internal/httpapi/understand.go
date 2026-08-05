@@ -397,9 +397,15 @@ func parseUnderstanding(raw string) (queryUnderstanding, []string, bool) {
 	var dropped []string
 	drop := func(what string) { dropped = append(dropped, what) }
 
-	for _, name := range parsed.Filters.Channels {
-		name = sanitizeChannelName(name)
+	for _, raw := range parsed.Filters.Channels {
+		name := sanitizeChannelName(raw)
 		if name == "" {
+			// A blank entry is nothing to report; one that sanitizing emptied —
+			// a whole sentence mislabelled as a channel — is a constraint the
+			// reader may have asked for and did not get, so it is named.
+			if strings.TrimSpace(raw) != "" {
+				drop("channel:" + truncateRunes(strings.Join(strings.Fields(raw), " "), understandMaxChannelRunes))
+			}
 			continue
 		}
 		if len(u.Filters.Channels) >= understandMaxChannels {
