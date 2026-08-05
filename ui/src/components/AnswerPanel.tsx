@@ -8,6 +8,7 @@ import {
   type RenderedPart,
 } from "../answerSources";
 import { splitIntoSegments } from "../streamFade";
+import type { EmphasisMark } from "../emphasis";
 import type { AnswerSource, AnswerVideo, LibraryCount } from "../api/answer";
 
 // AnswerPanel renders the grounded answer above Ask's moments.
@@ -274,7 +275,7 @@ export function AnswerPanel({
               tight={followsPunctuation(parts[i - 1])}
             />
           ) : (
-            <FadedText key={i} text={part.text} />
+            <MarkedText key={i} text={part.text} mark={part.mark} />
           ),
         )}
         {streaming ? <span className="caret" aria-hidden="true" /> : null}
@@ -344,6 +345,32 @@ export function AnswerPanel({
       ) : null}
     </div>
   );
+}
+
+// MarkedText renders one run of prose under whatever markdown the model wrapped
+// it in — see emphasis.ts, which drops the delimiters and leaves the mark. The
+// element goes OUTSIDE the fade segments rather than around each one: a span
+// keeps one element for its whole life that way, so the segments already on
+// screen are reconciled untouched when the closing delimiter arrives and none
+// of them re-runs its animation.
+//
+// A heading is block-level (.answer-lead). The body sets no `white-space`, so
+// bolding it inline would only produce a run-on in bold — "…real stars.³
+// Ontology basics The video…" — and the break is the whole point of a heading.
+function MarkedText({ text, mark }: { text: string; mark?: EmphasisMark }) {
+  const body = <FadedText text={text} />;
+  switch (mark) {
+    case "strong":
+      return <strong>{body}</strong>;
+    case "em":
+      return <em>{body}</em>;
+    case "code":
+      return <code>{body}</code>;
+    case "heading":
+      return <strong className="answer-lead">{body}</strong>;
+    default:
+      return body;
+  }
 }
 
 // FadedText splits prose into the clause-sized segments the CSS animates, so

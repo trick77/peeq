@@ -4999,6 +4999,28 @@ details.tomb-sect[open] > summary svg {
   font-size: 15.5px;
   line-height: 1.68;
 }
+/* The inline markdown the model leaks, rendered rather than shown as
+   delimiters — see emphasis.ts. The serif is a variable face covering 300-800,
+   so the bold here is a real weight rather than a synthesised one. */
+.answer-body code {
+  font-family: var(--font-mono);
+  /* Mono reads a size larger than the serif around it at the same px, so it is
+     stepped down to sit on the same line without bulging. */
+  font-size: 0.9em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--color-active);
+}
+/* A heading is the whole line. The body sets no `white-space`, so an inline
+   heading would run straight into the sentence after it; block is the break,
+   and it is scoped to headings rather than turned on for the body at large. */
+.answer-lead {
+  display: block;
+  margin-top: 14px;
+}
+.answer-lead:first-child {
+  margin-top: 0;
+}
 .answer-note {
   margin: 12px 0 0;
   color: var(--color-muted);
