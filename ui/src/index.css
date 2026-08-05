@@ -5181,6 +5181,14 @@ details.tomb-sect[open] > summary svg {
   order: 3;
   font-size: 13px;
 }
+/* Only present when the matches header is not — see Search. After the count, so
+   the rule still runs from the label to the numbers rather than stopping at a
+   button in the middle of the row. */
+.also-head .clear-results {
+  order: 4;
+  align-self: center;
+  margin-left: 4px;
+}
 
 /* Mode switch — Find vs Ask. Segmented, both options always visible, so the
    box announces that it does two different things before anything is typed. */

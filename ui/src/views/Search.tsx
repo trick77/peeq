@@ -130,10 +130,16 @@ export function Search({
   // When it is null the answer cited nothing, and every retrieved video belongs
   // in this tier — which is the case that would otherwise lose the list entirely,
   // since the matches block above does not render at all.
-  const citedIds = new Set((results ?? []).map((r) => r.video.id));
+  //
+  // Gated only on the mode. WHEN it may be shown is the render's business, and
+  // testing that here as well would be the same condition in two places, free to
+  // drift apart.
   const alsoRows =
-    mode === "ask" && !answerStreaming
-      ? (answer?.coverage ?? []).filter((v) => !citedIds.has(v.id))
+    mode === "ask"
+      ? (() => {
+          const cited = new Set((results ?? []).map((r) => r.video.id));
+          return (answer?.coverage ?? []).filter((v) => !cited.has(v.id));
+        })()
       : [];
 
   return (
@@ -286,6 +292,23 @@ export function Search({
           <div className="also-head">
             <span className="also-head-t">Also in your library</span>
             <span className="n mono">{alsoRows.length}</span>
+            {/* The way out of the search lives in the matches header — and that
+                header is exactly what is missing when the answer cited nothing,
+                which is the one case this block renders on its own. Without this
+                the reader would be left with up to coverageMaxVideos cards and no
+                control to put them away. It appears ONLY then, so the ordinary
+                page still has a single Clear results and not two. */}
+            {results === null ? (
+              <Button
+                type="button"
+                variant="secondary"
+                small
+                className="clear-results"
+                onClick={handleClearResults}
+              >
+                Clear results
+              </Button>
+            ) : null}
           </div>
           <ResultCards
             compact

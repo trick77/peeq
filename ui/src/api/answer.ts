@@ -64,10 +64,10 @@ export type AnswerEvent =
       sources: AnswerSource[];
       videos: AnswerVideo[];
       // Every video retrieval found, best-ranked first, one entry each — not just
-      // the ones that won an excerpt slot. The panel subtracts what the answer
-      // cited to get "Also in your library", and it has to happen HERE rather than
-      // on the server: this frame is sent before generation, so at that point
-      // nothing knows what will be cited.
+      // the ones that won an excerpt slot. Search subtracts what the answer cited
+      // to get the "Also in your library" tier, and that has to happen on the
+      // CLIENT rather than on the server: this frame is sent before generation, so
+      // at that point nothing knows what will be cited.
       coverage: AnswerVideo[];
     }
   | { type: "token"; text: string }

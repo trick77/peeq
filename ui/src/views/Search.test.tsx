@@ -693,6 +693,41 @@ describe("Search — the Ask answer", () => {
       expect(document.querySelectorAll(".result.compact")).toHaveLength(3);
     });
 
+    // The way out of a search lives in the matches header — which is the very
+    // thing missing when the answer cited nothing. Without a control here the
+    // reader is left with up to coverageMaxVideos cards and no way to put them
+    // away, and it clears the whole page rather than just this tier.
+    it("offers a way out when it is the only block on the page", async () => {
+      answerWith([...askVideos, uncited], "Nothing specific comes to mind.");
+      render(<Harness onOpen={vi.fn()} />);
+      submit("electrolytes");
+      await screen.findByText("Also in your library");
+      expect(screen.queryByText("Matches")).not.toBeInTheDocument();
+
+      const clear = screen.getByRole("button", { name: "Clear results" });
+      fireEvent.click(clear);
+      await waitFor(() =>
+        expect(
+          screen.queryByText("Also in your library"),
+        ).not.toBeInTheDocument(),
+      );
+      expect(document.querySelectorAll(".result")).toHaveLength(0);
+    });
+
+    // ...and exactly one of them on the ordinary page, where the matches header
+    // already carries it.
+    it("leaves the clear control to the matches header when there is one", async () => {
+      answerWith([...askVideos, uncited]);
+      render(<Harness onOpen={vi.fn()} />);
+      submit("electrolytes");
+
+      await screen.findByText("Also in your library");
+      expect(screen.getByText("Matches")).toBeInTheDocument();
+      expect(
+        screen.getAllByRole("button", { name: "Clear results" }),
+      ).toHaveLength(1);
+    });
+
     // It opens the video rather than seeking. A retrieved chunk does sit behind
     // each card, but the model never vouched for it, so a timestamp would assert
     // more than is known.
