@@ -127,6 +127,10 @@ const (
 // generation starts, so it is already known, and a failure mid-answer still
 // leaves the reader a usable list of moments.
 //
+// The one exception is a blank query, which returns before any of that runs and
+// sends sources, then done: there is no question to understand, so there is no
+// progress to report.
+//
 // progress comes first and carries the understood query. It exists because the
 // pre-retrieval step put a second or so of silence in front of everything else:
 // without a frame there, the reader watches a spinner that claims searching has

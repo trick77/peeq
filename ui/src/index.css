@@ -4936,6 +4936,13 @@ details.tomb-sect[open] > summary svg {
      a reserve wider than the panel. */
   min-width: min(17em, 62%);
 }
+/* The spinner must never absorb any of that shrink. Flex distributes a deficit
+   in proportion to each item's base size, so a long topic on a narrow viewport
+   takes a share out of the spinner too — enough of one to squash a 12px box to
+   a few pixels. The label is the only thing here that may give ground. */
+.answer .hd .status .ui-spin {
+  flex: none;
+}
 /* A topic is model output of unknown length, so it truncates rather than
    widening the header past its reserve. */
 .answer .hd .status .lbl {

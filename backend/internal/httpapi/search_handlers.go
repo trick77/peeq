@@ -399,6 +399,7 @@ func (s *server) semanticLane(r *http.Request, vec []float32, weight float64, d 
 	hits, err := s.rag.RetrieveWithin(r.Context(), vec, semanticCandidates, s.searchMaxDistance)
 	if err != nil {
 		slog.Warn("search: semantic retrieve degraded", "err", err)
+		d.failed = true
 		return rag.Lane{}, false
 	}
 	d.ran = true
@@ -447,13 +448,20 @@ type semLaneDiag struct {
 	// ran distinguishes a lane that returned nothing from a lane that never
 	// ran at all. Without it, "no topic lane" and "a topic lane the bound
 	// emptied" read identically, and they mean opposite things.
-	ran                    bool
+	ran bool
+	// failed is the vector store erroring, which is a THIRD state: without it a
+	// broken RetrieveWithin prints the same "-" as a lane that never ran, and the
+	// log would read as "no topic lane" on the one occasion it matters most.
+	failed                 bool
 	bounded, boundedVideos int
 	kept, keptVideos       int
 	nearest, farthest      float64
 }
 
 func (d semLaneDiag) String() string {
+	if d.failed {
+		return "err"
+	}
 	if !d.ran {
 		return "-"
 	}

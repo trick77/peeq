@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode"
@@ -159,7 +161,10 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 
 	if err != nil {
 		status := understandFailed
-		if cctx.Err() == context.DeadlineExceeded {
+		// Either bound counts as a timeout: understandTimeout above, or the
+		// llm.Client's own call cap, which fires on a context this function never
+		// sees — so cctx.Err() alone would report that one as a plain failure.
+		if errors.Is(err, context.DeadlineExceeded) || cctx.Err() == context.DeadlineExceeded {
 			status = understandTimedOut
 		}
 		return queryUnderstanding{Intent: intentContent}, understandDiag{
@@ -174,7 +179,16 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 		}
 	}
 	// A topic that merely restates the question buys nothing and costs a lane.
-	if u.Topic == "" || strings.EqualFold(u.Topic, strings.TrimSpace(q)) {
+	//
+	// Compare NORMALIZED to normalized. u.Topic has been through sanitizeTopic,
+	// which collapses runs of whitespace; q has not. Trimming q alone lets
+	// "what  are  transients" (a paste, or ?q=what++are++transients) slip past as
+	// a "different" phrasing, and the topic lane then embeds the SAME sentence a
+	// second time. That is not a harmless duplicate: FuseWeighted sums across
+	// lanes, so one phrasing counted twice earns 1.2 and outscores a strict
+	// keyword rung at 1.0 — the score that is supposed to mean two phrasings
+	// agreeing on a passage.
+	if u.Topic == "" || strings.EqualFold(u.Topic, strings.Join(strings.Fields(q), " ")) {
 		u.Topic = ""
 		return u, understandDiag{status: understandNoop, ms: elapsed, intent: u.Intent}
 	}
@@ -241,6 +255,13 @@ func sanitizeTopic(s string) string {
 	}, s)
 	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
 	if len([]rune(s)) > understandMaxTopicRunes {
+		// Dropped, and said so. Downstream this lands in the same "noop" status as
+		// a question that simply had no framing to strip — but those are not the
+		// same event: that one is the ordinary case, and this one is the model
+		// handing back a paraphrase instead of a topic. Silent, it would look like
+		// the step was working and merely finding nothing to do.
+		slog.Warn("understand: topic too long, dropped",
+			"runes", len([]rune(s)), "max", understandMaxTopicRunes)
 		return ""
 	}
 	return s
