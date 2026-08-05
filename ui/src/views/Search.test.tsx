@@ -5,6 +5,7 @@ import "@testing-library/jest-dom/vitest";
 import { Search } from "./Search";
 import { useSearchState } from "../searchState";
 import { HIGHLIGHT_END, HIGHLIGHT_START } from "../highlight";
+import { DOT } from "../sep";
 
 vi.mock("../api/search", () => ({
   searchVideos: vi.fn(),
@@ -627,8 +628,10 @@ describe("Search — the Ask answer", () => {
       expect(document.querySelector(".results-head .n")?.textContent).toContain(
         "1 video",
       );
+      // Leading DOT, the same separator the matches header puts between its own
+      // counts — see sep.ts, which owns the spacing around it.
       expect(document.querySelector(".also-head .n")?.textContent).toBe(
-        "2 videos",
+        `${DOT}2 videos`,
       );
     });
 

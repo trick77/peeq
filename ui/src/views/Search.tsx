@@ -293,8 +293,13 @@ export function Search({
             <span className="also-head-t">Also in your library</span>
             {/* "N videos", not a bare "N" — the same words and the same place
                 the matches header counts in, so the two rows read as one family
-                rather than one of them dropping its unit. */}
+                rather than one of them dropping its unit.
+
+                DOT leads it, and it carries its own en spaces (see sep.ts), so
+                .also-head sets no gap: the separator does that spacing itself,
+                the way it does between the counts in the matches header. */}
             <span className="n mono">
+              {DOT}
               {alsoRows.length} video{alsoRows.length === 1 ? "" : "s"}
             </span>
             {/* The way out of the search lives in the matches header — and that

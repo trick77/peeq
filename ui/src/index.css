@@ -5167,7 +5167,11 @@ details.tomb-sect[open] > summary svg {
 .also-head {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  /* No gap: the count leads with DOT, which carries its own en spaces, and a
+     flex gap on top of them would space this row wider than the matches header
+     it is built to match. The clear button is pushed right by its own margin,
+     so it needs nothing from here either. */
+  gap: 0;
   margin: 22px 2px 12px;
   color: var(--color-muted);
 }
