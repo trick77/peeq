@@ -463,6 +463,53 @@ describe("Search — the Ask answer", () => {
   // Retrieval returns long before generation does. Showing the moments and the
   // citation list first puts the evidence on screen ahead of the claim that
   // cites it, and pulls the eye off the text being written.
+  // The three phases of the wait, driven by the frames that actually mark them.
+  // The label has to move on each, because each says something the previous one
+  // could not: that the question was understood, and that retrieval succeeded.
+  it("walks the label through the phases as the frames arrive", async () => {
+    let emit: ((e: AnswerEvent) => void) | null = null;
+    mockedStreamAnswer.mockImplementation(
+      (_q, onEvent) =>
+        new Promise(() => {
+          emit = onEvent;
+        }),
+    );
+    render(<Harness onOpen={vi.fn()} />);
+    submit("what material about electrolytes do we have");
+
+    // Nothing on the wire yet.
+    await screen.findByText(/Understanding your question/);
+
+    // The progress frame: retrieval starting, and the understood query with it.
+    emit!({
+      type: "progress",
+      phase: "retrieving",
+      topic: "electrolytes",
+      intent: "inventory",
+    });
+    expect(await screen.findByText(/electrolytes/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Understanding your question/),
+    ).not.toBeInTheDocument();
+
+    // Retrieval done, the model now thinking — the long, silent stretch.
+    emit!({
+      type: "sources",
+      sources: askSources,
+      videos: askVideos,
+      coverage: [],
+    });
+    expect(
+      await screen.findByText(new RegExp(`Reading ${askVideos.length} video`)),
+    ).toBeInTheDocument();
+
+    // The first word retires the label entirely.
+    emit!({ type: "token", text: "Yes — " });
+    await waitFor(() =>
+      expect(screen.queryByText(/^Reading /)).not.toBeInTheDocument(),
+    );
+  });
+
   it("holds the moments and the sources until the answer settles", async () => {
     let emit: ((e: AnswerEvent) => void) | null = null;
     mockedStreamAnswer.mockImplementation(

@@ -171,6 +171,17 @@ describe("AnswerPanel", () => {
       expect(screen.getByText(/bike geometry/)).toBeInTheDocument();
     });
 
+    // Generating before the videos frame has been seen, or a retrieval that
+    // found none: there is no count to name, so the label must not say "0".
+    it("names no count it does not have", () => {
+      render(
+        <Panel
+          state={{ status: "generating", text: "", sources: [], videos: [] }}
+        />,
+      );
+      expect(screen.getByText("Reading your library")).toBeInTheDocument();
+    });
+
     it("falls back to the library when nothing was rewritten", () => {
       render(
         <Panel state={state({ status: "retrieving", text: "", topic: "" })} />,
