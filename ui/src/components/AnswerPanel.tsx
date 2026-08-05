@@ -80,13 +80,22 @@ function waitLabel(
     default: {
       // Generating: the long one. Naming the count is what makes the wait feel
       // like progress rather than a hang — it says retrieval already worked.
-      const read =
-        videoCount > 0
-          ? `Reading ${videoCount} video${videoCount === 1 ? "" : "s"}`
-          : "Reading your library";
-      // The count comes FIRST, so the part that says retrieval succeeded is the
-      // part that survives if .lbl has to ellipsize a long topic.
-      return topic ? `${read} on “${topic}”` : read;
+      //
+      // "Thinking", not "Reading". Reading was accurate while ONE label covered
+      // the whole wait, retrieval included — but by the time this phase starts,
+      // the library has already been read and the passages are in hand. What the
+      // five seconds actually are is the model reasoning over them: thinking is
+      // on for this call, and that is where the time goes.
+      if (videoCount > 0) {
+        const base = `Thinking about ${videoCount} video${videoCount === 1 ? "" : "s"}`;
+        // The count comes FIRST, so the part that says retrieval succeeded is
+        // what survives if .lbl has to ellipsize a long topic.
+        return topic ? `${base} on “${topic}”` : base;
+      }
+      // No count to name. Rare — generating begins on the sources frame, which
+      // carries the videos — so this is the empty-retrieval case, and it must not
+      // claim a number it does not have.
+      return topic ? `Thinking about “${topic}”` : "Thinking";
     }
   }
 }

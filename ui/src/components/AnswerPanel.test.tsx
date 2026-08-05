@@ -123,7 +123,7 @@ describe("AnswerPanel", () => {
     );
     // Generating with a retrieved set in hand: the label names the count, which
     // is what says retrieval already succeeded.
-    expect(screen.getByText(/Reading 3 videos/)).toBeInTheDocument();
+    expect(screen.getByText(/Thinking about 3 videos/)).toBeInTheDocument();
 
     rerender(
       <Panel
@@ -131,7 +131,9 @@ describe("AnswerPanel", () => {
         onOpen={vi.fn()}
       />,
     );
-    expect(screen.queryByText(/Reading 3 videos/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Thinking about 3 videos/),
+    ).not.toBeInTheDocument();
   });
 
   // The wait has three parts and each label is true only of its own. One label
@@ -152,7 +154,7 @@ describe("AnswerPanel", () => {
       rerender(<Panel state={state({ status: "generating", text: "" })} />);
       // videos carries the retrieved set, so the count is real.
       expect(
-        screen.getByText(`Reading ${videos.length} videos`),
+        screen.getByText(`Thinking about ${videos.length} videos`),
       ).toBeInTheDocument();
     });
 
@@ -179,7 +181,7 @@ describe("AnswerPanel", () => {
           state={{ status: "generating", text: "", sources: [], videos: [] }}
         />,
       );
-      expect(screen.getByText("Reading your library")).toBeInTheDocument();
+      expect(screen.getByText("Thinking")).toBeInTheDocument();
     });
 
     // Retrieval is well under a second; generating is around five. A topic shown
@@ -198,7 +200,9 @@ describe("AnswerPanel", () => {
       // The count still leads, so "retrieval succeeded" is what survives if the
       // label has to ellipsize.
       expect(
-        screen.getByText(`Reading ${videos.length} videos on “bike geometry”`),
+        screen.getByText(
+          `Thinking about ${videos.length} videos on “bike geometry”`,
+        ),
       ).toBeInTheDocument();
     });
 
@@ -231,7 +235,7 @@ describe("AnswerPanel", () => {
     it("goes as soon as text arrives, whatever the phase", () => {
       render(<Panel state={state({ status: "generating", text: "Yes — " })} />);
       expect(
-        screen.queryByText(/Reading|Searching|Understanding/),
+        screen.queryByText(/Thinking|Searching|Understanding/),
       ).not.toBeInTheDocument();
     });
   });
@@ -243,7 +247,7 @@ describe("AnswerPanel", () => {
         onOpen={vi.fn()}
       />,
     );
-    expect(screen.queryByText(/Reading your library/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Thinking/)).not.toBeInTheDocument();
     // Four were retrieved; two videos were used.
     expect(screen.getByText("2 sources")).toBeInTheDocument();
   });

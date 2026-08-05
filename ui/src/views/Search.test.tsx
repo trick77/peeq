@@ -500,13 +500,15 @@ describe("Search — the Ask answer", () => {
       coverage: [],
     });
     expect(
-      await screen.findByText(new RegExp(`Reading ${askVideos.length} video`)),
+      await screen.findByText(
+        new RegExp(`Thinking about ${askVideos.length} video`),
+      ),
     ).toBeInTheDocument();
 
     // The first word retires the label entirely.
     emit!({ type: "token", text: "Yes — " });
     await waitFor(() =>
-      expect(screen.queryByText(/^Reading /)).not.toBeInTheDocument(),
+      expect(screen.queryByText(/^Thinking /)).not.toBeInTheDocument(),
     );
   });
 
@@ -648,7 +650,7 @@ describe("Search — the Ask answer", () => {
     mockedSearchVideos.mockResolvedValue([]);
     render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
-    await screen.findByText(/Reading \d+ videos?/);
+    await screen.findByText(/Thinking about \d+ videos?/);
 
     // Off to a video and back, which unmounts the view entirely.
     fireEvent.click(screen.getByRole("button", { name: "leave" }));
@@ -801,7 +803,7 @@ describe("Search — the Ask answer", () => {
 
     toAsk();
     submit("electrolytes");
-    await screen.findByText(/Reading \d+ videos?/);
+    await screen.findByText(/Thinking about \d+ videos?/);
 
     // Off to the other tab, and a keyword search there.
     fireEvent.click(screen.getByRole("button", { name: "Find" }));
