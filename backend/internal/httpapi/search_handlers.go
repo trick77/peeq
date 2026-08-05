@@ -480,6 +480,11 @@ type askDiag struct {
 	// rewrite changed retrieval" from "the rewrite changed what was READ", and
 	// those come apart often — the vector lanes are outranked by three keyword
 	// rungs, so a lane can win rows and still lose every excerpt slot.
+	//
+	// attributed separates "no lane contributed an excerpt" from "excerpts were
+	// never looked at here" — /api/search?mode=ask has no excerpts to attribute,
+	// and four zeroes would read as the lanes having contributed nothing.
+	attributed                      bool
 	excerpts                        int
 	fromRaw, fromTopic, fromKeyword int
 
@@ -490,30 +495,35 @@ type askDiag struct {
 }
 
 // attribute counts how many of the passages the model was actually given came
-// from each lane family. A passage is keyed by video and start time rather than
-// by chunk ordinal: an answerSource does not carry the ordinal, and for a log
-// line "which video, at what second" identifies a passage perfectly well.
+// from each lane family.
+//
+// Passages are keyed by video AND CHUNK ORDINAL — the same key FuseWeighted
+// dedups on, and the only one that is unique. Video plus start second is not: a
+// chapter chunk carries the transcript of its own span, so one moment is indexed
+// twice under two kinds, which is what minMomentGapSeconds exists to hide. Keyed
+// on the pair, a lane holding the chapter rendering would be credited for the
+// transcript rendering the answer actually read.
 //
 // The counts overlap on purpose. A passage found by the topic lane AND a keyword
 // rung counts once for each, because the question being asked is "did this lane
 // contribute to what was read", not "which single lane owns this row".
-func (d *askDiag) attribute(lanes []rag.Lane, sources []answerSource) {
-	d.excerpts = len(sources)
-	if len(sources) == 0 {
+func (d *askDiag) attribute(lanes []rag.Lane, chosen []rag.Hit) {
+	d.attributed = true
+	d.excerpts = len(chosen)
+	if len(chosen) == 0 {
 		return
 	}
-	key := func(videoID string, start int) string {
-		return videoID + "@" + strconv.Itoa(start)
+	key := func(h rag.Hit) string {
+		return h.VideoID + ":" + strconv.Itoa(h.Ordinal)
 	}
-	chosen := make(map[string]bool, len(sources))
-	for _, s := range sources {
-		chosen[key(s.VideoID, s.StartSeconds)] = true
+	read := make(map[string]bool, len(chosen))
+	for _, h := range chosen {
+		read[key(h)] = true
 	}
 	count := func(lane rag.Lane) int {
 		seen := make(map[string]bool)
 		for _, h := range lane.Hits {
-			k := key(h.VideoID, h.StartSeconds)
-			if chosen[k] {
+			if k := key(h); read[k] {
 				seen[k] = true
 			}
 		}
@@ -532,7 +542,7 @@ func (d *askDiag) attribute(lanes []rag.Lane, sources []answerSource) {
 			// usually found by the floor too. Counting them as one family avoids
 			// a number larger than the excerpt count itself.
 			for _, h := range lane.Hits {
-				if k := key(h.VideoID, h.StartSeconds); chosen[k] {
+				if k := key(h); read[k] {
 					keywordSeen[k] = true
 				}
 			}
@@ -553,6 +563,12 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 	if understand == "" {
 		understand = string(understandSkipped)
 	}
+	// "-" for a path that never had excerpts to attribute, matching semLaneDiag.
+	excerpts := "-"
+	if d.attributed {
+		excerpts = fmt.Sprintf("%d raw=%d topic=%d kw=%d",
+			d.excerpts, d.fromRaw, d.fromTopic, d.fromKeyword)
+	}
 	slog.Info("ask retrieval",
 		"q", q,
 		// The extracted query, beside the raw one. If a rewrite ever mangles a
@@ -569,8 +585,7 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 		"semantic_raw", d.semRaw.String(),
 		"semantic_topic", d.semTopic.String(),
 		"fused", fmt.Sprintf("%dh/%dv", len(fused), distinctVideos(fused)),
-		"excerpts", fmt.Sprintf("%d raw=%d topic=%d kw=%d",
-			d.excerpts, d.fromRaw, d.fromTopic, d.fromKeyword),
+		"excerpts", excerpts,
 		"ms", fmt.Sprintf("embed=%d fts=%d retrieval=%d", d.embedMs, d.ftsMs, d.retrievalMs),
 	)
 }

@@ -188,11 +188,11 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	diag.understand, diag.understandMs = string(ud.status), ud.ms
 	diag.intent = ud.intent
 	hits := rag.FuseWeighted(lanes, searchCandidates)
-	sources, vids, excerpts := s.buildAnswerContext(hits)
+	sources, vids, excerpts, chosen := s.buildAnswerContext(hits)
 	// Logged HERE rather than inside askLanes, because only now is it known which
 	// passages the model was actually given — the number that says whether a lane
 	// changed what was read, not merely what was found.
-	diag.attribute(lanes, sources)
+	diag.attribute(lanes, chosen)
 	diag.log(q, hits)
 	if !send("sources", map[string]any{
 		"sources": sources, "videos": vids,
@@ -264,13 +264,22 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 // video contributes up to answerMaxSourcesPerVideo passages, and repeating its
 // record three times would put the same title, channel and duration on the wire
 // three times.
-func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVideo, []string) {
+// The chosen hits are returned alongside, for the retrieval log's per-lane
+// attribution. They carry the chunk ordinal, which an answerSource does not —
+// and the ordinal is what makes a passage identifiable. Video plus start second
+// is NOT unique: a chapter chunk contains the transcript of its own span, so the
+// same moment is indexed twice under two kinds (the reason minMomentGapSeconds
+// exists). Keying attribution on the pair would credit a lane for a passage it
+// never found.
+func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVideo, []string, []rag.Hit) {
 	sources := make([]answerSource, 0, answerMaxSources)
 	vids := make([]answerVideo, 0, answerMaxSources)
 	excerpts := make([]string, 0, answerMaxSources)
+	chosen := make([]rag.Hit, 0, answerMaxSources)
 	seenVideo := make(map[string]bool)
 
 	for _, c := range s.chooseExcerpts(hits) {
+		chosen = append(chosen, c.hit)
 		if !seenVideo[c.hit.VideoID] {
 			seenVideo[c.hit.VideoID] = true
 			vids = append(vids, answerVideo{
@@ -297,7 +306,7 @@ func (s *server) buildAnswerContext(hits []rag.Hit) ([]answerSource, []answerVid
 			n, stripExcerptTags(c.video.Title), c.hit.StartSeconds,
 			truncateRunes(stripExcerptTags(c.hit.Text), answerExcerptRunes)))
 	}
-	return sources, vids, excerpts
+	return sources, vids, excerpts, chosen
 }
 
 // coverageMaxVideos caps the retrieved-video list the panel shows under its

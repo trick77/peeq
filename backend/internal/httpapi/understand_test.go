@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/peeq/internal/rag"
 )
 
 // fakeUnderstander is a stub Completer for the query-understanding call. It
@@ -286,6 +287,52 @@ func TestAnswerProgressFrameCarriesTheUnderstoodQuery(t *testing.T) {
 	}
 	if got.Phase != "retrieving" {
 		t.Errorf("phase = %q", got.Phase)
+	}
+}
+
+// The attribution is how "did the rewrite earn its keep" gets answered, so it
+// has to key on something unique. A chapter chunk carries the transcript of its
+// own span, so two different chunks of one video share a start second — and a
+// lane holding the OTHER rendering must not be credited for the passage the
+// answer actually read.
+func TestAttributionKeysOnTheChunkNotTheSecond(t *testing.T) {
+	read := []rag.Hit{{VideoID: "v1", Ordinal: 7, StartSeconds: 872}}
+	lanes := []rag.Lane{
+		// A keyword rung that found the very chunk that was read.
+		{Hits: []rag.Hit{{VideoID: "v1", Ordinal: 7, StartSeconds: 872}}, Weight: rag.WeightKeywordStrict},
+		// The raw vector lane, holding the CHAPTER rendering of the same moment:
+		// same video, same second, different chunk. It did not find what was read.
+		{Hits: []rag.Hit{{VideoID: "v1", Ordinal: 41, StartSeconds: 872}}, Weight: rag.WeightSemantic},
+		// The topic lane, which did.
+		{Hits: []rag.Hit{{VideoID: "v1", Ordinal: 7, StartSeconds: 872}}, Weight: rag.WeightSemanticTopic},
+	}
+	d := askDiag{rawLane: 1, topicLane: 2}
+	d.attribute(lanes, read)
+
+	if d.excerpts != 1 {
+		t.Fatalf("excerpts = %d, want 1", d.excerpts)
+	}
+	if d.fromRaw != 0 {
+		t.Errorf("fromRaw = %d — a different chunk at the same second is not the same passage", d.fromRaw)
+	}
+	if d.fromTopic != 1 {
+		t.Errorf("fromTopic = %d, want 1", d.fromTopic)
+	}
+	if d.fromKeyword != 1 {
+		t.Errorf("fromKeyword = %d, want 1", d.fromKeyword)
+	}
+}
+
+// A path with no excerpts to attribute must not read as "the lanes contributed
+// nothing" — those are different facts.
+func TestUnattributedDiagIsNotZero(t *testing.T) {
+	d := askDiag{}
+	if d.attributed {
+		t.Error("a diag nobody attributed must not claim to be attributed")
+	}
+	d.attribute(nil, nil)
+	if !d.attributed {
+		t.Error("attribute must mark the diag even when there is nothing to count")
 	}
 }
 
