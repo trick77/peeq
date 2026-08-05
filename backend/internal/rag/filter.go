@@ -1,6 +1,8 @@
 package rag
 
 import (
+	"context"
+	"fmt"
 	"strings"
 )
 
@@ -128,6 +130,36 @@ func (f Filter) chunkSubquery() (string, []any) {
 	return `SELECT ftc.id FROM transcript_chunks ftc
 			JOIN videos fv ON fv.id = ftc.video_id
 			WHERE ` + strings.Join(conds, " AND "), args
+}
+
+// LibraryCount is what the library holds under a filter, for a question asking
+// how much of something there is rather than what it says.
+type LibraryCount struct {
+	Videos          int `json:"videos"`
+	DurationSeconds int `json:"duration_seconds"`
+	Channels        int `json:"channels"`
+}
+
+// CountVideos answers an inventory question directly instead of leaving the
+// model to estimate it from a dozen excerpts.
+//
+// It counts INDEXED videos — ones with chunks — rather than every row, so the
+// number agrees with what a search could actually have found. Counting the whole
+// table would report videos the answer beneath it cannot cite, which reads as
+// the answer having missed something.
+func (s *Store) CountVideos(ctx context.Context, f Filter) (LibraryCount, error) {
+	conds := []string{"EXISTS(SELECT 1 FROM transcript_chunks tc WHERE tc.video_id = v.id)"}
+	fconds, args := f.predicates("v")
+	conds = append(conds, fconds...)
+	q := `SELECT COUNT(*), COALESCE(SUM(COALESCE(v.duration_seconds, 0)), 0),
+	             COUNT(DISTINCT COALESCE(NULLIF(v.channel_id, ''), v.channel_name))
+	      FROM videos v WHERE ` + strings.Join(conds, " AND ")
+	var out LibraryCount
+	if err := s.db.QueryRowContext(ctx, q, args...).
+		Scan(&out.Videos, &out.DurationSeconds, &out.Channels); err != nil {
+		return LibraryCount{}, fmt.Errorf("count videos: %w", err)
+	}
+	return out, nil
 }
 
 func placeholders(n int) string {

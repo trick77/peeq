@@ -43,7 +43,22 @@ type RagStore interface {
 	// of doing the same thing.
 	SearchFTSFiltered(ctx context.Context, match string, n int, f rag.Filter) ([]rag.Hit, error)
 	RetrieveWithinFiltered(ctx context.Context, queryEmbedding []float32, k int, maxDistance float64, f rag.Filter) ([]rag.Hit, error)
+	// CountVideos answers an inventory question in SQL rather than leaving the
+	// model to estimate it from the excerpts it happened to be shown.
+	CountVideos(ctx context.Context, f rag.Filter) (rag.LibraryCount, error)
 	HasChunks(ctx context.Context, videoID string) (bool, error)
+}
+
+// queryVectors memoizes one question's embedding across the retrieval passes a
+// single request may make. Embedding is the one network call in retrieval, and
+// it depends on the question alone — not on which videos are being searched — so
+// a relaxation pass that widens the filter has nothing to re-embed. err is
+// carried too: a failed embed must degrade to FTS-only on both passes rather
+// than being retried once per pass.
+type queryVectors struct {
+	done bool
+	vecs [][]float32
+	err  error
 }
 
 // searchMatch is one hit within a search result's video, in the shape the
@@ -283,7 +298,7 @@ func (s *server) retrieveFind(r *http.Request, q string) []rag.Hit {
 // resolve a channel name or a "unwatched" from. A JSON caller that wants a
 // narrowed search has /api/videos' own filters for that.
 func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
-	lanes, diag := s.askLanes(r, q, "", rag.Filter{})
+	lanes, diag := s.askLanes(r, q, "", rag.Filter{}, nil)
 	fused := rag.FuseWeighted(lanes, searchCandidates)
 	diag.log(q, fused)
 	return fused
@@ -303,7 +318,13 @@ func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
 // reader who asked about one channel does not want the recall floor answering
 // from another. rag.Filter{} means the whole library, which is what every caller
 // but handleAnswer passes.
-func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter) ([]rag.Lane, askDiag) {
+//
+// qv carries the embedded query across calls. A relaxation pass re-runs
+// retrieval with the filter dropped, and it must not pay a second embedding
+// round-trip to ask the same question of a wider set — the vectors do not depend
+// on the filter. nil means "embed and discard", which is what a caller that runs
+// once wants.
+func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, qv *queryVectors) ([]rag.Lane, askDiag) {
 	lanes := make([]rag.Lane, 0, 6)
 
 	// Keyword lane, relaxed in steps: a natural question ANDs its function words
@@ -377,8 +398,19 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter) (
 			inputs = append(inputs, topic)
 		}
 		embedStart := time.Now()
-		vecs, err := s.embedder.Embed(r.Context(), inputs)
-		diag.embedMs = time.Since(embedStart).Milliseconds()
+		var vecs [][]float32
+		var err error
+		if qv != nil && qv.done {
+			// Second pass over the same question: reuse rather than re-embed.
+			// Recorded as 0ms, which is what it cost.
+			vecs, err = qv.vecs, qv.err
+		} else {
+			vecs, err = s.embedder.Embed(r.Context(), inputs)
+			if qv != nil {
+				qv.done, qv.vecs, qv.err = true, vecs, err
+			}
+			diag.embedMs = time.Since(embedStart).Milliseconds()
+		}
 		if err != nil {
 			// Semantic unavailable (endpoint down/misconfigured); fall back to
 			// FTS-only rather than failing the whole search.
@@ -509,6 +541,20 @@ type askDiag struct {
 	understand   string
 	understandMs int64
 
+	// The structured half of the question, also filled by the caller.
+	//
+	// All four are needed to tell apart failures that look identical from
+	// outside. filters is what was APPLIED; filtersDropped is what the model
+	// produced and Go refused; unresolved is a channel the library does not
+	// have; relaxed says the filter found nothing and was dropped. A search that
+	// quietly returned the whole library could be any of the last three, and
+	// they call for different fixes — a prompt change, a resolver change, or
+	// nothing at all.
+	filters        string
+	filtersDropped []string
+	unresolved     []string
+	relaxed        bool
+
 	embedMs, ftsMs, retrievalMs int64
 
 	// excerpts is the attribution the caller fills in once it knows which
@@ -615,6 +661,13 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 		"intent", d.intent,
 		"understand", understand,
 		"understand_ms", d.understandMs,
+		// What the question asked for structurally and what became of it. A
+		// filter that silently vanished is the failure mode this whole feature
+		// introduces, and these four fields are the only place it is visible.
+		"filters", orDash(d.filters),
+		"filters_dropped", orDash(strings.Join(d.filtersDropped, "|")),
+		"channels_unresolved", orDash(strings.Join(d.unresolved, "|")),
+		"relaxed", d.relaxed,
 		"keyword_rungs", rungs,
 		// bounded → kept, plus the distance range, per lane. Comparing the two
 		// ranges on one question is the recalibration data for DefaultMaxDistance
@@ -625,6 +678,16 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 		"excerpts", excerpts,
 		"ms", fmt.Sprintf("embed=%d fts=%d retrieval=%d", d.embedMs, d.ftsMs, d.retrievalMs),
 	)
+}
+
+// orDash keeps an absent value out of the log as "-" rather than as an empty
+// string, so a field that was never set reads differently from one deliberately
+// set to nothing — the same convention semLaneDiag.String uses.
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // distinctVideos counts how many different videos a set of hits covers, which is

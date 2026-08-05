@@ -831,6 +831,12 @@ func (f *failingRag) RetrieveWithinFiltered(ctx context.Context, q []float32, k 
 	return f.real.RetrieveWithinFiltered(ctx, q, k, maxDistance, flt)
 }
 
+// CountVideos is the inventory path, which is fail-soft in its own way: a count
+// that errors is dropped rather than shown, so it always delegates here.
+func (f *failingRag) CountVideos(ctx context.Context, flt rag.Filter) (rag.LibraryCount, error) {
+	return f.real.CountVideos(ctx, flt)
+}
+
 // HasChunks belongs to the ignore path, not the search path, so it always
 // delegates: no test here breaks it.
 func (f *failingRag) HasChunks(ctx context.Context, videoID string) (bool, error) {

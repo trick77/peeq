@@ -85,7 +85,7 @@ func TestAskEffortSweep(t *testing.T) {
 
 			start := time.Now()
 			var ttft time.Duration
-			answer, err := client.CompleteStream(ctx, answerMessages(q, sweepExcerpts), func(string) {
+			answer, err := client.CompleteStream(ctx, answerMessages(q, sweepExcerpts, nil, nil, nil), func(string) {
 				if ttft == 0 {
 					ttft = time.Since(start)
 				}
@@ -228,7 +228,7 @@ func TestAskEffortIsInert(t *testing.T) {
 			ctx = s.decorate(llm.WithMaxTokens(ctx, answerMaxTokens))
 			start := time.Now()
 			var ttft time.Duration
-			if _, err := client.CompleteStream(ctx, answerMessages(q, sweepExcerpts), func(string) {
+			if _, err := client.CompleteStream(ctx, answerMessages(q, sweepExcerpts, nil, nil, nil), func(string) {
 				if ttft == 0 {
 					ttft = time.Since(start)
 				}
@@ -272,7 +272,7 @@ func TestAskThinkingQuality(t *testing.T) {
 			}
 			start := time.Now()
 			var ttft time.Duration
-			answer, err := client.CompleteStream(ctx, answerMessages(q, sweepExcerpts), func(string) {
+			answer, err := client.CompleteStream(ctx, answerMessages(q, sweepExcerpts, nil, nil, nil), func(string) {
 				if ttft == 0 {
 					ttft = time.Since(start)
 				}
