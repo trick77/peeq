@@ -119,7 +119,23 @@ export function Search({
   // would silently stop matching the moment the phases were split apart.
   const answerStreaming =
     mode === "ask" && answer != null && answer.status !== "done";
-  const matchCount = results?.reduce((n, r) => n + r.matches.length, 0) ?? 0;
+  // A moment is a point IN a video, and only a chapter or a transcript hit is
+  // one. A summary hit matched the description of the whole thing: it has no
+  // timestamp of its own — it is stored at 0 — and its row seeks nowhere, so
+  // counting it said "1 moment" about a video where there was no moment to go
+  // to. Every other place already treats it as the odd one out: momentOrder
+  // hoists it above the timestamped rows, and it is the last kind still wearing
+  // a badge.
+  //
+  // The video count above it is left alone. A video that matched only on its
+  // summary WAS found, and dropping it from that number would leave the search
+  // silently disowning a card sitting right below the header. It reads as
+  // "3 videos · 5 moments" — the videos found, and the points inside them.
+  const matchCount =
+    results?.reduce(
+      (n, r) => n + r.matches.filter((m) => m.kind !== "summary").length,
+      0,
+    ) ?? 0;
 
   // What retrieval found and the answer did not quote. The subtraction happens
   // here, and it has to happen on the client: the coverage frame goes out before
