@@ -200,7 +200,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	diag.log(q, hits)
 	if !send("sources", map[string]any{
 		"sources": sources, "videos": vids,
-		"coverage": s.coverageVideos(hits, relevantVideos(lanes)),
+		"coverage": s.coverageVideos(hits, relevantVideos(lanes, diag.topicLane)),
 	}) {
 		return // client gone
 	}
@@ -237,6 +237,13 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// makes it deliberately.
 	ctx := llm.WithMaxTokens(r.Context(), answerMaxTokens)
 	ctx = llm.WithCall(ctx, llm.CallInfo{Step: "answer"})
+	// THE RAW QUESTION, and never the extracted topic. The two exist for
+	// different consumers and must not be confused: the topic is a retrieval
+	// input, deliberately stripped down to what would appear in a video about the
+	// subject, and it throws away everything that tells the model what kind of
+	// answer is wanted — "what material do we have on X" and "how does X work"
+	// reduce to the same topic and want different answers. The model gets the
+	// sentence the reader actually wrote; only the embedder sees the reduction.
 	answer, err := s.ask.CompleteStream(ctx, answerMessages(q, excerpts), func(delta string) {
 		// A send error means the browser disconnected. Nothing to do about it
 		// here; the request context is already cancelled, which unwinds the
@@ -345,10 +352,25 @@ const coverageMaxVideos = 20
 // question, and the strict, content and prefix rungs mean every content word is
 // present. WeightKeywordAny is the lowest weight of the five, so "above the floor"
 // is the test, and it stays correct if a rung is added.
-func relevantVideos(lanes []rag.Lane) map[string]bool {
+//
+// THE TOPIC LANE IS EXCLUDED, at excludeLane, and its weight is not why. The
+// safety argument for the rewritten query is that a bad rewrite is outvoted by
+// the four lanes that did not change — and that argument holds at FUSION, which
+// is a vote, but NOT here, which is a UNION. One lane is enough to put a video in
+// this list, so a topic mis-extracted as "material science" would seat
+// material-science videos in it with nothing to outrank them. That is exactly the
+// failure #350 tightened this list against.
+//
+// It costs the feature's best case: a good extraction reaching videos the raw
+// question never did. Taken deliberately while the rewrite is unmeasured — the
+// answer still gets the topic lane's evidence, which is where the value is, and
+// this is one line to give back once the logs say the rewrite can be trusted.
+//
+// excludeLane is -1 when there is no topic lane.
+func relevantVideos(lanes []rag.Lane, excludeLane int) map[string]bool {
 	out := make(map[string]bool)
-	for _, lane := range lanes {
-		if lane.Weight <= rag.WeightKeywordAny {
+	for i, lane := range lanes {
+		if i == excludeLane || lane.Weight <= rag.WeightKeywordAny {
 			continue
 		}
 		for _, h := range lane.Hits {

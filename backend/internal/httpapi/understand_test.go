@@ -323,6 +323,76 @@ func TestAttributionKeysOnTheChunkNotTheSecond(t *testing.T) {
 	}
 }
 
+// The topic is a RETRIEVAL input and nothing else. It is stripped down to what
+// would appear in a video about the subject, which throws away everything that
+// says what kind of answer is wanted — "what material do we have on X" and "how
+// does X work" reduce to the same topic and want different answers. So the model
+// must be handed the sentence the reader actually wrote.
+func TestTheModelSeesTheWholeQuestionNotTheTopic(t *testing.T) {
+	deps, ask := answerDeps(t)
+	deps.Understand = &fakeUnderstander{
+		reply: `{"topic":"electrolytes","intent":"inventory"}`,
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	// Phrased so retrieval actually finds the seeded passage — with no sources
+	// the model is never called, and the assertion below would pass vacuously.
+	const q = "what material about electrolytes do we have"
+	rec := doReq(t, h, cookie, http.MethodGet,
+		"/api/search/answer?q="+strings.ReplaceAll(q, " ", "+"), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !ask.called {
+		t.Fatal("the model was never called")
+	}
+
+	var prompt string
+	for _, m := range ask.messages {
+		if m.Role == "user" {
+			prompt = m.Content
+		}
+	}
+	if !strings.Contains(prompt, q) {
+		t.Errorf("the model must see the whole question, got: %q", prompt)
+	}
+	// Not a style point: the reduced query reaching the prompt would quietly
+	// change what the answer is written to address.
+	if strings.Contains(prompt, "Question: electrolytes\n") {
+		t.Errorf("the reduced query reached the answer prompt: %q", prompt)
+	}
+}
+
+// Coverage is a UNION, not a vote, so one lane is enough to seat a video in
+// "Also in your library". The rewrite's safety argument — a bad topic is
+// outvoted by the lanes that did not change — holds at fusion and not here, so
+// the topic lane stays out until the rewrite has been measured.
+func TestCoverageExcludesTheTopicLane(t *testing.T) {
+	lanes := []rag.Lane{
+		{Hits: []rag.Hit{{VideoID: "kept", Ordinal: 1}}, Weight: rag.WeightKeywordStrict},
+		{Hits: []rag.Hit{{VideoID: "raw", Ordinal: 2}}, Weight: rag.WeightSemantic},
+		{Hits: []rag.Hit{{VideoID: "from-topic", Ordinal: 3}}, Weight: rag.WeightSemanticTopic},
+		{Hits: []rag.Hit{{VideoID: "floor", Ordinal: 4}}, Weight: rag.WeightKeywordAny},
+	}
+	got := relevantVideos(lanes, 2)
+
+	if !got["kept"] || !got["raw"] {
+		t.Errorf("the unchanged lanes must still seat their videos: %v", got)
+	}
+	if got["from-topic"] {
+		t.Error("a video only the topic lane found must not reach the coverage list")
+	}
+	if got["floor"] {
+		t.Error("the recall floor is still out, as #350 established")
+	}
+
+	// -1 is "no topic lane ran", and must not silently drop lane 0.
+	if all := relevantVideos(lanes, -1); !all["from-topic"] {
+		t.Error("with no topic lane to exclude, every lane above the floor counts")
+	}
+}
+
 // A path with no excerpts to attribute must not read as "the lanes contributed
 // nothing" — those are different facts.
 func TestUnattributedDiagIsNotZero(t *testing.T) {

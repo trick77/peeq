@@ -797,7 +797,7 @@ func TestCoverageVideosExcludesFloorOnlyVideos(t *testing.T) {
 	hits := rag.FuseWeighted(lanes, searchCandidates)
 
 	testee := &server{videos: deps.Videos}
-	got := testee.coverageVideos(hits, relevantVideos(lanes))
+	got := testee.coverageVideos(hits, relevantVideos(lanes, -1))
 
 	if len(got) != 1 || got[0].ID != "geometry" {
 		t.Errorf("coverage = %+v, want only the video a lane above the floor found", got)
@@ -817,7 +817,7 @@ func TestCoverageVideosKeepsStrongKeywordRungs(t *testing.T) {
 	hits := rag.FuseWeighted(lanes, searchCandidates)
 
 	testee := &server{videos: deps.Videos}
-	if got := testee.coverageVideos(hits, relevantVideos(lanes)); len(got) != 1 {
+	if got := testee.coverageVideos(hits, relevantVideos(lanes, -1)); len(got) != 1 {
 		t.Errorf("coverage = %+v, want the content-rung video kept", got)
 	}
 }
@@ -835,7 +835,7 @@ func TestCoverageVideosEmptyWhenOnlyTheFloorRan(t *testing.T) {
 	hits := rag.FuseWeighted(lanes, searchCandidates)
 
 	testee := &server{videos: deps.Videos}
-	if got := testee.coverageVideos(hits, relevantVideos(lanes)); len(got) != 0 {
+	if got := testee.coverageVideos(hits, relevantVideos(lanes, -1)); len(got) != 0 {
 		t.Errorf("coverage = %+v, want empty", got)
 	}
 }
