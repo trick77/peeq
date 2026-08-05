@@ -290,17 +290,21 @@ export function Search({
       {!loading && !answerStreaming && alsoRows.length ? (
         <>
           <div className="also-head">
-            <span className="also-head-t">Also in your library</span>
-            {/* "N videos", not a bare "N" — the same words and the same place
-                the matches header counts in, so the two rows read as one family
-                rather than one of them dropping its unit.
-
-                DOT leads it, and it carries its own en spaces (see sep.ts), so
-                .also-head sets no gap: the separator does that spacing itself,
-                the way it does between the counts in the matches header. */}
-            <span className="n mono">
-              {DOT}
-              {alsoRows.length} video{alsoRows.length === 1 ? "" : "s"}
+            {/* Label and count are ONE flex item, not two. The separator between
+                them is DOT, which carries its own en spaces (see sep.ts), so they
+                must not also be spaced by the row's gap — and that gap has to
+                stay, because it is the only thing keeping the clear button off
+                the count once the row runs out of width on a phone. Wrapping the
+                pair is what lets both be true. */}
+            <span className="also-head-txt">
+              <span className="also-head-t">Also in your library</span>
+              {/* "N videos", not a bare "N" — the same words and the same place
+                  the matches header counts in, so the two rows read as one family
+                  rather than one of them dropping its unit. */}
+              <span className="n mono">
+                {DOT}
+                {alsoRows.length} video{alsoRows.length === 1 ? "" : "s"}
+              </span>
             </span>
             {/* The way out of the search lives in the matches header — and that
                 header is exactly what is missing when the answer cited nothing,

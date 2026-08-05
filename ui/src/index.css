@@ -5167,13 +5167,19 @@ details.tomb-sect[open] > summary svg {
 .also-head {
   display: flex;
   align-items: baseline;
-  /* No gap: the count leads with DOT, which carries its own en spaces, and a
-     flex gap on top of them would space this row wider than the matches header
-     it is built to match. The clear button is pushed right by its own margin,
-     so it needs nothing from here either. */
-  gap: 0;
+  /* Between the TEXT and the button, and nothing else — the label and its count
+     are one item (.also-head-txt) precisely so this gap cannot land between
+     them, where DOT's own en spaces already do the spacing. It is also the
+     minimum that keeps the clear button off the count when the row runs out of
+     width: margin-left:auto collapses to zero under pressure, a gap does not. */
+  gap: 10px;
   margin: 22px 2px 12px;
   color: var(--color-muted);
+}
+/* Plain inline flow, not a nested flex row, so the label and its count wrap as
+   one phrase on a narrow screen instead of the label alone breaking mid-word. */
+.also-head-txt {
+  min-width: 0;
 }
 .also-head-t {
   font-family: var(--font-serif);
@@ -5181,6 +5187,11 @@ details.tomb-sect[open] > summary svg {
 }
 .also-head .n {
   font-size: 13px;
+  /* The count is one word for wrapping purposes. Left to break, a narrow phone
+     puts "20" at the end of one line and "videos" at the start of the next,
+     which reads as a number that lost its unit. The label above it is what
+     wraps instead — it has spaces to give. */
+  white-space: nowrap;
 }
 /* Present only when the matches header is not — see Search. Pushed right, which
    is where this button sits in the header it stands in for. */
