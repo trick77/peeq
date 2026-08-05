@@ -1,4 +1,5 @@
 import { splitCitations, type AnswerPart } from "./citations";
+import { applyEmphasis, type EmphasisMark } from "./emphasis";
 import type { AnswerSource, AnswerVideo } from "./api/answer";
 import type { SearchMatch } from "./api/search";
 
@@ -78,8 +79,12 @@ export function citedInOrder(
 // the backend number must not reach any rendered string — a mark drawn as 2
 // whose label says "Source 4" sends a screen-reader user to a row that is not
 // there.
+// `mark` is the inline markdown the model leaked and the body renders rather
+// than shows the delimiters of — see emphasis.ts. Absent on ordinary prose,
+// which is nearly all of it.
 export type RenderedPart =
-  { kind: "text"; text: string } | { kind: "cite"; source: CitedSource };
+  | { kind: "text"; text: string; mark?: EmphasisMark }
+  | { kind: "cite"; source: CitedSource };
 
 // answerParts resolves an answer into the parts its body renders, collapsing a
 // run of ADJACENT citations that all show the same numeral down to the first.
@@ -115,7 +120,9 @@ export type RenderedPart =
 //
 // Two more passes run before the collapse, each with its own note below: a
 // markdown bullet the model opened a line with is stripped (stripListMarkers),
-// and the marks of a run are put in ascending order (sortRunsAscending).
+// and the marks of a run are put in ascending order (sortRunsAscending). One
+// runs after it: the markdown emphasis the model leaked is turned into marks on
+// the text parts rather than left on screen as delimiters (applyEmphasis).
 //
 // Stable while streaming: text only ever grows at the end, so a run already
 // collapsed stays collapsed and no mark appears, disappears, or renumbers under
@@ -177,7 +184,12 @@ export function answerParts(
     lastCite = source;
   }
   flushHeld();
-  return out;
+  // Emphasis runs LAST, on the parts rather than on the text. Everything above
+  // decides which mark is which number and where it sits; this only drops
+  // markdown delimiters and flags what they enclosed, and running it here means
+  // it cannot reach any of that. Working on the parts is also what lets a bold
+  // span cross a citation and still be one span.
+  return applyEmphasis(out, streaming);
 }
 
 // Punctuation a mark belongs after rather than before: what ends a sentence, and

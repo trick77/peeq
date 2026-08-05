@@ -550,9 +550,10 @@ func TestAnswerVideosOmitTheSummaryText(t *testing.T) {
 	}
 }
 
-// The answer body renders as plain text, so a markdown bullet the model opens a
-// line with reaches the reader as a stray hyphen mid-paragraph. The UI strips one
-// if it arrives; this rule is the half that asks for prose in the first place, and
+// The answer body is flowing prose, so a markdown bullet the model opens a line
+// with reaches the reader as a stray hyphen mid-paragraph. The UI strips one if it
+// arrives (and renders the inline emphasis that leaks through — see ui/src/
+// emphasis.ts); this rule is the half that asks for prose in the first place, and
 // a reword that quietly drops it would put the hyphen back.
 func TestAnswerPromptAsksForProseNotLists(t *testing.T) {
 	msgs := answerMessages("why are they not stars?", []string{"an excerpt"}, nil, nil, nil)

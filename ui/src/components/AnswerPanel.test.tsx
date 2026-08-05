@@ -469,6 +469,54 @@ describe("AnswerPanel", () => {
     expect(body).toHaveAttribute("aria-live", "polite");
     expect(body).toHaveAttribute("aria-busy", "true");
   });
+
+  // The reported bug: the model bolds a video title and the reader sees the
+  // asterisks. The prompt asks for prose and this is the second half of that,
+  // exactly as stripListMarkers is for bullets.
+  describe("markdown the model leaked", () => {
+    it("renders bold, code and a heading as their elements", () => {
+      render(
+        <Panel
+          state={state({
+            text: 'The **"Why Athletes Cramp"** talk runs `npm test`.\n## Next\nMore.',
+          })}
+        />,
+      );
+      const body = document.querySelector(".answer-body")!;
+      expect(body.querySelector("strong:not(.answer-lead)")?.textContent).toBe(
+        '"Why Athletes Cramp"',
+      );
+      expect(body.querySelector("code")?.textContent).toBe("npm test");
+      expect(body.querySelector(".answer-lead")?.textContent).toBe("Next");
+      // Nothing of the syntax itself reaches the page.
+      expect(body.textContent).not.toContain("*");
+      expect(body.textContent).not.toContain("`");
+      expect(body.textContent).not.toContain("#");
+    });
+
+    // The optimistic open, seen from the DOM: the <strong> and the segments
+    // inside it survive the closing delimiter's arrival untouched, so nothing
+    // already on screen re-runs its fade.
+    it("keeps the bold element and its segments across the closer", () => {
+      const { rerender } = render(
+        <Panel
+          state={state({ status: "generating", text: "The **Why Ath" })}
+        />,
+      );
+      const segments = () =>
+        [...document.querySelectorAll(".answer-body strong .ans-seg")].map(
+          (n) => n.textContent,
+        );
+      const before = document.querySelector(".answer-body strong")!;
+      const beforeSegments = segments();
+      expect(beforeSegments.join("")).toBe("Why Ath");
+
+      rerender(<Panel state={state({ text: "The **Why Ath**letes." })} />);
+      // Same element instance, and the segments it already held are unchanged.
+      expect(document.querySelector(".answer-body strong")).toBe(before);
+      expect(segments()).toEqual(beforeSegments);
+    });
+  });
 });
 
 // The coverage list moved OUT of this panel: it is a tier of compact video cards

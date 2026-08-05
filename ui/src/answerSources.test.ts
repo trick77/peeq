@@ -435,6 +435,34 @@ describe("stripListMarkers", () => {
     expect(text).not.toContain("-");
     expect(text).toContain("\nNext point.");
   });
+
+  // The two passes meet on a line opening with "**". LIST_MARKER needs
+  // whitespace after the bullet character, which the second asterisk is not, so
+  // the completed form is never touched. TRAILING_LIST_MARKER does match the
+  // half-arrived "\n*" — but a lone opener renders nothing either way (see
+  // emphasis.ts: the delimiters are never on screen), so the frame it costs is
+  // invisible rather than a flash.
+  it("leaves a line-leading bold marker for the emphasis pass", () => {
+    expect(stripListMarkers("Lead.\n**Bold** then.")).toBe(
+      "Lead.\n**Bold** then.",
+    );
+    expect(stripListMarkers("Lead.\n**Bo", true)).toBe("Lead.\n**Bo");
+  });
+});
+
+describe("answerParts emphasis", () => {
+  // The reported bug, through the whole pipeline: the model bolded a video
+  // title and the reader saw the asterisks.
+  it("renders bold as a mark rather than as delimiters", () => {
+    const parts = answerParts('The **"Why Ontologies"** talk.[1]', [src(1)]);
+    const text = parts.map((p) => (p.kind === "text" ? p.text : "")).join("");
+    expect(text).not.toContain("*");
+    expect(parts).toContainEqual({
+      kind: "text",
+      text: '"Why Ontologies"',
+      mark: "strong",
+    });
+  });
 });
 
 describe("groupCited", () => {
