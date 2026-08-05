@@ -25,8 +25,13 @@ import { DOT } from "../sep";
 // and a summary match go through `onOpenVideo` instead — no seek at all, which
 // is not the same as a seek to zero.
 
-// Copy per mode. Find leads with precision, Ask with the fact that a whole
-// question is allowed — the signal that was missing when one box did both.
+// Copy per mode. Find leads with precision; Ask leads with the work it does on
+// the question, not with how it retrieves. "Searches by meaning, not just
+// wording" described a synonym trick and undersold the rest: Ask works out what
+// is really being asked, pulls conditions out of the sentence and checks them
+// against the real library, compares across videos, counts from the database,
+// and writes a cited answer. None of that reads as available if the pitch is
+// about wording.
 const MODE_COPY: Record<
   SearchMode,
   { lead: string; hint: string; placeholder: string }
@@ -37,9 +42,16 @@ const MODE_COPY: Record<
     placeholder: "electrolytes endurance",
   },
   ask: {
-    lead: "Ask Peeq about anything in your library.",
-    hint: "Searches by meaning, not just wording — ask a full question and jump straight to the moment.",
-    placeholder: "Did someone ever talk about electrolytes in endurance sport?",
+    lead: "Ask like you'd ask someone who watched it all.",
+    // "the moments behind it" rather than the old "jump straight to the
+    // moment": a summary match has no timestamp and does not seek (see above).
+    hint: "Peeq works out what you're really after, goes through your library, and comes back with an answer and the moments behind it.",
+    // The placeholder is the one place that teaches phrasing by example, so it
+    // carries a condition inside the question. It names no channel on purpose —
+    // a placeholder implying a channel the library does not have is a promise
+    // the first search breaks.
+    placeholder:
+      "Which unwatched video explains electrolytes in endurance sport?",
   },
 };
 
@@ -51,6 +63,20 @@ const OPERATORS: { syntax: string; means: string }[] = [
   { syntax: "sodium OR calcium", means: "either term" },
   { syntax: "cramp*", means: "starts with" },
   { syntax: "hydration NOT ad", means: "exclude" },
+];
+
+// Ask's counterpart to that row: the conditions the question itself may carry.
+// Ask resolves a channel by name, watched/unwatched, favourites, a category and
+// a date range straight out of the sentence, which is the capability nobody
+// guesses from a search box. Fragments rather than whole questions, because the
+// lesson is that these belong inside a sentence — and because a canned question
+// naming a channel this library does not have would be a demo that finds
+// nothing.
+const CONDITIONS: string[] = [
+  "…that I haven't watched",
+  "…on a channel, by name",
+  "…since last summer",
+  "…how many are there",
 ];
 
 export function Search({
@@ -217,7 +243,14 @@ export function Search({
               </code>
             ))}
           </div>
-        ) : null}
+        ) : (
+          <div className="syntax conditions">
+            <span className="cap">Say it in the question</span>
+            {CONDITIONS.map((c) => (
+              <span key={c}>{c}</span>
+            ))}
+          </div>
+        )}
       </div>
 
       {error ? <div className="errline">{error}</div> : null}
