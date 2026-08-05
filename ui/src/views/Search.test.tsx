@@ -627,7 +627,9 @@ describe("Search — the Ask answer", () => {
       expect(document.querySelector(".results-head .n")?.textContent).toContain(
         "1 video",
       );
-      expect(document.querySelector(".also-head .n")?.textContent).toBe("2");
+      expect(document.querySelector(".also-head .n")?.textContent).toBe(
+        "2 videos",
+      );
     });
 
     it("shows nothing when every retrieved video was cited", async () => {

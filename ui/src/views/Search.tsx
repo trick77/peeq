@@ -291,7 +291,12 @@ export function Search({
         <>
           <div className="also-head">
             <span className="also-head-t">Also in your library</span>
-            <span className="n mono">{alsoRows.length}</span>
+            {/* "N videos", not a bare "N" — the same words and the same place
+                the matches header counts in, so the two rows read as one family
+                rather than one of them dropping its unit. */}
+            <span className="n mono">
+              {alsoRows.length} video{alsoRows.length === 1 ? "" : "s"}
+            </span>
             {/* The way out of the search lives in the matches header — and that
                 header is exactly what is missing when the answer cited nothing,
                 which is the one case this block renders on its own. Without this

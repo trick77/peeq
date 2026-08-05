@@ -5156,7 +5156,14 @@ details.tomb-sect[open] > summary svg {
    The heading carries its OWN count rather than joining the matches header's.
    That header says what the answer stood on; coverageMaxVideos is 20 and an
    answer typically cites two or three, so folding them together would overstate
-   it by an order of magnitude. */
+   it by an order of magnitude.
+
+   Built as .results-head is, down to the rule order, because it is the same kind
+   of row and the page already has one of these. It was briefly a label, a rule
+   spanning the gap, and the count out at the far end — which left the number
+   with nothing to belong to: too far from its label to read as its count, and
+   not at an edge either once the clear button sat beyond it. The count goes
+   straight after the words it counts. */
 .also-head {
   display: flex;
   align-items: baseline;
@@ -5168,26 +5175,14 @@ details.tomb-sect[open] > summary svg {
   font-family: var(--font-serif);
   font-size: 15px;
 }
-/* The rule runs from the label to the count, so the group reads as one band
-   rather than as a stray line of text above unrelated cards. */
-.also-head::after {
-  content: "";
-  flex: 1 1 auto;
-  align-self: center;
-  height: 1px;
-  background: var(--color-border);
-}
 .also-head .n {
-  order: 3;
   font-size: 13px;
 }
-/* Only present when the matches header is not — see Search. After the count, so
-   the rule still runs from the label to the numbers rather than stopping at a
-   button in the middle of the row. */
+/* Present only when the matches header is not — see Search. Pushed right, which
+   is where this button sits in the header it stands in for. */
 .also-head .clear-results {
-  order: 4;
+  margin-left: auto;
   align-self: center;
-  margin-left: 4px;
 }
 
 /* Mode switch — Find vs Ask. Segmented, both options always visible, so the
