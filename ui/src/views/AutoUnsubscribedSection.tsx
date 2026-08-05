@@ -1,6 +1,7 @@
 import { Icon } from "../icons";
 import { Button } from "../ui";
 import type { AutoUnsubscribedChannel } from "../api/types";
+import { toDate } from "../format";
 
 // reasonLabel maps the store's `reason` code to the sentence shown next to
 // the tomb-life dot. Only "deleted" is produced today (channels.ReasonDeleted),
@@ -53,7 +54,7 @@ export function AutoUnsubscribedSection({
                   {reasonLabel(c.reason)}
                 </span>
                 <span className="dot">·</span>
-                <span>Unsubscribed {new Date(c.at).toLocaleDateString()}</span>
+                <span>Unsubscribed {toDate(c.at).toLocaleDateString()}</span>
               </div>
               <div className="by" style={{ color: "var(--color-faint)" }}>
                 Archived videos were kept — nothing was deleted.

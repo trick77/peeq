@@ -99,6 +99,17 @@ export type AnswerEvent =
   | { type: "done" }
   | { type: "error"; message: string };
 
+// localToday is the asker's own calendar date, as "YYYY-MM-DD". Built from the
+// local getters rather than toISOString(), which would give UTC's date — the
+// one thing this must not be. It rides along on the question because "since
+// March" and "what did I watch yesterday" are resolved against a "today", and
+// the server's idea of that is its own machine's, which may be a day off from
+// the person typing.
+function localToday(now: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+}
+
 // streamAnswer opens the answer stream and narrows each frame, ignoring frames
 // it does not recognise. Resolves when the server closes the stream or the
 // signal aborts; rejects only on a transport or auth failure, since every
@@ -109,7 +120,7 @@ export async function streamAnswer(
   signal?: AbortSignal,
 ): Promise<void> {
   await streamSSE(
-    `/api/search/answer?q=${encodeURIComponent(q)}`,
+    `/api/search/answer?q=${encodeURIComponent(q)}&today=${localToday()}`,
     ({ event, data }) => {
       switch (event) {
         case "progress": {

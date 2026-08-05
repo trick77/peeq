@@ -233,7 +233,24 @@ const understandExampleYearStart = "<the 1st of January of the current year>"
 // understandQuery runs the pre-retrieval call. It NEVER returns an error: every
 // failure degrades to the raw question, which is exactly the behaviour Ask had
 // before this step existed. The diag says which way it went.
-func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstanding, understandDiag) {
+// askerToday resolves the date the question is asked relative to. The client
+// sends its OWN calendar date, because that is the only clock "yesterday" and
+// "since March" can honestly mean — the server's local date belongs to whatever
+// machine peeq happens to run on, which for a self-hosted instance reached from
+// a phone abroad can be a day out.
+//
+// The fallback is UTC, not time.Now(): the bounds this call produces are matched
+// against published_at, which is a UTC date. An unset or malformed parameter is
+// silently ignored rather than failing the ask — it is a hint, and the whole
+// understand step already degrades to the raw question on any trouble.
+func askerToday(today string, now time.Time) string {
+	if _, err := time.Parse("2006-01-02", today); err == nil {
+		return today
+	}
+	return now.UTC().Format("2006-01-02")
+}
+
+func (s *server) understandQuery(ctx context.Context, q, today string) (queryUnderstanding, understandDiag) {
 	// Not wired (chat unavailable, or a deployment that never configured it).
 	// Ask still answers; it just answers the way it did before.
 	if s.understand == nil {
@@ -258,10 +275,11 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 	// Today's date rides on the USER message, not the system one: it changes
 	// daily, and putting it in the system prompt would break the prompt cache
 	// every midnight for a call whose whole point is to be cheap. "since March"
-	// cannot be resolved without it.
+	// cannot be resolved without it — and it is the ASKER's today, not this
+	// machine's, which is what askerToday is for.
 	raw, err := s.understand.Complete(cctx, []llm.Message{
 		{Role: "system", Content: understandSystemPrompt},
-		{Role: "user", Content: "Today is " + started.Format("2006-01-02") + ".\nQ: " + q},
+		{Role: "user", Content: "Today is " + askerToday(today, started) + ".\nQ: " + q},
 	})
 	elapsed := time.Since(started).Milliseconds()
 

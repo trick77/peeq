@@ -68,22 +68,45 @@ export function summaryPhaseLabel(phase: string | undefined): string {
   return summaryPhaseInfo(phase).label;
 }
 
-// parseStamp turns any timestamp the backend sends into a Date.
+// toDate turns any timestamp the backend sends into a Date.
 //
 // Two shapes arrive. Date-only ('2026-03-01', from published_at) and true ISO
-// ('...Z') both parse as UTC, which is right. But SQLite's datetime('now')
-// yields '2026-03-01 09:00:00' — UTC with no zone marker — and JS parses that
-// space-separated form as LOCAL time, silently shifting the age by the
-// viewer's UTC offset and flipping "today" to "1 day ago" near a boundary.
-// Elsewhere the fix is spelled out at each call site (`new Date(x + "Z")` in
-// Channel.tsx, `x.replace(" ", "T") + "Z"` in Activity.tsx); doing it here
-// means daysSince and both formatters get it for free, whatever they are
-// handed.
-function parseStamp(iso: string): number {
+// ('...Z', from checked_at) both parse as UTC, which is right. But SQLite's
+// datetime('now') yields '2026-03-01 09:00:00' — UTC with no zone marker — and
+// JS parses that space-separated form as LOCAL time, silently shifting the age
+// by the viewer's UTC offset and flipping "today" to "1 day ago" near a
+// boundary.
+//
+// Nothing peeq stores is in server time: every write path formats through
+// .UTC() first. So the only thing standing between a stored instant and the
+// viewer's own clock is this one rewrite — which is why it is exported and why
+// no view should build a Date from a backend string any other way. Four screens
+// used to call `new Date(x)` directly and showed the offset (Settings) or a
+// date off by one near midnight (the channel review band); routing everything
+// through here is what keeps that from coming back.
+export function toDate(iso: string): Date {
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(iso)
     ? iso.replace(" ", "T") + "Z"
     : iso;
-  return new Date(normalized).getTime();
+  return new Date(normalized);
+}
+
+function parseStamp(iso: string): number {
+  return toDate(iso).getTime();
+}
+
+// formatAbsolute spells a stored instant out in full, in the viewer's own zone
+// and locale — for the places that show an exact time rather than an age: the
+// Settings receipts, and History's clock tooltip (which is the only way to tell
+// which day a 01:00 entry belongs to).
+//
+// Unparseable input reads as empty rather than "Invalid Date", so a caller can
+// concatenate it into a sentence without guarding.
+export function formatAbsolute(iso: string | undefined): string {
+  if (!iso) return "";
+  const d = toDate(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString();
 }
 
 // daysBetween returns the whole number of days elapsed from `from` (an ISO

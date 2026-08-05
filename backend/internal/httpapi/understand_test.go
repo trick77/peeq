@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/rag"
@@ -140,7 +141,7 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 
 	t.Run("no understander wired", func(t *testing.T) {
 		s := &server{}
-		u, d := s.understandQuery(context.Background(), q)
+		u, d := s.understandQuery(context.Background(), q, "")
 		if d.status != understandSkipped {
 			t.Errorf("status = %q, want skipped", d.status)
 		}
@@ -154,7 +155,7 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 
 	t.Run("call fails", func(t *testing.T) {
 		s := &server{understand: &fakeUnderstander{err: errors.New("upstream down")}}
-		u, d := s.understandQuery(context.Background(), q)
+		u, d := s.understandQuery(context.Background(), q, "")
 		if d.status != understandFailed {
 			t.Errorf("status = %q, want failed", d.status)
 		}
@@ -165,7 +166,7 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 
 	t.Run("unparseable reply", func(t *testing.T) {
 		s := &server{understand: &fakeUnderstander{reply: "bike geometry, probably"}}
-		_, d := s.understandQuery(context.Background(), q)
+		_, d := s.understandQuery(context.Background(), q, "")
 		if d.status != understandFailed {
 			t.Errorf("status = %q, want failed", d.status)
 		}
@@ -174,7 +175,7 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 	t.Run("topic that merely repeats the question is a noop", func(t *testing.T) {
 		reply, _ := json.Marshal(map[string]string{"topic": q, "intent": "content"})
 		s := &server{understand: &fakeUnderstander{reply: string(reply)}}
-		u, d := s.understandQuery(context.Background(), q)
+		u, d := s.understandQuery(context.Background(), q, "")
 		if d.status != understandNoop {
 			t.Errorf("status = %q, want noop", d.status)
 		}
@@ -186,7 +187,7 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 	t.Run("good reply", func(t *testing.T) {
 		f := &fakeUnderstander{reply: `{"topic":"bike geometry","intent":"inventory"}`}
 		s := &server{understand: f}
-		u, d := s.understandQuery(context.Background(), q)
+		u, d := s.understandQuery(context.Background(), q, "")
 		if d.status != understandOK {
 			t.Fatalf("status = %q, want ok", d.status)
 		}
@@ -198,6 +199,43 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 		}
 		if !strings.Contains(f.prompt, q) {
 			t.Errorf("the question never reached the model: %q", f.prompt)
+		}
+	})
+}
+
+// "Yesterday" and "since March" are resolved against a date, and the only
+// honest one is the asker's. peeq is self-hosted: the box can sit in a zone
+// hours from the person reading, so a server-local date silently answers a
+// different question than the one that was asked.
+func TestUnderstandQueryDatesTheQuestionInTheAskersZone(t *testing.T) {
+	t.Run("the client's date reaches the model", func(t *testing.T) {
+		f := &fakeUnderstander{reply: `{"topic":"bike geometry","intent":"content"}`}
+		s := &server{understand: f}
+		s.understandQuery(context.Background(), "what did I watch yesterday", "2026-03-01")
+		if !strings.Contains(f.prompt, "Today is 2026-03-01.") {
+			t.Errorf("the asker's date never reached the model: %q", f.prompt)
+		}
+	})
+
+	// The bounds this step produces are compared against published_at, which is
+	// a UTC date — so when the client says nothing, the fallback has to be UTC
+	// too, not this machine's wall clock.
+	t.Run("no client date falls back to UTC, not server-local", func(t *testing.T) {
+		// 00:30 on the 2nd in Tokyo is still the 1st in UTC. A fallback that
+		// used the local date would say the 2nd.
+		tokyo := time.FixedZone("JST", 9*60*60)
+		at := time.Date(2026, 3, 2, 0, 30, 0, 0, tokyo)
+		if got := askerToday("", at); got != "2026-03-01" {
+			t.Errorf("askerToday(\"\") = %q, want the UTC date 2026-03-01", got)
+		}
+	})
+
+	t.Run("a date the client mangles is ignored", func(t *testing.T) {
+		at := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+		for _, bad := range []string{"01/03/2026", "March", "2026-13-45", "'; DROP"} {
+			if got := askerToday(bad, at); got != "2026-03-01" {
+				t.Errorf("askerToday(%q) = %q, want the fallback", bad, got)
+			}
 		}
 	})
 }

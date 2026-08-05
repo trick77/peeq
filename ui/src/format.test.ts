@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   codecLabel,
   daysSince,
+  formatAbsolute,
   formatAge,
   formatAgo,
   formatSize,
   resolutionLabel,
   shortWatchLink,
+  toDate,
   videoLabel,
   watchURL,
 } from "./format";
@@ -89,6 +91,55 @@ describe("backend timestamp shape", () => {
       .slice(0, 19);
     expect(daysSince(justUnderADay, NOW)).toBe(0);
     expect(formatAgo(justUnderADay, NOW)).toBe("today");
+  });
+});
+
+// toDate is the one door between a stored instant and the viewer's clock, so
+// every shape the API actually sends has to come out as the SAME instant. The
+// assertions are on getTime(), not on rendered text, so the file says the same
+// thing under any TZ the test host happens to have.
+describe("toDate", () => {
+  const NOON_UTC = Date.UTC(2026, 2, 1, 9, 0, 0);
+
+  it("reads all three wire shapes as UTC", () => {
+    // SQLite's datetime('now') — the shape nearly every column carries. Without
+    // the rewrite this parses as LOCAL, and everything downstream is off by the
+    // viewer's offset.
+    expect(toDate("2026-03-01 09:00:00").getTime()).toBe(NOON_UTC);
+    // RFC3339, from ytdlp's checked_at — the one field that already says Z.
+    expect(toDate("2026-03-01T09:00:00Z").getTime()).toBe(NOON_UTC);
+    // Date-only, from published_at. Midnight UTC by spec.
+    expect(toDate("2026-03-01").getTime()).toBe(Date.UTC(2026, 2, 1));
+  });
+
+  // The old per-call-site copies appended "Z" unconditionally, so a string that
+  // already had one became "…ZZ" — an Invalid Date that History's day labels
+  // silently swallowed. Only the space-separated shape is rewritten, so that
+  // failure is now unreachable rather than merely unlikely.
+  it("does not double a zone marker that is already there", () => {
+    expect(Number.isNaN(toDate("2026-03-01T09:00:00Z").getTime())).toBe(false);
+  });
+
+  it("yields an invalid Date for junk rather than throwing", () => {
+    expect(Number.isNaN(toDate("not-a-date").getTime())).toBe(true);
+  });
+});
+
+describe("formatAbsolute", () => {
+  // Callers concatenate this straight into a sentence ("updated …", "Created
+  // …"), so the failure modes must be empty, never the words "Invalid Date".
+  it("reads as empty for missing or unparseable input", () => {
+    expect(formatAbsolute(undefined)).toBe("");
+    expect(formatAbsolute("")).toBe("");
+    expect(formatAbsolute("not-a-date")).toBe("");
+  });
+
+  it("renders a stored stamp as the viewer's own local time", () => {
+    // Whatever the host zone, this must be the local spelling of that instant —
+    // which is exactly what toLocaleString of the correctly-parsed Date gives.
+    expect(formatAbsolute("2026-03-01 09:00:00")).toBe(
+      new Date(Date.UTC(2026, 2, 1, 9, 0, 0)).toLocaleString(),
+    );
   });
 });
 

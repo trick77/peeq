@@ -1,5 +1,6 @@
 import type { ChannelDetail, ScanResult } from "../../api/types";
 import { DOT } from "../../sep";
+import { formatAbsolute, toDate } from "../../format";
 
 // The channel page reports its scan schedule in two places — the New tab and
 // the Settings tab — and they had drifted: New handled a next_scan_at in the
@@ -19,13 +20,11 @@ import { DOT } from "../../sep";
 // of confusion as the single "Refreshed" stamp that hid the scan date — one
 // event wearing several names, so no two surfaces obviously talk about it.
 
-// parseSqlUTC turns the backend's SQLite text timestamp ("2026-07-25 06:11:14",
-// always UTC, no zone suffix) into a Date. The space-separated form is not ISO
-// 8601, so appending "Z" alone leans on engine leniency; swapping the space for
-// a "T" first makes it a form every engine parses per spec.
-function parseSqlUTC(s: string): Date {
-  return new Date(s.replace(" ", "T") + "Z");
-}
+// The backend's SQLite text timestamp ("2026-07-25 06:11:14", always UTC, no
+// zone suffix) is read by format.ts's toDate — the app's one parser, which
+// swaps the space for a "T" before appending "Z" so the result is a form every
+// engine parses per spec rather than one it merely tolerates. formatAbsolute
+// then spells the instant out in the reader's own zone and locale.
 
 // isScanQueued reports whether this channel is waiting to be scanned: its next
 // scan is due at or before now, so the loop will claim it on its next poll.
@@ -34,7 +33,7 @@ function parseSqlUTC(s: string): Date {
 // second browser tab shows the same thing.
 export function isScanQueued(detail: ChannelDetail): boolean {
   if (!detail.next_scan_at) return false;
-  return parseSqlUTC(detail.next_scan_at).getTime() <= Date.now();
+  return toDate(detail.next_scan_at).getTime() <= Date.now();
 }
 
 // scheduleLine is the "last scanned / next scan" sentence. `lead` differs only
@@ -46,14 +45,14 @@ export function scheduleLine(
   const parts: string[] = [];
   parts.push(
     detail.last_scanned_at
-      ? `${lead} ${parseSqlUTC(detail.last_scanned_at).toLocaleString()}`
+      ? `${lead} ${formatAbsolute(detail.last_scanned_at)}`
       : "Never scanned",
   );
   if (detail.next_scan_at) {
     parts.push(
       isScanQueued(detail)
         ? "scan queued"
-        : `next scan ${parseSqlUTC(detail.next_scan_at).toLocaleString()}`,
+        : `next scan ${formatAbsolute(detail.next_scan_at)}`,
     );
   }
   return parts.join(DOT);

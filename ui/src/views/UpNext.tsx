@@ -20,14 +20,8 @@ import {
 import { Icon } from "../icons";
 import type { Job, SummaryJob } from "../api/types";
 import { DOT } from "../sep";
-import {
-  clockOf,
-  kindOf,
-  leadCap,
-  parseUTC,
-  plannedWhen,
-  subjectNode,
-} from "./agenda";
+import { clockOf, kindOf, leadCap, plannedWhen, subjectNode } from "./agenda";
+import { toDate } from "../format";
 
 // UpNext — everything peeq is about to do, in the order it will do it. It
 // absorbs the old Queue page and the projection half of the old Activity page,
@@ -88,7 +82,7 @@ function phaseState(
 const HOUR = 3600_000;
 const DAY = 86400_000;
 function bucketOf(at: string, now: number): string {
-  const delta = parseUTC(at).getTime() - now;
+  const delta = toDate(at).getTime() - now;
   if (delta < HOUR) return "Within the hour";
   if (delta < DAY) return "Later today";
   if (delta < 7 * DAY) return "This week";

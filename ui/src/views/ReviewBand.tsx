@@ -1,5 +1,6 @@
 import type { Channel } from "../api/types";
 import { Button } from "../ui";
+import { toDate } from "../format";
 
 // ReviewBand — the "needs review" surface for dormant subscriptions (no new
 // video in 6+ months). It sits ABOVE the main channel list but BELOW the
@@ -48,7 +49,7 @@ export function ReviewBand({
                 <span className="life warn">
                   <span className="led" />
                   {c.last_video_at
-                    ? `Last video ${new Date(c.last_video_at).toLocaleDateString()}`
+                    ? `Last video ${toDate(c.last_video_at).toLocaleDateString()}`
                     : "No video ever recorded"}
                 </span>
                 <span className="dot">·</span>

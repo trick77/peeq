@@ -175,7 +175,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// "material"; see understand.go for why it adds a lane instead of replacing
 	// the query. It never fails the request — a bad or absent understanding just
 	// means the raw question, which is what this endpoint did before.
-	u, ud := s.understandQuery(r.Context(), q)
+	u, ud := s.understandQuery(r.Context(), q, r.URL.Query().Get("today"))
 
 	// Resolve the structured half against the library before searching under it.
 	// The model reported channel NAMES; only the library can say which ids those

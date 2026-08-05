@@ -5,14 +5,8 @@ import { Icon } from "../icons";
 import { PillStrip } from "../components/PillStrip";
 import { DOT } from "../sep";
 import { Button } from "../ui";
-import {
-  clockOf,
-  kindOf,
-  leadCap,
-  parseUTC,
-  relTime,
-  subjectNode,
-} from "./agenda";
+import { clockOf, kindOf, leadCap, relTime, subjectNode } from "./agenda";
+import { formatAbsolute, toDate } from "../format";
 
 // History — the durable log of what peeq's workers actually did, newest first.
 // A pure record: nothing here is actionable, so the page carries no buttons.
@@ -95,7 +89,7 @@ function dayKeyOfDate(d: Date): string {
 
 // dayKeyOf is the same for an event's backend timestamp.
 function dayKeyOf(at: string): string {
-  return dayKeyOfDate(parseUTC(at));
+  return dayKeyOfDate(toDate(at));
 }
 
 const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -118,10 +112,12 @@ const MONTH = [
 // ones get a date, and yesterday gets both so the transition is never a guess.
 function dayLabel(key: string, now: number): string {
   // Keyed straight off the Date. Round-tripping through toISOString() looked
-  // harmless but produced a string already ending in "Z", which parseUTC then
-  // appended a second "Z" to — an Invalid Date, so both keys read
+  // harmless but produced a string already ending in "Z", which the old
+  // parseUTC then appended a second "Z" to — an Invalid Date, so both keys read
   // "NaN-NaN-NaN", never matched, and the two labels anyone actually reads
-  // never appeared.
+  // never appeared. format.ts's toDate only rewrites the space-separated shape,
+  // so it cannot double up that way, but there is still no reason to detour
+  // through a string here.
   const today = dayKeyOfDate(new Date(now));
   const yesterday = dayKeyOfDate(new Date(now - 86400_000));
   const [y, m, d] = key.split("-").map(Number);
@@ -445,7 +441,7 @@ export function History({
                   const { lead, rest } = detailParts(e);
                   return (
                     <div key={e.id} className={`ag-row ${e.outcome}`}>
-                      <span className="ag-clock" title={e.at}>
+                      <span className="ag-clock" title={formatAbsolute(e.at)}>
                         {clockOf(e.at)}
                       </span>
                       <span className="ag-node">
@@ -472,7 +468,7 @@ export function History({
                         </div>
                       </div>
                       <span className="ag-when">
-                        {relTime(parseUTC(e.at), now)}
+                        {relTime(toDate(e.at), now)}
                       </span>
                     </div>
                   );

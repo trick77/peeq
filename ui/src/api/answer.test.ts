@@ -180,8 +180,24 @@ describe("streamAnswer", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(makeStreamResponse([]));
     await streamAnswer("did someone say x?", () => {});
-    expect(f.mock.calls[0][0]).toBe(
+    expect(f.mock.calls[0][0]).toContain(
       "/api/search/answer?q=did%20someone%20say%20x%3F",
     );
+  });
+
+  // "since March" and "what did I watch yesterday" are resolved against a
+  // "today", and the server's own is whatever zone the box sits in. So the
+  // asker's calendar date rides along on the request — its LOCAL one, which is
+  // why this can't just assert against toISOString().
+  it("sends the asker's local date, not UTC's", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(makeStreamResponse([]));
+    await streamAnswer("what did I watch yesterday", () => {});
+
+    const now = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    const local = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+    expect(f.mock.calls[0][0]).toContain(`&today=${local}`);
   });
 });

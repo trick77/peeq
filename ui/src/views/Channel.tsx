@@ -11,7 +11,7 @@ import {
   refreshChannel,
 } from "../api/channels";
 import { CookieRequiredError } from "../api/downloads";
-import { formatAge, gradientClassFor } from "../format";
+import { formatAge, gradientClassFor, toDate } from "../format";
 import type { ActivityEvent, ChannelDetail } from "../api/types";
 import { ArchiveTab } from "./channel/ArchiveTab";
 import { NewTab } from "./channel/NewTab";
@@ -62,15 +62,13 @@ export function formatSubscribers(n: number | undefined): string {
 }
 
 // formatStamp renders one of peeq's stored timestamps as a plain local date.
-// The stored form has no zone marker but is always UTC, so the "Z" is what
-// stops the browser reading it as local time and shifting the date. The space
-// between date and time is swapped for a "T" first, for the reason parseSqlUTC
-// in channel/schedule.ts spells out: "2026-07-26 08:00:00Z" is not ISO 8601 and
-// only parses by engine leniency, so an engine that refuses it would print an
-// empty date here rather than the stamp.
+// The stored form has no zone marker but is always UTC, so without the rewrite
+// format.ts's toDate applies the browser would read it as local time and shift
+// the date — near midnight, by a whole day. This keeps its own name because it
+// is the date-only spelling; formatAbsolute is the one that also shows a clock.
 export function formatStamp(stored: string | undefined): string {
   if (!stored) return "";
-  const d = new Date(stored.replace(" ", "T") + "Z");
+  const d = toDate(stored);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString();
 }

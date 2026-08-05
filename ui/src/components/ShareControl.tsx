@@ -8,6 +8,7 @@ import {
   type ShareTTL,
 } from "../api";
 import { DOT } from "../sep";
+import { toDate } from "../format";
 
 // The fixed lifetimes the popover offers, in the order they read on screen.
 const TTLS: { id: ShareTTL; label: string }[] = [
@@ -21,7 +22,7 @@ const TTLS: { id: ShareTTL; label: string }[] = [
 // remaining (rounded up), or null when the link never expires.
 export function daysUntil(expiresAt: string | undefined): number | null {
   if (!expiresAt) return null;
-  const exp = new Date(expiresAt.replace(" ", "T") + "Z").getTime();
+  const exp = toDate(expiresAt).getTime();
   if (Number.isNaN(exp)) return null;
   return Math.max(0, Math.ceil((exp - Date.now()) / 86_400_000));
 }

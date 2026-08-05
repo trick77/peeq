@@ -9,7 +9,7 @@ import {
   createAPIToken,
 } from "../api/settings";
 import { getYtdlpVersion, updateYtdlp, type YtdlpVersion } from "../api/ytdlp";
-import { formatAgo } from "../format";
+import { formatAbsolute, formatAgo } from "../format";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 import type { Settings as SettingsType } from "../api/types";
 import { DOT } from "../sep";
@@ -389,7 +389,7 @@ export function Settings() {
             <span className="led" />
             {cookieHealthy ? "Active" : settings.cookie_status}
             {settings.cookie_updated_at
-              ? `${DOT}updated ${new Date(settings.cookie_updated_at).toLocaleString()}`
+              ? `${DOT}updated ${formatAbsolute(settings.cookie_updated_at)}`
               : ""}
           </span>
         </h2>
@@ -512,7 +512,7 @@ export function Settings() {
           <>
             <p className="meta">
               {tokenCreatedAt
-                ? `Created ${new Date(tokenCreatedAt).toLocaleString()}`
+                ? `Created ${formatAbsolute(tokenCreatedAt)}`
                 : "Token is set up."}
             </p>
             <div className="field-row">
