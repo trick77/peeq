@@ -68,9 +68,21 @@ export function applyEmphasis<C extends { kind: "cite" }>(
   const flat = texts.map((p) => p.text).join("");
   const { mark, drop, cut } = scan(flat, streaming);
 
+  // Whether the scan is holding text back at all. Only then does anything past
+  // the cut get withheld — `cut === flat.length` is the ordinary case and must
+  // leave every part alone, including an answer that ends on its citation.
+  const withholding = cut < flat.length;
+
   const out: (MarkedText | C)[] = [];
   let at = 0;
   for (const part of parts) {
+    // A citation sitting past the cut is withheld with the prose around it. It
+    // is zero-width, so without this it would render on ITS OWN, a superscript
+    // in front of the sentence it annotates, and then jump once the delimiter
+    // that stalled the text resolves. The sources list and the video cards
+    // below are unaffected: they come from citedInOrder on the raw text, not
+    // from these parts.
+    if (withholding && at >= cut) break;
     if (part.kind !== "text") {
       out.push(part);
       continue;
@@ -169,6 +181,22 @@ function scan(s: string, streaming: boolean): Scan {
         cut = i;
         break;
       }
+    }
+
+    // A lone "*" or "_" as the LAST character has not decided what it is yet:
+    // the next delta may make it "**", or the first half of an em span. Neither
+    // opens on one character, so the branches below would fall through and put
+    // the delimiter itself on screen for a frame — the same flash the partial
+    // heading above is held back for. Only at a boundary, so "snake_" keeps
+    // rendering mid-word.
+    if (
+      streaming &&
+      i === s.length - 1 &&
+      (s[i] === "*" || s[i] === "_") &&
+      boundaryBefore(s, i)
+    ) {
+      cut = i;
+      break;
     }
 
     const two = s.slice(i, i + 2);

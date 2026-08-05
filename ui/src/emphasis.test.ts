@@ -160,6 +160,41 @@ describe("applyEmphasis", () => {
     ]);
   });
 
+  // A citation is zero-width, so it is not covered by the withhold above unless
+  // it is withheld explicitly. Left in, it renders on its own — a superscript in
+  // front of the sentence it annotates, which then jumps once the delimiter that
+  // stalled the text resolves.
+  it("withholds a citation that sits past the cut", () => {
+    expect(rendered(applyEmphasis([text("See *note "), cite], true))).toEqual([
+      ["See ", "plain"],
+    ]);
+    // …and nothing is withheld when the scan is not holding text back, which is
+    // every answer that ends on its citation.
+    expect(rendered(applyEmphasis([text("Some text "), cite], false))).toEqual([
+      ["Some text ", "plain"],
+      ["·cite·", "cite"],
+    ]);
+  });
+
+  // A lone trailing "*" has not decided what it is: the next delta may make it
+  // "**". Rendering it now is the flash this file exists to avoid.
+  it("withholds a trailing lone delimiter while streaming", () => {
+    expect(rendered(applyEmphasis([text("The video *")], true))).toEqual([
+      ["The video ", "plain"],
+    ]);
+    expect(rendered(applyEmphasis([text("The video _")], true))).toEqual([
+      ["The video ", "plain"],
+    ]);
+    // Mid-word it was never an opener, so it stays on screen.
+    expect(rendered(applyEmphasis([text("use snake_")], true))).toEqual([
+      ["use snake_", "plain"],
+    ]);
+    // Settled, it is prose.
+    expect(rendered(applyEmphasis([text("The video *")], false))).toEqual([
+      ["The video *", "plain"],
+    ]);
+  });
+
   it("leaves prose with no markdown in it untouched", () => {
     const parts = [text("Nothing to do here."), cite];
     expect(applyEmphasis(parts, false)).toEqual(parts);
