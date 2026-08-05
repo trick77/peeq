@@ -100,7 +100,7 @@ func TestAnswerStreamsSourcesThenTokensThenDone(t *testing.T) {
 		t.Fatalf("content-type = %q, want an event stream", ct)
 	}
 	got := names(events(t, rec.Body.String()))
-	want := []string{"sources", "token", "token", "done"}
+	want := []string{"progress", "sources", "token", "token", "done"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("frames = %v, want %v", got, want)
 	}
@@ -136,7 +136,7 @@ func TestAnswerWithNoResultsSaysSoWithoutCallingTheModel(t *testing.T) {
 	if !strings.Contains(body, "Nothing in your library covers that") {
 		t.Errorf("no honest answer in: %s", body)
 	}
-	if got := names(events(t, body)); strings.Join(got, ",") != "sources,token,done" {
+	if got := names(events(t, body)); strings.Join(got, ",") != "progress,sources,token,done" {
 		t.Errorf("frames = %v", got)
 	}
 }
@@ -154,8 +154,8 @@ func TestAnswerWithoutChatStillSendsSources(t *testing.T) {
 		t.Fatalf("status = %d, want 200 — a missing chat client is not an error", rec.Code)
 	}
 	got := names(events(t, rec.Body.String()))
-	if strings.Join(got, ",") != "sources,error,done" {
-		t.Fatalf("frames = %v, want sources,error,done", got)
+	if strings.Join(got, ",") != "progress,sources,error,done" {
+		t.Fatalf("frames = %v, want progress,sources,error,done", got)
 	}
 	if !strings.Contains(rec.Body.String(), `"video_id":"v1"`) {
 		t.Errorf("sources were not sent: %s", rec.Body.String())
@@ -176,7 +176,7 @@ func TestAnswerMidStreamFailureKeepsEarlierTokens(t *testing.T) {
 		t.Fatalf("status = %d, want 200 — headers were already sent", rec.Code)
 	}
 	got := names(events(t, rec.Body.String()))
-	if strings.Join(got, ",") != "sources,token,error,done" {
+	if strings.Join(got, ",") != "progress,sources,token,error,done" {
 		t.Fatalf("frames = %v", got)
 	}
 	if !strings.Contains(rec.Body.String(), "Yes — Attia") {
@@ -198,8 +198,8 @@ func TestAnswerWithEmptyCompletionReportsAnError(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if got := names(events(t, rec.Body.String())); strings.Join(got, ",") != "sources,error,done" {
-		t.Fatalf("frames = %v, want sources,error,done", got)
+	if got := names(events(t, rec.Body.String())); strings.Join(got, ",") != "progress,sources,error,done" {
+		t.Fatalf("frames = %v, want progress,sources,error,done", got)
 	}
 }
 

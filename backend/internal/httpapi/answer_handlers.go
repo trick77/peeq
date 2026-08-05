@@ -27,6 +27,18 @@ type StreamCompleter interface {
 	CompleteStream(ctx context.Context, messages []llm.Message, onDelta func(string)) (string, error)
 }
 
+// Completer is the non-streaming slice of llm.Client, used by the
+// query-understanding step: one short reply read in full, not relayed. Declared
+// separately from StreamCompleter rather than widened onto it so a deployment
+// can wire the answer without the pre-step, and so every existing fake that
+// implements only CompleteStream keeps compiling.
+//
+// Optional in the same way: a nil one skips understanding and Ask searches the
+// raw question, exactly as it did before the step existed.
+type Completer interface {
+	Complete(ctx context.Context, messages []llm.Message) (string, error)
+}
+
 // answerSource is one cited passage, in the shape the UI needs to render a
 // citation, list it as a source, and open the player at it.
 type answerSource struct {
@@ -109,11 +121,17 @@ const (
 // handleAnswer answers GET /api/search/answer?q=: it runs the same retrieval
 // Ask mode uses, then streams a grounded answer over SSE.
 //
-// Frames are always sources, then zero or more token frames, then done — with
-// an error frame in place of the tokens when there is no answer to give. The
-// citation table goes first because retrieval finishes before generation
-// starts, so it is already known, and a failure mid-answer still leaves the
-// reader a usable list of moments.
+// Frames are always progress, then sources, then zero or more token frames,
+// then done — with an error frame in place of the tokens when there is no answer
+// to give. The citation table goes early because retrieval finishes before
+// generation starts, so it is already known, and a failure mid-answer still
+// leaves the reader a usable list of moments.
+//
+// progress comes first and carries the understood query. It exists because the
+// pre-retrieval step put a second or so of silence in front of everything else:
+// without a frame there, the reader watches a spinner that claims searching has
+// begun before it has. It is also where the extracted topic is surfaced, which
+// is what makes a bad rewrite visible instead of silent.
 func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// The ONE case that must refuse rather than degrade, and therefore the one
 	// check that has to happen before the stream opens: sse.NewWriter writes
@@ -148,9 +166,34 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lanes := s.askLanes(r, q)
+	// Understand the question before searching for it. This is the step that
+	// stops "what material about bike geometry do we have" searching for the word
+	// "material"; see understand.go for why it adds a lane instead of replacing
+	// the query. It never fails the request — a bad or absent understanding just
+	// means the raw question, which is what this endpoint did before.
+	u, ud := s.understandQuery(r.Context(), q)
+
+	// The reader has now been waiting a second or so with nothing on the wire, so
+	// say what happened before starting retrieval. The topic travels with it: a
+	// silent rewrite that quietly mangles the question is the main risk of this
+	// whole design, and showing the reader what was actually searched for is the
+	// cheapest possible guard against it.
+	if !send("progress", map[string]any{
+		"phase": "retrieving", "topic": u.Topic, "intent": u.Intent,
+	}) {
+		return // client gone
+	}
+
+	lanes, diag := s.askLanes(r, q, u.Topic)
+	diag.understand, diag.understandMs = string(ud.status), ud.ms
+	diag.intent = ud.intent
 	hits := rag.FuseWeighted(lanes, searchCandidates)
 	sources, vids, excerpts := s.buildAnswerContext(hits)
+	// Logged HERE rather than inside askLanes, because only now is it known which
+	// passages the model was actually given — the number that says whether a lane
+	// changed what was read, not merely what was found.
+	diag.attribute(lanes, sources)
+	diag.log(q, hits)
 	if !send("sources", map[string]any{
 		"sources": sources, "videos": vids,
 		"coverage": s.coverageVideos(hits, relevantVideos(lanes)),

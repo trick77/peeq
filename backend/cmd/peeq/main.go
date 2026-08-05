@@ -510,6 +510,11 @@ func run() error {
 		Embedder:          embedClient,
 		SearchMaxDistance: cfg.SearchMaxDistance,
 		Ask:               askClient,
+		// The same unpaced client as Ask, and for the same reason: this call also
+		// has a person waiting on it. It routes itself to the short-gate
+		// deployment per-call (see understand.go), so it needs no client of its
+		// own — the deployment is a context knob, not a connection.
+		Understand: askClient,
 
 		SummaryJobs:   summaryJobsStore,
 		SummaryList:   summaryJobsStore,

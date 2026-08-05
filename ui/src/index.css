@@ -4917,6 +4917,32 @@ details.tomb-sect[open] > summary svg {
   letter-spacing: 0.04em;
   text-transform: none;
 }
+/* The wait label changes three times — understanding, searching, reading — and
+   the spinner is the FIRST child of a block pushed right by margin-left:auto.
+   So the block's RIGHT edge is pinned and the spinner is what moves: every
+   change in label length slides it sideways.
+
+   Reserving a width and left-aligning the contents pins the spinner instead.
+   The reserve is sized in em, not px, because .answer .hd sets its own
+   font-size and letter-spacing — a px value would silently stop covering the
+   longest label the moment either token changed.
+
+   Only while waiting. The settled "N sources" keeps the original right-aligned
+   behaviour, which is what it has always looked like. */
+.answer .hd .status.waiting {
+  justify-content: flex-start;
+  /* Wide enough for the longest label at a two-digit count, and capped as a
+     share of the header so a narrow viewport cannot be pushed into overflow by
+     a reserve wider than the panel. */
+  min-width: min(17em, 62%);
+}
+/* A topic is model output of unknown length, so it truncates rather than
+   widening the header past its reserve. */
+.answer .hd .status .lbl {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .answer-body {
   max-width: 64ch;
   color: var(--color-ink);

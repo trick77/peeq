@@ -474,7 +474,7 @@ describe("Search — the Ask answer", () => {
     render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
 
-    await screen.findByText(/Reading your library/);
+    await screen.findByText(/Understanding your question/);
     emit!({
       type: "sources",
       sources: askSources,
@@ -557,7 +557,7 @@ describe("Search — the Ask answer", () => {
     render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
 
-    await screen.findByText(/Reading your library/);
+    await screen.findByText(/Understanding your question/);
     expect(screen.queryByText("Searching")).not.toBeInTheDocument();
 
     emit!({
@@ -569,7 +569,7 @@ describe("Search — the Ask answer", () => {
     emit!({ type: "token", text: "Yes — " });
     await waitFor(() =>
       expect(
-        screen.queryByText(/Reading your library/),
+        screen.queryByText(/Understanding your question/),
       ).not.toBeInTheDocument(),
     );
     expect(screen.queryByText("Searching")).not.toBeInTheDocument();
@@ -601,7 +601,7 @@ describe("Search — the Ask answer", () => {
     mockedSearchVideos.mockResolvedValue([]);
     render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
-    await screen.findByText(/Reading your library/);
+    await screen.findByText(/Reading \d+ videos?/);
 
     // Off to a video and back, which unmounts the view entirely.
     fireEvent.click(screen.getByRole("button", { name: "leave" }));
@@ -618,7 +618,9 @@ describe("Search — the Ask answer", () => {
         "Yes, twice",
       ),
     );
-    expect(screen.queryByText(/Reading your library/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Understanding your question/),
+    ).not.toBeInTheDocument();
   });
 
   it("shows no moments when the answer names none", async () => {
@@ -674,7 +676,7 @@ describe("Search — the Ask answer", () => {
 
     await waitFor(() =>
       expect(
-        screen.queryByText(/Reading your library/),
+        screen.queryByText(/Understanding your question/),
       ).not.toBeInTheDocument(),
     );
     expect(screen.queryByText("Matches")).not.toBeInTheDocument();
@@ -752,7 +754,7 @@ describe("Search — the Ask answer", () => {
 
     toAsk();
     submit("electrolytes");
-    await screen.findByText(/Reading your library/);
+    await screen.findByText(/Reading \d+ videos?/);
 
     // Off to the other tab, and a keyword search there.
     fireEvent.click(screen.getByRole("button", { name: "Find" }));
