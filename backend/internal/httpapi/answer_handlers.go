@@ -188,7 +188,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		return // client gone
 	}
 
-	lanes, diag := s.askLanes(r, q, u.Topic)
+	lanes, diag := s.askLanes(r, q, u.Topic, rag.Filter{})
 	diag.understand, diag.understandMs = string(ud.status), ud.ms
 	diag.intent = ud.intent
 	hits := rag.FuseWeighted(lanes, searchCandidates)
