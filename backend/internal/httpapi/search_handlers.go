@@ -465,6 +465,14 @@ func (d semLaneDiag) String() string {
 	if !d.ran {
 		return "-"
 	}
+	// A lane that ran and matched nothing has no distances to report. Printing
+	// the zero values as "0.000..0.000" would put a measurement in the field
+	// that was never taken — and this field is precisely the recalibration data
+	// for DefaultMaxDistance, so a fabricated 0.000 is the worst thing it could
+	// say.
+	if d.bounded == 0 {
+		return "0h/0v"
+	}
 	return fmt.Sprintf("%dh/%dv→%dh/%dv %.3f..%.3f",
 		d.bounded, d.boundedVideos, d.kept, d.keptVideos, d.nearest, d.farthest)
 }

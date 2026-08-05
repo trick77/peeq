@@ -99,11 +99,15 @@ const (
 )
 
 // understandDiag is the step's contribution to the ask retrieval log line.
+//
+// No topic field: the topic reaches the log through askDiag, which is handed the
+// same string as the retrieval input. Carrying a second copy here would give the
+// line two sources for one fact, and they could disagree — askLanes is what
+// decides whether the topic opened a lane at all.
 type understandDiag struct {
 	status understandStatus
 	ms     int64
 	intent string
-	topic  string
 }
 
 const understandSystemPrompt = `You separate what a question is ABOUT from the words it is asked WITH.
@@ -193,7 +197,7 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 		return u, understandDiag{status: understandNoop, ms: elapsed, intent: u.Intent}
 	}
 	return u, understandDiag{
-		status: understandOK, ms: elapsed, intent: u.Intent, topic: u.Topic,
+		status: understandOK, ms: elapsed, intent: u.Intent,
 	}
 }
 
