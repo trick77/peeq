@@ -118,7 +118,7 @@ func TestParseUnderstandingReadsTheDocumentedShape(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := parseUnderstanding(tc.raw)
+			got, _, ok := parseUnderstanding(tc.raw)
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
 			}

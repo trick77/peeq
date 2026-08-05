@@ -77,6 +77,18 @@ func CategoryIDs() []string {
 	return ids
 }
 
+// CategoryLabel returns a category's display label, or the id itself when it is
+// not a known one — so a caller rendering it for a reader never shows an empty
+// string where a name should be.
+func CategoryLabel(id string) string {
+	for _, c := range Categories {
+		if c.ID == id {
+			return c.Label
+		}
+	}
+	return id
+}
+
 // ClassifiableCategories is Categories minus the uncategorized fallback: the
 // set a classifier is allowed to choose from. 'uncategorized' is a state the
 // app assigns (not yet classified, or the call failed), never an answer the

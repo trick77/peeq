@@ -198,21 +198,57 @@ func (s *Store) Retrieve(ctx context.Context, queryEmbedding []float32, k int) (
 // rather than in Go only saves shipping those rows' text across the driver — it
 // does not buy back the KNN budget the far rows already consumed.
 func (s *Store) RetrieveWithin(ctx context.Context, queryEmbedding []float32, k int, maxDistance float64) ([]Hit, error) {
+	return s.RetrieveWithinFiltered(ctx, queryEmbedding, k, maxDistance, Filter{})
+}
+
+// vecKMax is vec0's own ceiling on the `k = ?` constraint
+// (SQLITE_VEC_VEC0_K_MAX in sqlite-vec.c). Exceeding it is an error from the
+// vtab, so k is clamped rather than passed through.
+const vecKMax = 4096
+
+// RetrieveWithinFiltered is RetrieveWithin scoped to the videos f admits.
+//
+// The two bounds in this query are not the same kind of thing, and confusing
+// them is the mistake this comment exists to prevent:
+//
+//   - maxDistance is a POST-filter. vec0 picks its k nearest rows and the bound
+//     then drops the far ones, exactly as RetrieveWithin documents.
+//   - the filter is a PRE-filter. vec0 treats `rowid IN (...)` as a first-class
+//     KNN constraint: it bitmap-ANDs the candidate rowids into the validity mask
+//     BEFORE computing distances, so k applies to the filtered set. "The 40
+//     nearest chunks among Veritasium's", not "the 40 nearest overall, of which
+//     some happen to be Veritasium's".
+//
+// That distinction is the whole feature. Post-filtering would return nothing for
+// any channel holding a small slice of the library, which is most of them.
+// TestRetrieveWithinFilteredIsAPreFilter pins it: it builds a fixture whose
+// global top-40 is entirely one channel and asserts the other channel's chunk
+// still comes back.
+func (s *Store) RetrieveWithinFiltered(ctx context.Context, queryEmbedding []float32, k int, maxDistance float64, f Filter) ([]Hit, error) {
 	if k <= 0 {
 		k = 10
 	}
+	if k > vecKMax {
+		k = vecKMax
+	}
 	// vec0 requires the `k = ?` constraint to sit alongside the MATCH; the
 	// distance bound is an ordinary predicate applied to the KNN output.
-	const q = `
-		SELECT video_id, ordinal, text, kind, start_seconds, distance FROM (
-			SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds, v.distance
+	inner := `SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds, v.distance
 			FROM vec_chunks v
 			JOIN transcript_chunks c ON c.id = v.rowid
-			WHERE v.embedding MATCH ? AND k = ?
-		)
+			WHERE v.embedding MATCH ? AND k = ?`
+	args := []any{store.VecLiteral(queryEmbedding), k}
+	if !f.Empty() {
+		sub, subArgs := f.chunkSubquery()
+		inner += "\n\t\t\t  AND v.rowid IN (" + sub + ")"
+		args = append(args, subArgs...)
+	}
+	q := `
+		SELECT video_id, ordinal, text, kind, start_seconds, distance FROM (` + inner + `)
 		WHERE ? <= 0 OR distance < ?
 		ORDER BY distance`
-	rows, err := s.db.QueryContext(ctx, q, store.VecLiteral(queryEmbedding), k, maxDistance, maxDistance)
+	args = append(args, maxDistance, maxDistance)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("retrieve: %w", err)
 	}
@@ -238,6 +274,15 @@ func (s *Store) RetrieveWithin(ctx context.Context, queryEmbedding []float32, k 
 // aliases aren't recognized there) — verified empirically against the
 // sqlite3 CLI (bm25(f) errors "no such column: f"; bm25(fts_chunks) works).
 func (s *Store) SearchFTS(ctx context.Context, match string, n int) ([]Hit, error) {
+	return s.SearchFTSFiltered(ctx, match, n, Filter{})
+}
+
+// SearchFTSFiltered is SearchFTS scoped to the videos f admits.
+//
+// No vec0-style care is needed here: FTS5 is not a top-k operator, so joining
+// videos and constraining it in the WHERE happens before ORDER BY bm25 … LIMIT
+// ever runs. This is a pre-filter by construction.
+func (s *Store) SearchFTSFiltered(ctx context.Context, match string, n int, f Filter) ([]Hit, error) {
 	if strings.TrimSpace(match) == "" {
 		return nil, nil
 	}
@@ -250,15 +295,27 @@ func (s *Store) SearchFTS(ctx context.Context, match string, n int) ([]Hit, erro
 	// word at all: a chunk is ~600 tokens and a hit is rarely in its first
 	// line. Column 0 is fts_chunks' only column; 32 is the token budget for the
 	// window (FTS5 caps it at 64).
-	const q = `
+	q := `
 		SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds,
 		       snippet(fts_chunks, 0, ?, ?, '…', 32)
 		FROM fts_chunks f
-		JOIN transcript_chunks c ON c.id = f.rowid
-		WHERE f.text MATCH ?
+		JOIN transcript_chunks c ON c.id = f.rowid`
+	args := []any{HighlightStart, HighlightEnd}
+	where := []string{"f.text MATCH ?"}
+	if !f.Empty() {
+		q += "\n\t\tJOIN videos fv ON fv.id = c.video_id"
+	}
+	args = append(args, match)
+	if !f.Empty() {
+		conds, fargs := f.predicates("fv")
+		where = append(where, conds...)
+		args = append(args, fargs...)
+	}
+	q += "\n\t\tWHERE " + strings.Join(where, " AND ") + `
 		ORDER BY bm25(fts_chunks)
 		LIMIT ?`
-	rows, err := s.db.QueryContext(ctx, q, HighlightStart, HighlightEnd, match, n)
+	args = append(args, n)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("fts search: %w", err)
 	}

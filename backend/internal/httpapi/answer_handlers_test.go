@@ -296,7 +296,7 @@ func TestChooseExcerptsSpreadsAcrossVideos(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.chooseExcerpts(hits)
+	got := testee.chooseExcerpts(hits, false)
 
 	if len(got) != answerMaxSources {
 		t.Fatalf("chose %d excerpts, want %d", len(got), answerMaxSources)
@@ -337,7 +337,7 @@ func TestChooseExcerptsKeepsSlotsForDepth(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.chooseExcerpts(hits)
+	got := testee.chooseExcerpts(hits, false)
 
 	if len(got) != answerMaxSources {
 		t.Fatalf("chose %d excerpts, want %d", len(got), answerMaxSources)
@@ -373,7 +373,7 @@ func TestChooseExcerptsFillsUpWhenFewVideosMatch(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.chooseExcerpts(hits)
+	got := testee.chooseExcerpts(hits, false)
 
 	if len(got) != answerMaxSourcesPerVideo {
 		t.Fatalf("chose %d excerpts from one video, want %d", len(got), answerMaxSourcesPerVideo)
@@ -398,7 +398,7 @@ func TestChooseExcerptsKeepsFusedOrder(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.chooseExcerpts(hits)
+	got := testee.chooseExcerpts(hits, false)
 
 	gotOrder := make([]string, 0, len(got))
 	for _, c := range got {
@@ -555,7 +555,7 @@ func TestAnswerVideosOmitTheSummaryText(t *testing.T) {
 // if it arrives; this rule is the half that asks for prose in the first place, and
 // a reword that quietly drops it would put the hyphen back.
 func TestAnswerPromptAsksForProseNotLists(t *testing.T) {
-	msgs := answerMessages("why are they not stars?", []string{"an excerpt"})
+	msgs := answerMessages("why are they not stars?", []string{"an excerpt"}, nil, nil, nil)
 	if len(msgs) == 0 || msgs[0].Role != "system" {
 		t.Fatalf("expected a system message first, got %+v", msgs)
 	}

@@ -813,6 +813,30 @@ func (f *failingRag) RetrieveWithin(ctx context.Context, q []float32, k int, max
 	return f.real.RetrieveWithin(ctx, q, k, maxDistance)
 }
 
+// The filtered pair is what askLanes actually calls, so the injected failures
+// have to reach it — a fake that only broke the unfiltered methods would let
+// every degraded-path test pass while exercising nothing.
+
+func (f *failingRag) SearchFTSFiltered(ctx context.Context, match string, n int, flt rag.Filter) ([]rag.Hit, error) {
+	if f.searchFTS != nil {
+		return nil, f.searchFTS
+	}
+	return f.real.SearchFTSFiltered(ctx, match, n, flt)
+}
+
+func (f *failingRag) RetrieveWithinFiltered(ctx context.Context, q []float32, k int, maxDistance float64, flt rag.Filter) ([]rag.Hit, error) {
+	if f.retrieve != nil {
+		return nil, f.retrieve
+	}
+	return f.real.RetrieveWithinFiltered(ctx, q, k, maxDistance, flt)
+}
+
+// CountVideos is the inventory path, which is fail-soft in its own way: a count
+// that errors is dropped rather than shown, so it always delegates here.
+func (f *failingRag) CountVideos(ctx context.Context, flt rag.Filter) (rag.LibraryCount, error) {
+	return f.real.CountVideos(ctx, flt)
+}
+
 // HasChunks belongs to the ignore path, not the search path, so it always
 // delegates: no test here breaks it.
 func (f *failingRag) HasChunks(ctx context.Context, videoID string) (bool, error) {

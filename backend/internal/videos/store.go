@@ -511,6 +511,48 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 	return out, nil
 }
 
+// ChannelRef is one channel as it appears in the library, for resolving a name
+// a reader typed back to the id searches filter on.
+type ChannelRef struct {
+	ID     string
+	Name   string
+	Handle string
+}
+
+// ChannelDirectory lists every channel that actually has videos here.
+//
+// Deliberately drawn from `videos` rather than from `channels`: the channels
+// table also holds cache-only rows for channels the user never tracked, and
+// resolving a name to one of those yields a filter that can only ever return
+// nothing. A channel is real, for this purpose, when something of its is on the
+// shelf.
+//
+// The handle comes from `channels` by an outer join — same database, and the
+// alternative is making the caller stitch two lists together to answer one
+// question. Rows recorded before channel ids were carry an empty id and are
+// still returned, because the filter has a by-name arm for exactly them.
+func (s *Store) ChannelDirectory() ([]ChannelRef, error) {
+	rows, err := s.db.QueryContext(context.Background(), `
+		SELECT DISTINCT v.channel_id, v.channel_name, COALESCE(c.handle, '')
+		FROM videos v
+		LEFT JOIN channels c ON c.id = v.channel_id
+		WHERE v.channel_name <> ''
+		ORDER BY v.channel_name`)
+	if err != nil {
+		return nil, fmt.Errorf("channel directory: %w", err)
+	}
+	defer rows.Close()
+	out := []ChannelRef{}
+	for rows.Next() {
+		var c ChannelRef
+		if err := rows.Scan(&c.ID, &c.Name, &c.Handle); err != nil {
+			return nil, fmt.Errorf("channel directory: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // nullInt maps 0 to a NULL (the schema leaves duration/filesize nullable
 // for "unknown"), any other value to itself.
 func nullInt(n int64) any {

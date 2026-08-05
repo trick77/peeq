@@ -4963,6 +4963,56 @@ details.tomb-sect[open] > summary svg {
   font-size: 13px;
 }
 
+/* The scope row: what the search was narrowed to. It sits between the header
+   and the prose because it qualifies everything below it — a reader who scrolls
+   past it and then reads "your library has three" has been misled by the layout
+   rather than by the words. */
+.answer-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.answer-scope .lbl {
+  color: var(--color-faint);
+  font-size: var(--text-micro);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.answer-scope .chip {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-active);
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* A constraint that was asked for and did not apply. Struck through AND faded:
+   the strike carries the meaning, the fade keeps it from competing with the
+   ones that did apply. Colour alone would say nothing to a reader who cannot
+   tell these two greys apart. */
+.answer-scope .chip.dropped {
+  border-style: dashed;
+  background: none;
+  color: var(--color-faint);
+  text-decoration: line-through;
+}
+
+/* The count for an inventory question. Set apart from the prose because it is
+   a different KIND of claim: computed over the whole library rather than read
+   out of twelve excerpts. */
+.answer-count {
+  margin: 10px 0 0;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+.answer-count strong {
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Streaming fade, ported from ../loom (.ui-stream-seg). Animates COLOR, not
    opacity: fading opacity on text lets the panel background show through the
    glyphs, which reads as washed out rather than as arriving. Segments are

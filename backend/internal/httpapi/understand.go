@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // Query understanding: the step that separates what a question is ABOUT from
@@ -45,10 +46,21 @@ import (
 // answer.
 const understandTimeout = 10 * time.Second
 
-// understandMaxTokens bounds the reply. It is a topic phrase and a one-word
-// label; anything longer is a model that has started explaining itself, and the
-// parse will reject it anyway.
-const understandMaxTokens = 200
+// understandMaxTokens bounds the reply. It is a topic phrase, a one-word label
+// and a small filter object; anything longer is a model that has started
+// explaining itself, and the parse will reject it anyway. Raised from 200 when
+// the filters were added — a reply carrying two channel names and a date range
+// is a few dozen tokens longer than one carrying a topic alone.
+const understandMaxTokens = 350
+
+// understandMaxChannels caps how many channel names one question may name.
+// Beyond a handful the reader is not comparing channels, the model is
+// hallucinating a list — and every name costs a resolution pass.
+const understandMaxChannels = 4
+
+// understandMaxChannelRunes bounds a single channel name. Real ones are short;
+// a long one is a sentence that has been mislabelled as a channel.
+const understandMaxChannelRunes = 60
 
 // understandMaxTopicRunes rejects a "topic" long enough to be a paraphrase of
 // the whole question. The point of the extra lane is a SHORT, topical query —
@@ -69,6 +81,51 @@ const (
 	intentInventory = "inventory"
 )
 
+// Watched labels. A question says one of three things about watch state, and
+// "said nothing" has to be distinguishable from "said unwatched" — which is why
+// this is a string here and a *bool by the time it reaches rag.Filter.
+const (
+	watchedUnwatched = "unwatched"
+	watchedWatched   = "watched"
+)
+
+// queryFilters is the structured half of a question, in the model's own terms:
+// NAMES, never ids. "does Veritasium have anything about ontology" carries a
+// channel the same way it carries a topic — as the words the reader typed. Go
+// resolves those words against the library (see resolve_channel.go); the model
+// is never asked for a channel id, because an id is a thing it can only invent.
+//
+// Every field is optional and every field defaults to "the question did not say
+// so". That asymmetry is the whole safety property: a filter the model imagines
+// SHRINKS the search, and a shrunk search is the one failure a reader cannot
+// see. The prompt says so twice for that reason, and the parse drops anything it
+// cannot verify rather than passing it along.
+type queryFilters struct {
+	// Channels are channel names as written. An ARRAY, though it almost always
+	// holds zero or one: "how do Veritasium and Kurzgesagt differ on X" has to
+	// arrive as two names rather than as the single string "Veritasium and
+	// Kurzgesagt", which would resolve to nothing at all.
+	Channels []string `json:"channels"`
+	// Watched is watchedUnwatched, watchedWatched, or "" for unsaid.
+	Watched string `json:"watched"`
+	// Favorite is set only by a question that actually says "favorite"; there
+	// is no way to ask for non-favorites, and none is wanted.
+	Favorite bool `json:"favorite"`
+	// Category must be one of videos.Categories. A reply naming anything else
+	// is dropped, never coined into a new category.
+	Category string `json:"category"`
+	// After and Before bound the release date as 'YYYY-MM-DD', inclusive.
+	After  string `json:"after"`
+	Before string `json:"before"`
+}
+
+// empty reports that the question carried no structured constraint at all, so
+// the whole resolution step can be skipped.
+func (f queryFilters) empty() bool {
+	return len(f.Channels) == 0 && f.Watched == "" && !f.Favorite &&
+		f.Category == "" && f.After == "" && f.Before == ""
+}
+
 // queryUnderstanding is what the call reports.
 type queryUnderstanding struct {
 	// Topic is the question with its framing removed: "bike geometry" from
@@ -79,6 +136,9 @@ type queryUnderstanding struct {
 	// Intent is one of the labels above. Always populated; defaults to
 	// intentContent, because answering is the thing Ask can always do.
 	Intent string `json:"intent"`
+	// Filters is the structured half. The zero value means the question named
+	// no constraint, which is both the common case and the safe one.
+	Filters queryFilters `json:"filters"`
 }
 
 // understandStatus records how the step went, for the one log line. A silent
@@ -108,29 +168,67 @@ type understandDiag struct {
 	status understandStatus
 	ms     int64
 	intent string
+	// filters is what survived the parse, rendered for the log.
+	filters string
+	// dropped names the filters the model produced and Go refused: an invalid
+	// category, an unparseable date, a "watched" value that is neither label.
+	// Without it a model quietly emitting garbage looks identical to a model
+	// correctly emitting nothing, and the search silently loses a constraint the
+	// reader did ask for.
+	dropped []string
 }
 
-const understandSystemPrompt = `You separate what a question is ABOUT from the words it is asked WITH.
+// understandSystemPrompt is built once at init because the category list is
+// rendered into it — a model asked to pick a category must be shown the ones
+// that exist, or it coins its own.
+var understandSystemPrompt = buildUnderstandPrompt()
+
+func buildUnderstandPrompt() string {
+	return `You separate what a question is ABOUT from the words it is asked WITH, and from the constraints it puts on WHICH videos to look at.
 
 You are given one question a reader typed into a personal video library. Reply with JSON and nothing else:
 
-{"topic": "...", "intent": "content" | "inventory"}
+{"topic": "...", "intent": "content" | "inventory", "filters": {...}}
 
-topic — the subject of the question, as the words that would appear in a video about it. Drop everything that refers to the library itself or to the act of asking: what, do we have, is there, show me, tell me, material, videos, content, footage, clips, anything. Keep every word that carries subject matter, including ones that could look generic. If the question is already just its subject, repeat it unchanged.
+topic — the subject of the question, as the words that would appear in a video about it. Drop everything that refers to the library itself or to the act of asking: what, do we have, is there, show me, tell me, material, videos, content, footage, clips, anything. Drop the constraint words too — a channel name, "unwatched", a date — because those go in filters instead. Keep every word that carries subject matter, including ones that could look generic. If the question is already just its subject, repeat it unchanged.
 
-intent — "inventory" when the reader is asking WHAT THE LIBRARY HOLDS ("what do we have on X", "any videos about X", "which videos cover X"). "content" when they want to know what the videos SAY ("how does X work", "what causes X", "why is X"). When it is genuinely both or you are unsure, answer "content".
+intent — "inventory" when the reader is asking WHAT THE LIBRARY HOLDS ("what do we have on X", "any videos about X", "which videos cover X", "how many videos about X"). "content" when they want to know what the videos SAY ("how does X work", "what causes X", "why is X"). When it is genuinely both or you are unsure, answer "content".
+
+filters — which videos to search, when the question restricts them. Every key is optional:
+
+  "channels": ["..."] — channel names EXACTLY as the reader wrote them. Never an id, never a guess at the real spelling. One name per entry: "Veritasium and Kurzgesagt" is two entries, not one.
+  "watched": "unwatched" | "watched" — only when the question says so.
+  "favorite": true — only when the question says favorite, starred or loved.
+  "category": one of ` + strings.Join(videos.CategoryIDs(), ", ") + ` — only when the question names a subject area as a CATEGORY of the library rather than as its topic. If in doubt this belongs in topic, not here.
+  "after": "YYYY-MM-DD", "before": "YYYY-MM-DD" — release-date bounds, from a question that mentions time. The reader's date is given to you below; compute against it.
+
+OMIT ANY FILTER THE QUESTION DOES NOT ACTUALLY STATE. An invented filter hides videos the reader asked to see, and they cannot tell that it happened. "filters": {} is the correct and common answer. When you are unsure whether the question meant a constraint, leave it out.
 
 Examples:
 Q: what material about bike geometry do we have
-{"topic": "bike geometry", "intent": "inventory"}
+{"topic": "bike geometry", "intent": "inventory", "filters": {}}
 Q: how does head angle affect handling
-{"topic": "head angle handling", "intent": "content"}
-Q: do we have anything on sourdough starters
-{"topic": "sourdough starter", "intent": "inventory"}
+{"topic": "head angle handling", "intent": "content", "filters": {}}
+Q: do we have unwatched videos about ontology
+{"topic": "ontology", "intent": "inventory", "filters": {"watched": "unwatched"}}
+Q: does Veritasium have anything about ontology
+{"topic": "ontology", "intent": "inventory", "filters": {"channels": ["Veritasium"]}}
+Q: how do Veritasium and Kurzgesagt differ on dark matter
+{"topic": "dark matter", "intent": "content", "filters": {"channels": ["Veritasium", "Kurzgesagt"]}}
+Q: anything on sourdough starters I haven't seen yet
+{"topic": "sourdough starter", "intent": "inventory", "filters": {"watched": "unwatched"}}
+Q: what did I watch about transients this year
+{"topic": "transients", "intent": "inventory", "filters": {"watched": "watched", "after": "` + understandExampleYearStart + `"}}
 Q: what are transients
-{"topic": "transients", "intent": "content"}
+{"topic": "transients", "intent": "content", "filters": {}}
 
 No explanation, no code fences, no other keys.`
+}
+
+// understandExampleYearStart keeps the worked date example from teaching a
+// specific year. The examples are static text, so a hard-coded 2024 would still
+// be sitting there in 2027 as the model's idea of "this year".
+const understandExampleYearStart = "<the 1st of January of the current year>"
 
 // understandQuery runs the pre-retrieval call. It NEVER returns an error: every
 // failure degrades to the raw question, which is exactly the behaviour Ask had
@@ -157,9 +255,13 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 	cctx = llm.WithCall(cctx, llm.CallInfo{Step: "understand"})
 
 	started := time.Now()
+	// Today's date rides on the USER message, not the system one: it changes
+	// daily, and putting it in the system prompt would break the prompt cache
+	// every midnight for a call whose whole point is to be cheap. "since March"
+	// cannot be resolved without it.
 	raw, err := s.understand.Complete(cctx, []llm.Message{
 		{Role: "system", Content: understandSystemPrompt},
-		{Role: "user", Content: "Q: " + q},
+		{Role: "user", Content: "Today is " + started.Format("2006-01-02") + ".\nQ: " + q},
 	})
 	elapsed := time.Since(started).Milliseconds()
 
@@ -176,7 +278,7 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 		}
 	}
 
-	u, ok := parseUnderstanding(raw)
+	u, dropped, ok := parseUnderstanding(raw)
 	if !ok {
 		return queryUnderstanding{Intent: intentContent}, understandDiag{
 			status: understandFailed, ms: elapsed, intent: intentContent,
@@ -192,22 +294,65 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 	// lanes, so one phrasing counted twice earns 1.2 and outscores a strict
 	// keyword rung at 1.0 — the score that is supposed to mean two phrasings
 	// agreeing on a passage.
+	//
+	// Note this judges the TOPIC only. A question can leave nothing to strip and
+	// still carry a filter — "unwatched ontology" is a noop topic and a real
+	// constraint — so u is returned whole either way and only the status differs.
 	if u.Topic == "" || strings.EqualFold(u.Topic, strings.Join(strings.Fields(q), " ")) {
 		u.Topic = ""
-		return u, understandDiag{status: understandNoop, ms: elapsed, intent: u.Intent}
+		return u, understandDiag{
+			status: understandNoop, ms: elapsed, intent: u.Intent,
+			filters: u.Filters.describe(), dropped: dropped,
+		}
 	}
 	return u, understandDiag{
 		status: understandOK, ms: elapsed, intent: u.Intent,
+		filters: u.Filters.describe(), dropped: dropped,
 	}
+}
+
+// describe renders the filters for the log line in the order they are applied.
+// Empty when nothing was asked for, which is what most questions produce.
+func (f queryFilters) describe() string {
+	var parts []string
+	if len(f.Channels) > 0 {
+		parts = append(parts, "channel="+strings.Join(f.Channels, "|"))
+	}
+	if f.Watched != "" {
+		parts = append(parts, f.Watched)
+	}
+	if f.Favorite {
+		parts = append(parts, "favorite")
+	}
+	if f.Category != "" {
+		parts = append(parts, "category="+f.Category)
+	}
+	if f.After != "" {
+		parts = append(parts, "after="+f.After)
+	}
+	if f.Before != "" {
+		parts = append(parts, "before="+f.Before)
+	}
+	return strings.Join(parts, ",")
 }
 
 // parseUnderstanding reads the model's reply. It is defensive in the two ways
 // that actually happen: a JSON object wrapped in a code fence, and prose before
 // or after it. Anything else is a failure, and a failure means the raw question.
-func parseUnderstanding(raw string) (queryUnderstanding, bool) {
+//
+// The filters get the same treatment one level down, and then some: a filter is
+// only kept when Go can independently verify it. An unknown category, a date
+// that will not parse, a "watched" value that is neither label — each is
+// DROPPED and named, not passed through and not treated as a failure. The
+// asymmetry is deliberate. A wrong topic costs a lane and gets outvoted by four
+// others; a wrong filter hides videos, and nothing downstream can tell that it
+// happened.
+//
+// The second return value names what was dropped, for the log.
+func parseUnderstanding(raw string) (queryUnderstanding, []string, bool) {
 	body := strings.TrimSpace(raw)
 	if body == "" {
-		return queryUnderstanding{}, false
+		return queryUnderstanding{}, nil, false
 	}
 	// Strip a fenced block, ```json or bare ```.
 	if strings.HasPrefix(body, "```") {
@@ -220,15 +365,23 @@ func parseUnderstanding(raw string) (queryUnderstanding, bool) {
 	start := strings.IndexByte(body, '{')
 	end := strings.LastIndexByte(body, '}')
 	if start < 0 || end <= start {
-		return queryUnderstanding{}, false
+		return queryUnderstanding{}, nil, false
 	}
 
 	var parsed struct {
-		Topic  string `json:"topic"`
-		Intent string `json:"intent"`
+		Topic   string `json:"topic"`
+		Intent  string `json:"intent"`
+		Filters struct {
+			Channels []string `json:"channels"`
+			Watched  string   `json:"watched"`
+			Favorite bool     `json:"favorite"`
+			Category string   `json:"category"`
+			After    string   `json:"after"`
+			Before   string   `json:"before"`
+		} `json:"filters"`
 	}
 	if err := json.Unmarshal([]byte(body[start:end+1]), &parsed); err != nil {
-		return queryUnderstanding{}, false
+		return queryUnderstanding{}, nil, false
 	}
 
 	u := queryUnderstanding{
@@ -240,7 +393,101 @@ func parseUnderstanding(raw string) (queryUnderstanding, bool) {
 	if strings.EqualFold(strings.TrimSpace(parsed.Intent), intentInventory) {
 		u.Intent = intentInventory
 	}
-	return u, true
+
+	var dropped []string
+	drop := func(what string) { dropped = append(dropped, what) }
+
+	for _, raw := range parsed.Filters.Channels {
+		name := sanitizeChannelName(raw)
+		if name == "" {
+			// A blank entry is nothing to report; one that sanitizing emptied —
+			// a whole sentence mislabelled as a channel — is a constraint the
+			// reader may have asked for and did not get, so it is named.
+			if strings.TrimSpace(raw) != "" {
+				drop("channel:" + truncateRunes(strings.Join(strings.Fields(raw), " "), understandMaxChannelRunes))
+			}
+			continue
+		}
+		if len(u.Filters.Channels) >= understandMaxChannels {
+			drop("channels:too-many")
+			break
+		}
+		u.Filters.Channels = append(u.Filters.Channels, name)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(parsed.Filters.Watched)) {
+	case "":
+		// The common case: the question said nothing about watch state.
+	case watchedUnwatched:
+		u.Filters.Watched = watchedUnwatched
+	case watchedWatched:
+		u.Filters.Watched = watchedWatched
+	default:
+		// "maybe", "partially", "seen" — a model improvising a third state. It
+		// cannot be mapped to a column, so it is dropped rather than guessed at.
+		drop("watched:" + strings.TrimSpace(parsed.Filters.Watched))
+	}
+
+	u.Filters.Favorite = parsed.Filters.Favorite
+
+	if c := strings.TrimSpace(parsed.Filters.Category); c != "" {
+		// NormalizeCategory repairs the wrappers models habitually add and maps
+		// a display label back to its id; anything it cannot place comes back as
+		// the uncategorized fallback, which is a state peeq assigns and never an
+		// answer to a question. Either way it is not a category to filter on.
+		if id := videos.NormalizeCategory(c); videos.ValidCategory(id) && id != videos.UncategorizedCategory {
+			u.Filters.Category = id
+		} else {
+			drop("category:" + c)
+		}
+	}
+
+	u.Filters.After, u.Filters.Before = parseDateBound(parsed.Filters.After, "after", drop),
+		parseDateBound(parsed.Filters.Before, "before", drop)
+	// An inverted range admits nothing at all, which would read to the reader as
+	// "your library has nothing on this". Drop both bounds instead: a search that
+	// is too wide is visibly too wide, a search that is empty is not.
+	if u.Filters.After != "" && u.Filters.Before != "" && u.Filters.After > u.Filters.Before {
+		drop("dates:inverted")
+		u.Filters.After, u.Filters.Before = "", ""
+	}
+
+	return u, dropped, true
+}
+
+// parseDateBound keeps only a date Go can actually parse, in the one format the
+// videos table stores. "last week", "2026", "March" and an empty string all
+// yield nothing; only the first is worth naming as dropped.
+func parseDateBound(s, which string, drop func(string)) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if _, err := time.Parse("2006-01-02", s); err != nil {
+		drop(which + ":" + s)
+		return ""
+	}
+	return s
+}
+
+// sanitizeChannelName bounds and cleans one name before it is used to look
+// anything up. Same treatment as sanitizeTopic and for the same reason: it is
+// model output, and it reaches both a SQL parameter and the reader's screen.
+func sanitizeChannelName(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return ' '
+		}
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+	if len([]rune(s)) > understandMaxChannelRunes {
+		return ""
+	}
+	return s
 }
 
 // sanitizeTopic reduces the returned topic to something safe to embed, to log
