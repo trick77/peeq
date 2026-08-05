@@ -121,6 +121,21 @@ export function Search({
     mode === "ask" && answer != null && answer.status !== "done";
   const matchCount = results?.reduce((n, r) => n + r.matches.length, 0) ?? 0;
 
+  // What retrieval found and the answer did not quote. The subtraction happens
+  // here, and it has to happen on the client: the coverage frame goes out before
+  // generation, when nothing yet knows what will be cited.
+  //
+  // `results` in Ask IS the cited set (searchState derives it from the moments
+  // the answer named), so subtracting the videos in it is the whole derivation.
+  // When it is null the answer cited nothing, and every retrieved video belongs
+  // in this tier — which is the case that would otherwise lose the list entirely,
+  // since the matches block above does not render at all.
+  const citedIds = new Set((results ?? []).map((r) => r.video.id));
+  const alsoRows =
+    mode === "ask" && !answerStreaming
+      ? (answer?.coverage ?? []).filter((v) => !citedIds.has(v.id))
+      : [];
+
   return (
     <>
       <div className="gsearch-hero">
@@ -251,6 +266,36 @@ export function Search({
           )}
         </>
       )}
+
+      {/* Retrieved, and the answer did not quote it. Its own block rather than a
+          tail on the matches above, for two reasons. The counts in that header
+          say what the answer stood on, and folding in videos it never cited would
+          overstate them — this heading carries its own number instead. And when
+          the answer cites nothing at all the header does not render, while these
+          videos still should: they are the only thing left on the page that says
+          retrieval found anything.
+
+          The cards are compact because they have nothing to be tall for — no
+          moments were matched in them, so a full-height card is a poster beside a
+          title and then empty space. Each opens its video without seeking, as the
+          text rows here used to: there IS a retrieved chunk behind every one, but
+          the model never vouched for it, and jumping to a timestamp on the
+          strength of a distance score asserts more than is known. */}
+      {!loading && !answerStreaming && alsoRows.length ? (
+        <>
+          <div className="also-head">
+            <span className="also-head-t">Also in your library</span>
+            <span className="n mono">{alsoRows.length}</span>
+          </div>
+          <ResultCards
+            compact
+            results={alsoRows.map((video) => ({ video, matches: [] }))}
+            onOpen={onOpen}
+            onOpenVideo={onOpenVideo}
+            onOpenChannel={onOpenChannel}
+          />
+        </>
+      ) : null}
     </>
   );
 }
