@@ -35,6 +35,15 @@ export type AnswerVideo = {
   published_at?: string;
 };
 
+// LibraryCount answers "how many", for a question that asked it. It is computed
+// in SQL under the constraints the question named, so it is authoritative in a
+// way the cited excerpts are not — they are a sample of at most twelve passages.
+export type LibraryCount = {
+  videos: number;
+  duration_seconds: number;
+  channels: number;
+};
+
 // AnswerEvent is the narrowed stream.
 //
 // `sources` always arrives first: the backend finishes retrieval before
@@ -58,11 +67,27 @@ export type AnswerEvent =
       phase: "retrieving";
       topic: string;
       intent: string;
+      // The constraints the question named and the search actually applied, in
+      // the reader's own words: "unwatched", "Veritasium", "Science & Research".
+      // Shown for the same reason `topic` is, and with more at stake — a rewrite
+      // makes the answer worse, a filter makes videos disappear.
+      filters?: string[];
+      // Channel names the question used that the library has nothing under. The
+      // constraint was dropped and the search widened; the panel says so.
+      unresolvedChannels?: string[];
     }
   | {
       type: "sources";
       sources: AnswerSource[];
       videos: AnswerVideo[];
+      filters?: string[];
+      unresolvedChannels?: string[];
+      // Constraints that found nothing and were dropped so the search could
+      // return something. Non-empty means what follows is the WHOLE library, not
+      // the slice that was asked for.
+      relaxed?: string[];
+      // Present only for an inventory question ("how many …").
+      counts?: LibraryCount;
       // Every video retrieval found, best-ranked first, one entry each — not just
       // the ones that won an excerpt slot. The panel subtracts what the answer
       // cited to get "Also in your library", and it has to happen HERE rather than
@@ -88,12 +113,19 @@ export async function streamAnswer(
     ({ event, data }) => {
       switch (event) {
         case "progress": {
-          const d = data as { topic?: string; intent?: string };
+          const d = data as {
+            topic?: string;
+            intent?: string;
+            filters?: string[];
+            unresolved_channels?: string[];
+          };
           onEvent({
             type: "progress",
             phase: "retrieving",
             topic: d.topic ?? "",
             intent: d.intent ?? "content",
+            filters: d.filters ?? [],
+            unresolvedChannels: d.unresolved_channels ?? [],
           });
           break;
         }
@@ -102,12 +134,20 @@ export async function streamAnswer(
             sources?: AnswerSource[];
             videos?: AnswerVideo[];
             coverage?: AnswerVideo[];
+            filters?: string[];
+            relaxed?: string[];
+            unresolved_channels?: string[];
+            counts?: LibraryCount;
           };
           onEvent({
             type: "sources",
             sources: d.sources ?? [],
             videos: d.videos ?? [],
             coverage: d.coverage ?? [],
+            filters: d.filters ?? [],
+            relaxed: d.relaxed ?? [],
+            unresolvedChannels: d.unresolved_channels ?? [],
+            counts: d.counts,
           });
           break;
         }

@@ -4,6 +4,7 @@ import {
   streamAnswer,
   type AnswerSource,
   type AnswerVideo,
+  type LibraryCount,
 } from "./api/answer";
 import { citedInOrder, groupCited } from "./answerSources";
 import type { AnswerState } from "./components/AnswerPanel";
@@ -157,6 +158,10 @@ export function useSearchState(): SearchState {
     let sources: AnswerSource[] = [];
     let videos: AnswerVideo[] = [];
     let coverage: AnswerVideo[] = [];
+    let filters: string[] = [];
+    let relaxed: string[] = [];
+    let unresolvedChannels: string[] = [];
+    let counts: LibraryCount | undefined;
     let text = "";
     let failed = false;
     // Whether retrieval reported at all. An empty source list means the library
@@ -194,11 +199,17 @@ export function useSearchState(): SearchState {
           case "progress":
             phase = "retrieving";
             topic = e.topic;
+            filters = e.filters ?? [];
+            unresolvedChannels = e.unresolvedChannels ?? [];
             break;
           case "sources":
             sources = e.sources;
             videos = e.videos;
             coverage = e.coverage;
+            filters = e.filters ?? [];
+            relaxed = e.relaxed ?? [];
+            unresolvedChannels = e.unresolvedChannels ?? [];
+            counts = e.counts;
             retrieved = true;
             // Retrieval is done and the model call starts here — the long, silent
             // part of the wait. This is the transition the panel could not see
@@ -221,6 +232,10 @@ export function useSearchState(): SearchState {
           sources,
           videos,
           coverage,
+          filters,
+          relaxed,
+          unresolvedChannels,
+          counts,
           failed,
         });
         // The done frame is the normal end, and acting on it rather than
@@ -256,7 +271,18 @@ export function useSearchState(): SearchState {
         // it would leave a page that says nothing happened.
         setAnswer(
           text || failed
-            ? { status: "done", text, sources, videos, coverage, failed }
+            ? {
+                status: "done",
+                text,
+                sources,
+                videos,
+                coverage,
+                filters,
+                relaxed,
+                unresolvedChannels,
+                counts,
+                failed,
+              }
             : null,
         );
         settle();

@@ -8,7 +8,7 @@ import {
   type RenderedPart,
 } from "../answerSources";
 import { splitIntoSegments } from "../streamFade";
-import type { AnswerSource, AnswerVideo } from "../api/answer";
+import type { AnswerSource, AnswerVideo, LibraryCount } from "../api/answer";
 
 // AnswerPanel renders the grounded answer above Ask's moments.
 //
@@ -50,6 +50,21 @@ export type AnswerState = {
   // "Also in your library"; it cannot be subtracted server-side, because the
   // frame carrying this is sent before the model has written anything.
   coverage?: AnswerVideo[];
+  // The constraints the question named and the search applied — "unwatched",
+  // "Veritasium". Shown for the same reason `topic` is, and with more at stake:
+  // a mangled rewrite makes the answer worse, a wrong filter makes videos
+  // disappear with nothing on screen to say so.
+  filters?: string[];
+  // Constraints that found nothing and were dropped so the search could return
+  // something. Non-empty means what is shown is the whole library rather than
+  // the slice that was asked for.
+  relaxed?: string[];
+  // Channel names the library has nothing under. The constraint was dropped;
+  // the answer's first sentence says so, and the chip row shows it struck out.
+  unresolvedChannels?: string[];
+  // Only for an inventory question. Computed in SQL under the constraints, so
+  // it is the whole count rather than a tally of what happened to be cited.
+  counts?: LibraryCount;
   failed?: boolean;
 };
 
@@ -100,6 +115,38 @@ function waitLabel(
   }
 }
 
+// ScopeChip is one constraint and whether it survived.
+type ScopeChip = { label: string; dropped: boolean; why?: string };
+
+// scopeChips renders the search's scope as chips: what applied, then what was
+// asked for and did not.
+//
+// The two dropped kinds are kept separate in the tooltip because they are
+// different problems. An unresolved channel is a name the library has nothing
+// under — usually a typo too far gone to match, sometimes a channel the reader
+// only thinks they have. A relaxed constraint matched a real thing and simply
+// found nothing under it. Both leave the reader looking at a wider search than
+// they asked for, which is why neither is allowed to be silent.
+function scopeChips(state: AnswerState): ScopeChip[] {
+  const { filters = [], relaxed = [], unresolvedChannels = [] } = state;
+  // A relaxed search applied nothing: `filters` is what was asked for, and
+  // showing it as applied would be exactly backwards.
+  const applied = relaxed.length ? [] : filters;
+  return [
+    ...applied.map((label) => ({ label, dropped: false })),
+    ...relaxed.map((label) => ({
+      label,
+      dropped: true,
+      why: "Nothing matched this, so the search was widened.",
+    })),
+    ...unresolvedChannels.map((label) => ({
+      label,
+      dropped: true,
+      why: "No channel by this name is in your library.",
+    })),
+  ];
+}
+
 export function AnswerPanel({
   state,
   onOpen,
@@ -114,7 +161,12 @@ export function AnswerPanel({
   onOpenVideo: (videoId: string) => void;
   onOpenChannel: (channelId: string) => void;
 }) {
-  const { status, topic, text, sources, videos, failed } = state;
+  const { status, topic, text, sources, videos, failed, counts } = state;
+  // The scope row: what the search was actually narrowed to, plus the
+  // constraints that were asked for and did not survive. Both belong in one row
+  // — a reader wants "what was searched", and a dropped constraint is part of
+  // that answer, not a separate topic.
+  const chips = scopeChips(state);
   const channelOf = new Map(
     (videos ?? []).map((v) => [v.id, v.channel_id] as const),
   );
@@ -181,6 +233,41 @@ export function AnswerPanel({
           ) : null}
         </span>
       </div>
+
+      {/* What the search was narrowed to, shown from the moment retrieval
+          starts rather than at the end. A filter the reader did not intend is
+          otherwise invisible: the prose reads perfectly whether or not it came
+          from the slice they meant, and there is nothing else on the page that
+          could tell them. A dropped constraint is struck through, so "asked for
+          and not applied" cannot be mistaken for "applied". */}
+      {chips.length ? (
+        <div className="answer-scope">
+          <span className="lbl">Searched</span>
+          {chips.map((c) => (
+            <span
+              key={c.label}
+              className={c.dropped ? "chip dropped" : "chip"}
+              title={c.dropped ? c.why : undefined}
+            >
+              {c.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {/* The count answers "how many", which twelve excerpts cannot. It is
+          computed in SQL under the constraints above, so it stands apart from
+          the prose rather than inside it. */}
+      {counts ? (
+        <p className="answer-count">
+          <strong>{counts.videos}</strong>{" "}
+          {counts.videos === 1 ? "video" : "videos"}
+          {counts.channels > 1 ? ` across ${counts.channels} channels` : null}
+          {counts.videos > 0
+            ? ` · ${formatDuration(counts.duration_seconds)}`
+            : null}
+        </p>
+      ) : null}
 
       <div className="answer-body" aria-live="polite" aria-busy={streaming}>
         {parts.map((part, i) =>

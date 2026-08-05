@@ -593,3 +593,123 @@ describe("also in your library", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 });
+
+// The scope row: the only thing on the page that can tell a reader their search
+// was narrowed. The prose reads perfectly either way, so silence here is the
+// failure mode the row exists to prevent.
+describe("AnswerPanel scope", () => {
+  it("shows no scope row for an unfiltered question", () => {
+    render(<Panel state={state({ text: "Yes[1]." })} />);
+    expect(document.querySelector(".answer-scope")).toBeNull();
+  });
+
+  it("names the constraints the search applied", () => {
+    render(
+      <Panel
+        state={state({ text: "Yes[1].", filters: ["unwatched", "Veritasium"] })}
+      />,
+    );
+    const scope = document.querySelector(".answer-scope")!;
+    expect(within(scope as HTMLElement).getByText("unwatched")).toBeVisible();
+    expect(within(scope as HTMLElement).getByText("Veritasium")).toBeVisible();
+    expect(scope.querySelectorAll(".chip.dropped")).toHaveLength(0);
+  });
+
+  it("strikes a constraint that was relaxed, and does not show it as applied", () => {
+    render(
+      <Panel
+        state={state({
+          text: "Here is the rest[1].",
+          filters: ["unwatched"],
+          relaxed: ["unwatched"],
+        })}
+      />,
+    );
+    const chips = document.querySelectorAll(".answer-scope .chip");
+    // Exactly one chip: the relaxed one. Showing it as applied AND as dropped
+    // would say the search both was and was not narrowed.
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveTextContent("unwatched");
+    expect(chips[0].className).toContain("dropped");
+  });
+
+  it("strikes a channel the library does not have", () => {
+    render(
+      <Panel
+        state={state({
+          text: "Here is what there is[1].",
+          unresolvedChannels: ["Numberphile"],
+        })}
+      />,
+    );
+    const chip = document.querySelector(".answer-scope .chip.dropped")!;
+    expect(chip).toHaveTextContent("Numberphile");
+    expect(chip.getAttribute("title")).toContain("No channel by this name");
+  });
+
+  it("keeps an applied constraint beside an unresolved one", () => {
+    render(
+      <Panel
+        state={state({
+          text: "Yes[1].",
+          filters: ["unwatched"],
+          unresolvedChannels: ["Numberphile"],
+        })}
+      />,
+    );
+    const scope = document.querySelector(".answer-scope")!;
+    expect(scope.querySelectorAll(".chip")).toHaveLength(2);
+    expect(scope.querySelectorAll(".chip.dropped")).toHaveLength(1);
+  });
+});
+
+describe("AnswerPanel counts", () => {
+  it("shows nothing for a question that asked no count", () => {
+    render(<Panel state={state({ text: "Yes[1]." })} />);
+    expect(document.querySelector(".answer-count")).toBeNull();
+  });
+
+  it("states the count, the channels and the runtime", () => {
+    render(
+      <Panel
+        state={state({
+          text: "Three of them[1].",
+          counts: { videos: 3, duration_seconds: 5400, channels: 2 },
+        })}
+      />,
+    );
+    const count = document.querySelector(".answer-count")!;
+    expect(count.textContent).toContain("3 videos");
+    expect(count.textContent).toContain("across 2 channels");
+    expect(count.textContent).toContain("1:30:00");
+  });
+
+  it("says one video without pluralising, and drops a single channel", () => {
+    render(
+      <Panel
+        state={state({
+          text: "Just the one[1].",
+          counts: { videos: 1, duration_seconds: 600, channels: 1 },
+        })}
+      />,
+    );
+    const count = document.querySelector(".answer-count")!;
+    expect(count.textContent).toContain("1 video");
+    expect(count.textContent).not.toContain("videos");
+    expect(count.textContent).not.toContain("channel");
+  });
+
+  it("names a zero without claiming a runtime", () => {
+    render(
+      <Panel
+        state={state({
+          text: "None[1].",
+          counts: { videos: 0, duration_seconds: 0, channels: 0 },
+        })}
+      />,
+    );
+    const count = document.querySelector(".answer-count")!;
+    expect(count.textContent).toContain("0 videos");
+    expect(count.textContent).not.toContain("·");
+  });
+});
