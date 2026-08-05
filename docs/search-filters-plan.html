@@ -1,0 +1,292 @@
+<title>peeq — Search: reading the constraints in a question</title>
+<style>
+  :root{
+    --bg:#1f1f1e; --panel:#1b1b1a; --border:#323230; --border-soft:#2a2a28;
+    --ink:#faf9f5; --ink-dim:#e4e1d8; --muted:#9c9a92; --faint:#6f6d66;
+    --accent:#c6613f; --accent-strong:#d97757; --accent-dim:#5a3527;
+    --online:#5aa06a; --danger:#c14638; --kept:#d6a15a;
+    --sans:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --r:10px; --r-sm:8px;
+  }
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(120% 80% at 80% -10%,rgba(198,97,63,.06),transparent 60%),
+                     radial-gradient(90% 70% at 8% 110%,rgba(214,161,90,.03),transparent 55%)}
+  .wrap{max-width:1000px;margin:0 auto;padding:46px 26px 110px}
+  h1{font-family:var(--serif);font-weight:600;font-size:2rem;margin:0 0 10px;letter-spacing:-.01em;text-wrap:balance}
+  h2{font-family:var(--serif);font-weight:600;font-size:1.3rem;margin:0 0 8px}
+  h3{font-size:12.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:26px 0 8px}
+  .eyebrow{font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--faint);margin:0 0 6px}
+  .lede{color:var(--muted);max-width:70ch;margin:0 0 4px}
+  p{max-width:74ch;color:var(--ink-dim)}
+  section{margin-top:44px;border-top:1px solid var(--border-soft);padding-top:26px}
+  code{font-family:var(--mono);font-size:12.5px;color:var(--ink-dim);background:var(--panel);
+       border:1px solid var(--border-soft);border-radius:4px;padding:1px 5px}
+  pre{margin:14px 0 0;padding:13px 15px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--panel);
+      overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--ink-dim)}
+  pre code{background:none;border:0;padding:0;font-size:inherit}
+  .c{color:var(--faint)}
+  ul{max-width:74ch;color:var(--ink-dim);padding-left:20px}
+  li{margin:5px 0}
+  table{border-collapse:collapse;width:100%;margin-top:14px;font-size:13.5px}
+  th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
+     font-weight:600;padding:0 12px 8px 0;border-bottom:1px solid var(--border)}
+  td{padding:9px 12px 9px 0;border-bottom:1px solid var(--border-soft);color:var(--ink-dim);vertical-align:top}
+  td.k{color:var(--muted);white-space:nowrap}
+  .scroll{overflow-x:auto}
+  .num{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;
+       border-radius:50%;background:var(--accent-dim);color:var(--accent-strong);
+       font-size:11.5px;font-weight:600;margin-right:9px;vertical-align:2px}
+  .cite{display:inline-block;padding:2px 4px;border:1px solid var(--accent-dim);border-radius:4px;
+        color:var(--accent-strong);font-size:10.5px;font-weight:600;line-height:1;vertical-align:super;margin:0 1px}
+  .panel{border:1px solid var(--border);border-radius:var(--r);background:var(--panel);padding:16px 18px;margin-top:16px}
+  .panel p{margin:0}
+  .panel p + p{margin-top:9px}
+  .tag{display:inline-block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;
+       padding:2px 7px;border-radius:20px;border:1px solid var(--border);color:var(--muted);margin-left:8px;vertical-align:2px}
+  .tag.done{color:var(--online);border-color:color-mix(in srgb,var(--online) 40%,transparent)}
+  .tag.no{color:var(--faint)}
+  .foot{margin-top:52px;color:var(--faint);font-size:12.5px}
+  a{color:var(--accent-strong)}
+</style>
+<div class="wrap">
+  <p class="eyebrow">peeq · search · branch <code>search-filters</code></p>
+  <h1>Reading the constraints in a question, not just its subject</h1>
+  <p class="lede">
+    “Do we have unwatched videos about ontology” asks two things at once. Ask
+    only ever heard one of them. Four phases, no migration, no new dependency,
+    and no extra model call.
+  </p>
+
+  <section>
+    <h2>What was broken</h2>
+    <p>
+      A question mixes a <em>semantic</em> half with a <em>structured</em> one.
+      The understanding step already stripped “do we have” as framing, which is
+      right — but “unwatched” and “Veritasium” went out with it, because there
+      was nowhere for them to land. <code>SearchFTS</code> and
+      <code>RetrieveWithin</code> never joined the <code>videos</code> table at
+      all, so no constraint could have been honoured even if it had survived.
+    </p>
+    <div class="panel">
+      <p><strong>The obvious answer — give the model tools — is the wrong first move here.</strong></p>
+      <p>
+        There is zero tool-calling plumbing in the repo: no <code>tools</code>
+        field, no tool-call delta accumulation, and <code>Message</code> is
+        <code>{role, content}</code>. The client targets MiMo, whose tool support
+        is unverified. And every hop is a full round-trip <em>before</em> the
+        answer starts streaming — two hops is +2–4s on a path where the reader
+        already waits about five seconds.
+      </p>
+      <p>
+        The decisive point: the tool’s implementation <em>would be</em> filtered
+        retrieval. Building the loop first means building all of this anyway,
+        with the loop’s latency and failure modes obscuring whether the
+        retrieval underneath is even right.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">1</span>Filtered retrieval <span class="tag done">done</span></h2>
+    <p>
+      <code>rag.Filter</code> is where a constraint lands. Every field arrives
+      already resolved and validated, so nothing a model emits reaches SQL as
+      text.
+    </p>
+    <h3>The part that needed care</h3>
+    <p>
+      KNN returns a <em>global</em> top-k that is blind to any filter. Applied to
+      the KNN’s output, “does Veritasium cover ontology” returns nothing for any
+      channel holding a small slice of the library — which is most of them.
+    </p>
+    <p>
+      sqlite-vec treats <code>rowid IN (…)</code> as a first-class KNN
+      constraint: it bitmap-ANDs the candidate rowids into the validity mask
+      <em>before</em> computing distances. So <code>k</code> applies to the
+      filtered set — “the 40 nearest chunks among Veritasium’s”, not “the 40
+      nearest overall, of which Veritasium owns none”.
+    </p>
+    <p>
+      Verified in the shipped C source before a line was written, then pinned by
+      a test whose fixture makes the global top-40 entirely one channel and
+      asserts the <em>other</em> channel’s chunk still comes back. That test
+      fails loudly if the pre-filter ever degrades into a post-filter.
+    </p>
+    <p>
+      FTS needed none of it. FTS5 is not a top-k operator, so joining
+      <code>videos</code> before <code>ORDER BY bm25 … LIMIT</code> is a
+      pre-filter by construction.
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="num">2</span>The query plan <span class="tag done">done</span></h2>
+    <p>
+      The understanding step already ran and already returned JSON. It now
+      returns one key more. <strong>No extra round-trip</strong> — a longer
+      prompt on a call that was happening anyway.
+    </p>
+    <div class="scroll">
+      <table>
+        <tr><th>Question</th><th>Extracted</th></tr>
+        <tr>
+          <td class="k">do we have unwatched videos about ontology</td>
+          <td><code>{"topic":"ontology","filters":{"watched":"unwatched"}}</code></td>
+        </tr>
+        <tr>
+          <td class="k">does Veritasium have anything about ontology</td>
+          <td><code>{"topic":"ontology","filters":{"channels":["Veritasium"]}}</code></td>
+        </tr>
+        <tr>
+          <td class="k">how do Veritasium and Kurzgesagt differ on dark matter</td>
+          <td><code>{"topic":"dark matter","filters":{"channels":["Veritasium","Kurzgesagt"]}}</code></td>
+        </tr>
+      </table>
+    </div>
+    <h3>Names, never ids</h3>
+    <p>
+      An id is a thing a model can only invent, and an invented one filters the
+      search down to nothing while looking exactly like a correct one. So the
+      model reports the name as written, and Go matches it against the channels
+      the library actually holds — down a ladder from exact, through handle and
+      normalized form, to a bounded typo tier.
+    </p>
+    <p>
+      It resolves against <code>videos</code> rather than <code>channels</code>,
+      because the latter also caches channels the user never tracked, and
+      filtering to one of those can only ever return nothing.
+    </p>
+    <h3>Everything else is dropped unless Go can verify it</h3>
+    <p>
+      An invented category, a date that will not parse, a third watch state — all
+      dropped and named in the log rather than passed along. The asymmetry is
+      deliberate: a wrong topic costs a lane and is outvoted by four others,
+      while <strong>a wrong filter hides videos and nothing downstream can tell
+      that it happened</strong>.
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="num">3</span>Relaxation, with disclosure <span class="tag done">done</span></h2>
+    <p>
+      This is the failure the feature itself introduces. “Unwatched videos about
+      ontology”, on a library holding three watched ones, would report that
+      <em>nothing covers the subject</em> — when the truth is that everything
+      covering it has been watched.
+    </p>
+    <p>
+      So a filter that finds nothing at all is dropped and the search re-run,
+      once. The vectors are already computed, so this is SQL and nothing else: no
+      second embedding, no second model call. What it must never be is silent.
+    </p>
+    <div class="panel">
+      <p>
+        An earlier draft relaxed below <em>two</em> distinct videos. That was
+        wrong, and the tests caught it: “does Veritasium cover ontology” answered
+        from the one Veritasium video that covers it is exactly right, and
+        widening it replaces a correct narrow answer with a vaguer broad one.
+        Empty is the only unambiguous signal.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">4</span>Counts, chapters, comparisons <span class="tag done">done</span></h2>
+    <ul>
+      <li>
+        <strong>Counts.</strong> <code>intent: inventory</code> was already
+        detected and then nothing branched on it — “how many unwatched
+        Veritasium videos” was answered by guessing from twelve excerpts. Now
+        it is one SQL count, under the <em>original</em> filter, so a relaxed
+        search still reports zero with the disclosure reconciling it.
+      </li>
+      <li>
+        <strong>Chapters.</strong> Each excerpt carries the chapter it falls in,
+        so an answer can say <em>where</em> in a two-hour lecture something is
+        covered instead of inferring a location from a fragment that names none.
+      </li>
+      <li>
+        <strong>Comparisons.</strong> A question naming two channels switches
+        excerpt selection to summary-first. Twelve interleaved transcript
+        fragments are the worst possible evidence for “how do these two differ”.
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>What the reader sees</h2>
+    <p>
+      A filter is invisible in an answer — the prose reads perfectly whether or
+      not it came from the slice the reader meant. So the scope row sits between
+      the header and the prose, where it qualifies everything below it.
+    </p>
+    <div class="scroll">
+      <table>
+        <tr><th>State</th><th>Shown as</th><th>Why</th></tr>
+        <tr><td class="k">Applied</td><td>plain chip</td><td>“Searched: unwatched, Veritasium”</td></tr>
+        <tr><td class="k">Typo corrected</td><td>plain chip, canonical name</td><td>Silent, as asked — the corrected name is the disclosure</td></tr>
+        <tr><td class="k">Relaxed</td><td>struck-through chip</td><td>Matched something real, found nothing in it</td></tr>
+        <tr><td class="k">Unknown channel</td><td>struck-through chip + a sentence</td><td>Widening in silence would hand them another channel’s videos</td></tr>
+      </table>
+    </div>
+    <p>
+      Both notes are written in Go rather than asked for — the same discipline as
+      the existing “Nothing in your library covers that”, and for the same
+      reason: the most important negative cannot depend on the model choosing to
+      admit it.
+    </p>
+  </section>
+
+  <section>
+    <h2>Where tools would still earn their keep</h2>
+    <p>
+      Three of the seven candidates needed no loop at all and are folded in
+      above. These are the ones that genuinely want one, once MiMo’s tool support
+      is spiked.
+    </p>
+    <div class="scroll">
+      <table>
+        <tr><th>Tool</th><th>Answers</th><th>Cost</th></tr>
+        <tr><td class="k">list_videos</td><td>“what should I watch next”, “longest unwatched”, “newest from Kurzgesagt”</td><td>One hop; highest value of the set</td></tr>
+        <tr><td class="k">count_library</td><td>Multi-constraint counting: “how many of each channel”</td><td>One hop, pure SQL</td></tr>
+        <tr><td class="k">search_within_video</td><td>“that one you cited — what else does it say about Y”</td><td>Free; the predicate already exists</td></tr>
+        <tr><td class="k">list_channels</td><td>Disambiguation vocabulary</td><td><strong>Zero</strong> — for a personal library, inline the names in the prompt instead</td></tr>
+        <tr><td class="k">channel_stats</td><td>“how much Veritasium do I have, how much have I watched”</td><td>One hop</td></tr>
+        <tr><td class="k">recent_arrivals</td><td>“what showed up this week”</td><td>Low — mostly covered by list_videos</td></tr>
+      </table>
+    </div>
+    <p>
+      Note the exposure a loop adds that a single call does not: injected
+      transcript text can steer the model’s <em>next tool call</em>, not just its
+      prose. The containment is that the tool boundary is a typed Go struct —
+      exactly the boundary <code>rag.Filter</code> already is.
+    </p>
+    <p>
+      <strong>Conversational follow-up</strong> is a bigger piece and belongs on
+      its own. <code>/api/search/answer</code> is a stateless
+      <code>GET&nbsp;?q=</code>; real multi-turn needs history on the wire, SSE
+      over POST, and client thread state.
+    </p>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <ul>
+      <li>Backend: full suite green, including the pre-filter contract test.</li>
+      <li>UI: <code>npm run build</code>, 1124 tests, <code>format:check</code> clean.</li>
+      <li>
+        <strong>Not done:</strong> the live end-to-end pass. The local dev
+        database holds one video, and the check needs the real chat and embed
+        endpoints.
+      </li>
+    </ul>
+  </section>
+
+  <p class="foot">
+    No migration · no new dependency · no change to <code>llm/</code> ·
+    <code>rag.Filter{}</code> reproduces every previous query byte for byte.
+  </p>
+</div>
