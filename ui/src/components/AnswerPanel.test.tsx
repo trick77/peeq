@@ -182,6 +182,26 @@ describe("AnswerPanel", () => {
       expect(screen.getByText("Reading your library")).toBeInTheDocument();
     });
 
+    // Retrieval is well under a second; generating is around five. A topic shown
+    // only while retrieving would flash past, so the guard against a silent bad
+    // rewrite has to survive into the phase the reader actually sits through.
+    it("keeps the understood query up through the long phase", () => {
+      render(
+        <Panel
+          state={state({
+            status: "generating",
+            text: "",
+            topic: "bike geometry",
+          })}
+        />,
+      );
+      // The count still leads, so "retrieval succeeded" is what survives if the
+      // label has to ellipsize.
+      expect(
+        screen.getByText(`Reading ${videos.length} videos on “bike geometry”`),
+      ).toBeInTheDocument();
+    });
+
     it("falls back to the library when nothing was rewritten", () => {
       render(
         <Panel state={state({ status: "retrieving", text: "", topic: "" })} />,

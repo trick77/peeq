@@ -58,10 +58,15 @@ export type AnswerState = {
 // one label across the entire wait could not say that retrieval had already
 // succeeded, so five seconds of the model thinking read exactly like a stall.
 //
-// The retrieving line shows the UNDERSTOOD query when there is one. That is the
-// most useful thing on screen at that moment — it is the reader's only view of
-// what was actually searched for, and the only way a rewrite that drops the
-// wrong word gets noticed instead of quietly returning worse answers.
+// The UNDERSTOOD query rides on BOTH of the phases that have one, and that is
+// not decoration. It is the reader's only view of what was actually searched
+// for, and the only way a rewrite that drops the wrong word gets noticed instead
+// of quietly returning worse answers. Shown on the retrieving line alone it
+// could not do that job: retrieval is well under a second, while understanding
+// takes a second or two and generating around five — so the one label carrying
+// the topic would flash past between two long ones, and a topic mis-extracted as
+// "material science" would be on screen for less time than it takes to read. It
+// stays up through the long phase instead, where it can actually be seen.
 function waitLabel(
   status: AnswerState["status"],
   topic: string | undefined,
@@ -72,12 +77,17 @@ function waitLabel(
       return "Understanding your question";
     case "retrieving":
       return topic ? `Searching for “${topic}”` : "Searching your library";
-    default:
+    default: {
       // Generating: the long one. Naming the count is what makes the wait feel
       // like progress rather than a hang — it says retrieval already worked.
-      return videoCount > 0
-        ? `Reading ${videoCount} video${videoCount === 1 ? "" : "s"}`
-        : "Reading your library";
+      const read =
+        videoCount > 0
+          ? `Reading ${videoCount} video${videoCount === 1 ? "" : "s"}`
+          : "Reading your library";
+      // The count comes FIRST, so the part that says retrieval succeeded is the
+      // part that survives if .lbl has to ellipsize a long topic.
+      return topic ? `${read} on “${topic}”` : read;
+    }
   }
 }
 
