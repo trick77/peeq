@@ -44,6 +44,22 @@ export type AnswerVideo = {
 // transport failure, and the sources that preceded it are still good.
 export type AnswerEvent =
   | {
+      // Retrieval is starting. It arrives BEFORE `sources`, once the backend has
+      // worked out what the question is about — a step that costs a second or so
+      // and used to pass with nothing on the wire, so the panel claimed the
+      // library was being searched before searching had begun.
+      //
+      // `topic` is the question with its framing stripped: "bike geometry" from
+      // "what material about bike geometry do we have". Empty when there was
+      // nothing to strip, when the step failed, or when it is not configured —
+      // all of which mean the raw question was searched, never an error. Showing
+      // it is what makes a bad rewrite visible instead of silent.
+      type: "progress";
+      phase: "retrieving";
+      topic: string;
+      intent: string;
+    }
+  | {
       type: "sources";
       sources: AnswerSource[];
       videos: AnswerVideo[];
@@ -71,6 +87,16 @@ export async function streamAnswer(
     `/api/search/answer?q=${encodeURIComponent(q)}`,
     ({ event, data }) => {
       switch (event) {
+        case "progress": {
+          const d = data as { topic?: string; intent?: string };
+          onEvent({
+            type: "progress",
+            phase: "retrieving",
+            topic: d.topic ?? "",
+            intent: d.intent ?? "content",
+          });
+          break;
+        }
         case "sources": {
           const d = data as {
             sources?: AnswerSource[];

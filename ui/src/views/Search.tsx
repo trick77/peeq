@@ -114,7 +114,11 @@ export function Search({
   // the citation list first puts the evidence on screen ahead of the thing that
   // cites it — which reads backwards, and pulls the eye away from the text
   // actually being written.
-  const answerStreaming = mode === "ask" && answer?.status === "streaming";
+  // Every phase before "done" counts: understanding, retrieving and generating
+  // are all "the answer has not finished". Testing for one named phase here
+  // would silently stop matching the moment the phases were split apart.
+  const answerStreaming =
+    mode === "ask" && answer != null && answer.status !== "done";
   const matchCount = results?.reduce((n, r) => n + r.matches.length, 0) ?? 0;
 
   return (

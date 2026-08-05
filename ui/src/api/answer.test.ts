@@ -50,6 +50,42 @@ describe("streamAnswer", () => {
     expect(got[1]).toMatchObject({ text: "Yes — " });
   });
 
+  // progress arrives before sources and carries the understood query — the
+  // reader's only view of what was actually searched for.
+  it("narrows the progress frame and its topic", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeStreamResponse(
+        frames(
+          `event: progress\ndata: {"phase":"retrieving","topic":"bike geometry","intent":"inventory"}`,
+          `event: done\ndata: {"reason":"stop"}`,
+        ),
+      ),
+    );
+    const got = await collect([]);
+    expect(got.map((e) => e.type)).toEqual(["progress", "done"]);
+    expect(got[0]).toMatchObject({
+      type: "progress",
+      phase: "retrieving",
+      topic: "bike geometry",
+      intent: "inventory",
+    });
+  });
+
+  // A question with no framing to strip sends an empty topic, and a backend
+  // built before this frame existed sends no fields at all. Both mean "the raw
+  // question was searched", never an error.
+  it("defaults a progress frame that carries nothing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeStreamResponse(frames(`event: progress\ndata: {}`)),
+    );
+    const got = await collect([]);
+    expect(got[0]).toMatchObject({
+      type: "progress",
+      topic: "",
+      intent: "content",
+    });
+  });
+
   // Leading and trailing spaces have to survive, or the answer loses its word
   // boundaries. They ride inside the JSON string precisely for this reason.
   it("preserves whitespace inside a token", async () => {

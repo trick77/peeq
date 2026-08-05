@@ -102,7 +102,7 @@ describe("AnswerPanel", () => {
   it("renders partial text while streaming", () => {
     render(
       <Panel
-        state={state({ status: "streaming", text: "Yes — twice, and" })}
+        state={state({ status: "generating", text: "Yes — twice, and" })}
         onOpen={vi.fn()}
       />,
     );
@@ -117,19 +117,127 @@ describe("AnswerPanel", () => {
   it("shows the spinner only until the first token", () => {
     const { rerender } = render(
       <Panel
-        state={state({ status: "streaming", text: "" })}
+        state={state({ status: "generating", text: "" })}
         onOpen={vi.fn()}
       />,
     );
-    expect(screen.getByText(/Reading your library/)).toBeInTheDocument();
+    // Generating with a retrieved set in hand: the label names the count, which
+    // is what says retrieval already succeeded.
+    expect(screen.getByText(/Thinking about 3 videos/)).toBeInTheDocument();
 
     rerender(
       <Panel
-        state={state({ status: "streaming", text: "Yes — " })}
+        state={state({ status: "generating", text: "Yes — " })}
         onOpen={vi.fn()}
       />,
     );
-    expect(screen.queryByText(/Reading your library/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Thinking about 3 videos/),
+    ).not.toBeInTheDocument();
+  });
+
+  // The wait has three parts and each label is true only of its own. One label
+  // across the whole wait could not say that retrieval had already succeeded,
+  // which is what made five seconds of the model thinking read like a stall.
+  describe("the wait label", () => {
+    it("names the phase it is actually in", () => {
+      const { rerender } = render(
+        <Panel state={state({ status: "understanding", text: "" })} />,
+      );
+      expect(
+        screen.getByText("Understanding your question"),
+      ).toBeInTheDocument();
+
+      rerender(<Panel state={state({ status: "retrieving", text: "" })} />);
+      expect(screen.getByText("Searching your library")).toBeInTheDocument();
+
+      rerender(<Panel state={state({ status: "generating", text: "" })} />);
+      // videos carries the retrieved set, so the count is real.
+      expect(
+        screen.getByText(`Thinking about ${videos.length} videos`),
+      ).toBeInTheDocument();
+    });
+
+    // The reader's only view of what was actually searched for. Without it a
+    // rewrite that drops the wrong word just returns worse answers, silently.
+    it("shows the understood query while retrieving", () => {
+      render(
+        <Panel
+          state={state({
+            status: "retrieving",
+            text: "",
+            topic: "bike geometry",
+          })}
+        />,
+      );
+      expect(screen.getByText(/bike geometry/)).toBeInTheDocument();
+    });
+
+    // Generating before the videos frame has been seen, or a retrieval that
+    // found none: there is no count to name, so the label must not say "0".
+    it("names no count it does not have", () => {
+      render(
+        <Panel
+          state={{ status: "generating", text: "", sources: [], videos: [] }}
+        />,
+      );
+      expect(screen.getByText("Thinking")).toBeInTheDocument();
+    });
+
+    // Retrieval is well under a second; generating is around five. A topic shown
+    // only while retrieving would flash past, so the guard against a silent bad
+    // rewrite has to survive into the phase the reader actually sits through.
+    it("keeps the understood query up through the long phase", () => {
+      render(
+        <Panel
+          state={state({
+            status: "generating",
+            text: "",
+            topic: "bike geometry",
+          })}
+        />,
+      );
+      // The count still leads, so "retrieval succeeded" is what survives if the
+      // label has to ellipsize.
+      expect(
+        screen.getByText(
+          `Thinking about ${videos.length} videos on “bike geometry”`,
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("falls back to the library when nothing was rewritten", () => {
+      render(
+        <Panel state={state({ status: "retrieving", text: "", topic: "" })} />,
+      );
+      expect(screen.getByText("Searching your library")).toBeInTheDocument();
+    });
+
+    // The spinner is the first child of a right-anchored block, so a label that
+    // changes length moves it. The reserve stops that — and is dropped once the
+    // answer settles, so "N sources" keeps sitting against the right edge.
+    it("reserves the label width only while waiting", () => {
+      const { rerender } = render(
+        <Panel state={state({ status: "retrieving", text: "" })} />,
+      );
+      expect(document.querySelector(".answer .hd .status")).toHaveClass(
+        "waiting",
+      );
+
+      rerender(<Panel state={state({ status: "done", text: "Yes.[1]" })} />);
+      expect(document.querySelector(".answer .hd .status")).not.toHaveClass(
+        "waiting",
+      );
+    });
+
+    // A phase label is about the wait BEFORE the first word; once words arrive
+    // they say it better.
+    it("goes as soon as text arrives, whatever the phase", () => {
+      render(<Panel state={state({ status: "generating", text: "Yes — " })} />);
+      expect(
+        screen.queryByText(/Thinking|Searching|Understanding/),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("counts the sources the answer cited, not the ones retrieved", () => {
@@ -139,7 +247,7 @@ describe("AnswerPanel", () => {
         onOpen={vi.fn()}
       />,
     );
-    expect(screen.queryByText(/Reading your library/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Thinking/)).not.toBeInTheDocument();
     // Four were retrieved; two videos were used.
     expect(screen.getByText("2 sources")).toBeInTheDocument();
   });
@@ -353,7 +461,7 @@ describe("AnswerPanel", () => {
   it("announces the settled answer politely rather than every token", () => {
     render(
       <Panel
-        state={state({ status: "streaming", text: "partial" })}
+        state={state({ status: "generating", text: "partial" })}
         onOpen={vi.fn()}
       />,
     );
@@ -413,7 +521,7 @@ describe("also in your library", () => {
     render(
       <Panel
         state={state({
-          status: "streaming",
+          status: "generating",
           text: "Only the first[1]",
           coverage: [...videos, uncited],
         })}

@@ -20,7 +20,24 @@ import type { AnswerSource, AnswerVideo } from "../api/answer";
 // See answerSources.ts — the same derivation feeds the moments below.
 
 export type AnswerState = {
-  status: "streaming" | "done";
+  // The wait has three distinct parts and they are not interchangeable:
+  //
+  //   understanding — working out what the question is about (~1-2s)
+  //   retrieving    — searching the library (well under a second)
+  //   generating    — the model is thinking, then writing (~5s to first word)
+  //
+  // They exist as separate values because the panel has something different and
+  // TRUE to say during each. Collapsing them back into one "streaming" is what
+  // made the whole wait a single spinner that could not tell a reader whether
+  // retrieval had already succeeded.
+  //
+  // Everything that used to ask `status === "streaming"` means "not finished",
+  // which is now every value except "done" — see `streaming` below.
+  status: "understanding" | "retrieving" | "generating" | "done";
+  // The understood query, from the progress frame. Shown while retrieving so a
+  // rewrite that mangles the question is visible rather than silent. Empty when
+  // the question needed no rewriting or the step did not run.
+  topic?: string;
   text: string;
   sources: AnswerSource[];
   // The videos frame of the same stream. A source carries channel_name but no
@@ -36,6 +53,53 @@ export type AnswerState = {
   failed?: boolean;
 };
 
+// waitLabel names the phase the reader is waiting through. Each line is true
+// only of its own phase, which is the whole reason the phases exist separately:
+// one label across the entire wait could not say that retrieval had already
+// succeeded, so five seconds of the model thinking read exactly like a stall.
+//
+// The UNDERSTOOD query rides on BOTH of the phases that have one, and that is
+// not decoration. It is the reader's only view of what was actually searched
+// for, and the only way a rewrite that drops the wrong word gets noticed instead
+// of quietly returning worse answers. Shown on the retrieving line alone it
+// could not do that job: retrieval is well under a second, while understanding
+// takes a second or two and generating around five — so the one label carrying
+// the topic would flash past between two long ones, and a topic mis-extracted as
+// "material science" would be on screen for less time than it takes to read. It
+// stays up through the long phase instead, where it can actually be seen.
+function waitLabel(
+  status: AnswerState["status"],
+  topic: string | undefined,
+  videoCount: number,
+): string {
+  switch (status) {
+    case "understanding":
+      return "Understanding your question";
+    case "retrieving":
+      return topic ? `Searching for “${topic}”` : "Searching your library";
+    default: {
+      // Generating: the long one. Naming the count is what makes the wait feel
+      // like progress rather than a hang — it says retrieval already worked.
+      //
+      // "Thinking", not "Reading". Reading was accurate while ONE label covered
+      // the whole wait, retrieval included — but by the time this phase starts,
+      // the library has already been read and the passages are in hand. What the
+      // five seconds actually are is the model reasoning over them: thinking is
+      // on for this call, and that is where the time goes.
+      if (videoCount > 0) {
+        const base = `Thinking about ${videoCount} video${videoCount === 1 ? "" : "s"}`;
+        // The count comes FIRST, so the part that says retrieval succeeded is
+        // what survives if .lbl has to ellipsize a long topic.
+        return topic ? `${base} on “${topic}”` : base;
+      }
+      // No count to name. Rare — generating begins on the sources frame, which
+      // carries the videos — so this is the empty-retrieval case, and it must not
+      // claim a number it does not have.
+      return topic ? `Thinking about “${topic}”` : "Thinking";
+    }
+  }
+}
+
 export function AnswerPanel({
   state,
   onOpen,
@@ -50,14 +114,20 @@ export function AnswerPanel({
   onOpenVideo: (videoId: string) => void;
   onOpenChannel: (channelId: string) => void;
 }) {
-  const { status, text, sources, videos, failed } = state;
+  const { status, topic, text, sources, videos, failed } = state;
   const channelOf = new Map(
     (videos ?? []).map((v) => [v.id, v.channel_id] as const),
   );
   // The body's parts come from answerSources too, so the marks above and the
   // rows below cannot disagree about what a numeral means. It is what resolves
   // each mark to its source and collapses a run of adjacent same-numeral marks.
-  const streaming = status === "streaming";
+  // "not finished" — the meaning every existing use of this flag already had.
+  const streaming = status !== "done";
+  // The spinner covers the wait BEFORE the first word. Once text is arriving it
+  // says the same thing better. This is the gate the phase label hangs off: a
+  // wider status union alone would change nothing, because this condition reads
+  // the same whichever unfinished value status holds.
+  const waiting = streaming && !text;
   // `streaming` is what lets answerParts hold back a mark whose sentence has not
   // finished arriving — see marksAfterSentenceEnd.
   const parts = answerParts(text, sources, streaming);
@@ -89,14 +159,22 @@ export function AnswerPanel({
       <div className="hd">
         <Icon name="sparkles" size="14px" />
         Answer
-        <span className="status">
+        {/* `waiting` reserves a fixed width for the label (see .status.waiting).
+            The status block is pushed right and the spinner is its FIRST child,
+            so without a reserve the spinner slides sideways every time the label
+            changes length — and it now changes three times. The reserve is only
+            applied while waiting, so the settled "N sources" keeps sitting hard
+            against the right edge exactly as it always has. */}
+        <span className={waiting ? "status waiting" : "status"}>
           {/* The spinner belongs to the wait before the first token. Once words
               are arriving they say the same thing better, and the caret below
               carries "still going". */}
-          {streaming && !text ? (
+          {waiting ? (
             <>
               <Spinner size="12px" />
-              Reading your library
+              <span className="lbl">
+                {waitLabel(status, topic, (videos ?? []).length)}
+              </span>
             </>
           ) : !streaming && rows.length ? (
             `${rows.length} source${rows.length === 1 ? "" : "s"}`

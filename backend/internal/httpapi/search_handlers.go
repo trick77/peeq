@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
@@ -265,12 +266,28 @@ func (s *server) retrieveFind(r *http.Request, q string) []rag.Hit {
 // retrieveAsk fuses the lanes askLanes built. A caller that needs to know WHICH
 // lane a hit came from — the answer's coverage list does, so it can keep the
 // recall floor out — uses askLanes directly.
+// retrieveAsk keeps the raw question and nothing else. The query-understanding
+// step belongs to /api/search/answer, which streams and can tell the reader that
+// a pre-step is running; this endpoint answers a direct API caller with JSON and
+// would only pay the latency without anywhere to report it. Such a call logs
+// understand=skipped, so the two paths are told apart in the log rather than
+// guessed at.
 func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
-	return rag.FuseWeighted(s.askLanes(r, q), searchCandidates)
+	lanes, diag := s.askLanes(r, q, "")
+	fused := rag.FuseWeighted(lanes, searchCandidates)
+	diag.log(q, fused)
+	return fused
 }
 
-func (s *server) askLanes(r *http.Request, q string) []rag.Lane {
-	lanes := make([]rag.Lane, 0, 5)
+// askLanes builds every lane one Ask retrieval fuses, and returns the diagnostic
+// alongside them. The caller logs it: handleAnswer waits until it knows which
+// excerpts the model was actually given, which is the only number that says
+// whether a lane changed what was READ rather than merely what was found.
+//
+// topic is the question with its framing stripped (see understand.go), or "" for
+// no second vector lane.
+func (s *server) askLanes(r *http.Request, q, topic string) ([]rag.Lane, askDiag) {
+	lanes := make([]rag.Lane, 0, 6)
 
 	// Keyword lane, relaxed in steps: a natural question ANDs its function words
 	// and matches nothing, so fall through to content-terms-only, to prefixes, and
@@ -305,7 +322,8 @@ func (s *server) askLanes(r *http.Request, q string) []rag.Lane {
 	// reader can see six in the search box next to it. The failure being fixed —
 	// answering from one chunk — was far worse than the dilution being accepted.
 	// Widening the bar is what to revisit if focused answers turn out to suffer.
-	diag := askDiag{}
+	diag := askDiag{topic: topic, rawLane: -1, topicLane: -1}
+	ftsStart := time.Now()
 	videosSeen := make(map[string]bool)
 	for _, tier := range rag.BuildFTSQueries(q) {
 		hits, err := s.rag.SearchFTS(r.Context(), tier.Match, searchCandidates)
@@ -331,41 +349,79 @@ func (s *server) askLanes(r *http.Request, q string) []rag.Lane {
 		}
 	}
 
+	diag.ftsMs = time.Since(ftsStart).Milliseconds()
+
+	// BOTH vector queries go out in ONE embedding request. The topic lane costs a
+	// lane, not a round-trip: Embed already takes a slice, and a second call would
+	// put its own network latency in front of the first byte to no purpose.
 	if s.embedder != nil {
-		if vecs, err := s.embedder.Embed(r.Context(), []string{q}); err == nil && len(vecs) > 0 {
-			semHits, err := s.rag.RetrieveWithin(r.Context(), vecs[0], semanticCandidates, s.searchMaxDistance)
-			switch {
-			case err != nil:
-				slog.Warn("search: semantic retrieve degraded", "err", err)
-			case len(semHits) > 0:
-				// The absolute bound says "not about anything"; the spread says
-				// "not about THIS, given what this query actually found". Both
-				// are needed — on a query the library covers well every row
-				// clears the absolute bound, and the spread is the only thing
-				// that can tell the sixth genuinely relevant chunk from the
-				// seventh merely-nearest one.
-				//
-				// A negative searchMaxDistance is the documented opt-out from
-				// bounding the vector lane, so it opts out of BOTH: an operator
-				// who asks for unbounded KNN gets unbounded KNN, not a floor
-				// they cannot see in any setting.
-				diag.semBounded, diag.semBoundedVideos = len(semHits), distinctVideos(semHits)
-				diag.nearest, diag.farthest = semHits[0].Distance, semHits[len(semHits)-1].Distance
-				if s.searchMaxDistance > 0 {
-					semHits = rag.WithinSpread(semHits, rag.SemanticSpread)
-				}
-				diag.semKept, diag.semKeptVideos = len(semHits), distinctVideos(semHits)
-				lanes = append(lanes, rag.Lane{Hits: semHits, Weight: rag.WeightSemantic})
-			}
-		} else if err != nil {
+		inputs := []string{q}
+		if topic != "" {
+			inputs = append(inputs, topic)
+		}
+		embedStart := time.Now()
+		vecs, err := s.embedder.Embed(r.Context(), inputs)
+		diag.embedMs = time.Since(embedStart).Milliseconds()
+		if err != nil {
 			// Semantic unavailable (endpoint down/misconfigured); fall back to
 			// FTS-only rather than failing the whole search.
 			slog.Warn("search: semantic degraded, using FTS only", "err", err)
+		} else {
+			if len(vecs) > 0 {
+				if lane, ok := s.semanticLane(r, vecs[0], rag.WeightSemantic, &diag.semRaw); ok {
+					diag.rawLane = len(lanes)
+					lanes = append(lanes, lane)
+				}
+			}
+			// A reply too short to hold the second vector is a misbehaving
+			// endpoint, not a reason to fail: the raw lane is already in, so the
+			// topic lane simply does not run and the log says it returned nothing.
+			if topic != "" && len(vecs) > 1 {
+				if lane, ok := s.semanticLane(r, vecs[1], rag.WeightSemanticTopic, &diag.semTopic); ok {
+					diag.topicLane = len(lanes)
+					lanes = append(lanes, lane)
+				}
+			}
 		}
 	}
 
-	diag.log(q, rag.FuseWeighted(lanes, searchCandidates))
-	return lanes
+	diag.retrievalMs = time.Since(ftsStart).Milliseconds()
+	return lanes, diag
+}
+
+// semanticLane runs one vector query and records what the two bounds did to it.
+// Both lanes go through here so the raw and topic lanes cannot drift apart in
+// how they are bounded — which matters more than usual, because comparing their
+// distance ranges on the same question is the measurement that says whether
+// DefaultMaxDistance and SemanticSpread still hold once a rewritten query is in
+// play. They were calibrated against raw questions only.
+func (s *server) semanticLane(r *http.Request, vec []float32, weight float64, d *semLaneDiag) (rag.Lane, bool) {
+	hits, err := s.rag.RetrieveWithin(r.Context(), vec, semanticCandidates, s.searchMaxDistance)
+	if err != nil {
+		slog.Warn("search: semantic retrieve degraded", "err", err)
+		d.failed = true
+		return rag.Lane{}, false
+	}
+	d.ran = true
+	if len(hits) == 0 {
+		return rag.Lane{}, false
+	}
+	// The absolute bound says "not about anything"; the spread says "not about
+	// THIS, given what this query actually found". Both are needed — on a query
+	// the library covers well every row clears the absolute bound, and the spread
+	// is the only thing that can tell the sixth genuinely relevant chunk from the
+	// seventh merely-nearest one.
+	//
+	// A negative searchMaxDistance is the documented opt-out from bounding the
+	// vector lane, so it opts out of BOTH: an operator who asks for unbounded KNN
+	// gets unbounded KNN, not a floor they cannot see in any setting.
+	d.bounded, d.boundedVideos = len(hits), distinctVideos(hits)
+	d.nearest, d.farthest = hits[0].Distance, hits[len(hits)-1].Distance
+	if s.searchMaxDistance > 0 {
+		hits = rag.WithinSpread(hits, rag.SemanticSpread)
+	}
+	d.kept, d.keptVideos = len(hits), distinctVideos(hits)
+	return rag.Lane{Hits: hits, Weight: weight}, true
 }
 
 // askDiag is what one Ask retrieval did, gathered so it can be logged as a
@@ -384,11 +440,131 @@ func (s *server) askLanes(r *http.Request, q string) []rag.Lane {
 // library's coverage and is merely outvoted at fusion — WeightSemantic is 0.6
 // against a strict rung's 1.0 — or whether it is weak because the raw question,
 // conversational framing and all, is what gets embedded.
+// semLaneDiag is one vector lane's numbers. There are two lanes now — the raw
+// question and its stripped topic — and they are recorded separately on purpose:
+// the totals cannot say whether the rewrite contributed anything, and "did the
+// rewrite help or hurt" is the only question this whole step has to answer.
+type semLaneDiag struct {
+	// ran distinguishes a lane that returned nothing from a lane that never
+	// ran at all. Without it, "no topic lane" and "a topic lane the bound
+	// emptied" read identically, and they mean opposite things.
+	ran bool
+	// failed is the vector store erroring, which is a THIRD state: without it a
+	// broken RetrieveWithin prints the same "-" as a lane that never ran, and the
+	// log would read as "no topic lane" on the one occasion it matters most.
+	failed                 bool
+	bounded, boundedVideos int
+	kept, keptVideos       int
+	nearest, farthest      float64
+}
+
+func (d semLaneDiag) String() string {
+	if d.failed {
+		return "err"
+	}
+	if !d.ran {
+		return "-"
+	}
+	// A lane that ran and matched nothing has no distances to report. Printing
+	// the zero values as "0.000..0.000" would put a measurement in the field
+	// that was never taken — and this field is precisely the recalibration data
+	// for DefaultMaxDistance, so a fabricated 0.000 is the worst thing it could
+	// say.
+	if d.bounded == 0 {
+		return "0h/0v"
+	}
+	return fmt.Sprintf("%dh/%dv→%dh/%dv %.3f..%.3f",
+		d.bounded, d.boundedVideos, d.kept, d.keptVideos, d.nearest, d.farthest)
+}
+
 type askDiag struct {
-	rungs                        []string
-	semBounded, semBoundedVideos int
-	semKept, semKeptVideos       int
-	nearest, farthest            float64
+	rungs    []string
+	semRaw   semLaneDiag
+	semTopic semLaneDiag
+
+	// The query-understanding step, filled by the caller that ran it.
+	topic        string
+	intent       string
+	understand   string
+	understandMs int64
+
+	embedMs, ftsMs, retrievalMs int64
+
+	// excerpts is the attribution the caller fills in once it knows which
+	// passages the model was actually handed: the total, and how many of them
+	// each lane family had found. It is the only field that separates "the
+	// rewrite changed retrieval" from "the rewrite changed what was READ", and
+	// those come apart often — the vector lanes are outranked by three keyword
+	// rungs, so a lane can win rows and still lose every excerpt slot.
+	//
+	// attributed separates "no lane contributed an excerpt" from "excerpts were
+	// never looked at here" — /api/search?mode=ask has no excerpts to attribute,
+	// and four zeroes would read as the lanes having contributed nothing.
+	attributed                      bool
+	excerpts                        int
+	fromRaw, fromTopic, fromKeyword int
+
+	// Which lane index is which. The two vector lanes carry the SAME weight by
+	// design, so weight cannot identify them and the attribution above would
+	// otherwise have nothing to key on. -1 means the lane never ran.
+	rawLane, topicLane int
+}
+
+// attribute counts how many of the passages the model was actually given came
+// from each lane family.
+//
+// Passages are keyed by video AND CHUNK ORDINAL — the same key FuseWeighted
+// dedups on, and the only one that is unique. Video plus start second is not: a
+// chapter chunk carries the transcript of its own span, so one moment is indexed
+// twice under two kinds, which is what minMomentGapSeconds exists to hide. Keyed
+// on the pair, a lane holding the chapter rendering would be credited for the
+// transcript rendering the answer actually read.
+//
+// The counts overlap on purpose. A passage found by the topic lane AND a keyword
+// rung counts once for each, because the question being asked is "did this lane
+// contribute to what was read", not "which single lane owns this row".
+func (d *askDiag) attribute(lanes []rag.Lane, chosen []rag.Hit) {
+	d.attributed = true
+	d.excerpts = len(chosen)
+	if len(chosen) == 0 {
+		return
+	}
+	key := func(h rag.Hit) string {
+		return h.VideoID + ":" + strconv.Itoa(h.Ordinal)
+	}
+	read := make(map[string]bool, len(chosen))
+	for _, h := range chosen {
+		read[key(h)] = true
+	}
+	count := func(lane rag.Lane) int {
+		seen := make(map[string]bool)
+		for _, h := range lane.Hits {
+			if k := key(h); read[k] {
+				seen[k] = true
+			}
+		}
+		return len(seen)
+	}
+	keywordSeen := make(map[string]bool)
+	for i, lane := range lanes {
+		switch i {
+		case d.rawLane:
+			d.fromRaw = count(lane)
+		case d.topicLane:
+			d.fromTopic = count(lane)
+		default:
+			// The keyword rungs are several lanes over one ladder, and they
+			// overlap heavily by construction — a chunk the strict rung found is
+			// usually found by the floor too. Counting them as one family avoids
+			// a number larger than the excerpt count itself.
+			for _, h := range lane.Hits {
+				if k := key(h); read[k] {
+					keywordSeen[k] = true
+				}
+			}
+		}
+	}
+	d.fromKeyword = len(keywordSeen)
 }
 
 // log writes the line. Info rather than Debug: an Ask is user-initiated and rare,
@@ -399,13 +575,34 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 	if len(d.rungs) > 0 {
 		rungs = strings.Join(d.rungs, " ")
 	}
+	understand := d.understand
+	if understand == "" {
+		understand = string(understandSkipped)
+	}
+	// "-" for a path that never had excerpts to attribute, matching semLaneDiag.
+	excerpts := "-"
+	if d.attributed {
+		excerpts = fmt.Sprintf("%d raw=%d topic=%d kw=%d",
+			d.excerpts, d.fromRaw, d.fromTopic, d.fromKeyword)
+	}
 	slog.Info("ask retrieval",
 		"q", q,
+		// The extracted query, beside the raw one. If a rewrite ever mangles a
+		// question this is the field that shows it, and it is why the pair is
+		// logged rather than just the topic.
+		"topic", d.topic,
+		"intent", d.intent,
+		"understand", understand,
+		"understand_ms", d.understandMs,
 		"keyword_rungs", rungs,
-		"semantic_bounded", fmt.Sprintf("%dh/%dv", d.semBounded, d.semBoundedVideos),
-		"semantic_kept", fmt.Sprintf("%dh/%dv", d.semKept, d.semKeptVideos),
-		"distance_range", fmt.Sprintf("%.3f..%.3f", d.nearest, d.farthest),
+		// bounded → kept, plus the distance range, per lane. Comparing the two
+		// ranges on one question is the recalibration data for DefaultMaxDistance
+		// and SemanticSpread, both tuned before a rewritten query existed.
+		"semantic_raw", d.semRaw.String(),
+		"semantic_topic", d.semTopic.String(),
 		"fused", fmt.Sprintf("%dh/%dv", len(fused), distinctVideos(fused)),
+		"excerpts", excerpts,
+		"ms", fmt.Sprintf("embed=%d fts=%d retrieval=%d", d.embedMs, d.ftsMs, d.retrievalMs),
 	)
 }
 

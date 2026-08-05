@@ -463,6 +463,55 @@ describe("Search — the Ask answer", () => {
   // Retrieval returns long before generation does. Showing the moments and the
   // citation list first puts the evidence on screen ahead of the claim that
   // cites it, and pulls the eye off the text being written.
+  // The three phases of the wait, driven by the frames that actually mark them.
+  // The label has to move on each, because each says something the previous one
+  // could not: that the question was understood, and that retrieval succeeded.
+  it("walks the label through the phases as the frames arrive", async () => {
+    let emit: ((e: AnswerEvent) => void) | null = null;
+    mockedStreamAnswer.mockImplementation(
+      (_q, onEvent) =>
+        new Promise(() => {
+          emit = onEvent;
+        }),
+    );
+    render(<Harness onOpen={vi.fn()} />);
+    submit("what material about electrolytes do we have");
+
+    // Nothing on the wire yet.
+    await screen.findByText(/Understanding your question/);
+
+    // The progress frame: retrieval starting, and the understood query with it.
+    emit!({
+      type: "progress",
+      phase: "retrieving",
+      topic: "electrolytes",
+      intent: "inventory",
+    });
+    expect(await screen.findByText(/electrolytes/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Understanding your question/),
+    ).not.toBeInTheDocument();
+
+    // Retrieval done, the model now thinking — the long, silent stretch.
+    emit!({
+      type: "sources",
+      sources: askSources,
+      videos: askVideos,
+      coverage: [],
+    });
+    expect(
+      await screen.findByText(
+        new RegExp(`Thinking about ${askVideos.length} video`),
+      ),
+    ).toBeInTheDocument();
+
+    // The first word retires the label entirely.
+    emit!({ type: "token", text: "Yes — " });
+    await waitFor(() =>
+      expect(screen.queryByText(/^Thinking /)).not.toBeInTheDocument(),
+    );
+  });
+
   it("holds the moments and the sources until the answer settles", async () => {
     let emit: ((e: AnswerEvent) => void) | null = null;
     mockedStreamAnswer.mockImplementation(
@@ -474,7 +523,7 @@ describe("Search — the Ask answer", () => {
     render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
 
-    await screen.findByText(/Reading your library/);
+    await screen.findByText(/Understanding your question/);
     emit!({
       type: "sources",
       sources: askSources,
@@ -557,7 +606,7 @@ describe("Search — the Ask answer", () => {
     render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
 
-    await screen.findByText(/Reading your library/);
+    await screen.findByText(/Understanding your question/);
     expect(screen.queryByText("Searching")).not.toBeInTheDocument();
 
     emit!({
@@ -569,7 +618,7 @@ describe("Search — the Ask answer", () => {
     emit!({ type: "token", text: "Yes — " });
     await waitFor(() =>
       expect(
-        screen.queryByText(/Reading your library/),
+        screen.queryByText(/Understanding your question/),
       ).not.toBeInTheDocument(),
     );
     expect(screen.queryByText("Searching")).not.toBeInTheDocument();
@@ -601,7 +650,7 @@ describe("Search — the Ask answer", () => {
     mockedSearchVideos.mockResolvedValue([]);
     render(<Harness onOpen={vi.fn()} />);
     submit("electrolytes");
-    await screen.findByText(/Reading your library/);
+    await screen.findByText(/Thinking about \d+ videos?/);
 
     // Off to a video and back, which unmounts the view entirely.
     fireEvent.click(screen.getByRole("button", { name: "leave" }));
@@ -618,7 +667,9 @@ describe("Search — the Ask answer", () => {
         "Yes, twice",
       ),
     );
-    expect(screen.queryByText(/Reading your library/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Understanding your question/),
+    ).not.toBeInTheDocument();
   });
 
   it("shows no moments when the answer names none", async () => {
@@ -674,7 +725,7 @@ describe("Search — the Ask answer", () => {
 
     await waitFor(() =>
       expect(
-        screen.queryByText(/Reading your library/),
+        screen.queryByText(/Understanding your question/),
       ).not.toBeInTheDocument(),
     );
     expect(screen.queryByText("Matches")).not.toBeInTheDocument();
@@ -752,7 +803,7 @@ describe("Search — the Ask answer", () => {
 
     toAsk();
     submit("electrolytes");
-    await screen.findByText(/Reading your library/);
+    await screen.findByText(/Thinking about \d+ videos?/);
 
     // Off to the other tab, and a keyword search there.
     fireEvent.click(screen.getByRole("button", { name: "Find" }));

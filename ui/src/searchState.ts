@@ -148,7 +148,12 @@ export function useSearchState(): SearchState {
   function runAnswer(q: string, id: number) {
     const ac = new AbortController();
     answerAbort.current = ac;
-    setAnswer({ status: "streaming", text: "", sources: [] });
+    // The first phase: the backend is working out what the question is about,
+    // and nothing is on the wire yet. Starting at "understanding" rather than at
+    // a generic streaming state is what lets the panel say so.
+    setAnswer({ status: "understanding", text: "", sources: [] });
+    let phase: AnswerState["status"] = "understanding";
+    let topic = "";
     let sources: AnswerSource[] = [];
     let videos: AnswerVideo[] = [];
     let coverage: AnswerVideo[] = [];
@@ -186,11 +191,19 @@ export function useSearchState(): SearchState {
       (e) => {
         if (id !== runIds.current.ask) return;
         switch (e.type) {
+          case "progress":
+            phase = "retrieving";
+            topic = e.topic;
+            break;
           case "sources":
             sources = e.sources;
             videos = e.videos;
             coverage = e.coverage;
             retrieved = true;
+            // Retrieval is done and the model call starts here — the long, silent
+            // part of the wait. This is the transition the panel could not see
+            // before: the frame already arrived, nothing acted on it.
+            phase = "generating";
             break;
           case "token":
             text += e.text;
@@ -202,7 +215,8 @@ export function useSearchState(): SearchState {
             break;
         }
         setAnswer({
-          status: e.type === "done" ? "done" : "streaming",
+          status: e.type === "done" ? "done" : phase,
+          topic,
           text,
           sources,
           videos,

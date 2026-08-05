@@ -132,6 +132,12 @@ type Deps struct {
 	// Ask streams the grounded answer for /api/search/answer. Optional: a nil
 	// one degrades that endpoint to citations only, never to an error.
 	Ask StreamCompleter
+	// Understand runs the pre-retrieval query-understanding call: it separates a
+	// question's topic from its framing so "what material about bike geometry do
+	// we have" searches for bike geometry rather than for "material". Optional: a
+	// nil one skips the step and searches the raw question, which is what Ask did
+	// before it existed. See understand.go.
+	Understand Completer
 	// SummaryJobs enqueues a summary job for a video. Optional: when nil,
 	// /api/videos/{id}/reprocess returns 503.
 	SummaryJobs SummaryEnqueuer
@@ -238,6 +244,7 @@ type server struct {
 	embedder          SearchEmbedder
 	searchMaxDistance float64
 	ask               StreamCompleter
+	understand        Completer
 	summaryJobs       SummaryEnqueuer
 	summaryList       SummaryLister
 	activity          ActivityReader
@@ -293,6 +300,7 @@ func New(d Deps) http.Handler {
 		embedder:          d.Embedder,
 		searchMaxDistance: maxDist,
 		ask:               d.Ask,
+		understand:        d.Understand,
 		summaryJobs:       d.SummaryJobs,
 		summaryList:       d.SummaryList,
 		activity:          d.Activity,

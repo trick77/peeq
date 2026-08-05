@@ -44,12 +44,34 @@ const rrfK = 60
 // Measured on the library this was tuned against: 'transient*' matches exactly
 // what '"transient" OR "transients"' matches, chunk for chunk. The width it buys
 // is inflection, not noise, which is why it earns 0.7 rather than floor money.
+//
+// WeightSemanticTopic is the second vector lane: the same embedding model over
+// the question with its framing stripped off (see httpapi/understand.go). It is
+// set EQUAL to WeightSemantic, and the equality is the decision, not a placeholder.
+//
+// The two lanes are the same retrieval method asked two ways, so neither is
+// better evidence than the other a priori: the raw lane knows the reader's exact
+// words, the topic lane knows what those words were about. Weighting the topic
+// lane higher would assert the rewrite is more trustworthy than the question,
+// which is precisely the assumption this design refuses to make — a rewrite is
+// allowed to add evidence, never to overrule.
+//
+// Note what equality does at fusion, because it is intended rather than
+// incidental: FuseWeighted SUMS a chunk's score across lanes, so a chunk BOTH
+// vector lanes return earns up to 1.2 and can outscore a strict keyword rung at
+// 1.0. That is the point. Two different phrasings of one question landing on the
+// same passage is real agreement, and it is the only signal in this system that
+// distinguishes a passage about the topic from one that merely repeats the
+// reader's words. A chunk only one lane found still earns only 0.6.
+//
+// This is the first constant to turn down if focused answers start drifting.
 const (
 	WeightKeywordStrict  = 1.0
 	WeightKeywordContent = 0.9
 	WeightKeywordPrefix  = 0.7
 	WeightKeywordAny     = 0.4
 	WeightSemantic       = 0.6
+	WeightSemanticTopic  = 0.6
 )
 
 // DefaultMaxDistance is the L2 cutoff past which a semantic hit is treated as
