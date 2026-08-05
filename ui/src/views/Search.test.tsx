@@ -117,6 +117,54 @@ describe("Search", () => {
     expect(await screen.findByText("Summary")).toBeInTheDocument();
   });
 
+  // A summary hit is not a moment. It matched the description of the whole
+  // video, has no timestamp of its own and seeks nowhere, so the header must not
+  // promise a point to jump to that does not exist. The video still counts: it
+  // WAS found, and its card is sitting right below the header.
+  it("keeps a summary hit out of the moment count", async () => {
+    mockedSearchVideos.mockResolvedValue(
+      result({ kind: "summary", snippet: "the platypus lives here" }),
+    );
+    render(<Harness onOpen={vi.fn()} />);
+    toFind();
+    submit("platypus");
+    await screen.findByText("iPhone 27 review");
+    expect(screen.getByText(/1 video.*0 moments/)).toBeInTheDocument();
+  });
+
+  it("counts chapter and transcript hits as moments", async () => {
+    mockedSearchVideos.mockResolvedValue([
+      {
+        video: { id: "v1", title: "iPhone 27 review" } as never,
+        matches: [
+          {
+            start_seconds: 0,
+            snippet: "about phones",
+            distance: 0.1,
+            kind: "summary",
+          },
+          {
+            start_seconds: 60,
+            snippet: "the battery",
+            distance: 0.2,
+            kind: "chapter",
+          },
+          {
+            start_seconds: 560,
+            snippet: "the new iPhone",
+            distance: 0.3,
+            kind: "transcript",
+          },
+        ],
+      },
+    ]);
+    render(<Harness onOpen={vi.fn()} />);
+    toFind();
+    submit("iphone");
+    await screen.findByText("iPhone 27 review");
+    expect(screen.getByText(/1 video.*2 moments/)).toBeInTheDocument();
+  });
+
   // A chapter match carries a timestamp, seeks like a transcript match and
   // reads like one, so the badge said nothing the row did not already. It went
   // the way the "Transcript" badge went; only the summary, which has no
