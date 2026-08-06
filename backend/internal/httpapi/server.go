@@ -337,6 +337,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/videos/{id}/stream", s.requireAuth(http.HandlerFunc(s.handleStreamVideo)))
 	mux.Handle("GET /api/videos/{id}/thumbnail", s.requireAuth(http.HandlerFunc(s.handleVideoThumbnail)))
 	mux.Handle("GET /api/videos/{id}/subtitles", s.requireAuth(http.HandlerFunc(s.handleVideoSubtitles)))
+	mux.Handle("GET /api/videos/{id}/embeddings", s.requireAuth(http.HandlerFunc(s.handleVideoEmbeddings)))
 	// Owner-facing share controls (create/status/stop) — session-gated.
 	mux.Handle("POST /api/videos/{id}/share", s.requireAuth(http.HandlerFunc(s.handleCreateShare)))
 	mux.Handle("GET /api/videos/{id}/share", s.requireAuth(http.HandlerFunc(s.handleGetShare)))

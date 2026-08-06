@@ -143,6 +143,29 @@ export type Chapter = {
   source: string;
 };
 
+// VideoEmbeddings mirrors httpapi's embeddingsDTO: what the vector index holds
+// for one video, behind GET /api/videos/{id}/embeddings.
+//
+// model/dimensions describe the embeddings that are stored, not the server's
+// current configuration, and are absent for a video that was never indexed —
+// where chunks is 0 and kinds is empty rather than the response being an error.
+export type VideoEmbeddings = {
+  model?: string;
+  dimensions?: number;
+  chunks: number;
+  tokens: number;
+  kinds: EmbeddingKind[];
+};
+
+// EmbeddingKind is one chunk kind's share of the index. kind carries the
+// pipeline's own word ("transcript", "chapter", "summary"); the readable label
+// is the card's job, so a kind added in Go needs no change here.
+export type EmbeddingKind = {
+  kind: string;
+  count: number;
+  tokens: number;
+};
+
 // KeyPoint mirrors httpapi's per-video key-point DTO — a timestamped
 // highlight extracted during summarization.
 export type KeyPoint = {

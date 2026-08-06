@@ -50,6 +50,16 @@ vi.mock("../api/videos", () => ({
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
   thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
   createPlaybackGrant: vi.fn(),
+  // Resolved by default so the Search index card's side load is harmless in
+  // every test that is not about it — an unresolved mock would leave the
+  // effect's promise dangling in all ~100 of them.
+  getVideoEmbeddings: vi.fn().mockResolvedValue({
+    model: "text-embedding-3-small",
+    dimensions: 1536,
+    chunks: 12,
+    tokens: 4200,
+    kinds: [{ kind: "transcript", count: 12, tokens: 4200 }],
+  }),
 }));
 
 vi.mock("../api/playback", () => ({
@@ -92,6 +102,7 @@ import {
   deleteVideo,
   setCategory,
   createPlaybackGrant,
+  getVideoEmbeddings,
 } from "../api/videos";
 import { reprocess } from "../api/search";
 import { setPlaybackState } from "../api/playback";
@@ -3007,5 +3018,70 @@ describe("parseVtt sound-event stripping", () => {
     expect(parseVtt(vtt("the result (roughly) doubled"))).toEqual([
       { ts: 0, text: "the result (roughly) doubled" },
     ]);
+  });
+});
+
+// The Search index card is a desktop/tablet affordance, and the breakpoint is
+// asked in JS rather than hidden in CSS so a phone also skips the request. Both
+// halves of that are pinned here.
+describe("Player search index card", () => {
+  function setViewport(mobile: boolean) {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: mobile,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+  }
+
+  beforeEach(() => {
+    vi.mocked(getVideo).mockReset();
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ indexed: true }));
+    vi.mocked(getSettings).mockReset();
+    vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
+    vi.mocked(getVideoEmbeddings).mockClear();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows what the index holds beside the video", async () => {
+    setViewport(false);
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    expect(await screen.findByText("Search index")).toBeInTheDocument();
+    expect(screen.getByText("12 chunks")).toBeInTheDocument();
+    expect(getVideoEmbeddings).toHaveBeenCalledWith("v1");
+  });
+
+  it("renders no card, and asks for nothing, on a phone", async () => {
+    setViewport(true);
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    // Awaited on the title so the assertion runs after the page has settled,
+    // rather than passing because nothing had rendered yet.
+    expect(
+      await screen.findByText("The Trillion Dollar Equation"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Search index")).not.toBeInTheDocument();
+    expect(getVideoEmbeddings).not.toHaveBeenCalled();
+  });
+
+  // A video whose embedding step has not finished (or failed) has nothing to
+  // report, and a card saying so would be a second place claiming what the
+  // Summary's "Not searchable yet." already says.
+  it("renders no card for a video that is not indexed", async () => {
+    setViewport(false);
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ indexed: false }));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    expect(
+      await screen.findByText("The Trillion Dollar Equation"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Search index")).not.toBeInTheDocument();
+    expect(getVideoEmbeddings).not.toHaveBeenCalled();
   });
 });

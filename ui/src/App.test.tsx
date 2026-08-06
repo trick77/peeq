@@ -139,6 +139,11 @@ vi.mock("./api/videos", () => ({
   // The Inbox card's poster. Only reached once a test puts an item in the
   // inbox — until then listPending resolves empty and no card renders.
   pendingThumbnailUrl: (id: string) => `/api/pending/${id}/thumbnail`,
+  // The player's Search index card side-loads this. Resolved with an empty
+  // index so no card renders and nothing here has to know about it.
+  getVideoEmbeddings: vi
+    .fn()
+    .mockResolvedValue({ chunks: 0, tokens: 0, kinds: [] }),
 }));
 
 vi.mock("./api/search", () => ({
