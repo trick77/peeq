@@ -636,6 +636,11 @@ func (d *askDiag) attribute(lanes []rag.Lane, chosen []rag.Hit) {
 	}
 	read := make(map[string]bool, len(chosen))
 	d.chosenIDs = make([]string, 0, len(chosen))
+	// The kind counters are the only fields here filled by ADDING rather than by
+	// assigning, so they are the only ones that would carry a previous call's
+	// numbers into this one. Every other field overwrites and is idempotent by
+	// construction; these are reset so the whole function is.
+	d.excTranscript, d.excSummary, d.excChapter = 0, 0, 0
 	for _, h := range chosen {
 		read[key(h)] = true
 		d.chosenIDs = append(d.chosenIDs, key(h))

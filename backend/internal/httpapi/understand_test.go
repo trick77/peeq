@@ -410,6 +410,14 @@ func TestExcerptKindsAreCountedOncePerPassage(t *testing.T) {
 	if got := d.excTranscript + d.excSummary + d.excChapter; got != d.excerpts {
 		t.Errorf("kinds sum to %d but %d passages were read", got, d.excerpts)
 	}
+
+	// Attributing twice must report the same set, not twice the set. The kind
+	// counters are the only fields filled by adding rather than assigning, so
+	// they are the only ones that could carry the first call into the second.
+	d.attribute(lanes, read)
+	if got := d.excTranscript + d.excSummary + d.excChapter; got != d.excerpts {
+		t.Errorf("kinds sum to %d after a second attribute, want %d", got, d.excerpts)
+	}
 }
 
 // The counts say what shape the excerpt set had; only the ids say which passages
