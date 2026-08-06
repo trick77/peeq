@@ -3649,6 +3649,12 @@ button.sleeppick.armed {
      is the whole reason they are right-aligned rather than run-on text. */
   font-variant-numeric: tabular-nums;
   text-align: right;
+  /* The model name is the one value here that is not a number, and it is
+     whatever BACKEND_EMBED_MODEL holds — "text-embedding-3-small" fits the
+     316px rail with nothing to spare, and a local model's id
+     ("Qwen/Qwen3-Embedding-0.6B") has no space to break at. Wrap it rather
+     than let it push the card wider than the sidebar. */
+  overflow-wrap: anywhere;
 }
 /* The dimension under the model name: one fact about the other, not a row of
    its own — a "Dimensions 1536" line would give a number nobody reads the same

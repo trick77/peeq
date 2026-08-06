@@ -3073,6 +3073,28 @@ describe("Player search index card", () => {
   // A video whose embedding step has not finished (or failed) has nothing to
   // report, and a card saying so would be a second place claiming what the
   // Summary's "Not searchable yet." already says.
+  // Reprocess clears embed_rev server-side, so the chunks the card is
+  // describing are about to be rebuilt. The card has to go with them — its
+  // effect keys on `indexed`, so a card left standing would also be a card
+  // frozen on the old counts forever.
+  it("drops the card when the video is sent back for reprocessing", async () => {
+    setViewport(false);
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ summary_status: "done", indexed: true, has_subtitles: true }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    expect(await screen.findByText("Search index")).toBeInTheDocument();
+
+    await openMenu();
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /Reprocess video/i }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText("Search index")).not.toBeInTheDocument(),
+    );
+  });
+
   it("renders no card for a video that is not indexed", async () => {
     setViewport(false);
     vi.mocked(getVideo).mockResolvedValue(makeVideo({ indexed: false }));

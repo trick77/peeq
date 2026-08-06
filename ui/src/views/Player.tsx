@@ -1266,6 +1266,11 @@ export function Player({
       // The endpoint just reset summary_status to pending and cleared the
       // stored analysis. Mirror that locally so the summary panel reflects it
       // immediately; the summary SSE drives the rest as the worker runs.
+      //
+      // indexed among them: the endpoint clears embed_rev, so the chunks that
+      // are about to be rebuilt no longer describe this video. Leaving it true
+      // would also freeze the Search index card on the OLD counts — its effect
+      // keys on this very flag, so it would never rerun.
       setVideo((prev) =>
         prev && prev.id === id
           ? {
@@ -1274,6 +1279,7 @@ export function Player({
               summary: "",
               chapters: [],
               key_points: [],
+              indexed: false,
             }
           : prev,
       );
