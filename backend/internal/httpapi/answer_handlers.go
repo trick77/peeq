@@ -193,7 +193,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// and is the stronger case: a rewrite makes the answer worse, a filter makes
 	// videos disappear.
 	if !send("progress", map[string]any{
-		"phase": "retrieving", "topic": u.Topic, "intent": u.Intent,
+		"phase": "retrieving", "topic": u.Topic, "counting": u.Counting,
 		"filters": applied, "unresolved_channels": ch.Unresolved,
 	}) {
 		return // client gone
@@ -202,7 +202,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	var qv queryVectors
 	lanes, diag := s.askLanes(r, q, u.Topic, filter, &qv)
 	diag.understand, diag.understandMs = string(ud.status), ud.ms
-	diag.intent = ud.intent
+	diag.counting = ud.counting
 	diag.filters, diag.filtersDropped = strings.Join(applied, "|"), ud.dropped
 	diag.unresolved = ch.Unresolved
 	hits := rag.FuseWeighted(lanes, searchCandidates)
@@ -224,7 +224,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			relaxed = applied
 			lanes, diag, hits = wide, wdiag, wideHits
 			diag.understand, diag.understandMs = string(ud.status), ud.ms
-			diag.intent = ud.intent
+			diag.counting = ud.counting
 			diag.filters, diag.filtersDropped = strings.Join(applied, "|"), ud.dropped
 			diag.unresolved, diag.relaxed = ch.Unresolved, true
 		}
@@ -254,7 +254,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// a number with no relation to the question, handed to the model as
 	// authoritative and printed above the answer. A count is meaningful exactly
 	// when there is a scope row beside it saying what it counts.
-	counts := s.inventoryCount(r.Context(), u.Intent, u.Topic, filter)
+	counts := s.inventoryCount(r.Context(), u.Counting, u.Topic, filter)
 
 	payload := map[string]any{
 		"sources": sources, "videos": vids,
@@ -676,8 +676,8 @@ func (s *server) chooseExcerpts(hits []rag.Hit, compare bool) []excerptCandidate
 // every one of those means the answer is written from the excerpts alone, which
 // is what it did before counting existed. A count that cannot be trusted is
 // worse than no count, because the prompt tells the model to believe it.
-func (s *server) inventoryCount(ctx context.Context, intent, topic string, f rag.Filter) *rag.LibraryCount {
-	if intent != intentInventory || s.rag == nil {
+func (s *server) inventoryCount(ctx context.Context, counting bool, topic string, f rag.Filter) *rag.LibraryCount {
+	if !counting || s.rag == nil {
 		return nil
 	}
 	// THE COUNT CANNOT SEE THE TOPIC. It is SQL over the videos table, and no

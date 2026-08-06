@@ -56,7 +56,7 @@ describe("streamAnswer", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       makeStreamResponse(
         frames(
-          `event: progress\ndata: {"phase":"retrieving","topic":"bike geometry","intent":"inventory"}`,
+          `event: progress\ndata: {"phase":"retrieving","topic":"bike geometry","counting":true}`,
           `event: done\ndata: {"reason":"stop"}`,
         ),
       ),
@@ -67,7 +67,7 @@ describe("streamAnswer", () => {
       type: "progress",
       phase: "retrieving",
       topic: "bike geometry",
-      intent: "inventory",
+      counting: true,
     });
   });
 
@@ -82,7 +82,7 @@ describe("streamAnswer", () => {
     expect(got[0]).toMatchObject({
       type: "progress",
       topic: "",
-      intent: "content",
+      counting: false,
     });
   });
 

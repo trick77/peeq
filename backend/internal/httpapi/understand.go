@@ -26,8 +26,8 @@ import (
 // conservative, and "material", "video" and "footage" are all words a reader
 // might genuinely be searching for.
 //
-// So a small call reads the question first and reports two things: the topic,
-// and whether the reader wants an answer or an inventory.
+// So a small call reads the question first and reports the topic, the structured
+// constraints, and whether the reader asked how many videos there are.
 //
 // WHAT IS DONE WITH THE TOPIC, and why it matters. The topic becomes an
 // ADDITIONAL semantic lane beside the raw question — never a replacement for it.
@@ -69,17 +69,22 @@ const understandMaxChannelRunes = 60
 // embedding it costs a lane slot for nothing.
 const understandMaxTopicRunes = 80
 
-// Intent labels. Deliberately two, and deliberately coarse: a label a short-gate
-// model gets wrong is worse than no label, and these are the only two the answer
-// path can actually do anything different about.
-const (
-	// intentContent — the reader wants an answer synthesized from what the
-	// videos say. This is Ask's built shape and the safe default.
-	intentContent = "content"
-	// intentInventory — the reader wants to know WHAT THE LIBRARY HOLDS, not
-	// what it says. "what material about bike geometry do we have" is this.
-	intentInventory = "inventory"
-)
+// There used to be an intent label here with two values, "content" for a reader
+// who wants to know what the videos SAY and "inventory" for one who wants to
+// know WHAT THE LIBRARY HOLDS. It is gone, and the reason is worth keeping.
+//
+// The distinction described a difference that does not exist. Ask only ever
+// answers from this library — see answerSystemPrompt, which now says so before
+// any of its rules. "What do we have on bike geometry" and "how does head angle
+// affect handling" both get the same kind of answer: what these videos say about
+// the subject. Sorting them into two modes implied one of them was a general
+// explanation of the topic, and a model handed a label meaning "the reader wants
+// the world's answer, not the library's" will occasionally give exactly that.
+//
+// Only one question in the old "inventory" set was genuinely different, and it
+// is the one Ask cannot answer from twelve excerpts however well they are
+// written: HOW MANY. That is what the label decides now, and it is all it ever
+// decided — inventoryCount was its only consumer.
 
 // Watched labels. A question says one of three things about watch state, and
 // "said nothing" has to be distinguishable from "said unwatched" — which is why
@@ -133,9 +138,11 @@ type queryUnderstanding struct {
 	// carried no framing worth removing, when the model failed, or when there is
 	// no understander wired — all of which mean "no extra lane", never an error.
 	Topic string `json:"topic"`
-	// Intent is one of the labels above. Always populated; defaults to
-	// intentContent, because answering is the thing Ask can always do.
-	Intent string `json:"intent"`
+	// Counting says the reader asked HOW MANY videos, rather than what any of
+	// them say. False is the default and the safe one: answering from the
+	// excerpts is the thing Ask can always do, and a count it cannot stand
+	// behind is worse than no count (see inventoryCount).
+	Counting bool `json:"counting"`
 	// Filters is the structured half. The zero value means the question named
 	// no constraint, which is both the common case and the safe one.
 	Filters queryFilters `json:"filters"`
@@ -167,7 +174,11 @@ const (
 type understandDiag struct {
 	status understandStatus
 	ms     int64
-	intent string
+	// counting is what the model said about "how many", kept for the log because
+	// a wrong answer here is silent: a true that should be false prints a count
+	// beside an answer that did not need one, and a false that should be true
+	// drops the only number the question asked for.
+	counting bool
 	// filters is what survived the parse, rendered for the log.
 	filters string
 	// dropped names the filters the model produced and Go refused: an invalid
@@ -188,11 +199,11 @@ func buildUnderstandPrompt() string {
 
 You are given one question a reader typed into a personal video library. Reply with JSON and nothing else:
 
-{"topic": "...", "intent": "content" | "inventory", "filters": {...}}
+{"topic": "...", "counting": true | false, "filters": {...}}
 
 topic — the subject of the question, as the words that would appear in a video about it. Drop everything that refers to the library itself or to the act of asking: what, do we have, is there, show me, tell me, material, videos, content, footage, clips, anything. Drop the constraint words too — a channel name, "unwatched", a date — because those go in filters instead. Keep every word that carries subject matter, including ones that could look generic. If the question is already just its subject, repeat it unchanged.
 
-intent — "inventory" when the reader is asking WHAT THE LIBRARY HOLDS ("what do we have on X", "any videos about X", "which videos cover X", "how many videos about X"). "content" when they want to know what the videos SAY ("how does X work", "what causes X", "why is X"). When it is genuinely both or you are unsure, answer "content".
+counting — true only when the reader is asking HOW MANY videos there are ("how many unwatched videos do I have", "how many Veritasium videos are there"). Everything else is false, including "what do we have on X" and "which videos cover X": those ask what the videos are about, which the search answers, not how many there are. When in doubt answer false.
 
 filters — which videos to search, when the question restricts them. Every key is optional:
 
@@ -206,21 +217,23 @@ OMIT ANY FILTER THE QUESTION DOES NOT ACTUALLY STATE. An invented filter hides v
 
 Examples:
 Q: what material about bike geometry do we have
-{"topic": "bike geometry", "intent": "inventory", "filters": {}}
+{"topic": "bike geometry", "counting": false, "filters": {}}
 Q: how does head angle affect handling
-{"topic": "head angle handling", "intent": "content", "filters": {}}
+{"topic": "head angle handling", "counting": false, "filters": {}}
 Q: do we have unwatched videos about ontology
-{"topic": "ontology", "intent": "inventory", "filters": {"watched": "unwatched"}}
+{"topic": "ontology", "counting": false, "filters": {"watched": "unwatched"}}
 Q: does Veritasium have anything about ontology
-{"topic": "ontology", "intent": "inventory", "filters": {"channels": ["Veritasium"]}}
+{"topic": "ontology", "counting": false, "filters": {"channels": ["Veritasium"]}}
 Q: how do Veritasium and Kurzgesagt differ on dark matter
-{"topic": "dark matter", "intent": "content", "filters": {"channels": ["Veritasium", "Kurzgesagt"]}}
+{"topic": "dark matter", "counting": false, "filters": {"channels": ["Veritasium", "Kurzgesagt"]}}
 Q: anything on sourdough starters I haven't seen yet
-{"topic": "sourdough starter", "intent": "inventory", "filters": {"watched": "unwatched"}}
+{"topic": "sourdough starter", "counting": false, "filters": {"watched": "unwatched"}}
 Q: what did I watch about transients this year
-{"topic": "transients", "intent": "inventory", "filters": {"watched": "watched", "after": "` + understandExampleYearStart + `"}}
+{"topic": "transients", "counting": false, "filters": {"watched": "watched", "after": "` + understandExampleYearStart + `"}}
 Q: what are transients
-{"topic": "transients", "intent": "content", "filters": {}}
+{"topic": "transients", "counting": false, "filters": {}}
+Q: how many unwatched Veritasium videos do I have
+{"topic": "", "counting": true, "filters": {"channels": ["Veritasium"], "watched": "unwatched"}}
 
 No explanation, no code fences, no other keys.`
 }
@@ -237,9 +250,7 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 	// Not wired (chat unavailable, or a deployment that never configured it).
 	// Ask still answers; it just answers the way it did before.
 	if s.understand == nil {
-		return queryUnderstanding{Intent: intentContent}, understandDiag{
-			status: understandSkipped, intent: intentContent,
-		}
+		return queryUnderstanding{}, understandDiag{status: understandSkipped}
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, understandTimeout)
@@ -273,16 +284,12 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 		if errors.Is(err, context.DeadlineExceeded) || cctx.Err() == context.DeadlineExceeded {
 			status = understandTimedOut
 		}
-		return queryUnderstanding{Intent: intentContent}, understandDiag{
-			status: status, ms: elapsed, intent: intentContent,
-		}
+		return queryUnderstanding{}, understandDiag{status: status, ms: elapsed}
 	}
 
 	u, dropped, ok := parseUnderstanding(raw)
 	if !ok {
-		return queryUnderstanding{Intent: intentContent}, understandDiag{
-			status: understandFailed, ms: elapsed, intent: intentContent,
-		}
+		return queryUnderstanding{}, understandDiag{status: understandFailed, ms: elapsed}
 	}
 	// A topic that merely restates the question buys nothing and costs a lane.
 	//
@@ -301,12 +308,12 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 	if u.Topic == "" || strings.EqualFold(u.Topic, strings.Join(strings.Fields(q), " ")) {
 		u.Topic = ""
 		return u, understandDiag{
-			status: understandNoop, ms: elapsed, intent: u.Intent,
+			status: understandNoop, ms: elapsed, counting: u.Counting,
 			filters: u.Filters.describe(), dropped: dropped,
 		}
 	}
 	return u, understandDiag{
-		status: understandOK, ms: elapsed, intent: u.Intent,
+		status: understandOK, ms: elapsed, counting: u.Counting,
 		filters: u.Filters.describe(), dropped: dropped,
 	}
 }
@@ -369,9 +376,15 @@ func parseUnderstanding(raw string) (queryUnderstanding, []string, bool) {
 	}
 
 	var parsed struct {
-		Topic   string `json:"topic"`
-		Intent  string `json:"intent"`
-		Filters struct {
+		Topic string `json:"topic"`
+		// Deliberately not a bool. A wrong TYPE fails json.Unmarshal for the whole
+		// object, which would throw away the topic and every filter beside it —
+		// and a short-gate model answering "true" or "inventory" where a boolean
+		// was asked for is exactly the kind of near-miss this step has to survive.
+		// The old string label tolerated an unrecognized value for the same
+		// reason; that property is worth keeping through the change.
+		Counting any `json:"counting"`
+		Filters  struct {
 			Channels []string `json:"channels"`
 			Watched  string   `json:"watched"`
 			Favorite bool     `json:"favorite"`
@@ -385,13 +398,8 @@ func parseUnderstanding(raw string) (queryUnderstanding, []string, bool) {
 	}
 
 	u := queryUnderstanding{
-		Topic:  sanitizeTopic(parsed.Topic),
-		Intent: intentContent,
-	}
-	// Only the label we know. An unrecognized one is not an error — the topic is
-	// still usable — it just means the safe default applies.
-	if strings.EqualFold(strings.TrimSpace(parsed.Intent), intentInventory) {
-		u.Intent = intentInventory
+		Topic:    sanitizeTopic(parsed.Topic),
+		Counting: readCounting(parsed.Counting),
 	}
 
 	var dropped []string
@@ -453,6 +461,25 @@ func parseUnderstanding(raw string) (queryUnderstanding, []string, bool) {
 	}
 
 	return u, dropped, true
+}
+
+// readCounting coerces whatever landed in the counting field. Only an actual
+// true — as a boolean, or as the string a model sometimes quotes it into —
+// asks for a count. Everything else, including a leftover "inventory" from the
+// label this replaced, is false.
+//
+// The asymmetry is the same one the filters have: a count the reader did not ask
+// for is printed above the answer and handed to the model under a rule saying it
+// is authoritative, so the harm runs one way and the default follows it.
+func readCounting(v any) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		return strings.EqualFold(strings.TrimSpace(t), "true")
+	default:
+		return false
+	}
 }
 
 // parseDateBound keeps only a date Go can actually parse, in the one format the

@@ -66,7 +66,13 @@ export type AnswerEvent =
       type: "progress";
       phase: "retrieving";
       topic: string;
-      intent: string;
+      // Whether the reader asked HOW MANY videos there are, rather than what any
+      // of them say. It replaced an "intent" label that sorted questions into
+      // "what the library holds" and "what the videos say" — a distinction the
+      // backend dropped, because Ask only ever answers from this library and
+      // sorting questions into two modes implied one of them was a general
+      // explanation of the subject.
+      counting: boolean;
       // The constraints the question named and the search actually applied, in
       // the reader's own words: "unwatched", "Veritasium", "Science & Research".
       // Shown for the same reason `topic` is, and with more at stake — a rewrite
@@ -115,7 +121,7 @@ export async function streamAnswer(
         case "progress": {
           const d = data as {
             topic?: string;
-            intent?: string;
+            counting?: boolean;
             filters?: string[];
             unresolved_channels?: string[];
           };
@@ -123,7 +129,7 @@ export async function streamAnswer(
             type: "progress",
             phase: "retrieving",
             topic: d.topic ?? "",
-            intent: d.intent ?? "content",
+            counting: d.counting ?? false,
             filters: d.filters ?? [],
             unresolvedChannels: d.unresolved_channels ?? [],
           });

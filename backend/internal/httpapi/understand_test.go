@@ -59,58 +59,95 @@ func (e *recordingEmbedder) Embed(_ context.Context, inputs []string) ([][]float
 
 func TestParseUnderstandingReadsTheDocumentedShape(t *testing.T) {
 	tests := []struct {
-		name       string
-		raw        string
-		wantOK     bool
-		wantTopic  string
-		wantIntent string
+		name         string
+		raw          string
+		wantOK       bool
+		wantTopic    string
+		wantCounting bool
 	}{
 		{
-			name:       "plain object",
-			raw:        `{"topic": "bike geometry", "intent": "inventory"}`,
-			wantOK:     true,
-			wantTopic:  "bike geometry",
-			wantIntent: intentInventory,
+			name:         "plain object",
+			raw:          `{"topic": "bike geometry", "counting": false}`,
+			wantOK:       true,
+			wantTopic:    "bike geometry",
+			wantCounting: false,
 		},
 		{
-			name:       "fenced as json",
-			raw:        "```json\n{\"topic\": \"transients\", \"intent\": \"content\"}\n```",
-			wantOK:     true,
-			wantTopic:  "transients",
-			wantIntent: intentContent,
+			name:         "fenced as json",
+			raw:          "```json\n{\"topic\": \"transients\", \"counting\": false}\n```",
+			wantOK:       true,
+			wantTopic:    "transients",
+			wantCounting: false,
 		},
 		{
 			// Prose either side is the other thing that actually happens.
-			name:       "object buried in prose",
-			raw:        `Sure! {"topic":"sourdough starter","intent":"inventory"} Hope that helps.`,
-			wantOK:     true,
-			wantTopic:  "sourdough starter",
-			wantIntent: intentInventory,
+			name:         "object buried in prose",
+			raw:          `Sure! {"topic":"sourdough starter","counting":false} Hope that helps.`,
+			wantOK:       true,
+			wantTopic:    "sourdough starter",
+			wantCounting: false,
 		},
 		{
-			// An unrecognized label is not a failure: the topic is still good,
-			// and the safe default applies to the branch.
-			name:       "unknown intent falls back to content",
-			raw:        `{"topic":"head angle","intent":"listing"}`,
-			wantOK:     true,
-			wantTopic:  "head angle",
-			wantIntent: intentContent,
+			// The one question the label exists for: how many, not what about.
+			name:         "a counting question",
+			raw:          `{"topic":"","counting":true,"filters":{"watched":"unwatched"}}`,
+			wantOK:       true,
+			wantTopic:    "",
+			wantCounting: true,
 		},
 		{
-			name:       "newlines and control characters are stripped",
-			raw:        "{\"topic\":\"bike\\ngeometry\",\"intent\":\"content\"}",
-			wantOK:     true,
-			wantTopic:  "bike geometry",
-			wantIntent: intentContent,
+			// A wrong TYPE must not fail the whole parse. Declared as a bool it
+			// would, taking the topic and every filter beside it down with it —
+			// and a short-gate model quoting its boolean is exactly the near-miss
+			// this step exists to survive.
+			name:         "a non-boolean counting value stays false without failing the parse",
+			raw:          `{"topic":"head angle","counting":"inventory"}`,
+			wantOK:       true,
+			wantTopic:    "head angle",
+			wantCounting: false,
+		},
+		{
+			// The one string worth honouring, because a model asked for a boolean
+			// will sometimes quote it.
+			name:         "a quoted true still counts",
+			raw:          `{"topic":"","counting":"true"}`,
+			wantOK:       true,
+			wantTopic:    "",
+			wantCounting: true,
+		},
+		{
+			// A filter must survive a malformed counting value rather than being
+			// discarded with it.
+			name:         "a bad counting value does not take the filters with it",
+			raw:          `{"topic":"ontology","counting":7,"filters":{"watched":"unwatched"}}`,
+			wantOK:       true,
+			wantTopic:    "ontology",
+			wantCounting: false,
+		},
+		{
+			// The label the old intent field used carries no meaning now, and must
+			// not somehow revive as a count.
+			name:         "the retired intent key is ignored",
+			raw:          `{"topic":"head angle","intent":"inventory"}`,
+			wantOK:       true,
+			wantTopic:    "head angle",
+			wantCounting: false,
+		},
+		{
+			name:         "newlines and control characters are stripped",
+			raw:          "{\"topic\":\"bike\\ngeometry\",\"counting\":false}",
+			wantOK:       true,
+			wantTopic:    "bike geometry",
+			wantCounting: false,
 		},
 		{
 			// Long enough to be a paraphrase of the question rather than a topic.
 			// The topic is dropped; the reply is still parsed.
-			name:       "overlong topic is dropped",
-			raw:        `{"topic":"` + strings.Repeat("a", understandMaxTopicRunes+1) + `","intent":"content"}`,
-			wantOK:     true,
-			wantTopic:  "",
-			wantIntent: intentContent,
+			name:         "overlong topic is dropped",
+			raw:          `{"topic":"` + strings.Repeat("a", understandMaxTopicRunes+1) + `","counting":false}`,
+			wantOK:       true,
+			wantTopic:    "",
+			wantCounting: false,
 		},
 		{name: "not json at all", raw: "I think you mean bike geometry.", wantOK: false},
 		{name: "empty", raw: "   ", wantOK: false},
@@ -128,8 +165,8 @@ func TestParseUnderstandingReadsTheDocumentedShape(t *testing.T) {
 			if got.Topic != tc.wantTopic {
 				t.Errorf("topic = %q, want %q", got.Topic, tc.wantTopic)
 			}
-			if got.Intent != tc.wantIntent {
-				t.Errorf("intent = %q, want %q", got.Intent, tc.wantIntent)
+			if got.Counting != tc.wantCounting {
+				t.Errorf("counting = %v, want %v", got.Counting, tc.wantCounting)
 			}
 		})
 	}
@@ -147,8 +184,8 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 		if u.Topic != "" {
 			t.Errorf("topic = %q, want empty", u.Topic)
 		}
-		if u.Intent != intentContent {
-			t.Errorf("intent = %q, want the safe default", u.Intent)
+		if u.Counting {
+			t.Errorf("counting = true — the safe default is no count")
 		}
 	})
 
@@ -158,7 +195,7 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 		if d.status != understandFailed {
 			t.Errorf("status = %q, want failed", d.status)
 		}
-		if u.Topic != "" || u.Intent != intentContent {
+		if u.Topic != "" || u.Counting {
 			t.Errorf("a failed call must degrade to the raw question, got %+v", u)
 		}
 	})
@@ -172,7 +209,7 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 	})
 
 	t.Run("topic that merely repeats the question is a noop", func(t *testing.T) {
-		reply, _ := json.Marshal(map[string]string{"topic": q, "intent": "content"})
+		reply, _ := json.Marshal(map[string]any{"topic": q, "counting": false})
 		s := &server{understand: &fakeUnderstander{reply: string(reply)}}
 		u, d := s.understandQuery(context.Background(), q)
 		if d.status != understandNoop {
@@ -184,7 +221,7 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 	})
 
 	t.Run("good reply", func(t *testing.T) {
-		f := &fakeUnderstander{reply: `{"topic":"bike geometry","intent":"inventory"}`}
+		f := &fakeUnderstander{reply: `{"topic":"bike geometry","counting":false}`}
 		s := &server{understand: f}
 		u, d := s.understandQuery(context.Background(), q)
 		if d.status != understandOK {
@@ -193,8 +230,8 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 		if u.Topic != "bike geometry" {
 			t.Errorf("topic = %q", u.Topic)
 		}
-		if u.Intent != intentInventory {
-			t.Errorf("intent = %q, want inventory", u.Intent)
+		if u.Counting {
+			t.Errorf("counting = true — the reply did not ask for a count")
 		}
 		if !strings.Contains(f.prompt, q) {
 			t.Errorf("the question never reached the model: %q", f.prompt)
@@ -209,7 +246,7 @@ func TestAnswerEmbedsBothTheQuestionAndItsTopicInOneCall(t *testing.T) {
 	emb := &recordingEmbedder{}
 	deps.Embedder = emb
 	deps.Understand = &fakeUnderstander{
-		reply: `{"topic":"bike geometry","intent":"inventory"}`,
+		reply: `{"topic":"bike geometry","counting":false}`,
 	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
@@ -241,7 +278,7 @@ func TestAnswerWithoutATopicEmbedsOnlyTheQuestion(t *testing.T) {
 	deps, _ := answerDeps(t)
 	emb := &recordingEmbedder{}
 	deps.Embedder = emb
-	deps.Understand = &fakeUnderstander{reply: `{"topic":"","intent":"content"}`}
+	deps.Understand = &fakeUnderstander{reply: `{"topic":"","counting":false}`}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
@@ -260,7 +297,7 @@ func TestAnswerWithoutATopicEmbedsOnlyTheQuestion(t *testing.T) {
 func TestAnswerProgressFrameCarriesTheUnderstoodQuery(t *testing.T) {
 	deps, _ := answerDeps(t)
 	deps.Understand = &fakeUnderstander{
-		reply: `{"topic":"bike geometry","intent":"inventory"}`,
+		reply: `{"topic":"bike geometry","counting":true}`,
 	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
@@ -272,9 +309,9 @@ func TestAnswerProgressFrameCarriesTheUnderstoodQuery(t *testing.T) {
 	}
 
 	var got struct {
-		Phase  string `json:"phase"`
-		Topic  string `json:"topic"`
-		Intent string `json:"intent"`
+		Phase    string `json:"phase"`
+		Topic    string `json:"topic"`
+		Counting bool   `json:"counting"`
 	}
 	if err := json.Unmarshal([]byte(evs[0][1]), &got); err != nil {
 		t.Fatalf("progress payload: %v", err)
@@ -282,8 +319,8 @@ func TestAnswerProgressFrameCarriesTheUnderstoodQuery(t *testing.T) {
 	if got.Topic != "bike geometry" {
 		t.Errorf("topic = %q", got.Topic)
 	}
-	if got.Intent != intentInventory {
-		t.Errorf("intent = %q", got.Intent)
+	if !got.Counting {
+		t.Error("counting did not reach the progress frame")
 	}
 	if got.Phase != "retrieving" {
 		t.Errorf("phase = %q", got.Phase)
@@ -331,7 +368,7 @@ func TestAttributionKeysOnTheChunkNotTheSecond(t *testing.T) {
 func TestTheModelSeesTheWholeQuestionNotTheTopic(t *testing.T) {
 	deps, ask := answerDeps(t)
 	deps.Understand = &fakeUnderstander{
-		reply: `{"topic":"electrolytes","intent":"inventory"}`,
+		reply: `{"topic":"electrolytes","counting":false}`,
 	}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)

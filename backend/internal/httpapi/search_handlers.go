@@ -540,7 +540,7 @@ type askDiag struct {
 
 	// The query-understanding step, filled by the caller that ran it.
 	topic        string
-	intent       string
+	counting     bool
 	understand   string
 	understandMs int64
 
@@ -661,7 +661,7 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 		// question this is the field that shows it, and it is why the pair is
 		// logged rather than just the topic.
 		"topic", d.topic,
-		"intent", d.intent,
+		"counting", d.counting,
 		"understand", understand,
 		"understand_ms", d.understandMs,
 		// What the question asked for structurally and what became of it. A
