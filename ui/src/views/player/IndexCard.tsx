@@ -16,6 +16,12 @@ function kindLabel(kind: string): string {
   return KIND_LABELS[kind] ?? kind;
 }
 
+// Thousands separators, pinned to en-US rather than left to toLocaleString's
+// default: the page is English throughout and every other figure in it groups
+// this way, so a browser set to de-CH must not render this one number as
+// 38’412 while the sizes beside it stay 1.4 GB.
+const GROUPED = new Intl.NumberFormat("en-US");
+
 // IndexCard reports what search actually holds for this video: how the
 // transcript was cut up, how much text that came to, and which model turned it
 // into vectors.
@@ -49,9 +55,15 @@ export function IndexCard({ stats }: { stats: VideoEmbeddings }) {
                 <dd>{k.count}</dd>
               </div>
             ))}
+            {/* "Embedded", not "text indexed": a chapter chunk is the
+                chapter's own transcript span with its title prefixed, so a
+                chaptered video embeds most of its transcript twice. The figure
+                is the size of the index, which is what it says — reading it as
+                how much video there is would make a chaptered video look twice
+                as talkative as an identical one without chapters. */}
             <div className="row">
-              <dt>Text indexed</dt>
-              <dd>{stats.tokens.toLocaleString()} tokens</dd>
+              <dt>Tokens embedded</dt>
+              <dd>{GROUPED.format(stats.tokens)}</dd>
             </div>
             {/* The model wrote the vectors that are stored, so it is reported
                 even when the server has since been pointed at another one —

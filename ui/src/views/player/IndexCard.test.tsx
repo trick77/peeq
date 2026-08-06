@@ -27,8 +27,10 @@ describe("IndexCard", () => {
     expect(screen.getByText("Chapters")).toBeInTheDocument();
     expect(screen.getByText("Summary")).toBeInTheDocument();
     expect(screen.getByText("54")).toBeInTheDocument();
-    // Grouped digits: the count is a figure to read, not one to copy.
-    expect(screen.getByText("38,412 tokens")).toBeInTheDocument();
+    // Grouped digits, and grouped the same way in every locale: the number
+    // formatter is pinned, so a de-CH runner must not see 38’412.
+    expect(screen.getByText("Tokens embedded")).toBeInTheDocument();
+    expect(screen.getByText("38,412")).toBeInTheDocument();
     expect(screen.getByText("text-embedding-3-small")).toBeInTheDocument();
     expect(screen.getByText("1536 dimensions")).toBeInTheDocument();
   });
