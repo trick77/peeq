@@ -47,6 +47,9 @@ type RagStore interface {
 	// model to estimate it from the excerpts it happened to be shown.
 	CountVideos(ctx context.Context, f rag.Filter) (rag.LibraryCount, error)
 	HasChunks(ctx context.Context, videoID string) (bool, error)
+	// ChunkStats backs the player's Search index card: what the index actually
+	// holds for one video, as opposed to HasChunks' yes/no.
+	ChunkStats(ctx context.Context, videoID string) ([]rag.KindCount, error)
 }
 
 // queryVectors memoizes one question's embedding across the retrieval passes a

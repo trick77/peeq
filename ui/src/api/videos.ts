@@ -1,5 +1,11 @@
 import { api } from "./http";
-import type { PlaybackGrant, Video, VideoFilter, VideoSort } from "./types";
+import type {
+  PlaybackGrant,
+  Video,
+  VideoEmbeddings,
+  VideoFilter,
+  VideoSort,
+} from "./types";
 
 // ListVideosOptions mirrors the query params handleListVideos understands.
 // Every field is optional; omitting all of them is "everything, newest first".
@@ -33,6 +39,16 @@ export async function getVideo(id: string): Promise<Video> {
   return api.get<Video>(
     `/api/videos/${encodeURIComponent(id)}`,
     "failed to load video",
+  );
+}
+
+// getVideoEmbeddings reads what the search index holds for one video. Its own
+// request rather than fields on getVideo, because the counts are a GROUP BY the
+// library list would otherwise pay for on every card in the grid.
+export async function getVideoEmbeddings(id: string): Promise<VideoEmbeddings> {
+  return api.get<VideoEmbeddings>(
+    `/api/videos/${encodeURIComponent(id)}/embeddings`,
+    "failed to load index stats",
   );
 }
 

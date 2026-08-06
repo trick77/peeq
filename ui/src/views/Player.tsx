@@ -17,13 +17,14 @@ import {
   streamUrl,
   thumbnailUrl,
   createPlaybackGrant,
+  getVideoEmbeddings,
 } from "../api/videos";
 import { reprocess, subtitlesUrl } from "../api/search";
 import { getSettings, updateSettings } from "../api/settings";
 import { setPlaybackState } from "../api/playback";
 import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareControl } from "../components/ShareControl";
-import type { Video } from "../api/types";
+import type { Video, VideoEmbeddings } from "../api/types";
 import type { SummaryStatus } from "../api/enums";
 import { ApiError } from "../api/http";
 import { formatDuration, gradientClassFor } from "../format";
@@ -37,6 +38,8 @@ import { ContentsCard } from "./player/ContentsCard";
 import { TranscriptCard } from "../components/TranscriptCard";
 import { UnfetchedVideo } from "./player/UnfetchedVideo";
 import { SummaryCard, HighlightsCard } from "./player/SidebarPanels";
+import { IndexCard } from "./player/IndexCard";
+import { MOBILE_QUERY, useMediaQuery } from "../shell/useMediaQuery";
 import { MetaHeader } from "./player/MetaHeader";
 import { park, useParkedAt, videoHostNode } from "../videoHost";
 import type { NowPlaying } from "../nowPlaying";
@@ -186,6 +189,15 @@ export function Player({
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // indexStats backs the Search index card. null means "not loaded" — either
+  // not fetched yet, not fetched at all (phone), or the request failed — and
+  // renders no card, since a reference panel is not worth an error line.
+  const [indexStats, setIndexStats] = useState<VideoEmbeddings | null>(null);
+  // The card is a desktop/tablet affordance: on a phone the page is one column
+  // that already runs summary, chapters, highlights and transcript, and index
+  // bookkeeping is not what that column is for. Asked in JS rather than hidden
+  // in CSS so the phone also skips the request. Same breakpoint as the shell's.
+  const isPhone = useMediaQuery(MOBILE_QUERY);
   // App passes onMediaKnown as an inline arrow, so its identity changes every
   // render. Held in a ref so the effect that reports media presence depends on
   // the ANSWER changing, not on the parent re-rendering.
@@ -576,6 +588,25 @@ export function Player({
       cancelled = true;
     };
   }, [videoId, summaryEvent]);
+
+  // Index stats for the Search index card. Keyed on `indexed` as well as on the
+  // video id, so the card appears on its own when the embedding step finishes
+  // mid-watch: the SSE effect above refetches the video, `indexed` flips true,
+  // and this runs. Best-effort throughout — a failure leaves no card rather
+  // than an error in the rail.
+  useEffect(() => {
+    setIndexStats(null);
+    if (!videoId || isPhone || !video?.indexed) return;
+    let cancelled = false;
+    getVideoEmbeddings(videoId)
+      .then((s) => {
+        if (!cancelled) setIndexStats(s);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [videoId, isPhone, video?.indexed]);
 
   // Load the global subtitles preference once per mount. A failure is not
   // fatal — playback must work even if settings can't be read — so it falls
@@ -1235,6 +1266,11 @@ export function Player({
       // The endpoint just reset summary_status to pending and cleared the
       // stored analysis. Mirror that locally so the summary panel reflects it
       // immediately; the summary SSE drives the rest as the worker runs.
+      //
+      // indexed among them: the endpoint clears embed_rev, so the chunks that
+      // are about to be rebuilt no longer describe this video. Leaving it true
+      // would also freeze the Search index card on the OLD counts — its effect
+      // keys on this very flag, so it would never rerun.
       setVideo((prev) =>
         prev && prev.id === id
           ? {
@@ -1243,6 +1279,7 @@ export function Player({
               summary: "",
               chapters: [],
               key_points: [],
+              indexed: false,
             }
           : prev,
       );
@@ -1678,6 +1715,7 @@ export function Player({
 
       <aside className="side">
         <SummaryCard video={video} />
+        {indexStats && <IndexCard stats={indexStats} />}
       </aside>
       {video ? (
         <ConfirmDialog

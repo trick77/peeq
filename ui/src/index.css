@@ -2787,6 +2787,13 @@ button.sleeppick.armed {
   .playgrid .transcriptpanel {
     order: 6;
   }
+  /* Last, unlike on the desktop where it sits under the Summary in the rail.
+     Beside the video that adjacency is free; in one column it would push the
+     chapters down behind a reference panel, and reference is what you scroll
+     to on purpose. It is not rendered at all on a phone (Player.tsx). */
+  .playgrid .indexpanel {
+    order: 7;
+  }
   /* .leftcol carried min-width: 0 to stop a long unbroken transcript line
      widening the column; with its box gone, the panels it held carry it. */
   .playgrid .stage-wrap,
@@ -3612,6 +3619,50 @@ button.sleeppick.armed {
    distinction. */
 .card.hlpanel .hd svg {
   color: var(--color-kept);
+}
+
+/* Search index card (views/player/IndexCard.tsx) — label left, figure right,
+   the shape a reference list wants and the one .playstats cannot give at 316px
+   wide. Same <dl> reasoning as that strip: each figure is bound to its label
+   rather than being two spans that happen to sit near each other. */
+.idxstats {
+  margin: 0;
+  display: grid;
+  gap: 11px;
+}
+.idxstats .row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.idxstats dt {
+  font-size: 12.5px;
+  color: var(--color-muted);
+}
+.idxstats dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--color-ink-dim);
+  /* Counts sit in a column against the card's right edge; lining the digits up
+     is the whole reason they are right-aligned rather than run-on text. */
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  /* The model name is the one value here that is not a number, and it is
+     whatever BACKEND_EMBED_MODEL holds — "text-embedding-3-small" fits the
+     316px rail with nothing to spare, and a local model's id
+     ("Qwen/Qwen3-Embedding-0.6B") has no space to break at. Wrap it rather
+     than let it push the card wider than the sidebar. */
+  overflow-wrap: anywhere;
+}
+/* The dimension under the model name: one fact about the other, not a row of
+   its own — a "Dimensions 1536" line would give a number nobody reads the same
+   weight as the chunk counts, which are why the card exists. */
+.idxstats .sub {
+  display: block;
+  font-size: var(--text-micro);
+  color: var(--color-faint);
 }
 
 /* Transcript search + cues */

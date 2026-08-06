@@ -843,6 +843,12 @@ func (f *failingRag) HasChunks(ctx context.Context, videoID string) (bool, error
 	return f.real.HasChunks(ctx, videoID)
 }
 
+// ChunkStats belongs to the player's index card, not the search path, so it
+// delegates for the same reason HasChunks does.
+func (f *failingRag) ChunkStats(ctx context.Context, videoID string) ([]rag.KindCount, error) {
+	return f.real.ChunkStats(ctx, videoID)
+}
+
 // TestSearch_ragDegradedStillServes pins the fail-soft contract from both
 // sides: whichever lane breaks, the other one's hits still come back 200.
 func TestSearch_ragDegradedStillServes(t *testing.T) {

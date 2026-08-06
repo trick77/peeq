@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -219,6 +220,76 @@ func (s *server) handleGetVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, toVideoDTO(v))
+}
+
+// embeddingsDTO is what the player's Search index card reads: what the vector
+// index holds for one video.
+//
+// Its own endpoint rather than fields on videoDTO, because the counts need a
+// GROUP BY over transcript_chunks and that DTO is also built once per row by
+// the library list — a subquery there would be paid on every card in the grid
+// to feed a card only the player shows.
+type embeddingsDTO struct {
+	// Model/Dimensions come off the video row, so they describe the embeddings
+	// that are actually stored, not whatever the server is configured with
+	// today. Omitted for a video that was never indexed, where the columns are
+	// blank and printing "0 dimensions" would be a claim rather than a gap.
+	Model      string `json:"model,omitempty"`
+	Dimensions int    `json:"dimensions,omitempty"`
+	Chunks     int    `json:"chunks"`
+	Tokens     int    `json:"tokens"`
+	// Kinds is sorted by count, largest first: transcript windows always
+	// dominate, so the row that carries the video is the row that reads first.
+	Kinds []embeddingKindDTO `json:"kinds"`
+}
+
+// embeddingKindDTO is one chunk kind's share of the index — "transcript",
+// "chapter", "summary", or whatever rag.BuildVideoChunks emits next. The wire
+// carries the pipeline's own word; the friendly label is the UI's job.
+type embeddingKindDTO struct {
+	Kind   string `json:"kind"`
+	Count  int    `json:"count"`
+	Tokens int    `json:"tokens"`
+}
+
+// handleVideoEmbeddings reports the video's presence in the search index.
+//
+// A video with nothing indexed is a 200 with zero chunks, not a 404: the video
+// exists and the honest answer about it is "nothing yet". Only a missing video,
+// or a server with no rag store at all, is an error.
+func (s *server) handleVideoEmbeddings(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.lookupVideo(w, r)
+	if !ok {
+		return
+	}
+	if s.rag == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "search is not configured")
+		return
+	}
+	kinds, err := s.rag.ChunkStats(r.Context(), v.ID)
+	if err != nil {
+		serverError(w, r, err, "video embeddings failed")
+		return
+	}
+	out := embeddingsDTO{
+		Model:      v.EmbedModel,
+		Dimensions: v.EmbedDim,
+		Kinds:      make([]embeddingKindDTO, 0, len(kinds)),
+	}
+	for _, k := range kinds {
+		out.Chunks += k.Count
+		out.Tokens += k.Tokens
+		out.Kinds = append(out.Kinds, embeddingKindDTO{Kind: k.Kind, Count: k.Count, Tokens: k.Tokens})
+	}
+	// Ties broken by kind name so the card's rows do not reshuffle between two
+	// requests that describe the same index.
+	sort.Slice(out.Kinds, func(i, j int) bool {
+		if out.Kinds[i].Count != out.Kinds[j].Count {
+			return out.Kinds[i].Count > out.Kinds[j].Count
+		}
+		return out.Kinds[i].Kind < out.Kinds[j].Kind
+	})
+	writeJSON(w, out)
 }
 
 // handleDeleteVideo is the manual DELETE endpoint: unconditionally

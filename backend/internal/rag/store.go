@@ -179,6 +179,44 @@ func (s *Store) HasChunks(ctx context.Context, videoID string) (bool, error) {
 	return n != 0, nil
 }
 
+// KindCount is how many chunks of one kind a video contributed to the index,
+// and how much text they carry.
+type KindCount struct {
+	Kind   string
+	Count  int
+	Tokens int
+}
+
+// ChunkStats reports a video's chunks grouped by kind, newest recipe first in
+// no particular order — the caller sorts for display.
+//
+// Grouped rather than three named counters because the kinds are a pipeline
+// detail (transcript, summary, chapter today; BuildVideoChunks decides), and a
+// fourth one added there should show up here without a schema change on the way
+// out. A video that was never indexed returns no rows, not an error: "nothing
+// indexed" is an answer, and the caller renders it as one.
+func (s *Store) ChunkStats(ctx context.Context, videoID string) ([]KindCount, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT kind, COUNT(*), COALESCE(SUM(token_count), 0)
+		   FROM transcript_chunks WHERE video_id = ? GROUP BY kind`, videoID)
+	if err != nil {
+		return nil, fmt.Errorf("rag: chunk stats %s: %w", videoID, err)
+	}
+	defer rows.Close()
+	var out []KindCount
+	for rows.Next() {
+		var k KindCount
+		if err := rows.Scan(&k.Kind, &k.Count, &k.Tokens); err != nil {
+			return nil, fmt.Errorf("rag: chunk stats %s: %w", videoID, err)
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rag: chunk stats %s: %w", videoID, err)
+	}
+	return out, nil
+}
+
 // Retrieve returns up to k chunks nearest to queryEmbedding across all videos.
 //
 // Note this is an unbounded KNN: it returns k rows for ANY query vector, however
