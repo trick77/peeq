@@ -407,10 +407,16 @@ function stageLabel(key: string): string {
 
 // AnswerTrace is the disclosure and the waterfall inside it.
 //
-// The bars are drawn to scale across the whole run, which is the one thing the
-// panel says that a list of numbers would not: the model calls are nearly all of
-// the wait and the entire search is a sliver. That shape is the answer to "why
-// does this take six seconds", and it is visible before any number is read.
+// The bars are drawn to scale across the whole run, which is the one thing a
+// list of numbers would not say: WHERE the time actually went, visible before a
+// single figure is read.
+//
+// This comment used to answer that for the reader — "the model calls are nearly
+// all of the wait and the entire search is a sliver" — and it was wrong within a
+// week. A cold page cache put 44s of disk reads into a 61s query and the searches
+// were three quarters of it. The shape is not knowable in advance, which is the
+// entire reason for drawing it rather than describing it, and why the footer
+// below states the split without characterising it.
 function AnswerTrace({ stages }: { stages: TraceStage[] }) {
   const [open, setOpen] = useState(false);
   const total = stages.reduce((sum, s) => sum + s.ms, 0);
