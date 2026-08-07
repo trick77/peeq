@@ -103,10 +103,21 @@ services:
           # The merge is the one that gives it away: it touches neither index,
           # only memory, and it moved 48x. Nothing was slow except the disk.
           #
-          # 3g leaves the whole database resident with room for the heap. Raise
-          # it again if the database grows past a gigabyte or so; the number to
-          # keep an eye on is `ask trace` reporting local steps in milliseconds.
-          memory: 3g
+          # 2g leaves the whole database resident with room for the heap. It is
+          # what the host has spare, and it clears the requirement comfortably:
+          # the rule of thumb is 2x the database plus a gigabyte for the runtime,
+          # which at ~200MB is about 1.4g.
+          #
+          # THE NUMBER TRACKS THE DATABASE, NOT THE LIBRARY. Chunks are what grow
+          # it — 7425 today. Once peeq.db approaches this limit the page cache
+          # starts losing again and the minute-long Ask comes back, so revisit it
+          # somewhere north of half a gigabyte on disk.
+          #
+          # The signal is free and already logged: `ask trace` prints every
+          # stage's duration on every question. Local steps in milliseconds means
+          # the database is resident; local steps in seconds means it is being
+          # evicted and read off the platters again.
+          memory: 2g
 
     labels:
       traefik.enable: "true"
