@@ -534,7 +534,7 @@ describe("Search — the Ask answer", () => {
       type: "progress",
       phase: "retrieving",
       topic: "electrolytes",
-      intent: "inventory",
+      counting: true,
     });
     expect(await screen.findByText(/electrolytes/)).toBeInTheDocument();
     expect(

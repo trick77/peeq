@@ -103,7 +103,7 @@ func askFor(t *testing.T, deps Deps, q string) string {
 // retrieval and keep the watched video out of the sources entirely.
 func TestAnswerAppliesWatchedFilter(t *testing.T) {
 	deps, _, ask, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"ontology","intent":"content","filters":{"watched":"unwatched"}}`
+	understand.reply = `{"topic":"ontology","counting":false,"filters":{"watched":"unwatched"}}`
 	body := askFor(t, deps, "do+we+have+unwatched+videos+about+ontology")
 
 	sources := frame(t, body, "sources")
@@ -126,7 +126,7 @@ func TestAnswerAppliesWatchedFilter(t *testing.T) {
 
 func TestAnswerAppliesChannelFilter(t *testing.T) {
 	deps, _, _, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"ontology","intent":"content","filters":{"channels":["Veritasium"]}}`
+	understand.reply = `{"topic":"ontology","counting":false,"filters":{"channels":["Veritasium"]}}`
 	body := askFor(t, deps, "does+Veritasium+cover+ontology")
 
 	got, _ := json.Marshal(frame(t, body, "sources")["sources"])
@@ -142,7 +142,7 @@ func TestAnswerAppliesChannelFilter(t *testing.T) {
 // shown as the applied filter, which is the disclosure.
 func TestAnswerResolvesChannelTypoSilently(t *testing.T) {
 	deps, _, _, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"ontology","intent":"content","filters":{"channels":["Veritaseum"]}}`
+	understand.reply = `{"topic":"ontology","counting":false,"filters":{"channels":["Veritaseum"]}}`
 	body := askFor(t, deps, "does+Veritaseum+cover+ontology")
 
 	applied, _ := json.Marshal(frame(t, body, "sources")["filters"])
@@ -159,7 +159,7 @@ func TestAnswerResolvesChannelTypoSilently(t *testing.T) {
 // channel's videos with no indication their question was not honoured.
 func TestAnswerReportsAnUnknownChannel(t *testing.T) {
 	deps, _, _, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"ontology","intent":"content","filters":{"channels":["Numberphile"]}}`
+	understand.reply = `{"topic":"ontology","counting":false,"filters":{"channels":["Numberphile"]}}`
 	body := askFor(t, deps, "does+Numberphile+cover+ontology")
 
 	text := tokens(t, body)
@@ -183,7 +183,7 @@ func TestAnswerRelaxesAFilterThatFoundNothing(t *testing.T) {
 	deps, _, ask, understand := filteredAnswerDeps(t)
 	// Everything about ontology in this library is in 'science'; asking for
 	// 'gaming' matches nothing at all.
-	understand.reply = `{"topic":"ontology","intent":"content","filters":{"category":"gaming"}}`
+	understand.reply = `{"topic":"ontology","counting":false,"filters":{"category":"gaming"}}`
 	body := askFor(t, deps, "any+gaming+videos+about+ontology")
 
 	text := tokens(t, body)
@@ -212,7 +212,7 @@ func TestAnswerRelaxesAFilterThatFoundNothing(t *testing.T) {
 // that answers about something else.
 func TestAnswerKeepsSayingNothingWhenNothingCovers(t *testing.T) {
 	deps, _, _, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"submarines","intent":"content","filters":{"watched":"unwatched"}}`
+	understand.reply = `{"topic":"submarines","counting":false,"filters":{"watched":"unwatched"}}`
 	// No embedder is wired here, so retrieval is FTS-only and a word the
 	// library does not contain finds nothing under any filter.
 	deps.Embedder = nil
@@ -233,7 +233,7 @@ func TestAnswerKeepsSayingNothingWhenNothingCovers(t *testing.T) {
 // directly above a count line reading "2 videos".
 func TestAnswerCountsForAnInventoryQuestion(t *testing.T) {
 	deps, _, ask, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"","intent":"inventory","filters":{"category":"science"}}`
+	understand.reply = `{"topic":"","counting":true,"filters":{"category":"science"}}`
 	body := askFor(t, deps, "how+many+science+videos+do+I+have")
 
 	counts, ok := frame(t, body, "sources")["counts"].(map[string]any)
@@ -260,7 +260,7 @@ func TestAnswerCountsForAnInventoryQuestion(t *testing.T) {
 // written about a subject.
 func TestAnswerCountOfZeroSaysNothingMatches(t *testing.T) {
 	deps, _, _, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"","intent":"inventory","filters":{"category":"gaming"}}`
+	understand.reply = `{"topic":"","counting":true,"filters":{"category":"gaming"}}`
 	body := askFor(t, deps, "how+many+gaming+videos+do+I+have")
 
 	text := tokens(t, body)
@@ -279,7 +279,7 @@ func TestAnswerCountOfZeroSaysNothingMatches(t *testing.T) {
 // it. The topic is what makes the number unanswerable.
 func TestAnswerSkipsCountsForATopicalQuestion(t *testing.T) {
 	deps, _, ask, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"ontology","intent":"inventory","filters":{"watched":"unwatched"}}`
+	understand.reply = `{"topic":"ontology","counting":true,"filters":{"watched":"unwatched"}}`
 	body := askFor(t, deps, "how+many+unwatched+videos+about+ontology+do+I+have")
 
 	if _, present := frame(t, body, "sources")["counts"]; present {
@@ -294,7 +294,7 @@ func TestAnswerSkipsCountsForATopicalQuestion(t *testing.T) {
 // so the number would just be the size of the library.
 func TestAnswerSkipsCountsWithoutAFilter(t *testing.T) {
 	deps, _, _, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"","intent":"inventory","filters":{}}`
+	understand.reply = `{"topic":"","counting":true,"filters":{}}`
 	body := askFor(t, deps, "how+many+videos+do+I+have")
 
 	if _, present := frame(t, body, "sources")["counts"]; present {
@@ -307,7 +307,7 @@ func TestAnswerSkipsCountsWithoutAFilter(t *testing.T) {
 // below it show the science ones, and the relaxation note reconciles them.
 func TestAnswerCountsUseTheOriginalFilterNotTheRelaxedOne(t *testing.T) {
 	deps, _, _, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"","intent":"inventory","filters":{"category":"gaming"}}`
+	understand.reply = `{"topic":"","counting":true,"filters":{"category":"gaming"}}`
 	body := askFor(t, deps, "how+many+gaming+videos+do+I+have")
 
 	counts := frame(t, body, "sources")["counts"].(map[string]any)
@@ -319,7 +319,7 @@ func TestAnswerCountsUseTheOriginalFilterNotTheRelaxedOne(t *testing.T) {
 // A content question pays for no count at all.
 func TestAnswerSkipsCountsForAContentQuestion(t *testing.T) {
 	deps, _, _, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"ontology","intent":"content","filters":{}}`
+	understand.reply = `{"topic":"ontology","counting":false,"filters":{}}`
 	body := askFor(t, deps, "what+is+an+ontology")
 	if _, present := frame(t, body, "sources")["counts"]; present {
 		t.Fatal("a content question should carry no counts")
@@ -330,7 +330,7 @@ func TestAnswerSkipsCountsForAContentQuestion(t *testing.T) {
 // existed: no constraints line, no counts, no notes.
 func TestAnswerUnfilteredIsUnchanged(t *testing.T) {
 	deps, _, ask, understand := filteredAnswerDeps(t)
-	understand.reply = `{"topic":"ontology","intent":"content","filters":{}}`
+	understand.reply = `{"topic":"ontology","counting":false,"filters":{}}`
 	body := askFor(t, deps, "what+is+an+ontology")
 
 	if text := tokens(t, body); text != "Both cover it[1]." {
@@ -353,7 +353,7 @@ func TestRelaxationReusesTheEmbedding(t *testing.T) {
 	deps, _, _, understand := filteredAnswerDeps(t)
 	embedder := &recordingEmbedder{}
 	deps.Embedder = embedder
-	understand.reply = `{"topic":"ontology","intent":"content","filters":{"category":"gaming"}}`
+	understand.reply = `{"topic":"ontology","counting":false,"filters":{"category":"gaming"}}`
 	askFor(t, deps, "any+gaming+videos+about+ontology")
 
 	if len(embedder.calls) != 1 {
@@ -404,7 +404,7 @@ func TestAnswerExcerptsCarryTheChapter(t *testing.T) {
 		`[{"title":"Aristotle's categories","ts":60}]`); err != nil {
 		t.Fatal(err)
 	}
-	understand.reply = `{"topic":"ontology","intent":"content","filters":{}}`
+	understand.reply = `{"topic":"ontology","counting":false,"filters":{}}`
 	askFor(t, deps, "what+is+an+ontology")
 
 	if !strings.Contains(ask.messages[1].Content, `chapter="Aristotle's categories"`) {

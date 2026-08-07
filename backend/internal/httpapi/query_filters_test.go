@@ -21,32 +21,32 @@ func TestParseUnderstandingFilters(t *testing.T) {
 	}{
 		{
 			name: "no filters key at all",
-			raw:  `{"topic":"ontology","intent":"content"}`,
+			raw:  `{"topic":"ontology","counting":false}`,
 			want: queryFilters{},
 		},
 		{
 			name: "empty filters object",
-			raw:  `{"topic":"ontology","intent":"content","filters":{}}`,
+			raw:  `{"topic":"ontology","counting":false,"filters":{}}`,
 			want: queryFilters{},
 		},
 		{
 			name: "unwatched",
-			raw:  `{"topic":"ontology","intent":"inventory","filters":{"watched":"unwatched"}}`,
+			raw:  `{"topic":"ontology","counting":false,"filters":{"watched":"unwatched"}}`,
 			want: queryFilters{Watched: watchedUnwatched},
 		},
 		{
 			name: "one channel",
-			raw:  `{"topic":"ontology","intent":"inventory","filters":{"channels":["Veritasium"]}}`,
+			raw:  `{"topic":"ontology","counting":false,"filters":{"channels":["Veritasium"]}}`,
 			want: queryFilters{Channels: []string{"Veritasium"}},
 		},
 		{
 			name: "two channels, a comparison",
-			raw:  `{"topic":"dark matter","intent":"content","filters":{"channels":["Veritasium","Kurzgesagt"]}}`,
+			raw:  `{"topic":"dark matter","counting":false,"filters":{"channels":["Veritasium","Kurzgesagt"]}}`,
 			want: queryFilters{Channels: []string{"Veritasium", "Kurzgesagt"}},
 		},
 		{
 			name: "everything at once",
-			raw: `{"topic":"ontology","intent":"inventory","filters":{"channels":["Veritasium"],` +
+			raw: `{"topic":"ontology","counting":false,"filters":{"channels":["Veritasium"],` +
 				`"watched":"watched","favorite":true,"category":"science",` +
 				`"after":"2026-01-01","before":"2026-06-30"}}`,
 			want: queryFilters{
@@ -58,13 +58,13 @@ func TestParseUnderstandingFilters(t *testing.T) {
 			// A model improvising a third watch state. It maps to no column, so
 			// it is dropped rather than guessed at.
 			name:        "invented watch state is dropped",
-			raw:         `{"topic":"x","intent":"content","filters":{"watched":"partially"}}`,
+			raw:         `{"topic":"x","counting":false,"filters":{"watched":"partially"}}`,
 			want:        queryFilters{},
 			wantDropped: []string{"watched:partially"},
 		},
 		{
 			name:        "invented category is dropped",
-			raw:         `{"topic":"x","intent":"content","filters":{"category":"philosophy"}}`,
+			raw:         `{"topic":"x","counting":false,"filters":{"category":"philosophy"}}`,
 			want:        queryFilters{},
 			wantDropped: []string{"category:philosophy"},
 		},
@@ -72,7 +72,7 @@ func TestParseUnderstandingFilters(t *testing.T) {
 			// 'uncategorized' is a state peeq assigns to unclassified videos,
 			// never an answer to a question about a subject area.
 			name:        "uncategorized is not a filterable category",
-			raw:         `{"topic":"x","intent":"content","filters":{"category":"uncategorized"}}`,
+			raw:         `{"topic":"x","counting":false,"filters":{"category":"uncategorized"}}`,
 			want:        queryFilters{},
 			wantDropped: []string{"category:uncategorized"},
 		},
@@ -80,18 +80,18 @@ func TestParseUnderstandingFilters(t *testing.T) {
 			// The display label is a legitimate reply shape; NormalizeCategory
 			// maps it back to the id rather than dropping a correct answer.
 			name: "category display label resolves to its id",
-			raw:  `{"topic":"x","intent":"content","filters":{"category":"Science & Research"}}`,
+			raw:  `{"topic":"x","counting":false,"filters":{"category":"Science & Research"}}`,
 			want: queryFilters{Category: "science"},
 		},
 		{
 			name:        "a date the model did not resolve is dropped",
-			raw:         `{"topic":"x","intent":"content","filters":{"after":"last week"}}`,
+			raw:         `{"topic":"x","counting":false,"filters":{"after":"last week"}}`,
 			want:        queryFilters{},
 			wantDropped: []string{"after:last week"},
 		},
 		{
 			name:        "a bare year is not a date",
-			raw:         `{"topic":"x","intent":"content","filters":{"after":"2026"}}`,
+			raw:         `{"topic":"x","counting":false,"filters":{"after":"2026"}}`,
 			want:        queryFilters{},
 			wantDropped: []string{"after:2026"},
 		},
@@ -99,13 +99,13 @@ func TestParseUnderstandingFilters(t *testing.T) {
 			// An inverted range admits nothing, which the reader would read as
 			// "your library has nothing on this". Both bounds go.
 			name:        "inverted date range drops both bounds",
-			raw:         `{"topic":"x","intent":"content","filters":{"after":"2026-06-01","before":"2026-01-01"}}`,
+			raw:         `{"topic":"x","counting":false,"filters":{"after":"2026-06-01","before":"2026-01-01"}}`,
 			want:        queryFilters{},
 			wantDropped: []string{"dates:inverted"},
 		},
 		{
 			name:        "too many channels",
-			raw:         `{"topic":"x","intent":"content","filters":{"channels":["a","b","c","d","e","f"]}}`,
+			raw:         `{"topic":"x","counting":false,"filters":{"channels":["a","b","c","d","e","f"]}}`,
 			want:        queryFilters{Channels: []string{"a", "b", "c", "d"}},
 			wantDropped: []string{"channels:too-many"},
 		},
@@ -114,7 +114,7 @@ func TestParseUnderstandingFilters(t *testing.T) {
 			// the reader may have asked for and did not get, so it is named in
 			// the log rather than vanishing.
 			name: "blank channel names are skipped, overlong ones are named",
-			raw: `{"topic":"x","intent":"content","filters":{"channels":["  ","` +
+			raw: `{"topic":"x","counting":false,"filters":{"channels":["  ","` +
 				strings.Repeat("z", understandMaxChannelRunes+1) + `","Veritasium"]}}`,
 			want: queryFilters{Channels: []string{"Veritasium"}},
 			wantDropped: []string{
@@ -123,14 +123,14 @@ func TestParseUnderstandingFilters(t *testing.T) {
 		},
 		{
 			name: "control characters are stripped from a channel name",
-			raw:  "{\"topic\":\"x\",\"intent\":\"content\",\"filters\":{\"channels\":[\"Verita\\nsium\"]}}",
+			raw:  "{\"topic\":\"x\",\"counting\":false,\"filters\":{\"channels\":[\"Verita\\nsium\"]}}",
 			want: queryFilters{Channels: []string{"Verita sium"}},
 		},
 		{
 			// The nested filters object must not confuse the outermost-object
 			// scan, which takes the first { and the last }.
 			name: "filters survive surrounding prose",
-			raw:  `Here you go: {"topic":"x","intent":"content","filters":{"watched":"unwatched"}} done`,
+			raw:  `Here you go: {"topic":"x","counting":false,"filters":{"watched":"unwatched"}} done`,
 			want: queryFilters{Watched: watchedUnwatched},
 		},
 	}
@@ -162,7 +162,7 @@ func TestUnderstandPromptCategoriesRoundTrip(t *testing.T) {
 		if id == videos.UncategorizedCategory {
 			continue
 		}
-		raw := `{"topic":"x","intent":"content","filters":{"category":"` + id + `"}}`
+		raw := `{"topic":"x","counting":false,"filters":{"category":"` + id + `"}}`
 		got, dropped, ok := parseUnderstanding(raw)
 		if !ok || got.Filters.Category != id {
 			t.Errorf("category %q did not survive the parse: %+v dropped=%v", id, got.Filters, dropped)
