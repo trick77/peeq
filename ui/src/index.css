@@ -5265,6 +5265,182 @@ details.tomb-sect[open] > summary svg {
   font-size: 12px;
 }
 
+/* ── How this was answered ───────────────────────────────────────────────
+   The pipeline behind one answer, closed by default and last in the panel.
+   Nothing about it is on the waiting path: the frame carrying it is sent after
+   generation, because it reports what generation cost. The wait itself is one
+   spinner and one label, exactly as it was. ── */
+.answer-trace {
+  margin-top: 14px;
+  padding-top: 11px;
+  border-top: 1px solid var(--color-border);
+}
+.trace-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-faint);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.trace-toggle:hover {
+  color: var(--color-ink-dim);
+}
+.trace-toggle svg {
+  flex: none;
+}
+.trace-body {
+  margin-top: 11px;
+  padding: 13px 15px 12px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-ui-sm);
+  background: var(--color-elevated);
+}
+.trace-hd {
+  margin: 0 0 11px;
+  color: var(--color-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+/* The header doubles as the key. Both glyphs appear below on rows the reader
+   has not looked at yet, so teaching them here — in the one line they are
+   already reading — is what stops the badges needing to be guessed at. */
+.trace-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  white-space: nowrap;
+  color: var(--color-ink-dim);
+}
+.trace-key svg {
+  color: var(--color-accent-strong);
+}
+.trace-key.local svg {
+  color: var(--color-muted);
+}
+.trace-row {
+  display: grid;
+  grid-template-columns: 1fr 150px 52px;
+  align-items: center;
+  column-gap: 14px;
+  padding: 5px 0;
+}
+.trace-row + .trace-row {
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 45%, transparent);
+}
+.trace-name {
+  min-width: 0;
+  color: var(--color-ink-dim);
+  font-size: 13px;
+}
+/* What ran the step, as a BADGE rather than another line of text. A step that
+   called a model and a step that was only our own code have to be tellable
+   apart at a glance, and two identical mono lines reading "mimo-v2.5-pro" and
+   "weighted RRF" were not that. A step that called nothing renders no badge at
+   all — the absence is the point, and a third pill would say "another tool". */
+.trace-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.trace-by svg {
+  flex: none;
+}
+/* Left this machine. The accent is doing real work: these are the steps that
+   cost seconds and sent the question somewhere. */
+.trace-by.model {
+  border-color: var(--color-accent-dim);
+  background: color-mix(
+    in srgb,
+    var(--color-accent) 15%,
+    var(--color-elevated)
+  );
+  color: var(--color-ink);
+}
+.trace-by.model svg {
+  color: var(--color-accent-strong);
+}
+/* Ran here, against the reader's own library. */
+.trace-by.local {
+  border-color: var(--color-border);
+  background: var(--color-panel);
+  color: var(--color-ink-dim);
+}
+.trace-by.local svg {
+  color: var(--color-muted);
+}
+/* Bars are placed ALONG the run rather than left-aligned, so the row reads as
+   elapsed time. Drawn to scale is the one quantitative claim the panel makes:
+   the model calls are nearly the whole wait and the search is a sliver, which
+   is the answer to "why does this take six seconds". */
+.trace-track {
+  position: relative;
+  height: 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+.trace-track > i {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 4px;
+  background: var(--color-accent-dim);
+}
+.trace-row.model .trace-track > i {
+  background: linear-gradient(
+    90deg,
+    var(--color-accent-dim),
+    var(--color-accent)
+  );
+}
+.trace-ms {
+  color: var(--color-faint);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.trace-row.model .trace-ms {
+  color: var(--color-ink-dim);
+}
+.trace-foot {
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 45%, transparent);
+  color: var(--color-faint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.trace-hd .num,
+.trace-foot .num {
+  color: var(--color-ink-dim);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+/* Narrow: the bar is the first thing to go. It is the only part that needs
+   width to mean anything, and the label and the duration still say everything
+   the row is for. */
+@media (max-width: 620px) {
+  .trace-row {
+    grid-template-columns: 1fr 52px;
+  }
+  .trace-track {
+    display: none;
+  }
+}
+
 /* "Also in your library" — what retrieval found and the answer did not use.
    Retrieval reaches far more videos than a six-sentence answer can cite, and the
    citation list alone made Ask look like it knew less than the search box beside

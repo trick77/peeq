@@ -100,7 +100,7 @@ func TestAnswerStreamsSourcesThenTokensThenDone(t *testing.T) {
 		t.Fatalf("content-type = %q, want an event stream", ct)
 	}
 	got := names(events(t, rec.Body.String()))
-	want := []string{"progress", "sources", "token", "token", "done"}
+	want := []string{"progress", "sources", "token", "token", "trace", "done"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("frames = %v, want %v", got, want)
 	}
@@ -136,7 +136,7 @@ func TestAnswerWithNoResultsSaysSoWithoutCallingTheModel(t *testing.T) {
 	if !strings.Contains(body, "Nothing in your library covers that") {
 		t.Errorf("no honest answer in: %s", body)
 	}
-	if got := names(events(t, body)); strings.Join(got, ",") != "progress,sources,token,done" {
+	if got := names(events(t, body)); strings.Join(got, ",") != "progress,sources,token,trace,done" {
 		t.Errorf("frames = %v", got)
 	}
 }
@@ -154,7 +154,7 @@ func TestAnswerWithoutChatStillSendsSources(t *testing.T) {
 		t.Fatalf("status = %d, want 200 — a missing chat client is not an error", rec.Code)
 	}
 	got := names(events(t, rec.Body.String()))
-	if strings.Join(got, ",") != "progress,sources,error,done" {
+	if strings.Join(got, ",") != "progress,sources,error,trace,done" {
 		t.Fatalf("frames = %v, want progress,sources,error,done", got)
 	}
 	if !strings.Contains(rec.Body.String(), `"video_id":"v1"`) {
@@ -176,7 +176,7 @@ func TestAnswerMidStreamFailureKeepsEarlierTokens(t *testing.T) {
 		t.Fatalf("status = %d, want 200 — headers were already sent", rec.Code)
 	}
 	got := names(events(t, rec.Body.String()))
-	if strings.Join(got, ",") != "progress,sources,token,error,done" {
+	if strings.Join(got, ",") != "progress,sources,token,error,trace,done" {
 		t.Fatalf("frames = %v", got)
 	}
 	if !strings.Contains(rec.Body.String(), "Yes — Attia") {
@@ -198,7 +198,7 @@ func TestAnswerWithEmptyCompletionReportsAnError(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if got := names(events(t, rec.Body.String())); strings.Join(got, ",") != "progress,sources,error,done" {
+	if got := names(events(t, rec.Body.String())); strings.Join(got, ",") != "progress,sources,error,trace,done" {
 		t.Fatalf("frames = %v, want progress,sources,error,done", got)
 	}
 }
@@ -977,5 +977,214 @@ func TestCoverageVideosEmptyWhenOnlyTheFloorRan(t *testing.T) {
 	testee := &server{videos: deps.Videos}
 	if got := testee.coverageVideos(hits, relevantVideos(lanes, -1)); len(got) != 0 {
 		t.Errorf("coverage = %+v, want empty", got)
+	}
+}
+
+// ── The answer trace ───────────────────────────────────────────────────────
+//
+// What the panel reports about how an answer was made. These pin the two
+// properties the panel's honesty rests on: a stage exists only if it ran, and
+// the durations do not double-count a step measured inside another one.
+
+// traceStages decodes the trace frame into the stages it carried.
+func traceStages(t *testing.T, body string) []traceStage {
+	t.Helper()
+	var payload struct {
+		Stages []traceStage `json:"stages"`
+	}
+	if err := json.Unmarshal([]byte(firstEvent(t, body, "trace")), &payload); err != nil {
+		t.Fatalf("decode trace: %v", err)
+	}
+	return payload.Stages
+}
+
+func stageKeys(stages []traceStage) []string {
+	out := make([]string, 0, len(stages))
+	for _, s := range stages {
+		out = append(out, s.Key)
+	}
+	return out
+}
+
+func findStage(t *testing.T, stages []traceStage, key string) traceStage {
+	t.Helper()
+	for _, s := range stages {
+		if s.Key == key {
+			return s
+		}
+	}
+	t.Fatalf("no %q stage in %v", key, stageKeys(stages))
+	return traceStage{}
+}
+
+func TestTraceNamesTheStepsThatRan(t *testing.T) {
+	deps, _ := answerDeps(t)
+	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	got := stageKeys(traceStages(t, rec.Body.String()))
+	want := []string{"keyword", "embed", "vector", "merge", "answer"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("stages = %v, want %v", got, want)
+	}
+}
+
+// A step that never ran must not appear. The channel lookup is the case that
+// matters: resolveChannels returns without touching the library when the
+// question named no channel, and a row for it would claim a search that did not
+// happen — on nearly every question.
+func TestTraceOmitsTheChannelLookupWhenNoChannelWasNamed(t *testing.T) {
+	deps, _ := answerDeps(t)
+	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+	deps.Understand = &fakeUnderstander{reply: `{"topic":"","counting":false,"filters":{}}`}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	for _, s := range traceStages(t, rec.Body.String()) {
+		if s.Key == "channels" {
+			t.Fatalf("traced a channel lookup for a question that named no channel: %v",
+				stageKeys(traceStages(t, rec.Body.String())))
+		}
+	}
+}
+
+func TestTraceIncludesTheChannelLookupWhenOneWasNamed(t *testing.T) {
+	deps, _ := answerDeps(t)
+	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+	deps.Understand = &fakeUnderstander{
+		reply: `{"topic":"electrolytes","counting":false,"filters":{"channels":["Attia"]}}`,
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=attia+on+electrolytes", nil)
+
+	stages := traceStages(t, rec.Body.String())
+	ch := findStage(t, stages, "channels")
+	if ch.Kind != traceKindLocal || ch.Tool != "sqlite" {
+		t.Fatalf("channel stage = %+v, want a local sqlite step", ch)
+	}
+	// It resolved a name against the library, so it belongs before the searches
+	// that use the resulting filter.
+	if keys := stageKeys(stages); keys[0] != "understand" || keys[1] != "channels" {
+		t.Fatalf("stages = %v, want the channel lookup right after understanding", keys)
+	}
+}
+
+// Each stage has to name the thing that actually ran it, read back off the
+// component rather than written out a second time. A hardcoded model name is
+// the failure this guards: it keeps passing after a redeployment and puts a
+// model nobody is using on the reader's screen.
+func TestTraceNamesTheRealModelsAndEngines(t *testing.T) {
+	deps, _ := answerDeps(t)
+	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+	deps.Understand = &fakeUnderstander{reply: `{"topic":"cramp","counting":false,"filters":{}}`}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	stages := traceStages(t, rec.Body.String())
+	for _, tc := range []struct{ key, tool, kind string }{
+		{"understand", "mimo-v2.5", traceKindModel},
+		{"keyword", "sqlite FTS5", traceKindLocal},
+		{"embed", "test-embed-model", traceKindModel},
+		{"vector", "sqlite-vec", traceKindLocal},
+		{"answer", "mimo-v2.5-pro", traceKindModel},
+	} {
+		s := findStage(t, stages, tc.key)
+		if s.Tool != tc.tool || s.Kind != tc.kind {
+			t.Errorf("%s stage = tool %q kind %q, want %q / %q", tc.key, s.Tool, s.Kind, tc.tool, tc.kind)
+		}
+	}
+	// The merge called nothing, and an empty tool is how the panel knows to
+	// render no badge rather than the words "no tool".
+	if m := findStage(t, stages, "merge"); m.Tool != "" || m.Kind != traceKindCode {
+		t.Errorf("merge stage = %+v, want no tool and kind %q", m, traceKindCode)
+	}
+}
+
+// The vector span is retrievalMs minus the two steps measured inside it. Get
+// that subtraction wrong and the bars sum to nearly twice the real wait — the
+// panel's one quantitative claim, silently doubled.
+func TestTraceDurationsDoNotDoubleCountRetrieval(t *testing.T) {
+	deps, _ := answerDeps(t)
+	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	stages := traceStages(t, rec.Body.String())
+	var total int64
+	for _, s := range stages {
+		if s.Ms < 0 {
+			t.Fatalf("%s stage reported %dms; a bar cannot draw backwards", s.Key, s.Ms)
+		}
+		total += s.Ms
+	}
+	// Retrieval's three stages together cannot exceed the whole request, which
+	// they would if `vector` were reported as the retrieval total rather than as
+	// what is left of it.
+	kw := findStage(t, stages, "keyword").Ms
+	em := findStage(t, stages, "embed").Ms
+	vec := findStage(t, stages, "vector").Ms
+	if kw+em+vec > total {
+		t.Fatalf("retrieval stages sum to %d of a %d total", kw+em+vec, total)
+	}
+}
+
+// A failed answer is exactly when someone wants to know what happened, so the
+// trace still goes out — showing every step that ran and, correctly, no answer
+// step. This is what the defer buys over a statement at the end of the handler.
+func TestTraceSurvivesAFailedAnswer(t *testing.T) {
+	deps, ask := answerDeps(t)
+	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+	ask.err = errors.New("upstream is down")
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	stages := traceStages(t, rec.Body.String())
+	if len(stages) == 0 {
+		t.Fatal("a failed answer traced nothing")
+	}
+	findStage(t, stages, "keyword") // retrieval still ran and still says so
+}
+
+// A question that retrieved nothing never reaches the model, so there is no
+// answer step to report — but everything before it did happen.
+func TestTraceHasNoAnswerStepWhenTheModelWasNeverCalled(t *testing.T) {
+	// No embedder, so the semantic lane never runs and a word the library does
+	// not hold retrieves nothing at all — the same setup the honest-answer test
+	// uses. With one wired, the stub vector matches the seeded chunk and every
+	// query retrieves something.
+	deps, ask := answerDeps(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=unicornhusbandry", nil)
+
+	if ask.called {
+		t.Fatal("the model was called for a query that retrieved nothing")
+	}
+	for _, s := range traceStages(t, rec.Body.String()) {
+		if s.Key == "answer" {
+			t.Fatal("traced an answer step for a call that never happened")
+		}
+	}
+}
+
+// The blank query returns before anything runs. An empty trace frame would put
+// a "How this was answered" disclosure on a panel where nothing was answered.
+func TestTraceIsAbsentForABlankQuery(t *testing.T) {
+	deps, _ := answerDeps(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=", nil)
+
+	for _, e := range events(t, rec.Body.String()) {
+		if e[0] == "trace" {
+			t.Fatalf("blank query sent a trace: %s", e[1])
+		}
 	}
 }

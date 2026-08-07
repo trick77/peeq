@@ -187,6 +187,11 @@ type understandDiag struct {
 	// correctly emitting nothing, and the search silently loses a constraint the
 	// reader did ask for.
 	dropped []string
+	// model is the deployment this call actually reached, read back off the
+	// context that configured it rather than written out again here. The answer
+	// trace names it on screen, and a hand-copied second spelling would keep
+	// naming the old one after a routing change.
+	model string
 }
 
 // understandSystemPrompt is built once at init because the category list is
@@ -264,6 +269,11 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 	cctx = llm.ShortGate(llm.WithoutThinking(cctx))
 	cctx = llm.WithMaxTokens(cctx, understandMaxTokens)
 	cctx = llm.WithCall(cctx, llm.CallInfo{Step: "understand"})
+	// Read back off the context that was just configured, so this can only ever
+	// name the deployment the call actually reaches. Captured before the call
+	// rather than after, because every failure path below reports it too — a
+	// timeout that cannot say which model timed out is half a diagnostic.
+	model := llm.ModelFor(cctx)
 
 	started := time.Now()
 	// Today's date rides on the USER message, not the system one: it changes
@@ -284,12 +294,12 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 		if errors.Is(err, context.DeadlineExceeded) || cctx.Err() == context.DeadlineExceeded {
 			status = understandTimedOut
 		}
-		return queryUnderstanding{}, understandDiag{status: status, ms: elapsed}
+		return queryUnderstanding{}, understandDiag{status: status, ms: elapsed, model: model}
 	}
 
 	u, dropped, ok := parseUnderstanding(raw)
 	if !ok {
-		return queryUnderstanding{}, understandDiag{status: understandFailed, ms: elapsed}
+		return queryUnderstanding{}, understandDiag{status: understandFailed, ms: elapsed, model: model}
 	}
 	// A topic that merely restates the question buys nothing and costs a lane.
 	//
@@ -308,12 +318,12 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 	if u.Topic == "" || strings.EqualFold(u.Topic, strings.Join(strings.Fields(q), " ")) {
 		u.Topic = ""
 		return u, understandDiag{
-			status: understandNoop, ms: elapsed, counting: u.Counting,
+			status: understandNoop, ms: elapsed, counting: u.Counting, model: model,
 			filters: u.Filters.describe(), dropped: dropped,
 		}
 	}
 	return u, understandDiag{
-		status: understandOK, ms: elapsed, counting: u.Counting,
+		status: understandOK, ms: elapsed, counting: u.Counting, model: model,
 		filters: u.Filters.describe(), dropped: dropped,
 	}
 }

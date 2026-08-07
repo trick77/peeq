@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { Icon } from "../icons";
 import { Spinner } from "../ui";
-import { formatDuration } from "../format";
+import { formatDuration, formatMs } from "../format";
 import {
   answerParts,
   citedInOrder,
@@ -9,7 +10,12 @@ import {
 } from "../answerSources";
 import { splitIntoSegments } from "../streamFade";
 import type { EmphasisMark } from "../emphasis";
-import type { AnswerSource, AnswerVideo, LibraryCount } from "../api/answer";
+import type {
+  AnswerSource,
+  AnswerVideo,
+  LibraryCount,
+  TraceStage,
+} from "../api/answer";
 
 // AnswerPanel renders the grounded answer above Ask's moments.
 //
@@ -68,6 +74,11 @@ export type AnswerState = {
   // Only for an inventory question. Computed in SQL under the constraints, so
   // it is the whole count rather than a tally of what happened to be cited.
   counts?: LibraryCount;
+  // How the answer was made, one entry per step that actually ran. Absent until
+  // the stream is nearly over — the frame carrying it is sent after generation,
+  // because it reports what generation cost — so the panel only ever draws it
+  // settled, which is also the only time anyone wants it.
+  trace?: TraceStage[];
   failed?: boolean;
 };
 
@@ -343,6 +354,169 @@ export function AnswerPanel({
           })}
         </div>
       ) : null}
+
+      {/* How the answer was made. Settled only, and closed by default: the
+          reader asked a question, not for a pipeline. It is the last thing in
+          the panel because it is about the answer rather than part of it. */}
+      {!streaming && state.trace?.length ? (
+        <AnswerTrace stages={state.trace} />
+      ) : null}
+    </div>
+  );
+}
+
+// STAGE_LABELS turns the backend's stable keys into the words a reader sees.
+//
+// THE WORDS LIVE HERE, and that is the whole reason the wire carries a key. They
+// are copy: "fuse" was what the code called merging two result lists, it went on
+// screen verbatim, and nobody outside the codebase could tell what it meant.
+// Rewording a row must cost a frontend change and nothing more.
+//
+// Every label says what the step DID, in words a reader already has. The
+// technical name is in the badge beside it, which is where someone who wants
+// "embedding" or "sqlite-vec" will find it — so the label never has to carry
+// vocabulary and the badge never has to be a sentence.
+const STAGE_LABELS: Record<string, string> = {
+  understand: "Worked out what you’re asking",
+  channels: "Matched the channel you named",
+  keyword: "Looked for those words",
+  // Not "embedded" and not "vector": an embedding IS a list of numbers, so this
+  // is accurate rather than simplified, and it works for a reader who has never
+  // met the word. The one who has is reading the model name directly below it.
+  embed: "Turned the question into numbers",
+  vector: "Found passages that mean the same",
+  // One row for fusing and choosing, because they are one idea: the two
+  // searches came back, and this is what was kept out of them. It only reads
+  // correctly with the two search rows above it, which is why they are separate
+  // and this is not.
+  merge: "Merged both lists, kept the best 12",
+  count: "Counted the matching videos",
+  answer: "Wrote the answer",
+};
+
+// stageLabel falls back to the raw key rather than hiding a stage it does not
+// recognise. A backend that adds a step should show up as an ugly row, not as a
+// silently missing one — the panel's whole claim is that it lists what ran.
+function stageLabel(key: string): string {
+  return STAGE_LABELS[key] ?? key;
+}
+
+// AnswerTrace is the disclosure and the waterfall inside it.
+//
+// The bars are drawn to scale across the whole run, which is the one thing the
+// panel says that a list of numbers would not: the model calls are nearly all of
+// the wait and the entire search is a sliver. That shape is the answer to "why
+// does this take six seconds", and it is visible before any number is read.
+function AnswerTrace({ stages }: { stages: TraceStage[] }) {
+  const [open, setOpen] = useState(false);
+  const total = stages.reduce((sum, s) => sum + s.ms, 0);
+  const modelMs = stages
+    .filter((s) => s.kind === "model")
+    .reduce((sum, s) => sum + s.ms, 0);
+  const models = stages.filter((s) => s.kind === "model").length;
+  const local = stages.filter((s) => s.kind === "local").length;
+
+  return (
+    <div className="answer-trace">
+      <button
+        type="button"
+        className="trace-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Icon
+          name="chevronRight"
+          size="11px"
+          style={{
+            transition: "transform .15s",
+            transform: open ? "rotate(90deg)" : "none",
+          }}
+        />
+        How this was answered
+      </button>
+      {open ? (
+        <div className="trace-body">
+          <p className="trace-hd">
+            {stages.length} steps,{" "}
+            <span className="num">{formatMs(total)}</span> end to end.
+            {models > 0 ? (
+              <span className="trace-key">
+                <Icon name="sparkles" size="11px" />
+                {models} {models === 1 ? "call" : "calls"} to a model
+              </span>
+            ) : null}
+            {local > 0 ? (
+              <span className="trace-key local">
+                <Icon name="database" size="11px" />
+                {local} {local === 1 ? "query" : "queries"} of your library
+              </span>
+            ) : null}
+          </p>
+          {stages.map((s, i) => (
+            <TraceRow
+              key={`${s.key}-${i}`}
+              stage={s}
+              // Bars are positioned along the run, not left-aligned, so the
+              // waterfall reads as elapsed time rather than as a bar chart of
+              // unrelated magnitudes.
+              offset={stages.slice(0, i).reduce((sum, p) => sum + p.ms, 0)}
+              total={total}
+            />
+          ))}
+          <p className="trace-foot">
+            The model calls are nearly all of the wait:{" "}
+            <span className="num">{formatMs(modelMs)}</span> of the{" "}
+            <span className="num">{formatMs(total)}</span>, and the only steps
+            that left this machine. Two searches run every time — one on the
+            words you used, one on what they mean — and the results are merged
+            before the model reads anything.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// TraceRow is one step: what it did, what ran it, and what it cost.
+//
+// A step that called nothing renders NO badge and no second line. The blank
+// says it; a row reading "no tool" would spend a line on something that did not
+// happen, and the eye would have to read it to learn nothing.
+function TraceRow({
+  stage,
+  offset,
+  total,
+}: {
+  stage: TraceStage;
+  offset: number;
+  total: number;
+}) {
+  // A zero-length run would make every bar NaN% wide. It cannot happen with a
+  // stage list that exists, but the arithmetic should not depend on that.
+  const scale = total > 0 ? total : 1;
+  return (
+    <div className={`trace-row${stage.kind === "model" ? " model" : ""}`}>
+      <span className="trace-name">
+        {stageLabel(stage.key)}
+        {stage.tool ? (
+          <span className={`trace-by ${stage.kind}`}>
+            <Icon
+              name={stage.kind === "model" ? "sparkles" : "database"}
+              size="11px"
+            />
+            {stage.tool}
+          </span>
+        ) : null}
+      </span>
+      <span className="trace-track" aria-hidden="true">
+        <i
+          style={{
+            left: `${(offset / scale) * 100}%`,
+            width: `${(stage.ms / scale) * 100}%`,
+          }}
+        />
+      </span>
+      <span className="trace-ms">{formatMs(stage.ms)}</span>
     </div>
   );
 }

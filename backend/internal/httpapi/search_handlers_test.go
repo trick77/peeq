@@ -79,6 +79,10 @@ func (f *fakeEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, e
 	return out, nil
 }
 
+// A name distinct from the real deployments, so a test asserting on the trace
+// cannot pass by accidentally matching a hardcoded "text-embedding-3-small".
+func (f *fakeEmbedder) Model() string { return "test-embed-model" }
+
 // spySummaryJobs is a stub SummaryEnqueuer that records the last enqueued id.
 type spySummaryJobs struct {
 	lastID string

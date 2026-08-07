@@ -1167,3 +1167,50 @@ describe("Search — the caret on arrival", () => {
     await waitFor(() => expect(document.activeElement).not.toBe(box()));
   });
 });
+
+// The trace frame arrives LAST — after the answer, just before `done` — so it
+// is the one piece of answer state that has to survive the rebuild in
+// runAnswer's .finally(). That literal reconstructs the settled state from
+// scratch, and a field threaded into only the handler's setAnswer is dropped at
+// the exact moment the panel starts rendering it. Nothing else in the panel has
+// that timing, which is why this is tested through the view rather than in
+// isolation.
+describe("the answer trace surviving settle", () => {
+  it("is still there once the stream has finished", async () => {
+    mockedStreamAnswer.mockImplementation(async (_q, onEvent) => {
+      onEvent({
+        type: "sources",
+        sources: [
+          {
+            n: 1,
+            video_id: "v1",
+            title: "Why Athletes Cramp",
+            start_seconds: 872,
+            kind: "transcript",
+            snippet: "the electrolytes you replace",
+          },
+        ],
+        videos: [],
+        coverage: [],
+      });
+      onEvent({ type: "token", text: "Attia covers it[1]." });
+      onEvent({
+        type: "trace",
+        stages: [
+          { key: "understand", ms: 1200, tool: "mimo-v2.5", kind: "model" },
+          { key: "answer", ms: 4800, tool: "mimo-v2.5-pro", kind: "model" },
+        ],
+      });
+      onEvent({ type: "done" });
+    });
+
+    render(<Harness onOpen={vi.fn()} />);
+    submit("electrolytes");
+
+    const toggle = await screen.findByRole("button", {
+      name: /how this was answered/i,
+    });
+    fireEvent.click(toggle);
+    expect(document.querySelectorAll(".trace-row")).toHaveLength(2);
+  });
+});

@@ -102,8 +102,31 @@ export type AnswerEvent =
       coverage: AnswerVideo[];
     }
   | { type: "token"; text: string }
+  | {
+      // How the answer was made, one entry per step that actually ran, in order.
+      // It arrives LAST — after the answer, just before `done` — because it
+      // reports what everything cost, which is not known until it has.
+      type: "trace";
+      stages: TraceStage[];
+    }
   | { type: "done" }
   | { type: "error"; message: string };
+
+// TraceStage is one step of the pipeline. The backend sends a stable `key` and
+// the UI owns the words for it (see stageLabel in AnswerPanel): the label is
+// copy and gets reworded, and rewording it must not mean a backend deploy.
+export type TraceStage = {
+  key: string;
+  ms: number;
+  // The model deployment or storage engine that ran the step — "mimo-v2.5",
+  // "sqlite-vec". EMPTY means the step called nothing, which the panel renders
+  // as an absence rather than as words: a row reading "no tool" would spend a
+  // line saying something did not happen.
+  tool?: string;
+  // How to read `tool`: "model" left this machine, "local" queried the library,
+  // "code" was neither.
+  kind: string;
+};
 
 // streamAnswer opens the answer stream and narrows each frame, ignoring frames
 // it does not recognise. Resolves when the server closes the stream or the
@@ -161,6 +184,15 @@ export async function streamAnswer(
           const d = data as { text?: string };
           if (typeof d.text === "string") {
             onEvent({ type: "token", text: d.text });
+          }
+          break;
+        }
+        case "trace": {
+          const d = data as { stages?: TraceStage[] };
+          // A frame with no stages is not worth a render. The backend already
+          // withholds one, so this is belt and braces against a future sender.
+          if (d.stages?.length) {
+            onEvent({ type: "trace", stages: d.stages });
           }
           break;
         }

@@ -669,3 +669,144 @@ describe("AnswerPanel counts", () => {
     expect(count.textContent).not.toContain("·");
   });
 });
+
+describe("AnswerPanel trace", () => {
+  const stages = [
+    { key: "understand", ms: 1200, tool: "mimo-v2.5", kind: "model" },
+    { key: "keyword", ms: 40, tool: "sqlite FTS5", kind: "local" },
+    { key: "merge", ms: 8, kind: "code" },
+    { key: "answer", ms: 4800, tool: "mimo-v2.5-pro", kind: "model" },
+  ];
+
+  // The wait is one spinner and one label, and this must not change that. A
+  // disclosure appearing mid-stream would put "how it was answered" on screen
+  // before there was an answer.
+  it("stays away until the answer settles", () => {
+    render(
+      <Panel
+        state={state({ status: "generating", text: "Yes", trace: stages })}
+      />,
+    );
+    expect(document.querySelector(".answer-trace")).toBeNull();
+  });
+
+  // An older backend, or a stream that broke before the last frame, sends no
+  // trace. The panel must render without one rather than show an empty box.
+  it("is absent when no trace arrived", () => {
+    render(<Panel state={state({ text: "Yes[1]." })} />);
+    expect(document.querySelector(".answer-trace")).toBeNull();
+  });
+
+  it("opens on click and closes again", () => {
+    render(<Panel state={state({ text: "Yes[1].", trace: stages })} />);
+    const toggle = screen.getByRole("button", {
+      name: /how this was answered/i,
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(document.querySelector(".trace-body")).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(document.querySelectorAll(".trace-row")).toHaveLength(4);
+
+    fireEvent.click(toggle);
+    expect(document.querySelector(".trace-body")).toBeNull();
+  });
+
+  // The label is the one place that must not require vocabulary — "fuse" was
+  // the code's own word for merging two result lists and meant nothing to a
+  // reader. The technical name belongs in the badge, not the sentence.
+  it("labels each step in plain words, with the tool beside it", () => {
+    render(<Panel state={state({ text: "Yes[1].", trace: stages })} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /how this was answered/i }),
+    );
+
+    const rows = document.querySelectorAll(".trace-row");
+    expect(rows[0]).toHaveTextContent("Worked out what you’re asking");
+    expect(rows[0]).toHaveTextContent("mimo-v2.5");
+    expect(rows[3]).toHaveTextContent("Wrote the answer");
+    expect(rows[3]).toHaveTextContent("mimo-v2.5-pro");
+  });
+
+  // A step that called nothing gets no badge and no second line. Writing "no
+  // tool" would spend a row saying something did not happen.
+  it("gives a step that called nothing no badge at all", () => {
+    render(<Panel state={state({ text: "Yes[1].", trace: stages })} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /how this was answered/i }),
+    );
+
+    const merge = document.querySelectorAll(".trace-row")[2];
+    expect(merge).toHaveTextContent("Merged both lists");
+    expect(merge.querySelector(".trace-by")).toBeNull();
+    expect(merge.textContent).not.toMatch(/no tool/i);
+  });
+
+  // A model call and a library query are different facts and must not read the
+  // same. The badge class is what the stylesheet hangs the accent off.
+  it("tells a model call apart from a library query", () => {
+    render(<Panel state={state({ text: "Yes[1].", trace: stages })} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /how this was answered/i }),
+    );
+
+    const rows = document.querySelectorAll(".trace-row");
+    expect(rows[0].querySelector(".trace-by")!.className).toContain("model");
+    expect(rows[1].querySelector(".trace-by")!.className).toContain("local");
+  });
+
+  // formatDuration would render every one of these as "0:00" — it takes seconds
+  // and prints clock time. A trace of "0:00" rows says nothing.
+  it("renders durations as step times, not clock times", () => {
+    render(<Panel state={state({ text: "Yes[1].", trace: stages })} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /how this was answered/i }),
+    );
+
+    const times = [...document.querySelectorAll(".trace-ms")].map(
+      (n) => n.textContent,
+    );
+    expect(times).toEqual(["1.2s", "40ms", "8ms", "4.8s"]);
+  });
+
+  // The header is also the key for the two glyphs used below it.
+  it("counts the model calls and the library queries", () => {
+    render(<Panel state={state({ text: "Yes[1].", trace: stages })} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /how this was answered/i }),
+    );
+
+    const hd = document.querySelector(".trace-hd")!;
+    expect(hd).toHaveTextContent("4 steps");
+    expect(hd).toHaveTextContent("6.0s");
+    expect(hd).toHaveTextContent("2 calls to a model");
+    expect(hd).toHaveTextContent("1 query of your library");
+  });
+
+  // A failed answer is exactly when someone wants to know what happened, and
+  // it is the one case where the panel is otherwise nearly empty.
+  it("still shows on a failed answer", () => {
+    render(<Panel state={state({ text: "", failed: true, trace: stages })} />);
+    expect(
+      screen.getByRole("button", { name: /how this was answered/i }),
+    ).toBeVisible();
+  });
+
+  // A key the frontend has not been taught renders as itself. A silently
+  // dropped row would break the panel's one promise: that it lists what ran.
+  it("shows an unknown step rather than hiding it", () => {
+    render(
+      <Panel
+        state={state({
+          text: "Yes[1].",
+          trace: [{ key: "rerank", ms: 900, tool: "mimo-v2.5", kind: "model" }],
+        })}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /how this was answered/i }),
+    );
+    expect(document.querySelector(".trace-row")).toHaveTextContent("rerank");
+  });
+});

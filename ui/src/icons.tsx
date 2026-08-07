@@ -23,6 +23,7 @@ import {
   Play,
   Tv,
   Captions,
+  Database,
   ChevronRight,
   ChevronDown,
   ChevronLeft,
@@ -87,6 +88,7 @@ const COMPONENTS = {
   // obvious glyph for the next play affordance, and the entry is one line.
   playFilled: Play,
   captions: Captions,
+  database: Database, // the answer trace: a step that queried your library
   chevronRight: ChevronRight,
   chevronDown: ChevronDown,
   chevronLeft: ChevronLeft,

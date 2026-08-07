@@ -259,3 +259,35 @@ func TestComplete_failOnEarlyFinish(t *testing.T) {
 		t.Fatalf("length under flag: out=%q err=%v, want partial/nil", out, err)
 	}
 }
+
+// ModelFor has to agree with what the request actually carries, because it
+// exists to LABEL a call that has already happened. A second copy of the
+// selection rule that drifted from modelFrom would put the wrong model name on
+// the trace panel, and nothing downstream could tell.
+func TestModelFor_namesWhatTheRequestCarries(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		io.WriteString(w, sseStream("news", ""))
+	}))
+	defer srv.Close()
+	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+	}{
+		{"short gate", ShortGate(context.Background())},
+		{"default", context.Background()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := c.Complete(tc.ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
+				t.Fatal(err)
+			}
+			if got := ModelFor(tc.ctx); got != gotBody["model"] {
+				t.Fatalf("ModelFor = %q, but the request carried %v", got, gotBody["model"])
+			}
+		})
+	}
+}

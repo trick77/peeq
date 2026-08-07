@@ -174,8 +174,15 @@ type Deps struct {
 
 // SearchEmbedder embeds free-text search queries into vectors comparable
 // against Rag's stored chunk embeddings.
+//
+// Model is here rather than left to a type assertion because the answer trace
+// NAMES the model that ran each step, and a name the panel silently drops when
+// an assertion misses is worse than no panel: every other row would still be
+// there, so the gap reads as "this step used nothing" rather than "we could not
+// tell". Widening the interface makes the compiler ask every implementation.
 type SearchEmbedder interface {
 	Embed(ctx context.Context, inputs []string) ([][]float32, error)
+	Model() string
 }
 
 // SummaryEnqueuer schedules a (re)summarize job for a video, returning the

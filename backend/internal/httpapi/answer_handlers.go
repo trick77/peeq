@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/rag"
@@ -81,6 +82,61 @@ type answerVideo struct {
 	// byline every other card in the app does. Omitted for a video whose date
 	// was never learned; the card then simply shows the channel.
 	PublishedAt string `json:"published_at,omitempty"`
+}
+
+// traceStage is one step of the pipeline, as the answer panel reports it.
+//
+// KEY, NOT PROSE. The label a reader sees ("Turned the question into numbers")
+// lives in the frontend, because it is copy: it gets reworded, and rewording it
+// must not be a backend deploy. What the backend owns is which step ran, what
+// ran it, and what it cost — the three things only the backend can know.
+//
+// Tool is empty for a step that called nothing. That is not the same as unknown,
+// and the panel renders it as an absence rather than as a word: a row saying "no
+// tool" would spend a line on something that did not happen.
+type traceStage struct {
+	Key string `json:"key"`
+	Ms  int64  `json:"ms"`
+	// Tool is the model deployment or storage engine that ran this step —
+	// "mimo-v2.5", "sqlite-vec". Read from the thing that actually ran (see
+	// llm.ModelFor and SearchEmbedder.Model) rather than written out here, so a
+	// redeployment cannot leave the panel naming a model nobody is using.
+	Tool string `json:"tool,omitempty"`
+	// Kind is how to read Tool: "model" for a call that left this machine,
+	// "local" for a query against the library, "code" for neither.
+	Kind string `json:"kind"`
+}
+
+const (
+	traceKindModel = "model"
+	traceKindLocal = "local"
+	traceKindCode  = "code"
+)
+
+// answerTrace accumulates the stages of one answer, in the order they ran.
+//
+// It is filled as the handler goes rather than assembled at the end, because
+// half of these steps are conditional and the only place that knows a step
+// happened is the branch that ran it.
+type answerTrace struct {
+	stages []traceStage
+}
+
+// add records a step that RAN. A step that was skipped never calls this, which
+// is the whole mechanism behind "the panel lists what happened": there is no
+// flag to forget to set, because a stage exists only if some branch appended it.
+//
+// A sub-millisecond step still gets a row. Rounding it away would drop the
+// channel lookup and the merge from most traces, and "the search matched a
+// channel" is worth saying even when it took no measurable time.
+func (t *answerTrace) add(key, tool, kind string, ms int64) {
+	if ms < 0 {
+		// Derived spans can go negative when two clocks disagree by a tick (see
+		// the vector stage, which is a subtraction). Report zero rather than a
+		// bar that draws backwards.
+		ms = 0
+	}
+	t.stages = append(t.stages, traceStage{Key: key, Ms: ms, Tool: tool, Kind: kind})
 }
 
 const (
@@ -164,6 +220,30 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { send("done", map[string]string{"reason": "stop"}) }()
 
+	// How the answer was made, sent as one frame once it has been.
+	//
+	// A DEFER, and registered after done's on purpose: defers unwind last-in
+	// first-out, so this one runs BEFORE done and the frame lands where the
+	// client expects it — last but one. It has to be a defer rather than a
+	// statement because handleAnswer returns from six different places (client
+	// gone, nothing retrieved, no chat wired, a failed stream), and a trace that
+	// only arrived on the happy path would be missing from exactly the answers
+	// worth investigating.
+	//
+	// A failed answer therefore traces every step that ran and simply has no
+	// answer row, which is the honest reading of it: retrieval worked, the model
+	// call is what did not.
+	var tr answerTrace
+	defer func() {
+		// Nothing ran — a blank query returns before the first stage. Sending an
+		// empty trace would put a "How this was answered" disclosure on a panel
+		// where nothing was.
+		if len(tr.stages) == 0 {
+			return
+		}
+		send("trace", map[string]any{"stages": tr.stages})
+	}()
+
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		send("sources", map[string]any{"sources": []any{}, "videos": []any{}})
@@ -176,14 +256,26 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// the query. It never fails the request — a bad or absent understanding just
 	// means the raw question, which is what this endpoint did before.
 	u, ud := s.understandQuery(r.Context(), q)
+	// Skipped means no understander is wired, so there was no step to report.
+	if ud.status != understandSkipped {
+		tr.add("understand", ud.model, traceKindModel, ud.ms)
+	}
 
 	// Resolve the structured half against the library before searching under it.
 	// The model reported channel NAMES; only the library can say which ids those
 	// are, and a name it cannot place drops out here rather than filtering the
 	// search down to nothing. See resolve_channel.go.
+	channelStart := time.Now()
 	ch := s.resolveChannels(u.Filters.Channels)
 	filter := s.buildFilter(u.Filters, ch)
 	applied := describeFilter(u.Filters, ch)
+	// Only when the question actually named a channel. resolveChannels returns
+	// immediately on an empty list without touching the library, so tracing it
+	// unconditionally would report a lookup that never happened on the majority
+	// of questions.
+	if len(u.Filters.Channels) > 0 {
+		tr.add("channels", "sqlite", traceKindLocal, time.Since(channelStart).Milliseconds())
+	}
 
 	// The reader has now been waiting a second or so with nothing on the wire, so
 	// say what happened before starting retrieval. The topic travels with it: a
@@ -205,7 +297,9 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	diag.counting = ud.counting
 	diag.filters, diag.filtersDropped = strings.Join(applied, "|"), ud.dropped
 	diag.unresolved = ch.Unresolved
+	mergeStart := time.Now()
 	hits := rag.FuseWeighted(lanes, searchCandidates)
+	mergeMs := time.Since(mergeStart).Milliseconds()
 
 	// Over-filtering is this feature's own failure mode, and it lies. "unwatched
 	// videos about ontology" on a library holding three watched ones would
@@ -220,8 +314,22 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	var relaxed []string
 	if !filter.Empty() && len(hits) == 0 {
 		wide, wdiag := s.askLanes(r, q, u.Topic, rag.Filter{}, &qv)
+		wideStart := time.Now()
 		if wideHits := rag.FuseWeighted(wide, searchCandidates); len(wideHits) > 0 {
+			mergeMs += time.Since(wideStart).Milliseconds()
 			relaxed = applied
+			// The wide pass's diag REPLACES the narrow one, which drops the
+			// timings of a search that genuinely happened — the reader waited
+			// through both. Carry them forward so the trace reports the whole
+			// wait rather than the second half of it.
+			//
+			// embedMs is the exception and is deliberately not carried: the wide
+			// pass reuses the memoized vectors (see queryVectors) and records 0ms
+			// because that is what it cost. Adding the two would bill the reader
+			// twice for one embedding.
+			wdiag.ftsMs += diag.ftsMs
+			wdiag.retrievalMs += diag.retrievalMs
+			wdiag.embedMs = diag.embedMs
 			lanes, diag, hits = wide, wdiag, wideHits
 			diag.understand, diag.understandMs = string(ud.status), ud.ms
 			diag.counting = ud.counting
@@ -230,12 +338,30 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The two searches and the merge, in the order they happened.
+	//
+	// The vector span is DERIVED, not measured: retrievalMs runs from the same
+	// start as ftsMs (see askLanes), so it is a total that already contains the
+	// keyword ladder and the embedding. Reporting all three as siblings would
+	// draw bars summing to nearly twice the wall clock.
+	tr.add("keyword", "sqlite FTS5", traceKindLocal, diag.ftsMs)
+	if s.embedder != nil {
+		tr.add("embed", s.embedder.Model(), traceKindModel, diag.embedMs)
+	}
+	tr.add("vector", "sqlite-vec", traceKindLocal, diag.retrievalMs-diag.ftsMs-diag.embedMs)
+
 	// A comparison is two channels the library actually HAS, named deliberately.
 	// Counting the model's names instead would switch to summary-first selection
 	// for "Veritasium and Numberphile" on a library holding only the first —
 	// which is not a comparison at all — and channelResolution.Ambiguous keeps
 	// one uncertain name that matched several channels out of it.
+	selectStart := time.Now()
 	sources, vids, excerpts, chosen := s.buildAnswerContext(hits, len(ch.Matched) > 1 && !ch.Ambiguous)
+	// One row for fusing and choosing together, because they are one idea to a
+	// reader: the two searches came back and this is what was kept out of them.
+	// Split apart they would be two adjacent rows with no tool between them,
+	// saying nothing the merged row does not.
+	tr.add("merge", "", traceKindCode, mergeMs+time.Since(selectStart).Milliseconds())
 	// Logged HERE rather than inside askLanes, because only now is it known which
 	// passages the model was actually given — the number that says whether a lane
 	// changed what was read, not merely what was found.
@@ -254,7 +380,13 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// a number with no relation to the question, handed to the model as
 	// authoritative and printed above the answer. A count is meaningful exactly
 	// when there is a scope row beside it saying what it counts.
+	countStart := time.Now()
 	counts := s.inventoryCount(r.Context(), u.Counting, u.Topic, filter)
+	// Only when a count was actually taken. inventoryCount returns nil without a
+	// query for every question that was not asking how many.
+	if counts != nil {
+		tr.add("count", "sqlite", traceKindLocal, time.Since(countStart).Milliseconds())
+	}
 
 	payload := map[string]any{
 		"sources": sources, "videos": vids,
@@ -316,12 +448,31 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// answer is wanted — "what material do we have on X" and "how does X work"
 	// reduce to the same topic and want different answers. The model gets the
 	// sentence the reader actually wrote; only the embedder sees the reduction.
+	//
+	// Timed here and nowhere else. diag.log fires above, before this call, so
+	// until now the longest step of the whole pipeline — around five seconds, more
+	// than everything else put together — was the one step with no measurement
+	// anywhere. Time to the FIRST token is tracked separately because that is the
+	// part a reader experiences as waiting; the rest of the stream arrives while
+	// they are already reading.
+	answerStart := time.Now()
+	var ttft time.Duration
 	answer, err := s.ask.CompleteStream(ctx, answerMessages(q, excerpts, applied, relaxed, counts), func(delta string) {
+		if ttft == 0 {
+			ttft = time.Since(answerStart)
+		}
 		// A send error means the browser disconnected. Nothing to do about it
 		// here; the request context is already cancelled, which unwinds the
 		// upstream call.
 		send("token", map[string]string{"text": delta})
 	})
+	tr.add("answer", llm.ModelFor(ctx), traceKindModel, time.Since(answerStart).Milliseconds())
+	slog.Debug("ask generation",
+		"ms", time.Since(answerStart).Milliseconds(),
+		"ttft_ms", ttft.Milliseconds(),
+		"model", llm.ModelFor(ctx),
+		"chars", len(answer),
+	)
 	switch {
 	case err != nil:
 		slog.Warn("answer: chat failed", "err", err)

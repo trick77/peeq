@@ -57,6 +57,8 @@ func (e *recordingEmbedder) Embed(_ context.Context, inputs []string) ([][]float
 	return out, nil
 }
 
+func (e *recordingEmbedder) Model() string { return "test-embed-model" }
+
 func TestParseUnderstandingReadsTheDocumentedShape(t *testing.T) {
 	tests := []struct {
 		name         string
