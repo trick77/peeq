@@ -323,6 +323,125 @@ func TestAttributionKeysOnTheChunkNotTheSecond(t *testing.T) {
 	}
 }
 
+// The OR floor matches any ONE content word, so a passage it found shares a word
+// with the question and nothing more. Counted inside the keyword family, an
+// excerpt set assembled entirely from the floor printed the same kw= number as
+// one the strict rung found — and those are the two cases a bad answer has to be
+// told apart by.
+func TestTheFloorRungIsCountedApartFromTheKeywordFamily(t *testing.T) {
+	t.Run("a passage only the floor found is not credited to the family", func(t *testing.T) {
+		read := []rag.Hit{{VideoID: "v1", Ordinal: 3}}
+		lanes := []rag.Lane{
+			{Hits: []rag.Hit{{VideoID: "v9", Ordinal: 1}}, Weight: rag.WeightKeywordStrict},
+			{Hits: []rag.Hit{{VideoID: "v1", Ordinal: 3}}, Weight: rag.WeightKeywordAny},
+		}
+		d := askDiag{rawLane: -1, topicLane: -1}
+		d.attribute(lanes, read)
+
+		if d.fromKeyword != 0 {
+			t.Errorf("fromKeyword = %d — the floor must not read as evidence", d.fromKeyword)
+		}
+		if d.fromFloor != 1 {
+			t.Errorf("fromFloor = %d, want 1", d.fromFloor)
+		}
+	})
+
+	t.Run("a passage both found counts once for each", func(t *testing.T) {
+		read := []rag.Hit{{VideoID: "v1", Ordinal: 3}}
+		lanes := []rag.Lane{
+			{Hits: []rag.Hit{{VideoID: "v1", Ordinal: 3}}, Weight: rag.WeightKeywordStrict},
+			{Hits: []rag.Hit{{VideoID: "v1", Ordinal: 3}}, Weight: rag.WeightKeywordAny},
+		}
+		d := askDiag{rawLane: -1, topicLane: -1}
+		d.attribute(lanes, read)
+
+		if d.fromKeyword != 1 || d.fromFloor != 1 {
+			t.Errorf("fromKeyword=%d fromFloor=%d, want 1 and 1 — the counts overlap on purpose",
+				d.fromKeyword, d.fromFloor)
+		}
+	})
+
+	t.Run("the prefix rung stays in the family", func(t *testing.T) {
+		// Only the OR floor is held apart. The prefix rung means every content word
+		// is present in some inflection, which is evidence.
+		read := []rag.Hit{{VideoID: "v1", Ordinal: 3}}
+		lanes := []rag.Lane{{Hits: read, Weight: rag.WeightKeywordPrefix}}
+		d := askDiag{rawLane: -1, topicLane: -1}
+		d.attribute(lanes, read)
+
+		if d.fromKeyword != 1 || d.fromFloor != 0 {
+			t.Errorf("fromKeyword=%d fromFloor=%d, want 1 and 0", d.fromKeyword, d.fromFloor)
+		}
+	})
+}
+
+// A summary chunk is one vector averaging a whole video, so an excerpt set built
+// from summaries matches broad questions loosely and answers them vaguely. That
+// is a different failure from one built from transcript windows, and the totals
+// cannot tell them apart.
+func TestExcerptKindsAreCountedOncePerPassage(t *testing.T) {
+	read := []rag.Hit{
+		{VideoID: "v1", Ordinal: 1, Kind: rag.KindTranscript},
+		{VideoID: "v1", Ordinal: 9, Kind: rag.KindSummary},
+		{VideoID: "v2", Ordinal: 4, Kind: rag.KindChapter},
+		// A row written before the kind column exists counts as transcript, which
+		// is what the store already defaults a blank kind to.
+		{VideoID: "v3", Ordinal: 2},
+	}
+	// Three lanes all holding the summary chunk. Counting kinds per lane rather
+	// than per passage would report it three times.
+	lanes := []rag.Lane{
+		{Hits: read, Weight: rag.WeightKeywordStrict},
+		{Hits: read, Weight: rag.WeightSemantic},
+		{Hits: read, Weight: rag.WeightSemanticTopic},
+	}
+	d := askDiag{rawLane: 1, topicLane: 2}
+	d.attribute(lanes, read)
+
+	if d.excTranscript != 2 {
+		t.Errorf("excTranscript = %d, want 2 — an unset kind is a transcript row", d.excTranscript)
+	}
+	if d.excSummary != 1 {
+		t.Errorf("excSummary = %d, want 1 — kinds count passages, not lane appearances", d.excSummary)
+	}
+	if d.excChapter != 1 {
+		t.Errorf("excChapter = %d, want 1", d.excChapter)
+	}
+	if got := d.excTranscript + d.excSummary + d.excChapter; got != d.excerpts {
+		t.Errorf("kinds sum to %d but %d passages were read", got, d.excerpts)
+	}
+
+	// Attributing twice must report the same set, not twice the set. The kind
+	// counters are the only fields filled by adding rather than assigning, so
+	// they are the only ones that could carry the first call into the second.
+	d.attribute(lanes, read)
+	if got := d.excTranscript + d.excSummary + d.excChapter; got != d.excerpts {
+		t.Errorf("kinds sum to %d after a second attribute, want %d", got, d.excerpts)
+	}
+}
+
+// The counts say what shape the excerpt set had; only the ids say which passages
+// it held, which is what has to be read back out of the database when an answer
+// makes a claim the videos do not support.
+func TestChosenIDsRecordEveryPassageInReadingOrder(t *testing.T) {
+	read := []rag.Hit{
+		{VideoID: "v2", Ordinal: 4},
+		{VideoID: "v1", Ordinal: 9},
+	}
+	d := askDiag{rawLane: -1, topicLane: -1}
+	d.attribute(nil, read)
+
+	want := []string{"v2:4", "v1:9"}
+	if len(d.chosenIDs) != len(want) {
+		t.Fatalf("chosenIDs = %v, want %v", d.chosenIDs, want)
+	}
+	for i := range want {
+		if d.chosenIDs[i] != want[i] {
+			t.Errorf("chosenIDs[%d] = %q, want %q — reading order is the citation order", i, d.chosenIDs[i], want[i])
+		}
+	}
+}
+
 // The topic is a RETRIEVAL input and nothing else. It is stripped down to what
 // would appear in a video about the subject, which throws away everything that
 // says what kind of answer is wanted — "what material do we have on X" and "how

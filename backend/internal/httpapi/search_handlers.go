@@ -573,6 +573,38 @@ type askDiag struct {
 	attributed                      bool
 	excerpts                        int
 	fromRaw, fromTopic, fromKeyword int
+	// fromFloor is the OR rung's own count, held apart from fromKeyword.
+	//
+	// The rungs were counted as one family because they overlap by construction,
+	// and that is still right for the three above the floor. The floor is not one
+	// of them: it matches ANY ONE content word, so "bike" alone qualifies a
+	// passage, and a lane that means "shares a word with the question" is not
+	// evidence the way "contains every word the reader typed" is.
+	//
+	// Merged into the family, an excerpt set assembled entirely from the floor
+	// printed the same kw=9 as one the strict rung found — so the log could not
+	// tell an answer built on evidence from an answer built on a net. That
+	// distinction is what search_handlers.go's own ladder comment predicts will
+	// matter ("the breadth pass spends five of its eight slots on floor videos"),
+	// and it was the one number missing when a bad answer had to be diagnosed.
+	fromFloor int
+	// Chunk kinds among the passages actually read. A set that is mostly summary
+	// chunks failed differently from one that is mostly transcript: a summary is
+	// one vector averaging a whole video, so it matches broad questions loosely
+	// and answers them vaguely. The totals cannot say which happened.
+	excTranscript, excSummary, excChapter int
+	// chosenIDs names the passages themselves, in the order the model read them,
+	// for the Debug line beside the Info one.
+	//
+	// The counts above say what SHAPE the excerpt set had; only the ids say WHICH
+	// passages, which is what has to be read back out of the database when an
+	// answer makes a claim the videos do not support. Without them a bad answer
+	// can only be investigated by re-running the query and hoping retrieval is
+	// deterministic enough to hand back the same set.
+	//
+	// Debug rather than Info because this is twelve ids per Ask against one line,
+	// and it is only wanted when an answer is already suspect.
+	chosenIDs []string
 
 	// Which lane index is which. The two vector lanes carry the SAME weight by
 	// design, so weight cannot identify them and the attribution above would
@@ -603,8 +635,29 @@ func (d *askDiag) attribute(lanes []rag.Lane, chosen []rag.Hit) {
 		return h.VideoID + ":" + strconv.Itoa(h.Ordinal)
 	}
 	read := make(map[string]bool, len(chosen))
+	d.chosenIDs = make([]string, 0, len(chosen))
+	// The kind counters are the only fields here filled by ADDING rather than by
+	// assigning, so they are the only ones that would carry a previous call's
+	// numbers into this one. Every other field overwrites and is idempotent by
+	// construction; these are reset so the whole function is.
+	d.excTranscript, d.excSummary, d.excChapter = 0, 0, 0
 	for _, h := range chosen {
 		read[key(h)] = true
+		d.chosenIDs = append(d.chosenIDs, key(h))
+		// Kinds are counted off chosen itself rather than off the lanes: a passage
+		// is one kind however many lanes found it, so counting per lane would
+		// multiply it by its own popularity.
+		switch h.Kind {
+		case rag.KindSummary:
+			d.excSummary++
+		case rag.KindChapter:
+			d.excChapter++
+		default:
+			// Rows written before the kind column, and anything unrecognized,
+			// count as transcript — which is what Store.Upsert already defaults
+			// a blank kind to.
+			d.excTranscript++
+		}
 	}
 	count := func(lane rag.Lane) int {
 		seen := make(map[string]bool)
@@ -616,17 +669,28 @@ func (d *askDiag) attribute(lanes []rag.Lane, chosen []rag.Hit) {
 		return len(seen)
 	}
 	keywordSeen := make(map[string]bool)
+	floorSeen := make(map[string]bool)
 	for i, lane := range lanes {
-		switch i {
-		case d.rawLane:
+		switch {
+		case i == d.rawLane:
 			d.fromRaw = count(lane)
-		case d.topicLane:
+		case i == d.topicLane:
 			d.fromTopic = count(lane)
+		case lane.Weight <= rag.WeightKeywordAny:
+			// The floor keeps its own count. Same test relevantVideos uses to keep
+			// floor-only videos out of the coverage list, spelled the same way so
+			// the two cannot drift: what is too weak to claim a video covers the
+			// subject is the thing worth knowing about the excerpts too.
+			for _, h := range lane.Hits {
+				if k := key(h); read[k] {
+					floorSeen[k] = true
+				}
+			}
 		default:
-			// The keyword rungs are several lanes over one ladder, and they
-			// overlap heavily by construction — a chunk the strict rung found is
-			// usually found by the floor too. Counting them as one family avoids
-			// a number larger than the excerpt count itself.
+			// The remaining keyword rungs are several lanes over one ladder, and
+			// they overlap heavily by construction — a chunk the strict rung found
+			// is usually found by the prefix rung too. Counting them as one family
+			// avoids a number larger than the excerpt count itself.
 			for _, h := range lane.Hits {
 				if k := key(h); read[k] {
 					keywordSeen[k] = true
@@ -635,6 +699,7 @@ func (d *askDiag) attribute(lanes []rag.Lane, chosen []rag.Hit) {
 		}
 	}
 	d.fromKeyword = len(keywordSeen)
+	d.fromFloor = len(floorSeen)
 }
 
 // log writes the line. Info rather than Debug: an Ask is user-initiated and rare,
@@ -652,8 +717,9 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 	// "-" for a path that never had excerpts to attribute, matching semLaneDiag.
 	excerpts := "-"
 	if d.attributed {
-		excerpts = fmt.Sprintf("%d raw=%d topic=%d kw=%d",
-			d.excerpts, d.fromRaw, d.fromTopic, d.fromKeyword)
+		excerpts = fmt.Sprintf("%d raw=%d topic=%d kw=%d floor=%d t%d/s%d/c%d",
+			d.excerpts, d.fromRaw, d.fromTopic, d.fromKeyword, d.fromFloor,
+			d.excTranscript, d.excSummary, d.excChapter)
 	}
 	slog.Info("ask retrieval",
 		"q", q,
@@ -681,6 +747,11 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 		"excerpts", excerpts,
 		"ms", fmt.Sprintf("embed=%d fts=%d retrieval=%d", d.embedMs, d.ftsMs, d.retrievalMs),
 	)
+	// Which passages, in reading order, for the case where the shape above is not
+	// enough and the excerpts themselves have to be pulled from the database.
+	if len(d.chosenIDs) > 0 {
+		slog.Debug("ask excerpts", "q", q, "chunks", strings.Join(d.chosenIDs, " "))
+	}
 }
 
 // orDash keeps an absent value out of the log as "-" rather than as an empty
