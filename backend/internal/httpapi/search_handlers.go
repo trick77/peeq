@@ -370,12 +370,20 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, q
 		// Before the call, not after: a rung that errors still queried sqlite and
 		// still cost the reader the wait.
 		diag.ftsQueried = true
+		rungStart := time.Now()
 		hits, err := s.rag.SearchFTSFiltered(r.Context(), tier.Match, searchCandidates, filter)
+		rungMs := time.Since(rungStart).Milliseconds()
 		if err != nil {
-			slog.Warn("search: FTS degraded", "err", err)
+			slog.Warn("search: FTS degraded", "err", err, "rung", tier.Weight, "ms", rungMs)
 			break
 		}
+		// EVERY RUNG THAT RAN IS RECORDED, including one that matched nothing.
+		// This used to `continue` before the append, so a rung that queried sqlite
+		// and came back empty left no trace — and an empty rung costs the same
+		// scan as a full one. On a ladder where the total is measured in seconds,
+		// the rungs that cost it and found nothing are the ones worth seeing.
 		if len(hits) == 0 {
+			diag.rungs = append(diag.rungs, fmt.Sprintf("w%.1f=0h/0v/%dms", tier.Weight, rungMs))
 			continue
 		}
 		// The rung decides how much its lane counts: a query that only matched
@@ -386,8 +394,13 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, q
 		for _, h := range hits {
 			videosSeen[h.VideoID] = true
 		}
+		// The ms is what the whole ladder's cost has to be attributed to. ftsMs
+		// is one total across up to four rungs, and the floor rung — "any one
+		// content word", the widest query the ladder can build — is a different
+		// animal from the strict one. Without a per-rung figure a slow ladder
+		// cannot be told from one slow rung.
 		diag.rungs = append(diag.rungs,
-			fmt.Sprintf("w%.1f=%dh/%dv", tier.Weight, len(hits), distinctVideos(hits)))
+			fmt.Sprintf("w%.1f=%dh/%dv/%dms", tier.Weight, len(hits), distinctVideos(hits), rungMs))
 		if len(videosSeen) >= keywordVideoTarget {
 			break
 		}
