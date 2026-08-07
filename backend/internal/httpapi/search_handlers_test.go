@@ -1565,3 +1565,35 @@ func TestAskLanesRecordsARungThatMatchedNothing(t *testing.T) {
 		t.Errorf("rungs = %v, want the rung that ran and matched nothing recorded too", diag.rungs)
 	}
 }
+
+// A rung that ERRORS is the single one most worth seeing: ftsMs is measured
+// from the top of the ladder, so it counts every second that rung burned before
+// failing. Leaving it out printed a total no rung could account for — and the
+// comment above the loop claims every rung that ran is recorded, which was
+// simply false for this path.
+func TestAskLanesRecordsARungThatErrored(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "Cramp"}); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "the electrolytes you replace matter", StartSeconds: 10},
+	})
+	testee := &server{
+		rag:    &failingRag{real: ragStore, searchFTS: errors.New("fts index is corrupt")},
+		videos: deps.Videos,
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	_, diag := testee.askLanes(r, "electrolytes", "", rag.Filter{}, nil)
+
+	if len(diag.rungs) != 1 {
+		t.Fatalf("rungs = %v, want the errored rung recorded and the ladder abandoned", diag.rungs)
+	}
+	if !strings.Contains(diag.rungs[0], "=err/") {
+		t.Errorf("rung %q does not say it errored", diag.rungs[0])
+	}
+	if !strings.HasSuffix(diag.rungs[0], "ms") {
+		t.Errorf("rung %q carries no duration, which is the whole point for an error", diag.rungs[0])
+	}
+}
