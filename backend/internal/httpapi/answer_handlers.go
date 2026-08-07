@@ -139,6 +139,58 @@ func (t *answerTrace) add(key, tool, kind string, ms int64) {
 	t.stages = append(t.stages, traceStage{Key: key, Ms: ms, Tool: tool, Kind: kind})
 }
 
+// log writes the same trace the panel gets, as one line.
+//
+// INFO, not Debug, for the reason askDiag.log gives above itself: an Ask is
+// user-initiated and rare, one line each is not noise, and a diagnostic nobody
+// can see without redeploying at a different level is a diagnostic nobody uses.
+// "It is for debugging" is an argument for Info here, not against it — Debug is
+// about volume, and this has none.
+//
+// It exists because until now the trace went to the BROWSER and nowhere else.
+// Half these steps — the channel lookup, the merge, the count — had no
+// server-side record at all, so a reader reporting what the panel showed them
+// could not be matched against anything. Logged from the same defer that sends
+// the frame, so the two cannot disagree, and so it still lands when the client
+// has already disconnected.
+//
+// Generation is in here rather than on a line of its own. It is the step that
+// had no measurement anywhere before this, and splitting it out would leave two
+// uncorrelated lines per Ask to read together — there is no request id to join
+// them by.
+func (t answerTrace) log(q string, ttft time.Duration) {
+	if len(t.stages) == 0 {
+		return
+	}
+	// Packed into one field rather than spread across many, matching the
+	// "embed=%d fts=%d retrieval=%d" shape askDiag.log already uses: the stage
+	// list is variable-length, and a line whose KEYS change per request is one
+	// no log query can group.
+	parts := make([]string, 0, len(t.stages))
+	models := make([]string, 0, 3)
+	var total int64
+	for _, s := range t.stages {
+		parts = append(parts, fmt.Sprintf("%s=%d", s.Key, s.Ms))
+		total += s.Ms
+		// Only the model calls. The storage engines are compiled in and cannot
+		// surprise anyone; a model id is configuration and is the thing worth
+		// having in the record when an answer has to be explained later.
+		if s.Kind == traceKindModel {
+			models = append(models, s.Tool)
+		}
+	}
+	slog.Info("ask trace",
+		"q", q,
+		"stages", strings.Join(parts, " "),
+		"total_ms", total,
+		// The part of the wait a reader actually experiences: after the first
+		// token they are reading, not waiting. 0 when no token ever arrived,
+		// which is itself the finding.
+		"ttft_ms", ttft.Milliseconds(),
+		"models", orDash(strings.Join(models, "|")),
+	)
+}
+
 const (
 	// answerMaxSources is how many passages the model is given. Enough for a
 	// question spanning several videos, small enough that the citation list
@@ -234,21 +286,31 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// answer row, which is the honest reading of it: retrieval worked, the model
 	// call is what did not.
 	var tr answerTrace
+	// Declared up here rather than beside the model call so the defer below can
+	// read it: the log line and the stream frame are written in the same place,
+	// which is what stops them ever describing different runs.
+	var ttft time.Duration
+
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		// Registered below this return on purpose, so a blank query keeps its
+		// two-frame stream and writes no log line. Nothing ran; there is nothing
+		// to trace and nothing to say about it.
+		send("sources", map[string]any{"sources": []any{}, "videos": []any{}})
+		return
+	}
+
 	defer func() {
-		// Nothing ran — a blank query returns before the first stage. Sending an
-		// empty trace would put a "How this was answered" disclosure on a panel
-		// where nothing was.
+		// Belt and braces after the blank-query return above: a client that hung
+		// up before the first stage completed leaves nothing worth reporting.
 		if len(tr.stages) == 0 {
 			return
 		}
 		send("trace", map[string]any{"stages": tr.stages})
+		// Logged whether or not the frame reached anyone. A client that hung up
+		// mid-answer is a case worth having a record of, not one worth losing.
+		tr.log(q, ttft)
 	}()
-
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" {
-		send("sources", map[string]any{"sources": []any{}, "videos": []any{}})
-		return
-	}
 
 	// Understand the question before searching for it. This is the step that
 	// stops "what material about bike geometry do we have" searching for the word
@@ -454,9 +516,8 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// than everything else put together — was the one step with no measurement
 	// anywhere. Time to the FIRST token is tracked separately because that is the
 	// part a reader experiences as waiting; the rest of the stream arrives while
-	// they are already reading.
+	// they are already reading. Both reach the log through answerTrace.log.
 	answerStart := time.Now()
-	var ttft time.Duration
 	answer, err := s.ask.CompleteStream(ctx, answerMessages(q, excerpts, applied, relaxed, counts), func(delta string) {
 		if ttft == 0 {
 			ttft = time.Since(answerStart)
@@ -467,12 +528,6 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		send("token", map[string]string{"text": delta})
 	})
 	tr.add("answer", llm.ModelFor(ctx), traceKindModel, time.Since(answerStart).Milliseconds())
-	slog.Debug("ask generation",
-		"ms", time.Since(answerStart).Milliseconds(),
-		"ttft_ms", ttft.Milliseconds(),
-		"model", llm.ModelFor(ctx),
-		"chars", len(answer),
-	)
 	switch {
 	case err != nil:
 		slog.Warn("answer: chat failed", "err", err)
