@@ -561,3 +561,21 @@ func TestChapterAtReadsWhatSummarizeWrites(t *testing.T) {
 		}
 	}
 }
+
+// A relaxed search runs the keyword ladder TWICE, and ftsMs is the sum of both.
+// Reporting only the second ladder's rungs would print a total no rung can
+// account for — the exact confusion per-rung timing exists to remove.
+func TestAnswerLogsBothLaddersRungsWhenRelaxed(t *testing.T) {
+	logs := captureLogs(t)
+	deps, _, _, understand := filteredAnswerDeps(t)
+	understand.reply = `{"topic":"ontology","counting":false,"filters":{"category":"gaming"}}`
+	askFor(t, deps, "any+gaming+videos+about+ontology")
+
+	line := logs.String()
+	if !strings.Contains(line, "keyword_rungs=") {
+		t.Fatalf("no retrieval line was logged:\n%s", line)
+	}
+	if !strings.Contains(line, secondLadderMarker) {
+		t.Errorf("keyword_rungs carries one ladder's rungs against two ladders' ftsMs:\n%s", line)
+	}
+}

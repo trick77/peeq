@@ -1507,3 +1507,93 @@ func TestDistinctVideosCountsVideosNotHits(t *testing.T) {
 		t.Errorf("distinctVideos(nil) = %d, want 0", got)
 	}
 }
+
+// The keyword ladder is up to four separate sqlite queries reported as one
+// ftsMs, and they are not comparable: the floor rung matches any ONE content
+// word and is by far the widest query the ladder can build. When the ladder
+// costs seconds, "which rung" is the entire question, and a single total cannot
+// answer it.
+func TestAskLanesTimesEachRungSeparately(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "Cramp"}); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "the electrolytes you replace matter", StartSeconds: 10},
+	})
+	testee := &server{rag: ragStore, videos: deps.Videos}
+	r := httptest.NewRequest(http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	_, diag := testee.askLanes(r, "electrolytes", "", rag.Filter{}, nil)
+
+	if len(diag.rungs) == 0 {
+		t.Fatal("no rung was recorded at all")
+	}
+	// Shape is w<weight>=<hits>h/<videos>v/<ms>ms — the ms is the point.
+	for _, rung := range diag.rungs {
+		if !strings.HasSuffix(rung, "ms") {
+			t.Errorf("rung %q carries no duration; the ladder's cost cannot be attributed", rung)
+		}
+	}
+}
+
+// A rung that queried sqlite and matched nothing used to leave no trace: the
+// loop skipped the append. An empty rung costs the same scan as a full one, so
+// on a ladder measured in seconds those are exactly the ones worth seeing.
+func TestAskLanesRecordsARungThatMatchedNothing(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "Cramp"}); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "the electrolytes you replace matter", StartSeconds: 10},
+	})
+	testee := &server{rag: ragStore, videos: deps.Videos}
+	// Two content words where only one is in the library: the strict rung ANDs
+	// both and matches nothing, the looser rungs find the one that is there.
+	r := httptest.NewRequest(http.MethodGet, "/api/search/answer?q=electrolytes+zirconium", nil)
+
+	_, diag := testee.askLanes(r, "electrolytes zirconium", "", rag.Filter{}, nil)
+
+	var empty int
+	for _, rung := range diag.rungs {
+		if strings.Contains(rung, "=0h/0v/") {
+			empty++
+		}
+	}
+	if empty == 0 {
+		t.Errorf("rungs = %v, want the rung that ran and matched nothing recorded too", diag.rungs)
+	}
+}
+
+// A rung that ERRORS is the single one most worth seeing: ftsMs is measured
+// from the top of the ladder, so it counts every second that rung burned before
+// failing. Leaving it out printed a total no rung could account for — and the
+// comment above the loop claims every rung that ran is recorded, which was
+// simply false for this path.
+func TestAskLanesRecordsARungThatErrored(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "Cramp"}); err != nil {
+		t.Fatal(err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "the electrolytes you replace matter", StartSeconds: 10},
+	})
+	testee := &server{
+		rag:    &failingRag{real: ragStore, searchFTS: errors.New("fts index is corrupt")},
+		videos: deps.Videos,
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	_, diag := testee.askLanes(r, "electrolytes", "", rag.Filter{}, nil)
+
+	if len(diag.rungs) != 1 {
+		t.Fatalf("rungs = %v, want the errored rung recorded and the ladder abandoned", diag.rungs)
+	}
+	if !strings.Contains(diag.rungs[0], "=err/") {
+		t.Errorf("rung %q does not say it errored", diag.rungs[0])
+	}
+	if !strings.HasSuffix(diag.rungs[0], "ms") {
+		t.Errorf("rung %q carries no duration, which is the whole point for an error", diag.rungs[0])
+	}
+}

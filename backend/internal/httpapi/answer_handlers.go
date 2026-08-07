@@ -444,7 +444,14 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			narrowFTS, narrowRetrieval := diag.ftsMs, diag.retrievalMs
 			narrowEmbed := diag.embedMs
 			narrowQueried, narrowSem := diag.ftsQueried, semanticRan(diag)
+			// Both ladders' rungs, in the order they ran, separated by the
+			// marker. ftsMs below is the sum of TWO ladders, so carrying only
+			// the wide one's rungs would print a total the rungs cannot
+			// account for — which is the exact confusion per-rung timing
+			// exists to remove.
+			narrowRungs := append(diag.rungs, secondLadderMarker)
 			lanes, diag, hits = wide, wdiag, wideHits
+			diag.rungs = append(narrowRungs, wdiag.rungs...)
 			diag.ftsMs = wideFTS + narrowFTS
 			diag.retrievalMs = wideRetrieval + narrowRetrieval
 			diag.embedMs = narrowEmbed
@@ -460,7 +467,8 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			// Nothing swapped in, so the wide pass's cost has to be added to the
-			// diag that stays.
+			// diag that stays — its rungs with it, for the same reason.
+			diag.rungs = append(append(diag.rungs, secondLadderMarker), wdiag.rungs...)
 			diag.ftsMs += wideFTS
 			diag.retrievalMs += wideRetrieval
 			diag.ftsQueried = diag.ftsQueried || wideQueried
