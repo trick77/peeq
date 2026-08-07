@@ -810,3 +810,39 @@ describe("AnswerPanel trace", () => {
     expect(document.querySelector(".trace-row")).toHaveTextContent("rerank");
   });
 });
+
+// A generation that failed still happened and still cost the wait — a failure
+// that took ninety seconds is the one most worth seeing — so it keeps a row.
+// But the row must not say the model wrote the answer while the panel above it
+// says the answer is unavailable, which is why the backend sends a different
+// key for it rather than a flag.
+describe("AnswerPanel trace, failed generation", () => {
+  it("names the generation row for what happened to it", () => {
+    render(
+      <Panel
+        state={state({
+          text: "",
+          failed: true,
+          trace: [
+            { key: "keyword", ms: 40, tool: "sqlite FTS5", kind: "local" },
+            {
+              key: "answer_failed",
+              ms: 90000,
+              tool: "mimo-v2.5-pro",
+              kind: "model",
+            },
+          ],
+        })}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /how this was answered/i }),
+    );
+
+    const rows = document.querySelectorAll(".trace-row");
+    expect(rows[1]).toHaveTextContent("Couldn’t write the answer");
+    expect(rows[1]).not.toHaveTextContent("Wrote the answer");
+    // The time is the point of keeping the row at all.
+    expect(rows[1]).toHaveTextContent("90.0s");
+  });
+});

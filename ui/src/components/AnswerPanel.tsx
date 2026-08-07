@@ -392,6 +392,10 @@ const STAGE_LABELS: Record<string, string> = {
   merge: "Merged both lists, kept the best 12",
   count: "Counted the matching videos",
   answer: "Wrote the answer",
+  // The model call happened and cost real time — a failure that took ninety
+  // seconds is the one most worth seeing — but the row must not say the answer
+  // was written while the panel above it says the answer is unavailable.
+  answer_failed: "Couldn’t write the answer",
 };
 
 // stageLabel falls back to the raw key rather than hiding a stage it does not

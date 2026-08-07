@@ -1150,6 +1150,17 @@ func TestTraceSurvivesAFailedAnswer(t *testing.T) {
 		t.Fatal("a failed answer traced nothing")
 	}
 	findStage(t, stages, "keyword") // retrieval still ran and still says so
+	// The call was made and cost real time, so it is listed — but it must not
+	// claim the answer was written while the panel says it is unavailable.
+	for _, st := range stages {
+		if st.Key == "answer" {
+			t.Errorf("a failed answer traced a step saying the model wrote it: %v", stageKeys(stages))
+		}
+	}
+	failed := findStage(t, stages, "answer_failed")
+	if failed.Tool != "mimo-v2.5-pro" || failed.Kind != traceKindModel {
+		t.Errorf("failed answer stage = %+v, want the model that was called", failed)
+	}
 }
 
 // A question that retrieved nothing never reaches the model, so there is no
@@ -1187,4 +1198,99 @@ func TestTraceIsAbsentForABlankQuery(t *testing.T) {
 			t.Fatalf("blank query sent a trace: %s", e[1])
 		}
 	}
+}
+
+// ── Steps that did not run must not appear ─────────────────────────────────
+//
+// The panel's whole claim is that it lists what happened, so every one of these
+// is the same defect wearing a different hat: a row for work nobody did, counted
+// toward "N queries of your library" and given a bar in the total.
+
+// No embedder is a supported deployment — askLanes skips the semantic block
+// wholesale — and the panel used to report "Found passages that mean the same,
+// sqlite-vec" for a store that was never asked anything.
+func TestTraceOmitsTheVectorSearchWhenThereIsNoEmbedder(t *testing.T) {
+	deps, _ := answerDeps(t) // no Embedder wired
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	keys := stageKeys(traceStages(t, rec.Body.String()))
+	for _, k := range keys {
+		if k == "vector" || k == "embed" {
+			t.Fatalf("traced %q with no embedder wired: %v", k, keys)
+		}
+	}
+}
+
+// An embedding that fails degrades retrieval to FTS-only, logging "semantic
+// degraded, using FTS only". No vector lane runs — but an embedding WAS
+// attempted, so that step did happen and keeps its row.
+func TestTraceOmitsTheVectorSearchWhenEmbeddingFailed(t *testing.T) {
+	deps, _ := answerDeps(t)
+	deps.Embedder = &fakeEmbedder{err: errors.New("embeddings are down")}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	keys := stageKeys(traceStages(t, rec.Body.String()))
+	for _, k := range keys {
+		if k == "vector" {
+			t.Fatalf("traced a vector search after the embedding failed: %v", keys)
+		}
+	}
+	// The embedding itself was attempted and cost the wait, so it stays.
+	findStage(t, traceStages(t, rec.Body.String()), "embed")
+}
+
+// A query with no usable terms builds no FTS ladder at all, so sqlite is never
+// asked for those words.
+func TestTraceOmitsTheKeywordSearchWhenNoLadderWasBuilt(t *testing.T) {
+	deps, _ := answerDeps(t)
+	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	// Punctuation only: BuildFTSMatch yields nothing, so BuildFTSQueries returns
+	// no tiers and the loop body never runs.
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=%2B%2B%2B", nil)
+
+	keys := stageKeys(traceStages(t, rec.Body.String()))
+	for _, k := range keys {
+		if k == "keyword" {
+			t.Fatalf("traced a keyword search for a query with no terms: %v", keys)
+		}
+	}
+}
+
+// The doubly-empty search — a filtered pass that finds nothing, then a full
+// unfiltered re-run that also finds nothing — is the slowest path this endpoint
+// has, and it must still produce a trace.
+//
+// WHAT THIS DOES NOT ASSERT: that the second pass's milliseconds were added to
+// the first's. The accumulation is the actual fix here (the wide diag's timings
+// used to be carried forward only inside the `len(wideHits) > 0` branch, so a
+// doubly-empty search reported roughly half the wait it cost), but the fakes
+// complete in well under a millisecond, so every stage reports 0ms and there is
+// no arithmetic left to check. Verified by reading the branch, not by this test.
+func TestTraceCountsBothPassesWhenRelaxationAlsoFindsNothing(t *testing.T) {
+	deps, _ := answerDeps(t)
+	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+	// A channel the library does not have would be dropped before it filtered
+	// anything, so use one it DOES have plus a word it does not: the narrow
+	// search returns nothing, the wide re-run returns nothing either.
+	deps.Understand = &fakeUnderstander{
+		reply: `{"topic":"","counting":false,"filters":{"watched":"watched"}}`,
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=unicornhusbandry", nil)
+
+	// Both passes ran, so both were searched. The assertion that matters is that
+	// the keyword step is REPORTED at all — it is the step the dropped diag used
+	// to take with it.
+	stages := traceStages(t, rec.Body.String())
+	if len(stages) == 0 {
+		t.Fatal("a doubly-empty search traced nothing")
+	}
+	findStage(t, stages, "keyword")
 }
