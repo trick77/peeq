@@ -533,7 +533,7 @@ func TestCoverageExcludesTheTopicLane(t *testing.T) {
 		{Hits: []rag.Hit{{VideoID: "from-topic", Ordinal: 3}}, Weight: rag.WeightSemanticTopic},
 		{Hits: []rag.Hit{{VideoID: "floor", Ordinal: 4}}, Weight: rag.WeightKeywordAny},
 	}
-	got := relevantVideos(lanes, 2)
+	got, _ := relevantVideos(lanes, 2, rag.DefaultMaxDistance)
 
 	if !got["kept"] || !got["raw"] {
 		t.Errorf("the unchanged lanes must still seat their videos: %v", got)
@@ -546,7 +546,7 @@ func TestCoverageExcludesTheTopicLane(t *testing.T) {
 	}
 
 	// -1 is "no topic lane ran", and must not silently drop lane 0.
-	if all := relevantVideos(lanes, -1); !all["from-topic"] {
+	if all, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance); !all["from-topic"] {
 		t.Error("with no topic lane to exclude, every lane above the floor counts")
 	}
 }

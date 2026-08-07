@@ -937,7 +937,8 @@ func TestCoverageVideosExcludesFloorOnlyVideos(t *testing.T) {
 	hits := rag.FuseWeighted(lanes, searchCandidates)
 
 	testee := &server{videos: deps.Videos}
-	got := testee.coverageVideos(hits, relevantVideos(lanes, -1))
+	relevant, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
+	got := testee.coverageVideos(hits, relevant)
 
 	if len(got) != 1 || got[0].ID != "geometry" {
 		t.Errorf("coverage = %+v, want only the video a lane above the floor found", got)
@@ -957,7 +958,8 @@ func TestCoverageVideosKeepsStrongKeywordRungs(t *testing.T) {
 	hits := rag.FuseWeighted(lanes, searchCandidates)
 
 	testee := &server{videos: deps.Videos}
-	if got := testee.coverageVideos(hits, relevantVideos(lanes, -1)); len(got) != 1 {
+	relevant, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
+	if got := testee.coverageVideos(hits, relevant); len(got) != 1 {
 		t.Errorf("coverage = %+v, want the content-rung video kept", got)
 	}
 }
@@ -975,7 +977,8 @@ func TestCoverageVideosEmptyWhenOnlyTheFloorRan(t *testing.T) {
 	hits := rag.FuseWeighted(lanes, searchCandidates)
 
 	testee := &server{videos: deps.Videos}
-	if got := testee.coverageVideos(hits, relevantVideos(lanes, -1)); len(got) != 0 {
+	relevant, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
+	if got := testee.coverageVideos(hits, relevant); len(got) != 0 {
 		t.Errorf("coverage = %+v, want empty", got)
 	}
 }
@@ -1293,4 +1296,198 @@ func TestTraceCountsBothPassesWhenRelaxationAlsoFindsNothing(t *testing.T) {
 		t.Fatal("a doubly-empty search traced nothing")
 	}
 	findStage(t, stages, "keyword")
+}
+
+// The reported bug, second instalment: "Also in your library" often lists
+// videos with no connection to the question.
+//
+// The floor rung was already excluded (see above), which fixed the case where
+// sharing one word was enough. The semantic lane was the remaining hole: it sits
+// above the floor, so ANY vector hit admitted a video however far away it landed
+// — and coverageVideos never looked at Distance at all.
+//
+// It bites hardest on questions the library does not cover, because the only
+// bound on the lane is RELATIVE: WithinSpread keeps everything within 0.20 of
+// the best hit. When the best hit is itself poor, the whole band is poor and
+// passes the spread test perfectly — a filter measuring consistency cannot
+// bound quality.
+func TestCoverageVideosExcludesDistantSemanticOnlyVideos(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	for _, id := range []string{"near", "far"} {
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A UNIFORMLY POOR BAND, which is the shape this bug actually takes and the
+	// only shape that reaches here. An earlier version of this fixture used 0.62
+	// and 1.18 — but WithinSpread cuts 0.20 past the best hit, so a 0.62 best
+	// would have dropped the 1.18 row long before fusion and the test passed
+	// only because it hand-builds lanes.
+	//
+	// Best hit 1.08 means the spread cuts at 1.28, above the 1.25 cap: nothing is
+	// trimmed, every row survives retrieval, and the relative bound has done
+	// precisely nothing. That is the case the absolute bar exists for.
+	semantic := []rag.Hit{
+		{VideoID: "near", Ordinal: 0, Distance: 1.08},
+		{VideoID: "far", Ordinal: 0, Distance: 1.22},
+	}
+	lanes := []rag.Lane{{Hits: semantic, Weight: rag.WeightSemantic}}
+	hits := rag.FuseWeighted(lanes, searchCandidates)
+
+	testee := &server{videos: deps.Videos}
+	relevant, barred := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
+	got := testee.coverageVideos(hits, relevant)
+
+	if len(got) != 1 || got[0].ID != "near" {
+		t.Errorf("coverage = %+v, want only the video the question is actually near", got)
+	}
+	if len(barred) != 1 {
+		t.Errorf("barred = %v, want the distant video counted for the log", barred)
+	}
+}
+
+// Keyword evidence is a CLAIM about a video — every content word the reader
+// typed is in the chunk — so it is not subject to the distance bar. Those hits
+// carry no distance at all, and treating a missing distance as a near one is
+// what keeps the strict rungs working.
+func TestCoverageVideosDistanceBarSparesKeywordEvidence(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "exact", URL: "u", Title: "exact"}); err != nil {
+		t.Fatal(err)
+	}
+	lanes := []rag.Lane{
+		{Hits: []rag.Hit{{VideoID: "exact", Ordinal: 0}}, Weight: rag.WeightKeywordStrict},
+	}
+	hits := rag.FuseWeighted(lanes, searchCandidates)
+
+	testee := &server{videos: deps.Videos}
+	relevant, barred := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
+	got := testee.coverageVideos(hits, relevant)
+	if len(got) != 1 {
+		t.Errorf("coverage = %+v, want the strict-rung video kept", got)
+	}
+	if len(barred) != 0 {
+		t.Errorf("barred = %v, want keyword evidence untouched by the bar", barred)
+	}
+}
+
+// A video the semantic lane found far away, but a strict rung also found, keeps
+// its place: one weak signal does not cancel a strong one.
+func TestCoverageVideosKeepsAVideoWithBothWeakAndStrongEvidence(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "both", URL: "u", Title: "both"}); err != nil {
+		t.Fatal(err)
+	}
+	lanes := []rag.Lane{
+		{Hits: []rag.Hit{{VideoID: "both", Ordinal: 0}}, Weight: rag.WeightKeywordStrict},
+		{Hits: []rag.Hit{{VideoID: "both", Ordinal: 1, Distance: 1.20}}, Weight: rag.WeightSemantic},
+	}
+	hits := rag.FuseWeighted(lanes, searchCandidates)
+
+	testee := &server{videos: deps.Videos}
+	relevant, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
+	got := testee.coverageVideos(hits, relevant)
+	if len(got) != 1 {
+		t.Errorf("coverage = %+v, want the video its keyword evidence earned", got)
+	}
+}
+
+// A video can sit between the two bounds: past the coverage bar (1.10) but
+// inside the retrieval cap (1.25). Those still reach the model as excerpts —
+// buildAnswerContext reads the fused list, not the coverage list — so barring
+// them here would leave one that the model then declined to cite in NEITHER
+// tier, since the client builds "Also in your library" by subtracting the cited
+// set from coverage. It would vanish from the page.
+//
+// That is the failure coverageVideos' own comment says the design avoids by
+// refusing to subtract the excerpt set server-side. A distance bar must not
+// reintroduce it by another route.
+func TestCoverageKeepsAnExcerptVideoTheBarWouldHaveDropped(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{
+		ID: "mid", URL: "u", Title: "Between The Two Bounds",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// dim1536 sets element 0 and zeroes the rest, so the L2 distance between two
+	// of them is just the gap between those elements. Query 1.0 against chunk
+	// -0.15 is 1.15: past the coverage bar (1.10), inside the retrieval cap
+	// (1.25). Exactly the band where a video reaches the model but not the list.
+	//
+	// The text deliberately shares no word with the query, so the keyword ladder
+	// cannot vouch for it and the semantic lane is its only evidence.
+	rows := []rag.ChunkRow{{Ordinal: 0, Text: "quite another subject entirely", StartSeconds: 10}}
+	if err := ragStore.ReplaceVideoChunks(context.Background(), "mid",
+		rag.IndexMeta{Model: "test-model", Dim: 1536, Rev: rag.ChunkRecipeRev},
+		rows, [][]float32{dim1536(-0.15)}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	deps.Embedder = &fakeEmbedder{vec: dim1536(1.0)}
+	deps.Ask = &fakeAsk{deltas: []string{"Nothing much."}}
+
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+
+	var payload struct {
+		Sources  []answerSource `json:"sources"`
+		Coverage []answerVideo  `json:"coverage"`
+	}
+	if err := json.Unmarshal([]byte(firstEvent(t, rec.Body.String(), "sources")), &payload); err != nil {
+		t.Fatalf("decode sources: %v", err)
+	}
+	if len(payload.Sources) == 0 {
+		t.Fatal("the 1.15 chunk never reached the model, so this proves nothing")
+	}
+	inCoverage := make(map[string]bool, len(payload.Coverage))
+	for _, v := range payload.Coverage {
+		inCoverage[v.ID] = true
+	}
+	for _, src := range payload.Sources {
+		if !inCoverage[src.VideoID] {
+			t.Errorf("video %q was sent to the model but is in neither tier", src.VideoID)
+		}
+	}
+}
+
+// A negative BACKEND_SEARCH_MAX_DISTANCE is the documented opt-out from bounding
+// the vector lane, and semanticLane honours it by skipping both of its bounds:
+// "an operator who asks for unbounded KNN gets unbounded KNN, not a floor they
+// cannot see in any setting". The coverage bar has to opt out with them, or it
+// is precisely that invisible floor.
+func TestCoverageBarOptsOutWithUnboundedKNN(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "far", URL: "u", Title: "far"}); err != nil {
+		t.Fatal(err)
+	}
+	lanes := []rag.Lane{
+		{Hits: []rag.Hit{{VideoID: "far", Ordinal: 0, Distance: 1.22}}, Weight: rag.WeightSemantic},
+	}
+	hits := rag.FuseWeighted(lanes, searchCandidates)
+	testee := &server{videos: deps.Videos}
+
+	// Bounded: the bar applies.
+	bounded, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
+	if got := testee.coverageVideos(hits, bounded); len(got) != 0 {
+		t.Errorf("coverage = %+v, want the distant video barred when bounded", got)
+	}
+	// Opted out: no floor at all, visible or otherwise.
+	unbounded, barred := relevantVideos(lanes, -1, -1)
+	if got := testee.coverageVideos(hits, unbounded); len(got) != 1 {
+		t.Errorf("coverage = %+v, want no bar when the operator asked for unbounded KNN", got)
+	}
+	if len(barred) != 0 {
+		t.Errorf("barred = %v, want nothing barred with the bar disabled", barred)
+	}
+}
+
+// "0/0" from a run that never reached the coverage tier reads identically to one
+// that reached it and admitted nothing — and those are different outcomes.
+func TestCoverageDiagDistinguishesNeverRanFromEmpty(t *testing.T) {
+	if got := (coverageDiag{}).String(); got != "-" {
+		t.Errorf("unreached coverage logged %q, want %q", got, "-")
+	}
+	if got := (coverageDiag{ran: true}).String(); got != "0/0 barred=0" {
+		t.Errorf("empty coverage logged %q, want the zeroes spelled out", got)
+	}
 }

@@ -85,7 +85,28 @@ services:
       resources:
         limits:
           cpus: "2.0"
-          memory: 1g
+          # Sized for the PAGE CACHE, not for the Go heap.
+          #
+          # Under cgroup v2 the cache holding file pages this container reads is
+          # charged against this limit, so the database and the heap compete for
+          # one budget — and at 1g the database lost, every time. peeq.db is
+          # ~200MB on 7200rpm platters; evicted, an Ask re-read the vector table
+          # as ~11k random 4KB pages, which at the ~300 IOPS two spinning disks
+          # manage is most of a minute.
+          #
+          # Measured on the same query, same build, cold then warm:
+          #
+          #   keyword search   36.2s -> 170ms
+          #   vector search     7.7s -> 121ms
+          #   merge             524ms ->  11ms
+          #
+          # The merge is the one that gives it away: it touches neither index,
+          # only memory, and it moved 48x. Nothing was slow except the disk.
+          #
+          # 3g leaves the whole database resident with room for the heap. Raise
+          # it again if the database grows past a gigabyte or so; the number to
+          # keep an eye on is `ask trace` reporting local steps in milliseconds.
+          memory: 3g
 
     labels:
       traefik.enable: "true"

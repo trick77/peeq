@@ -169,7 +169,31 @@ func (t *answerTrace) add(key, tool, kind string, ms int64) {
 // had no measurement anywhere before this, and splitting it out would leave two
 // uncorrelated lines per Ask to read together — there is no request id to join
 // them by.
-func (t answerTrace) log(q string, ttft time.Duration) {
+// coverageDiag is what the "Also in your library" tier did with what retrieval
+// offered it. Three numbers rather than one, because "8 videos shown" cannot
+// say whether the other fifteen were junk correctly dropped or good material
+// wrongly barred — and rag.CoverageMaxDistance can only be tuned by someone who
+// can see the difference.
+type coverageDiag struct {
+	// ran separates "the coverage tier was never reached" from "it was reached
+	// and admitted nothing". A client that hangs up mid-retrieval returns before
+	// the tier is built, and the zero value would log 0/0 — indistinguishable
+	// from a search that genuinely found nothing, which is a real and different
+	// outcome. Same "-" convention semLaneDiag uses for a lane that never ran.
+	ran        bool
+	shown      int
+	considered int
+	barred     int
+}
+
+func (c coverageDiag) String() string {
+	if !c.ran {
+		return "-"
+	}
+	return fmt.Sprintf("%d/%d barred=%d", c.shown, c.considered, c.barred)
+}
+
+func (t answerTrace) log(q string, ttft time.Duration, cov coverageDiag) {
 	if len(t.stages) == 0 {
 		return
 	}
@@ -199,6 +223,11 @@ func (t answerTrace) log(q string, ttft time.Duration) {
 		// which is itself the finding.
 		"ttft_ms", ttft.Milliseconds(),
 		"models", orDash(strings.Join(models, "|")),
+		// shown/considered, then how many of the difference were turned away by
+		// the distance bar specifically. A barred count that climbs with
+		// complaints about junk means the bar is too loose; one that climbs with
+		// complaints about a thin list means it is too tight.
+		"coverage", cov.String(),
 	)
 }
 
@@ -302,6 +331,10 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// read it: the log line and the stream frame are written in the same place,
 	// which is what stops them ever describing different runs.
 	var ttft time.Duration
+	// What the "Also in your library" tier did with what retrieval offered.
+	// Declared here for the same reason ttft is: the defer below logs it, and it
+	// is computed much further down.
+	var cov coverageDiag
 
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
@@ -321,7 +354,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		send("trace", map[string]any{"stages": tr.stages})
 		// Logged whether or not the frame reached anyone. A client that hung up
 		// mid-answer is a case worth having a record of, not one worth losing.
-		tr.log(q, ttft)
+		tr.log(q, ttft, cov)
 	}()
 
 	// Understand the question before searching for it. This is the step that
@@ -501,9 +534,43 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		tr.add("count", "sqlite", traceKindLocal, time.Since(countStart).Milliseconds())
 	}
 
+	// The "Also in your library" tier. Its admission rule is stricter than
+	// retrieval's on purpose — see rag.CoverageMaxDistance — because a passage
+	// worth reasoning over and a video worth recommending are different claims.
+	relevant, barredSet := relevantVideos(lanes, diag.topicLane, s.searchMaxDistance)
+	// EVERY VIDEO THE MODEL WAS SHOWN STAYS LISTABLE, whatever its distance.
+	//
+	// The excerpt set is chosen from `hits`, which is bounded by
+	// DefaultMaxDistance (1.25) rather than by the coverage bar (1.10) — so a
+	// video sitting between the two can win an excerpt slot and then be barred
+	// from this list. If the model goes on not to cite it, the client's
+	// subtraction leaves it in neither tier and it vanishes from the page
+	// entirely. That is the exact failure coverageVideos' own comment says the
+	// design avoids by refusing to subtract the excerpt set server-side; a
+	// distance bar that dropped them would reintroduce it by another route.
+	for _, h := range chosen {
+		relevant[h.VideoID] = true
+	}
+	coverage := s.coverageVideos(hits, relevant)
+	// Netted off AFTER the excerpt videos are added back, so this counts what the
+	// bar actually removed rather than what it merely objected to.
+	barred := 0
+	for id := range barredSet {
+		if !relevant[id] {
+			barred++
+		}
+	}
+	// considered is every distinct video retrieval offered, counted off the fused
+	// list itself rather than inside coverageVideos' loop — that loop stops at
+	// coverageMaxVideos, so counting there reported "20/20" for every full list
+	// and hid the denominator exactly when it mattered most.
+	cov = coverageDiag{
+		ran: true, shown: len(coverage),
+		considered: distinctVideos(hits), barred: barred,
+	}
 	payload := map[string]any{
 		"sources": sources, "videos": vids,
-		"coverage": s.coverageVideos(hits, relevantVideos(lanes, diag.topicLane)),
+		"coverage": coverage,
 		"filters":  applied, "relaxed": relaxed, "unresolved_channels": ch.Unresolved,
 	}
 	if counts != nil {
@@ -720,17 +787,46 @@ const coverageMaxVideos = 20
 // this is one line to give back once the logs say the rewrite can be trusted.
 //
 // excludeLane is -1 when there is no topic lane.
-func relevantVideos(lanes []rag.Lane, excludeLane int) map[string]bool {
+//
+// The second return is how many videos the distance bar turned away, for the
+// log. It is the number that says whether rag.CoverageMaxDistance is set
+// anywhere near right, and there is nowhere else to get it from.
+func relevantVideos(lanes []rag.Lane, excludeLane int, searchMaxDistance float64) (map[string]bool, map[string]bool) {
 	out := make(map[string]bool)
+	barred := make(map[string]bool)
+	// A negative searchMaxDistance is the documented opt-out from bounding the
+	// vector lane, and semanticLane honours it by skipping BOTH of its bounds —
+	// "an operator who asks for unbounded KNN gets unbounded KNN, not a floor
+	// they cannot see in any setting". A coverage bar that kept cutting at 1.10
+	// under that setting would be exactly the invisible floor that promises not
+	// to exist, so it opts out too.
+	bar := rag.CoverageMaxDistance
+	if searchMaxDistance < 0 {
+		bar = 0
+	}
 	for i, lane := range lanes {
 		if i == excludeLane || lane.Weight <= rag.WeightKeywordAny {
 			continue
 		}
 		for _, h := range lane.Hits {
+			// THE BAR APPLIES TO DISTANCE, WHICH ONLY THE VECTOR LANES CARRY.
+			// A keyword hit leaves Distance at zero and sails through, which is
+			// the intent rather than an accident of the zero value: a strict,
+			// content or prefix rung means every content word the reader typed
+			// is in that chunk, and that is a claim about the video no measure
+			// of vector proximity should be able to overturn.
+			if bar > 0 && h.Distance > bar {
+				barred[h.VideoID] = true
+				continue
+			}
 			out[h.VideoID] = true
 		}
 	}
-	return out
+	// The barred SET rather than a count, because the caller adds the excerpt
+	// videos to `out` afterwards and only then is it known which of these were
+	// genuinely turned away. A video barred by one lane and vouched for by
+	// another was never rejected at all.
+	return out, barred
 }
 
 func (s *server) coverageVideos(hits []rag.Hit, relevant map[string]bool) []answerVideo {
