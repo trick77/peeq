@@ -467,13 +467,19 @@ function AnswerTrace({ stages }: { stages: TraceStage[] }) {
               total={total}
             />
           ))}
+          {/* STATES THE SPLIT, NEVER CHARACTERISES IT.
+              This used to open "the model calls are nearly all of the wait",
+              hardcoded — and it was right until the day it wasn't. A cold page
+              cache put 44s of disk reads into a 61s query, and the sentence
+              cheerfully called 16.5s of 61.0s "nearly all", directly under bars
+              showing otherwise. The numbers are already on screen; a sentence
+              adding a verdict to them can only ever contradict them. */}
           <p className="trace-foot">
-            The model calls are nearly all of the wait:{" "}
             <span className="num">{formatMs(modelMs)}</span> of the{" "}
-            <span className="num">{formatMs(total)}</span>, and the only steps
-            that left this machine. Two searches run every time — one on the
-            words you used, one on what they mean — and the results are merged
-            before the model reads anything.
+            <span className="num">{formatMs(total)}</span> went to the model
+            calls, the only steps that left this machine. Two searches run every
+            time — one on the words you used, one on what they mean — and the
+            results are merged before the model reads anything.
           </p>
         </div>
       ) : null}

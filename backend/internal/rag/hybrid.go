@@ -151,6 +151,37 @@ const DefaultMaxDistance = 1.25
 // worse than the best thing this query found?
 const SemanticSpread = 0.20
 
+// CoverageMaxDistance is the absolute bar a video must clear to be listed under
+// "Also in your library" on SEMANTIC evidence alone.
+//
+// It exists because the two bounds above cannot do this job between them, and
+// the reason is worth stating: SemanticSpread is RELATIVE. It keeps everything
+// within 0.20 of the best hit, which is a test of consistency, not of quality.
+// On a question the library covers, the best hit is close and the band is tight.
+// On a question it does not cover, the whole band is poor — and a uniformly poor
+// band passes a spread test perfectly. That is exactly when a reader notices the
+// list is full of videos with no connection to what they asked.
+//
+// DefaultMaxDistance cannot cover it either. At 1.25 it is deliberately set to
+// reject only "not about anything at all" (unrelated text sits at 1.31-1.41), so
+// it is doing its own job correctly and there is a wide band beneath it that is
+// legitimate to RETRIEVE and misleading to LIST. Fusion wants that band; a list
+// captioned as related material does not.
+//
+// 1.10 splits it. The comment above measures a typical good best hit at around
+// 0.995 — a ~600-token chunk against a short query scores low by construction —
+// so a bar at 1.0 would have emptied the list of everything including the good
+// matches. 1.10 keeps that whole normal range and cuts only the 1.10-1.25 band,
+// the part adjacent to unrelated.
+//
+// The ANSWER is unaffected. This bounds what is shown beside it, never what
+// retrieval hands the model: a passage worth reasoning over is not the same
+// claim as a video worth recommending, and the excerpts keep the looser bound.
+//
+// This is the number to tune. `ask trace` logs how many videos it barred, so
+// the evidence for moving it is one grep away.
+const CoverageMaxDistance = 1.10
+
 // WithinSpread drops semantic hits more than SemanticSpread past the closest
 // one, and is what lets the vector lane return FEWER rows than it was asked
 // for. hits must be distance-ascending, which is what Store.RetrieveWithin

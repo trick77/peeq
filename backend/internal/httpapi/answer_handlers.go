@@ -169,7 +169,18 @@ func (t *answerTrace) add(key, tool, kind string, ms int64) {
 // had no measurement anywhere before this, and splitting it out would leave two
 // uncorrelated lines per Ask to read together — there is no request id to join
 // them by.
-func (t answerTrace) log(q string, ttft time.Duration) {
+// coverageDiag is what the "Also in your library" tier did with what retrieval
+// offered it. Three numbers rather than one, because "8 videos shown" cannot
+// say whether the other fifteen were junk correctly dropped or good material
+// wrongly barred — and rag.CoverageMaxDistance can only be tuned by someone who
+// can see the difference.
+type coverageDiag struct {
+	shown      int
+	considered int
+	barred     int
+}
+
+func (t answerTrace) log(q string, ttft time.Duration, cov coverageDiag) {
 	if len(t.stages) == 0 {
 		return
 	}
@@ -199,6 +210,11 @@ func (t answerTrace) log(q string, ttft time.Duration) {
 		// which is itself the finding.
 		"ttft_ms", ttft.Milliseconds(),
 		"models", orDash(strings.Join(models, "|")),
+		// shown/considered, then how many of the difference were turned away by
+		// the distance bar specifically. A barred count that climbs with
+		// complaints about junk means the bar is too loose; one that climbs with
+		// complaints about a thin list means it is too tight.
+		"coverage", fmt.Sprintf("%d/%d barred=%d", cov.shown, cov.considered, cov.barred),
 	)
 }
 
@@ -302,6 +318,10 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// read it: the log line and the stream frame are written in the same place,
 	// which is what stops them ever describing different runs.
 	var ttft time.Duration
+	// What the "Also in your library" tier did with what retrieval offered.
+	// Declared here for the same reason ttft is: the defer below logs it, and it
+	// is computed much further down.
+	var cov coverageDiag
 
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
@@ -321,7 +341,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		send("trace", map[string]any{"stages": tr.stages})
 		// Logged whether or not the frame reached anyone. A client that hung up
 		// mid-answer is a case worth having a record of, not one worth losing.
-		tr.log(q, ttft)
+		tr.log(q, ttft, cov)
 	}()
 
 	// Understand the question before searching for it. This is the step that
@@ -501,9 +521,15 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		tr.add("count", "sqlite", traceKindLocal, time.Since(countStart).Milliseconds())
 	}
 
+	// The "Also in your library" tier. Its admission rule is stricter than
+	// retrieval's on purpose — see rag.CoverageMaxDistance — because a passage
+	// worth reasoning over and a video worth recommending are different claims.
+	relevant, barred := relevantVideos(lanes, diag.topicLane)
+	coverage, considered := s.coverageVideos(hits, relevant)
+	cov = coverageDiag{shown: len(coverage), considered: considered, barred: barred}
 	payload := map[string]any{
 		"sources": sources, "videos": vids,
-		"coverage": s.coverageVideos(hits, relevantVideos(lanes, diag.topicLane)),
+		"coverage": coverage,
 		"filters":  applied, "relaxed": relaxed, "unresolved_channels": ch.Unresolved,
 	}
 	if counts != nil {
@@ -720,22 +746,50 @@ const coverageMaxVideos = 20
 // this is one line to give back once the logs say the rewrite can be trusted.
 //
 // excludeLane is -1 when there is no topic lane.
-func relevantVideos(lanes []rag.Lane, excludeLane int) map[string]bool {
+//
+// The second return is how many videos the distance bar turned away, for the
+// log. It is the number that says whether rag.CoverageMaxDistance is set
+// anywhere near right, and there is nowhere else to get it from.
+func relevantVideos(lanes []rag.Lane, excludeLane int) (map[string]bool, int) {
 	out := make(map[string]bool)
+	barred := make(map[string]bool)
 	for i, lane := range lanes {
 		if i == excludeLane || lane.Weight <= rag.WeightKeywordAny {
 			continue
 		}
 		for _, h := range lane.Hits {
+			// THE BAR APPLIES TO DISTANCE, WHICH ONLY THE VECTOR LANES CARRY.
+			// A keyword hit leaves Distance at zero and sails through, which is
+			// the intent rather than an accident of the zero value: a strict,
+			// content or prefix rung means every content word the reader typed
+			// is in that chunk, and that is a claim about the video no measure
+			// of vector proximity should be able to overturn.
+			if h.Distance > rag.CoverageMaxDistance {
+				barred[h.VideoID] = true
+				continue
+			}
 			out[h.VideoID] = true
 		}
 	}
-	return out
+	// Counted only if NOTHING else vouched for it. A video whose best passage is
+	// far away but which a strict rung also found has been barred by one lane and
+	// admitted by another, and reporting that as a rejection would overstate what
+	// the bar is doing.
+	n := 0
+	for id := range barred {
+		if !out[id] {
+			n++
+		}
+	}
+	return out, n
 }
 
-func (s *server) coverageVideos(hits []rag.Hit, relevant map[string]bool) []answerVideo {
+// The second return is how many distinct videos retrieval offered at all, so
+// the log can say "8 of 23" rather than only how many survived.
+func (s *server) coverageVideos(hits []rag.Hit, relevant map[string]bool) ([]answerVideo, int) {
 	lookup := &videoLookup{store: s.videos, seen: make(map[string]*videos.Video)}
 	seen := make(map[string]bool)
+	considered := 0
 	out := make([]answerVideo, 0, coverageMaxVideos)
 	for _, h := range hits {
 		if len(out) >= coverageMaxVideos {
@@ -748,6 +802,7 @@ func (s *server) coverageVideos(hits []rag.Hit, relevant map[string]bool) []answ
 		// Ranked by the fused list, but admitted only on a signal stronger than
 		// sharing one word. Ordering still comes from the fusion, so the list reads
 		// strongest-first among the videos that qualify.
+		considered++
 		if !relevant[h.VideoID] {
 			continue
 		}
@@ -764,7 +819,7 @@ func (s *server) coverageVideos(hits []rag.Hit, relevant map[string]bool) []answ
 			PublishedAt:      v.PublishedAt,
 		})
 	}
-	return out
+	return out, considered
 }
 
 // excerptCandidate is a hit that could be an excerpt, paired with the video

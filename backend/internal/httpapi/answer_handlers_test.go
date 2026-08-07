@@ -849,7 +849,7 @@ func TestCoverageVideosCollapsesAndOrders(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.coverageVideos(hits, allRelevant(hits))
+	got, _ := testee.coverageVideos(hits, allRelevant(hits))
 
 	ids := make([]string, 0, len(got))
 	for _, v := range got {
@@ -876,7 +876,7 @@ func TestCoverageVideosCapsVideosNotChunks(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.coverageVideos(hits, allRelevant(hits))
+	got, _ := testee.coverageVideos(hits, allRelevant(hits))
 
 	if len(got) != coverageMaxVideos {
 		t.Fatalf("coverage carried %d videos, want %d", len(got), coverageMaxVideos)
@@ -901,7 +901,7 @@ func TestCoverageVideosKeepsTheExcerptVideos(t *testing.T) {
 	hits := []rag.Hit{{VideoID: "cited", Ordinal: 0}}
 
 	testee := &server{videos: deps.Videos}
-	if got := testee.coverageVideos(hits, allRelevant(hits)); len(got) != 1 || got[0].ID != "cited" {
+	if got, _ := testee.coverageVideos(hits, allRelevant(hits)); len(got) != 1 || got[0].ID != "cited" {
 		t.Errorf("coverage = %+v, want the excerpt video kept for the client to subtract", got)
 	}
 }
@@ -937,7 +937,8 @@ func TestCoverageVideosExcludesFloorOnlyVideos(t *testing.T) {
 	hits := rag.FuseWeighted(lanes, searchCandidates)
 
 	testee := &server{videos: deps.Videos}
-	got := testee.coverageVideos(hits, relevantVideos(lanes, -1))
+	relevant, _ := relevantVideos(lanes, -1)
+	got, _ := testee.coverageVideos(hits, relevant)
 
 	if len(got) != 1 || got[0].ID != "geometry" {
 		t.Errorf("coverage = %+v, want only the video a lane above the floor found", got)
@@ -957,7 +958,8 @@ func TestCoverageVideosKeepsStrongKeywordRungs(t *testing.T) {
 	hits := rag.FuseWeighted(lanes, searchCandidates)
 
 	testee := &server{videos: deps.Videos}
-	if got := testee.coverageVideos(hits, relevantVideos(lanes, -1)); len(got) != 1 {
+	relevant, _ := relevantVideos(lanes, -1)
+	if got, _ := testee.coverageVideos(hits, relevant); len(got) != 1 {
 		t.Errorf("coverage = %+v, want the content-rung video kept", got)
 	}
 }
@@ -975,7 +977,8 @@ func TestCoverageVideosEmptyWhenOnlyTheFloorRan(t *testing.T) {
 	hits := rag.FuseWeighted(lanes, searchCandidates)
 
 	testee := &server{videos: deps.Videos}
-	if got := testee.coverageVideos(hits, relevantVideos(lanes, -1)); len(got) != 0 {
+	relevant, _ := relevantVideos(lanes, -1)
+	if got, _ := testee.coverageVideos(hits, relevant); len(got) != 0 {
 		t.Errorf("coverage = %+v, want empty", got)
 	}
 }
@@ -1293,4 +1296,91 @@ func TestTraceCountsBothPassesWhenRelaxationAlsoFindsNothing(t *testing.T) {
 		t.Fatal("a doubly-empty search traced nothing")
 	}
 	findStage(t, stages, "keyword")
+}
+
+// The reported bug, second instalment: "Also in your library" often lists
+// videos with no connection to the question.
+//
+// The floor rung was already excluded (see above), which fixed the case where
+// sharing one word was enough. The semantic lane was the remaining hole: it sits
+// above the floor, so ANY vector hit admitted a video however far away it landed
+// — and coverageVideos never looked at Distance at all.
+//
+// It bites hardest on questions the library does not cover, because the only
+// bound on the lane is RELATIVE: WithinSpread keeps everything within 0.20 of
+// the best hit. When the best hit is itself poor, the whole band is poor and
+// passes the spread test perfectly — a filter measuring consistency cannot
+// bound quality.
+func TestCoverageVideosExcludesDistantSemanticOnlyVideos(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	for _, id := range []string{"near", "far"} {
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Both came back inside the absolute cap (1.25) and within 0.20 of each
+	// other, so both survived retrieval. Only one is actually about this.
+	semantic := []rag.Hit{
+		{VideoID: "near", Ordinal: 0, Distance: 0.62},
+		{VideoID: "far", Ordinal: 0, Distance: 1.18},
+	}
+	lanes := []rag.Lane{{Hits: semantic, Weight: rag.WeightSemantic}}
+	hits := rag.FuseWeighted(lanes, searchCandidates)
+
+	testee := &server{videos: deps.Videos}
+	relevant, barred := relevantVideos(lanes, -1)
+	got, _ := testee.coverageVideos(hits, relevant)
+
+	if len(got) != 1 || got[0].ID != "near" {
+		t.Errorf("coverage = %+v, want only the video the question is actually near", got)
+	}
+	if barred != 1 {
+		t.Errorf("barred = %d, want the distant video counted for the log", barred)
+	}
+}
+
+// Keyword evidence is a CLAIM about a video — every content word the reader
+// typed is in the chunk — so it is not subject to the distance bar. Those hits
+// carry no distance at all, and treating a missing distance as a near one is
+// what keeps the strict rungs working.
+func TestCoverageVideosDistanceBarSparesKeywordEvidence(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "exact", URL: "u", Title: "exact"}); err != nil {
+		t.Fatal(err)
+	}
+	lanes := []rag.Lane{
+		{Hits: []rag.Hit{{VideoID: "exact", Ordinal: 0}}, Weight: rag.WeightKeywordStrict},
+	}
+	hits := rag.FuseWeighted(lanes, searchCandidates)
+
+	testee := &server{videos: deps.Videos}
+	relevant, barred := relevantVideos(lanes, -1)
+	got, _ := testee.coverageVideos(hits, relevant)
+	if len(got) != 1 {
+		t.Errorf("coverage = %+v, want the strict-rung video kept", got)
+	}
+	if barred != 0 {
+		t.Errorf("barred = %d, want keyword evidence untouched by the bar", barred)
+	}
+}
+
+// A video the semantic lane found far away, but a strict rung also found, keeps
+// its place: one weak signal does not cancel a strong one.
+func TestCoverageVideosKeepsAVideoWithBothWeakAndStrongEvidence(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "both", URL: "u", Title: "both"}); err != nil {
+		t.Fatal(err)
+	}
+	lanes := []rag.Lane{
+		{Hits: []rag.Hit{{VideoID: "both", Ordinal: 0}}, Weight: rag.WeightKeywordStrict},
+		{Hits: []rag.Hit{{VideoID: "both", Ordinal: 1, Distance: 1.20}}, Weight: rag.WeightSemantic},
+	}
+	hits := rag.FuseWeighted(lanes, searchCandidates)
+
+	testee := &server{videos: deps.Videos}
+	relevant, _ := relevantVideos(lanes, -1)
+	got, _ := testee.coverageVideos(hits, relevant)
+	if len(got) != 1 {
+		t.Errorf("coverage = %+v, want the video its keyword evidence earned", got)
+	}
 }

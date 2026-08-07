@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { AnswerPanel, type AnswerState } from "./AnswerPanel";
+import type { TraceStage } from "../api/answer";
 
 // Four retrieved passages, of which an answer typically uses some. The panel
 // shows what it used — see answerSources.ts. Passages 1 and 4 come from the SAME
@@ -844,5 +845,40 @@ describe("AnswerPanel trace, failed generation", () => {
     expect(rows[1]).not.toHaveTextContent("Wrote the answer");
     // The time is the point of keeping the row at all.
     expect(rows[1]).toHaveTextContent("90.0s");
+  });
+});
+
+// The footer states the split; it never characterises it. The old copy opened
+// "the model calls are nearly all of the wait" as a hardcoded claim, and a cold
+// page cache made it call 16.5s of 61.0s "nearly all" — directly beneath bars
+// showing the opposite. The numbers are already on screen, so a sentence that
+// adds a verdict to them can only contradict them.
+describe("AnswerPanel trace footer", () => {
+  function footerFor(stages: TraceStage[]): string {
+    render(<Panel state={state({ text: "Yes[1].", trace: stages })} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /how this was answered/i }),
+    );
+    return document.querySelector(".trace-foot")!.textContent!;
+  }
+
+  it("states the split without judging it, when local work dominates", () => {
+    const foot = footerFor([
+      { key: "keyword", ms: 36200, tool: "sqlite FTS5", kind: "local" },
+      { key: "answer", ms: 12600, tool: "mimo-v2.5-pro", kind: "model" },
+    ]);
+    expect(foot).toContain("12.6s");
+    expect(foot).toContain("48.8s");
+    expect(foot).not.toMatch(/nearly all/i);
+  });
+
+  it("says the same thing when the models do dominate", () => {
+    const foot = footerFor([
+      { key: "keyword", ms: 170, tool: "sqlite FTS5", kind: "local" },
+      { key: "answer", ms: 12600, tool: "mimo-v2.5-pro", kind: "model" },
+    ]);
+    expect(foot).toContain("12.6s");
+    expect(foot).toContain("12.8s");
+    expect(foot).not.toMatch(/nearly all/i);
   });
 });
