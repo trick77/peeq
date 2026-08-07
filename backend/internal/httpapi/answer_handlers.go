@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/rag"
@@ -81,6 +82,124 @@ type answerVideo struct {
 	// byline every other card in the app does. Omitted for a video whose date
 	// was never learned; the card then simply shows the channel.
 	PublishedAt string `json:"published_at,omitempty"`
+}
+
+// traceStage is one step of the pipeline, as the answer panel reports it.
+//
+// KEY, NOT PROSE. The label a reader sees ("Turned the question into numbers")
+// lives in the frontend, because it is copy: it gets reworded, and rewording it
+// must not be a backend deploy. What the backend owns is which step ran, what
+// ran it, and what it cost — the three things only the backend can know.
+//
+// Tool is empty for a step that called nothing. That is not the same as unknown,
+// and the panel renders it as an absence rather than as a word: a row saying "no
+// tool" would spend a line on something that did not happen.
+type traceStage struct {
+	Key string `json:"key"`
+	Ms  int64  `json:"ms"`
+	// Tool is the model deployment or storage engine that ran this step —
+	// "mimo-v2.5", "sqlite-vec". Read from the thing that actually ran (see
+	// llm.ModelFor and SearchEmbedder.Model) rather than written out here, so a
+	// redeployment cannot leave the panel naming a model nobody is using.
+	Tool string `json:"tool,omitempty"`
+	// Kind is how to read Tool: "model" for a call that left this machine,
+	// "local" for a query against the library, "code" for neither.
+	Kind string `json:"kind"`
+}
+
+const (
+	traceKindModel = "model"
+	traceKindLocal = "local"
+	traceKindCode  = "code"
+)
+
+// semanticRan reports whether either vector lane actually reached the store.
+//
+// `failed` counts as ran: a KNN query that errored still went to sqlite-vec and
+// still cost the wait. What this excludes is the case where no query was ever
+// issued — no embedder wired, or an embedding that failed before the lanes
+// could run — which is the difference between "sqlite-vec found nothing" and
+// "sqlite-vec was never asked".
+func semanticRan(d askDiag) bool {
+	return d.semRaw.ran || d.semRaw.failed || d.semTopic.ran || d.semTopic.failed
+}
+
+// answerTrace accumulates the stages of one answer, in the order they ran.
+//
+// It is filled as the handler goes rather than assembled at the end, because
+// half of these steps are conditional and the only place that knows a step
+// happened is the branch that ran it.
+type answerTrace struct {
+	stages []traceStage
+}
+
+// add records a step that RAN. A step that was skipped never calls this, which
+// is the whole mechanism behind "the panel lists what happened": there is no
+// flag to forget to set, because a stage exists only if some branch appended it.
+//
+// A sub-millisecond step still gets a row. Rounding it away would drop the
+// channel lookup and the merge from most traces, and "the search matched a
+// channel" is worth saying even when it took no measurable time.
+func (t *answerTrace) add(key, tool, kind string, ms int64) {
+	if ms < 0 {
+		// Derived spans can go negative when two clocks disagree by a tick (see
+		// the vector stage, which is a subtraction). Report zero rather than a
+		// bar that draws backwards.
+		ms = 0
+	}
+	t.stages = append(t.stages, traceStage{Key: key, Ms: ms, Tool: tool, Kind: kind})
+}
+
+// log writes the same trace the panel gets, as one line.
+//
+// INFO, not Debug, for the reason askDiag.log gives above itself: an Ask is
+// user-initiated and rare, one line each is not noise, and a diagnostic nobody
+// can see without redeploying at a different level is a diagnostic nobody uses.
+// "It is for debugging" is an argument for Info here, not against it — Debug is
+// about volume, and this has none.
+//
+// It exists because until now the trace went to the BROWSER and nowhere else.
+// Half these steps — the channel lookup, the merge, the count — had no
+// server-side record at all, so a reader reporting what the panel showed them
+// could not be matched against anything. Logged from the same defer that sends
+// the frame, so the two cannot disagree, and so it still lands when the client
+// has already disconnected.
+//
+// Generation is in here rather than on a line of its own. It is the step that
+// had no measurement anywhere before this, and splitting it out would leave two
+// uncorrelated lines per Ask to read together — there is no request id to join
+// them by.
+func (t answerTrace) log(q string, ttft time.Duration) {
+	if len(t.stages) == 0 {
+		return
+	}
+	// Packed into one field rather than spread across many, matching the
+	// "embed=%d fts=%d retrieval=%d" shape askDiag.log already uses: the stage
+	// list is variable-length, and a line whose KEYS change per request is one
+	// no log query can group.
+	parts := make([]string, 0, len(t.stages))
+	models := make([]string, 0, 3)
+	var total int64
+	for _, s := range t.stages {
+		parts = append(parts, fmt.Sprintf("%s=%d", s.Key, s.Ms))
+		total += s.Ms
+		// Only the model calls. The storage engines are compiled in and cannot
+		// surprise anyone; a model id is configuration and is the thing worth
+		// having in the record when an answer has to be explained later.
+		if s.Kind == traceKindModel {
+			models = append(models, s.Tool)
+		}
+	}
+	slog.Info("ask trace",
+		"q", q,
+		"stages", strings.Join(parts, " "),
+		"total_ms", total,
+		// The part of the wait a reader actually experiences: after the first
+		// token they are reading, not waiting. 0 when no token ever arrived,
+		// which is itself the finding.
+		"ttft_ms", ttft.Milliseconds(),
+		"models", orDash(strings.Join(models, "|")),
+	)
 }
 
 const (
@@ -164,11 +283,46 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { send("done", map[string]string{"reason": "stop"}) }()
 
+	// How the answer was made, sent as one frame once it has been.
+	//
+	// A DEFER, and registered after done's on purpose: defers unwind last-in
+	// first-out, so this one runs BEFORE done and the frame lands where the
+	// client expects it — last but one. It has to be a defer rather than a
+	// statement because handleAnswer returns from six different places (client
+	// gone, nothing retrieved, no chat wired, a failed stream), and a trace that
+	// only arrived on the happy path would be missing from exactly the answers
+	// worth investigating.
+	//
+	// A failed answer therefore traces every step that ran, with the generation
+	// row named for what happened to it — the call was made and cost real time,
+	// so it is listed, but as "Couldn't write the answer" rather than as having
+	// written one. An answer the model was never asked for has no row at all.
+	var tr answerTrace
+	// Declared up here rather than beside the model call so the defer below can
+	// read it: the log line and the stream frame are written in the same place,
+	// which is what stops them ever describing different runs.
+	var ttft time.Duration
+
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
+		// Registered below this return on purpose, so a blank query keeps its
+		// two-frame stream and writes no log line. Nothing ran; there is nothing
+		// to trace and nothing to say about it.
 		send("sources", map[string]any{"sources": []any{}, "videos": []any{}})
 		return
 	}
+
+	defer func() {
+		// Belt and braces after the blank-query return above: a client that hung
+		// up before the first stage completed leaves nothing worth reporting.
+		if len(tr.stages) == 0 {
+			return
+		}
+		send("trace", map[string]any{"stages": tr.stages})
+		// Logged whether or not the frame reached anyone. A client that hung up
+		// mid-answer is a case worth having a record of, not one worth losing.
+		tr.log(q, ttft)
+	}()
 
 	// Understand the question before searching for it. This is the step that
 	// stops "what material about bike geometry do we have" searching for the word
@@ -176,14 +330,26 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// the query. It never fails the request — a bad or absent understanding just
 	// means the raw question, which is what this endpoint did before.
 	u, ud := s.understandQuery(r.Context(), q)
+	// Skipped means no understander is wired, so there was no step to report.
+	if ud.status != understandSkipped {
+		tr.add("understand", ud.model, traceKindModel, ud.ms)
+	}
 
 	// Resolve the structured half against the library before searching under it.
 	// The model reported channel NAMES; only the library can say which ids those
 	// are, and a name it cannot place drops out here rather than filtering the
 	// search down to nothing. See resolve_channel.go.
+	channelStart := time.Now()
 	ch := s.resolveChannels(u.Filters.Channels)
 	filter := s.buildFilter(u.Filters, ch)
 	applied := describeFilter(u.Filters, ch)
+	// Only when the question actually named a channel. resolveChannels returns
+	// immediately on an empty list without touching the library, so tracing it
+	// unconditionally would report a lookup that never happened on the majority
+	// of questions.
+	if len(u.Filters.Channels) > 0 {
+		tr.add("channels", "sqlite", traceKindLocal, time.Since(channelStart).Milliseconds())
+	}
 
 	// The reader has now been waiting a second or so with nothing on the wire, so
 	// say what happened before starting retrieval. The topic travels with it: a
@@ -205,7 +371,9 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	diag.counting = ud.counting
 	diag.filters, diag.filtersDropped = strings.Join(applied, "|"), ud.dropped
 	diag.unresolved = ch.Unresolved
+	mergeStart := time.Now()
 	hits := rag.FuseWeighted(lanes, searchCandidates)
+	mergeMs := time.Since(mergeStart).Milliseconds()
 
 	// Over-filtering is this feature's own failure mode, and it lies. "unwatched
 	// videos about ontology" on a library holding three watched ones would
@@ -220,14 +388,78 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	var relaxed []string
 	if !filter.Empty() && len(hits) == 0 {
 		wide, wdiag := s.askLanes(r, q, u.Topic, rag.Filter{}, &qv)
-		if wideHits := rag.FuseWeighted(wide, searchCandidates); len(wideHits) > 0 {
+		wideStart := time.Now()
+		wideHits := rag.FuseWeighted(wide, searchCandidates)
+		// Accounted for OUTSIDE the branch below, because the second search ran
+		// either way. A re-run that also found nothing is the slowest path this
+		// endpoint has — a full FTS ladder and two KNN queries on top of the
+		// first pass — and billing it only when it succeeded understated exactly
+		// the wait most worth knowing about by roughly half.
+		mergeMs += time.Since(wideStart).Milliseconds()
+		wideFTS, wideRetrieval := wdiag.ftsMs, wdiag.retrievalMs
+		wideQueried, wideSem := wdiag.ftsQueried, semanticRan(wdiag)
+		if len(wideHits) > 0 {
 			relaxed = applied
+			// The wide pass's diag REPLACES the narrow one, which would drop the
+			// timings of a search that genuinely happened. Carry them forward so
+			// the trace reports the whole wait rather than the second half.
+			//
+			// embedMs is the exception and is deliberately not carried: the wide
+			// pass reuses the memoized vectors (see queryVectors) and records 0ms
+			// because that is what it cost. Adding the two would bill the reader
+			// twice for one embedding.
+			narrowFTS, narrowRetrieval := diag.ftsMs, diag.retrievalMs
+			narrowEmbed := diag.embedMs
+			narrowQueried, narrowSem := diag.ftsQueried, semanticRan(diag)
 			lanes, diag, hits = wide, wdiag, wideHits
+			diag.ftsMs = wideFTS + narrowFTS
+			diag.retrievalMs = wideRetrieval + narrowRetrieval
+			diag.embedMs = narrowEmbed
+			diag.ftsQueried = wideQueried || narrowQueried
 			diag.understand, diag.understandMs = string(ud.status), ud.ms
 			diag.counting = ud.counting
 			diag.filters, diag.filtersDropped = strings.Join(applied, "|"), ud.dropped
 			diag.unresolved, diag.relaxed = ch.Unresolved, true
+			// semanticRan reads the two lane diags, which came across with wdiag.
+			// If only the narrow pass reached the vector store, say so.
+			if narrowSem && !wideSem {
+				diag.semRaw.ran = true
+			}
+		} else {
+			// Nothing swapped in, so the wide pass's cost has to be added to the
+			// diag that stays.
+			diag.ftsMs += wideFTS
+			diag.retrievalMs += wideRetrieval
+			diag.ftsQueried = diag.ftsQueried || wideQueried
+			if wideSem {
+				diag.semRaw.ran = true
+			}
 		}
+	}
+
+	// The two searches and the merge, in the order they happened.
+	//
+	// The vector span is DERIVED, not measured: retrievalMs runs from the same
+	// start as ftsMs (see askLanes), so it is a total that already contains the
+	// keyword ladder and the embedding. Reporting all three as siblings would
+	// draw bars summing to nearly twice the wall clock.
+	//
+	// Each gated on whether it HAPPENED, never on its duration — a step that
+	// never ran and one that ran in under a millisecond both report 0ms, so a
+	// duration cannot tell them apart. Three real configurations reach here with
+	// one of these missing: a query with no usable terms builds no FTS ladder at
+	// all, a deployment with no embedder skips the semantic block wholesale, and
+	// an embedding that fails leaves both vector lanes unrun while retrieval
+	// carries on FTS-only. Each of those used to draw a row for work nobody did,
+	// count it toward "N queries of your library", and add its bar to the total.
+	if diag.ftsQueried {
+		tr.add("keyword", "sqlite FTS5", traceKindLocal, diag.ftsMs)
+	}
+	if diag.embedQueried && s.embedder != nil {
+		tr.add("embed", s.embedder.Model(), traceKindModel, diag.embedMs)
+	}
+	if semanticRan(diag) {
+		tr.add("vector", "sqlite-vec", traceKindLocal, diag.retrievalMs-diag.ftsMs-diag.embedMs)
 	}
 
 	// A comparison is two channels the library actually HAS, named deliberately.
@@ -235,7 +467,13 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// for "Veritasium and Numberphile" on a library holding only the first —
 	// which is not a comparison at all — and channelResolution.Ambiguous keeps
 	// one uncertain name that matched several channels out of it.
+	selectStart := time.Now()
 	sources, vids, excerpts, chosen := s.buildAnswerContext(hits, len(ch.Matched) > 1 && !ch.Ambiguous)
+	// One row for fusing and choosing together, because they are one idea to a
+	// reader: the two searches came back and this is what was kept out of them.
+	// Split apart they would be two adjacent rows with no tool between them,
+	// saying nothing the merged row does not.
+	tr.add("merge", "", traceKindCode, mergeMs+time.Since(selectStart).Milliseconds())
 	// Logged HERE rather than inside askLanes, because only now is it known which
 	// passages the model was actually given — the number that says whether a lane
 	// changed what was read, not merely what was found.
@@ -254,7 +492,14 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// a number with no relation to the question, handed to the model as
 	// authoritative and printed above the answer. A count is meaningful exactly
 	// when there is a scope row beside it saying what it counts.
-	counts := s.inventoryCount(r.Context(), u.Counting, u.Topic, filter)
+	countStart := time.Now()
+	counts, counted := s.inventoryCount(r.Context(), u.Counting, u.Topic, filter)
+	// On whether the query RAN, not on whether it produced a number: a count that
+	// reached sqlite and errored also returns nil, and it cost the same wait as
+	// one that worked.
+	if counted {
+		tr.add("count", "sqlite", traceKindLocal, time.Since(countStart).Milliseconds())
+	}
 
 	payload := map[string]any{
 		"sources": sources, "videos": vids,
@@ -316,12 +561,34 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// answer is wanted — "what material do we have on X" and "how does X work"
 	// reduce to the same topic and want different answers. The model gets the
 	// sentence the reader actually wrote; only the embedder sees the reduction.
+	//
+	// Timed here and nowhere else. diag.log fires above, before this call, so
+	// until now the longest step of the whole pipeline — around five seconds, more
+	// than everything else put together — was the one step with no measurement
+	// anywhere. Time to the FIRST token is tracked separately because that is the
+	// part a reader experiences as waiting; the rest of the stream arrives while
+	// they are already reading. Both reach the log through answerTrace.log.
+	answerStart := time.Now()
 	answer, err := s.ask.CompleteStream(ctx, answerMessages(q, excerpts, applied, relaxed, counts), func(delta string) {
+		if ttft == 0 {
+			ttft = time.Since(answerStart)
+		}
 		// A send error means the browser disconnected. Nothing to do about it
 		// here; the request context is already cancelled, which unwinds the
 		// upstream call.
 		send("token", map[string]string{"text": delta})
 	})
+	// The row stays even when the call failed, because the time is real and a
+	// failure that took ninety seconds is exactly the one worth seeing. But it
+	// must not say the model WROTE the answer while the panel above it says the
+	// answer is unavailable — so the failure gets its own key and its own words.
+	// Keys are how the panel names a step (see STAGE_LABELS), which is what makes
+	// this a rename rather than a new field on the wire.
+	answerKey := "answer"
+	if err != nil || strings.TrimSpace(answer) == "" {
+		answerKey = "answer_failed"
+	}
+	tr.add(answerKey, llm.ModelFor(ctx), traceKindModel, time.Since(answerStart).Milliseconds())
 	switch {
 	case err != nil:
 		slog.Warn("answer: chat failed", "err", err)
@@ -676,9 +943,13 @@ func (s *server) chooseExcerpts(hits []rag.Hit, compare bool) []excerptCandidate
 // every one of those means the answer is written from the excerpts alone, which
 // is what it did before counting existed. A count that cannot be trusted is
 // worse than no count, because the prompt tells the model to believe it.
-func (s *server) inventoryCount(ctx context.Context, counting bool, topic string, f rag.Filter) *rag.LibraryCount {
+// The second return says whether the COUNT QUERY RAN, which nil cannot: this
+// returns nil both for a question that was never counting and for a count that
+// reached sqlite and errored. The answer trace has to tell those apart — the
+// second one cost the reader a query and belongs in the list.
+func (s *server) inventoryCount(ctx context.Context, counting bool, topic string, f rag.Filter) (*rag.LibraryCount, bool) {
 	if !counting || s.rag == nil {
-		return nil
+		return nil, false
 	}
 	// THE COUNT CANNOT SEE THE TOPIC. It is SQL over the videos table, and no
 	// column holds "is about ontology" — only retrieval knows that, and only
@@ -698,14 +969,14 @@ func (s *server) inventoryCount(ctx context.Context, counting bool, topic string
 	// the count is just "how big is my library", and there would be no scope row
 	// above it saying what it counted.
 	if topic != "" || f.Empty() {
-		return nil
+		return nil, false
 	}
 	c, err := s.rag.CountVideos(ctx, f)
 	if err != nil {
 		slog.Warn("answer: inventory count failed", "err", err)
-		return nil
+		return nil, true
 	}
-	return &c
+	return &c, true
 }
 
 // deterministicNote is what the reader is told before the model says anything,

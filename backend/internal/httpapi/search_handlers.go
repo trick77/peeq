@@ -367,6 +367,9 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, q
 	ftsStart := time.Now()
 	videosSeen := make(map[string]bool)
 	for _, tier := range rag.BuildFTSQueries(q) {
+		// Before the call, not after: a rung that errors still queried sqlite and
+		// still cost the reader the wait.
+		diag.ftsQueried = true
 		hits, err := s.rag.SearchFTSFiltered(r.Context(), tier.Match, searchCandidates, filter)
 		if err != nil {
 			slog.Warn("search: FTS degraded", "err", err)
@@ -400,6 +403,9 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, q
 		if topic != "" {
 			inputs = append(inputs, topic)
 		}
+		// Set whether the vectors are computed here or reused from the first pass
+		// of a relaxed search: either way this question got embedded.
+		diag.embedQueried = true
 		embedStart := time.Now()
 		var vecs [][]float32
 		var err error
@@ -559,6 +565,26 @@ type askDiag struct {
 	relaxed        bool
 
 	embedMs, ftsMs, retrievalMs int64
+
+	// Whether each retrieval step ACTUALLY HAPPENED, as opposed to how long it
+	// took. The two are not the same question and a duration cannot answer it: a
+	// step that never ran and a step that ran in under a millisecond both report
+	// 0ms.
+	//
+	// The answer trace needs this and nothing else does. Its whole claim is that
+	// it lists the steps that ran, so it may not infer "the library was searched"
+	// from the absence of an error — BuildFTSQueries returns no tiers at all for
+	// a query with no usable terms, a nil embedder skips the semantic block
+	// wholesale, and an Embed that fails leaves both vector lanes unrun. Each of
+	// those used to draw a row for work nobody did.
+	//
+	// ftsQueried means at least one MATCH went to sqlite, whether or not it
+	// matched anything — a search that ran and found nothing did run.
+	ftsQueried bool
+	// embedQueried means the question was turned into a vector for this request,
+	// including the relaxation pass that reuses the memoized one: the embedding
+	// happened, it simply was not paid for twice.
+	embedQueried bool
 
 	// excerpts is the attribution the caller fills in once it knows which
 	// passages the model was actually handed: the total, and how many of them

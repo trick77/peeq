@@ -62,6 +62,11 @@ func NewEmbedClient(cfg EmbedConfig, hc *http.Client) *EmbedClient {
 	}
 }
 
+// Model names the deployment this client embeds against. It is configuration,
+// not a secret — the same string already rides on every request body — and the
+// answer trace has to say which model turned the question into a vector.
+func (c *EmbedClient) Model() string { return c.model }
+
 type embedRequest struct {
 	Model string   `json:"model"`
 	Input []string `json:"input"`

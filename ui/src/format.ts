@@ -230,6 +230,24 @@ export function formatSize(bytes: number | undefined): string {
   return `${bytes} B`;
 }
 
+// formatMs renders a step duration for the answer trace: seconds with one
+// decimal once past a second, whole milliseconds below.
+//
+// Not formatDuration, which takes SECONDS and renders clock time — it turns a
+// 400ms step into "0:00", and a trace made of "0:00" rows says nothing at all.
+// The threshold is where the unit stops helping: "1200ms" makes a reader count
+// digits, "1.2s" does not, and below a second the decimal would be noise on a
+// number nobody compares that finely.
+//
+// Zero is a real answer here and prints as "0ms". A sub-millisecond step did
+// happen, and blanking it would leave the one row in the trace with no duration
+// looking like the one row that failed to report.
+export function formatMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0ms";
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
 // GRADIENT_CLASSES mirrors the mockup's six thumbnail gradient fallbacks
 // (g1..g6, defined in index.css). gradientClassFor picks a stable one per
 // video id (a simple string hash) so a given card keeps the same color

@@ -185,3 +185,43 @@ describe("streamAnswer", () => {
     );
   });
 });
+
+describe("the trace frame", () => {
+  it("narrows the stages it carries", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeStreamResponse(
+        frames(
+          `event: trace\ndata: {"stages":[{"key":"answer","ms":4800,"tool":"mimo-v2.5-pro","kind":"model"}]}`,
+          `event: done\ndata: {"reason":"stop"}`,
+        ),
+      ),
+    );
+    const got: AnswerEvent[] = [];
+    await streamAnswer("q", (e) => got.push(e));
+
+    expect(got.map((e) => e.type)).toEqual(["trace", "done"]);
+    expect(got[0]).toEqual({
+      type: "trace",
+      stages: [
+        { key: "answer", ms: 4800, tool: "mimo-v2.5-pro", kind: "model" },
+      ],
+    });
+  });
+
+  // An empty trace is not worth a render — the panel would show a "How this was
+  // answered" disclosure over nothing.
+  it("drops a frame carrying no stages", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeStreamResponse(
+        frames(
+          `event: trace\ndata: {"stages":[]}`,
+          `event: done\ndata: {"reason":"stop"}`,
+        ),
+      ),
+    );
+    const got: AnswerEvent[] = [];
+    await streamAnswer("q", (e) => got.push(e));
+
+    expect(got.map((e) => e.type)).toEqual(["done"]);
+  });
+});

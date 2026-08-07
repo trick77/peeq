@@ -66,6 +66,17 @@ func modelFrom(ctx context.Context) string {
 	return model
 }
 
+// ModelFor names the deployment a call made with ctx will reach, for a caller
+// that has to REPORT which model ran a step rather than choose one.
+//
+// It delegates to modelFrom rather than repeating the rule. That is the whole
+// point of it existing: the model ids are unexported consts chosen inside this
+// package, so a caller that wanted to label a call could only hardcode a second
+// copy of both names and the ShortGate test between them — three things that
+// drift silently, and whose drift shows up as a wrong model name on a panel
+// nobody would think to distrust.
+func ModelFor(ctx context.Context) string { return modelFrom(ctx) }
+
 // --- max tokens ---------------------------------------------------------------
 
 type maxTokensKey struct{}

@@ -5,6 +5,7 @@ import {
   type AnswerSource,
   type AnswerVideo,
   type LibraryCount,
+  type TraceStage,
 } from "./api/answer";
 import { citedInOrder, groupCited } from "./answerSources";
 import type { AnswerState } from "./components/AnswerPanel";
@@ -162,6 +163,11 @@ export function useSearchState(): SearchState {
     let relaxed: string[] = [];
     let unresolvedChannels: string[] = [];
     let counts: LibraryCount | undefined;
+    // How the answer was made. It arrives last, so it is only ever read by the
+    // settled panel — but it has to be threaded through BOTH setAnswer calls
+    // below, because the one in .finally() rebuilds the state from scratch and
+    // would otherwise drop it at the exact moment the panel starts showing it.
+    let trace: TraceStage[] | undefined;
     let text = "";
     let failed = false;
     // Whether retrieval reported at all. An empty source list means the library
@@ -216,6 +222,9 @@ export function useSearchState(): SearchState {
             // before: the frame already arrived, nothing acted on it.
             phase = "generating";
             break;
+          case "trace":
+            trace = e.stages;
+            break;
           case "token":
             text += e.text;
             break;
@@ -236,6 +245,7 @@ export function useSearchState(): SearchState {
           relaxed,
           unresolvedChannels,
           counts,
+          trace,
           failed,
         });
         // The done frame is the normal end, and acting on it rather than
@@ -281,6 +291,7 @@ export function useSearchState(): SearchState {
                 relaxed,
                 unresolvedChannels,
                 counts,
+                trace,
                 failed,
               }
             : null,

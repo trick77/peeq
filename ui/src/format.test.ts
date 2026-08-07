@@ -4,6 +4,8 @@ import {
   daysSince,
   formatAge,
   formatAgo,
+  formatDuration,
+  formatMs,
   formatSize,
   resolutionLabel,
   shortWatchLink,
@@ -290,5 +292,31 @@ describe("watchURL / shortWatchLink", () => {
       "https://www.youtube.com/watch?v=aircAruvnKk",
     );
     expect(shortWatchLink("aircAruvnKk")).toBe("youtu.be/aircAruvnKk");
+  });
+});
+
+describe("formatMs", () => {
+  // The unit switches where it stops helping a reader: "1200ms" makes you count
+  // digits, "1.2s" does not.
+  it("renders seconds past a second and milliseconds below", () => {
+    expect(formatMs(40)).toBe("40ms");
+    expect(formatMs(999)).toBe("999ms");
+    expect(formatMs(1000)).toBe("1.0s");
+    expect(formatMs(4800)).toBe("4.8s");
+  });
+
+  // A sub-millisecond step still happened. Blanking it would leave the one row
+  // in the trace with no duration looking like the one row that failed.
+  it("prints a zero rather than nothing", () => {
+    expect(formatMs(0)).toBe("0ms");
+    expect(formatMs(-1)).toBe("0ms");
+    expect(formatMs(NaN)).toBe("0ms");
+  });
+
+  // The reason this exists at all: formatDuration takes SECONDS and renders
+  // clock time, so every step in a trace would print as "0:00".
+  it("is not formatDuration", () => {
+    expect(formatDuration(0.4)).toBe("0:00");
+    expect(formatMs(400)).toBe("400ms");
   });
 });
