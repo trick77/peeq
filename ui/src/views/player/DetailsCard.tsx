@@ -49,7 +49,7 @@ type Group = { title: string; rows: Row[]; tags?: string[] };
 // buildGroups turns the video — and, once it has been fetched, its index
 // stats — into the panel's contents. Split out from the component so the
 // drop-what-is-missing rule is one readable pass rather than a thicket of JSX
-// conditionals, and so it can be tested as data.
+// conditionals.
 //
 // Note what is NOT here: format_used, the resolved yt-dlp -f selector. It had
 // a pill of its own in the player once, and rendered as
@@ -64,10 +64,7 @@ type Group = { title: string; rows: Row[]; tags?: string[] };
 // 'unknown' in practice, is written once at metadata time and never
 // refreshed, so the row would still read "Available" for a video YouTube
 // deleted a year ago.
-export function buildGroups(
-  video: Video,
-  stats: VideoEmbeddings | null,
-): Group[] {
+function buildGroups(video: Video, stats: VideoEmbeddings | null): Group[] {
   const file: Row[] = [
     // formatDuration renders "--:--" for an unknown length, which is the right
     // answer under a scrubber and the wrong one here: a labelled figure
@@ -170,23 +167,18 @@ export function buildGroups(
     .filter((g) => g.rows.length > 0 || (g.tags?.length ?? 0) > 0);
 }
 
-// GLANCE_MAX is how many facts the collapsed line carries. Three is what fits
-// beside the label at the narrowest width the panel is drawn at without
-// wrapping, and they are taken in order of how often someone wants them.
-const GLANCE_MAX = 3;
-
 // glanceOf is the collapsed line's right-hand summary — the two or three
-// figures worth reading without opening anything. Built from the same values
-// as the File group and dropped the same way, so an unprobed video shows
-// "34:12 · 412 MB" rather than a row of blanks and separators.
-export function glanceOf(video: Video): string {
+// figures worth reading without opening anything, and as many as fit beside
+// the label at the narrowest width the line is drawn at. Built from the same
+// values as the File group and dropped the same way, so an unprobed video
+// shows "34:12 · 412 MB" rather than a row of blanks and separators.
+function glanceOf(video: Video): string {
   return [
     video.duration_seconds ? formatDuration(video.duration_seconds) : "",
     formatSize(video.filesize_bytes),
     resolutionLabel(video.video_height),
   ]
     .filter(Boolean)
-    .slice(0, GLANCE_MAX)
     .join(" · ");
 }
 
