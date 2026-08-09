@@ -136,15 +136,17 @@ export function TranscriptCard({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
-        <Icon
-          name="chevronRight"
-          size="16px"
-          style={{
-            transition: "transform .15s",
-            transform: open ? "rotate(90deg)" : "none",
-          }}
-        />
+        {/* A leading topic glyph and a trailing chevron, as Contents,
+            Highlights and Details all carry. This header used to spend its
+            leading slot on a chevronRight that rotated 90deg when open, which
+            left the card as the one panel with no icon saying what it is, and
+            with its open/shut affordance in a different place from every
+            sibling. */}
+        <Icon name="captions" size="16px" />
         <span className="lbl">Transcript</span>
+        <span className="chev">
+          <Icon name={open ? "chevronUp" : "chevronDown"} size="15px" />
+        </span>
       </button>
       {open && (
         <>
