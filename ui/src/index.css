@@ -2927,6 +2927,14 @@ button.sleeppick.armed {
   bottom: 0;
   border-radius: 2px;
   pointer-events: none;
+  /* A band is as wide as its share of the video, and that share can be tiny:
+     a 13-second sponsor read on a two-and-a-half-hour podcast is 0.13% of the
+     bar — under one pixel, drawn with a 45deg gradient whose stripes are 5px
+     apart. It rendered as nothing at all, while the legend below (whose swatch
+     is a fixed 20px) went on naming it and auto-skip went on jumping it. The
+     floor costs a few seconds of positional accuracy on a segment already too
+     short to aim at, and buys a mark you can actually see. */
+  min-width: 4px;
   background: repeating-linear-gradient(
     45deg,
     color-mix(in srgb, var(--color-online) 85%, transparent) 0 5px,
