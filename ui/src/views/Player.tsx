@@ -624,18 +624,20 @@ export function Player({
     };
   }, [videoId, summaryEvent]);
 
-  // Index stats for the Details panel's Search index group. Fetched only once
-  // the panel is actually open — it rests closed, and a player that loads
-  // figures nobody asked to see is a request per video for nothing.
+  // Index stats for the Details panel's Search index group. Fetched with the
+  // page, not when the panel is opened: opening it must show the whole record
+  // at once, and a group that arrives a moment later makes the panel look like
+  // it is still thinking. The request is small and the panel is on every
+  // player, so the cost is one cheap call per video.
   //
-  // Keyed on `indexed` as well as on the video id, so an open panel gains the
-  // group on its own when the embedding step finishes mid-watch: the SSE effect
-  // above refetches the video, `indexed` flips true, and this runs.
-  // Best-effort throughout — a failure leaves the group out rather than putting
-  // an error under the video.
+  // Keyed on `indexed` as well as on the video id, so the panel gains the group
+  // on its own when the embedding step finishes mid-watch: the SSE effect above
+  // refetches the video, `indexed` flips true, and this runs. Best-effort
+  // throughout — a failure leaves the group out rather than putting an error
+  // in the card.
   useEffect(() => {
     setIndexStats(null);
-    if (!videoId || isPhone || !detailsOpen || !video?.indexed) return;
+    if (!videoId || isPhone || !video?.indexed) return;
     let cancelled = false;
     getVideoEmbeddings(videoId)
       .then((s) => {
@@ -645,7 +647,7 @@ export function Player({
     return () => {
       cancelled = true;
     };
-  }, [videoId, isPhone, detailsOpen, video?.indexed]);
+  }, [videoId, isPhone, video?.indexed]);
 
   // Load the global subtitles preference once per mount. A failure is not
   // fatal — playback must work even if settings can't be read — so it falls
@@ -1706,20 +1708,6 @@ export function Player({
               </span>
             </div>
           </div>
-          {/* The technical record, resting as one line. Not on a phone: that
-              layout is already a long single column of summary, chapters,
-              highlights and transcript, and file bookkeeping is not what it is
-              for — the same call the Search index card made before this panel
-              absorbed it. Asked in JS rather than hidden in CSS so the phone
-              also skips the embeddings request. */}
-          {!isPhone && (
-            <DetailsCard
-              video={video}
-              stats={indexStats}
-              open={detailsOpen}
-              onToggle={toggleDetails}
-            />
-          )}
         </div>
 
         <div className="belowvideo">
@@ -1760,6 +1748,21 @@ export function Player({
               /* "full" is the default this prop already carried; the second
                  class is the placement hook the single-column order uses. */
               className="full transcriptpanel"
+            />
+          )}
+          {/* Last in the stack, after the three panels people scroll down FOR.
+              Not on a phone: that layout is already a long single column of
+              summary, chapters, highlights and transcript, and file
+              bookkeeping is not what it is for — the same call the Search
+              index card made before this panel absorbed it. Asked in JS rather
+              than hidden in CSS so the phone also skips the embeddings
+              request. */}
+          {!isPhone && (
+            <DetailsCard
+              video={video}
+              stats={indexStats}
+              open={detailsOpen}
+              onToggle={toggleDetails}
             />
           )}
         </div>

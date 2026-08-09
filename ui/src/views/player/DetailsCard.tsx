@@ -185,7 +185,13 @@ function glanceOf(video: Video): string {
 // DetailsCard is the video's technical record: what the file is, where it came
 // from, and what search holds for it. Everything in it is reference material —
 // true, occasionally load-bearing, and not what anyone opened the page to read
-// — so it rests as one labelled line under the action row and opens in place.
+// — so it rests collapsed and opens in place.
+//
+// It is the last card in the stack below the video, after Contents, Highlights
+// and the transcript. Same card language as those three deliberately: Details
+// is one more thing about this video, not a special line, and a header that
+// toggles is the shape the page already uses. Last because it is the only one
+// of the four nobody scrolls down for.
 //
 // It replaced two surfaces. A five-column stat strip
 // (Length/Size/Format/Video/Audio) stood here and spent that space on every
@@ -214,23 +220,29 @@ export function DetailsCard({
   const groups = open ? buildGroups(video, stats) : [];
   const glance = glanceOf(video);
   return (
-    <div className="details">
+    /* detailspanel is a placement hook like summarypanel: in one column the
+       panels are ordered individually (see .playgrid's media query), and this
+       one is ordered last. */
+    <div className="card detailspanel">
       <button
         type="button"
-        className="specline"
+        className="hd hd-btn"
         aria-expanded={open}
         onClick={onToggle}
       >
-        <Icon name={open ? "chevronDown" : "chevronRight"} size="15px" />
+        <Icon name="fileText" size="16px" />
         <span className="lbl">Details</span>
         {/* Only while shut. Open, the File group repeats these three figures
-            a line below, and a summary of what is already on screen is noise
-            — on a video whose size and height are unknown it is the same
+            immediately below, and a summary of what is already on screen is
+            noise — on a video whose size and height are unknown it is the same
             string twice, one above the other. */}
-        {!open && glance && <span className="glance">{glance}</span>}
+        {!open && glance && <span className="meta glance">{glance}</span>}
+        <span className="chev">
+          <Icon name={open ? "chevronUp" : "chevronDown"} size="15px" />
+        </span>
       </button>
       {open && (
-        <div className="specbody">
+        <div className="detailsbody">
           {groups.length === 0 ? (
             /* Unreachable in practice — the Video ID row alone keeps Source
                populated — but an opened panel must never be an empty box. */
