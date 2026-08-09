@@ -28,21 +28,32 @@ const CHIPS: { id: VideoFilter; label: string }[] = [
 // SORT_OPTIONS is shared with the channel page's Archive tab so the two
 // lists can never drift apart in wording or in accepted values.
 //
-// Newest/Oldest are the default and carry no qualifier — they are the
-// long-standing ordering the grid is expected to have. The added-date pair is
-// the opt-in, so it names its date.
+// The import-date pair leads and is the default: the question the grid is
+// opened with is "what arrived last?", and ranking by airdate answered a
+// different one — import a batch of older videos and nothing new appears at the
+// top. Airdate is still one click away, unchanged.
+//
+// EVERY option names its date. Two different dates are on offer here, so an
+// unqualified "Newest first" cannot be read: it looks like it must mean the
+// obvious one, and which one is obvious depends on the reader.
+//
+// The ids stay `added_*` while the labels say "imported" — the ids are the
+// ?sort= wire contract the backend maps in sortClauses (videos/store.go) and
+// are asserted in tests on both sides. Only the wording moved.
 export const SORT_OPTIONS: { id: VideoSort; label: string }[] = [
-  { id: "newest", label: "Newest first" },
-  { id: "oldest", label: "Oldest first" },
-  { id: "added_newest", label: "Recently added" },
-  { id: "added_oldest", label: "Added, oldest first" },
+  { id: "added_newest", label: "Recently imported" },
+  { id: "added_oldest", label: "Imported, oldest first" },
+  { id: "newest", label: "Newest airdate" },
+  { id: "oldest", label: "Oldest airdate" },
   { id: "longest", label: "Longest first" },
   { id: "title", label: "Title A–Z" },
 ];
 
-// INBOX_SORT_OPTIONS drops the added-date pair for the Inbox and the channel
+// INBOX_SORT_OPTIONS drops the import-date pair for the Inbox and the channel
 // page's New tab. Items there have never been downloaded, so they have no
-// added date at all — offering it would be an option that cannot work. It
+// import date at all — offering it would be an option that cannot work, which
+// is also why those two lists still open on airdate rather than the default
+// used here. It
 // lives beside SORT_OPTIONS rather than in Inbox.tsx so the two lists stay
 // adjacent and cannot drift.
 export const INBOX_SORT_OPTIONS = SORT_OPTIONS.filter(
@@ -146,7 +157,7 @@ export function Library({
 }) {
   const [filter, setFilter] = useState<VideoFilter>("unwatched");
   const [category, setCategory] = useState<string>("all");
-  const [sort, setSort] = useState<VideoSort>("newest");
+  const [sort, setSort] = useState<VideoSort>("added_newest");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [allVideos, setAllVideos] = useState<Video[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);

@@ -1138,6 +1138,46 @@ describe("Library category chips", () => {
     });
   });
 
+  // The grid opens on import date, not air date: what it is asked on arrival is
+  // "what came in last?", and airdate-first buried a freshly imported batch of
+  // older videos wherever their release years fell. Pinned here — first fetch
+  // AND the select's own value — because this default has been argued both ways
+  // before and would otherwise drift back silently.
+  it("opens on import date, newest first", async () => {
+    vi.mocked(listVideos).mockResolvedValue([]);
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
+    await screen.findByLabelText(/sort/i);
+
+    expect((screen.getByLabelText(/sort/i) as HTMLSelectElement).value).toBe(
+      "added_newest",
+    );
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: "added_newest" }),
+      );
+    });
+  });
+
+  // Air date is still on offer, just no longer the default.
+  it("refetches by air date when that ordering is picked", async () => {
+    vi.mocked(listVideos).mockResolvedValue([]);
+    const user = userEvent.setup();
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
+    await screen.findByLabelText(/sort/i);
+
+    await user.selectOptions(screen.getByLabelText(/sort/i), "newest");
+
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: "newest" }),
+      );
+    });
+  });
+
   it("choosing a sort option refetches with that sort", async () => {
     vi.mocked(listVideos).mockResolvedValue([]);
     const user = userEvent.setup();

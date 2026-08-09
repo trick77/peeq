@@ -757,9 +757,10 @@ describe("Inbox", () => {
       );
     });
 
-    // The Library's added-date orderings are meaningless here: an inbox item
-    // has never been downloaded, so it has no added date to rank by. The
-    // dropdown must not offer them at all.
+    // The Library's import-date orderings — its default there — are meaningless
+    // here: an inbox item has never been downloaded, so it has no import date to
+    // rank by. The dropdown must not offer them at all, which is also why this
+    // list keeps opening on air date while the Library no longer does.
     it("offers only the orderings an undownloaded item can satisfy", async () => {
       vi.mocked(listPending).mockResolvedValue([older, newer]);
       render(<Inbox />);

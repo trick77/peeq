@@ -338,7 +338,8 @@ type ListOptions struct {
 	Category string
 	// Query matches case-insensitively against the title as a substring.
 	Query string
-	// Sort is newest|oldest|longest|title. Anything else means newest.
+	// Sort is newest|oldest|added_newest|added_oldest|longest|title. Anything
+	// else means newest.
 	Sort string
 	// ChannelID scopes to one channel. ChannelName is the fallback for rows
 	// written before channel ids were recorded, and is only consulted when
@@ -366,7 +367,15 @@ type ListOptions struct {
 // then orders same-day videos by when peeq recorded them, newest first.
 //
 // added_newest/added_oldest rank by downloaded_at — when peeq actually fetched
-// the file — and are offered in the dropdown rather than as the default. NULL
+// the file. They are what the Library and the channel Archive tab now open on,
+// so the grid answers "what arrived last?"; newest/oldest stayed the fallback
+// HERE for an unrecognized ?sort=, and remain reachable from the dropdown as
+// the airdate ordering. Note this leaves the default grid ordered by
+// downloaded_at, which is what #139 above produced — but by choosing an
+// existing option rather than by rewriting these clauses, and this time the
+// grid was watched in a running stack first — on a library seeded so that
+// import order is the exact reverse of airdate order, which is the case #139
+// got wrong. NULL
 // until a download succeeds, so an 'error' row (which the Library still lists,
 // see notInFlight, so it can be retried) has no added date. `x IS NULL`
 // evaluates to 0/1, so putting it first ASCENDING keeps dated rows ahead in

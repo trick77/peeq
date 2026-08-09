@@ -19,7 +19,7 @@ export function ArchiveTab({
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [category, setCategory] = useState("all");
-  const [sort, setSort] = useState<VideoSort>("newest");
+  const [sort, setSort] = useState<VideoSort>("added_newest");
   const [retentionDays, setRetentionDays] = useState(0);
 
   // The Archive tab keeps its own search/category/sort state rather than
