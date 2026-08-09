@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
@@ -33,12 +33,11 @@ import { formatDuration, gradientClassFor } from "../format";
 import { transcriptFilenameBase } from "../vtt";
 import { centerCuesRef } from "../captions";
 import { DOT } from "../sep";
-import { MediaStats } from "./player/MediaStats";
 import { ContentsCard } from "./player/ContentsCard";
 import { TranscriptCard } from "../components/TranscriptCard";
 import { UnfetchedVideo } from "./player/UnfetchedVideo";
 import { SummaryCard, HighlightsCard } from "./player/SidebarPanels";
-import { IndexCard } from "./player/IndexCard";
+import { DetailsCard } from "./player/DetailsCard";
 import { MOBILE_QUERY, useMediaQuery } from "../shell/useMediaQuery";
 import { MetaHeader } from "./player/MetaHeader";
 import { park, useParkedAt, videoHostNode } from "../videoHost";
@@ -79,6 +78,34 @@ const JUMP_SETTLE_SECONDS = 15;
 // to stop a few minutes late than to cut off a viewer who is still awake —
 // and the clamp is what makes resuming after a pause correct at all.
 const SLEEP_MAX_TICK_MS = 2000;
+
+// Where the Details panel's open/closed choice is kept. It is a preference
+// about how this browser shows every video, not a fact about any one of them,
+// so it lives in localStorage rather than in settings on the server — and
+// rather than in component state, which would forget it on the next video.
+const DETAILS_OPEN_KEY = "peeq.player.details";
+
+// Both accessors are wrapped, as App's rail-collapsed pair is: a browser with
+// storage blocked throws on access rather than returning null, and a reference
+// panel is not worth a broken player.
+function readDetailsOpen(): boolean {
+  try {
+    return (
+      typeof window !== "undefined" &&
+      window.localStorage?.getItem(DETAILS_OPEN_KEY) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function writeDetailsOpen(open: boolean) {
+  try {
+    window.localStorage?.setItem(DETAILS_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    /* storage blocked — the panel still opens, it just forgets. */
+  }
+}
 
 // fmt is the Task 17 alias for formatDuration used throughout the
 // intelligence panels below (chapters/highlights/transcript cues) — kept as
@@ -189,14 +216,22 @@ export function Player({
 }) {
   const [video, setVideo] = useState<Video | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // indexStats backs the Search index card. null means "not loaded" — either
-  // not fetched yet, not fetched at all (phone), or the request failed — and
-  // renders no card, since a reference panel is not worth an error line.
+  // indexStats backs the Details panel's last group. null means "not loaded" —
+  // not fetched yet, not fetched at all (phone, or the panel never opened), or
+  // the request failed — and renders no Search index group, since a reference
+  // figure is not worth an error line under the video.
   const [indexStats, setIndexStats] = useState<VideoEmbeddings | null>(null);
-  // The card is a desktop/tablet affordance: on a phone the page is one column
-  // that already runs summary, chapters, highlights and transcript, and index
-  // bookkeeping is not what that column is for. Asked in JS rather than hidden
-  // in CSS so the phone also skips the request. Same breakpoint as the shell's.
+  // Whether the Details panel is open. Persisted, so someone who wants the
+  // file facts on every video gets them without a click per video, and someone
+  // who does not never sees them again. Same breakpoint as the shell's for the
+  // phone case (see the render site).
+  const [detailsOpen, setDetailsOpen] = useState(readDetailsOpen);
+  const toggleDetails = useCallback(() => {
+    setDetailsOpen((wasOpen) => {
+      writeDetailsOpen(!wasOpen);
+      return !wasOpen;
+    });
+  }, []);
   const isPhone = useMediaQuery(MOBILE_QUERY);
   // App passes onMediaKnown as an inline arrow, so its identity changes every
   // render. Held in a ref so the effect that reports media presence depends on
@@ -589,14 +624,18 @@ export function Player({
     };
   }, [videoId, summaryEvent]);
 
-  // Index stats for the Search index card. Keyed on `indexed` as well as on the
-  // video id, so the card appears on its own when the embedding step finishes
-  // mid-watch: the SSE effect above refetches the video, `indexed` flips true,
-  // and this runs. Best-effort throughout — a failure leaves no card rather
-  // than an error in the rail.
+  // Index stats for the Details panel's Search index group. Fetched only once
+  // the panel is actually open — it rests closed, and a player that loads
+  // figures nobody asked to see is a request per video for nothing.
+  //
+  // Keyed on `indexed` as well as on the video id, so an open panel gains the
+  // group on its own when the embedding step finishes mid-watch: the SSE effect
+  // above refetches the video, `indexed` flips true, and this runs.
+  // Best-effort throughout — a failure leaves the group out rather than putting
+  // an error under the video.
   useEffect(() => {
     setIndexStats(null);
-    if (!videoId || isPhone || !video?.indexed) return;
+    if (!videoId || isPhone || !detailsOpen || !video?.indexed) return;
     let cancelled = false;
     getVideoEmbeddings(videoId)
       .then((s) => {
@@ -606,7 +645,7 @@ export function Player({
     return () => {
       cancelled = true;
     };
-  }, [videoId, isPhone, video?.indexed]);
+  }, [videoId, isPhone, detailsOpen, video?.indexed]);
 
   // Load the global subtitles preference once per mount. A failure is not
   // fatal — playback must work even if settings can't be read — so it falls
@@ -1667,7 +1706,20 @@ export function Player({
               </span>
             </div>
           </div>
-          <MediaStats video={video} />
+          {/* The technical record, resting as one line. Not on a phone: that
+              layout is already a long single column of summary, chapters,
+              highlights and transcript, and file bookkeeping is not what it is
+              for — the same call the Search index card made before this panel
+              absorbed it. Asked in JS rather than hidden in CSS so the phone
+              also skips the embeddings request. */}
+          {!isPhone && (
+            <DetailsCard
+              video={video}
+              stats={indexStats}
+              open={detailsOpen}
+              onToggle={toggleDetails}
+            />
+          )}
         </div>
 
         <div className="belowvideo">
@@ -1715,7 +1767,6 @@ export function Player({
 
       <aside className="side">
         <SummaryCard video={video} />
-        {indexStats && <IndexCard stats={indexStats} />}
       </aside>
       {video ? (
         <ConfirmDialog

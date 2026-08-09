@@ -323,3 +323,55 @@ export function watchURL(id: string): string {
 export function shortWatchLink(id: string): string {
   return `youtu.be/${id}`;
 }
+
+// bitrateLabel is the file's average bitrate — the one figure in the details
+// panel that is computed rather than measured. Size over length, so it counts
+// the container's overhead and both streams together: it is what the file
+// costs per second, not what the encoder was told to aim for.
+//
+// Both inputs are optional on the wire and either being absent means the
+// figure cannot be honest, so it is dropped rather than guessed. Mbps once
+// past a megabit, kbps below — a 96 kbps audio-only rip reading "0.1 Mbps"
+// tells you nothing you wanted to know.
+export function bitrateLabel(
+  bytes: number | undefined,
+  seconds: number | undefined,
+): string {
+  if (!bytes || bytes <= 0 || !seconds || seconds <= 0) return "";
+  const bitsPerSecond = (bytes * 8) / seconds;
+  // Rounded first, then compared: testing the raw figure against a megabit
+  // lets 999_600 bps fall through and round up to "1000 kbps", a unit that
+  // has already run out.
+  const kbps = Math.round(bitsPerSecond / 1000);
+  if (kbps >= 1000) {
+    return `${(bitsPerSecond / 1_000_000).toFixed(1)} Mbps`;
+  }
+  return `${kbps} kbps`;
+}
+
+// languageLabel names an audio track's language tag ("en", "de-CH") the way a
+// person would. Intl.DisplayNames does the naming, wrapped because the tag
+// comes from yt-dlp and a malformed one throws rather than returning null —
+// an unnameable tag falls back to itself uppercased, which is still readable.
+//
+// The formatter is built once and kept, as GROUPED in DetailsCard is:
+// Intl.DisplayNames is among the more expensive Intl constructors, and the
+// Player re-renders about once a second while playing. Built lazily rather
+// than at module scope so an engine without it cannot break the import.
+let displayNames: Intl.DisplayNames | null | undefined;
+
+export function languageLabel(raw: string | undefined): string {
+  const tag = (raw ?? "").trim();
+  if (!tag) return "";
+  try {
+    if (displayNames === undefined) {
+      displayNames = new Intl.DisplayNames(["en"], { type: "language" });
+    }
+    return displayNames?.of(tag) ?? tag.toUpperCase();
+  } catch {
+    // A malformed tag throws from .of(); an engine with no DisplayNames at all
+    // throws from the constructor, and must not be asked again on every row.
+    displayNames ??= null;
+    return tag.toUpperCase();
+  }
+}

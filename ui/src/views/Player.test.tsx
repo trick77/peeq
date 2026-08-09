@@ -137,6 +137,24 @@ async function openMenu() {
   );
 }
 
+// This environment's global localStorage is node's experimental one, which is
+// not the browser object the Player talks to (it has no removeItem). A tiny map
+// stands in for it, reinstalled per test so one test's remembered Details
+// panel is not the next test's starting state. Same stand-in App.test.tsx uses.
+function stubStorage(seed?: string) {
+  const map = new Map<string, string>();
+  if (seed !== undefined) map.set("peeq.player.details", seed);
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+      removeItem: (k: string) => void map.delete(k),
+    },
+  });
+  return map;
+}
+
 describe("Player", () => {
   beforeEach(() => {
     // A fresh clipboard per test, for the same reason the mocks below are
@@ -182,6 +200,7 @@ describe("Player", () => {
     vi.mocked(updateSettings).mockResolvedValue(makeSettings(false));
     vi.unstubAllGlobals();
     sessionStorage.clear();
+    stubStorage();
   });
 
   // The detail view is where both dates appear spelled out; the card eyebrow
@@ -248,87 +267,76 @@ describe("Player", () => {
     });
   });
 
-  // The strip replaced a pill showing format_used — the raw yt-dlp -f
-  // selector, which said what was requested rather than what arrived.
-  describe("media stats strip", () => {
-    async function stats(overrides: Partial<Video>): Promise<string> {
+  // The five-column stat strip that stood here (Length/Size/Format/Video/Audio,
+  // open on every page load) is now the Details panel's File group, resting
+  // behind one line. The rows themselves are covered in DetailsCard.test.tsx;
+  // these are the wiring — that it rests shut, opens, and remembers.
+  describe("details panel", () => {
+    async function line(overrides: Partial<Video> = {}) {
       vi.mocked(getVideo).mockResolvedValue(makeVideo(overrides));
       render(<Player videoId="v1" onDeleted={() => {}} />);
-      await screen.findByRole("heading", { level: 1 });
-      return await waitFor(() => {
-        const el = document.querySelector(".playstats");
-        if (!el) throw new Error("stats strip not rendered yet");
-        return el.textContent ?? "";
-      });
+      return await screen.findByRole("button", { name: /Details/ });
     }
 
-    it("names the codecs and resolution in human terms", async () => {
-      const text = await stats({
+    it("rests shut, with the figures worth a glance", async () => {
+      const btn = await line({
         duration_seconds: 1795,
         filesize_bytes: 412 * 1024 ** 2,
+        video_height: 1080,
+      });
+
+      expect(btn).toHaveAttribute("aria-expanded", "false");
+      expect(btn.textContent).toContain("29:55 · 412 MB · 1080p");
+      expect(screen.queryByText("Container")).not.toBeInTheDocument();
+    });
+
+    it("opens in place, and remembers that it was opened", async () => {
+      const btn = await line({
         media_container: "mp4",
         video_codec: "h264",
         video_height: 1080,
         audio_codec: "aac",
       });
-      expect(text).toContain("29:55");
-      expect(text).toContain("412 MB");
-      expect(text).toContain("MP4");
-      expect(text).toContain("1080p H.264");
-      expect(text).toContain("AAC");
+
+      fireEvent.click(btn);
+
+      expect(await screen.findByText("1080p H.264")).toBeInTheDocument();
+      expect(screen.getByText("MP4")).toBeInTheDocument();
+      expect(btn).toHaveAttribute("aria-expanded", "true");
+      // Persisted, so the next video opens showing what this one showed —
+      // otherwise it is a click per video for anyone who wants these figures.
+      expect(window.localStorage.getItem("peeq.player.details")).toBe("1");
     });
 
+    // format_used is the resolved yt-dlp -f selector: what was ASKED FOR, the
+    // same string for every video downloaded under one preset. It had a pill
+    // here once, and the panel that replaced the strip must not bring it back.
     it("never shows the raw yt-dlp format selector", async () => {
-      vi.mocked(getVideo).mockResolvedValue(
-        makeVideo({
-          format_used:
-            "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
-          video_codec: "h264",
-          video_height: 1080,
-        }),
-      );
-      render(<Player videoId="v1" onDeleted={() => {}} />);
-      await screen.findByRole("heading", { level: 1 });
-      await waitFor(() => {
-        if (!document.querySelector(".playstats")) {
-          throw new Error("stats strip not rendered yet");
-        }
+      const btn = await line({
+        format_used:
+          "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
+        video_codec: "h264",
+        video_height: 1080,
       });
+
+      fireEvent.click(btn);
+
+      expect(await screen.findByText("1080p H.264")).toBeInTheDocument();
       expect(document.body.textContent).not.toContain("bestvideo");
     });
 
-    // A video the backfill has not reached yet still has its download-time
-    // facts, and must not render empty columns for the rest.
-    it("omits the columns an unprobed video has no value for", async () => {
-      const text = await stats({
-        duration_seconds: 1795,
-        filesize_bytes: 412 * 1024 ** 2,
-        media_container: undefined,
-        video_codec: undefined,
-        video_height: undefined,
-        audio_codec: undefined,
-      });
-      expect(text).toContain("29:55");
-      expect(text).toContain("412 MB");
-      expect(text).not.toContain("Format");
-      expect(text).not.toContain("Video");
-      expect(text).not.toContain("Audio");
-    });
-
-    it("drops the whole strip when there is nothing to show", async () => {
-      vi.mocked(getVideo).mockResolvedValue(
-        makeVideo({
-          duration_seconds: undefined,
-          filesize_bytes: undefined,
-          media_container: undefined,
-          video_codec: undefined,
-          video_height: undefined,
-          audio_codec: undefined,
-        }),
-      );
+    // The one column layout is already a long scroll of summary, chapters,
+    // highlights and transcript; file bookkeeping is not what it is for.
+    it("is not rendered at all on a phone", async () => {
+      setViewport(true);
+      vi.mocked(getVideo).mockResolvedValue(makeVideo());
       render(<Player videoId="v1" onDeleted={() => {}} />);
+
       await screen.findByRole("heading", { level: 1 });
-      expect(document.querySelector(".playstats")).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /Details/ }),
+      ).not.toBeInTheDocument();
+      setViewport(false);
     });
   });
 
@@ -3021,43 +3029,67 @@ describe("parseVtt sound-event stripping", () => {
   });
 });
 
-// The Search index card is a desktop/tablet affordance, and the breakpoint is
-// asked in JS rather than hidden in CSS so a phone also skips the request. Both
-// halves of that are pinned here.
-describe("Player search index card", () => {
-  function setViewport(mobile: boolean) {
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn().mockImplementation((query: string) => ({
-        matches: mobile,
-        media: query,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      })),
-    );
-  }
+// setViewport pins the media query the Player asks in JS rather than hiding in
+// CSS, so a phone also skips the requests a desktop makes.
+function setViewport(mobile: boolean) {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn().mockImplementation((query: string) => ({
+      matches: mobile,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
+  );
+}
 
+// The Search index group is the Details panel's last, and the only part of it
+// that costs a request. It is fetched when the panel is opened rather than on
+// page load, and not at all on a phone, where the panel is not rendered.
+describe("Player search index group", () => {
   beforeEach(() => {
     vi.mocked(getVideo).mockReset();
     vi.mocked(getVideo).mockResolvedValue(makeVideo({ indexed: true }));
     vi.mocked(getSettings).mockReset();
     vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
     vi.mocked(getVideoEmbeddings).mockClear();
+    // Seeded open rather than clicked: the panel's remembered state is what
+    // these tests are running against, and clicking it open first would make
+    // every one of them also a test of the toggle.
+    stubStorage("1");
   });
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("shows what the index holds beside the video", async () => {
+  it("shows what the index holds, once the panel is open", async () => {
     setViewport(false);
     render(<Player videoId="v1" onDeleted={() => {}} />);
 
     expect(await screen.findByText("Search index")).toBeInTheDocument();
-    expect(screen.getByText("12 chunks")).toBeInTheDocument();
+    expect(screen.getByText("Tokens embedded")).toBeInTheDocument();
     expect(getVideoEmbeddings).toHaveBeenCalledWith("v1");
   });
 
-  it("renders no card, and asks for nothing, on a phone", async () => {
+  // The panel rests shut, and a player that fetches figures nobody asked to
+  // see is a request per video for nothing.
+  it("asks for nothing while the panel is shut", async () => {
+    setViewport(false);
+    stubStorage("0");
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    expect(
+      await screen.findByRole("button", { name: /Details/ }),
+    ).toBeInTheDocument();
+    expect(getVideoEmbeddings).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Details/ }));
+
+    expect(await screen.findByText("Search index")).toBeInTheDocument();
+    expect(getVideoEmbeddings).toHaveBeenCalledWith("v1");
+  });
+
+  it("renders nothing, and asks for nothing, on a phone", async () => {
     setViewport(true);
     render(<Player videoId="v1" onDeleted={() => {}} />);
 
@@ -3077,7 +3109,7 @@ describe("Player search index card", () => {
   // describing are about to be rebuilt. The card has to go with them — its
   // effect keys on `indexed`, so a card left standing would also be a card
   // frozen on the old counts forever.
-  it("drops the card when the video is sent back for reprocessing", async () => {
+  it("drops the group when the video is sent back for reprocessing", async () => {
     setViewport(false);
     vi.mocked(getVideo).mockResolvedValue(
       makeVideo({ summary_status: "done", indexed: true, has_subtitles: true }),
@@ -3095,7 +3127,7 @@ describe("Player search index card", () => {
     );
   });
 
-  it("renders no card for a video that is not indexed", async () => {
+  it("renders no group for a video that is not indexed", async () => {
     setViewport(false);
     vi.mocked(getVideo).mockResolvedValue(makeVideo({ indexed: false }));
     render(<Player videoId="v1" onDeleted={() => {}} />);
