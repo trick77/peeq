@@ -64,6 +64,9 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   version, so the edit silently never applies. Safe only before it ships; else write the next number.
 - Migration touching DATA (not just shape) → test on a populated DB stood up at the previous migration
   (`applyThrough`). Fresh-DB test runs it over zero rows and passes whatever it says.
+- Ad-hoc query against a containerised DB → sqlite base image, never `alpine` + `apk add sqlite`:
+  `docker run --rm -v "$PWD/data:/data" keinos/sqlite3 sqlite3 -readonly -box /data/peeq.db "<sql>"`.
+  Mount rw, not `:ro` — WAL needs the `-shm` sidecar even to read; `-readonly` is what protects a live DB.
 
 ## Frontend
 - Vite + React + TS + Tailwind. `npm run build` empties `backend/web/dist` and overwrites the tracked
