@@ -2787,6 +2787,12 @@ button.sleeppick.armed {
   .playgrid .transcriptpanel {
     order: 6;
   }
+  /* Last, as on the desktop. It is the one panel nobody scrolls down for, and
+     in one column that matters more, not less. Never rendered on a phone at
+     all (Player.tsx). */
+  .playgrid .detailspanel {
+    order: 7;
+  }
   /* .leftcol carried min-width: 0 to stop a long unbroken transcript line
      widening the column; with its box gone, the panels it held carry it. */
   .playgrid .stage-wrap,
@@ -3056,59 +3062,41 @@ button.sleeppick.armed {
   flex: none;
 }
 
-/* The Details panel under the action row (views/player/DetailsCard.tsx) —
-   the video's technical record, resting as one line.
+/* The Details card (views/player/DetailsCard.tsx) — the video's technical
+   record, last in the stack below the video.
 
-   It replaced a five-column stat strip that stood open here on every page
-   load. The reasoning that shaped the strip still holds and is why this is a
-   line rather than a card: these are reference figures, and a panel would give
-   them more weight than the actions above them. Hairline rules top and bottom,
-   nothing else. */
-.specline {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  margin: 16px 0 0;
-  padding: 9px 0;
-  background: none;
-  border: none;
-  border-top: 1px solid var(--color-border-soft);
-  border-bottom: 1px solid var(--color-border-soft);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.specline svg {
-  color: var(--color-muted);
+   It began as a five-column stat strip standing open under the action row, and
+   then as a hairline-ruled disclosure line in the same place. Both made it a
+   special case in a page whose every other section is a card with a header;
+   this is just the fourth card, after Contents, Highlights and the transcript.
+   Shape only — .card and .card .hd already carry the frame, fill and header. */
+.card .hd.hd-btn .chev {
+  display: inline-flex;
   flex: none;
+  margin-left: 9px;
 }
-.specline .lbl {
-  font-size: 13px;
-  color: var(--color-ink-dim);
+/* Grey, not the accent every other header glyph wears (.card .hd svg): the
+   chevron is furniture that reports open/shut, not the card's identity. */
+.card .hd.hd-btn .chev svg {
+  color: var(--color-muted);
 }
-/* The two or three figures the collapsed line carries. Mono and tabular for
-   the same reason the strip's values were: they are digits people compare
-   between videos. */
-.specline .glance {
+/* Straight after the label means the glance figures are absent — an open card
+   drops them, since the File group repeats them immediately below — so the
+   chevron takes the right edge itself. */
+.card .hd.hd-btn .lbl + .chev {
   margin-left: auto;
+}
+/* The two or three figures the collapsed header carries. Mono and tabular for
+   the same reason the strip's values were: they are digits people compare
+   between videos, so they line up rather than read as a sentence. */
+.card .hd .meta.glance {
   font-family: var(--font-mono);
   font-size: 12.5px;
   color: var(--color-faint);
   font-variant-numeric: tabular-nums;
 }
-.specline:hover .lbl {
-  color: var(--color-ink);
-}
-/* Open, the line's own bottom rule would draw a seam through the middle of one
-   panel; the body carries the closing rule instead. */
-.details:has(.specbody) .specline {
-  border-bottom-color: transparent;
-}
-.specbody {
-  padding: 4px 0 18px;
-  border-bottom: 1px solid var(--color-border-soft);
+.detailsbody {
+  padding: 14px 16px 16px;
 }
 /* Three groups side by side where there is room, stacking to one column when
    there is not — auto-fit rather than a fixed three, so File keeps its column

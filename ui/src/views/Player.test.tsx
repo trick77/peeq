@@ -2772,7 +2772,7 @@ describe("Player panel placement", () => {
     vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
   });
 
-  it("keeps the Summary alone in the rail and puts Highlights under Contents", async () => {
+  it("keeps the Summary alone in the rail and ends the stack with Details", async () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
     await screen.findByText("Highlights");
 
@@ -2780,10 +2780,12 @@ describe("Player panel placement", () => {
       [...document.querySelectorAll(`${sel} .lbl`)].map((el) => el.textContent);
 
     expect(labels(".side")).toEqual(["Summary"]);
+    // Details is last on purpose: it is the one panel nobody scrolls down for.
     expect(labels(".belowvideo")).toEqual([
       "Contents",
       "Highlights",
       "Transcript",
+      "Details",
     ]);
   });
 });
@@ -3071,9 +3073,10 @@ describe("Player search index group", () => {
     expect(getVideoEmbeddings).toHaveBeenCalledWith("v1");
   });
 
-  // The panel rests shut, and a player that fetches figures nobody asked to
-  // see is a request per video for nothing.
-  it("asks for nothing while the panel is shut", async () => {
+  // Fetched with the page, not on open: the panel must show its whole record
+  // the instant it is expanded, and a group that arrives a moment later makes
+  // it look like it is still thinking.
+  it("fetches the index stats even while the panel is shut", async () => {
     setViewport(false);
     stubStorage("0");
     render(<Player videoId="v1" onDeleted={() => {}} />);
@@ -3081,12 +3084,13 @@ describe("Player search index group", () => {
     expect(
       await screen.findByRole("button", { name: /Details/ }),
     ).toBeInTheDocument();
-    expect(getVideoEmbeddings).not.toHaveBeenCalled();
+    await waitFor(() => expect(getVideoEmbeddings).toHaveBeenCalledWith("v1"));
+    // Shut, so nothing is rendered from them yet.
+    expect(screen.queryByText("Search index")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Details/ }));
 
     expect(await screen.findByText("Search index")).toBeInTheDocument();
-    expect(getVideoEmbeddings).toHaveBeenCalledWith("v1");
   });
 
   it("renders nothing, and asks for nothing, on a phone", async () => {
