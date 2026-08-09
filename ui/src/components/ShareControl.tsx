@@ -138,9 +138,16 @@ export function ShareControl({
   // Pull focus into the dialog when it opens. RowMenu returns focus to the ⋮
   // before it fires the action, so without this the popover would open with the
   // keyboard still parked on the trigger behind it.
+  //
+  // The DIALOG takes focus, not the first button inside it. Focusing Copy drew
+  // the global :focus-visible ring around it — a 2px terracotta frame on the
+  // one control in the panel, every single time the panel opened, mouse or
+  // not. It read as an alarm about the share link rather than as "your
+  // keyboard is here". A container with tabindex=-1 carries the same keyboard
+  // entry (Escape closes, Tab walks into the panel) and wears no ring.
   useEffect(() => {
     if (!open) return;
-    popRef.current?.querySelector<HTMLElement>("button")?.focus();
+    popRef.current?.focus();
   }, [open]);
 
   // Reset the transient popover state each time it closes.
@@ -211,6 +218,9 @@ export function ShareControl({
           className="sharepop"
           role="dialog"
           aria-label="Share this video"
+          /* Focusable only programmatically — see the effect above. It is the
+             dialog itself that takes focus, never a control inside it. */
+          tabIndex={-1}
           ref={popRef}
         >
           <div className="ph">

@@ -6296,6 +6296,12 @@ details.tomb-sect[open] > summary svg {
   position: relative;
   display: inline-flex;
 }
+/* No ring on the panel itself: it takes focus when it opens (ShareControl
+   pulls the keyboard in off the ⋮), and an outline around a 320px dialog that
+   is already unmistakably present is noise. Controls inside it keep theirs. */
+.sharepop:focus {
+  outline: none;
+}
 .sharepop {
   position: absolute;
   bottom: calc(100% + 10px);
