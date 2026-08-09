@@ -42,8 +42,8 @@ function sortKey(i: PendingItem): string {
 // video_id is the final tiebreak everywhere, which is what keeps the grid
 // from reshuffling between renders when the primary keys tie.
 //
-// The added-date ids get no arm: INBOX_SORT_OPTIONS never offers them here,
-// since an inbox item has never been downloaded and so has no added date. They
+// The import-date ids get no arm: INBOX_SORT_OPTIONS never offers them here,
+// since an inbox item has never been downloaded and so has no import date. They
 // would land in default: and order by publish date, which is the only honest
 // answer anyway.
 function compareBy(
@@ -279,8 +279,10 @@ export function Inbox({
   // channel dumping a week of uploads at once, this narrows the grid (and the
   // Download-all action) to one channel.
   const [channel, setChannel] = useState<string>("all");
-  // The Library's orderings minus the added-date pair (see
-  // INBOX_SORT_OPTIONS); "newest" means the same thing here as there. Applied
+  // The Library's orderings minus the import-date pair (see
+  // INBOX_SORT_OPTIONS); "newest" — the airdate ordering — means the same thing
+  // here as there, and stays the default here precisely because the Library's
+  // default is one of the two options this list cannot offer. Applied
   // client-side (unlike Library's `sort` query param) because /api/pending
   // returns the whole inbox in one unpaged response — there is nothing for a
   // server-side ORDER BY to win here.

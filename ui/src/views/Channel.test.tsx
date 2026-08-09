@@ -695,6 +695,22 @@ describe("Channel", () => {
     });
   });
 
+  // The Archive tab shares SORT_OPTIONS with the Library, so it shares the
+  // Library's default too — the two grids must not open on different dates.
+  it("opens the Archive tab on import date, newest first", async () => {
+    vi.mocked(listVideos).mockResolvedValue([]);
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+
+    await waitFor(() => {
+      expect(listVideos).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "UCa", sort: "added_newest" }),
+      );
+    });
+  });
+
   it("choosing a sort option on the Archive tab refetches with that sort", async () => {
     const user = userEvent.setup();
     vi.mocked(listVideos).mockResolvedValue([]);

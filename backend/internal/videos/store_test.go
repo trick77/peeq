@@ -800,22 +800,25 @@ func TestList_sort_ordersRows(t *testing.T) {
 	}
 }
 
-// TestList_newest_ranksByReleaseDate pins the DEFAULT ordering: release date,
+// TestList_newest_ranksByReleaseDate pins what "newest" MEANS: release date,
 // newest first, with created_at as the fallback for a row yt-dlp gave no date
-// for.
+// for. It is still this store's fallback for an unrecognized ?sort=, though the
+// UI now opens the grid on added_newest and reaches this one as "Newest airdate".
 //
 // This is the guard against changing it a third time. It was repointed at
 // downloaded_at once (#139) on the argument that "new to this library" is what
 // the grid should answer; run against a real library that ordering was wrong,
-// and it was reverted. Reasoning lost to evidence — leave it alone.
+// and it was reverted. Reasoning lost to evidence — leave it alone. Answering
+// "what arrived last" is added_newest's job, and that is the option the UI
+// selects; it is not a reason to redefine this one.
 func TestList_newest_ranksByReleaseDate(t *testing.T) {
 	// Given: an old talk fetched recently, and a fresh upload fetched long ago.
 	s := newTestStore(t)
 	seedVideo(t, s, Video{ID: "oldtalk", PublishedAt: "2019-05-01", CreatedAt: "2026-03-01 00:00:00", DownloadedAt: "2026-03-01 09:00:00", Status: "downloaded"})
 	seedVideo(t, s, Video{ID: "freshupload", PublishedAt: "2026-02-20", CreatedAt: "2026-02-20 00:00:00", DownloadedAt: "2026-02-20 09:00:00", Status: "downloaded"})
 
-	// When/Then: the default ranks by when it AIRED, so the fresh upload wins
-	// even though the old talk arrived more recently.
+	// When/Then: newest ranks by when it AIRED, so the fresh upload wins even
+	// though the old talk arrived more recently.
 	got, err := s.List(ListOptions{Sort: "newest"})
 	if err != nil {
 		t.Fatalf("list newest: %v", err)
@@ -824,7 +827,8 @@ func TestList_newest_ranksByReleaseDate(t *testing.T) {
 		t.Fatalf("newest order = %v, want %v", ids(got), want)
 	}
 
-	// ...and the opt-in added-date sort is where "what arrived last" lives.
+	// ...and the added-date sort — what the Library opens on — is where "what
+	// arrived last" lives.
 	got, err = s.List(ListOptions{Sort: "added_newest"})
 	if err != nil {
 		t.Fatalf("list added_newest: %v", err)
