@@ -763,14 +763,34 @@ export function Player({
 
   const segments = video.sponsorblock_segments ?? [];
 
+  // The scrub bar's length, taken from the media itself. It has to live out
+  // here rather than inside handleLoadedMetadata, behind the one-shot
+  // resumeAppliedRef guard, because the guard makes correcting a zero
+  // impossible: whichever loadedmetadata fires first wins for the life of the
+  // element, and a firing against a not-yet-loaded src reports NaN.
+  //
+  // Zero is not cosmetic on this bar. videos.duration_seconds is nullable and
+  // is NULL for rows that never got full metadata — an import, in particular —
+  // and the DTO omits it, so those videos reach the Scrubber with nothing but
+  // this. Its SponsorBlock bands are then dropped for want of a scale to place
+  // them on (see Scrubber.tsx), while the legend beneath the bar still names
+  // them and auto-skip, which only compares timestamps, still jumps them: a
+  // segment that gets skipped without ever having been drawn.
+  function adoptDuration() {
+    const el = videoRef.current;
+    if (!el) return;
+    if (!Number.isFinite(el.duration) || el.duration <= 0) return;
+    setDuration(el.duration);
+  }
+
   function handleLoadedMetadata() {
     const el = videoRef.current;
     // Open the subtitle gate first, ahead of the resumeAppliedRef guard, so
     // it still opens if this fires more than once on the same media.
     if (video) setSubtitlesReadyFor(video.id);
+    adoptDuration();
     if (!el || !video || resumeAppliedRef.current) return;
     resumeAppliedRef.current = true;
-    setDuration(el.duration);
     // el.duration is NaN until real media metadata loads (e.g. under
     // jsdom, or before the stream responds) — only use it to *withhold* a
     // too-far resume once it's a known finite number; a not-yet-known
@@ -1441,6 +1461,11 @@ export function Player({
                   // is 100x56 and the bar draws its own transport.
                   controls={parkedAt !== "dock"}
                   onLoadedMetadata={handleLoadedMetadata}
+                  // durationchange is the event that actually announces a
+                  // length — it fires before loadedmetadata, again whenever
+                  // the element re-reads the media, and once more when a
+                  // stream that started out unbounded settles on a real one.
+                  onDurationChange={adoptDuration}
                   onTimeUpdate={handleTimeUpdate}
                   onPlay={handlePlay}
                   onEnded={handleEnded}

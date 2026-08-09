@@ -635,6 +635,42 @@ describe("Player", () => {
     expect(screen.queryByText(/Skipped ad/)).not.toBeInTheDocument();
   });
 
+  // videos.duration_seconds is NULL for a row that never got full metadata —
+  // an import — and the DTO omits it, so the video arrives with no length at
+  // all. The SponsorBlock backfill worker still fetches segments for exactly
+  // those videos, and the bar used to drop every band for want of a scale to
+  // place them on while auto-skip, which only compares timestamps, went on
+  // jumping them. The length now comes off the media element instead.
+  it("draws the SponsorBlock bands for a video whose duration only the media knows", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({
+        duration_seconds: undefined,
+        sponsorblock_segments: [
+          { category: "sponsor", start_time: 10, end_time: 25 },
+        ],
+      }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    // Nothing to place the band against yet.
+    expect(document.querySelectorAll(".scrub .sb")).toHaveLength(0);
+
+    Object.defineProperty(videoEl, "duration", { value: 100, writable: true });
+    fireEvent.durationChange(videoEl);
+
+    await waitFor(() =>
+      expect(document.querySelectorAll(".scrub .sb")).toHaveLength(1),
+    );
+    const band = document.querySelector(".scrub .sb") as HTMLElement;
+    expect(band.style.left).toBe("10%");
+    expect(band.style.width).toBe("15%");
+  });
+
   it("plays through a marked segment and skips only the ad", async () => {
     // The categories outside AUTO_SKIP are drawn on the scrubber but must
     // never be cut: skipping an intro or a non-music section would silently

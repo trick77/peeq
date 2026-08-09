@@ -53,9 +53,20 @@ export function Scrubber({
   segments: SponsorblockSegment[];
   onSeek: (seconds: number) => void;
 }) {
-  const duration = durationSeconds > 0 ? durationSeconds : 0;
+  // Number.isFinite, not just > 0: a media element reports Infinity for a
+  // stream whose length it cannot know, and Infinity would place every band
+  // at 0% left and 0% width — present in the DOM, invisible on the bar.
+  const duration =
+    Number.isFinite(durationSeconds) && durationSeconds > 0
+      ? durationSeconds
+      : 0;
   const playedPercent =
     duration > 0 ? Math.min(100, (currentSeconds / duration) * 100) : 0;
+  // With no duration there is no scale to place a band on, so none are drawn —
+  // and a legend naming band styles that are nowhere on the bar is worse than
+  // no legend: it says the bar is showing you something it isn't. Both read
+  // from here so the two can never disagree again.
+  const drawn = duration > 0 ? segments : [];
 
   function handleClick(e: MouseEvent<HTMLDivElement>) {
     if (duration <= 0) return;
@@ -76,8 +87,7 @@ export function Scrubber({
         aria-label="Seek"
         aria-valuenow={currentSeconds}
       >
-        {segments.map((seg, i) => {
-          if (duration <= 0) return null;
+        {drawn.map((seg, i) => {
           const left = (seg.start_time / duration) * 100;
           const width = ((seg.end_time - seg.start_time) / duration) * 100;
           const skipped = AUTO_SKIP.has(seg.category);
@@ -101,14 +111,14 @@ export function Scrubber({
         {/* The legend names both band styles, and only the ones actually on
             the bar: claiming segments are "auto-skipped" while some of them
             deliberately play would misdescribe what just happened. */}
-        {segments.length > 0 ? (
+        {drawn.length > 0 ? (
           <span className="sb-legend">
-            {segments.some((s) => AUTO_SKIP.has(s.category)) ? (
+            {drawn.some((s) => AUTO_SKIP.has(s.category)) ? (
               <span>
                 <i /> skipped
               </span>
             ) : null}
-            {segments.some((s) => !AUTO_SKIP.has(s.category)) ? (
+            {drawn.some((s) => !AUTO_SKIP.has(s.category)) ? (
               <span>
                 <i className="mark" /> marked
               </span>
