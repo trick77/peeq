@@ -339,25 +339,39 @@ export function bitrateLabel(
 ): string {
   if (!bytes || bytes <= 0 || !seconds || seconds <= 0) return "";
   const bitsPerSecond = (bytes * 8) / seconds;
-  if (bitsPerSecond >= 1_000_000) {
+  // Rounded first, then compared: testing the raw figure against a megabit
+  // lets 999_600 bps fall through and round up to "1000 kbps", a unit that
+  // has already run out.
+  const kbps = Math.round(bitsPerSecond / 1000);
+  if (kbps >= 1000) {
     return `${(bitsPerSecond / 1_000_000).toFixed(1)} Mbps`;
   }
-  return `${Math.round(bitsPerSecond / 1000)} kbps`;
+  return `${kbps} kbps`;
 }
 
 // languageLabel names an audio track's language tag ("en", "de-CH") the way a
 // person would. Intl.DisplayNames does the naming, wrapped because the tag
 // comes from yt-dlp and a malformed one throws rather than returning null —
 // an unnameable tag falls back to itself uppercased, which is still readable.
+//
+// The formatter is built once and kept, as GROUPED in DetailsCard is:
+// Intl.DisplayNames is among the more expensive Intl constructors, and the
+// Player re-renders about once a second while playing. Built lazily rather
+// than at module scope so an engine without it cannot break the import.
+let displayNames: Intl.DisplayNames | null | undefined;
+
 export function languageLabel(raw: string | undefined): string {
   const tag = (raw ?? "").trim();
   if (!tag) return "";
   try {
-    return (
-      new Intl.DisplayNames(["en"], { type: "language" }).of(tag) ??
-      tag.toUpperCase()
-    );
+    if (displayNames === undefined) {
+      displayNames = new Intl.DisplayNames(["en"], { type: "language" });
+    }
+    return displayNames?.of(tag) ?? tag.toUpperCase();
   } catch {
+    // A malformed tag throws from .of(); an engine with no DisplayNames at all
+    // throws from the constructor, and must not be asked again on every row.
+    displayNames ??= null;
     return tag.toUpperCase();
   }
 }

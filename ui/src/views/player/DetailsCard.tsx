@@ -208,7 +208,10 @@ export function DetailsCard({
   open: boolean;
   onToggle: () => void;
 }) {
-  const groups = buildGroups(video, stats);
+  // Only while open. Shut, the panel is one line and three figures, and
+  // building the rows behind it is work thrown away once a second — the
+  // Player re-renders on every whole second of playback.
+  const groups = open ? buildGroups(video, stats) : [];
   const glance = glanceOf(video);
   return (
     <div className="details">
@@ -250,8 +253,13 @@ export function DetailsCard({
                   </dl>
                   {!!g.tags?.length && (
                     <div className="tags">
-                      {g.tags.slice(0, TAGS_SHOWN).map((t) => (
-                        <span className="pill" key={t}>
+                      {/* Keyed on the position as well as the word: yt_tags is
+                          YouTube's keyword list passed straight through, and
+                          nothing upstream de-duplicates it — a video tagged
+                          "ai" twice would otherwise give React two pills with
+                          the same key. */}
+                      {g.tags.slice(0, TAGS_SHOWN).map((t, i) => (
+                        <span className="pill" key={`${i}-${t}`}>
                           {t}
                         </span>
                       ))}
