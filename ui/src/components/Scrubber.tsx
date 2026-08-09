@@ -76,6 +76,14 @@ export function Scrubber({
         aria-label="Seek"
         aria-valuenow={currentSeconds}
       >
+        {/* The played fill comes FIRST, the bands after. Both are absolutely
+            positioned siblings with no z-index, so paint order is DOM order —
+            and with the fill last it covered every band behind the playhead.
+            That hid a skipped segment at exactly the moment it mattered: an
+            auto-skip leaves the playhead at the segment's end, so the stripe
+            you just jumped was always under the fill. The bands are striped
+            and semi-transparent, so the accent still reads through them. */}
+        <div className="played" style={{ width: `${playedPercent}%` }} />
         {segments.map((seg, i) => {
           if (duration <= 0) return null;
           const left = (seg.start_time / duration) * 100;
@@ -94,7 +102,6 @@ export function Scrubber({
             />
           );
         })}
-        <div className="played" style={{ width: `${playedPercent}%` }} />
       </div>
       <div className="scrub-times">
         <span className="mono">{formatDuration(currentSeconds)}</span>
