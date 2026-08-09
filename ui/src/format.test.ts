@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bitrateLabel,
   codecLabel,
   daysSince,
   formatAge,
@@ -7,6 +8,7 @@ import {
   formatDuration,
   formatMs,
   formatSize,
+  languageLabel,
   resolutionLabel,
   shortWatchLink,
   videoLabel,
@@ -318,5 +320,43 @@ describe("formatMs", () => {
   it("is not formatDuration", () => {
     expect(formatDuration(0.4)).toBe("0:00");
     expect(formatMs(400)).toBe("400ms");
+  });
+});
+
+describe("bitrateLabel", () => {
+  // Size over length, so it counts container overhead and both streams: what
+  // the file costs per second, not what the encoder was aiming for.
+  it("renders Mbps past a megabit", () => {
+    expect(bitrateLabel(432013312, 2052)).toBe("1.7 Mbps");
+    expect(bitrateLabel(1024 ** 3, 3600)).toBe("2.4 Mbps");
+  });
+
+  // A 96 kbps audio rip reading "0.1 Mbps" says nothing anyone wanted to know.
+  it("drops to kbps below a megabit", () => {
+    expect(bitrateLabel(6 * 1024 * 1024, 600)).toBe("84 kbps");
+  });
+
+  // Both inputs are optional on the wire, and either being absent means the
+  // figure cannot be honest — so there is no figure, not a zero.
+  it("says nothing when it cannot say something true", () => {
+    expect(bitrateLabel(undefined, 2052)).toBe("");
+    expect(bitrateLabel(432013312, undefined)).toBe("");
+    expect(bitrateLabel(432013312, 0)).toBe("");
+    expect(bitrateLabel(0, 2052)).toBe("");
+  });
+});
+
+describe("languageLabel", () => {
+  it("names a language tag the way a person would", () => {
+    expect(languageLabel("en")).toBe("English");
+    expect(languageLabel("de")).toBe("German");
+  });
+
+  // The tag comes from yt-dlp, and Intl.DisplayNames throws on a malformed one
+  // rather than returning null. An unnameable tag is still readable as itself.
+  it("falls back to the tag rather than throwing", () => {
+    expect(languageLabel("!!")).toBe("!!");
+    expect(languageLabel("")).toBe("");
+    expect(languageLabel(undefined)).toBe("");
   });
 });

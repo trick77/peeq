@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import {
+  FileText,
   Library,
   CirclePlay,
   Plus,
@@ -89,6 +90,7 @@ const COMPONENTS = {
   playFilled: Play,
   captions: Captions,
   database: Database, // the answer trace: a step that queried your library
+  fileText: FileText, // the player's Details card: this video's technical record
   chevronRight: ChevronRight,
   chevronDown: ChevronDown,
   chevronLeft: ChevronLeft,

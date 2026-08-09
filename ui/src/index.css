@@ -2787,13 +2787,6 @@ button.sleeppick.armed {
   .playgrid .transcriptpanel {
     order: 6;
   }
-  /* Last, unlike on the desktop where it sits under the Summary in the rail.
-     Beside the video that adjacency is free; in one column it would push the
-     chapters down behind a reference panel, and reference is what you scroll
-     to on purpose. It is not rendered at all on a phone (Player.tsx). */
-  .playgrid .indexpanel {
-    order: 7;
-  }
   /* .leftcol carried min-width: 0 to stop a long unbroken transcript line
      widening the column; with its box gone, the panels it held carry it. */
   .playgrid .stage-wrap,
@@ -3063,48 +3056,132 @@ button.sleeppick.armed {
   flex: none;
 }
 
-/* The file-facts strip under the action row. Hairline rules top and bottom
-   rather than a filled panel: these are reference figures, and a card would
-   give them more weight than the actions above them.
+/* The Details panel under the action row (views/player/DetailsCard.tsx) —
+   the video's technical record, resting as one line.
 
-   It is a <dl>, so each figure is bound to its label for a screen reader
-   instead of being two loose spans that happen to sit near each other. */
-.playstats {
+   It replaced a five-column stat strip that stood open here on every page
+   load. The reasoning that shaped the strip still holds and is why this is a
+   line rather than a card: these are reference figures, and a panel would give
+   them more weight than the actions above them. Hairline rules top and bottom,
+   nothing else. */
+.specline {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
   margin: 16px 0 0;
+  padding: 9px 0;
+  background: none;
+  border: none;
   border-top: 1px solid var(--color-border-soft);
   border-bottom: 1px solid var(--color-border-soft);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.playstats .stat {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 10px 18px 10px 0;
-  margin-right: 18px;
-  border-right: 1px solid var(--color-border-soft);
+.specline svg {
+  color: var(--color-muted);
+  flex: none;
 }
-/* The divider belongs BETWEEN figures, so the last one drops it. On a wrapped
-   row this leaves a trailing rule mid-line, which is the lesser evil: the
-   alternative (a rule on every item) puts one at the page edge. */
-.playstats .stat:last-child {
-  border-right: none;
-  margin-right: 0;
-}
-.playstats dt {
-  font-size: var(--text-micro);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-faint);
-}
-.playstats dd {
-  margin: 0;
-  font-family: var(--font-mono);
+.specline .lbl {
   font-size: 13px;
   color: var(--color-ink-dim);
-  /* Sizes and durations are digits that sit in a column; lining them up is
-     the whole reason this is a strip and not a sentence. */
+}
+/* The two or three figures the collapsed line carries. Mono and tabular for
+   the same reason the strip's values were: they are digits people compare
+   between videos. */
+.specline .glance {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--color-faint);
   font-variant-numeric: tabular-nums;
+}
+.specline:hover .lbl {
+  color: var(--color-ink);
+}
+/* Open, the line's own bottom rule would draw a seam through the middle of one
+   panel; the body carries the closing rule instead. */
+.details:has(.specbody) .specline {
+  border-bottom-color: transparent;
+}
+.specbody {
+  padding: 4px 0 18px;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+/* Three groups side by side where there is room, stacking to one column when
+   there is not — auto-fit rather than a fixed three, so File keeps its column
+   on the videos where Source and Search index have nothing to report. */
+.specgrid {
+  display: grid;
+  gap: 18px 34px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+.specgrid .grp {
+  min-width: 0;
+}
+.specgrid .grp > h4 {
+  margin: 14px 0 9px;
+  font-size: var(--text-micro);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--color-faint);
+}
+.specgrid dl {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+/* Label left, figure right — the shape a reference list wants, and the one the
+   strip's stacked label-over-value could not give three columns of. */
+.specgrid .row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+.specgrid dt {
+  font-size: 12.5px;
+  color: var(--color-muted);
+}
+.specgrid dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--color-ink-dim);
+  /* Sizes, durations and counts sit in a column against the group's right
+     edge; lining the digits up is the whole reason they are right-aligned
+     rather than run-on text. */
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  /* The model name is the one value here that is not a number, and it is
+     whatever BACKEND_EMBED_MODEL holds — a local model's id
+     ("Qwen/Qwen3-Embedding-0.6B") has no space to break at. Wrap it rather
+     than let it push the group wider than its column. */
+  overflow-wrap: anywhere;
+}
+/* The dimension under the model name: one fact about the other, not a row of
+   its own — a "Dimensions 1536" line would give a number nobody reads the same
+   weight as the chunk counts. */
+.specgrid .sub {
+  display: block;
+  font-size: var(--text-micro);
+  color: var(--color-faint);
+}
+/* YouTube's own tags, under the Source rows they belong to. Pills rather than
+   a comma list: they are labels someone else applied, and reading them as one
+   sentence invites reading them as peeq's own words. */
+.specgrid .tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+.specgrid .tags .pill {
+  font-size: var(--text-micro);
+  padding: 1px 8px;
 }
 .pill {
   font-family: var(--font-mono);
@@ -3627,50 +3704,6 @@ button.sleeppick.armed {
    distinction. */
 .card.hlpanel .hd svg {
   color: var(--color-kept);
-}
-
-/* Search index card (views/player/IndexCard.tsx) — label left, figure right,
-   the shape a reference list wants and the one .playstats cannot give at 316px
-   wide. Same <dl> reasoning as that strip: each figure is bound to its label
-   rather than being two spans that happen to sit near each other. */
-.idxstats {
-  margin: 0;
-  display: grid;
-  gap: 11px;
-}
-.idxstats .row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-.idxstats dt {
-  font-size: 12.5px;
-  color: var(--color-muted);
-}
-.idxstats dd {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  color: var(--color-ink-dim);
-  /* Counts sit in a column against the card's right edge; lining the digits up
-     is the whole reason they are right-aligned rather than run-on text. */
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  /* The model name is the one value here that is not a number, and it is
-     whatever BACKEND_EMBED_MODEL holds — "text-embedding-3-small" fits the
-     316px rail with nothing to spare, and a local model's id
-     ("Qwen/Qwen3-Embedding-0.6B") has no space to break at. Wrap it rather
-     than let it push the card wider than the sidebar. */
-  overflow-wrap: anywhere;
-}
-/* The dimension under the model name: one fact about the other, not a row of
-   its own — a "Dimensions 1536" line would give a number nobody reads the same
-   weight as the chunk counts, which are why the card exists. */
-.idxstats .sub {
-  display: block;
-  font-size: var(--text-micro);
-  color: var(--color-faint);
 }
 
 /* Transcript search + cues */

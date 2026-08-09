@@ -323,3 +323,41 @@ export function watchURL(id: string): string {
 export function shortWatchLink(id: string): string {
   return `youtu.be/${id}`;
 }
+
+// bitrateLabel is the file's average bitrate — the one figure in the details
+// panel that is computed rather than measured. Size over length, so it counts
+// the container's overhead and both streams together: it is what the file
+// costs per second, not what the encoder was told to aim for.
+//
+// Both inputs are optional on the wire and either being absent means the
+// figure cannot be honest, so it is dropped rather than guessed. Mbps once
+// past a megabit, kbps below — a 96 kbps audio-only rip reading "0.1 Mbps"
+// tells you nothing you wanted to know.
+export function bitrateLabel(
+  bytes: number | undefined,
+  seconds: number | undefined,
+): string {
+  if (!bytes || bytes <= 0 || !seconds || seconds <= 0) return "";
+  const bitsPerSecond = (bytes * 8) / seconds;
+  if (bitsPerSecond >= 1_000_000) {
+    return `${(bitsPerSecond / 1_000_000).toFixed(1)} Mbps`;
+  }
+  return `${Math.round(bitsPerSecond / 1000)} kbps`;
+}
+
+// languageLabel names an audio track's language tag ("en", "de-CH") the way a
+// person would. Intl.DisplayNames does the naming, wrapped because the tag
+// comes from yt-dlp and a malformed one throws rather than returning null —
+// an unnameable tag falls back to itself uppercased, which is still readable.
+export function languageLabel(raw: string | undefined): string {
+  const tag = (raw ?? "").trim();
+  if (!tag) return "";
+  try {
+    return (
+      new Intl.DisplayNames(["en"], { type: "language" }).of(tag) ??
+      tag.toUpperCase()
+    );
+  } catch {
+    return tag.toUpperCase();
+  }
+}
