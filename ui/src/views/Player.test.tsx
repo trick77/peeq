@@ -2772,7 +2772,7 @@ describe("Player panel placement", () => {
     vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
   });
 
-  it("keeps the Summary alone in the rail and ends the stack with Details", async () => {
+  it("keeps the Summary alone in the rail and puts Details above the transcript", async () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
     await screen.findByText("Highlights");
 
@@ -2780,12 +2780,13 @@ describe("Player panel placement", () => {
       [...document.querySelectorAll(`${sel} .lbl`)].map((el) => el.textContent);
 
     expect(labels(".side")).toEqual(["Summary"]);
-    // Details is last on purpose: it is the one panel nobody scrolls down for.
+    // Details sits above the transcript: the transcript is a long scroll, and
+    // anything under it is buried.
     expect(labels(".belowvideo")).toEqual([
       "Contents",
       "Highlights",
-      "Transcript",
       "Details",
+      "Transcript",
     ]);
   });
 });

@@ -935,14 +935,17 @@ describe("Channels", () => {
         .closest(".channel-row") as HTMLElement;
 
       await openRowMenu(user, row);
-      // RowMenu focuses its first menuitem — a BUTTON, which the shortcut's
-      // "already typing somewhere?" tag check waves through.
-      const firstItem = within(row).getAllByRole("menuitem")[0];
-      expect(firstItem).toHaveFocus();
+      // RowMenu focuses the menu itself — a DIV, which the shortcut's "already
+      // typing somewhere?" tag check waves through exactly as it waved the
+      // first menuitem through before. The role="menu" guard is what stops the
+      // slash, and it is asked of the focused element, which is now that very
+      // element rather than a child of it.
+      const menu = within(row).getByRole("menu");
+      expect(menu).toHaveFocus();
 
       await user.keyboard("/");
 
-      expect(firstItem).toHaveFocus();
+      expect(menu).toHaveFocus();
       expect(
         screen.getByRole("searchbox", { name: "Search channels" }),
       ).not.toHaveFocus();
