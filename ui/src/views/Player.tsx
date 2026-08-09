@@ -1728,6 +1728,22 @@ export function Player({
             video={video}
             seek={video.has_media ? seek : undefined}
           />
+          {/* Above the transcript, below the chapters and highlights: those two
+              are what people scroll down for, and the transcript is a long
+              scroll that would bury anything under it. Not on a phone — that
+              layout is already a single column of summary, chapters,
+              highlights and transcript, and file bookkeeping is not what it is
+              for, the same call the Search index card made before this panel
+              absorbed it. Asked in JS rather than hidden in CSS so the phone
+              also skips the embeddings request. */}
+          {!isPhone && (
+            <DetailsCard
+              video={video}
+              stats={indexStats}
+              open={detailsOpen}
+              onToggle={toggleDetails}
+            />
+          )}
           {video.has_subtitles && (
             /* seek is withheld for a fileless video, exactly as ContentsCard
                above withholds it: with nothing to seek, a cue is text to read,
@@ -1748,21 +1764,6 @@ export function Player({
               /* "full" is the default this prop already carried; the second
                  class is the placement hook the single-column order uses. */
               className="full transcriptpanel"
-            />
-          )}
-          {/* Last in the stack, after the three panels people scroll down FOR.
-              Not on a phone: that layout is already a long single column of
-              summary, chapters, highlights and transcript, and file
-              bookkeeping is not what it is for — the same call the Search
-              index card made before this panel absorbed it. Asked in JS rather
-              than hidden in CSS so the phone also skips the embeddings
-              request. */}
-          {!isPhone && (
-            <DetailsCard
-              video={video}
-              stats={indexStats}
-              open={detailsOpen}
-              onToggle={toggleDetails}
             />
           )}
         </div>

@@ -53,10 +53,21 @@ export function RowMenu({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const place = useMenuPlacement(open, triggerRef, menuRef);
 
-  // Focus the first item when the menu opens, so the keyboard lands inside it.
+  // Pull focus into the menu when it opens, so the keyboard lands inside it.
+  //
+  // The MENU takes focus, not its first item. Focusing the first item drew the
+  // global :focus-visible ring — 2px of --color-accent — around whatever
+  // happens to be at the top of the list, every time the menu opened, mouse or
+  // keyboard. On the Player that is "Share…", so opening the ⋮ framed the
+  // share entry in terracotta and made it look flagged.
+  //
+  // A container with tabindex=-1 carries the same keyboard entry — Escape
+  // closes, ArrowDown/ArrowUp step through the items (see onMenuKeyDown, which
+  // starts from the top when focus is still on the menu itself), Tab walks in
+  // — and wears no ring.
   useEffect(() => {
     if (!open) return;
-    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    menuRef.current?.focus();
   }, [open]);
 
   // Close on an outside click or Escape. Escape returns focus to the trigger;
@@ -88,11 +99,17 @@ export function RowMenu({
       menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
     );
     if (items.length === 0) return;
+    // -1 when focus is still on the menu container itself, which is the state
+    // it opens in. ArrowDown then lands on the first item, which (i + 1) gives
+    // for free; ArrowUp has to be spelled out, because (i - 1 + len) % len
+    // would hand back the second-to-last item rather than the last.
     const i = items.indexOf(document.activeElement as HTMLElement);
     const next =
       e.key === "ArrowDown"
         ? items[(i + 1) % items.length]
-        : items[(i - 1 + items.length) % items.length];
+        : i < 0
+          ? items[items.length - 1]
+          : items[(i - 1 + items.length) % items.length];
     next.focus();
   }
 
@@ -124,6 +141,9 @@ export function RowMenu({
         <div
           className="rowmenu"
           role="menu"
+          /* Focusable only programmatically — the menu itself takes focus when
+             it opens, never an item inside it. */
+          tabIndex={-1}
           data-place={place}
           ref={menuRef}
           onKeyDown={onMenuKeyDown}

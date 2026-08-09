@@ -153,7 +153,12 @@ describe("RowMenu", () => {
     const user = userEvent.setup();
     setup();
     await user.click(screen.getByRole("button", { name: "Actions for X" }));
-    // Opens focused on the first item.
+    // Opens focused on the MENU, not on an item: focusing the top entry drew
+    // the global :focus-visible ring around it every time the menu opened,
+    // which on the Player framed "Share…" in terracotta.
+    expect(screen.getByRole("menu")).toHaveFocus();
+
+    await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: "Subscribe" })).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveFocus();
@@ -162,6 +167,19 @@ describe("RowMenu", () => {
     expect(screen.getByRole("menuitem", { name: "Subscribe" })).toHaveFocus();
     // ArrowUp wraps to the last.
     await user.keyboard("{ArrowUp}");
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveFocus();
+  });
+
+  // From the menu itself, ArrowUp has to reach the LAST item. The index of the
+  // container is -1, and the wrap arithmetic that serves every other position
+  // would hand back the second-to-last one.
+  it("ArrowUp from a freshly opened menu lands on the last item", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole("button", { name: "Actions for X" }));
+
+    await user.keyboard("{ArrowUp}");
+
     expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveFocus();
   });
 
