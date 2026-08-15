@@ -6,7 +6,7 @@ require (
 	github.com/asg017/sqlite-vec-go-bindings v0.1.7-alpha.2
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/ncruces/go-sqlite3 v0.23.3
-	golang.org/x/image v0.44.0
+	golang.org/x/image v0.45.0
 	golang.org/x/oauth2 v0.36.0
 )
 
@@ -14,6 +14,6 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
-	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )
