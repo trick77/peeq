@@ -5,10 +5,9 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 
 ## Working conventions
 - Docs, specs, and code comments are **English only**.
-- One feature branch per phase (`feat/phase-N-...`); never commit to `master`. Conventional commits.
+- One feature branch per phase (`feat/phase-N-...`). Conventional commits.
 - TDD: failing test first, then the minimal implementation.
 - Keep files focused — one clear responsibility each.
-- YAML files use `.yaml`, never `.yml`.
 - Phase 3 needs chat + embeddings endpoints (`BACKEND_CHAT_*`, `BACKEND_EMBED_*`); tests fake them
   with httptest — never call a real LLM/embeddings endpoint or the real yt-dlp binary.
 - Flows needing a real cookie/AI endpoints aren't automated — run `docs/manual-verification.md` by hand.
