@@ -2,27 +2,24 @@
   Source for apple-touch-icon.png only. Not shipped: ui/icons/ is outside
   Vite's publicDir, so nothing here is copied into the bundle.
 
-  Two things iOS forces that the transparent ui/public/icon.svg cannot give it:
+  Two things iOS forces that the transparent icon.svg cannot give it:
 
   1. An opaque ground. iOS composites an apple-touch-icon onto PURE BLACK before
      masking it, so a transparent one ships as a black square. #1f1f1e is peeq's
      own color-bg token, which is what that flattening should have produced.
   2. Square corners. iOS applies its own superellipse mask; rounding the corners
-     here would double-round them.
+     of the TILE would double-round them. The chip inside keeps its rx 4 — those
+     corners are the mark's own and are meant to be seen.
 
-  The glyph is smaller than in icon.svg (60% vs 96%) because it now sits inside
+  The chip is smaller than in icon.svg (60% vs 100%) because it now sits inside
   a tile with its own edges to breathe against, rather than being the whole
-  picture. Its frame is left unfilled for the same reason icon.svg's is filled:
-  there the enclosed area would otherwise be the client's chrome, here it is
-  already this file's own #1f1f1e tile. Note that this puts one rounded frame
-  inside another: the glyph's
-  own corners are lucide's, at rx 2 of 24, and are meant to be seen. Only the
-  TILE's corners have to stay square, because only the tile meets the OS mask.
+  picture. This puts one rounded shape inside another, which is intended.
 
-  Same lucide square-play paths, same filled wedge, same 2 stroke and the same
-  true-bbox centring — see ui/public/icon.svg for all of it, and for why the
-  nominal 24x24 box is not used. The stroke is in glyph units, so shrinking the
-  glyph thins the frame with it and the weight stays proportional.
+  The wedge is painted the tile's own #1f1f1e, so it reads as cut clean through
+  the chip to the tile behind it. Same lucide square-play paths, same filled
+  chip, same 1.35 wedge scale and the same true-bbox centring as icon.svg — see
+  that file for all of it, for why the nominal 24x24 box is not used, and for
+  the two derived transform formulas. This file's coverage C is 0.60.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
@@ -30,8 +27,10 @@
     <stop offset="1" stop-color="#c25f34"/>
   </linearGradient>
   <rect width="64" height="64" fill="#1f1f1e"/>
-  <g transform="translate(8.9600 8.9600) scale(1.92000)" fill="none" stroke="url(#og)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="3" y="3" width="18" height="18" rx="2"/>
-    <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" fill="url(#og)" stroke="none"/>
+  <g transform="translate(6.4000 6.4000) scale(2.13333)">
+    <rect x="3" y="3" width="18" height="18" rx="4" fill="url(#og)"/>
+    <g transform="translate(-4.2 -4.2) scale(1.35)" fill="#1f1f1e">
+      <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z"/>
+    </g>
   </g>
 </svg>

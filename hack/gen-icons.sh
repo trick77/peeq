@@ -21,9 +21,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/ui/icons"
 OUT="$ROOT/ui/public"
-MASTER="$SRC/icon.svg"          # renders the PWA rasters; never ships itself
-FAVICON="$SRC/icon-favicon.svg" # the master with a filled frame; ships as-is
-TAB='#33322f'                   # the tab icon's ground, see icon-favicon.svg
+MASTER="$SRC/icon.svg"          # the mark: ships as the tab icon AND renders the PWA rasters
 
 for tool in rsvg-convert magick; do
 	if ! command -v "$tool" >/dev/null 2>&1; then
@@ -35,16 +33,20 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 # --- icon.svg: served directly as the modern tab icon ------------------------
-# Its own source, not the master: Safari plates favicons on its favourites bar,
-# so this one carries a ground where the master does not.
-cp "$FAVICON" "$OUT/icon.svg"
+# The master itself, unmodified. There used to be a separate icon-favicon.svg
+# here — the master with the frame's rect filled #33322f — because Safari plates
+# favicons on a light rgb(192,192,192) bar and a hollow mark landed there as an
+# orange scribble on a white card. The mark is a filled chip now, which is a
+# solid object on that plate on its own, so the second source bought nothing and
+# is gone.
+cp "$MASTER" "$OUT/icon.svg"
 
 # --- transparent, from the master --------------------------------------------
-# -b none, and now these genuinely come out transparent: the master paints only
-# its glyph — no canvas rect, no fill inside the frame — so the mark composites
-# onto whatever is behind it instead of stamping peeq's ground onto it. The
-# renderer must not supply a ground of its own here or the check below, which
-# is what catches a master that grew a background rect back, could never fail.
+# -b none, and these still come out transparent: the master paints a chip, not a
+# canvas, so the four corners outside its rx-4 radius stay clear and the mark
+# lands as a chip rather than a square tile. The renderer must not supply a
+# ground of its own here or the check below, which is what catches a master that
+# grew a background rect back, could never fail.
 rsvg-convert -b none -w 192 -h 192 "$MASTER" -o "$OUT/icon-192.png"
 rsvg-convert -b none -w 512 -h 512 "$MASTER" -o "$OUT/icon-512.png"
 
@@ -64,13 +66,13 @@ rsvg-convert -w 512 -h 512 "$SRC/icon-maskable.svg" -o "$OUT/icon-maskable-512.p
 #
 # The four split two and two, and the halves are not the same decision:
 #
-#   icon-192/512          transparent — rendered from ui/public/icon.svg, which
-#                         paints only its glyph so the mark can take the colour
-#                         behind it. These were opaque for a while, when the
-#                         master carried a #1f1f1e canvas to stop Safari's light
-#                         tab bar showing through the corners of a rounded
-#                         silhouette. It no longer fills anything at all, which
-#                         is why that artifact has nothing left to appear in.
+#   icon-192/512          transparent — rendered from ui/icons/icon.svg, whose
+#                         chip leaves the canvas corners clear. These were opaque
+#                         for a while, when the master carried a #1f1f1e canvas to
+#                         stop Safari's light tab bar showing through the corners
+#                         of a rounded silhouette; the chip is opaque ink now, so
+#                         there is no interior for a light bar to show through and
+#                         that artifact has nothing left to appear in.
 #   apple-touch/maskable  opaque — from ui/icons/, and deliberately NOT following
 #                         the master: iOS flattens alpha onto black and Android
 #                         fills it with the launcher's colour, so these two must
@@ -94,23 +96,27 @@ check_alpha "$OUT/apple-touch-icon.png" true
 check_alpha "$OUT/icon-maskable-512.png" true
 
 # icon.svg ships as SVG, so there is no raster to read — render one here just to
-# assert it. Two samples, because it has to be a chip and not a tile: the canvas
-# corner transparent, and a point inside the frame clear of the wedge filled
-# with $TAB. Losing the fill is invisible until someone opens Safari.
+# assert it. Two samples, because it has to be a chip and not a tile, and it has
+# to be filled: the canvas corner transparent, and a point inside the chip clear
+# of the wedge fully opaque. Losing the fill is invisible until someone opens
+# Safari's favourites bar.
+#
+# The interior is asserted on ALPHA, not on a hex value: the chip is painted with
+# a gradient, so any single sample sits at one arbitrary point on the ramp and a
+# hex equality would pin this check to that point and break on every retune.
 #
 # -alpha on before both reads. Without it a fully opaque image carries no alpha
-# channel, and then %[hex:...] returns six digits instead of eight and
-# %[fx:...a] does not report 1 — the comparisons would be measuring
-# ImageMagick's channel bookkeeping rather than the icon.
+# channel, and then %[fx:...a] does not report 1 — the comparisons would be
+# measuring ImageMagick's channel bookkeeping rather than the icon.
 rsvg-convert -b none -w 512 -h 512 "$OUT/icon.svg" -o "$TMP/icon-favicon.png"
 fav_corner="$(magick "$TMP/icon-favicon.png" -alpha on -format '%[fx:p{0,0}.a]' info:)"
-fav_ground="$(magick "$TMP/icon-favicon.png" -alpha on -format '%[hex:p{256,96}]' info: | tr '[:upper:]' '[:lower:]')"
+fav_ground="$(magick "$TMP/icon-favicon.png" -alpha on -format '%[fx:p{256,96}.a]' info:)"
 if [[ "$fav_corner" != "0" ]]; then
 	echo "gen-icons: icon.svg's canvas corner has alpha $fav_corner, expected 0" >&2
 	fail=1
 fi
-if [[ "$fav_ground" != "${TAB#\#}ff" ]]; then
-	echo "gen-icons: icon.svg's frame is #$fav_ground, expected ${TAB}ff" >&2
+if [[ "$fav_ground" != "1" ]]; then
+	echo "gen-icons: icon.svg's chip has alpha $fav_ground, expected 1" >&2
 	fail=1
 fi
 

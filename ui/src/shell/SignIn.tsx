@@ -3,10 +3,18 @@ import { Spinner, buttonClass } from "../ui";
 /**
  * The mark, at the one size it is ever drawn here.
  *
- * Same geometry as the favicon (ui/public/icon.svg): lucide `square-play` with
- * the wedge filled rather than stroked, and a viewBox set to the frame's true
- * outline at stroke 2 — 2 2 20 20 — not the nominal 24x24, which is
- * two thirds empty and would draw the mark small inside its own box.
+ * Same geometry as the favicon (ui/icons/icon.svg), which carries the full
+ * reasoning: lucide `square-play` inverted — the chip filled with the accent
+ * gradient and the wedge cut out of it in --color-bg, rather than an orange
+ * stroke framing an orange wedge. The viewBox is the chip's true bbox, 3 3 18
+ * 18, not the nominal 24x24, which is two thirds empty and would draw the mark
+ * small inside its own box; it lost the half-stroke padding it used to carry
+ * because a filled chip's drawn edge is its geometric edge.
+ *
+ * The wedge is scaled 1.35 about the chip's centre. lucide sized it to sit
+ * inside a stroked frame, and on a filled chip that untouched wedge covers only
+ * 39%, which reads as an orange square with a speck in it. Do not push it
+ * further without re-centring: the wedge's own centre is x 12.45, not 12.
  *
  * The rail dropped its copy of this in #286 (loom's header carries a word and
  * its controls, nothing else). Sign-in is the one screen with no chrome around
@@ -16,7 +24,7 @@ import { Spinner, buttonClass } from "../ui";
  */
 function SignInMark() {
   return (
-    <svg className="signin-logo" viewBox="2 2 20 20" aria-hidden="true">
+    <svg className="signin-logo" viewBox="3 3 18 18" aria-hidden="true">
       <linearGradient id="signin-mark-grad" x1="0" y1="0" x2="0.72" y2="1">
         <stop className="s0" offset="0" />
         <stop className="s1" offset="1" />
@@ -26,15 +34,13 @@ function SignInMark() {
         y="3"
         width="18"
         height="18"
-        rx="2"
-        fill="none"
-        stroke="url(#signin-mark-grad)"
-        strokeWidth="2"
-        strokeLinejoin="round"
+        rx="4"
+        fill="url(#signin-mark-grad)"
       />
       <path
         d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z"
-        fill="url(#signin-mark-grad)"
+        fill="var(--color-bg)"
+        transform="translate(-4.2 -4.2) scale(1.35)"
       />
     </svg>
   );

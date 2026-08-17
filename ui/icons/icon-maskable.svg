@@ -5,16 +5,19 @@
   A maskable icon is cropped to whatever shape the Android launcher prefers —
   circle, squircle, rounded square, teardrop — and only the middle 80% of the
   square survives that crop. So this differs from icon-tile.svg in exactly one
-  way: the glyph is smaller again (46% vs 60%), which keeps every pixel of it
+  way: the chip is smaller again (46% vs 60%), which keeps every pixel of it
   inside that safe circle no matter which mask the launcher picks. The tile has
   to run edge to edge for the same reason it does on iOS — the launcher fills
   whatever the icon leaves transparent, and that fill is not ours to choose.
 
-  Same lucide square-play paths, filled wedge, 2 stroke and true-bbox centring
-  as the other two; see ui/public/icon.svg for all of it, and for why the
-  nominal 24x24 box is not used. A square glyph is the good case for a round
-  crop: its corners are the only part near the safe circle's edge, and at 46%
-  they clear it with room to spare.
+  Same lucide square-play paths, filled chip, 1.35 wedge scale and true-bbox
+  centring as the other two; see icon.svg for all of it, for why the nominal
+  24x24 box is not used, and for the two derived transform formulas. This file's
+  coverage C is 0.46. A near-square chip is the good case for a round crop: its
+  corners are the only part near the safe circle's edge, and at 46% with an rx 4
+  radius they clear it with room to spare — the chip's furthest painted point is
+  ~18.1 units from centre against a 25.6 safe radius. The rx 4 corner is what
+  bought the last of that margin; going back to rx 2 costs some of it.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
@@ -22,8 +25,10 @@
     <stop offset="1" stop-color="#c25f34"/>
   </linearGradient>
   <rect width="64" height="64" fill="#1f1f1e"/>
-  <g transform="translate(14.3360 14.3360) scale(1.47200)" fill="none" stroke="url(#og)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="3" y="3" width="18" height="18" rx="2"/>
-    <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" fill="url(#og)" stroke="none"/>
+  <g transform="translate(12.3733 12.3733) scale(1.63556)">
+    <rect x="3" y="3" width="18" height="18" rx="4" fill="url(#og)"/>
+    <g transform="translate(-4.2 -4.2) scale(1.35)" fill="#1f1f1e">
+      <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z"/>
+    </g>
   </g>
 </svg>
