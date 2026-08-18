@@ -836,8 +836,43 @@ func TestWorker_spreadsTheFleetAcrossTheWeek(t *testing.T) {
 			t.Fatalf("two channels share the slot %v — that is the convoy, not a spread", slot)
 		}
 		seen[slot] = true
-		if slot%(week/fleet) != 0 {
-			t.Fatalf("%s sits at %v, not a multiple of the %v slot width", id, slot, week/fleet)
+		// Every slot sits one offset past a multiple of the slot width: the
+		// lattice is regular, but deliberately shifted off the scan grid.
+		offset := 24 * time.Hour / (2 * fleet)
+		if slot%(week/fleet) != offset {
+			t.Fatalf("%s sits at %v, want %v past a multiple of the %v slot width",
+				id, slot, offset, week/fleet)
+		}
+	}
+}
+
+// TestNextRefreshAt_landsBetweenScans is the collision this offset exists for.
+// A refresh slot is rank*7d/count and a week is a whole number of days, so
+// without the offset every refresh instant reduced, modulo 24h, to an exact
+// multiple of 24h/count — which is precisely where some channel's scan sits.
+// Every refresh collided with a scan, for every rank and every fleet size; only
+// their scarcity made it look intermittent. Each refresh must now fall midway
+// between two scan slots instead.
+func TestNextRefreshAt_landsBetweenScans(t *testing.T) {
+	const day = 24 * time.Hour
+	now := time.Date(2026, 8, 18, 7, 3, 0, 0, time.UTC)
+
+	for _, count := range []int{1, 4, 12, 44} {
+		scanWidth := day / time.Duration(count)
+		for rank := 0; rank < count; rank++ {
+			at, err := time.ParseInLocation(sqlTimeLayout, NextRefreshAt(now, rank, count), time.UTC)
+			if err != nil {
+				t.Fatalf("count=%d rank=%d: %v", count, rank, err)
+			}
+			// Where in the day the refresh lands, against the scan grid. A
+			// second of slack: both grids are stored as whole-second text,
+			// and a slot width of 24h/44 is not a whole number of seconds.
+			into := time.Duration(at.Unix()%int64(day/time.Second)) * time.Second
+			off := into%scanWidth - scanWidth/2
+			if off < -time.Second || off > time.Second {
+				t.Fatalf("count=%d rank=%d refreshes at %v, %v into a %v scan slot; want the midpoint %v",
+					count, rank, at, into%scanWidth, scanWidth, scanWidth/2)
+			}
 		}
 	}
 }

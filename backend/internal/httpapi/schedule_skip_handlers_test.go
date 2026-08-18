@@ -407,11 +407,14 @@ func TestSkipScan_landsExactlyOneCycleLater(t *testing.T) {
 	cookie := loginAndGetCookie(t, h)
 
 	// The only subscription, so its slot is the top of each cycle: midnight UTC
-	// for the daily scan, and for the weekly refresh the epoch's own weekday.
-	// Both are seeded far enough ahead that the anchor is the stored instant
-	// rather than the wall clock.
+	// for the daily scan, and for the weekly refresh the epoch's own weekday —
+	// plus, for the refresh, the half-scan-slot offset that keeps the two
+	// rotations from sharing a minute (see channelmeta.NextRefreshAt). A fleet
+	// of one has a scan slot a day wide, so that offset is 12 hours. Both are
+	// seeded far enough ahead that the anchor is the stored instant rather than
+	// the wall clock.
 	scanSlot := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	metaSlot := time.Unix(scanSlot.Unix()/604800*604800, 0).UTC()
+	metaSlot := time.Unix(scanSlot.Unix()/604800*604800, 0).UTC().Add(12 * time.Hour)
 	const layout = skipTimeLayout
 	seedSkippableChannel(t, ch, "UCx", scanSlot.Format(layout), metaSlot.Format(layout))
 
