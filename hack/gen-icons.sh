@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # hack/gen-icons.sh
 #
-# Renders every favicon raster from the three SVG sources. Run it by hand after
-# editing any of them and commit what it writes.
+# Renders every favicon raster from the three SVG sources, plus the Companion
+# extension's four icons from the same master. Run it by hand after editing any
+# of them and commit what it writes.
 #
 # The outputs are COMMITTED rather than generated during the build, so neither
 # `npm run build` nor CI needs an image toolchain. That is the whole reason this
@@ -115,8 +116,9 @@ check_alpha "$OUT/apple-touch-icon.png" true
 check_alpha "$OUT/icon-maskable-512.png" true
 # The extension's four are transparent for the same reason icon-192/512 are, and
 # for one more: a light Chrome toolbar shows through anything they leave opaque.
-check_alpha "$EXT/icon-16.png" false
-check_alpha "$EXT/icon-128.png" false
+for size in 16 32 48 128; do
+	check_alpha "$EXT/icon-$size.png" false
+done
 
 # icon.svg ships as SVG, so there is no raster to read — render one here just to
 # assert it. Two samples, because it has to be a chip and not a tile, and it has
@@ -145,4 +147,4 @@ fi
 
 [[ "$fail" == 0 ]] || exit 1
 echo "gen-icons: wrote $(cd "$OUT" && ls icon-*.png apple-touch-icon.png | tr '\n' ' ')"
-echo "gen-icons: wrote extension/icons/$(cd "$EXT" && ls icon-*.png | tr '\n' ' ')"
+echo "gen-icons: wrote $(cd "$EXT" && ls icon-*.png | sed 's|^|extension/icons/|' | tr '\n' ' ')"
