@@ -48,7 +48,9 @@ node -e '
 # Fail loudly if packaging dropped something the extension needs to load. Every
 # entry point the manifest names, plus the modules they import.
 for required in manifest.json background.js send.js shared.js config.js \
-                popup.html popup.js options.html options.js styles.css; do
+                popup.html popup.js options.html options.js styles.css \
+                icons/icon-16.png icons/icon-32.png icons/icon-48.png \
+                icons/icon-128.png; do
   if [ ! -f "$STAGE/$required" ]; then
     echo "::error::packaged extension is missing $required" >&2
     exit 1
@@ -68,7 +70,7 @@ fi
 # than that means something was swept in that does not belong.
 FILE_COUNT="$(find "$STAGE" -type f | wc -l | tr -d ' ')"
 if [ "$FILE_COUNT" -gt 25 ]; then
-  echo "::error::packaged extension has $FILE_COUNT files, expected ~10 — something leaked in" >&2
+  echo "::error::packaged extension has $FILE_COUNT files, expected ~14 — something leaked in" >&2
   find "$STAGE" -type f >&2
   exit 1
 fi
