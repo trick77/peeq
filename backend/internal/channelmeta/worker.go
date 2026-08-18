@@ -23,6 +23,12 @@ const (
 	// to stand before it is re-read. A week: names, artwork and subscriber
 	// counts move slowly, and every refresh is a yt-dlp call against YouTube.
 	refreshInterval = 7 * 24 * time.Hour
+	// scanDay is the scan scheduler's own cycle (scan.scanInterval), named
+	// here because NextRefreshAt has to interleave with a grid that package
+	// owns. Duplicated rather than imported for the reason given there — but
+	// duplicated visibly: if the scan cycle ever stops being a day, this
+	// constant is the thing that has to move with it.
+	scanDay = 24 * time.Hour
 	// pollInterval is how often the worker looks for something to do. One
 	// channel is claimed per pass, so this doubles as the spacing between
 	// refreshes — including when draining a large never-resolved backlog
@@ -303,20 +309,45 @@ func (w *Worker) nextRefreshAt(channelID string) string {
 // repeat. Migration 0005 scattered these rows once; a slot keeps them scattered
 // through the restarts and cookie expiries that used to re-gather them.
 //
-// Both slots derive from the same rank, so for some channels the refresh comes
-// due right beside that channel's own scan and ClaimDueMetadata defers it on
-// ScanQuietWindow every week rather than occasionally. The two coincide when
-// 6*rank is a multiple of the fleet size, which is gcd(6, count) channels —
-// ranks 0 and 22 of production's 44, but six of them in a fleet of 12. That is
-// the intended
-// behaviour of the quiet window and it clears itself within a poll or two; it is
-// written down because the recurrence looks like a stuck channel and is not.
+// The half-scan-slot offset is what keeps this rotation off the scan grid, and
+// without it the two collide by construction rather than by accident. A refresh
+// slot is rank*7d/count; a week is an exact multiple of a day, so that instant
+// taken modulo 24h is always a whole multiple of 24h/count — which is to say
+// always exactly on some channel's scan minute, for every rank and every fleet
+// size. Every refresh landed on a scan, not occasionally but always; the
+// scarcity of refreshes (one a week each, against a scan a day) is the only
+// reason it read as intermittent. Shifting the whole refresh lattice by half a
+// scan slot puts each refresh midway between the two scans it used to sit on:
+// 16.4 minutes clear on either side at production's 44 channels, which is the
+// most the 32.7-minute scan grid has to give.
+//
+// The same-channel case is a separate question and the offset only half
+// answers it. A refresh still comes due NEAR its own channel's scan for the
+// ranks where 6*rank is congruent to 0 or -1 modulo the fleet size — those two
+// residues put it half a scan slot either side — but half a scan slot is
+// 12h/count, so whether ClaimDueMetadata still defers them depends on the fleet
+// size: at production's 44 that is 16 minutes, inside ScanQuietWindow, and they
+// are deferred exactly as before; below about 24 channels the offset clears the
+// window and they simply run. Both outcomes are fine, and the deferral is the
+// quiet window working. It is written down because the weekly recurrence looks
+// like a stuck channel and is not.
 //
 // The small duplication with the scan package stays deliberate: importing it
 // for twenty lines would tie two schedulers together that share only an idea.
 func NextRefreshAt(now time.Time, rank, count int) string {
-	slot := sched.Slot(rank, count, refreshInterval)
+	slot := sched.Slot(rank, count, refreshInterval) + scanSlotOffset(count)
 	return sched.NextSlotAfter(now.Add(refreshInterval/2), refreshInterval, slot).Format(sqlTimeLayout)
+}
+
+// scanSlotOffset is half the width of one scan slot — the shift that lands a
+// refresh between two scans instead of on one. A fleet of zero has no grid to
+// dodge and no channel to schedule; it yields no offset rather than dividing by
+// its size.
+func scanSlotOffset(count int) time.Duration {
+	if count <= 0 {
+		return 0
+	}
+	return scanDay / time.Duration(2*count)
 }
 
 // sleep waits d, returning false if ctx was cancelled first.
