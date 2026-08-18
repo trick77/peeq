@@ -401,6 +401,72 @@ func TestMetadata_withCookie_stillPassesCookiesFlag(t *testing.T) {
 	}
 }
 
+// TestExec_withCookie_forcesPlayerClients locks the yt-dlp#17389 workaround to
+// the cookie branch of the ONE argv choke point, so every entry point —
+// Metadata here, but equally Subtitles, Download and the channel scans — gets
+// it. Without it yt-dlp picks tv_downgraded for a logged-in session and every
+// video comes back "The page needs to be reloaded."
+func TestExec_withCookie_forcesPlayerClients(t *testing.T) {
+	captureOut := filepath.Join(t.TempDir(), "capture.out")
+	content := "#!/bin/sh\necho \"$@\" > '" + captureOut + "'\necho '{}'\nexit 0\n"
+	script := filepath.Join(t.TempDir(), "capture.sh")
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New(RunnerConfig{
+		Bin:            script,
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+
+	out, err := os.ReadFile(captureOut)
+	if err != nil {
+		t.Fatalf("read capture: %v", err)
+	}
+	// The flag and its value, in that order and adjacent: yt-dlp reads the
+	// value as the following argv element, so a stray match anywhere in the
+	// line would not prove the pair was passed correctly.
+	want := "--extractor-args " + playerClients
+	if !strings.Contains(string(out), want) {
+		t.Fatalf("args %q must contain %q when a cookie is present", string(out), want)
+	}
+}
+
+// TestExec_anonymous_emptyCookie_leavesPlayerClientsAlone is the other half:
+// the failing client is the one yt-dlp picks BECAUSE the session is logged in,
+// so an anonymous run keeps yt-dlp's own defaults rather than being pinned to a
+// list chosen for the cookie case.
+func TestExec_anonymous_emptyCookie_leavesPlayerClientsAlone(t *testing.T) {
+	captureOut := filepath.Join(t.TempDir(), "capture.out")
+	content := "#!/bin/sh\necho \"$@\" > '" + captureOut + "'\necho '{}'\nexit 0\n"
+	script := filepath.Join(t.TempDir(), "capture.sh")
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New(RunnerConfig{
+		Bin:            script,
+		AllowAnonymous: true,
+		CookieProvider: func() (string, string) { return "", "absent" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+
+	out, err := os.ReadFile(captureOut)
+	if err != nil {
+		t.Fatalf("read capture: %v", err)
+	}
+	if strings.Contains(string(out), "--extractor-args") {
+		t.Fatalf("args %q must not pin a player client in anonymous mode", string(out))
+	}
+}
+
 // TestThrottle_appliesInAnonymousMode locks that the 20s throttle floor is
 // unaffected by AllowAnonymous — anonymous calls carry MORE ban risk (no
 // account to rate-limit, just the host IP), so the throttle must not be

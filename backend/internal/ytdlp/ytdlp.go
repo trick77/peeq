@@ -26,6 +26,26 @@ const minThrottleFloor = 20 * time.Second
 // random component is always added on top of the floor.
 const defaultThrottleJitter = 15 * time.Second
 
+// playerClients is the --extractor-args value peeq forces on every
+// cookie-bearing call.
+//
+// Left to itself, yt-dlp picks YouTube's tv_downgraded client for a logged-in
+// session, and YouTube answers that client with an UNPLAYABLE player response —
+// surfacing as "ERROR: [youtube] <id>: The page needs to be reloaded." on EVERY
+// video (yt-dlp#17389). It costs captions, downloads and metadata alike, and it
+// does so quietly: captionfetch spends its whole retry ladder on the error and
+// settles the video as no_transcript, so an inbox card reads "Summarizing…" for
+// 31 hours and then loses its marker with nothing said.
+//
+// Naming the client list explicitly is the yt-dlp maintainers' workaround.
+// "default" keeps yt-dlp's own choices rather than replacing them, and
+// web_embedded is the one that still answers with cookies attached.
+//
+// Scoped to the youtube extractor, so it does not disturb the youtubetab one
+// channel.go passes: yt-dlp keys --extractor-args by extractor and merges
+// repeated flags carrying different keys.
+const playerClients = "youtube:player_client=default,web_embedded"
+
 // RunnerConfig configures a Runner. Every external dependency (the binary
 // path, the cookie source, the sleep function) is injectable so tests
 // never need the real yt-dlp binary and never actually sleep. A sidecar
@@ -558,7 +578,11 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 
 	fullArgs := args
 	if cookieFile != "" {
-		fullArgs = append([]string{"--cookies", cookieFile}, args...)
+		// The player-client override rides with the cookie rather than being
+		// unconditional: the client YouTube rejects is the one yt-dlp picks
+		// BECAUSE the session is logged in, so an anonymous run (the
+		// AllowAnonymous dev carve-out) is better left on yt-dlp's own defaults.
+		fullArgs = append([]string{"--cookies", cookieFile, "--extractor-args", playerClients}, args...)
 	}
 	// Resolve the binary path fresh on every invocation (not once at boot),
 	// so a self-updated yt-dlp written to disk after startup is used without

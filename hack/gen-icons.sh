@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # hack/gen-icons.sh
 #
-# Renders every favicon raster from the three SVG sources. Run it by hand after
-# editing any of them and commit what it writes.
+# Renders every favicon raster from the three SVG sources, plus the Companion
+# extension's four icons from the same master. Run it by hand after editing any
+# of them and commit what it writes.
 #
 # The outputs are COMMITTED rather than generated during the build, so neither
 # `npm run build` nor CI needs an image toolchain. That is the whole reason this
@@ -57,6 +58,25 @@ rsvg-convert -b none -w 512 -h 512 "$MASTER" -o "$OUT/icon-512.png"
 rsvg-convert -w 180 -h 180 "$SRC/icon-tile.svg" -o "$OUT/apple-touch-icon.png"
 rsvg-convert -w 512 -h 512 "$SRC/icon-maskable.svg" -o "$OUT/icon-maskable-512.png"
 
+# --- the Companion extension's icons, also from the master -------------------
+# Chrome draws a generated letter tile — a grey "p" — for an extension whose
+# manifest declares no icons, which is what the toolbar showed until these
+# existed. The four sizes are the ones Chrome asks for: 16 in the toolbar and
+# favicon slots, 32 on Windows, 48 in chrome://extensions, 128 on the Web Store
+# and at install time. Chrome downscales when a size is missing, but its
+# downscale of the 128 into a 16 is muddier than rsvg's own render, and 16 is
+# the size the user actually looks at all day.
+#
+# Transparent, from the master, exactly like the tab icon: Chrome's toolbar
+# follows the browser theme, so a mark with its own opaque ground would carry a
+# square of peeq's dark panel onto a light toolbar. The chip is opaque ink and
+# only its corners are clear, so it reads as a chip on either theme.
+EXT="$ROOT/extension/icons"
+mkdir -p "$EXT"
+for size in 16 32 48 128; do
+	rsvg-convert -b none -w "$size" -h "$size" "$MASTER" -o "$EXT/icon-$size.png"
+done
+
 # --- verify the grounds survived --------------------------------------------
 # Rendering can succeed and still produce the wrong thing — a tiled source that
 # lost its background rect yields a touch icon iOS flattens onto black; a master
@@ -94,6 +114,11 @@ check_alpha "$OUT/icon-192.png" false
 check_alpha "$OUT/icon-512.png" false
 check_alpha "$OUT/apple-touch-icon.png" true
 check_alpha "$OUT/icon-maskable-512.png" true
+# The extension's four are transparent for the same reason icon-192/512 are, and
+# for one more: a light Chrome toolbar shows through anything they leave opaque.
+for size in 16 32 48 128; do
+	check_alpha "$EXT/icon-$size.png" false
+done
 
 # icon.svg ships as SVG, so there is no raster to read — render one here just to
 # assert it. Two samples, because it has to be a chip and not a tile, and it has
@@ -122,3 +147,4 @@ fi
 
 [[ "$fail" == 0 ]] || exit 1
 echo "gen-icons: wrote $(cd "$OUT" && ls icon-*.png apple-touch-icon.png | tr '\n' ' ')"
+echo "gen-icons: wrote $(cd "$EXT" && ls icon-*.png | sed 's|^|extension/icons/|' | tr '\n' ' ')"
