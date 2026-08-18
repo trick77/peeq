@@ -555,6 +555,20 @@ func (r *analysisRun) skipped(name, reason string) {
 		append([]any{"step", name}, append(r.ident(), "reason", reason)...)...)
 }
 
+// succeeded reports whether an outcome passed to finished is a success.
+//
+// A prefix test rather than an equality, because "done" is not the only one:
+// an inbox read finishes as done_inbox or done_inbox_indexed, and both are
+// terminal — the job is marked StateDone on the very next line. Comparing
+// against "done" alone printed will_retry=true beside outcome=done_inbox,
+// which reads as though something were still pending on a video that is
+// finished and already rendering its summary.
+//
+// Every failing outcome is named for its failure (error, panic, <step>_failed),
+// so a new success spelled done_* is covered here on the day it is added and a
+// new failure cannot pass by accident.
+func succeeded(outcome string) bool { return strings.HasPrefix(outcome, "done") }
+
 // finished logs the whole analysis: wall time plus the chat tokens it cost.
 // retrying distinguishes a failure the queue will pick up again from a
 // terminal one — without it an outcome of "error" reads as final on a job that
@@ -579,7 +593,7 @@ func (r *analysisRun) finished(outcome string) {
 		"duration_ms", elapsed,
 		"wait_ms", wait,
 		"attempt", attemptLabel(r.job),
-		"will_retry", outcome != "done" && r.job.Attempts < r.job.MaxAttempts)
+		"will_retry", !succeeded(outcome) && r.job.Attempts < r.job.MaxAttempts)
 	r.log.Info("summarize worker: analysis finished", append(attrs, total.LogAttrs()...)...)
 }
 
