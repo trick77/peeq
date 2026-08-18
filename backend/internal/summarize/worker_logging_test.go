@@ -414,6 +414,45 @@ func TestWorkerLogsExhaustedRetryAsFinal(t *testing.T) {
 	}
 }
 
+// An inbox read succeeds under a name of its own — done_inbox — and the finish
+// line must say so. The predicate compared against "done" alone, so the one
+// outcome peeq produces most often for a fresh subscription video printed
+// will_retry=true beside it: a finished summary, already rendering in the
+// Player, logged as though the queue still owed it something.
+func TestWorkerLogsAnInboxReadAsTerminal(t *testing.T) {
+	h := newWorkerHarness(t)
+	rel := writeInboxCaption(t, h, "inbox-log")
+	if err := h.videos.Upsert(videos.Video{ID: "inbox-log", URL: "https://youtu.be/inbox-log"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	seedTranscript(t, h, "inbox-log", rel)
+	if err := h.videos.SetStatus("inbox-log", videos.StatusNew, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("inbox-log"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	log, buf := captureLogger()
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(&countingCompleter{reply: "A summary of the video."}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		EmbedModel: "test-model", EmbedDim: 1536, Logger: log})
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+
+	fin := findRec(buf.records(t), "summarize worker: analysis finished")
+	if fin == nil || fin["outcome"] != "done_inbox" {
+		t.Fatalf("finished record = %v, want outcome done_inbox", fin)
+	}
+	// Attempts remain on the job, so only the outcome can make this false.
+	if fin["will_retry"] != false {
+		t.Errorf("finished.will_retry = %v, want false — done_inbox is terminal", fin["will_retry"])
+	}
+}
+
 // An embedding failure is named as such and stays retryable. It used to log
 // outcome=error — the same word a summary failure uses — because it went through
 // failJob, which also marked the video summary_status='error' with a finished
