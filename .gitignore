@@ -1,6 +1,9 @@
 bin/
 node_modules
 coverage/
+# Finder metadata. macOS drops these into any directory it browses, so the
+# rule is bare (no leading slash) and matches at every depth.
+.DS_Store
 # tsc -b build-mode stamp file, written by the UI typecheck.
 ui/tsconfig.tsbuildinfo
 # Playwright run output from extension/e2e.
