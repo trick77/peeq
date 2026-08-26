@@ -2180,7 +2180,13 @@ body:has(.nowdock) {
   flex-wrap: nowrap;
   white-space: nowrap;
   min-width: 0;
-  margin-bottom: 4px;
+  /* Negative on purpose, not a typo: the eyebrow is the title's kicker and has
+     to read as attached to it, but the title's line box carries ~3px of
+     half-leading above its caps (16.5px at line-height 1.4). The 4px this
+     replaces put the optical gap at ~17px, wider than the 10px between the
+     poster and the eyebrow, so the line floated between the two. -3px cancels
+     the half-leading and lands the optical gap on the same 10px. */
+  margin-bottom: -3px;
   /* The channel name ellipsizes first (it is the only shrinkable item below),
      but on the narrowest card even the fixed dates can outrun the width. Clip
      there rather than let the row spill past the thumbnail's edge. */
@@ -2984,8 +2990,24 @@ button.sleeppick.armed {
   );
 }
 
-.playmeta {
-  margin-top: 20px;
+/* No margin-top: .leftcol is a flex column with gap: 20px, which already spaces
+   this block off the stage above it. The 20px margin that used to sit here
+   predates that gap and stacked on top of it, so the seam under the video was
+   40px on the desktop layout and, since a margin here would survive .leftcol
+   dissolving to display: contents, on the phone one too.
+
+   What is here instead: the byline and the title are the only things in this
+   column that are not inside a bordered box, so at x=0 they hung left of every
+   panel's text (.card .hd is a 1px border plus 16px of padding, .panel 1px plus
+   17px) and left of the scrubber inside the stage, which is inset the same
+   17px. The two header rows take that inset; .playacts below them does not,
+   because .playbar is itself a bordered box and belongs on the panels' edge
+   rather than on their text. Scoped with > so .unfetched-ident, which shares
+   the .by rule below, keeps its own alignment — that page sets the eyebrow
+   beside a 260px poster, with no panel edge under it to line up with. */
+.playmeta > .by,
+.playmeta > .playtitle {
+  padding-left: 17px;
 }
 /* Title line: the title plus the "Shared" chip, which rides the first line and
    wraps below on a narrow stage rather than crushing the title. */
