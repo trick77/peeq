@@ -58,6 +58,10 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   already bit classify (256 cap → empty reply → permanent 'uncategorized').
 - Need JSON → `llm.AsJSONObject(ctx)`. A prompt saying "as JSON" does NOT work: 0/8 raw replies
   strictly parseable without it, 8/8 with it.
+- New summarizer call site → feed it `forSummary`, never `parsed` (summarize/worker.go). `parsed` is
+  the raw transcript and still carries sponsor reads; `forSummary` has them stripped so no chapter,
+  key point or summary sentence can be drawn from one. See `summarize/sponsor.go`. Embedding
+  deliberately keeps `parsed` — search is not narrowed.
 - Asserting a model id in a test → `llm.ModelFor` / `llm.EffortFor` / `llm.ShortGateFrom`, never a
   literal: gate and default ids are equal today, so literals pass for the wrong reason.
 

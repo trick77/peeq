@@ -49,6 +49,24 @@ func Wanted(category string) bool {
 	return false
 }
 
+// NotContent reports whether category names a segment that is not part of what
+// the video is ABOUT, and so must never reach the summarizer — no chapter title,
+// no key point, and nothing in the prose summary drawn from it. A sponsor read
+// is the obvious case: it is the most quotable, most confidently-worded passage
+// in many videos, which is exactly why a model reaches for it.
+//
+// Every stored category qualifies EXCEPT "intro". An intro is a real part of the
+// video and a legitimate chapter — it is skippable, not off-topic, and it almost
+// always covers t=0, where a video's first chapter sits. Suppressing it would
+// strip the opening chapter from most videos that have one.
+//
+// Note this is a different question from Wanted, which asks what peeq STORES and
+// draws on the seek bar. A segment can be worth marking for the player and still
+// be worth hiding from the summarizer; "outro" and "filler" are both.
+func NotContent(category string) bool {
+	return category != "intro" && Wanted(category)
+}
+
 // Segment is one stored SponsorBlock segment, in the shape peeq persists in
 // videos.sponsorblock_segments and serves to the player.
 type Segment struct {

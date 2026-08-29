@@ -1753,3 +1753,99 @@ func TestFallbackReindexesAReprocessedVideoWithStaleRev(t *testing.T) {
 		t.Errorf("the video was left unsearchable: %v", kinds)
 	}
 }
+
+// sponsorSpyCompleter records every prompt the summarizer was given, so a test
+// can assert on what the model READ rather than only on what it returned. It
+// answers key points with a chapter and a point inside the sponsor read, which
+// is the artifact the output backstop has to catch.
+type sponsorSpyCompleter struct{ seen *[]string }
+
+func (c sponsorSpyCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	for _, msg := range m {
+		*c.seen = append(*c.seen, msg.Content)
+	}
+	if len(m) > 0 {
+		sys := m[0].Content
+		if strings.Contains(sys, "cohesive summary") {
+			return "Overall prose summary.", nil
+		}
+		if strings.Contains(sys, "category id") {
+			return "ai", nil
+		}
+		if strings.Contains(sys, "JSON") {
+			return `{"chapters":[{"ts":8,"title":"The sponsor offer"},{"ts":20,"title":"Real topic"}],` +
+				`"key_points":[{"ts":8,"text":"use code PEEQ"},{"ts":20,"text":"a real point"}]}`, nil
+		}
+	}
+	return "chunk summary", nil
+}
+
+// A sponsor read must not reach the summarizer at all, and anything the model
+// still times inside one must not be persisted. Both halves are checked here
+// because they fail differently: the first cleans the prose summary, which no
+// output filter could reach; the second catches a timestamp the model inferred
+// rather than read.
+func TestWorkerWithholdsSponsorSegmentsFromTheSummarizer(t *testing.T) {
+	h := newWorkerHarness(t)
+
+	relPath := "v9/captions.en.vtt"
+	full := filepath.Join(h.mediaDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	vtt := "WEBVTT\n\n" +
+		"00:00:00.000 --> 00:00:04.000\nWelcome back to the channel today.\n\n" +
+		"00:00:06.000 --> 00:00:10.000\nThis episode is sponsored by AcmeVPN use code PEEQ.\n\n" +
+		"00:00:12.000 --> 00:00:16.000\nAcmeVPN keeps your traffic private and fast.\n\n" +
+		"00:00:20.000 --> 00:00:24.000\nAnyway the actual topic is Go worker testing.\n"
+	if err := os.WriteFile(full, []byte(vtt), 0o644); err != nil {
+		t.Fatalf("write vtt: %v", err)
+	}
+
+	if err := h.videos.Upsert(videos.Video{ID: "v9", URL: "https://youtu.be/v9"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetSponsorblockSegments("v9",
+		`[{"category":"sponsor","start_time":5,"end_time":18}]`); err != nil {
+		t.Fatalf("set segments: %v", err)
+	}
+	seedTranscript(t, h, "v9", relPath)
+	if _, err := h.jobs.Enqueue("v9"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	var seen []string
+	w := NewWorker(WorkerDeps{
+		Jobs:       h.jobs,
+		Videos:     h.videos,
+		Rag:        h.rag,
+		Summarizer: New(sponsorSpyCompleter{seen: &seen}),
+		Embedder:   fakeWorkerEmbedder{dim: 1536},
+		EmbedModel: "test-model",
+		EmbedDim:   1536})
+
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+
+	prompts := strings.Join(seen, "\n")
+	if strings.Contains(prompts, "AcmeVPN") || strings.Contains(prompts, "code PEEQ") {
+		t.Error("the sponsor read reached the summarizer; it must be stripped from the input")
+	}
+	if !strings.Contains(prompts, "actual topic is Go worker testing") {
+		t.Fatal("real content was stripped too — the filter is too wide")
+	}
+
+	v, err := h.videos.Get("v9")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if strings.Contains(v.Chapters, "sponsor offer") || strings.Contains(v.KeyPoints, "code PEEQ") {
+		t.Errorf("an artifact inside the sponsor read was persisted:\nchapters=%s\nkey_points=%s",
+			v.Chapters, v.KeyPoints)
+	}
+	if !strings.Contains(v.Chapters, "Real topic") || !strings.Contains(v.KeyPoints, "a real point") {
+		t.Errorf("the artifacts outside the sponsor read were dropped:\nchapters=%s\nkey_points=%s",
+			v.Chapters, v.KeyPoints)
+	}
+}
