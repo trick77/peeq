@@ -516,6 +516,15 @@ func stripFences(s string) string {
 // string boundaries. Falls back to stripFences(s) when no brace pair is
 // found, so genuinely non-JSON replies still degrade to the old "leave empty"
 // behavior instead of erroring.
+func extractJSON(s string) string {
+	first := strings.IndexByte(s, '{')
+	last := strings.LastIndexByte(s, '}')
+	if first >= 0 && last > first {
+		return s[first : last+1]
+	}
+	return stripFences(s)
+}
+
 // head returns the first n runes of s on one line, for a log field that has to
 // be readable without dumping a 16k reply into the journal.
 func head(s string, n int) string {
@@ -524,13 +533,4 @@ func head(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n]) + "…"
-}
-
-func extractJSON(s string) string {
-	first := strings.IndexByte(s, '{')
-	last := strings.LastIndexByte(s, '}')
-	if first >= 0 && last > first {
-		return s[first : last+1]
-	}
-	return stripFences(s)
 }

@@ -189,6 +189,30 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		return true, nil
 	}
 
+	// Sponsor reads and the other off-topic segments are taken out of what the
+	// summarizer reads, so no chapter, key point or summary sentence can be drawn
+	// from one. See sponsor.go for why this is done to the INPUT rather than only
+	// to the results, and why "intro" is not among them.
+	//
+	// Deliberately applied to a copy: `parsed` stays whole for embedAndStore, so
+	// this narrows what the Player captions without narrowing what search finds.
+	sponsorSpans := suppressedSpans(video.SponsorblockSegments)
+	forSummary, spansUnusable := stripCues(parsed, sponsorSpans)
+	if spansUnusable {
+		// The spans covered every cue. The transcript falls back to the
+		// unfiltered parse (see stripCues), and the spans have to be dropped
+		// here too: leaving them in place would let the same bad data strip
+		// every chapter and key point in the backstop below, which is the
+		// failure the fallback exists to prevent.
+		w.d.Logger.Warn("summarize worker: sponsor segments cover the whole transcript, filter skipped",
+			"video_id", video.ID, "spans", len(sponsorSpans))
+		sponsorSpans = nil
+	}
+	if n := len(parsed.Cues) - len(forSummary.Cues); n > 0 {
+		w.d.Logger.Debug("summarize worker: sponsor segments withheld from summarizer",
+			"video_id", video.ID, "cues_dropped", n, "spans", len(sponsorSpans))
+	}
+
 	// There is real work to do: everything from here on is logged against this
 	// video — one identity, one token accumulator, one wall clock.
 	run = w.startRun(ctx, job, video)
@@ -202,7 +226,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	summary := video.Summary
 	if summary == "" {
 		sctx, done := run.step("summary")
-		s, serr := w.d.Summarizer.SummarizeText(sctx, parsed.Transcript)
+		s, serr := w.d.Summarizer.SummarizeText(sctx, forSummary.Transcript)
 		if serr != nil {
 			return true, w.failJob(job, video, run, serr.Error())
 		}
@@ -327,7 +351,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// would index every video as though it had no chapters.
 	ytChapters := decodeChapters(video.Chapters)
 	kctx, done := run.step("keypoints")
-	chapters, keyPoints, err := w.d.Summarizer.KeyPoints(kctx, summary, parsed.Cues, ytChapters)
+	chapters, keyPoints, err := w.d.Summarizer.KeyPoints(kctx, summary, forSummary.Cues, ytChapters)
 	if err != nil {
 		// Moving embedding after this step means a video whose key-points call
 		// keeps failing would never be indexed at all — unfindable, with no
@@ -354,6 +378,20 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 			}
 		}
 		return true, w.requeueJob(job, video, run, "keypoints", err.Error())
+	}
+	// Backstop over the input filter above. The model was handed a cue index with
+	// the suppressed passages missing, but a timestamp it infers rather than
+	// reads can still land in one of those holes.
+	//
+	// This also covers yt-dlp's chapters, which KeyPoints passes through
+	// unchanged when YouTube supplied them: a creator who titles their own
+	// chapter "Sponsor" is naming the same thing, and the reader is complaining
+	// about what the Player shows, not about which component wrote it.
+	if dc, dk := dropCovered(sponsorSpans, chapters, keyPoints); len(dc) != len(chapters) || len(dk) != len(keyPoints) {
+		w.d.Logger.Debug("summarize worker: dropped artifacts inside sponsor segments",
+			"video_id", video.ID,
+			"chapters_dropped", len(chapters)-len(dc), "key_points_dropped", len(keyPoints)-len(dk))
+		chapters, keyPoints = dc, dk
 	}
 	if err := w.d.Videos.SetKeyPoints(video.ID, encodeChapters(chapters), encodeKeyPoints(keyPoints)); err != nil {
 		return true, w.requeueJob(job, video, run, "keypoints", err.Error())

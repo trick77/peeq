@@ -98,7 +98,7 @@ type traceStage struct {
 	Key string `json:"key"`
 	Ms  int64  `json:"ms"`
 	// Tool is the model deployment or storage engine that ran this step —
-	// "mimo-v2.5", "sqlite-vec". Read from the thing that actually ran (see
+	// "glm-5.3-flash", "sqlite-vec". Read from the thing that actually ran (see
 	// llm.ModelFor and SearchEmbedder.Model) rather than written out here, so a
 	// redeployment cannot leave the panel naming a model nobody is using.
 	Tool string `json:"tool,omitempty"`
