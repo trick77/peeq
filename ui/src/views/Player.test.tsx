@@ -49,6 +49,8 @@ vi.mock("../api/videos", () => ({
   redownload: vi.fn().mockResolvedValue(undefined),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
   thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
+  // Needed by UnfetchedVideo, which Player renders for a 'new' video.
+  pendingThumbnailUrl: (id: string) => `/api/pending/${id}/thumbnail`,
   createPlaybackGrant: vi.fn(),
   // Resolved by default so the Search index card's side load is harmless in
   // every test that is not about it — an unresolved mock would leave the
@@ -1520,27 +1522,48 @@ describe("Player", () => {
     ).toBeInTheDocument();
   });
 
-  // 'pending' says nothing about whether there is a summary job: without a
-  // transcript there is none, and the video is waiting on YouTube's captions
-  // for as much as 31 hours. The panel has to tell the two apart, because
-  // "Summarizing" on the second was a claim about work nobody was doing.
-  it("distinguishes waiting for captions from summarizing", async () => {
-    vi.mocked(getVideo).mockResolvedValue(
-      makeVideo({ summary_status: "pending", has_subtitles: false }),
-    );
-    const { unmount } = render(<Player videoId="v1" onDeleted={() => {}} />);
+  // The caption-less copy splits on has_subtitles, and the event that starts a
+  // run IS the moment the captions landed — so patching summary_status alone
+  // would leave an open inbox page saying "waiting for captions" through the
+  // entire summarization, healing only on the "done" refetch. A non-final
+  // event on a page that believes there are no captions refetches instead.
+  it("refetches when a run starts on a page that saw no captions", async () => {
+    vi.mocked(getVideo)
+      .mockResolvedValueOnce(
+        makeVideo({
+          id: "v1",
+          status: "new",
+          summary_status: "pending",
+          has_subtitles: false,
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeVideo({
+          id: "v1",
+          status: "new",
+          summary_status: "running",
+          has_subtitles: true,
+        }),
+      );
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
     expect(
-      await screen.findByText(/Waiting for captions/i),
+      await screen.findByText(/Waiting for YouTube to publish captions/i),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Summarizing/i)).toBeNull();
-    unmount();
 
-    vi.mocked(getVideo).mockResolvedValue(
-      makeVideo({ summary_status: "pending", has_subtitles: true }),
+    rerender(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        summaryEvent={{ videoId: "v1", status: "running" }}
+      />,
     );
-    render(<Player videoId="v1" onDeleted={() => {}} />);
-    expect(await screen.findByText(/Summarizing/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Waiting for captions/i)).toBeNull();
+
+    expect(
+      await screen.findByText(/Summarizing this video/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Waiting for YouTube to publish captions/i),
+    ).toBeNull();
   });
 
   describe("Reprocess menu item", () => {
