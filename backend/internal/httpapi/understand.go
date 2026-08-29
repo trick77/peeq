@@ -51,6 +51,11 @@ const understandTimeout = 10 * time.Second
 // explaining itself, and the parse will reject it anyway. Raised from 200 when
 // the filters were added — a reply carrying two channel names and a date range
 // is a few dozen tokens longer than one carrying a topic alone.
+//
+// The cap now has to cover reasoning too, which cannot be switched off. This is
+// the tightest cap in the codebase against the reasoning it must hold: ~53
+// tokens at the low effort Shallow pins above, but 345 at the package default.
+// The margin exists only because this call asks for low — see understandQuery.
 const understandMaxTokens = 350
 
 // understandMaxChannels caps how many channel names one question may name.
@@ -266,11 +271,13 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 	// model allows, because this is a labelling job sitting in front of the first
 	// byte of an answer.
 	//
-	// Shallow is the ONLY lever here, and it is a latency lever, not a cost one.
-	// Reasoning cannot be switched off at all now, and the effort levels cost
-	// almost the same in tokens (53 at low, 54 at the default) — but max would
-	// take this call from 2.5s to 7.4s against understandTimeout's 10s. See
-	// llm/calloptions.go.
+	// Shallow is the ONLY lever here, and it is both a latency and a headroom
+	// lever. Reasoning cannot be switched off at all now: low and high cost about
+	// the same (53 and 54 tokens), but the package default, max, spends 345 —
+	// which is 2.5s become 7.4s against understandTimeout's 10s AND 345 reasoning
+	// tokens against understandMaxTokens' 350, leaving nothing for the reply.
+	// Dropping Shallow here does not make this call deeper, it makes it empty.
+	// See llm/calloptions.go.
 	cctx = llm.Shallow(llm.ShortGate(cctx))
 	cctx = llm.WithMaxTokens(cctx, understandMaxTokens)
 	cctx = llm.WithCall(cctx, llm.CallInfo{Step: "understand"})

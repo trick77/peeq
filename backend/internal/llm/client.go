@@ -74,9 +74,10 @@ const (
 	// sends it rather than quietly running the model shallower than it was tuned
 	// for. Only Shallow opts out, and only because of a hard timeout.
 	//
-	// highReasoningEffort has no caller today. It is named because
-	// WithReasoningEffort takes a raw string and this is the one place that knows
-	// which strings the endpoint accepts.
+	// highReasoningEffort has exactly one caller, the streamed Ask answer (see
+	// httpapi/answer_handlers.go), and is exported as HighReasoningEffort for it.
+	// It is a named const because WithReasoningEffort takes a raw string and this
+	// is the one place that knows which strings the endpoint accepts.
 	reasoningEffort = maxReasoningEffort
 
 	// Z.ai's recommended sampling settings for GLM-5.3-Flash. Sent explicitly
@@ -102,6 +103,13 @@ const (
 	pacedLogThreshold  = time.Second
 	maxRawUsage        = 1 << 10
 )
+
+func responseFormatFor(ctx context.Context) *responseFormat {
+	if jsonObjectFrom(ctx) {
+		return &responseFormat{Type: responseFormatJSONObject}
+	}
+	return nil
+}
 
 // Config configures the chat client. BaseURL is the OpenAI-compatible root
 // (the client appends /chat/completions). APIKey is optional. RequestInterval
@@ -230,15 +238,24 @@ func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 // CALL arguments as they are generated, and peeq sends no tools at all. There is
 // nothing for it to stream.
 type chatRequest struct {
-	Model           string         `json:"model"`
-	Messages        []Message      `json:"messages"`
-	ReasoningEffort string         `json:"reasoning_effort"`
-	Thinking        thinkingOption `json:"thinking"`
-	Temperature     float64        `json:"temperature"`
-	TopP            float64        `json:"top_p"`
-	MaxTokens       int            `json:"max_tokens,omitempty"`
-	Stream          bool           `json:"stream"`
+	Model           string          `json:"model"`
+	Messages        []Message       `json:"messages"`
+	ReasoningEffort string          `json:"reasoning_effort"`
+	Thinking        thinkingOption  `json:"thinking"`
+	Temperature     float64         `json:"temperature"`
+	TopP            float64         `json:"top_p"`
+	MaxTokens       int             `json:"max_tokens,omitempty"`
+	Stream          bool            `json:"stream"`
+	ResponseFormat  *responseFormat `json:"response_format,omitempty"`
 }
+
+// responseFormat constrains the reply shape. Omitted unless AsJSONObject asks
+// for it — see there for why the prompt alone is not enough on this model.
+type responseFormat struct {
+	Type string `json:"type"`
+}
+
+const responseFormatJSONObject = "json_object"
 
 // No stream_options here, deliberately. MiMo needed stream_options.include_usage
 // to send the trailing usage chunk at all, without which every chat_tokens_*
@@ -348,6 +365,7 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 		Model: modelFrom(ctx), Messages: messages, ReasoningEffort: reasoningEffortFrom(ctx),
 		Thinking: thinkingOptionFor(ctx), Temperature: chatTemperature, TopP: chatTopP,
 		MaxTokens: maxTokensFrom(ctx), Stream: true,
+		ResponseFormat: responseFormatFor(ctx),
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal chat request: %w", err)

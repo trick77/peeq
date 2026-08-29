@@ -323,3 +323,32 @@ func TestModelFor_namesWhatTheRequestCarries(t *testing.T) {
 		})
 	}
 }
+
+// JSON mode is opt-in and off by default: most calls here must not be
+// constrained (classify answers with a bare id, the summary and Ask answers are
+// prose), so a leak would be worse than the absence it replaces.
+func TestComplete_jsonObjectIsOptIn(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		io.WriteString(w, sseStream("{}", ""))
+	}))
+	defer srv.Close()
+	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := gotBody["response_format"]; present {
+		t.Fatalf("response_format sent without opting in: %v", gotBody["response_format"])
+	}
+
+	if _, err := c.Complete(AsJSONObject(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	rf, _ := gotBody["response_format"].(map[string]any)
+	if rf == nil || rf["type"] != responseFormatJSONObject {
+		t.Fatalf("response_format = %v, want type %q", gotBody["response_format"], responseFormatJSONObject)
+	}
+}

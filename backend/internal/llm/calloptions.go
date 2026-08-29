@@ -113,6 +113,37 @@ func modelFrom(ctx context.Context) string {
 // nobody would think to distrust.
 func ModelFor(ctx context.Context) string { return modelFrom(ctx) }
 
+// --- response format ----------------------------------------------------------
+
+type jsonObjectKey struct{}
+
+// AsJSONObject asks the endpoint to constrain the reply to a single JSON object
+// (response_format json_object). Opt-in per call, because most calls here must
+// NOT be constrained: classify answers with a bare id and the summary and Ask
+// answers are prose.
+//
+// It is not belt-and-braces over a prompt that already says "as JSON" — the
+// prompt alone does not work on this model. Measured on the keypoints call, 8
+// runs each, whether the RAW reply parses with no cleanup at all:
+//
+//	prompt only                    0/8
+//	prompt + response_format       8/8
+//
+// Seven of the eight arrived fenced in ```json, and one opened with a sentence
+// of prose. summarize.extractJSON salvages both shapes by slicing from the first
+// brace to the last, so nothing was broken — but that heuristic is one prose
+// preamble containing a brace away from handing back garbage, and the caller
+// tolerates a parse failure by returning empty. This removes the guesswork
+// instead of widening the salvage.
+func AsJSONObject(ctx context.Context) context.Context {
+	return context.WithValue(ctx, jsonObjectKey{}, true)
+}
+
+func jsonObjectFrom(ctx context.Context) bool {
+	v, ok := ctx.Value(jsonObjectKey{}).(bool)
+	return ok && v
+}
+
 // --- max tokens ---------------------------------------------------------------
 
 type maxTokensKey struct{}

@@ -34,8 +34,8 @@ type shallowKey struct{}
 // reasoning at high, so saving tokens is never the reason to reach for this.
 // Latency is: low answers the understand gate in 2.5s where max takes 7.4s.
 //
-// A step with no one waiting on it should NOT use this. The default is high,
-// and the offline summary calls go higher still — see WithReasoningEffort.
+// A step with no one waiting on it should NOT use this. The default is max, and
+// the offline summary calls take it as-is — see WithReasoningEffort.
 func Shallow(ctx context.Context) context.Context {
 	return context.WithValue(ctx, shallowKey{}, true)
 }

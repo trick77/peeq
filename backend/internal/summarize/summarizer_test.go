@@ -38,14 +38,14 @@ func (f *fakeCompleter) Complete(ctx context.Context, m []llm.Message) (string, 
 	return f.replies[0], nil
 }
 
-// Classify is the one step routed to the non-Pro deployment, and this test runs
-// a real client at a stub endpoint rather than a fake completer because the
-// choice only exists on the wire — a fake sees a context, not a model name.
+// Classify is the one step routed to the gate deployment, and this test runs a
+// real client at a stub endpoint rather than a fake completer because the choice
+// only exists on the wire — a fake sees a context, not a model name.
 //
 // The summary half is the guard that matters: it is the prose a reader sees, and
-// it stays on Pro. The bar for the swap is what the call produces — an id or a
-// label — not "thinking happens to be off", which is true of several calls that
-// must not move, and not "the other deployment cannot reason", which is false.
+// it never takes the gate. The bar for the swap is what the call produces — an
+// id or a label — and nothing else; "it reasons shallowly" is true of calls that
+// must not move.
 func TestClassifyRunsOnTheGateDeploymentAndTheSummaryDoesNot(t *testing.T) {
 	var models []string
 	var maxTokens []any

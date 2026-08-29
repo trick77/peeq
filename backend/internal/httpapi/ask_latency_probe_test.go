@@ -37,7 +37,7 @@ import (
 //	ask answer           —            80 / 4.4s     355 / 9.6s
 //
 // Effort now buys real depth and costs real time. Tokens barely separate the
-// levels; wall clock separates them a lot. Re-run TestAskEffortSweep with more
+// levels; wall clock separates them a lot. Re-run TestAskEffortTiers with more
 // repeats before changing the Ask tier — the numbers above are single samples.
 //
 // Skipped unless PEEQ_ASK_SWEEP=1: they call the real endpoint and cost real
@@ -192,11 +192,9 @@ var sweepExcerpts = func() []string {
 
 // The sweep above showed reasoning-token counts that did not track the effort
 // level — high returning 28 tokens on one question while low returned 312 on
-// another. Either the parameter is inert on this endpoint or six samples per
-// level cannot see past the variance. This separates the two: ONE question, many
-// repeats, three settings. If effort works, the distributions separate; if it is
-// separate the tiers on the Ask prompt specifically, with enough repeats to tell
-// a real gap from noise.
+// another, which under MiMo read as the parameter being inert. This separates a
+// real gap from that variance: ONE question, many repeats, three settings, on
+// the Ask prompt specifically. If effort works, the distributions separate.
 //
 // All three levels are compared because all three are reachable: low is what
 // llm.Shallow sends, max is the package default, and high sits between them.

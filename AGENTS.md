@@ -39,26 +39,27 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 
 ## Chat model
 - `glm-5.3-flash` on Z.ai, hardcoded in `internal/llm/client.go`, never env vars.
-- `BACKEND_CHAT_BASE_URL` must be Z.ai's GENERAL endpoint `https://api.z.ai/api/paas/v4` (no `/v1`).
-  NEVER the GLM Coding Plan endpoint `/api/coding/paas/v4` — that plan is restricted to Z.ai's own
-  supported coding tools and forbids calls from anything else.
-- **Thinking cannot be switched off.** `thinking:{"type":"disabled"}` → HTTP 400 code 1210. Only
-  `low`/`high`/`max` reasoning_effort are accepted (`none`/`minimal`/`medium`/`xhigh` are rejected).
-- Default effort is `max` — Z.ai's own default and their recommendation for this model. Also send
-  their recommended `temperature: 1` / `top_p: 0.95`; omitting those does NOT give "the defaults",
-  it gives lower ones.
-- `llm.Shallow(ctx)` (→ `low`) is a LATENCY lever, not a cost one, and has exactly one caller: the
-  Ask understand gate, under a hard 10s timeout. Tokens barely differ between levels; time does
-  (keypoints: 12.8s at high, 69.9s at max). Reach for it only with a latency reason, written down.
-- Answer is a lookup no reader sees (an id, a label) → also `llm.ShortGate(ctx)`. It resolves to the
-  same deployment today and changes nothing on the wire; it records the decision for a future split.
-  Text that reaches the page never gets it — summary, map, reduce, keypoints, Ask.
-- `Shallow` and `ShortGate` are separate switches; don't couple them.
-- Cap a new call (`llm.WithMaxTokens`) unless a cut answer would be worse than a long one. The cap
-  counts reasoning tokens, and reasoning is never zero now, so leave headroom — a call that spends
-  its budget thinking returns empty with NO error.
-- Asserting a model id in a test → use `llm.ModelFor` / `llm.EffortFor` / `llm.ShortGateFrom`, never
-  a literal: the gate and default ids are equal today, so literals pass for the wrong reason.
+- `BACKEND_CHAT_BASE_URL` = Z.ai GENERAL endpoint `https://api.z.ai/api/paas/v4` (no `/v1`). NEVER
+  the Coding Plan endpoint `/api/coding/paas/v4` — restricted to Z.ai's own tools, forbids peeq.
+- **Thinking can't be switched off.** `thinking:{"type":"disabled"}` → 400 code 1210. Only
+  `low`/`high`/`max` effort accepted; `none`/`minimal`/`medium`/`xhigh` rejected.
+- Default effort `max` (Z.ai's own default + recommendation). Also send their `temperature: 1` /
+  `top_p: 0.95` — omitting these gives LOWER values, not "the defaults".
+- `llm.Shallow(ctx)` (→`low`) is a LATENCY lever, not cost. One caller: the Ask understand gate,
+  hard 10s timeout. Tokens barely differ per level; time does (keypoints 12.8s high → 69.9s max).
+  Use only with a latency reason, written down. Classification is NOT such a reason: measured, `low`
+  is unstable on ambiguous videos (2 answers in 3 runs) and a wrong category persists forever.
+- Lookup no reader sees (an id, a label) → also `llm.ShortGate(ctx)`. Same deployment today, changes
+  nothing on the wire; it records the decision for a future split. Never on reader-facing text
+  (summary, map, reduce, keypoints, Ask). `Shallow` and `ShortGate` are separate; don't couple them.
+- Cap every new call (`llm.WithMaxTokens`) with GENEROUS headroom: the cap counts reasoning, which is
+  never zero now, and a call that spends its budget thinking returns empty with NO error. Reasoning
+  is stochastic — one classify prompt measured 120, 254 and 646 tokens. Size for the worst. This
+  already bit classify (256 cap → empty reply → permanent 'uncategorized').
+- Need JSON → `llm.AsJSONObject(ctx)`. A prompt saying "as JSON" does NOT work: 0/8 raw replies
+  strictly parseable without it, 8/8 with it.
+- Asserting a model id in a test → `llm.ModelFor` / `llm.EffortFor` / `llm.ShortGateFrom`, never a
+  literal: gate and default ids are equal today, so literals pass for the wrong reason.
 
 ## Config
 - All runtime config comes from `BACKEND_*` env vars — see `.env.example`.
