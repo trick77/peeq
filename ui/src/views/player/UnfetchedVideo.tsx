@@ -263,6 +263,14 @@ export function UnfetchedVideo({
           <p className="unfetched-empty">
             Summarizing this video failed. It will be tried again.
           </p>
+        ) : !video.has_subtitles ? (
+          // No transcript means no summary job: peeq is waiting on YouTube to
+          // publish captions, which it chases for roughly 31 hours before
+          // settling the video as no_transcript. No spinner — nothing is
+          // running, and the next attempt can be a day away.
+          <p className="unfetched-empty">
+            Waiting for YouTube to publish captions for this video.
+          </p>
         ) : (
           <p className="unfetched-empty">
             <Spinner size="15px" />

@@ -144,13 +144,33 @@ describe("UnfetchedVideo", () => {
     vi.unstubAllGlobals();
   });
 
-  it("says it is still summarizing a video whose captions have not landed", () => {
+  it("says it is summarizing a video whose captions are in", () => {
     render(
       <UnfetchedVideo
         video={video({ summary: "", summary_status: "pending" })}
       />,
     );
     expect(screen.getByText(/Summarizing this video/)).toBeTruthy();
+  });
+
+  // 'pending' with no transcript is the state an inbox video sits in from
+  // discovery until YouTube's ASR pass lands — up to 31 hours, with no summary
+  // job in existence. Saying "Summarizing this video" there named work that had
+  // not started.
+  it("says it is waiting on captions when none have landed", () => {
+    render(
+      <UnfetchedVideo
+        video={video({
+          summary: "",
+          summary_status: "pending",
+          has_subtitles: false,
+        })}
+      />,
+    );
+    expect(
+      screen.getByText(/Waiting for YouTube to publish captions/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Summarizing this video/)).toBeNull();
   });
 
   // The eyebrow above the title is the same line the library card and the

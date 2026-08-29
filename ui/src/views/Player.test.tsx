@@ -1520,6 +1520,29 @@ describe("Player", () => {
     ).toBeInTheDocument();
   });
 
+  // 'pending' says nothing about whether there is a summary job: without a
+  // transcript there is none, and the video is waiting on YouTube's captions
+  // for as much as 31 hours. The panel has to tell the two apart, because
+  // "Summarizing" on the second was a claim about work nobody was doing.
+  it("distinguishes waiting for captions from summarizing", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ summary_status: "pending", has_subtitles: false }),
+    );
+    const { unmount } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    expect(
+      await screen.findByText(/Waiting for captions/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Summarizing/i)).toBeNull();
+    unmount();
+
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ summary_status: "pending", has_subtitles: true }),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    expect(await screen.findByText(/Summarizing/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Waiting for captions/i)).toBeNull();
+  });
+
   describe("Reprocess menu item", () => {
     it("shows on error status and calls reprocess", async () => {
       vi.mocked(getVideo).mockResolvedValue(
@@ -1927,7 +1950,9 @@ describe("Player", () => {
   // connection to hear what App had already decoded.
   it("updates live when a summary event arrives for the open video", async () => {
     vi.mocked(getVideo)
-      .mockResolvedValueOnce(makeVideo({ id: "v1", summary_status: "running" }))
+      .mockResolvedValueOnce(
+        makeVideo({ id: "v1", summary_status: "running", has_subtitles: true }),
+      )
       .mockResolvedValueOnce(
         makeVideo({
           id: "v1",
@@ -1951,7 +1976,7 @@ describe("Player", () => {
 
   it("ignores a summary event for a different video", async () => {
     vi.mocked(getVideo).mockResolvedValue(
-      makeVideo({ id: "v1", summary_status: "running" }),
+      makeVideo({ id: "v1", summary_status: "running", has_subtitles: true }),
     );
     const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
     expect(await screen.findByText(/summarizing/i)).toBeInTheDocument();
@@ -1975,7 +2000,7 @@ describe("Player", () => {
   // transition would be a request per step of every job on the box.
   it("patches a non-final status in place, without refetching", async () => {
     vi.mocked(getVideo).mockResolvedValue(
-      makeVideo({ id: "v1", summary_status: "error" }),
+      makeVideo({ id: "v1", summary_status: "error", has_subtitles: true }),
     );
     const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
     expect(
@@ -2000,7 +2025,7 @@ describe("Player", () => {
   it("drops a finished refetch that lost its video", async () => {
     let resolveStale: (v: Video) => void = () => {};
     vi.mocked(getVideo).mockResolvedValueOnce(
-      makeVideo({ id: "v1", summary_status: "running" }),
+      makeVideo({ id: "v1", summary_status: "running", has_subtitles: true }),
     );
     const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
     await screen.findByText(/summarizing/i);
@@ -2038,7 +2063,7 @@ describe("Player", () => {
   // status still lands — the phase moves under a status that does not.
   it("reacts to a repeated event with an unchanged status", async () => {
     vi.mocked(getVideo).mockResolvedValue(
-      makeVideo({ id: "v1", summary_status: "pending" }),
+      makeVideo({ id: "v1", summary_status: "pending", has_subtitles: true }),
     );
     const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
     await screen.findByText(/summariz|pending/i);
