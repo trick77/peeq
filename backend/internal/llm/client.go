@@ -1,10 +1,14 @@
 // Package llm is peeq's lean OpenAI-compatible chat client, configured via
 // BACKEND_CHAT_BASE_URL and BACKEND_CHAT_API_KEY. The model below is a real
 // upstream model identifier sent on the wire, not a config name — it is
-// deliberately NOT renamed alongside those env vars. It targets
-// reasoning_effort=high on every call (an offline summarization job, so latency
-// is free and quality is the priority), and sends MiMo's thinking switch
-// explicitly — see thinking.go for why, and for the steps that turn it off.
+// deliberately NOT renamed alongside those env vars.
+//
+// The upstream is Z.ai (api.z.ai/api/paas/v4), which cannot be asked to skip
+// reasoning: GLM-5.3-Flash rejects thinking:{"type":"disabled"} outright with
+// code 1210, "This model always engages in thinking and cannot be disabled;
+// please use low, high, or max". So thinking is sent enabled on every call and
+// reasoning_effort is the only depth control — see calloptions.go for the tiers
+// and thinking.go for the one step that asks for the shallowest of them.
 // Modeled on loom's llm/client.go, minus loom's tool/vision/streaming machinery.
 package llm
 
@@ -32,21 +36,56 @@ import (
 // A whole-request http.Client.Timeout is deliberately NOT set: it caps body
 // reads too, so it would cut a legitimately long stream mid-answer.
 const (
-	model = "mimo-v2.5-pro"
-	// shortGateModel is MiMo's non-Pro deployment, used by the steps whose answer
-	// is a lookup rather than a deduction (see ShortGate). It is neither a weaker
-	// model picked to save money nor a non-reasoning one — it is the same
-	// reasoning family as Pro and thinks when asked to. It is picked because it
-	// queues less: Pro is where the long thinking calls sit, so a 64-token
-	// classification behind them waits for work it has nothing to do with.
-	// Mirrors loom, which routes its short gates the same way after measuring a
-	// Pro that spent 78s queueing on a routing call.
+	model = "glm-5.3-flash"
+	// shortGateModel is the deployment the short gates reach (see ShortGate) —
+	// the steps whose answer is a lookup rather than a deduction. Today Z.ai
+	// serves those from the same model as everything else, so this is the same
+	// id twice and ShortGate changes nothing on the wire.
 	//
-	// Named for the use rather than for a model class, and apart from model
-	// rather than derived from it, so a future change to either use moves one
-	// without silently moving the other.
-	shortGateModel  = "mimo-v2.5"
-	reasoningEffort = "high"
+	// It stays a separate const anyway, named for the use rather than for a model
+	// class and written out rather than derived from model, so that pointing the
+	// gates at a different deployment later moves one use without silently moving
+	// the other. Under MiMo these differed: mimo-v2.5 was picked over -pro
+	// because it queued less, not because it was weaker.
+	shortGateModel = "glm-5.3-flash"
+	// The three reasoning depths GLM-5.3-Flash accepts. They are the ONLY values
+	// it takes — none, minimal, medium and xhigh are rejected — and thinking
+	// cannot be switched off at all (see the package doc).
+	//
+	// Measured against api.z.ai on peeq's own call shapes, reasoning tokens and
+	// wall clock:
+	//
+	//	                     low          high          max
+	//	classify             0 / 1.0s     15 / 1.3s     107 / 3.5s
+	//	understand           53 / 2.5s    54 / 2.5s     345 / 7.4s
+	//	summary (6.7k tok)   —            18 / 8.5s     144 / 11.0s
+	//	keypoints (12.5k)    18 / 7.9s    192 / 12.8s   3183 / 69.9s
+	//	ask answer           —            80 / 4.4s     355 / 9.6s
+	//
+	// The model scales its reasoning to the task, so even max stays far inside
+	// every max_tokens cap in the codebase. Time is the cost that varies, not
+	// tokens — note keypoints at 70s, and understand at 7.4s against a 10s
+	// timeout, which is the one place a deep call cannot go.
+	lowReasoningEffort  = "low"
+	highReasoningEffort = "high"
+	maxReasoningEffort  = "max"
+	// reasoningEffort is what a call gets when it asks for nothing. max is Z.ai's
+	// own default and their documented recommendation for this model, so peeq
+	// sends it rather than quietly running the model shallower than it was tuned
+	// for. Only Shallow opts out, and only because of a hard timeout.
+	//
+	// highReasoningEffort has exactly one caller, the streamed Ask answer (see
+	// httpapi/answer_handlers.go), and is exported as HighReasoningEffort for it.
+	// It is a named const because WithReasoningEffort takes a raw string and this
+	// is the one place that knows which strings the endpoint accepts.
+	reasoningEffort = maxReasoningEffort
+
+	// Z.ai's recommended sampling settings for GLM-5.3-Flash. Sent explicitly
+	// because the endpoint's own fallbacks are lower (around 0.5 and 0.7), so
+	// omitting them does not mean "the model's defaults" — it means running it
+	// off its recommended operating point.
+	chatTemperature = 1.0
+	chatTopP        = 0.95
 	// defaultHeaderTimeout is how long the endpoint may take to send response
 	// headers. Generous next to the ~2.5s observed, because it competes with
 	// nothing — a stall costs a minute now instead of five.
@@ -64,6 +103,13 @@ const (
 	pacedLogThreshold  = time.Second
 	maxRawUsage        = 1 << 10
 )
+
+func responseFormatFor(ctx context.Context) *responseFormat {
+	if jsonObjectFrom(ctx) {
+		return &responseFormat{Type: responseFormatJSONObject}
+	}
+	return nil
+}
 
 // Config configures the chat client. BaseURL is the OpenAI-compatible root
 // (the client appends /chat/completions). APIKey is optional. RequestInterval
@@ -188,34 +234,43 @@ func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 	}
 }
 
+// No tool_stream here, which Z.ai also recommends for streaming: it streams tool
+// CALL arguments as they are generated, and peeq sends no tools at all. There is
+// nothing for it to stream.
 type chatRequest struct {
-	Model           string         `json:"model"`
-	Messages        []Message      `json:"messages"`
-	ReasoningEffort string         `json:"reasoning_effort"`
-	Thinking        thinkingOption `json:"thinking"`
-	MaxTokens       int            `json:"max_tokens,omitempty"`
-	Stream          bool           `json:"stream"`
-	StreamOptions   *streamOptions `json:"stream_options,omitempty"`
+	Model           string          `json:"model"`
+	Messages        []Message       `json:"messages"`
+	ReasoningEffort string          `json:"reasoning_effort"`
+	Thinking        thinkingOption  `json:"thinking"`
+	Temperature     float64         `json:"temperature"`
+	TopP            float64         `json:"top_p"`
+	MaxTokens       int             `json:"max_tokens,omitempty"`
+	Stream          bool            `json:"stream"`
+	ResponseFormat  *responseFormat `json:"response_format,omitempty"`
 }
 
-// streamOptions asks for the trailing usage chunk. Without it a streamed call
-// reports no token usage at all, which would have turned every chat_tokens_*
-// field dark the moment streaming was switched on.
-//
-// With it, streaming costs no accounting whatsoever — worth stating because the
-// natural worry when adopting it is that the breakdown degrades. Measured
-// against token-plan-sgp.xiaomimimo.com, same prompt, thinking enabled:
-//
-//	stream=true   reasoning_tokens=79   cached_tokens=192
-//	stream=false  reasoning_tokens=108  cached_tokens=192
-//
-// Both counters survive streaming. The reasoning figures differ only because
-// the model thought a different amount on each run; cached is identical. Note
-// reasoning_tokens still depends on the thinking field being sent explicitly
-// (see thinking.go) — that is what zeroes it, not streaming.
-type streamOptions struct {
-	IncludeUsage bool `json:"include_usage"`
+// responseFormat constrains the reply shape. Omitted unless AsJSONObject asks
+// for it — see there for why the prompt alone is not enough on this model.
+type responseFormat struct {
+	Type string `json:"type"`
 }
+
+const responseFormatJSONObject = "json_object"
+
+// No stream_options here, deliberately. MiMo needed stream_options.include_usage
+// to send the trailing usage chunk at all, without which every chat_tokens_*
+// field went dark the moment streaming was switched on. Z.ai does not take the
+// parameter — it is absent from their SDK's request schema — and does not need
+// it: the final SSE frame carries usage unconditionally, before [DONE].
+// Measured against api.z.ai, same prompt, streamed:
+//
+//	{"choices":[{"finish_reason":"stop",...}],
+//	 "usage":{"prompt_tokens":15,"completion_tokens":16,"total_tokens":31,
+//	          "prompt_tokens_details":{"cached_tokens":0},
+//	          "completion_tokens_details":{"reasoning_tokens":12}}}
+//
+// Sending it anyway is accepted and ignored rather than rejected, but it is an
+// undocumented field on this endpoint, so it is not sent.
 
 // chatUsage mirrors the OpenAI-compatible `usage` object. Everything in it is
 // optional — endpoints vary in how much of the breakdown they report, and a
@@ -308,8 +363,9 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	}
 	body, err := json.Marshal(chatRequest{
 		Model: modelFrom(ctx), Messages: messages, ReasoningEffort: reasoningEffortFrom(ctx),
-		Thinking: thinkingOptionFor(ctx), MaxTokens: maxTokensFrom(ctx), Stream: true,
-		StreamOptions: &streamOptions{IncludeUsage: true},
+		Thinking: thinkingOptionFor(ctx), Temperature: chatTemperature, TopP: chatTopP,
+		MaxTokens: maxTokensFrom(ctx), Stream: true,
+		ResponseFormat: responseFormatFor(ctx),
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal chat request: %w", err)
@@ -346,7 +402,7 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	started := time.Now()
 	c.log.Debug("llm: request start", append(info.LogAttrs(),
 		"model", modelFrom(ctx), "messages", len(messages), "request_bytes", len(body),
-		"thinking", ThinkingFrom(ctx))...)
+		"reasoning_effort", reasoningEffortFrom(ctx))...)
 
 	var counters streamCounters
 	stop := StartHeartbeatFunc(ctx, c.log, c.heartbeat, "llm: still waiting for response",

@@ -34,24 +34,45 @@ func TestCompleteSendsModelAndEffortAndReturnsContent(t *testing.T) {
 	if out != "hello world" {
 		t.Fatalf("content = %q", out)
 	}
-	if gotBody["model"] != "mimo-v2.5-pro" {
+	if gotBody["model"] != model {
 		t.Fatalf("model = %v", gotBody["model"])
 	}
-	if gotBody["reasoning_effort"] != "high" {
+	// The default is max, which is the endpoint's own default and Z.ai's
+	// recommendation — a regression to a shallower value would be silent.
+	if gotBody["reasoning_effort"] != maxReasoningEffort {
 		t.Fatalf("reasoning_effort = %v", gotBody["reasoning_effort"])
+	}
+	// Z.ai's recommended sampling point. Omitting these does not give "the
+	// model's defaults", it gives lower ones, so absence is the bug to catch.
+	if gotBody["temperature"] != chatTemperature {
+		t.Fatalf("temperature = %v", gotBody["temperature"])
+	}
+	if gotBody["top_p"] != chatTopP {
+		t.Fatalf("top_p = %v", gotBody["top_p"])
+	}
+	if ct, ok := thinkingObj(t, gotBody)["clear_thinking"].(bool); !ok || ct {
+		t.Fatalf("clear_thinking = %v, want false", thinkingObj(t, gotBody)["clear_thinking"])
 	}
 	if gotBody["stream"] != true {
 		t.Fatalf("stream = %v", gotBody["stream"])
 	}
-	// Thinking is on unless the caller opts out, and it is sent explicitly:
-	// omitting it costs the reasoning-token accounting, not the reasoning.
+	// Thinking is always on: the endpoint rejects "disabled" outright, so this
+	// is the only value that can ever go out, and it must go out explicitly.
 	if got := thinkingType(t, gotBody); got != "enabled" {
 		t.Fatalf("thinking.type = %q", got)
+	}
+	// No stream_options. Z.ai does not take the parameter and sends usage on the
+	// final frame regardless; sending it would be an undocumented field.
+	if _, ok := gotBody["stream_options"]; ok {
+		t.Fatalf("request carried stream_options: %v", gotBody["stream_options"])
 	}
 	_ = strings.TrimSpace
 }
 
-func TestComplete_withoutThinkingDisablesItOnTheWire(t *testing.T) {
+// Shallow cannot switch thinking off — the endpoint refuses that outright with
+// code 1210 — so it must lower reasoning_effort instead and leave thinking
+// enabled. A regression that sent "disabled" would fail every call in prod.
+func TestComplete_shallowLowersEffortAndLeavesThinkingEnabled(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -61,24 +82,30 @@ func TestComplete_withoutThinkingDisablesItOnTheWire(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
-	if _, err := c.Complete(WithoutThinking(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
+	if _, err := c.Complete(Shallow(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := thinkingType(t, gotBody); got != "disabled" {
-		t.Fatalf("thinking.type = %q", got)
+	if got := thinkingType(t, gotBody); got != "enabled" {
+		t.Fatalf("thinking.type = %q, want enabled even when shallow", got)
 	}
-	// Effort still rides along: the endpoint ignores it while thinking is off,
-	// and dropping it would be a second, untested divergence from every other
-	// request the client makes.
-	if gotBody["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort = %v", gotBody["reasoning_effort"])
+	if gotBody["reasoning_effort"] != lowReasoningEffort {
+		t.Fatalf("reasoning_effort = %v, want %v", gotBody["reasoning_effort"], lowReasoningEffort)
+	}
+
+	// An explicit override still wins over Shallow.
+	if _, err := c.Complete(WithReasoningEffort(Shallow(context.Background()), highReasoningEffort), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["reasoning_effort"] != highReasoningEffort {
+		t.Fatalf("reasoning_effort = %v, want the explicit override to win", gotBody["reasoning_effort"])
 	}
 }
 
-// The short gate goes to the non-Pro deployment, and nothing else does. The
-// second half is the point of the test: ShortGate is opt-in per call, and a
-// leak would move the summary and the Ask answer off Pro without anyone asking.
-func TestComplete_shortGateRoutesToTheNonProDeployment(t *testing.T) {
+// ShortGate routes to shortGateModel and nothing else does. Both consts hold the
+// same id today, so this asserts against the consts rather than two literals:
+// written with literals it would pass for the wrong reason now and silently stop
+// testing anything if the deployments are ever split again.
+func TestComplete_shortGateRoutesToTheGateDeployment(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -91,22 +118,22 @@ func TestComplete_shortGateRoutesToTheNonProDeployment(t *testing.T) {
 	if _, err := c.Complete(ShortGate(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
-	if gotBody["model"] != "mimo-v2.5" {
-		t.Fatalf("model = %v, want the non-Pro deployment", gotBody["model"])
+	if gotBody["model"] != shortGateModel {
+		t.Fatalf("model = %v, want the gate deployment", gotBody["model"])
 	}
 
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
-	if gotBody["model"] != "mimo-v2.5-pro" {
-		t.Fatalf("model = %v, want Pro for a call that did not opt in", gotBody["model"])
+	if gotBody["model"] != model {
+		t.Fatalf("model = %v, want the default for a call that did not opt in", gotBody["model"])
 	}
 }
 
-// The deployment and the thinking switch are separate choices, and either can be
-// made without the other: disabling thinking must not silently move a call off
-// Pro, which is what keeps the summary and the forced Ask answer where they are.
-func TestComplete_withoutThinkingStaysOnPro(t *testing.T) {
+// The deployment and the reasoning depth are separate choices, and either can be
+// made without the other: asking for shallow reasoning must not silently move a
+// call onto the gate deployment.
+func TestComplete_shallowDoesNotChangeTheDeployment(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -116,24 +143,29 @@ func TestComplete_withoutThinkingStaysOnPro(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
-	if _, err := c.Complete(WithoutThinking(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
+	if _, err := c.Complete(Shallow(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
-	if gotBody["model"] != "mimo-v2.5-pro" {
-		t.Fatalf("model = %v, want Pro: thinking off is not the same as the non-Pro deployment", gotBody["model"])
+	if gotBody["model"] != model {
+		t.Fatalf("model = %v, want the default: shallow reasoning is not the same as the gate deployment", gotBody["model"])
 	}
 }
 
 // thinkingType digs the switch out of a decoded request body, failing the test
-// when the field is missing entirely — an absent object is exactly the bug this
-// pair of tests exists to catch, and it would otherwise read as an empty type.
+// when the field is missing entirely — an absent object is exactly the bug these
+// tests exist to catch, and it would otherwise read as an empty type.
 func thinkingType(t *testing.T, body map[string]any) string {
+	t.Helper()
+	return thinkingObj(t, body)["type"].(string)
+}
+
+func thinkingObj(t *testing.T, body map[string]any) map[string]any {
 	t.Helper()
 	obj, ok := body["thinking"].(map[string]any)
 	if !ok {
 		t.Fatalf("request carried no thinking object: %v", body)
 	}
-	return obj["type"].(string)
+	return obj
 }
 
 func TestCompleteErrorsOnNon2xx(t *testing.T) {
@@ -226,8 +258,8 @@ func TestComplete_maxTokensOmittedByDefault(t *testing.T) {
 	if _, present := gotBody["max_tokens"]; present {
 		t.Fatalf("max_tokens present by default: %v", gotBody["max_tokens"])
 	}
-	if gotBody["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort = %v, want the default high", gotBody["reasoning_effort"])
+	if gotBody["reasoning_effort"] != reasoningEffort {
+		t.Fatalf("reasoning_effort = %v, want the package default", gotBody["reasoning_effort"])
 	}
 }
 
@@ -289,5 +321,34 @@ func TestModelFor_namesWhatTheRequestCarries(t *testing.T) {
 				t.Fatalf("ModelFor = %q, but the request carried %v", got, gotBody["model"])
 			}
 		})
+	}
+}
+
+// JSON mode is opt-in and off by default: most calls here must not be
+// constrained (classify answers with a bare id, the summary and Ask answers are
+// prose), so a leak would be worse than the absence it replaces.
+func TestComplete_jsonObjectIsOptIn(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		io.WriteString(w, sseStream("{}", ""))
+	}))
+	defer srv.Close()
+	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := gotBody["response_format"]; present {
+		t.Fatalf("response_format sent without opting in: %v", gotBody["response_format"])
+	}
+
+	if _, err := c.Complete(AsJSONObject(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	rf, _ := gotBody["response_format"].(map[string]any)
+	if rf == nil || rf["type"] != responseFormatJSONObject {
+		t.Fatalf("response_format = %v, want type %q", gotBody["response_format"], responseFormatJSONObject)
 	}
 }

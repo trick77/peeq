@@ -2069,13 +2069,25 @@ describe("Player", () => {
     const contentsHeader = () =>
       screen.getByText("Contents").closest(".hd") as HTMLElement;
 
-    it("names MiMo in the header for summarizer-generated chapters", async () => {
+    it("names the LLM in the header for summarizer-generated chapters", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ chapters: [{ ts: 108, title: "Frame", source: "llm" }] }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await screen.findByText("Frame")).toBeInTheDocument();
+      expect(within(contentsHeader()).getByText("LLM")).toBeInTheDocument();
+    });
+
+    // Videos summarized before the model switch stored "mimo". They must keep
+    // their pill: an unrecognised source renders nothing, so dropping the legacy
+    // key would silently strip provenance from every older video.
+    it("still names the LLM for chapters stored under the legacy source", async () => {
       vi.mocked(getVideo).mockResolvedValue(
         makeVideo({ chapters: [{ ts: 108, title: "Frame", source: "mimo" }] }),
       );
       render(<Player videoId="v1" onDeleted={() => {}} />);
       expect(await screen.findByText("Frame")).toBeInTheDocument();
-      expect(within(contentsHeader()).getByText("MiMo")).toBeInTheDocument();
+      expect(within(contentsHeader()).getByText("LLM")).toBeInTheDocument();
     });
 
     it("names one source once however many chapters share it", async () => {
@@ -2099,15 +2111,15 @@ describe("Player", () => {
         makeVideo({
           chapters: [
             { ts: 0, title: "Cold open", source: "yt-dlp" },
-            { ts: 60, title: "Middle", source: "mimo" },
+            { ts: 60, title: "Middle", source: "llm" },
             { ts: 120, title: "End", source: "yt-dlp" },
           ],
         }),
       );
       render(<Player videoId="v1" onDeleted={() => {}} />);
       expect(await screen.findByText("Cold open")).toBeInTheDocument();
-      const pills = within(contentsHeader()).getAllByText(/yt-dlp|MiMo/);
-      expect(pills.map((p) => p.textContent)).toEqual(["yt-dlp", "MiMo"]);
+      const pills = within(contentsHeader()).getAllByText(/yt-dlp|LLM/);
+      expect(pills.map((p) => p.textContent)).toEqual(["yt-dlp", "LLM"]);
     });
 
     it("names no source it does not recognise", async () => {
@@ -2116,9 +2128,7 @@ describe("Player", () => {
       );
       render(<Player videoId="v1" onDeleted={() => {}} />);
       expect(await screen.findByText("Frame")).toBeInTheDocument();
-      expect(
-        within(contentsHeader()).queryByText(/wat|yt-dlp|MiMo/),
-      ).toBeNull();
+      expect(within(contentsHeader()).queryByText(/wat|yt-dlp|LLM/)).toBeNull();
     });
   });
 

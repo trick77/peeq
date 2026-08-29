@@ -5,13 +5,21 @@ import { tocGridStyle } from "../../ui";
 import type { Video } from "../../api/types";
 
 // Chapters come from two places and the card says which: yt-dlp reads them off
-// the video itself, MiMo derives them from the transcript when YouTube supplied
-// none, and a reader deciding whether to trust a timestamp wants to know the
-// difference. A video's chapters are written as a set, so the answer is the
-// same for every row — the header says it once rather than tagging all twelve.
+// the video itself, the model derives them from the transcript when YouTube
+// supplied none, and a reader deciding whether to trust a timestamp wants to
+// know the difference. A video's chapters are written as a set, so the answer is
+// the same for every row — the header says it once rather than tagging all
+// twelve.
+//
+// The label names the KIND of generator, not the vendor: which model peeq runs
+// has changed once and can change again, and a pill saying "MiMo" on chapters a
+// different model wrote is worse than one saying nothing. "mimo" is the legacy
+// stored value, kept so videos summarized before the switch keep their pill
+// instead of silently losing it.
 const SOURCE_LABELS: Record<string, string> = {
   "yt-dlp": "yt-dlp",
-  mimo: "MiMo",
+  llm: "LLM",
+  mimo: "LLM",
 };
 
 // sourceLabels names each generator behind these chapters, in the order it

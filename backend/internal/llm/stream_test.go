@@ -94,7 +94,7 @@ func TestComplete_concatenatesContentDeltas(t *testing.T) {
 	}
 }
 
-func TestComplete_sendsStreamAndAsksForUsage(t *testing.T) {
+func TestComplete_streamsWithoutStreamOptions(t *testing.T) {
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		decodeJSON(t, r, &body)
@@ -109,11 +109,13 @@ func TestComplete_sendsStreamAndAsksForUsage(t *testing.T) {
 	if body["stream"] != true {
 		t.Errorf("stream = %v, want true", body["stream"])
 	}
-	// Without include_usage a streamed call reports no tokens at all, so this is
-	// the difference between accounting that works and accounting gone dark.
-	opts, _ := body["stream_options"].(map[string]any)
-	if opts == nil || opts["include_usage"] != true {
-		t.Errorf("stream_options = %v, want include_usage true", body["stream_options"])
+	// MiMo needed stream_options.include_usage before it would send the trailing
+	// usage chunk. Z.ai does not take the parameter and sends usage on the final
+	// frame regardless, so the client must NOT send it — an undocumented field on
+	// this endpoint. The accounting it used to buy is covered by the usage-chunk
+	// tests below, which is what actually proves tokens are still counted.
+	if _, present := body["stream_options"]; present {
+		t.Errorf("stream_options = %v, want it absent", body["stream_options"])
 	}
 }
 

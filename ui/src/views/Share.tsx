@@ -291,7 +291,7 @@ export function Share({ token }: { token: string | null }) {
 
               Two things still differ from the Player's Contents card, both
               because this page is public: no empty state (it shouldn't
-              advertise a panel it has nothing for) and no yt-dlp/MiMo source
+              advertise a panel it has nothing for) and no yt-dlp/LLM source
               tag (internal trivia the recipient has no use for). */}
           {chapters.length > 0 && (
             <div className="card sharepage-chapters">

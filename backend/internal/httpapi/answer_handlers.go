@@ -613,21 +613,29 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pro, with thinking on: this is the one call a person waits on, and it
-	// writes cited prose from a dozen excerpts — the deduction the deeper
-	// deployment is for.
+	// The one call in peeq a person waits on: it writes cited prose from a dozen
+	// excerpts while a spinner is on screen.
 	//
-	// An earlier note here guessed that reasoning_effort was the lever for that
-	// wait. Measured (ask_latency_probe_test.go), it is not: high and low return
-	// the same reasoning-token distribution, so llm.WithReasoningEffort changes
-	// nothing on this endpoint. The lever that does work is thinking:disabled,
-	// worth ~3.8s of time-to-first-token — and it is not free. Without thinking
-	// the answers stay grounded and still refuse a question the excerpts cannot
-	// answer, but they run thinner and drift on citation placement, landing the
-	// marker before the full stop rather than after it. That is a call about
-	// answer quality, not a tuning knob, so it stays as it is until someone
-	// makes it deliberately.
-	ctx := llm.WithMaxTokens(r.Context(), answerMaxTokens)
+	// Explicitly BELOW the package default (max), which is the only place that is
+	// true, and it is a latency decision rather than a quality or cost one. The
+	// stream cannot start until reasoning ends, so effort is paid entirely in
+	// time-to-first-token. Measured on this prompt, 8 repeats
+	// (ask_latency_probe_test.go), ttft median / reasoning median:
+	//
+	//	max   4950ms / 278      high  1270ms / 19      low  934ms / 0
+	//
+	// max costs 3.7s of blank panel before the first word, on an answer that is
+	// grounded extraction from excerpts retrieval already chose — the hard part
+	// happened in embedding and ranking, not here. high keeps the reasoning that
+	// makes citation placement stable while starting to stream in about a second.
+	//
+	// Do NOT drop this to Shallow to save the remaining 336ms: measured earlier
+	// against a shallower setting, the answers stay grounded and still refuse a
+	// question the excerpts cannot answer, but they run thinner and drift on
+	// citation placement, landing the marker before the full stop rather than
+	// after it.
+	ctx := llm.WithReasoningEffort(r.Context(), llm.HighReasoningEffort)
+	ctx = llm.WithMaxTokens(ctx, answerMaxTokens)
 	ctx = llm.WithCall(ctx, llm.CallInfo{Step: "answer"})
 	// THE RAW QUESTION, and never the extracted topic. The two exist for
 	// different consumers and must not be confused: the topic is a retrieval

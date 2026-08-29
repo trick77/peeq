@@ -38,19 +38,28 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   deviates from loom's distroless-static runtime.
 
 ## Chat model
-- Two MiMo deployments, hardcoded in `internal/llm/client.go`, never env vars. New call site → Pro.
-- Answer is a lookup no reader sees (an id, a label) → also `llm.ShortGate(ctx)`: the non-Pro
-  deployment queues less. Bar is what the call produces (an id, a label), NOT "thinking is off".
-  Text that reaches the page stays on Pro — summary, map, reduce, keypoints, Ask, whatever their
-  thinking switch says.
-- Both deployments are reasoning models. Non-Pro is not "the non-reasoning one" — it thinks unless
-  `WithoutThinking` says otherwise. Never justify the swap as "that model can't reason".
-- `WithoutThinking` and `ShortGate` are separate switches; don't couple them.
-- `reasoning_effort` is MEASURED INERT on this endpoint (`httpapi/ask_latency_probe_test.go`): high
-  and low behave identically. Never propose `WithReasoningEffort` as a speed or cost fix —
-  `WithoutThinking` is the lever that works (reasoning → a measured zero).
-- Cap a new call (`llm.WithMaxTokens`) unless a cut answer would be worse than a long one — with
-  thinking on the cap counts reasoning tokens too, and a truncated reply is rarely an error.
+- `glm-5.3-flash` on Z.ai, hardcoded in `internal/llm/client.go`, never env vars.
+- `BACKEND_CHAT_BASE_URL` = Z.ai GENERAL endpoint `https://api.z.ai/api/paas/v4` (no `/v1`). NEVER
+  the Coding Plan endpoint `/api/coding/paas/v4` — restricted to Z.ai's own tools, forbids peeq.
+- **Thinking can't be switched off.** `thinking:{"type":"disabled"}` → 400 code 1210. Only
+  `low`/`high`/`max` effort accepted; `none`/`minimal`/`medium`/`xhigh` rejected.
+- Default effort `max` (Z.ai's own default + recommendation). Also send their `temperature: 1` /
+  `top_p: 0.95` — omitting these gives LOWER values, not "the defaults".
+- `llm.Shallow(ctx)` (→`low`) is a LATENCY lever, not cost. One caller: the Ask understand gate,
+  hard 10s timeout. Tokens barely differ per level; time does (keypoints 12.8s high → 69.9s max).
+  Use only with a latency reason, written down. Classification is NOT such a reason: measured, `low`
+  is unstable on ambiguous videos (2 answers in 3 runs) and a wrong category persists forever.
+- Lookup no reader sees (an id, a label) → also `llm.ShortGate(ctx)`. Same deployment today, changes
+  nothing on the wire; it records the decision for a future split. Never on reader-facing text
+  (summary, map, reduce, keypoints, Ask). `Shallow` and `ShortGate` are separate; don't couple them.
+- Cap every new call (`llm.WithMaxTokens`) with GENEROUS headroom: the cap counts reasoning, which is
+  never zero now, and a call that spends its budget thinking returns empty with NO error. Reasoning
+  is stochastic — one classify prompt measured 120, 254 and 646 tokens. Size for the worst. This
+  already bit classify (256 cap → empty reply → permanent 'uncategorized').
+- Need JSON → `llm.AsJSONObject(ctx)`. A prompt saying "as JSON" does NOT work: 0/8 raw replies
+  strictly parseable without it, 8/8 with it.
+- Asserting a model id in a test → `llm.ModelFor` / `llm.EffortFor` / `llm.ShortGateFrom`, never a
+  literal: gate and default ids are equal today, so literals pass for the wrong reason.
 
 ## Config
 - All runtime config comes from `BACKEND_*` env vars — see `.env.example`.

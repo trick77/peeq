@@ -118,7 +118,7 @@ export type AnswerEvent =
 export type TraceStage = {
   key: string;
   ms: number;
-  // The model deployment or storage engine that ran the step — "mimo-v2.5",
+  // The model deployment or storage engine that ran the step — "glm-5.3-flash",
   // "sqlite-vec". EMPTY means the step called nothing, which the panel renders
   // as an absence rather than as words: a row reading "no tool" would spend a
   // line saying something did not happen.

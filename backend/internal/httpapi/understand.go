@@ -51,6 +51,11 @@ const understandTimeout = 10 * time.Second
 // explaining itself, and the parse will reject it anyway. Raised from 200 when
 // the filters were added — a reply carrying two channel names and a date range
 // is a few dozen tokens longer than one carrying a topic alone.
+//
+// The cap now has to cover reasoning too, which cannot be switched off. This is
+// the tightest cap in the codebase against the reasoning it must hold: ~53
+// tokens at the low effort Shallow pins above, but 345 at the package default.
+// The margin exists only because this call asks for low — see understandQuery.
 const understandMaxTokens = 350
 
 // understandMaxChannels caps how many channel names one question may name.
@@ -260,13 +265,20 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 
 	cctx, cancel := context.WithTimeout(ctx, understandTimeout)
 	defer cancel()
-	// ShortGate and WithoutThinking say different things and both are needed:
-	// the first asks for the deployment that answers sooner (Pro is where the
-	// long thinking calls queue, and this call sits in front of the first byte),
-	// the second stops the model reasoning about a question that is a labelling
-	// job. See llm/calloptions.go. reasoning_effort is NOT the lever here — it is
-	// measured inert against this endpoint.
-	cctx = llm.ShortGate(llm.WithoutThinking(cctx))
+	// ShortGate and Shallow say different things and both are needed: the first
+	// marks this as a gate (it reaches the same deployment as everything else
+	// today — see llm.ShortGate), the second asks for the least reasoning the
+	// model allows, because this is a labelling job sitting in front of the first
+	// byte of an answer.
+	//
+	// Shallow is the ONLY lever here, and it is both a latency and a headroom
+	// lever. Reasoning cannot be switched off at all now: low and high cost about
+	// the same (53 and 54 tokens), but the package default, max, spends 345 —
+	// which is 2.5s become 7.4s against understandTimeout's 10s AND 345 reasoning
+	// tokens against understandMaxTokens' 350, leaving nothing for the reply.
+	// Dropping Shallow here does not make this call deeper, it makes it empty.
+	// See llm/calloptions.go.
+	cctx = llm.Shallow(llm.ShortGate(cctx))
 	cctx = llm.WithMaxTokens(cctx, understandMaxTokens)
 	cctx = llm.WithCall(cctx, llm.CallInfo{Step: "understand"})
 	// Read back off the context that was just configured, so this can only ever

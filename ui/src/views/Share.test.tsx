@@ -119,17 +119,17 @@ describe("Share (public page)", () => {
       ...mockVideo,
       chapters: [
         { ts: 0, title: "Cold open", source: "yt-dlp" },
-        { ts: 154, title: "What finished intelligence means", source: "mimo" },
+        { ts: 154, title: "What finished intelligence means", source: "llm" },
       ],
     });
     render(<Share token="3xK9raPb" />);
 
     expect(await screen.findByText("Chapters")).toBeInTheDocument();
     expect(screen.getByText("2 chapters")).toBeInTheDocument();
-    // The yt-dlp/MiMo provenance tag is Player-only — internal trivia the
+    // The yt-dlp/LLM provenance tag is Player-only — internal trivia the
     // recipient has no use for.
     expect(screen.queryByText("yt-dlp")).not.toBeInTheDocument();
-    expect(screen.queryByText("MiMo")).not.toBeInTheDocument();
+    expect(screen.queryByText("LLM")).not.toBeInTheDocument();
 
     const playSpy = vi
       .spyOn(window.HTMLMediaElement.prototype, "play")

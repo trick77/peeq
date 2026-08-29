@@ -8,10 +8,15 @@ import (
 	"time"
 )
 
-// chatUserAgent is the User-Agent sent to the MiMo endpoint. Go's default
+// chatUserAgent is the User-Agent sent to the chat endpoint. Go's default
 // "Go-http-client/1.1" identifies the caller as a bot; the upstream is happier
 // with the client string an ordinary OpenAI-compatible SDK sends. Ported from
 // ../loom's llm client along with the session headers below.
+//
+// This and the session headers are MiMo-era and no longer load-bearing: Z.ai
+// neither requires them nor issues session ids of this shape. They are kept
+// because they are inert and cost nothing, not because anything depends on
+// them — a future cleanup can drop the lot without a replacement.
 const chatUserAgent = "opencode/1.18.11 ai-sdk/openai-compatible/3.0.20 ai-sdk/provider-utils/5.0.18 runtime/bun/1.3.14"
 
 // Session ids mirror the shape the upstream issues, e.g.
