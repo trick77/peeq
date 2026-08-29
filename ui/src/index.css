@@ -5397,7 +5397,7 @@ details.tomb-sect[open] > summary svg {
 }
 /* What ran the step, as a BADGE rather than another line of text. A step that
    called a model and a step that was only our own code have to be tellable
-   apart at a glance, and two identical mono lines reading "mimo-v2.5-pro" and
+   apart at a glance, and two identical mono lines reading "glm-5.3-flash" and
    "weighted RRF" were not that. A step that called nothing renders no badge at
    all — the absence is the point, and a third pill would say "another tool". */
 .trace-by {

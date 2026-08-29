@@ -38,19 +38,27 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   deviates from loom's distroless-static runtime.
 
 ## Chat model
-- Two MiMo deployments, hardcoded in `internal/llm/client.go`, never env vars. New call site → Pro.
-- Answer is a lookup no reader sees (an id, a label) → also `llm.ShortGate(ctx)`: the non-Pro
-  deployment queues less. Bar is what the call produces (an id, a label), NOT "thinking is off".
-  Text that reaches the page stays on Pro — summary, map, reduce, keypoints, Ask, whatever their
-  thinking switch says.
-- Both deployments are reasoning models. Non-Pro is not "the non-reasoning one" — it thinks unless
-  `WithoutThinking` says otherwise. Never justify the swap as "that model can't reason".
-- `WithoutThinking` and `ShortGate` are separate switches; don't couple them.
-- `reasoning_effort` is MEASURED INERT on this endpoint (`httpapi/ask_latency_probe_test.go`): high
-  and low behave identically. Never propose `WithReasoningEffort` as a speed or cost fix —
-  `WithoutThinking` is the lever that works (reasoning → a measured zero).
-- Cap a new call (`llm.WithMaxTokens`) unless a cut answer would be worse than a long one — with
-  thinking on the cap counts reasoning tokens too, and a truncated reply is rarely an error.
+- `glm-5.3-flash` on Z.ai, hardcoded in `internal/llm/client.go`, never env vars.
+- `BACKEND_CHAT_BASE_URL` must be Z.ai's GENERAL endpoint `https://api.z.ai/api/paas/v4` (no `/v1`).
+  NEVER the GLM Coding Plan endpoint `/api/coding/paas/v4` — that plan is restricted to Z.ai's own
+  supported coding tools and forbids calls from anything else.
+- **Thinking cannot be switched off.** `thinking:{"type":"disabled"}` → HTTP 400 code 1210. Only
+  `low`/`high`/`max` reasoning_effort are accepted (`none`/`minimal`/`medium`/`xhigh` are rejected).
+- Default effort is `max` — Z.ai's own default and their recommendation for this model. Also send
+  their recommended `temperature: 1` / `top_p: 0.95`; omitting those does NOT give "the defaults",
+  it gives lower ones.
+- `llm.Shallow(ctx)` (→ `low`) is a LATENCY lever, not a cost one, and has exactly one caller: the
+  Ask understand gate, under a hard 10s timeout. Tokens barely differ between levels; time does
+  (keypoints: 12.8s at high, 69.9s at max). Reach for it only with a latency reason, written down.
+- Answer is a lookup no reader sees (an id, a label) → also `llm.ShortGate(ctx)`. It resolves to the
+  same deployment today and changes nothing on the wire; it records the decision for a future split.
+  Text that reaches the page never gets it — summary, map, reduce, keypoints, Ask.
+- `Shallow` and `ShortGate` are separate switches; don't couple them.
+- Cap a new call (`llm.WithMaxTokens`) unless a cut answer would be worse than a long one. The cap
+  counts reasoning tokens, and reasoning is never zero now, so leave headroom — a call that spends
+  its budget thinking returns empty with NO error.
+- Asserting a model id in a test → use `llm.ModelFor` / `llm.EffortFor` / `llm.ShortGateFrom`, never
+  a literal: the gate and default ids are equal today, so literals pass for the wrong reason.
 
 ## Config
 - All runtime config comes from `BACKEND_*` env vars — see `.env.example`.

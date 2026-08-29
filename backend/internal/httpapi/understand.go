@@ -260,13 +260,18 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 
 	cctx, cancel := context.WithTimeout(ctx, understandTimeout)
 	defer cancel()
-	// ShortGate and WithoutThinking say different things and both are needed:
-	// the first asks for the deployment that answers sooner (Pro is where the
-	// long thinking calls queue, and this call sits in front of the first byte),
-	// the second stops the model reasoning about a question that is a labelling
-	// job. See llm/calloptions.go. reasoning_effort is NOT the lever here — it is
-	// measured inert against this endpoint.
-	cctx = llm.ShortGate(llm.WithoutThinking(cctx))
+	// ShortGate and Shallow say different things and both are needed: the first
+	// marks this as a gate (it reaches the same deployment as everything else
+	// today — see llm.ShortGate), the second asks for the least reasoning the
+	// model allows, because this is a labelling job sitting in front of the first
+	// byte of an answer.
+	//
+	// Shallow is the ONLY lever here, and it is a latency lever, not a cost one.
+	// Reasoning cannot be switched off at all now, and the effort levels cost
+	// almost the same in tokens (53 at low, 54 at the default) — but max would
+	// take this call from 2.5s to 7.4s against understandTimeout's 10s. See
+	// llm/calloptions.go.
+	cctx = llm.Shallow(llm.ShortGate(cctx))
 	cctx = llm.WithMaxTokens(cctx, understandMaxTokens)
 	cctx = llm.WithCall(cctx, llm.CallInfo{Step: "understand"})
 	// Read back off the context that was just configured, so this can only ever

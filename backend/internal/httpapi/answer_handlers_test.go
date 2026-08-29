@@ -1090,11 +1090,11 @@ func TestTraceNamesTheRealModelsAndEngines(t *testing.T) {
 
 	stages := traceStages(t, rec.Body.String())
 	for _, tc := range []struct{ key, tool, kind string }{
-		{"understand", "mimo-v2.5", traceKindModel},
+		{"understand", llm.ModelFor(llm.ShortGate(context.Background())), traceKindModel},
 		{"keyword", "sqlite FTS5", traceKindLocal},
 		{"embed", "test-embed-model", traceKindModel},
 		{"vector", "sqlite-vec", traceKindLocal},
-		{"answer", "mimo-v2.5-pro", traceKindModel},
+		{"answer", llm.ModelFor(context.Background()), traceKindModel},
 	} {
 		s := findStage(t, stages, tc.key)
 		if s.Tool != tc.tool || s.Kind != tc.kind {
@@ -1161,7 +1161,7 @@ func TestTraceSurvivesAFailedAnswer(t *testing.T) {
 		}
 	}
 	failed := findStage(t, stages, "answer_failed")
-	if failed.Tool != "mimo-v2.5-pro" || failed.Kind != traceKindModel {
+	if failed.Tool != llm.ModelFor(context.Background()) || failed.Kind != traceKindModel {
 		t.Errorf("failed answer stage = %+v, want the model that was called", failed)
 	}
 }

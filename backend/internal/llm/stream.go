@@ -13,9 +13,10 @@ import (
 	"unicode/utf8"
 )
 
-// The wire shape below was verified against token-plan-sgp.xiaomimimo.com with
-// stream:true and stream_options.include_usage, and three of its details are
-// load-bearing enough to record rather than rediscover:
+// The wire shape below was first verified against token-plan-sgp.xiaomimimo.com
+// and re-verified against api.z.ai with stream:true (and NO stream_options — Z.ai
+// sends usage regardless; see client.go). Three of its details are load-bearing
+// enough to record rather than rediscover, and all three still hold:
 //
 //   - Reasoning arrives as its own delta field, reasoning_content, with content
 //     null throughout. On a "count to 20" probe: nine reasoning deltas, THEN

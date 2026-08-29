@@ -266,7 +266,7 @@ func TestShare_publicVideoCarriesChapters(t *testing.T) {
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "Chaptered", ChannelName: "Chan"}); err != nil {
 		t.Fatalf("seed video: %v", err)
 	}
-	chapters := `[{"ts":0,"title":"Cold open","source":"yt-dlp"},{"ts":95,"title":"The argument","source":"mimo"}]`
+	chapters := `[{"ts":0,"title":"Cold open","source":"yt-dlp"},{"ts":95,"title":"The argument","source":"llm"}]`
 	if err := deps.Videos.SetSummary("v1", "A short summary.", chapters, "[]"); err != nil {
 		t.Fatalf("set summary: %v", err)
 	}

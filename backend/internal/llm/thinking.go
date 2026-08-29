@@ -2,51 +2,65 @@ package llm
 
 import "context"
 
-// Thinking is MiMo's native switch for chain-of-thought, carried on the
-// context rather than on Complete's signature — the same reasoning as CallInfo
-// (see callinfo.go): the Completer interface stays one method wide and every
-// fake that implements it keeps compiling.
+// The thinking switch is carried on the context rather than on Complete's
+// signature — the same reasoning as CallInfo (see callinfo.go): the Completer
+// interface stays one method wide and every fake that implements it keeps
+// compiling.
 //
-// The default is on, which is what the endpoint does anyway: MiMo returns
-// reasoning_content whether or not the field is sent. What sending it buys is
-// honest accounting — without an explicit thinking object the endpoint reports
-// completion_tokens_details.reasoning_tokens as 0 and folds those tokens into
-// completion_tokens, so the log read as "the model did not think" on a call
-// that plainly had. Verified against token-plan-sgp.xiaomimimo.com: the same
-// prompt reports 0 reasoning tokens with the field absent and 594 with it
-// enabled, both returning ~2.5 kB of reasoning_content.
-const (
-	thinkingEnabled  = "enabled"
-	thinkingDisabled = "disabled"
-)
+// There is nothing to switch any more. GLM-5.3-Flash refuses
+// thinking:{"type":"disabled"} with code 1210, "This model always engages in
+// thinking and cannot be disabled; please use low, high, or max", so the field
+// is sent enabled on every call and depth is chosen with reasoning_effort
+// instead (see calloptions.go). The wire shape stays because the endpoint
+// requires the object, not because peeq has a choice about its value.
+//
+// Under MiMo this field was the lever: sending it explicitly was what made
+// reasoning_tokens honest (0 reported with the field absent, 594 with it
+// enabled, on a call that plainly reasoned either way), and disabling it drove
+// reasoning to a measured zero. Neither is true here — Z.ai reports
+// reasoning_tokens whether or not the object is sent, and never reports zero.
+const thinkingEnabled = "enabled"
 
-type thinkingKey struct{}
+type shallowKey struct{}
 
-// WithoutThinking returns a context whose LLM calls ask the model not to think.
-// It is for the steps whose answer is a lookup rather than a deduction — a
-// one-word category, a two-sentence precis — where the reasoning is pure cost:
-// classification burns several hundred completion tokens to emit a single id.
-// Mirrors loom, which disables thinking on its utility calls for the same
-// reason and lets only the main chat reason.
-func WithoutThinking(ctx context.Context) context.Context {
-	return context.WithValue(ctx, thinkingKey{}, false)
+// Shallow returns a context whose LLM calls ask for the least reasoning the
+// model allows (lowReasoningEffort). It is for a step that is a lookup rather
+// than a deduction AND that something is waiting on — today only the Ask
+// understand gate, which sits in front of the first byte of an answer under a
+// 10s timeout.
+//
+// It is not a cost lever. Reasoning at low is nearly free on this model
+// (measured: 0 tokens on a classification, 53 on the understand gate) but so is
+// reasoning at high, so saving tokens is never the reason to reach for this.
+// Latency is: low answers the understand gate in 2.5s where max takes 7.4s.
+//
+// A step with no one waiting on it should NOT use this. The default is high,
+// and the offline summary calls go higher still — see WithReasoningEffort.
+func Shallow(ctx context.Context) context.Context {
+	return context.WithValue(ctx, shallowKey{}, true)
 }
 
-// ThinkingFrom reports whether the calls made with ctx should reason. Absent a
-// value the answer is yes, so a caller that never opts out is unchanged.
-func ThinkingFrom(ctx context.Context) bool {
-	enabled, ok := ctx.Value(thinkingKey{}).(bool)
-	return !ok || enabled
+// ShallowFrom reports whether the calls made with ctx want the shallowest
+// reasoning. Absent a value the answer is no, so a caller that never opts in is
+// unchanged.
+func ShallowFrom(ctx context.Context) bool {
+	shallow, ok := ctx.Value(shallowKey{}).(bool)
+	return ok && shallow
 }
 
-// thinkingOption is the wire shape of the switch: {"type":"enabled"}.
+// thinkingOption is the wire shape of the switch:
+// {"type":"enabled","clear_thinking":false}.
+//
+// clear_thinking controls whether reasoning content is carried across turns.
+// Z.ai recommends false for this model, and peeq sends it that way — though it
+// makes no difference here in practice: every call is a fresh system+user pair
+// with no prior assistant turn, so there is no reasoning to carry or clear. It
+// is sent to match the recommended configuration rather than to fix anything.
 type thinkingOption struct {
-	Type string `json:"type"`
+	Type          string `json:"type"`
+	ClearThinking bool   `json:"clear_thinking"`
 }
 
-func thinkingOptionFor(ctx context.Context) thinkingOption {
-	if ThinkingFrom(ctx) {
-		return thinkingOption{Type: thinkingEnabled}
-	}
-	return thinkingOption{Type: thinkingDisabled}
+func thinkingOptionFor(context.Context) thinkingOption {
+	return thinkingOption{Type: thinkingEnabled, ClearThinking: false}
 }

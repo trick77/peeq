@@ -16,26 +16,29 @@ import (
 // a unit test cannot: what actually makes Ask — peeq's only user-blocking model
 // call — slow, and which knob moves it.
 //
-// WHAT THEY ESTABLISHED (2026-08-04, the 12-excerpt prompt below, one question,
-// eight repeats per setting):
+// WHAT THEY ESTABLISHED UNDER MIMO (2026-08-04, superseded — kept because the
+// conclusion inverted and someone will otherwise re-derive the old one):
 //
 //	reasoning_effort=high    ttft 4858ms   reasoning [25 26 26 26 26 157 221 266]
 //	reasoning_effort=low     ttft 6200ms   reasoning [26 26 26 28 28 307 333 383]
 //	thinking disabled        ttft 1084ms   reasoning [0 0 0 0 0 0 0 0]
 //
-// reasoning_effort is INERT here. high and low produce the same distribution —
-// low came out marginally deeper, which is noise, not an inversion. Probably
-// MiMo's native thinking field takes precedence over the OpenAI-compatible
-// parameter, but that mechanism is a guess; the measurement is not. Do not reach
-// for WithReasoningEffort expecting a latency change.
+// Against MiMo, reasoning_effort was inert and thinking:disabled was the only
+// lever. NEITHER HOLDS ON Z.AI. Thinking cannot be disabled at all there (HTTP
+// 400, code 1210), and reasoning_effort is the only control that exists.
 //
-// thinking:disabled is the lever that works, and it is worth ~3.8s of
-// time-to-first-token. Whether Ask can afford it is a quality question, which is
-// what TestAskThinkingQuality prints the evidence for.
+// WHAT HOLDS NOW (2026-08-29, api.z.ai, glm-5.3-flash, single calls per cell —
+// reasoning tokens / wall clock, measured outside this harness):
 //
-// The bimodal reasoning counts (five calls near 26, three in the hundreds)
-// reproduce at every setting and are unexplained. Whatever drives them, it is
-// not the effort parameter.
+//	                     low          high          max
+//	classify             0 / 1.0s     15 / 1.3s     107 / 3.5s
+//	understand           53 / 2.5s    54 / 2.5s     345 / 7.4s
+//	keypoints (12.5k)    18 / 7.9s    192 / 12.8s   3183 / 69.9s
+//	ask answer           —            80 / 4.4s     355 / 9.6s
+//
+// Effort now buys real depth and costs real time. Tokens barely separate the
+// levels; wall clock separates them a lot. Re-run TestAskEffortSweep with more
+// repeats before changing the Ask tier — the numbers above are single samples.
 //
 // Skipped unless PEEQ_ASK_SWEEP=1: they call the real endpoint and cost real
 // tokens. Run from the repo root with the environment loaded:
@@ -192,12 +195,13 @@ var sweepExcerpts = func() []string {
 // another. Either the parameter is inert on this endpoint or six samples per
 // level cannot see past the variance. This separates the two: ONE question, many
 // repeats, three settings. If effort works, the distributions separate; if it is
-// inert, high and low overlap and only thinking:disabled moves.
+// separate the tiers on the Ask prompt specifically, with enough repeats to tell
+// a real gap from noise.
 //
-// thinking:disabled is in the comparison because it is the lever peeq already
-// knows works (the classify and keypoints calls rely on it), so it calibrates
-// what a real effect looks like against this same endpoint.
-func TestAskEffortIsInert(t *testing.T) {
+// All three levels are compared because all three are reachable: low is what
+// llm.Shallow sends, max is the package default, and high sits between them.
+// thinking:disabled is NOT in the comparison — the endpoint rejects it.
+func TestAskEffortTiers(t *testing.T) {
 	if os.Getenv("PEEQ_ASK_SWEEP") != "1" {
 		t.Skip("manual: set PEEQ_ASK_SWEEP=1 (calls the real chat endpoint)")
 	}
@@ -215,9 +219,9 @@ func TestAskEffortIsInert(t *testing.T) {
 		name     string
 		decorate func(context.Context) context.Context
 	}{
+		{"max", func(c context.Context) context.Context { return llm.WithReasoningEffort(c, "max") }},
 		{"high", func(c context.Context) context.Context { return llm.WithReasoningEffort(c, "high") }},
 		{"low", func(c context.Context) context.Context { return llm.WithReasoningEffort(c, "low") }},
-		{"no-think", llm.WithoutThinking},
 	}
 
 	for _, s := range settings {
@@ -246,12 +250,12 @@ func TestAskEffortIsInert(t *testing.T) {
 	}
 }
 
-// Given that effort is inert and thinking:disabled is not, the real question
-// becomes whether Ask can afford to lose thinking. This prints both answers to
-// every sweep question side by side so the citation behaviour, the refusal on a
-// question the corpus cannot answer, and the six-sentence limit can be read
-// rather than assumed. Timing is reported too, but the decision here is quality.
-func TestAskThinkingQuality(t *testing.T) {
+// Effort is the only lever, so the question is what Ask loses at the shallow end.
+// This prints the max and shallow answers to every sweep question side by side so
+// the citation behaviour, the refusal on a question the corpus cannot answer, and
+// the six-sentence limit can be read rather than assumed. Timing is reported too,
+// but the decision here is quality.
+func TestAskEffortQuality(t *testing.T) {
 	if os.Getenv("PEEQ_ASK_SWEEP") != "1" {
 		t.Skip("manual: set PEEQ_ASK_SWEEP=1 (calls the real chat endpoint)")
 	}
@@ -265,10 +269,10 @@ func TestAskThinkingQuality(t *testing.T) {
 
 	for _, q := range sweepQuestions {
 		t.Logf("\n──────── %s", q)
-		for _, mode := range []string{"thinking", "no-think"} {
+		for _, mode := range []string{"max", "shallow"} {
 			ctx := llm.WithMaxTokens(context.Background(), answerMaxTokens)
-			if mode == "no-think" {
-				ctx = llm.WithoutThinking(ctx)
+			if mode == "shallow" {
+				ctx = llm.Shallow(ctx)
 			}
 			start := time.Now()
 			var ttft time.Duration

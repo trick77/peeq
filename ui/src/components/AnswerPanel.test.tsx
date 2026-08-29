@@ -673,10 +673,10 @@ describe("AnswerPanel counts", () => {
 
 describe("AnswerPanel trace", () => {
   const stages = [
-    { key: "understand", ms: 1200, tool: "mimo-v2.5", kind: "model" },
+    { key: "understand", ms: 1200, tool: "glm-5.3-flash", kind: "model" },
     { key: "keyword", ms: 40, tool: "sqlite FTS5", kind: "local" },
     { key: "merge", ms: 8, kind: "code" },
-    { key: "answer", ms: 4800, tool: "mimo-v2.5-pro", kind: "model" },
+    { key: "answer", ms: 4800, tool: "glm-5.3-flash", kind: "model" },
   ];
 
   // The wait is one spinner and one label, and this must not change that. A
@@ -725,9 +725,9 @@ describe("AnswerPanel trace", () => {
 
     const rows = document.querySelectorAll(".trace-row");
     expect(rows[0]).toHaveTextContent("Worked out what you’re asking");
-    expect(rows[0]).toHaveTextContent("mimo-v2.5");
+    expect(rows[0]).toHaveTextContent("glm-5.3-flash");
     expect(rows[3]).toHaveTextContent("Wrote the answer");
-    expect(rows[3]).toHaveTextContent("mimo-v2.5-pro");
+    expect(rows[3]).toHaveTextContent("glm-5.3-flash");
   });
 
   // A step that called nothing gets no badge and no second line. Writing "no
@@ -801,7 +801,9 @@ describe("AnswerPanel trace", () => {
       <Panel
         state={state({
           text: "Yes[1].",
-          trace: [{ key: "rerank", ms: 900, tool: "mimo-v2.5", kind: "model" }],
+          trace: [
+            { key: "rerank", ms: 900, tool: "glm-5.3-flash", kind: "model" },
+          ],
         })}
       />,
     );
@@ -829,7 +831,7 @@ describe("AnswerPanel trace, failed generation", () => {
             {
               key: "answer_failed",
               ms: 90000,
-              tool: "mimo-v2.5-pro",
+              tool: "glm-5.3-flash",
               kind: "model",
             },
           ],
@@ -865,7 +867,7 @@ describe("AnswerPanel trace footer", () => {
   it("states the split without judging it, when local work dominates", () => {
     const foot = footerFor([
       { key: "keyword", ms: 36200, tool: "sqlite FTS5", kind: "local" },
-      { key: "answer", ms: 12600, tool: "mimo-v2.5-pro", kind: "model" },
+      { key: "answer", ms: 12600, tool: "glm-5.3-flash", kind: "model" },
     ]);
     expect(foot).toContain("12.6s");
     expect(foot).toContain("48.8s");
@@ -875,7 +877,7 @@ describe("AnswerPanel trace footer", () => {
   it("says the same thing when the models do dominate", () => {
     const foot = footerFor([
       { key: "keyword", ms: 170, tool: "sqlite FTS5", kind: "local" },
-      { key: "answer", ms: 12600, tool: "mimo-v2.5-pro", kind: "model" },
+      { key: "answer", ms: 12600, tool: "glm-5.3-flash", kind: "model" },
     ]);
     expect(foot).toContain("12.6s");
     expect(foot).toContain("12.8s");

@@ -46,7 +46,7 @@ func (f *fakeCompleter) Complete(ctx context.Context, m []llm.Message) (string, 
 // it stays on Pro. The bar for the swap is what the call produces — an id or a
 // label — not "thinking happens to be off", which is true of several calls that
 // must not move, and not "the other deployment cannot reason", which is false.
-func TestClassifyRunsOnTheNonProDeploymentAndTheSummaryDoesNot(t *testing.T) {
+func TestClassifyRunsOnTheGateDeploymentAndTheSummaryDoesNot(t *testing.T) {
 	var models []string
 	var maxTokens []any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,8 +68,11 @@ func TestClassifyRunsOnTheNonProDeploymentAndTheSummaryDoesNot(t *testing.T) {
 		[]videos.Category{{ID: "science", Label: "Science"}}); err != nil {
 		t.Fatal(err)
 	}
-	if models[0] != "mimo-v2.5" {
-		t.Fatalf("classify ran on %q, want the non-Pro deployment", models[0])
+	// Asserted against ModelFor rather than a literal id. The gate and default
+	// deployments hold the same id today, so a literal here would pass for the
+	// wrong reason and stop testing anything the moment they are split again.
+	if want := llm.ModelFor(llm.ShortGate(context.Background())); models[0] != want {
+		t.Fatalf("classify ran on %q, want the gate deployment %q", models[0], want)
 	}
 	// The cap it went without until now: one id needs a couple of tokens, and an
 	// endpoint that starts explaining itself instead had nothing to stop it.
@@ -80,8 +83,8 @@ func TestClassifyRunsOnTheNonProDeploymentAndTheSummaryDoesNot(t *testing.T) {
 	if _, err := s.SummarizeText(context.Background(), "a short transcript"); err != nil {
 		t.Fatal(err)
 	}
-	if models[1] != "mimo-v2.5-pro" {
-		t.Fatalf("the summary ran on %q, want Pro", models[1])
+	if want := llm.ModelFor(context.Background()); models[1] != want {
+		t.Fatalf("the summary ran on %q, want the default deployment %q", models[1], want)
 	}
 }
 
@@ -215,14 +218,14 @@ func TestSummarizeText_emptyTranscriptErrors(t *testing.T) {
 }
 
 // A transcript that fits the budget is summarized in a SINGLE call — the whole
-// point of the redesign — and that call reasons, because it is the synthesis a
-// person actually reads.
-func TestSummarizeText_singlePassIsOneCallAndThinks(t *testing.T) {
+// point of the redesign — and that call reasons as deeply as the endpoint
+// allows, because it is the synthesis a person actually reads.
+func TestSummarizeText_singlePassIsOneCallAtFullEffort(t *testing.T) {
 	var calls int
-	var thought []bool
+	var efforts []string
 	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
 		calls++
-		thought = append(thought, llm.ThinkingFrom(ctx))
+		efforts = append(efforts, llm.EffortFor(ctx))
 		return "Overall prose summary.", nil
 	}))
 	got, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000))
@@ -235,8 +238,8 @@ func TestSummarizeText_singlePassIsOneCallAndThinks(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("single-pass made %d calls, want exactly 1", calls)
 	}
-	if len(thought) != 1 || !thought[0] {
-		t.Fatalf("single-pass thinking = %v, want one call that reasoned", thought)
+	if len(efforts) != 1 || efforts[0] != llm.EffortFor(context.Background()) {
+		t.Fatalf("single-pass efforts = %v, want one call at the package default", efforts)
 	}
 }
 
@@ -274,32 +277,34 @@ func TestSummarizeText_emptyReduceErrors(t *testing.T) {
 }
 
 // A transcript ABOVE the (here deliberately tiny) budget falls back to coarse
-// map-reduce: each big section is condensed thinking-OFF, then one reduce call
-// (thinking ON) writes the summary the reader sees.
-func TestSummarizeText_coarseFallbackThinksOnlyOnReduce(t *testing.T) {
-	var mapThought, reduceThought []bool
+// map-reduce: several section calls, then one reduce call that writes the
+// summary the reader sees. Neither stage asks for less reasoning — the map's
+// prose is what the reduce writes from, so trimming it would cost the reader's
+// summary one step later.
+func TestSummarizeText_coarseFallbackRunsBothStagesAtFullEffort(t *testing.T) {
+	var mapEfforts, reduceEfforts []string
 	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
 		if strings.Contains(m[0].Content, "cohesive summary") {
-			reduceThought = append(reduceThought, llm.ThinkingFrom(ctx))
+			reduceEfforts = append(reduceEfforts, llm.EffortFor(ctx))
 			return "Overall prose summary.", nil
 		}
-		mapThought = append(mapThought, llm.ThinkingFrom(ctx))
+		mapEfforts = append(mapEfforts, llm.EffortFor(ctx))
 		return "section summary", nil
 	}), WithSummaryChunkTokens(300))
 
 	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err != nil {
 		t.Fatal(err)
 	}
-	if len(mapThought) < 2 {
-		t.Fatalf("coarse fallback made %d section calls, want >1 (else it wasn't the map path)", len(mapThought))
+	if len(mapEfforts) < 2 {
+		t.Fatalf("coarse fallback made %d section calls, want >1 (else it wasn't the map path)", len(mapEfforts))
 	}
-	for i, thought := range mapThought {
-		if thought {
-			t.Errorf("section call %d reasoned; coarse condensing is meant to be cheap", i)
+	for i, e := range append(append([]string{}, mapEfforts...), reduceEfforts...) {
+		if e != llm.EffortFor(context.Background()) {
+			t.Errorf("call %d ran at effort %q, want the package default", i, e)
 		}
 	}
-	if len(reduceThought) != 1 || !reduceThought[0] {
-		t.Errorf("reduce thinking = %v, want exactly one call that reasoned", reduceThought)
+	if len(reduceEfforts) != 1 {
+		t.Errorf("coarse fallback made %d reduce calls, want exactly 1", len(reduceEfforts))
 	}
 }
 
@@ -324,36 +329,45 @@ func TestSummarizeText_coarseReduceErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestClassify_doesNotThink(t *testing.T) {
-	var thought bool
+// Classify is a short gate: its answer is an id that lands in the Library
+// filter, never prose a reader sees. It does NOT ask for shallow reasoning —
+// nothing waits on it (the backlog sweep fires it in bulk), and reasoning stays
+// cheap on this endpoint even at the default.
+func TestClassify_isAShortGateAtDefaultEffort(t *testing.T) {
+	var gate bool
+	var effort string
 	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
-		thought = llm.ThinkingFrom(ctx)
+		gate = llm.ShortGateFrom(ctx)
+		effort = llm.EffortFor(ctx)
 		return "science", nil
 	}))
 	if _, err := s.Classify(context.Background(), "Title", "A summary.", videos.ClassifiableCategories()); err != nil {
 		t.Fatal(err)
 	}
-	if thought {
-		t.Error("classify reasoned; picking one id from a list it was just handed should not cost a chain of thought")
+	if !gate {
+		t.Error("classify did not route as a short gate")
+	}
+	if effort != llm.EffortFor(context.Background()) {
+		t.Errorf("classify ran at effort %q, want the package default", effort)
 	}
 }
 
-// Key points now runs thinking-OFF: it is an extractive JSON step, and running
-// it with reasoning is what once let it spiral to tens of thousands of tokens
-// and return nothing. max_tokens counts reasoning too, so a cap alone would
-// still hand back empty — disabling thinking is what guarantees output.
-func TestKeyPoints_doesNotThink(t *testing.T) {
-	var thought bool
+// Key points must NOT be routed as a short gate, whatever its effort: chapter
+// titles and key-point text are what a reader sees in the Player. Reasoning can
+// no longer be switched off here (it is what once let this call spiral to tens
+// of thousands of tokens), so keypointsMaxTokens is the only remaining guard.
+func TestKeyPoints_isNotAShortGate(t *testing.T) {
+	var gate bool
 	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
-		thought = llm.ThinkingFrom(ctx)
+		gate = llm.ShortGateFrom(ctx)
 		return `{"key_points":[{"ts":0,"text":"intro"}]}`, nil
 	}))
 	cues := []subtitles.Cue{{StartSeconds: 0, Text: "intro"}}
 	if _, _, err := s.KeyPoints(context.Background(), "A summary.", cues, []Chapter{{TS: 0, Title: "Intro", Source: "yt-dlp"}}); err != nil {
 		t.Fatal(err)
 	}
-	if thought {
-		t.Error("key points reasoned; it is an extractive step that must not be allowed to spiral")
+	if gate {
+		t.Error("key points routed as a short gate; its text is what a reader sees in the Player")
 	}
 }
 

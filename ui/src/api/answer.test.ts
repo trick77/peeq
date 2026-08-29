@@ -191,7 +191,7 @@ describe("the trace frame", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       makeStreamResponse(
         frames(
-          `event: trace\ndata: {"stages":[{"key":"answer","ms":4800,"tool":"mimo-v2.5-pro","kind":"model"}]}`,
+          `event: trace\ndata: {"stages":[{"key":"answer","ms":4800,"tool":"glm-5.3-flash","kind":"model"}]}`,
           `event: done\ndata: {"reason":"stop"}`,
         ),
       ),
@@ -203,7 +203,7 @@ describe("the trace frame", () => {
     expect(got[0]).toEqual({
       type: "trace",
       stages: [
-        { key: "answer", ms: 4800, tool: "mimo-v2.5-pro", kind: "model" },
+        { key: "answer", ms: 4800, tool: "glm-5.3-flash", kind: "model" },
       ],
     });
   });

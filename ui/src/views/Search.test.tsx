@@ -1197,8 +1197,8 @@ describe("the answer trace surviving settle", () => {
       onEvent({
         type: "trace",
         stages: [
-          { key: "understand", ms: 1200, tool: "mimo-v2.5", kind: "model" },
-          { key: "answer", ms: 4800, tool: "mimo-v2.5-pro", kind: "model" },
+          { key: "understand", ms: 1200, tool: "glm-5.3-flash", kind: "model" },
+          { key: "answer", ms: 4800, tool: "glm-5.3-flash", kind: "model" },
         ],
       });
       onEvent({ type: "done" });
