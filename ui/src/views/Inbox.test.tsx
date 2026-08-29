@@ -884,6 +884,15 @@ describe("Inbox summaries", () => {
         summary_status: "",
         auto_summary: true,
       }),
+      // pending WITH captions: the summary job exists and is doing the work
+      // the marker names.
+      baseItem({
+        video_id: "busy",
+        title: "Being read now",
+        summary_status: "pending",
+        auto_summary: true,
+        has_subtitles: true,
+      }),
       baseItem({
         video_id: "off",
         title: "Channel opted out",
@@ -910,9 +919,18 @@ describe("Inbox summaries", () => {
         name: "Read summary",
       }),
     ).toBeTruthy();
-    // The pending one is not, because there is nothing to press yet.
+    // The pending one is not, because there is nothing to press yet. It says
+    // what is actually happening: no captions have landed, so no summary job
+    // exists and nothing is being summarized.
     expect(
-      within(await card("Still reading")).getByText("Summarizing…"),
+      within(await card("Still reading")).getByText("Waiting for captions"),
+    ).toBeTruthy();
+    expect(
+      within(await card("Still reading")).queryByText("Summarizing…"),
+    ).toBeNull();
+    // Once the captions are in, the work really is under way.
+    expect(
+      within(await card("Being read now")).getByText("Summarizing…"),
     ).toBeTruthy();
     expect(
       within(await card("Still reading")).queryByRole("button", {
@@ -924,12 +942,20 @@ describe("Inbox summaries", () => {
       within(await card("Channel opted out")).queryByText("Summarizing…"),
     ).toBeNull();
     expect(
+      within(await card("Channel opted out")).queryByText(
+        "Waiting for captions",
+      ),
+    ).toBeNull();
+    expect(
       within(await card("Channel opted out")).queryByText(/summary/i),
     ).toBeNull();
     // Neither does one whose captions turned out to be music: there is no
     // action behind it and no progress left to report.
     expect(
       within(await card("No speech")).queryByText("Summarizing…"),
+    ).toBeNull();
+    expect(
+      within(await card("No speech")).queryByText("Waiting for captions"),
     ).toBeNull();
     expect(within(await card("No speech")).queryByText(/summary/i)).toBeNull();
   });

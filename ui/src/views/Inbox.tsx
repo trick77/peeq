@@ -77,10 +77,13 @@ function compareBy(
 // separate field rather than "mark !== null":
 //
 //   done                  Read summary     opens   the summary is written
-//   pending / running      Summarizing…     opens   a videos row exists; the
-//                                                   page shows live progress
-//   "" + auto_summary      Summarizing…     INERT   the caption fetcher has not
-//                                                   reached it, so there is no
+//   pending / running,     Summarizing…     opens   a videos row exists; the
+//     captions in                                   page shows live progress
+//   pending / running,     Waiting for      opens   there is no transcript yet,
+//     no captions            captions               so no summary job exists —
+//                                                   nothing is being summarized
+//   "" + auto_summary      Waiting for      INERT   the caption fetcher has not
+//                            captions               reached it, so there is no
 //                                                   videos row and the page
 //                                                   would 404 — the marker is a
 //                                                   promise about the channel,
@@ -97,7 +100,7 @@ function compareBy(
 //                                                   the card sends you to the
 //                                                   Player, where Reprocess is
 type Offer = {
-  mark: "summary" | "reading" | "failed" | null;
+  mark: "summary" | "reading" | "waiting" | "failed" | null;
   opens: boolean;
 };
 
@@ -105,9 +108,16 @@ function offer(item: PendingItem): Offer {
   switch (item.summary_status) {
     case "done":
       return { mark: "summary", opens: true };
+    // 'pending' is two videos wearing one status, and has_subtitles is what
+    // tells them apart. With a transcript on hand there is a summary job, and
+    // "Summarizing…" is a fact. Without one there is no job at all: the video
+    // is waiting on YouTube's ASR pass, which the caption ladder chases for
+    // roughly 31 hours (captionfetch.Backoff) before settling the row as
+    // no_transcript. Calling that "Summarizing…" claimed work that had not
+    // started, for up to a day and a half.
     case "pending":
     case "running":
-      return { mark: "reading", opens: true };
+      return { mark: item.has_subtitles ? "reading" : "waiting", opens: true };
     // no_transcript is two different videos wearing one status: YouTube had no
     // captions at all, or the captions turned out to be music and produced no
     // summary. The distinction used to matter, because the second kind offered
@@ -126,7 +136,7 @@ function offer(item: PendingItem): Offer {
     case "no_transcript":
       return { mark: null, opens: false };
     case "":
-      return { mark: item.auto_summary ? "reading" : null, opens: false };
+      return { mark: item.auto_summary ? "waiting" : null, opens: false };
     // 'error' is two cards, and only the job's own state tells them apart. The
     // status is written on EVERY summary failure, so on its own it means "the
     // last attempt failed" — with the ladder at 15m then 4h, a card that will
@@ -166,11 +176,21 @@ function hasPage(item: PendingItem) {
 // "Summarizing…" stays a span. There is nothing to press yet, and a disabled
 // button would be a control that never worked. The quiet scrim treatment keeps
 // the two from ever looking interchangeable.
+//
+// "Waiting for captions" is the same span in the same treatment — both are
+// progress the card reports rather than offers, and they read as one state the
+// video moves through. is-reading is the style hook for that treatment, so it
+// stays on both rather than gaining a twin that would only duplicate its rules.
 function summaryMark(item: PendingItem, onOpen?: (videoID: string) => void) {
   const { mark, opens } = offer(item);
   if (mark === null) return null;
   if (mark === "reading") {
     return <span className="metapill oncover is-reading">Summarizing…</span>;
+  }
+  if (mark === "waiting") {
+    return (
+      <span className="metapill oncover is-reading">Waiting for captions</span>
+    );
   }
   // A summary that gave up. A button, not a span, and for the same reason
   // "Read summary" is one: the card is offering somewhere to go — the Player,
