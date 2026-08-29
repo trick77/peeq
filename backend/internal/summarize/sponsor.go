@@ -31,10 +31,11 @@ import (
 // with a sponsor read is a different question from the Player captioning one,
 // and narrowing what is searchable is not this change's business.
 
-// span is one suppressed region, in whole seconds. Cue and chapter timestamps
-// are both integer seconds, so the fractional bounds SponsorBlock reports are
-// widened outward here rather than compared as floats: a cue at second 12 that
-// begins inside a segment ending at 12.4 is part of that segment.
+// span is one suppressed region, in whole seconds, half-open: [start, end).
+// Cue and chapter timestamps are both integer seconds, so the fractional bounds
+// SponsorBlock reports are widened outward here rather than compared as floats:
+// a cue at second 12 that begins inside a segment ending at 12.4 is part of that
+// segment, so the end is ceiled to 13 and second 12 falls inside [start, 13).
 type span struct{ start, end int }
 
 // suppressedSpans decodes the stored sponsorblock_segments JSON and returns the
@@ -89,11 +90,15 @@ func suppressedSpans(segmentsJSON string) []span {
 }
 
 // covers reports whether ts (whole seconds) falls inside any span. The end is
-// inclusive: a chapter marker landing exactly on the last second of a sponsor
-// read is still titled from it.
+// EXCLUSIVE, because it has already been ceiled outward in suppressedSpans: a
+// SponsorBlock end time is where content resumes, so for a segment ending at an
+// exact 90.0 second 90 is the first content second, and for one ending at 90.4
+// the ceil to 91 is what keeps second 90 suppressed. Testing ts <= end on top of
+// that widening would claim one further second in both cases — dropping the
+// chapter a creator placed exactly at the end of the ad read.
 func covers(spans []span, ts int) bool {
 	for _, s := range spans {
-		if ts >= s.start && ts <= s.end {
+		if ts >= s.start && ts < s.end {
 			return true
 		}
 	}
@@ -112,9 +117,14 @@ func covers(spans []span, ts int) bool {
 // and it is computed before this runs — recomputing it against a filtered cue
 // list would change which videos are rejected as non-speech, which is not this
 // filter's business.
-func stripCues(p subtitles.Parsed, spans []span) subtitles.Parsed {
+//
+// The second return value reports that the filter was abandoned — the caller
+// must then stop trusting the spans altogether, output backstop included, or
+// the same bad data that would have emptied the transcript instead empties the
+// chapter and key-point lists.
+func stripCues(p subtitles.Parsed, spans []span) (subtitles.Parsed, bool) {
 	if len(spans) == 0 {
-		return p
+		return p, false
 	}
 	kept := make([]subtitles.Cue, 0, len(p.Cues))
 	texts := make([]string, 0, len(p.Cues))
@@ -130,11 +140,11 @@ func stripCues(p subtitles.Parsed, spans []span) subtitles.Parsed {
 	// out. Bad segment data must not be able to do that, so an empty result falls
 	// back to the unfiltered parse.
 	if len(kept) == 0 {
-		return p
+		return p, true
 	}
 	p.Cues = kept
 	p.Transcript = strings.Join(texts, " ")
-	return p
+	return p, false
 }
 
 // DropCovered removes chapters and key points whose timestamp falls in a

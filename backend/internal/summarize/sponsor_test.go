@@ -39,8 +39,13 @@ func TestSuppressedSpans_selectsCategoriesAndMerges(t *testing.T) {
 	if covers(got, 5) {
 		t.Error("an intro second was suppressed; intro is a valid chapter")
 	}
-	if !covers(got, 100) || !covers(got, 60) || !covers(got, 120) {
-		t.Error("a sponsor second was not covered; bounds are inclusive")
+	if !covers(got, 100) || !covers(got, 60) || !covers(got, 119) {
+		t.Error("a sponsor second was not covered")
+	}
+	// The end is exclusive: second 120 is where content resumes, and a chapter
+	// a creator placed exactly there must survive.
+	if covers(got, 120) {
+		t.Error("the first second after a sponsor read was suppressed")
 	}
 }
 
@@ -71,7 +76,10 @@ func TestStripCues_removesCoveredCuesAndRebuildsTranscript(t *testing.T) {
 	p.Transcript = strings.Join([]string{"welcome back", "this video is sponsored by",
 		"use code PEEQ", "anyway the actual topic"}, " ")
 
-	got := stripCues(p, []span{{60, 120}})
+	got, fellBack := stripCues(p, []span{{60, 120}})
+	if fellBack {
+		t.Fatal("the filter reported a fallback it did not take")
+	}
 
 	if len(got.Cues) != 2 {
 		t.Fatalf("cues = %v, want the two outside the span", got.Cues)
@@ -91,7 +99,10 @@ func TestStripCues_removesCoveredCuesAndRebuildsTranscript(t *testing.T) {
 
 func TestStripCues_keepsEverythingWhenNothingIsSuppressed(t *testing.T) {
 	p := subtitles.Parsed{Cues: cues(0, "a", 10, "b"), Transcript: "a b"}
-	got := stripCues(p, nil)
+	got, fellBack := stripCues(p, nil)
+	if fellBack {
+		t.Fatal("no spans must not read as a fallback")
+	}
 	if len(got.Cues) != 2 || got.Transcript != "a b" {
 		t.Fatalf("unfiltered parse was modified: %+v", got)
 	}
@@ -101,9 +112,14 @@ func TestStripCues_fallsBackWhenSegmentsWouldEmptyTheTranscript(t *testing.T) {
 	// Bad segment data must not be able to turn a real video into "no
 	// transcript", which is what the worker does with an empty one.
 	p := subtitles.Parsed{Cues: cues(0, "a", 10, "b"), Transcript: "a b"}
-	got := stripCues(p, []span{{0, 3600}})
+	got, fellBack := stripCues(p, []span{{0, 3600}})
 	if len(got.Cues) != 2 || got.Transcript != "a b" {
 		t.Fatalf("an all-covering span emptied the transcript: %+v", got)
+	}
+	// The caller has to hear about it: the same bad spans would otherwise strip
+	// every chapter and key point in the output backstop.
+	if !fellBack {
+		t.Error("the fallback was taken silently; the caller still trusts the spans")
 	}
 }
 

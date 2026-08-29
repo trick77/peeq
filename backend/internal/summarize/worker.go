@@ -197,7 +197,17 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// Deliberately applied to a copy: `parsed` stays whole for embedAndStore, so
 	// this narrows what the Player captions without narrowing what search finds.
 	sponsorSpans := suppressedSpans(video.SponsorblockSegments)
-	forSummary := stripCues(parsed, sponsorSpans)
+	forSummary, spansUnusable := stripCues(parsed, sponsorSpans)
+	if spansUnusable {
+		// The spans covered every cue. The transcript falls back to the
+		// unfiltered parse (see stripCues), and the spans have to be dropped
+		// here too: leaving them in place would let the same bad data strip
+		// every chapter and key point in the backstop below, which is the
+		// failure the fallback exists to prevent.
+		w.d.Logger.Warn("summarize worker: sponsor segments cover the whole transcript, filter skipped",
+			"video_id", video.ID, "spans", len(sponsorSpans))
+		sponsorSpans = nil
+	}
 	if n := len(parsed.Cues) - len(forSummary.Cues); n > 0 {
 		w.d.Logger.Debug("summarize worker: sponsor segments withheld from summarizer",
 			"video_id", video.ID, "cues_dropped", n, "spans", len(sponsorSpans))
