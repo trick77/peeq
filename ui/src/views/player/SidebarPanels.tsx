@@ -42,24 +42,23 @@ export function SummaryCard({ video }: { video: Video }) {
         {video.summary_status === "no_transcript" && (
           <p className="placeholder">No speech in this video.</p>
         )}
-        {/* Split on has_subtitles: 'pending' with no transcript means no
-            summary job exists at all — the video is waiting on YouTube's ASR
-            pass, and the next caption attempt can be a day out. No spinner
-            there, because a spinner re-asserts the "work in flight" claim the
-            wording just removed. */}
+        {/* No has_subtitles split here, unlike the Inbox card and
+            UnfetchedVideo. This panel is only reached for a video that is NOT
+            'new' (Player routes those to UnfetchedVideo), and every such video
+            has a summary job: the download worker enqueues one on every
+            success regardless of captions, and EnqueueMissing does the same at
+            boot. A caption-less video here is queued, not waiting on
+            YouTube. */}
         {(video.summary_status === "pending" ||
-          video.summary_status === "running") &&
-          (video.has_subtitles ? (
-            <p
-              className="placeholder"
-              style={{ display: "flex", alignItems: "center", gap: 8 }}
-            >
-              <Spinner size="15px" />
-              Summarizing
-            </p>
-          ) : (
-            <p className="placeholder">Waiting for captions</p>
-          ))}
+          video.summary_status === "running") && (
+          <p
+            className="placeholder"
+            style={{ display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <Spinner size="15px" />
+            Summarizing
+          </p>
+        )}
         {video.summary_status === "error" && (
           <p className="errline">Summarization failed.</p>
         )}

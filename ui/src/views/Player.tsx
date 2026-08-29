@@ -603,7 +603,14 @@ export function Player({
   // so two events carrying the same status both land.
   useEffect(() => {
     if (!videoId || summaryEvent?.videoId !== videoId) return;
-    if (summaryEvent.status !== "done") {
+    // A non-final status is patched in place — except when this page still
+    // believes there are no captions. The summary copy splits on
+    // has_subtitles ("Waiting for captions" vs "Summarizing"), and the event
+    // that starts a run is precisely the moment the captions landed: patching
+    // the status alone would leave the page claiming to wait for captions for
+    // the whole run, healing only on the "done" refetch. Rare enough to cost
+    // one request — it needs a transcript to have arrived under an open page.
+    if (summaryEvent.status !== "done" && video?.has_subtitles !== false) {
       const status = summaryEvent.status;
       setVideo((prev) => (prev ? { ...prev, summary_status: status } : prev));
       return;
