@@ -1935,12 +1935,15 @@ describe("Player", () => {
       await screen.findByText(/Battery life is great/i),
     ).toBeInTheDocument();
 
-    const cueBtn = screen.getByRole("button", {
-      name: /Battery life is great/i,
-    });
     const vid = document.querySelector("video") as HTMLVideoElement;
     const seekSpy = vi.spyOn(vid, "currentTime", "set");
-    fireEvent.click(cueBtn);
+
+    // The words are not a control — reading a line must not move the video.
+    fireEvent.click(screen.getByText(/Battery life is great/i));
+    expect(seekSpy).not.toHaveBeenCalled();
+
+    // The timestamp is.
+    fireEvent.click(screen.getByRole("button", { name: /Play from 0:10/ }));
     expect(seekSpy).toHaveBeenCalledWith(10);
   });
 
@@ -1962,10 +1965,16 @@ describe("Player", () => {
 
     const markEl = await screen.findByText(/battery/i, { selector: "mark" });
     expect(markEl).toBeInTheDocument();
-    const cueBtn = markEl.closest("button");
-    expect(cueBtn).toHaveClass("hit");
-    const helloRow = screen.getByText("Hello there").closest("button");
+    // The row is a div now, not a button: the cue list is plain text so a drag
+    // across it can be copied.
+    const cueRow = markEl.closest(".cue");
+    expect(cueRow).toHaveClass("hit");
+    // And it is the one the find steppers are parked on.
+    expect(cueRow).toHaveClass("current");
+    const helloRow = screen.getByText("Hello there").closest(".cue");
     expect(helloRow).not.toHaveClass("hit");
+
+    expect(screen.getByText("1 / 1")).toBeInTheDocument();
   });
 
   // The event arrives as a prop now: App owns the session's one SSE stream and

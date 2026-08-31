@@ -3607,14 +3607,20 @@ button.sleeppick.armed {
   gap: 0;
 }
 /* A seek row is a <button> that SHOWS text, and WebKit's UA stylesheet refuses
-   to let a form control's text be selected — so the words in a highlight, a
-   chapter title or a transcript cue could not be copied at all in Safari.
-   Chrome and Firefox already allow it; this is what makes Safari agree. The
-   other half of the fix is in selection.ts: a drag that ends inside the row
-   would otherwise fire a click and seek the video out from under the copy. */
+   to let a form control's text be selected — so the words in a highlight or a
+   chapter title could not be copied at all in Safari. Chrome and Firefox
+   already allow it; this is what makes Safari agree. The other half of the fix
+   is in selection.ts: a drag that ends inside the row would otherwise fire a
+   click and seek the video out from under the copy.
+
+   .transcript .cue used to be in this list and no longer is — it stopped being
+   a button. The override was never enough for it anyway: it makes ONE control's
+   text selectable, and no browser extends a selection ACROSS two controls, so a
+   drag over several transcript lines still selected nothing. There, only the
+   timestamp is a control now and the words are plain text. These two lists are
+   short enough that a drag across them is not the point. */
 .hl .row,
-.toc .row,
-.transcript .cue {
+.toc .row {
   user-select: text;
   -webkit-user-select: text;
 }
@@ -3652,11 +3658,11 @@ button.sleeppick.armed {
   border-top: none;
 }
 /* With no border of its own to light up, a row answers the pointer by filling
-   instead — the same --color-active a transcript cue uses on hover, since the
-   two are now the same kind of thing: a line in a list rather than a card. The
-   cue tints a rounded inset pill; a highlight is a full-bleed band, because its
-   text wraps to two lines and a pill around two lines reads as a box, which is
-   what this card just stopped being. */
+   with --color-active: it is a line in a list rather than a card. A full-bleed
+   band, not an inset pill, because the text wraps to two lines and a pill
+   around two lines reads as a box, which is what this card just stopped being.
+   (A transcript cue used to fill the same way. It no longer answers the pointer
+   at all — the row there is prose and only its timestamp is a control.) */
 .hl .row:hover {
   background: var(--color-active);
 }
@@ -3666,7 +3672,7 @@ button.sleeppick.armed {
 /* The row's border box is now exactly the card's content box, and .card clips
    with overflow: hidden — so the global ring's +2px offset would put both of
    its vertical strokes outside the clip and delete them. Inset instead. (The
-   transcript cue this list is otherwise modelled on is a rounded pill with
+   transcript cue this list is otherwise modelled on is a rounded shape with
    room around it, so it never had to answer this.) */
 .hl .row:focus-visible {
   outline-offset: -2px;
@@ -3748,10 +3754,50 @@ button.sleeppick.armed {
 .searchbox .count {
   font-size: 11px;
   color: var(--color-muted);
+  /* The counter changes on every step, and a proportional digit makes the
+     whole field twitch as it goes 9 -> 10. */
+  font-variant-numeric: tabular-nums;
+}
+/* The find steppers, at the right end of the search field. Bare chevrons: the
+   field is already a bordered object, and two more borders inside it read as a
+   control panel. 26px inside a 38px pill leaves the field's own padding intact.
+
+   Shown whenever there is a term to step through, greyed when it matches
+   nothing — never revealed by hover. */
+.searchbox .tfind-nav {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+.searchbox .tfind-nav button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  color: var(--color-muted);
+  border-radius: var(--radius-ui-sm);
+  cursor: pointer;
+}
+.searchbox .tfind-nav button:hover:not(:disabled) {
+  background: var(--color-active);
+  color: var(--color-ink);
+}
+/* An end of the list is a fact, not a failure — same treatment as the inbox
+   stepper's arrows, which keep their place rather than disappearing. */
+.searchbox .tfind-nav button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .transcript-body {
   max-height: 340px;
   overflow-y: auto;
+  /* Positioned so a cue's offsetTop is measured from this box. TranscriptCard
+     scrolls to a match by setting this element's scrollTop rather than calling
+     scrollIntoView, which would drag every scrollable ancestor — the whole
+     player page — along with it. */
+  position: relative;
 }
 .transcript {
   display: flex;
@@ -3771,25 +3817,49 @@ button.sleeppick.armed {
   color: inherit;
   font: inherit;
 }
-.transcript .cue:hover {
-  background: var(--color-active);
-}
+/* No hover fill on the row any more, and no .inert variant to suppress one:
+   the row is not a control in either the seekable or the media-less case, so a
+   fill that tracked the pointer would promise a click that does nothing. Only
+   the timestamp responds. */
 .transcript .cue.hit {
   background: color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
-/* See .toc .row.inert. Ordered after .hit so a find match keeps its tint on an
-   inert cue — the highlight is about the search, not about clicking. */
-.transcript .cue.inert:hover {
-  background: none;
+/* The match the find steppers are parked on, after the panel has scrolled it
+   into the middle. A rail plus a slightly deeper wash rather than a strong
+   fill: the row already carries <mark> on the term itself, and a heavy
+   background underneath it swallows exactly the word being looked for. */
+.transcript .cue.current {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-accent-strong);
 }
-.transcript .cue.inert.hit:hover {
-  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+.transcript .cue.current .line {
+  color: var(--color-ink);
 }
 .transcript .ts {
   color: var(--color-muted);
   font-size: 11.5px;
   flex: none;
   width: 52px;
+  /* Furniture, not prose: dragging across the cue list to copy what was said
+     must not pick up a column of timestamps. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* The seek control, and the only one in the row. Reads as a link because that
+   is what it is — a jump to a point in the video — and it is the stamp that was
+   already there rather than a glyph added to five thousand rows. */
+.transcript .ts.tseek {
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.transcript .ts.tseek:hover {
+  color: var(--color-accent-strong);
+  text-decoration: underline;
 }
 .transcript .line {
   font-size: 13px;
