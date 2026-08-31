@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { formatDuration } from "../format";
 import { seekOnClick } from "../selection";
@@ -77,7 +77,14 @@ export function TranscriptCard({
   // plain `cues` array would go on rendering the previous share's transcript
   // until the new fetch landed — one video's words under another video's title.
   // Clearing in an effect would still leave that frame; deriving removes it.
-  const cues = loaded === vttUrl ? parsed : [];
+  // Memoized rather than merely derived: the match list and the scroll effect
+  // below take `cues` as a dependency, and a bare `[]` literal on the
+  // not-yet-loaded path is a new array every render — enough to reset the
+  // search cursor on a loop.
+  const cues = useMemo(
+    () => (loaded === vttUrl ? parsed : []),
+    [loaded, vttUrl, parsed],
+  );
 
   // Fetch and parse on first open, and again only if the URL changes. Reopening
   // a panel whose transcript is already loaded costs nothing.
@@ -107,9 +114,71 @@ export function TranscriptCard({
     };
   }, [open, vttUrl, loaded]);
 
-  const hitCount = find
-    ? cues.filter((c) => matchesFind(c.text, find)).length
-    : 0;
+  // matches is the position of every cue holding the term, in document order —
+  // the list the counter counts, the steppers walk and the scroll aims at.
+  //
+  // One entry per CUE, not per occurrence: a line saying the word three times
+  // is one stop, because the row is what gets scrolled to and marked, and
+  // highlightCue already marks all three inside it.
+  //
+  // Memoized because it is O(cues) and this panel routinely holds five thousand
+  // of them. The count it replaces ran matchesFind twice per cue per render, on
+  // every keystroke.
+  const matches = useMemo(() => {
+    if (!find.trim()) return [];
+    const out: number[] = [];
+    cues.forEach((c, i) => {
+      if (matchesFind(c.text, find)) out.push(i);
+    });
+    return out;
+  }, [cues, find]);
+  // The same set, for the per-row tint — a Set so drawing five thousand rows
+  // does not run a linear scan per row.
+  const hits = useMemo(() => new Set(matches), [matches]);
+
+  // at is the match the steppers are parked on. Clamped on READ rather than
+  // corrected in an effect: typing another letter can shrink the list under a
+  // cursor pointing past its end, and a frame rendering "8 / 3" is a frame of
+  // lying. activeCue is that match's index in `cues`, or -1 for none.
+  const [at, setAt] = useState(0);
+  const activeAt = matches.length ? Math.min(at, matches.length - 1) : -1;
+  const activeCue = activeAt < 0 ? -1 : matches[activeAt];
+
+  // A new search starts at its own first match, not wherever the last one left
+  // the cursor.
+  useEffect(() => {
+    setAt(0);
+  }, [find, cues]);
+
+  // step walks the matches, wrapping at both ends. Wrapping rather than
+  // stopping dead: the counter says which match you are on, so arriving back at
+  // 1 of 47 reads as a lap rather than as a stuck button.
+  function step(delta: number) {
+    if (!matches.length) return;
+    setAt((v) => {
+      const cur = Math.min(v, matches.length - 1);
+      return (cur + delta + matches.length) % matches.length;
+    });
+  }
+
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // Bring the current match to the middle of the cue list.
+  //
+  // Written against the container's own scrollTop rather than with
+  // scrollIntoView, which walks EVERY scrollable ancestor: the cue list is a
+  // 340px window part-way down a long player page, and pressing "next" would
+  // otherwise scroll the page around the transcript as well as the transcript
+  // itself. This moves exactly one box. offsetTop is measured from
+  // .transcript-body, which index.css gives `position: relative` for it.
+  useEffect(() => {
+    if (activeCue < 0) return;
+    const body = bodyRef.current;
+    const row = body?.querySelector<HTMLElement>(`[data-cue="${activeCue}"]`);
+    if (!body || !row) return;
+    body.scrollTop =
+      row.offsetTop - body.clientHeight / 2 + row.offsetHeight / 2;
+  }, [activeCue]);
 
   // The .txt download is built from the parsed cues rather than fetched, so it
   // contains exactly what the panel shows and exactly what Copy puts on the
@@ -157,10 +226,54 @@ export function TranscriptCard({
                 placeholder="Find in transcript…"
                 value={find}
                 onChange={(e) => setFind(e.target.value)}
+                // Enter steps forward, Shift+Enter back — the pair every find
+                // bar has, and the only way to walk matches without taking a
+                // hand off the keyboard. Scoped to the input rather than the
+                // window: a global Enter handler would fire from anywhere on
+                // the player page, and nothing else here wants the key.
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  step(e.shiftKey ? -1 : 1);
+                }}
               />
+              {/* Position over total, both counting MATCHES. It used to read
+                  matching lines over total lines — "1 / 5413" on a long
+                  transcript, which looks like a position in a list of 5413
+                  matches and is neither a position nor a count of them. */}
               <span className="count mono">
-                {find ? `${hitCount} / ${cues.length}` : "—"}
+                {!find.trim()
+                  ? "—"
+                  : matches.length === 0
+                    ? "None"
+                    : `${activeAt + 1} / ${matches.length}`}
               </span>
+              {/* Only while something is being searched for: with no term
+                  there is nothing to step through, and two dead arrows would
+                  be furniture. Present and pressable the moment there is —
+                  never revealed by hover. */}
+              {find.trim() !== "" && (
+                <span className="tfind-nav">
+                  <button
+                    type="button"
+                    onClick={() => step(-1)}
+                    disabled={matches.length === 0}
+                    aria-label="Previous match"
+                    title="Previous match"
+                  >
+                    <Icon name="chevronUp" size="15px" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => step(1)}
+                    disabled={matches.length === 0}
+                    aria-label="Next match"
+                    title="Next match"
+                  >
+                    <Icon name="chevronDown" size="15px" />
+                  </button>
+                </span>
+              )}
             </div>
             {cues.length > 0 && (
               <div className="transcript-dl">
@@ -194,7 +307,7 @@ export function TranscriptCard({
               </p>
             )}
           </div>
-          <div className="tabbody transcript-body">
+          <div className="tabbody transcript-body" ref={bodyRef}>
             {loading && <p className="placeholder">Loading transcript…</p>}
             {error && <p className="errline">{error}</p>}
             {!loading && !error && cues.length === 0 && (
@@ -202,35 +315,52 @@ export function TranscriptCard({
             )}
             {!loading && !error && cues.length > 0 && (
               <div className="transcript">
-                {cues.map((cue, i) =>
-                  seek ? (
-                    <button
-                      key={i}
-                      type="button"
-                      className={`cue${matchesFind(cue.text, find) ? " hit" : ""}`}
-                      onClick={seekOnClick(seek, cue.ts)}
-                    >
-                      <span className="ts mono">{formatDuration(cue.ts)}</span>
-                      <span className="line">
-                        {highlightCue(cue.text, find)}
-                      </span>
-                    </button>
-                  ) : (
-                    // No media to jump to, so the row is not a control. Same
-                    // rule and the same class as the chapter and highlight
-                    // rows: a button that looked identical and did nothing
-                    // would be worse than plain text. Find still highlights it.
+                {/* The row is prose, and the TIMESTAMP is the control.
+
+                    It used to be the other way round: the whole row was a
+                    <button>, so reading a line meant risking a jump, and — the
+                    part that had no workaround — no browser extends a text
+                    selection across two form controls, which made dragging over
+                    several lines to copy them select nothing at all. The
+                    `user-select: text` in index.css cannot reach that; only
+                    taking the words out of a control can.
+
+                    So the stamp that was already on every row carries the jump,
+                    and the words are words. A transcript is read far more often
+                    than it is jumped from, and the jump is now something aimed
+                    at rather than triggered by touching the text. */}
+                {cues.map((cue, i) => {
+                  const stamp = formatDuration(cue.ts);
+                  return (
                     <div
                       key={i}
-                      className={`cue inert${matchesFind(cue.text, find) ? " hit" : ""}`}
+                      data-cue={i}
+                      className={`cue${hits.has(i) ? " hit" : ""}${
+                        i === activeCue ? " current" : ""
+                      }`}
                     >
-                      <span className="ts mono">{formatDuration(cue.ts)}</span>
+                      {seek ? (
+                        <button
+                          type="button"
+                          className="ts mono tseek"
+                          onClick={seekOnClick(seek, cue.ts)}
+                          title={`Play from ${stamp}`}
+                          aria-label={`Play from ${stamp}`}
+                        >
+                          {stamp}
+                        </button>
+                      ) : (
+                        // Nothing to jump to — the inbox video page has no
+                        // media — so the stamp is plain text rather than a
+                        // control that would do nothing.
+                        <span className="ts mono">{stamp}</span>
+                      )}
                       <span className="line">
                         {highlightCue(cue.text, find)}
                       </span>
                     </div>
-                  ),
-                )}
+                  );
+                })}
               </div>
             )}
           </div>

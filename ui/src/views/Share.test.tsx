@@ -385,9 +385,12 @@ describe("Share transcript panel", () => {
     const playSpy = vi
       .spyOn(window.HTMLMediaElement.prototype, "play")
       .mockResolvedValue(undefined);
-    fireEvent.click(
-      screen.getByRole("button", { name: /sourcing is what separates/i }),
-    );
+    // The timestamp is the jump; the words are words. Clicking the line does
+    // nothing, which is what makes the transcript readable and selectable.
+    fireEvent.click(screen.getByText(/sourcing is what separates/i));
+    expect(playSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Play from 1:04/ }));
     expect(playSpy).toHaveBeenCalled();
   });
 
@@ -399,7 +402,9 @@ describe("Share transcript panel", () => {
     fireEvent.change(screen.getByPlaceholderText(/find in transcript/i), {
       target: { value: "discipline" },
     });
-    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    // Position among matches — one match, and we are on it. This used to read
+    // "1 / 2": one matching line out of two lines in the file.
+    expect(screen.getByText("1 / 1")).toBeInTheDocument();
   });
 
   it("offers caption downloads named from the title — never the id or the token", async () => {

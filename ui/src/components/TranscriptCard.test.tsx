@@ -72,7 +72,7 @@ describe("TranscriptCard", () => {
     expect(await screen.findByText("Copied")).toBeTruthy();
   });
 
-  it("seeks when a cue is clicked", async () => {
+  it("seeks from the timestamp, not from the words", async () => {
     const seek = vi.fn();
     render(
       <TranscriptCard
@@ -82,24 +82,137 @@ describe("TranscriptCard", () => {
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: /Transcript/ }));
-    await userEvent.click(await screen.findByText(/Fuse plugs/));
 
+    // Reading is not jumping. Clicking the line used to move the video, which
+    // made the transcript hostile to read and — because a selection cannot
+    // cross two form controls — impossible to drag-select across.
+    await userEvent.click(await screen.findByText(/Fuse plugs/));
+    expect(seek).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Play from 0:05/ }),
+    );
     expect(seek).toHaveBeenCalledWith(5);
   });
 
-  // Without a seek there is no media to jump to, so a cue must not be a
-  // control: a button that looked identical and did nothing would be worse
-  // than plain text. This is the inbox video page's case.
-  it("renders inert cues when there is nothing to seek", async () => {
+  // The line itself is never a control, so the whole cue list is one continuous
+  // run of selectable text.
+  it("leaves the spoken words out of any control", async () => {
+    render(
+      <TranscriptCard
+        vttUrl="/api/videos/v1/subtitles"
+        filenameBase="v"
+        seek={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Transcript/ }));
+
+    const line = await screen.findByText(/Fuse plugs/);
+    expect(line.closest("button")).toBeNull();
+    expect((line.closest(".cue") as HTMLElement).tagName).toBe("DIV");
+  });
+
+  // Without a seek there is no media to jump to, so the stamp must not be a
+  // control either: a button that looked identical and did nothing would be
+  // worse than plain text. This is the inbox video page's case.
+  it("renders a plain timestamp when there is nothing to seek", async () => {
     render(
       <TranscriptCard vttUrl="/api/videos/v1/subtitles" filenameBase="v" />,
     );
     await userEvent.click(screen.getByRole("button", { name: /Transcript/ }));
 
-    const cue = await screen.findByText(/Fuse plugs/);
-    const row = cue.closest(".cue") as HTMLElement;
-    expect(row.tagName).toBe("DIV");
-    expect(row.className).toContain("inert");
+    await screen.findByText(/Fuse plugs/);
+    expect(screen.queryByRole("button", { name: /Play from/ })).toBeNull();
+    expect(screen.getByText("0:05").tagName).toBe("SPAN");
+  });
+
+  describe("find", () => {
+    async function openAndSearch(term: string) {
+      render(
+        <TranscriptCard
+          vttUrl="/api/videos/v1/subtitles"
+          filenameBase="v"
+          seek={vi.fn()}
+        />,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /Transcript/ }));
+      await screen.findByText(/Fuse plugs/);
+      await userEvent.type(
+        screen.getByPlaceholderText(/Find in transcript/),
+        term,
+      );
+    }
+
+    // The counter used to read matching lines over TOTAL lines, so a long
+    // transcript said "1 / 5413" — a number that looks like a position among
+    // 5413 matches while being neither.
+    it("counts the position among matches, not the lines in the file", async () => {
+      await openAndSearch("e");
+
+      expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    });
+
+    it("steps through matches and wraps", async () => {
+      await openAndSearch("e");
+
+      await userEvent.click(screen.getByRole("button", { name: "Next match" }));
+      expect(screen.getByText("2 / 2")).toBeInTheDocument();
+      // Wrapping, not stopping: the counter says where you are, so a lap
+      // cannot be mistaken for a dead button.
+      await userEvent.click(screen.getByRole("button", { name: "Next match" }));
+      expect(screen.getByText("1 / 2")).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Previous match" }),
+      );
+      expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    });
+
+    it("marks the match it is parked on", async () => {
+      await openAndSearch("e");
+
+      // By position, not by text: a match splits the line into <mark> and
+      // plain fragments, so getByText no longer sees it as one node.
+      const first = document.querySelector('[data-cue="0"]')!;
+      const second = document.querySelector('[data-cue="1"]')!;
+      expect(first.className).toContain("current");
+      expect(second.className).not.toContain("current");
+
+      await userEvent.click(screen.getByRole("button", { name: "Next match" }));
+      expect(second.className).toContain("current");
+      expect(first.className).not.toContain("current");
+    });
+
+    it("says so when nothing matches, and greys the steppers", async () => {
+      await openAndSearch("zzz");
+
+      expect(screen.getByText("None")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Next match" })).toBeDisabled();
+    });
+
+    // A second search starts at its own first match rather than wherever the
+    // previous one left the cursor — and a cursor pointing past a shrunken
+    // list must never render as "2 / 1".
+    it("restarts at the first match when the term changes", async () => {
+      await openAndSearch("e");
+      await userEvent.click(screen.getByRole("button", { name: "Next match" }));
+      expect(screen.getByText("2 / 2")).toBeInTheDocument();
+
+      await userEvent.type(
+        screen.getByPlaceholderText(/Find in transcript/),
+        "mptied",
+      );
+      expect(screen.getByText("1 / 1")).toBeInTheDocument();
+    });
+
+    it("steps with Enter and back with Shift+Enter", async () => {
+      await openAndSearch("e");
+
+      const box = screen.getByPlaceholderText(/Find in transcript/);
+      await userEvent.type(box, "{Enter}");
+      expect(screen.getByText("2 / 2")).toBeInTheDocument();
+      await userEvent.type(box, "{Shift>}{Enter}{/Shift}");
+      expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    });
   });
 
   // The share page keeps this component mounted across a token change, so a
