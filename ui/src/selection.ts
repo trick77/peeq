@@ -6,8 +6,13 @@
 //
 // The rows this guards are <button>s, which WebKit also refuses to let the user
 // select at all until `user-select: text` is set on them; the two halves of the
-// fix travel together (see `.hl .row` / `.toc .row` / `.transcript .cue` in
-// index.css).
+// fix travel together (see `.hl .row` / `.toc .row` in index.css).
+//
+// The transcript no longer works that way. Its cue row stopped being a button —
+// only the timestamp is one — because that override can make ONE control's text
+// selectable and no browser extends a selection ACROSS two, so a drag over
+// several cues selected nothing at all. The guard still applies to the
+// timestamp: a drag that happens to end on it must not seek.
 export function isSelectingText(): boolean {
   return !!window.getSelection()?.toString();
 }

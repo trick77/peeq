@@ -3658,11 +3658,11 @@ button.sleeppick.armed {
   border-top: none;
 }
 /* With no border of its own to light up, a row answers the pointer by filling
-   instead — the same --color-active a transcript cue uses on hover, since the
-   two are now the same kind of thing: a line in a list rather than a card. The
-   cue tints a rounded inset pill; a highlight is a full-bleed band, because its
-   text wraps to two lines and a pill around two lines reads as a box, which is
-   what this card just stopped being. */
+   with --color-active: it is a line in a list rather than a card. A full-bleed
+   band, not an inset pill, because the text wraps to two lines and a pill
+   around two lines reads as a box, which is what this card just stopped being.
+   (A transcript cue used to fill the same way. It no longer answers the pointer
+   at all — the row there is prose and only its timestamp is a control.) */
 .hl .row:hover {
   background: var(--color-active);
 }
@@ -3672,7 +3672,7 @@ button.sleeppick.armed {
 /* The row's border box is now exactly the card's content box, and .card clips
    with overflow: hidden — so the global ring's +2px offset would put both of
    its vertical strokes outside the clip and delete them. Inset instead. (The
-   transcript cue this list is otherwise modelled on is a rounded pill with
+   transcript cue this list is otherwise modelled on is a rounded shape with
    room around it, so it never had to answer this.) */
 .hl .row:focus-visible {
   outline-offset: -2px;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TranscriptCard } from "./TranscriptCard";
 
@@ -202,6 +202,18 @@ describe("TranscriptCard", () => {
         "mptied",
       );
       expect(screen.getByText("1 / 1")).toBeInTheDocument();
+    });
+
+    // An Enter that commits an IME candidate is aimed at the composition, not
+    // at this control — swallowing it would eat the commit and move the cursor.
+    it("ignores the Enter that commits an IME composition", async () => {
+      await openAndSearch("e");
+
+      fireEvent.keyDown(screen.getByPlaceholderText(/Find in transcript/), {
+        key: "Enter",
+        isComposing: true,
+      });
+      expect(screen.getByText("1 / 2")).toBeInTheDocument();
     });
 
     it("steps with Enter and back with Shift+Enter", async () => {
