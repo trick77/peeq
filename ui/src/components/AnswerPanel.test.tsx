@@ -698,6 +698,48 @@ describe("AnswerPanel trace", () => {
     expect(document.querySelector(".answer-trace")).toBeNull();
   });
 
+  // The cost sits on the model chip because the model calls are the only steps
+  // that cost anything — the count and the price are one fact, not two rows.
+  it("names the cost of the model calls", () => {
+    render(
+      <Panel
+        state={state({
+          text: "Yes[1].",
+          trace: stages,
+          traceCostNanoUsd: 900_000,
+        })}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /how this was answered/i }),
+    );
+
+    const chip = document.querySelector(".trace-key")!;
+    expect(chip.textContent).toContain("2 calls to a model");
+    expect(chip.textContent).toContain("$0.0009");
+  });
+
+  // An older backend sends the trace without a cost, and an unpriced deployment
+  // sends a zero. Neither means the answer was free, so neither prints a figure
+  // — and the chip that carries the call count must survive either way.
+  it("keeps the chip but prints no figure when there is no cost to report", () => {
+    for (const traceCostNanoUsd of [undefined, 0]) {
+      const { unmount } = render(
+        <Panel
+          state={state({ text: "Yes[1].", trace: stages, traceCostNanoUsd })}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: /how this was answered/i }),
+      );
+
+      const chip = document.querySelector(".trace-key")!;
+      expect(chip.textContent).toContain("2 calls to a model");
+      expect(chip.textContent).not.toContain("$");
+      unmount();
+    }
+  });
+
   it("opens on click and closes again", () => {
     render(<Panel state={state({ text: "Yes[1].", trace: stages })} />);
     const toggle = screen.getByRole("button", {

@@ -92,7 +92,7 @@ func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
 	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 
 	totals := &Totals{}
-	ctx := WithCall(context.Background(), CallInfo{VideoID: "vid1", Title: "A Title", Channel: "A Channel", Totals: totals})
+	ctx := WithTotals(WithCall(context.Background(), CallInfo{VideoID: "vid1", Title: "A Title", Channel: "A Channel"}), totals)
 	if _, err := c.Complete(WithStep(ctx, "summary"), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,12 @@ func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
 	// Timings vary per run, so compare the accounting and check them separately.
 	tokensOnly := got
 	tokensOnly.InferenceNanos, tokensOnly.PacedNanos = 0, 0
-	want := Usage{Requests: 1, Accounted: 1, PromptTokens: 1200, CachedTokens: 800, CompletionTokens: 340, ReasoningTokens: 250, TotalTokens: 1540}
+	// Cost is part of the accounting the client books, not a separate concern:
+	// 400 uncached prompt tokens at 75 + 800 cached at 15 + 340 completion at
+	// 250 nanodollars. Reasoning is inside CompletionTokens and is not priced
+	// again.
+	want := Usage{Requests: 1, Accounted: 1, PromptTokens: 1200, CachedTokens: 800, CompletionTokens: 340,
+		ReasoningTokens: 250, TotalTokens: 1540, CostNanoUSD: 127_000}
 	if tokensOnly != want {
 		t.Fatalf("totals = %+v, want %+v", tokensOnly, want)
 	}
@@ -174,7 +179,7 @@ func TestComplete_logsRawUsageAndTheAbsenceOfIt(t *testing.T) {
 		log, buf := capture()
 		c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 		totals := &Totals{}
-		ctx := WithCall(context.Background(), CallInfo{VideoID: "vid1", Totals: totals})
+		ctx := WithTotals(WithCall(context.Background(), CallInfo{VideoID: "vid1"}), totals)
 		if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
 			t.Fatal(err)
 		}
@@ -246,7 +251,7 @@ func TestComplete_inferenceTimeExcludesPacing(t *testing.T) {
 	c := NewClient(Config{BaseURL: srv.URL, Logger: log, RequestInterval: interval}, srv.Client())
 
 	totals := &Totals{}
-	ctx := WithCall(context.Background(), CallInfo{VideoID: "vid1", Totals: totals})
+	ctx := WithTotals(WithCall(context.Background(), CallInfo{VideoID: "vid1"}), totals)
 	wall := time.Now()
 	for i := 0; i < 2; i++ {
 		if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
@@ -279,7 +284,7 @@ func TestComplete_accumulatesTotalsAcrossCalls(t *testing.T) {
 	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 
 	totals := &Totals{}
-	ctx := WithCall(context.Background(), CallInfo{VideoID: "vid1", Totals: totals})
+	ctx := WithTotals(WithCall(context.Background(), CallInfo{VideoID: "vid1"}), totals)
 	for i := 0; i < 3; i++ {
 		if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
 			t.Fatal(err)
@@ -287,6 +292,31 @@ func TestComplete_accumulatesTotalsAcrossCalls(t *testing.T) {
 	}
 	if got := totals.Snapshot(); got.Requests != 3 || got.PromptTokens != 3600 {
 		t.Fatalf("totals = %+v", got)
+	}
+}
+
+// The accumulator has to outlive an identity change beneath it. It used to be a
+// CallInfo field, and WithCall REPLACES the whole CallInfo — so a caller that
+// attached a fresh identity for a sub-step silently stopped accounting. That is
+// exactly the shape of the Ask handler, whose two model calls each build their
+// own CallInfo.
+func TestComplete_totalsSurviveANestedWithCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, usageBody)
+	}))
+	defer srv.Close()
+	log, _ := capture()
+	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+
+	totals := &Totals{}
+	ctx := WithTotals(context.Background(), totals)
+	// A wholly new identity, the way a second handler stage attaches its own.
+	inner := WithCall(ctx, CallInfo{Step: "understand"})
+	if _, err := c.Complete(inner, []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := totals.Snapshot(); got.Requests != 1 || got.CostNanoUSD == 0 {
+		t.Fatalf("nested WithCall dropped the accumulator: %+v", got)
 	}
 }
 

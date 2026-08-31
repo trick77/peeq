@@ -82,7 +82,7 @@ func TestAskEffortSweep(t *testing.T) {
 	for _, q := range sweepQuestions {
 		for _, effort := range []string{"high", "medium", "low"} {
 			totals := &llm.Totals{}
-			ctx := llm.WithCall(context.Background(), llm.CallInfo{Step: "answer-sweep", Totals: totals})
+			ctx := llm.WithTotals(llm.WithCall(context.Background(), llm.CallInfo{Step: "answer-sweep"}), totals)
 			ctx = llm.WithMaxTokens(ctx, answerMaxTokens)
 			ctx = llm.WithReasoningEffort(ctx, effort)
 
@@ -226,7 +226,7 @@ func TestAskEffortTiers(t *testing.T) {
 		var ttfts, reasons []int64
 		for i := 0; i < repeats; i++ {
 			totals := &llm.Totals{}
-			ctx := llm.WithCall(context.Background(), llm.CallInfo{Step: "inert-probe", Totals: totals})
+			ctx := llm.WithTotals(llm.WithCall(context.Background(), llm.CallInfo{Step: "inert-probe"}), totals)
 			ctx = s.decorate(llm.WithMaxTokens(ctx, answerMaxTokens))
 			start := time.Now()
 			var ttft time.Duration

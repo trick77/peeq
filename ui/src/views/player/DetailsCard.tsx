@@ -4,6 +4,7 @@ import {
   bitrateLabel,
   codecLabel,
   formatAgo,
+  formatCostUSD,
   formatDuration,
   formatSize,
   languageLabel,
@@ -153,6 +154,36 @@ function buildGroups(video: Video, stats: VideoEmbeddings | null): Group[] {
     }
   }
 
+  // What the analysis cost at the chat endpoint, summed over every attempt the
+  // queue spent on this video — so a video that failed twice before succeeding
+  // reports all three attempts, which is what was actually paid.
+  //
+  // Every row goes through the same "" -> dropped rule as the rest of the
+  // panel, so a video analysed before the backend started recording this has no
+  // Analysis group at all rather than one claiming it was free.
+  const analysis: Row[] = [
+    { k: "Analysis cost", v: formatCostUSD(video.chat_cost_nano_usd) },
+    {
+      k: "Tokens in",
+      v: video.chat_prompt_tokens
+        ? GROUPED.format(video.chat_prompt_tokens)
+        : "",
+      // Cached tokens are a SUBSET of the figure above, not an addition to it,
+      // and they bill at a fifth of the rate. Worth a line because it is the
+      // one part of the cost a reader can act on — a re-analysis soon after the
+      // first is cheap, days later is not.
+      sub: video.chat_cached_tokens
+        ? `${GROUPED.format(video.chat_cached_tokens)} cached`
+        : undefined,
+    },
+    {
+      k: "Tokens out",
+      v: video.chat_completion_tokens
+        ? GROUPED.format(video.chat_completion_tokens)
+        : "",
+    },
+  ];
+
   const groups: Group[] = [
     { title: "File", rows: file },
     {
@@ -161,6 +192,7 @@ function buildGroups(video: Video, stats: VideoEmbeddings | null): Group[] {
       tags: (video.yt_tags ?? []).filter(Boolean),
     },
     { title: "Search index", rows: index },
+    { title: "Analysis", rows: analysis },
   ];
   return groups
     .map((g) => ({ ...g, rows: g.rows.filter((r) => r.v !== "") }))

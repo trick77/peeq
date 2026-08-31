@@ -193,7 +193,7 @@ func (c coverageDiag) String() string {
 	return fmt.Sprintf("%d/%d barred=%d", c.shown, c.considered, c.barred)
 }
 
-func (t answerTrace) log(q string, ttft time.Duration, cov coverageDiag) {
+func (t answerTrace) log(q string, ttft time.Duration, cov coverageDiag, cost llm.Usage) {
 	if len(t.stages) == 0 {
 		return
 	}
@@ -228,6 +228,10 @@ func (t answerTrace) log(q string, ttft time.Duration, cov coverageDiag) {
 		// complaints about junk means the bar is too loose; one that climbs with
 		// complaints about a thin list means it is too tight.
 		"coverage", cov.String(),
+		// Raw nanodollars, matching the chat_cost_nano_usd the llm client logs
+		// per call: a log line gets summed and grouped, and a rendered "$0.0009"
+		// is useless for both.
+		"cost_nano_usd", cost.CostNanoUSD,
 	)
 }
 
@@ -336,6 +340,19 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// is computed much further down.
 	var cov coverageDiag
 
+	// What answering this question costs at the endpoint. One accumulator for
+	// the whole request, carried on askCtx, so both model calls land in it —
+	// the understand gate and the answer itself each build their own CallInfo,
+	// and llm.WithTotals is a context value of its own precisely so neither
+	// wipes it out (see llm.WithTotals).
+	//
+	// Reported, never stored. A question is not an object in the library the
+	// way a video is: there is no row to add it to, nobody asks the same
+	// question twice, and a per-question ledger is a feature nobody asked for.
+	// The number is here to answer "what did that cost" while it is on screen.
+	spend := &llm.Totals{}
+	askCtx := llm.WithTotals(r.Context(), spend)
+
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		// Registered below this return on purpose, so a blank query keeps its
@@ -351,10 +368,14 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		if len(tr.stages) == 0 {
 			return
 		}
-		send("trace", map[string]any{"stages": tr.stages})
+		// Snapshotted here rather than at the answer call, because this runs
+		// after every model call the request made and is the only point that
+		// can see all of them.
+		cost := spend.Snapshot()
+		send("trace", map[string]any{"stages": tr.stages, "cost_nano_usd": cost.CostNanoUSD})
 		// Logged whether or not the frame reached anyone. A client that hung up
 		// mid-answer is a case worth having a record of, not one worth losing.
-		tr.log(q, ttft, cov)
+		tr.log(q, ttft, cov, cost)
 	}()
 
 	// Understand the question before searching for it. This is the step that
@@ -362,7 +383,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// "material"; see understand.go for why it adds a lane instead of replacing
 	// the query. It never fails the request — a bad or absent understanding just
 	// means the raw question, which is what this endpoint did before.
-	u, ud := s.understandQuery(r.Context(), q)
+	u, ud := s.understandQuery(askCtx, q)
 	// Skipped means no understander is wired, so there was no step to report.
 	if ud.status != understandSkipped {
 		tr.add("understand", ud.model, traceKindModel, ud.ms)
@@ -634,7 +655,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// question the excerpts cannot answer, but they run thinner and drift on
 	// citation placement, landing the marker before the full stop rather than
 	// after it.
-	ctx := llm.WithReasoningEffort(r.Context(), llm.HighReasoningEffort)
+	ctx := llm.WithReasoningEffort(askCtx, llm.HighReasoningEffort)
 	ctx = llm.WithMaxTokens(ctx, answerMaxTokens)
 	ctx = llm.WithCall(ctx, llm.CallInfo{Step: "answer"})
 	// THE RAW QUESTION, and never the extracted topic. The two exist for

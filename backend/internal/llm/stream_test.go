@@ -134,13 +134,14 @@ func TestComplete_keepsTheUsageChunkThatFollowsFinishReason(t *testing.T) {
 
 	totals := &Totals{}
 	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
-	ctx := WithCall(context.Background(), CallInfo{Totals: totals})
+	ctx := WithTotals(context.Background(), totals)
 	if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
 	got := totals.Snapshot()
 	got.InferenceNanos, got.PacedNanos = 0, 0
-	want := Usage{Requests: 1, Accounted: 1, PromptTokens: 265, CachedTokens: 192, CompletionTokens: 80, TotalTokens: 345}
+	want := Usage{Requests: 1, Accounted: 1, PromptTokens: 265, CachedTokens: 192, CompletionTokens: 80,
+		TotalTokens: 345, CostNanoUSD: 28_355}
 	if got != want {
 		t.Fatalf("totals = %+v, want %+v", got, want)
 	}

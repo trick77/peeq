@@ -5,6 +5,7 @@ import {
   daysSince,
   formatAge,
   formatAgo,
+  formatCostUSD,
   formatDuration,
   formatMs,
   formatSize,
@@ -294,6 +295,32 @@ describe("watchURL / shortWatchLink", () => {
       "https://www.youtube.com/watch?v=aircAruvnKk",
     );
     expect(shortWatchLink("aircAruvnKk")).toBe("youtu.be/aircAruvnKk");
+  });
+});
+
+describe("formatCostUSD", () => {
+  // Four decimals below a dollar. Two would render every video peeq analyses as
+  // "$0.01" and every answer as "$0.00" — a figure that looks precise and says
+  // nothing.
+  it("renders sub-cent amounts at four decimals", () => {
+    expect(formatCostUSD(9_400_000)).toBe("$0.0094");
+    expect(formatCostUSD(900_000)).toBe("$0.0009");
+    expect(formatCostUSD(125_000_000)).toBe("$0.1250");
+  });
+
+  // Past a dollar the fourth decimal is noise and the cents are what matter.
+  it("switches to two decimals at a dollar and above", () => {
+    expect(formatCostUSD(1_000_000_000)).toBe("$1.00");
+    expect(formatCostUSD(12_345_000_000)).toBe("$12.35");
+  });
+
+  // Blank, following formatSize: the Details panel drops a row whose value is
+  // "", so a video with no accounting shows no cost rather than a free one.
+  it("is blank when there is nothing to report", () => {
+    expect(formatCostUSD(0)).toBe("");
+    expect(formatCostUSD(undefined)).toBe("");
+    expect(formatCostUSD(-5)).toBe("");
+    expect(formatCostUSD(NaN)).toBe("");
   });
 });
 

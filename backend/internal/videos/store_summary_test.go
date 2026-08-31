@@ -9,6 +9,45 @@ import (
 // Tests for store_summary.go: the summarize/classify pipeline's writes and
 // the classifier's unclassified sweep.
 
+func TestAddChatUsage_accumulatesAcrossRuns(t *testing.T) {
+	s := New(openTestDB(t))
+	if err := s.Upsert(Video{ID: "v1", URL: "u-v1", DurationSeconds: 100}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh row is unaccounted, not zero-cost. The distinction is what stops
+	// the panel claiming an old video was free.
+	got, err := s.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.ChatUsage.Empty() {
+		t.Fatalf("new row already has usage: %+v", got.ChatUsage)
+	}
+
+	// Two runs, standing in for an attempt that failed and the retry that
+	// succeeded. Both spent real tokens, so both must be counted.
+	first := ChatUsage{PromptTokens: 1000, CachedTokens: 200, CompletionTokens: 300, CostNanoUSD: 138_000}
+	second := ChatUsage{PromptTokens: 500, CachedTokens: 100, CompletionTokens: 50, CostNanoUSD: 44_000}
+	for _, u := range []ChatUsage{first, second} {
+		if err := s.AddChatUsage("v1", u); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err = s.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ChatUsage{PromptTokens: 1500, CachedTokens: 300, CompletionTokens: 350, CostNanoUSD: 182_000}
+	if got.ChatUsage != want {
+		t.Fatalf("usage = %+v, want %+v (the second run overwrote rather than added)", got.ChatUsage, want)
+	}
+	if got.ChatUsage.Empty() {
+		t.Fatal("Empty() true on an accounted row")
+	}
+}
+
 func TestSetCategoryAndListByCategory(t *testing.T) {
 	s := New(openTestDB(t))
 	if err := s.Upsert(Video{ID: "v-ai", URL: "u-v-ai", DurationSeconds: 100}); err != nil {

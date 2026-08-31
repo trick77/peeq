@@ -460,8 +460,12 @@ func (w *Worker) recordActivity(e activity.Event) {
 // lets the failure paths that run before the analysis is announced (and the
 // panic recovery) call them unconditionally.
 type analysisRun struct {
-	log     *slog.Logger
-	ctx     context.Context // carries the CallInfo the llm client logs against
+	log *slog.Logger
+	ctx context.Context // carries the CallInfo the llm client logs against
+	// store is where finished() banks the run's spend. Held here rather than
+	// reached for through the worker because finished() is called from the
+	// defers and panic recovery of paths that have no worker in hand.
+	store   *videos.Store
 	totals  *llm.Totals
 	video   *videos.Video
 	job     *summaryjobs.Job
@@ -481,13 +485,13 @@ func (w *Worker) startRun(ctx context.Context, job *summaryjobs.Job, video *vide
 	totals := &llm.Totals{}
 	r := &analysisRun{
 		log:    w.d.Logger,
+		store:  w.d.Videos,
 		totals: totals,
-		ctx: llm.WithCall(ctx, llm.CallInfo{
+		ctx: llm.WithTotals(llm.WithCall(ctx, llm.CallInfo{
 			VideoID: video.ID,
 			Title:   video.Title,
 			Channel: video.ChannelName,
-			Totals:  totals,
-		}),
+		}), totals),
 		video:   video,
 		job:     job,
 		started: time.Now(),
@@ -617,6 +621,7 @@ func (r *analysisRun) finished(outcome string) {
 		return
 	}
 	total := r.totals.Snapshot()
+	r.bankSpend(total)
 	elapsed := time.Since(r.started).Milliseconds()
 	// Everything that was not inference: the pacing gap, embedding, VTT
 	// parsing, SQLite writes. Printed so the numbers on the line add up and a
@@ -633,6 +638,36 @@ func (r *analysisRun) finished(outcome string) {
 		"attempt", attemptLabel(r.job),
 		"will_retry", !succeeded(outcome) && r.job.Attempts < r.job.MaxAttempts)
 	r.log.Info("summarize worker: analysis finished", append(attrs, total.LogAttrs()...)...)
+}
+
+// bankSpend records what this run cost against the video row, so the figure
+// outlives the log line beside it.
+//
+// Called from finished() on EVERY outcome, success and failure alike. A run
+// that died in the keypoints step still paid for the summary it produced first,
+// and a cost column that only counted successes would quietly under-report
+// exactly the videos that cost the most.
+//
+// Best-effort by design: the analysis is over by the time this runs and its
+// real artifacts are already committed, so a bookkeeping write that fails must
+// not turn a finished video into a failed job. It warns and moves on.
+func (r *analysisRun) bankSpend(total llm.Usage) {
+	// Nothing accounted means either no call was made (a resumed job that
+	// skipped every LLM step) or the endpoint reported no usage. Neither is a
+	// zero worth adding, and skipping keeps the write off the fast path of a
+	// job that did no inference at all.
+	if r.store == nil || total.Accounted == 0 {
+		return
+	}
+	err := r.store.AddChatUsage(r.video.ID, videos.ChatUsage{
+		PromptTokens:     total.PromptTokens,
+		CachedTokens:     total.CachedTokens,
+		CompletionTokens: total.CompletionTokens,
+		CostNanoUSD:      total.CostNanoUSD,
+	})
+	if err != nil {
+		r.log.Warn("summarize worker: recording chat usage failed", append(r.ident(), "err", err)...)
+	}
 }
 
 // isInboxRead reports whether this video's transcript was fetched to help
@@ -731,10 +766,10 @@ func (w *Worker) classifyOne(ctx context.Context) (bool, error) {
 	// Same identity/token plumbing as a full analysis, so a backlog sweep is as
 	// readable as a normal run — including the "still waiting" heartbeat.
 	totals := &llm.Totals{}
-	cctx := llm.WithCall(ctx, llm.CallInfo{
+	cctx := llm.WithTotals(llm.WithCall(ctx, llm.CallInfo{
 		VideoID: video.ID, Title: video.Title, Channel: video.ChannelName,
-		Step: "classify-backlog", Totals: totals,
-	})
+		Step: "classify-backlog",
+	}), totals)
 	ident := []any{"video_id", video.ID, "title", video.Title, "channel", video.ChannelName}
 	started := time.Now()
 

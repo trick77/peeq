@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Icon } from "../icons";
 import { Spinner } from "../ui";
-import { formatDuration, formatMs } from "../format";
+import { formatCostUSD, formatDuration, formatMs } from "../format";
 import {
   answerParts,
   citedInOrder,
@@ -79,6 +79,10 @@ export type AnswerState = {
   // because it reports what generation cost — so the panel only ever draws it
   // settled, which is also the only time anyone wants it.
   trace?: TraceStage[];
+  // What the model calls in this answer cost, in nanodollars. Arrives in the
+  // same frame as trace. Not stored anywhere: it is here to answer "what did
+  // that cost" while the answer is on screen, and that is all.
+  traceCostNanoUsd?: number;
   failed?: boolean;
 };
 
@@ -359,7 +363,10 @@ export function AnswerPanel({
           reader asked a question, not for a pipeline. It is the last thing in
           the panel because it is about the answer rather than part of it. */}
       {!streaming && state.trace?.length ? (
-        <AnswerTrace stages={state.trace} />
+        <AnswerTrace
+          stages={state.trace}
+          costNanoUsd={state.traceCostNanoUsd}
+        />
       ) : null}
     </div>
   );
@@ -417,7 +424,13 @@ function stageLabel(key: string): string {
 // were three quarters of it. The shape is not knowable in advance, which is the
 // entire reason for drawing it rather than describing it, and why the footer
 // below states the split without characterising it.
-function AnswerTrace({ stages }: { stages: TraceStage[] }) {
+function AnswerTrace({
+  stages,
+  costNanoUsd,
+}: {
+  stages: TraceStage[];
+  costNanoUsd?: number;
+}) {
   const [open, setOpen] = useState(false);
   const total = stages.reduce((sum, s) => sum + s.ms, 0);
   const modelMs = stages
@@ -425,6 +438,11 @@ function AnswerTrace({ stages }: { stages: TraceStage[] }) {
     .reduce((sum, s) => sum + s.ms, 0);
   const models = stages.filter((s) => s.kind === "model").length;
   const local = stages.filter((s) => s.kind === "local").length;
+  // Sits on the model chip rather than on a line of its own: the model calls
+  // are the only steps that cost anything, so the count and the price are one
+  // fact. Blank when the backend sent no figure, or sent a zero — an older
+  // backend and an unpriced deployment both land there, and neither means free.
+  const cost = formatCostUSD(costNanoUsd);
 
   return (
     <div className="answer-trace">
@@ -453,6 +471,7 @@ function AnswerTrace({ stages }: { stages: TraceStage[] }) {
               <span className="trace-key">
                 <Icon name="sparkles" size="11px" />
                 {models} {models === 1 ? "call" : "calls"} to a model
+                {cost ? ` · ${cost}` : ""}
               </span>
             ) : null}
             {local > 0 ? (
