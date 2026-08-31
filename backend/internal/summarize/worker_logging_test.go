@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/rag"
+	"github.com/trick77/peeq/internal/summaryjobs"
 	"time"
 
 	"github.com/trick77/peeq/internal/llm"
@@ -311,6 +312,38 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 	}
 	if fin["chat_cost_nano_usd"].(float64) != float64(v.ChatUsage.CostNanoUSD) {
 		t.Errorf("logged cost %v disagrees with the banked %d", fin["chat_cost_nano_usd"], v.ChatUsage.CostNanoUSD)
+	}
+}
+
+// finished() is reachable twice for one run: a panic raised after the normal
+// call unwinds into processOne's recover, which calls it again. It only logged
+// before, so a second call was free; it writes now, and a second write would
+// double the video's recorded cost.
+func TestAnalysisRun_banksItsSpendOnlyOnce(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedVideo(t, h, "v1")
+	log, _ := captureLogger()
+
+	video, err := h.videos.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	totals := &llm.Totals{}
+	totals.Add(llm.Usage{Requests: 1, Accounted: 1, PromptTokens: 1000, CostNanoUSD: 75_000})
+	run := &analysisRun{
+		log: log, store: h.videos, totals: totals, video: video,
+		job: &summaryjobs.Job{ID: 1, Attempts: 1, MaxAttempts: 3}, started: time.Now(),
+	}
+
+	run.finished("done")
+	run.finished("panic")
+
+	got, err := h.videos.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ChatUsage.CostNanoUSD != 75_000 || got.ChatUsage.PromptTokens != 1000 {
+		t.Fatalf("banked %+v, want one run's worth — the second finished() wrote again", got.ChatUsage)
 	}
 }
 

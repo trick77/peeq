@@ -475,6 +475,14 @@ type analysisRun struct {
 	// each step's own duration and token delta live in its done closure, so a
 	// done() called out of order cannot report another step's numbers.
 	stepStarted time.Time
+
+	// banked stops the run's spend being written twice. finished() used to only
+	// log, so calling it twice cost nothing; it now writes to the video row, and
+	// there is one path that can reach it twice — a panic raised AFTER a normal
+	// finished() (in Jobs.Finish, say) unwinds into processOne's recover, which
+	// calls finished("panic") on the same run. That would double the video's
+	// recorded cost on the one occasion nobody is watching the numbers.
+	banked bool
 }
 
 // startRun announces the analysis and returns its logging state. attempt/
@@ -656,9 +664,13 @@ func (r *analysisRun) bankSpend(total llm.Usage) {
 	// skipped every LLM step) or the endpoint reported no usage. Neither is a
 	// zero worth adding, and skipping keeps the write off the fast path of a
 	// job that did no inference at all.
-	if r.store == nil || total.Accounted == 0 {
+	if r.store == nil || total.Accounted == 0 || r.banked {
 		return
 	}
+	// Set before the write, not after: a failed write must not leave the door
+	// open for a second attempt from the panic path, which would be running
+	// against a row whose state nobody has checked.
+	r.banked = true
 	err := r.store.AddChatUsage(r.video.ID, videos.ChatUsage{
 		PromptTokens:     total.PromptTokens,
 		CachedTokens:     total.CachedTokens,
