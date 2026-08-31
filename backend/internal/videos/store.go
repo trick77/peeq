@@ -99,6 +99,9 @@ type Video struct {
 	// Ask Indexed() rather than comparing here — see the note on that method.
 	EmbedRev int
 	Category string
+	// ChatUsage is what the chat model has spent analysing this video, summed
+	// over every attempt. Zero on a video analysed before migration 0028.
+	ChatUsage ChatUsage
 	// MediaContainer, VideoCodec, VideoHeight and AudioCodec are what the
 	// downloaded file actually is, filled in by mediaprobe. They carry
 	// ffprobe's raw values ("mp4", "h264", 1080, "aac"); the UI does the
@@ -258,6 +261,7 @@ const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	v.created_at, v.downloaded_at,
 	v.audio_language,
 	EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = v.id) AS has_transcript, v.summary, v.chapters, v.key_points, v.summary_status, v.summary_error, v.embed_model, v.embed_dim, v.embed_rev, v.category,
+	v.chat_prompt_tokens, v.chat_cached_tokens, v.chat_completion_tokens, v.chat_cost_nano_usd,
 	v.media_container, v.video_codec, v.video_height, v.audio_codec, v.probed_at,
 	v.media_type, v.live_status, v.yt_tags, v.yt_categories,
 	COALESCE(ch.keep_reads, 0) AS channel_keep_reads`
@@ -291,6 +295,8 @@ func scanVideo(rs rowScanner) (Video, error) {
 		&v.CreatedAt, &downloadedAt,
 		&v.AudioLanguage, &hasTranscript, &v.Summary, &v.Chapters, &v.KeyPoints,
 		&v.SummaryStatus, &v.SummaryError, &v.EmbedModel, &v.EmbedDim, &v.EmbedRev, &v.Category,
+		&v.ChatUsage.PromptTokens, &v.ChatUsage.CachedTokens, &v.ChatUsage.CompletionTokens,
+		&v.ChatUsage.CostNanoUSD,
 		&v.MediaContainer, &v.VideoCodec, &v.VideoHeight, &v.AudioCodec, &probedAt,
 		&v.MediaType, &v.LiveStatus, &v.YTTags, &v.YTCategories,
 		&v.ChannelKeepReads,

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Icon } from "../icons";
 import { Spinner } from "../ui";
-import { formatDuration, formatMs } from "../format";
+import { formatCostUSD, formatDuration, formatMs } from "../format";
 import {
   answerParts,
   citedInOrder,
@@ -79,6 +79,10 @@ export type AnswerState = {
   // because it reports what generation cost — so the panel only ever draws it
   // settled, which is also the only time anyone wants it.
   trace?: TraceStage[];
+  // What the model calls in this answer cost, in nanodollars. Arrives in the
+  // same frame as trace. Not stored anywhere: it is here to answer "what did
+  // that cost" while the answer is on screen, and that is all.
+  traceCostNanoUsd?: number;
   failed?: boolean;
 };
 
@@ -359,7 +363,10 @@ export function AnswerPanel({
           reader asked a question, not for a pipeline. It is the last thing in
           the panel because it is about the answer rather than part of it. */}
       {!streaming && state.trace?.length ? (
-        <AnswerTrace stages={state.trace} />
+        <AnswerTrace
+          stages={state.trace}
+          costNanoUsd={state.traceCostNanoUsd}
+        />
       ) : null}
     </div>
   );
@@ -417,7 +424,13 @@ function stageLabel(key: string): string {
 // were three quarters of it. The shape is not knowable in advance, which is the
 // entire reason for drawing it rather than describing it, and why the footer
 // below states the split without characterising it.
-function AnswerTrace({ stages }: { stages: TraceStage[] }) {
+function AnswerTrace({
+  stages,
+  costNanoUsd,
+}: {
+  stages: TraceStage[];
+  costNanoUsd?: number;
+}) {
   const [open, setOpen] = useState(false);
   const total = stages.reduce((sum, s) => sum + s.ms, 0);
   const modelMs = stages
@@ -425,6 +438,17 @@ function AnswerTrace({ stages }: { stages: TraceStage[] }) {
     .reduce((sum, s) => sum + s.ms, 0);
   const models = stages.filter((s) => s.kind === "model").length;
   const local = stages.filter((s) => s.kind === "local").length;
+  // Blank when the backend sent no figure, or sent a zero — an older backend
+  // and an unpriced deployment both land there, and neither means free.
+  //
+  // Deliberately NOT on the model chip beside `models`. The figure covers the
+  // CHAT calls, and `models` counts every stage that left the machine —
+  // embedding included (answer_handlers.go tags the embed stage as a model
+  // step). Hanging the price off that count renders "3 calls to a model ·
+  // $0.0009" on any answer that ran vector search, pricing two of the three
+  // and saying nothing about it. It goes in the footer instead, where there is
+  // room to name what it covers.
+  const cost = formatCostUSD(costNanoUsd);
 
   return (
     <div className="answer-trace">
@@ -486,6 +510,18 @@ function AnswerTrace({ stages }: { stages: TraceStage[] }) {
             calls, the only steps that left this machine. Two searches run every
             time — one on the words you used, one on what they mean — and the
             results are merged before the model reads anything.
+            {/* Scoped explicitly. Reading the question and writing the answer
+                are the priced calls; turning the question into a vector is a
+                model call too, on another endpoint whose tokens peeq does not
+                account. An unqualified total here would quietly claim to cover
+                all three. */}
+            {cost ? (
+              <>
+                {" "}
+                Reading and answering cost <span className="num">{cost}</span>;
+                the embedding call is not priced.
+              </>
+            ) : null}
           </p>
         </div>
       ) : null}

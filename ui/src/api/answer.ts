@@ -108,6 +108,11 @@ export type AnswerEvent =
       // reports what everything cost, which is not known until it has.
       type: "trace";
       stages: TraceStage[];
+      // What the model calls in this answer cost, in nanodollars (see
+      // formatCostUSD). Reported, never stored — unlike a video's analysis
+      // there is no row to keep it on, and nobody asks the same question twice.
+      // Absent from an older backend, and zero when no model call was made.
+      costNanoUsd?: number;
     }
   | { type: "done" }
   | { type: "error"; message: string };
@@ -188,11 +193,18 @@ export async function streamAnswer(
           break;
         }
         case "trace": {
-          const d = data as { stages?: TraceStage[] };
+          const d = data as { stages?: TraceStage[]; cost_nano_usd?: number };
           // A frame with no stages is not worth a render. The backend already
           // withholds one, so this is belt and braces against a future sender.
           if (d.stages?.length) {
-            onEvent({ type: "trace", stages: d.stages });
+            onEvent({
+              type: "trace",
+              stages: d.stages,
+              costNanoUsd:
+                typeof d.cost_nano_usd === "number"
+                  ? d.cost_nano_usd
+                  : undefined,
+            });
           }
           break;
         }

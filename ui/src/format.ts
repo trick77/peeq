@@ -230,6 +230,33 @@ export function formatSize(bytes: number | undefined): string {
   return `${bytes} B`;
 }
 
+// formatCostUSD renders what an analysis or an answer cost at the LLM endpoint.
+// Takes NANODOLLARS — billionths of a dollar — because that is what the backend
+// stores and sends: at current rates a whole video costs a fraction of a cent,
+// and money kept in floats drifts in exactly those digits.
+//
+// Four decimals below a dollar, two at or above it. Two everywhere would print
+// "$0.01" for a video and "$0.00" for an answer, which is the same as printing
+// nothing while looking like a figure. Four is where the numbers peeq actually
+// produces become distinguishable from each other.
+//
+// Blank at zero, following formatSize: a row whose value is "" is dropped by
+// the Details panel, so an unaccounted video shows no cost rather than a free
+// one. A negative cannot happen — the backend clamps — and is treated as
+// unaccounted rather than rendered.
+//
+// Below the fourth decimal it says "<$0.0001" rather than rounding. Four
+// decimals alone printed "$0.0000" for anything under half a thousandth of a
+// cent — reachable on the Ask chip when the only accounted call was the short
+// understand gate — and a rendered zero claims the call was free, which is the
+// one thing this function exists not to say.
+export function formatCostUSD(nano: number | undefined): string {
+  if (!nano || !Number.isFinite(nano) || nano <= 0) return "";
+  const usd = nano / 1_000_000_000;
+  if (usd < 0.0001) return "<$0.0001";
+  return `$${usd.toFixed(usd >= 1 ? 2 : 4)}`;
+}
+
 // formatMs renders a step duration for the answer trace: seconds with one
 // decimal once past a second, whole milliseconds below.
 //

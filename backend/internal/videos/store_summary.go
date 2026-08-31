@@ -100,6 +100,58 @@ func (s *Store) ClearEmbedRev(id string) error {
 	return nil
 }
 
+// ChatUsage is what the chat model has spent on one video: the tokens, and what
+// they cost in nanodollars (billionths of a dollar — integers, because a whole
+// video costs a fraction of a cent and floats drift in exactly those digits).
+//
+// The two token lanes are not disjoint: CachedTokens is a SUBSET of
+// PromptTokens, and the completion count already includes the model's reasoning
+// tokens. Anything deriving a figure from these has to know that; the price was
+// computed upstream in internal/llm, which does.
+//
+// Deliberately plain int64s rather than an llm.Usage. This package must not
+// import internal/llm — it is the storage layer, and a dependency on the client
+// that happens to produce the numbers would invert that.
+type ChatUsage struct {
+	PromptTokens     int64
+	CachedTokens     int64
+	CompletionTokens int64
+	CostNanoUSD      int64
+}
+
+// Empty reports whether nothing has been accounted for this video, which is the
+// state of every row analysed before migration 0028 as well as of any video the
+// endpoint never reported usage for. Callers use it to omit a figure rather than
+// display a confident zero.
+func (u ChatUsage) Empty() bool {
+	return u.PromptTokens == 0 && u.CachedTokens == 0 && u.CompletionTokens == 0 && u.CostNanoUSD == 0
+}
+
+// AddChatUsage folds one analysis run's chat spend into a video's running
+// totals.
+//
+// ADDITIVE, and that is the whole design. The job queue retries a failed
+// analysis up to max_attempts times and every attempt spends real tokens at the
+// endpoint, so a column overwritten with the last run's snapshot would report a
+// video that failed twice as costing only its third attempt. The same follows
+// for a manual Re-summarize: it is money spent on this video, so it adds. What
+// the columns answer is "what has this video cost", not "what would it cost to
+// produce the analysis currently on screen".
+func (s *Store) AddChatUsage(id string, u ChatUsage) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE videos SET
+		   chat_prompt_tokens     = chat_prompt_tokens + ?,
+		   chat_cached_tokens     = chat_cached_tokens + ?,
+		   chat_completion_tokens = chat_completion_tokens + ?,
+		   chat_cost_nano_usd     = chat_cost_nano_usd + ?
+		 WHERE id = ?`,
+		u.PromptTokens, u.CachedTokens, u.CompletionTokens, u.CostNanoUSD, id)
+	if err != nil {
+		return fmt.Errorf("add video %s chat usage: %w", id, err)
+	}
+	return nil
+}
+
 // SetCategory persists a video's classification. The value must already be a
 // valid enum id or 'uncategorized' (callers use videos.NormalizeCategory).
 //

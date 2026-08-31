@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/rag"
+	"github.com/trick77/peeq/internal/summaryjobs"
 	"time"
 
 	"github.com/trick77/peeq/internal/llm"
@@ -110,10 +111,17 @@ func (u *usageCompleter) Complete(ctx context.Context, m []llm.Message) (string,
 	u.steps = append(u.steps, info.Step)
 	u.mu.Unlock()
 	// Accounted mirrors what the real client counts when the endpoint sends a
-	// usage object; without it the totals log no token fields at all.
-	info.Totals.Add(llm.Usage{
+	// usage object; without it the totals log no token fields at all. Cost is
+	// booked here too, for the same reason: the real client prices each call as
+	// it returns, so a fake that skipped it would leave the worker's persisted
+	// spend at zero and the assertions on it vacuous.
+	llm.TotalsFrom(ctx).Add(llm.Usage{
 		Requests: 1, Accounted: 1,
 		PromptTokens: 1000, CompletionTokens: 200, ReasoningTokens: 120, TotalTokens: 1200,
+		// 1000 uncached in at 75 + 200 out at 250 nanodollars. Cached stays at
+		// zero deliberately: a REPORTED zero has to survive to the log line, and
+		// the assertion on chat_tokens_cached below is what holds it there.
+		CostNanoUSD:    125_000,
 		InferenceNanos: int64(250 * time.Millisecond)})
 
 	sys := m[0].Content
@@ -284,6 +292,82 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 	}
 	if !comp.sawStep("summary") || !comp.sawStep("classify") || !comp.sawStep("keypoints") {
 		t.Errorf("completer never saw per-step context: %v", comp.steps)
+	}
+
+	// The run's spend outlives its log line: the same totals are banked on the
+	// video row, which is what the Details panel reads. Compared against the
+	// logged figure rather than a literal so the two can never disagree — a
+	// hardcoded expectation here would keep passing if the worker banked a
+	// different run's numbers.
+	v, err := h.videos.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := int64(len(comp.steps))
+	if v.ChatUsage.PromptTokens != 1000*calls || v.ChatUsage.CompletionTokens != 200*calls {
+		t.Errorf("banked tokens = %+v, want %d calls' worth", v.ChatUsage, calls)
+	}
+	if v.ChatUsage.CostNanoUSD != 125_000*calls {
+		t.Errorf("banked cost = %d, want %d", v.ChatUsage.CostNanoUSD, 125_000*calls)
+	}
+	if fin["chat_cost_nano_usd"].(float64) != float64(v.ChatUsage.CostNanoUSD) {
+		t.Errorf("logged cost %v disagrees with the banked %d", fin["chat_cost_nano_usd"], v.ChatUsage.CostNanoUSD)
+	}
+}
+
+// finished() is reachable twice for one run: a panic raised after the normal
+// call unwinds into processOne's recover, which calls it again. It only logged
+// before, so a second call was free; it writes now, and a second write would
+// double the video's recorded cost.
+func TestAnalysisRun_banksItsSpendOnlyOnce(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedVideo(t, h, "v1")
+	log, _ := captureLogger()
+
+	video, err := h.videos.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	totals := &llm.Totals{}
+	totals.Add(llm.Usage{Requests: 1, Accounted: 1, PromptTokens: 1000, CostNanoUSD: 75_000})
+	run := &analysisRun{
+		log: log, store: h.videos, totals: totals, video: video,
+		job: &summaryjobs.Job{ID: 1, Attempts: 1, MaxAttempts: 3}, started: time.Now(),
+	}
+
+	run.finished("done")
+	run.finished("panic")
+
+	got, err := h.videos.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ChatUsage.CostNanoUSD != 75_000 || got.ChatUsage.PromptTokens != 1000 {
+		t.Fatalf("banked %+v, want one run's worth — the second finished() wrote again", got.ChatUsage)
+	}
+}
+
+// A video the worker never made a chat call for must stay unaccounted, not be
+// stamped with a zero that reads as "this analysis was free".
+func TestWorkerBanksNothingWhenNoCallWasAccounted(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedVideo(t, h, "v1")
+	log, _ := captureLogger()
+
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(&fakeWorkerCompleter{}), Embedder: fakeWorkerEmbedder{dim: 1536},
+		EmbedModel: "test-model", EmbedDim: 1536, Logger: log})
+	if _, err := w.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+
+	v, err := h.videos.Get("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.ChatUsage.Empty() {
+		t.Fatalf("unaccounted run banked %+v", v.ChatUsage)
 	}
 }
 

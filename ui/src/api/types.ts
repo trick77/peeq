@@ -133,6 +133,24 @@ export type Video = {
   live_status?: string;
   yt_tags?: string[];
   yt_categories?: string[];
+  // What the chat model has spent analysing this video, summed over every
+  // attempt the job queue made. Chat only — embedding tokens come from another
+  // endpoint at another price and are not folded in.
+  //
+  // All optional together: they are omitempty on the wire, so a video analysed
+  // before migration 0028 has none of them and the panel drops the group rather
+  // than reporting a cost of zero.
+  //
+  // chat_cached_tokens is a SUBSET of chat_prompt_tokens, not an addition to
+  // it, and chat_cost_nano_usd already accounts for the cheaper rate cached
+  // tokens are billed at. Nothing here should be re-derived from the others.
+  chat_prompt_tokens?: number;
+  chat_cached_tokens?: number;
+  chat_completion_tokens?: number;
+  // Nanodollars — billionths of a dollar, an integer. A whole video costs a
+  // fraction of a cent, so the wire carries the exact figure and the client
+  // renders it (see formatCostUSD).
+  chat_cost_nano_usd?: number;
 };
 
 // Chapter mirrors httpapi's per-video chapter DTO — source distinguishes

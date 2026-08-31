@@ -168,6 +168,9 @@ export function useSearchState(): SearchState {
     // below, because the one in .finally() rebuilds the state from scratch and
     // would otherwise drop it at the exact moment the panel starts showing it.
     let trace: TraceStage[] | undefined;
+    // Rides alongside trace and for the same reason: it lands in the same last
+    // frame and has to survive the .finally() rebuild below.
+    let traceCostNanoUsd: number | undefined;
     let text = "";
     let failed = false;
     // Whether retrieval reported at all. An empty source list means the library
@@ -224,6 +227,7 @@ export function useSearchState(): SearchState {
             break;
           case "trace":
             trace = e.stages;
+            traceCostNanoUsd = e.costNanoUsd;
             break;
           case "token":
             text += e.text;
@@ -246,6 +250,7 @@ export function useSearchState(): SearchState {
           unresolvedChannels,
           counts,
           trace,
+          traceCostNanoUsd,
           failed,
         });
         // The done frame is the normal end, and acting on it rather than
@@ -292,6 +297,7 @@ export function useSearchState(): SearchState {
                 unresolvedChannels,
                 counts,
                 trace,
+                traceCostNanoUsd,
                 failed,
               }
             : null,

@@ -297,4 +297,53 @@ describe("DetailsCard", () => {
       expect(screen.queryByText("Search index")).not.toBeInTheDocument();
     });
   });
+
+  describe("analysis cost", () => {
+    it("reports what the analysis cost, with the cached share called out", () => {
+      open(
+        baseVideo({
+          chat_prompt_tokens: 96142,
+          chat_cached_tokens: 11008,
+          chat_completion_tokens: 7431,
+          chat_cost_nano_usd: 9_400_000,
+        }),
+      );
+
+      expect(screen.getByText("Analysis")).toBeInTheDocument();
+      expect(screen.getByText("$0.0094")).toBeInTheDocument();
+      // Grouped the same way every other figure in the panel is, whatever the
+      // browser's locale.
+      expect(screen.getByText("96,142")).toBeInTheDocument();
+      expect(screen.getByText("7,431")).toBeInTheDocument();
+      // A SUBSET of the tokens above, so it reads as a share rather than as an
+      // addition.
+      expect(screen.getByText("11,008 cached")).toBeInTheDocument();
+    });
+
+    // Every video analysed before the backend started recording this. It must
+    // show nothing at all — a group of zeros would claim those videos were free.
+    it("drops the whole group on a video with no accounting", () => {
+      open(baseVideo());
+
+      expect(screen.queryByText("Analysis")).not.toBeInTheDocument();
+      expect(screen.queryByText("Analysis cost")).not.toBeInTheDocument();
+      expect(screen.queryByText("Tokens in")).not.toBeInTheDocument();
+    });
+
+    // Cache misses are the norm on a first analysis. The group still belongs;
+    // only the sub-line goes.
+    it("omits the cached line when nothing was served from cache", () => {
+      open(
+        baseVideo({
+          chat_prompt_tokens: 5000,
+          chat_cached_tokens: 0,
+          chat_completion_tokens: 900,
+          chat_cost_nano_usd: 600_000,
+        }),
+      );
+
+      expect(screen.getByText("$0.0006")).toBeInTheDocument();
+      expect(screen.queryByText(/cached/)).not.toBeInTheDocument();
+    });
+  });
 });

@@ -19,9 +19,6 @@ type CallInfo struct {
 	// Stage is the caller's position in its pipeline, rendered as "2/4", so a
 	// heartbeat says how far along the work is and not just that it is slow.
 	Stage string
-	// Totals, when set, accumulates the token usage of every call made with
-	// this info, so the caller can report a per-video total.
-	Totals *Totals
 }
 
 type callInfoKey struct{}
@@ -54,6 +51,37 @@ func WithStage(ctx context.Context, stage string) context.Context {
 func CallFrom(ctx context.Context) CallInfo {
 	ci, _ := ctx.Value(callInfoKey{}).(CallInfo)
 	return ci
+}
+
+type totalsKey struct{}
+
+// WithTotals attaches the accumulator every call made with ctx folds its usage
+// into, so a caller can report what a whole video or a whole answer cost.
+//
+// It is a context value of its own rather than a CallInfo field, which is where
+// it used to live. CallInfo is REPLACED wholesale by WithCall, and WithStep and
+// WithStage are built on WithCall — so an accumulator carried inside it survived
+// only as long as nobody attached a fresh identity further down. The summarize
+// worker got away with it because it sets the identity once at the top; the Ask
+// handler cannot, because the two calls it needs to total (understand.go and the
+// streamed answer) each build their own CallInfo, and each would have dropped
+// the accumulator on the floor. Separating them means an accumulator outlives
+// every identity change beneath it, which is the only behaviour a caller
+// summing a request could sensibly expect.
+func WithTotals(ctx context.Context, t *Totals) context.Context {
+	return context.WithValue(ctx, totalsKey{}, t)
+}
+
+// TotalsFrom returns the accumulator attached to ctx, or nil when there is
+// none. Nil is usable: every Totals method is a no-op on it.
+//
+// Exported for the same reason CallFrom is — the fake Completers that stand in
+// for this client in other packages' tests have to book usage the way the real
+// one does, and the only place they can read the accumulator from is the
+// context they were handed.
+func TotalsFrom(ctx context.Context) *Totals {
+	t, _ := ctx.Value(totalsKey{}).(*Totals)
+	return t
 }
 
 // LogAttrs returns the identity of the call as slog key/value pairs, omitting
@@ -102,6 +130,18 @@ type Usage struct {
 	// spent deliberately not calling it. Nanoseconds so Add can sum them.
 	InferenceNanos int64
 	PacedNanos     int64
+
+	// CostNanoUSD is what the tokens above cost, priced when the call returns
+	// (see pricing.go) rather than derived later. Pricing at the call site is
+	// what makes it right the day shortGateModel stops being the same
+	// deployment as model: a total covering two models cannot be re-derived
+	// from a sum of tokens that no longer says which model spent which.
+	//
+	// Nanodollars, like the timings above are nanoseconds, so Add can sum them
+	// without rounding. Zero from an endpoint that reported no usage, and zero
+	// from a model missing from the rate table — Accounted separates the first
+	// case, and priced() is logged for the second.
+	CostNanoUSD int64
 }
 
 // Totals accumulates Usage across the many calls one video costs (the
@@ -129,6 +169,7 @@ func (t *Totals) Add(u Usage) {
 	t.u.TotalTokens += u.TotalTokens
 	t.u.InferenceNanos += u.InferenceNanos
 	t.u.PacedNanos += u.PacedNanos
+	t.u.CostNanoUSD += u.CostNanoUSD
 }
 
 // Snapshot returns the totals so far. A nil *Totals yields the zero Usage.
@@ -154,6 +195,7 @@ func (u Usage) Sub(earlier Usage) Usage {
 		TotalTokens:      u.TotalTokens - earlier.TotalTokens,
 		InferenceNanos:   u.InferenceNanos - earlier.InferenceNanos,
 		PacedNanos:       u.PacedNanos - earlier.PacedNanos,
+		CostNanoUSD:      u.CostNanoUSD - earlier.CostNanoUSD,
 	}
 }
 
@@ -216,5 +258,7 @@ func (u Usage) LogAttrs() []any {
 	} {
 		attrs = append(attrs, f.key, FormatTokens(f.val))
 	}
-	return attrs
+	// Raw nanodollars, not a rendered "$0.0094". A log line is queried and
+	// summed, and a currency string is neither; the UI does the rendering.
+	return append(attrs, "chat_cost_nano_usd", u.CostNanoUSD)
 }
