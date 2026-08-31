@@ -244,9 +244,16 @@ export function formatSize(bytes: number | undefined): string {
 // the Details panel, so an unaccounted video shows no cost rather than a free
 // one. A negative cannot happen — the backend clamps — and is treated as
 // unaccounted rather than rendered.
+//
+// Below the fourth decimal it says "<$0.0001" rather than rounding. Four
+// decimals alone printed "$0.0000" for anything under half a thousandth of a
+// cent — reachable on the Ask chip when the only accounted call was the short
+// understand gate — and a rendered zero claims the call was free, which is the
+// one thing this function exists not to say.
 export function formatCostUSD(nano: number | undefined): string {
   if (!nano || !Number.isFinite(nano) || nano <= 0) return "";
   const usd = nano / 1_000_000_000;
+  if (usd < 0.0001) return "<$0.0001";
   return `$${usd.toFixed(usd >= 1 ? 2 : 4)}`;
 }
 

@@ -80,6 +80,24 @@ func TestCostNanoUSD_unknownModelIsUnpricedNotFree(t *testing.T) {
 	}
 }
 
+// The unpriced case fires on EVERY call, so it has to be said once. A warning
+// per chunk would bury the log under one line during a library import.
+func TestShouldWarnUnpriced_saysItOncePerModel(t *testing.T) {
+	const unknown = "model-for-the-warn-once-test"
+	if !shouldWarnUnpriced(unknown) {
+		t.Fatal("first sighting of an unpriced model did not warn")
+	}
+	for i := 0; i < 3; i++ {
+		if shouldWarnUnpriced(unknown) {
+			t.Fatalf("warned again on call %d", i+2)
+		}
+	}
+	// A priced model never warns, however many times it is asked.
+	if shouldWarnUnpriced(ModelFor(context.Background())) {
+		t.Fatal("warned about a model that has a rate")
+	}
+}
+
 func TestUsage_costAddsAndSubtracts(t *testing.T) {
 	var totals Totals
 	totals.Add(Usage{Requests: 1, Accounted: 1, CostNanoUSD: 1_500})

@@ -314,6 +314,15 @@ describe("formatCostUSD", () => {
     expect(formatCostUSD(12_345_000_000)).toBe("$12.35");
   });
 
+  // Rounding to four decimals printed "$0.0000" down here, which reads as
+  // free. Anything that cost something has to look like it cost something.
+  it("says less-than rather than rounding a real cost to zero", () => {
+    expect(formatCostUSD(45_000)).toBe("<$0.0001");
+    expect(formatCostUSD(1)).toBe("<$0.0001");
+    // The boundary itself is renderable at four decimals, so it prints.
+    expect(formatCostUSD(100_000)).toBe("$0.0001");
+  });
+
   // Blank, following formatSize: the Details panel drops a row whose value is
   // "", so a video with no accounting shows no cost rather than a free one.
   it("is blank when there is nothing to report", () => {

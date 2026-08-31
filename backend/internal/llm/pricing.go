@@ -1,5 +1,7 @@
 package llm
 
+import "sync"
+
 // What a call costs, in money rather than tokens.
 //
 // Z.ai reports no price. The usage object measured in client.go carries token
@@ -83,4 +85,24 @@ func costNanoUSD(modelID string, u Usage) nanoUSD {
 func priced(modelID string) bool {
 	_, ok := ratesNanoPerToken[modelID]
 	return ok
+}
+
+// unpricedWarned remembers which model ids have already been complained about.
+var unpricedWarned sync.Map
+
+// shouldWarnUnpriced reports whether this is the first call to reach an
+// unpriced model, so the gap is said once per process instead of once per call.
+//
+// Volume is the whole point. The situation it fires in is a deployment added to
+// client.go without a rate here, and in that situation EVERY call is unpriced —
+// a single video's map-reduce summary would emit one warning per transcript
+// chunk, and importing a library would bury the log under thousands of copies
+// of one line. Once is enough to act on; the rest is noise that makes the log
+// worse at the exact moment someone needs to read it.
+func shouldWarnUnpriced(modelID string) bool {
+	if priced(modelID) {
+		return false
+	}
+	_, seen := unpricedWarned.LoadOrStore(modelID, true)
+	return !seen
 }
