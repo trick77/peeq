@@ -438,10 +438,16 @@ function AnswerTrace({
     .reduce((sum, s) => sum + s.ms, 0);
   const models = stages.filter((s) => s.kind === "model").length;
   const local = stages.filter((s) => s.kind === "local").length;
-  // Sits on the model chip rather than on a line of its own: the model calls
-  // are the only steps that cost anything, so the count and the price are one
-  // fact. Blank when the backend sent no figure, or sent a zero — an older
-  // backend and an unpriced deployment both land there, and neither means free.
+  // Blank when the backend sent no figure, or sent a zero — an older backend
+  // and an unpriced deployment both land there, and neither means free.
+  //
+  // Deliberately NOT on the model chip beside `models`. The figure covers the
+  // CHAT calls, and `models` counts every stage that left the machine —
+  // embedding included (answer_handlers.go tags the embed stage as a model
+  // step). Hanging the price off that count renders "3 calls to a model ·
+  // $0.0009" on any answer that ran vector search, pricing two of the three
+  // and saying nothing about it. It goes in the footer instead, where there is
+  // room to name what it covers.
   const cost = formatCostUSD(costNanoUsd);
 
   return (
@@ -471,7 +477,6 @@ function AnswerTrace({
               <span className="trace-key">
                 <Icon name="sparkles" size="11px" />
                 {models} {models === 1 ? "call" : "calls"} to a model
-                {cost ? ` · ${cost}` : ""}
               </span>
             ) : null}
             {local > 0 ? (
@@ -505,6 +510,18 @@ function AnswerTrace({
             calls, the only steps that left this machine. Two searches run every
             time — one on the words you used, one on what they mean — and the
             results are merged before the model reads anything.
+            {/* Scoped explicitly. Reading the question and writing the answer
+                are the priced calls; turning the question into a vector is a
+                model call too, on another endpoint whose tokens peeq does not
+                account. An unqualified total here would quietly claim to cover
+                all three. */}
+            {cost ? (
+              <>
+                {" "}
+                Reading and answering cost <span className="num">{cost}</span>;
+                the embedding call is not priced.
+              </>
+            ) : null}
           </p>
         </div>
       ) : null}
