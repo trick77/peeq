@@ -19,7 +19,7 @@ func NewService(oidc *OIDCService, sessions *SessionStore, users *UserStore) *Se
 	return &Service{oidc: oidc, sessions: sessions, users: users}
 }
 
-// StartLogin redirects the browser to Authentik and sets state/nonce cookies.
+// StartLogin redirects the browser to the OIDC provider and sets state/nonce cookies.
 func (s *Service) StartLogin(w http.ResponseWriter, r *http.Request) {
 	s.oidc.StartLogin(w, r)
 }

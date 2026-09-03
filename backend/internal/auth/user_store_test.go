@@ -10,7 +10,7 @@ func TestUserStore_UpsertFromClaimsCreatesUserAsAdmin(t *testing.T) {
 	store := NewUserStore(db)
 
 	claims := Claims{
-		Subject:           "authentik-sub-1",
+		Subject:           "oidc-sub-1",
 		PreferredUsername: "jan",
 		Email:             "jan@example.com",
 		Name:              "Jan",
@@ -49,7 +49,7 @@ func TestUserStore_UpsertFromClaimsFallsBackToEmailForUsername(t *testing.T) {
 	store := NewUserStore(db)
 
 	user, err := store.UpsertFromClaims(context.Background(), Claims{
-		Subject: "authentik-sub-2",
+		Subject: "oidc-sub-2",
 		Email:   "user@example.com",
 	})
 	if err != nil {
@@ -65,7 +65,7 @@ func TestUserStore_FindByIDReturnsUpsertedUser(t *testing.T) {
 	store := NewUserStore(db)
 
 	created, err := store.UpsertFromClaims(context.Background(), Claims{
-		Subject:           "authentik-sub-3",
+		Subject:           "oidc-sub-3",
 		PreferredUsername: "amy",
 		Email:             "amy@example.com",
 	})

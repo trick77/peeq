@@ -45,7 +45,7 @@ type OIDCServiceConfig struct {
 	SecureCookie bool
 }
 
-// OIDCService handles OIDC redirects and callback validation against Authentik.
+// OIDCService handles OIDC redirects and callback validation against the identity provider.
 type OIDCService struct {
 	backend OIDCBackend
 	secure  bool
@@ -60,7 +60,7 @@ func NewOIDCService(cfg OIDCServiceConfig) *OIDCService {
 	}
 }
 
-// NewOIDCServiceFromDiscovery discovers the configured OIDC provider (Authentik).
+// NewOIDCServiceFromDiscovery discovers the configured OIDC provider.
 func NewOIDCServiceFromDiscovery(ctx context.Context, cfg OIDCServiceConfig) (*OIDCService, error) {
 	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
 	if err != nil {
