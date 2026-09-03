@@ -48,7 +48,7 @@ func TestOIDCService_CallbackMapsVerifiedClaims(t *testing.T) {
 			Subject:           "sub-1",
 			PreferredUsername: "jan",
 			Email:             "jan@example.com",
-			Groups:            []string{"authentik Admins"},
+			Groups:            []string{"Admins"},
 		}, nonce: "valid-nonce"},
 	})
 	req := requestWithValidStateAndNonce(t, service)
@@ -63,7 +63,7 @@ func TestOIDCService_CallbackMapsVerifiedClaims(t *testing.T) {
 	if claims.PreferredUsername != "jan" {
 		t.Fatalf("preferred username = %q", claims.PreferredUsername)
 	}
-	if claims.Groups[0] != "authentik Admins" {
+	if claims.Groups[0] != "Admins" {
 		t.Fatalf("groups = %v", claims.Groups)
 	}
 }

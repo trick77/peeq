@@ -1,4 +1,4 @@
-// Package auth implements Authentik OIDC login, opaque session tokens, and
+// Package auth implements OIDC login, opaque session tokens, and
 // the RequireAuth middleware for peeq's single-user deployment model.
 package auth
 

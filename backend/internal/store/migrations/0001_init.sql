@@ -86,7 +86,7 @@ CREATE TABLE download_jobs (
 CREATE INDEX idx_download_jobs_video_id ON download_jobs(video_id);
 CREATE INDEX idx_download_jobs_state ON download_jobs(state);
 
--- users: the app-local profile created from a verified Authentik OIDC
+-- users: the app-local profile created from a verified OIDC
 -- identity (or the dev auto-login identity). Peeq is single-user; in
 -- practice only one row is ever created, but the table stays keyed by
 -- oidc_subject to support re-provisioning without changing shape later.
