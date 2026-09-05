@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/asg017/sqlite-vec-go-bindings v0.1.7-alpha.2
-	github.com/coreos/go-oidc/v3 v3.20.0
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/ncruces/go-sqlite3 v0.23.3
 	golang.org/x/image v0.45.0
 	golang.org/x/oauth2 v0.36.0
