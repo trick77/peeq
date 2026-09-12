@@ -653,8 +653,8 @@ func (r *analysisRun) finished(outcome string) {
 //
 // Called from finished() on EVERY outcome, success and failure alike. A run
 // that died in the keypoints step still paid for the summary it produced first,
-// and a cost column that only counted successes would quietly under-report
-// exactly the videos that cost the most.
+// and token columns that only counted successes would quietly under-report
+// exactly the videos that spent the most.
 //
 // Best-effort by design: the analysis is over by the time this runs and its
 // real artifacts are already committed, so a bookkeeping write that fails must
@@ -675,7 +675,6 @@ func (r *analysisRun) bankSpend(total llm.Usage) {
 		PromptTokens:     total.PromptTokens,
 		CachedTokens:     total.CachedTokens,
 		CompletionTokens: total.CompletionTokens,
-		CostNanoUSD:      total.CostNanoUSD,
 	})
 	if err != nil {
 		r.log.Warn("summarize worker: recording chat usage failed", append(r.ident(), "err", err)...)

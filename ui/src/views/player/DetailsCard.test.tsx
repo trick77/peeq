@@ -298,19 +298,17 @@ describe("DetailsCard", () => {
     });
   });
 
-  describe("analysis cost", () => {
-    it("reports what the analysis cost, with the cached share called out", () => {
+  describe("analysis spend", () => {
+    it("reports what the analysis spent, with the cached share called out", () => {
       open(
         baseVideo({
           chat_prompt_tokens: 96142,
           chat_cached_tokens: 11008,
           chat_completion_tokens: 7431,
-          chat_cost_nano_usd: 9_400_000,
         }),
       );
 
       expect(screen.getByText("Analysis")).toBeInTheDocument();
-      expect(screen.getByText("$0.0094")).toBeInTheDocument();
       // Grouped the same way every other figure in the panel is, whatever the
       // browser's locale.
       expect(screen.getByText("96,142")).toBeInTheDocument();
@@ -321,12 +319,11 @@ describe("DetailsCard", () => {
     });
 
     // Every video analysed before the backend started recording this. It must
-    // show nothing at all — a group of zeros would claim those videos were free.
+    // show nothing at all — a group of zeros would claim nothing was spent.
     it("drops the whole group on a video with no accounting", () => {
       open(baseVideo());
 
       expect(screen.queryByText("Analysis")).not.toBeInTheDocument();
-      expect(screen.queryByText("Analysis cost")).not.toBeInTheDocument();
       expect(screen.queryByText("Tokens in")).not.toBeInTheDocument();
     });
 
@@ -338,11 +335,10 @@ describe("DetailsCard", () => {
           chat_prompt_tokens: 5000,
           chat_cached_tokens: 0,
           chat_completion_tokens: 900,
-          chat_cost_nano_usd: 600_000,
         }),
       );
 
-      expect(screen.getByText("$0.0006")).toBeInTheDocument();
+      expect(screen.getByText("5,000")).toBeInTheDocument();
       expect(screen.queryByText(/cached/)).not.toBeInTheDocument();
     });
   });

@@ -83,22 +83,16 @@ type videoDTO struct {
 	YTTags       json.RawMessage `json:"yt_tags,omitempty"`
 	YTCategories json.RawMessage `json:"yt_categories,omitempty"`
 	// What the chat model has spent analysing this video, summed over every
-	// attempt. Chat only — embedding tokens come from a different endpoint at a
-	// different price and are not folded in.
-	//
-	// ChatCachedTokens is a SUBSET of ChatPromptTokens, not an addition to it,
-	// and the cost is already computed from all three (cached tokens are a
-	// fifth of the price); the UI must not re-derive it. Nanodollars, an
-	// integer, because a whole video costs a fraction of a cent — the client
-	// formats, the wire does not.
+	// attempt. Chat only — embedding tokens come from a different endpoint and
+	// are not folded in. ChatCachedTokens is a SUBSET of ChatPromptTokens, not
+	// an addition to it.
 	//
 	// All omitempty together: a video analysed before this shipped has zeros
 	// across the board, and the panel drops the whole group rather than
-	// claiming it cost nothing.
+	// claiming nothing was spent.
 	ChatPromptTokens     int64 `json:"chat_prompt_tokens,omitempty"`
 	ChatCachedTokens     int64 `json:"chat_cached_tokens,omitempty"`
 	ChatCompletionTokens int64 `json:"chat_completion_tokens,omitempty"`
-	ChatCostNanoUSD      int64 `json:"chat_cost_nano_usd,omitempty"`
 }
 
 // sponsorblockSegmentDTO is one entry of the parsed sponsorblock_segments
@@ -186,7 +180,6 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		ChatPromptTokens:      v.ChatUsage.PromptTokens,
 		ChatCachedTokens:      v.ChatUsage.CachedTokens,
 		ChatCompletionTokens:  v.ChatUsage.CompletionTokens,
-		ChatCostNanoUSD:       v.ChatUsage.CostNanoUSD,
 	}
 }
 
