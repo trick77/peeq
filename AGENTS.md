@@ -50,8 +50,10 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   the Coding Plan endpoint `/api/coding/paas/v4` — restricted to Z.ai's own tools, forbids peeq.
 - **The wire protocol is `github.com/trick77/llmwire`.** What that library owns, and what therefore
   must NOT be reimplemented here: the SSE parsing, the header/idle/call bounds and the text naming
-  which one fired, the request body, and the rate table. This package owns pacing, the heartbeat,
-  the `CallInfo`/`Totals` accounting, the context knobs and the per-video session headers.
+  which one fired, the request body, the rate table, and the opencode identity
+  (`EmulateOpenCode: true` in `NewClient` — the User-Agent, the session header pair and the id).
+  This package owns pacing, the heartbeat, the `CallInfo`/`Totals` accounting and the context knobs.
+  One `llmwire.Client` per `llm.Client`, never one per call: the session id lives on it.
 - **Thinking can't be switched off.** `thinking:{"type":"disabled"}` → 400 code 1210. Only
   `low`/`high`/`max` effort accepted; `none`/`minimal`/`medium`/`xhigh` rejected. This now lives in
   llmwire's profile for the model, which is where a fix belongs if Z.ai ever changes it.

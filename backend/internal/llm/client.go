@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -146,8 +145,11 @@ type Message struct {
 
 // Client calls an OpenAI-compatible /chat/completions endpoint.
 type Client struct {
-	baseURL   string
-	apiKey    string
+	// wire is the one llmwire client every call goes through. One, not one per
+	// call: it presents as opencode (see NewClient), and that identity carries a
+	// session id that llmwire mints and rotates itself — building a client per
+	// call would mint a session per call, which is not what a session is.
+	wire      *llmwire.Client
 	http      *http.Client
 	interval  time.Duration
 	log       *slog.Logger
@@ -200,8 +202,22 @@ func NewClient(cfg Config, hc *http.Client) *Client {
 		hc = &http.Client{Transport: tr}
 	}
 	return &Client{
-		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:    cfg.APIKey,
+		wire: llmwire.New(llmwire.Config{
+			BaseURL: cfg.BaseURL,
+			APIKey:  cfg.APIKey,
+			// Presents as the opencode client: its User-Agent and the session
+			// header pair, with a session id llmwire mints and rotates after an
+			// idle gap. Inherited from the MiMo token-plan days, where the
+			// endpoint is an opencode-facing product and a neutral User-Agent is
+			// not what its traffic looks like. Inert on Z.ai, which neither
+			// requires the headers nor issues ids of that shape; kept because it
+			// costs nothing and the next endpoint may care again.
+			EmulateOpenCode: true,
+			HeaderTimeout:   cfg.HeaderTimeout,
+			IdleTimeout:     cfg.StreamIdleTimeout,
+			CallTimeout:     cfg.CallTimeout,
+			HTTPClient:      hc,
+		}),
 		http:      hc,
 		interval:  cfg.RequestInterval,
 		log:       cfg.Logger,
@@ -363,30 +379,9 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	}
 	wireReq := chatRequestFor(ctx, messages)
 
-	// A client per call, because the session headers are per call: they pin the
-	// many requests one video costs to a single upstream node, and llmwire's
-	// header map is per client. This is cheap — the *http.Client, and with it the
-	// connection pool, is the one built in NewClient and shared across every
-	// call; only a small struct and a two-entry map are new.
-	//
 	// Accept-Encoding stays unset so net/http keeps negotiating and decompressing
 	// gzip transparently. Setting it by hand would hand us a compressed body to
 	// decode ourselves, mid-stream. llmwire leaves it alone for the same reason.
-	sessionID := chatSessionID(info.VideoID)
-	wire := llmwire.New(llmwire.Config{
-		BaseURL:   c.baseURL,
-		APIKey:    c.apiKey,
-		UserAgent: chatUserAgent,
-		Headers: map[string]string{
-			"X-Session-Id":       sessionID,
-			"X-Session-Affinity": sessionID,
-		},
-		HeaderTimeout: c.header,
-		IdleTimeout:   c.idle,
-		CallTimeout:   c.cap,
-		HTTPClient:    c.http,
-	})
-
 	started := time.Now()
 	c.log.Debug("llm: request start", append(info.LogAttrs(),
 		"model", modelFrom(ctx), "messages", len(messages),
@@ -416,7 +411,7 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	// call cap" — and surfaces a non-2xx as a typed error carrying the status and
 	// the endpoint's own message, so the classification this package used to do
 	// by hand arrives already done.
-	res, err := c.runStream(ctx, wire, wireReq, &counters, onDelta)
+	res, err := c.runStream(ctx, c.wire, wireReq, &counters, onDelta)
 	for _, w := range res.warnings {
 		// DEBUG, not WARN. A warning here means llmwire coerced something or
 		// could not price the call, and the commonest by far is "this response
