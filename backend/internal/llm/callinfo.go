@@ -130,18 +130,6 @@ type Usage struct {
 	// spent deliberately not calling it. Nanoseconds so Add can sum them.
 	InferenceNanos int64
 	PacedNanos     int64
-
-	// CostNanoUSD is what the tokens above cost, priced when the call returns
-	// (see pricing.go) rather than derived later. Pricing at the call site is
-	// what makes it right the day shortGateModel stops being the same
-	// deployment as model: a total covering two models cannot be re-derived
-	// from a sum of tokens that no longer says which model spent which.
-	//
-	// Nanodollars, like the timings above are nanoseconds, so Add can sum them
-	// without rounding. Zero from an endpoint that reported no usage, and zero
-	// from a model missing from the rate table — Accounted separates the first
-	// case, and priced() is logged for the second.
-	CostNanoUSD int64
 }
 
 // Totals accumulates Usage across the many calls one video costs (the
@@ -169,7 +157,6 @@ func (t *Totals) Add(u Usage) {
 	t.u.TotalTokens += u.TotalTokens
 	t.u.InferenceNanos += u.InferenceNanos
 	t.u.PacedNanos += u.PacedNanos
-	t.u.CostNanoUSD += u.CostNanoUSD
 }
 
 // Snapshot returns the totals so far. A nil *Totals yields the zero Usage.
@@ -195,7 +182,6 @@ func (u Usage) Sub(earlier Usage) Usage {
 		TotalTokens:      u.TotalTokens - earlier.TotalTokens,
 		InferenceNanos:   u.InferenceNanos - earlier.InferenceNanos,
 		PacedNanos:       u.PacedNanos - earlier.PacedNanos,
-		CostNanoUSD:      u.CostNanoUSD - earlier.CostNanoUSD,
 	}
 }
 
@@ -258,7 +244,5 @@ func (u Usage) LogAttrs() []any {
 	} {
 		attrs = append(attrs, f.key, FormatTokens(f.val))
 	}
-	// Raw nanodollars, not a rendered "$0.0094". A log line is queried and
-	// summed, and a currency string is neither; the UI does the rendering.
-	return append(attrs, "chat_cost_nano_usd", u.CostNanoUSD)
+	return attrs
 }

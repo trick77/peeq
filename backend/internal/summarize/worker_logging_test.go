@@ -111,17 +111,13 @@ func (u *usageCompleter) Complete(ctx context.Context, m []llm.Message) (string,
 	u.steps = append(u.steps, info.Step)
 	u.mu.Unlock()
 	// Accounted mirrors what the real client counts when the endpoint sends a
-	// usage object; without it the totals log no token fields at all. Cost is
-	// booked here too, for the same reason: the real client prices each call as
-	// it returns, so a fake that skipped it would leave the worker's persisted
-	// spend at zero and the assertions on it vacuous.
+	// usage object; without it the totals log no token fields at all.
 	llm.TotalsFrom(ctx).Add(llm.Usage{
 		Requests: 1, Accounted: 1,
 		PromptTokens: 1000, CompletionTokens: 200, ReasoningTokens: 120, TotalTokens: 1200,
-		// 1000 uncached in at 75 + 200 out at 250 nanodollars. Cached stays at
-		// zero deliberately: a REPORTED zero has to survive to the log line, and
-		// the assertion on chat_tokens_cached below is what holds it there.
-		CostNanoUSD:    125_000,
+		// Cached stays at zero deliberately: a REPORTED zero has to survive to
+		// the log line, and the assertion on chat_tokens_cached below is what
+		// holds it there.
 		InferenceNanos: int64(250 * time.Millisecond)})
 
 	sys := m[0].Content
@@ -307,18 +303,12 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 	if v.ChatUsage.PromptTokens != 1000*calls || v.ChatUsage.CompletionTokens != 200*calls {
 		t.Errorf("banked tokens = %+v, want %d calls' worth", v.ChatUsage, calls)
 	}
-	if v.ChatUsage.CostNanoUSD != 125_000*calls {
-		t.Errorf("banked cost = %d, want %d", v.ChatUsage.CostNanoUSD, 125_000*calls)
-	}
-	if fin["chat_cost_nano_usd"].(float64) != float64(v.ChatUsage.CostNanoUSD) {
-		t.Errorf("logged cost %v disagrees with the banked %d", fin["chat_cost_nano_usd"], v.ChatUsage.CostNanoUSD)
-	}
 }
 
 // finished() is reachable twice for one run: a panic raised after the normal
 // call unwinds into processOne's recover, which calls it again. It only logged
 // before, so a second call was free; it writes now, and a second write would
-// double the video's recorded cost.
+// double the video's recorded spend.
 func TestAnalysisRun_banksItsSpendOnlyOnce(t *testing.T) {
 	h := newWorkerHarness(t)
 	seedVideo(t, h, "v1")
@@ -329,7 +319,7 @@ func TestAnalysisRun_banksItsSpendOnlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	totals := &llm.Totals{}
-	totals.Add(llm.Usage{Requests: 1, Accounted: 1, PromptTokens: 1000, CostNanoUSD: 75_000})
+	totals.Add(llm.Usage{Requests: 1, Accounted: 1, PromptTokens: 1000})
 	run := &analysisRun{
 		log: log, store: h.videos, totals: totals, video: video,
 		job: &summaryjobs.Job{ID: 1, Attempts: 1, MaxAttempts: 3}, started: time.Now(),
@@ -342,7 +332,7 @@ func TestAnalysisRun_banksItsSpendOnlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ChatUsage.CostNanoUSD != 75_000 || got.ChatUsage.PromptTokens != 1000 {
+	if got.ChatUsage.PromptTokens != 1000 {
 		t.Fatalf("banked %+v, want one run's worth — the second finished() wrote again", got.ChatUsage)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"unicode/utf8"
 
@@ -16,7 +15,7 @@ import (
 // The seam onto llmwire.
 //
 // What moved out of this package: the SSE scanner, the three-bound stall guard
-// that named which bound fired, the request struct, and the rate table. All four
+// that named which bound fired, and the request struct. All three
 // existed in near-identical form in five backends, and every model quirk learned
 // here had to be relearned there — which is what llmwire exists to stop.
 //
@@ -55,14 +54,9 @@ type wireResult struct {
 	// usageFrom, so "reported a zero" stays distinguishable from "reported
 	// nothing".
 	rawUsage json.RawMessage
-	// costNanoUSD is priced by llmwire from its embedded table, with the model
-	// that actually ran.
-	costNanoUSD int64
-	// costPriced says a rate was found. False means unknown, never free.
-	costPriced bool
-	events     int64
-	chars      int64
-	warnings   []llmwire.Warning
+	events   int64
+	chars    int64
+	warnings []llmwire.Warning
 }
 
 // chatRequestFor maps peeq's context knobs onto an llmwire request.
@@ -148,8 +142,6 @@ func (c *Client) runStream(ctx context.Context, wire *llmwire.Client, req llmwir
 	usage := stream.Usage()
 	res.content = content.String()
 	res.rawUsage = usage.Raw
-	res.costNanoUSD = usage.Cost.NanoUSD
-	res.costPriced = usage.Cost.Provenance != llmwire.Unpriced
 	res.warnings = stream.Warnings()
 	return res, nil
 }
@@ -194,18 +186,4 @@ func statusError(e *llmwire.APIError) error {
 		return fmt.Errorf("chat failed mid-stream: %s", e.Message)
 	}
 	return fmt.Errorf("chat failed with status %d: %s", e.StatusCode, e.Message)
-}
-
-// unpricedWarned throttles the no-rate warning to once per model id per process.
-//
-// llmwire warns on every call, correctly for a library — a per-call return value
-// must not depend on call order. peeq logs, where the volume matters: the
-// map-reduce path makes dozens of calls per video and a per-call line would bury
-// everything else in the job's log. The fact is constant per deployment, so
-// saying it once is saying it.
-var unpricedWarned sync.Map
-
-func shouldWarnUnpriced(modelID string) bool {
-	_, loaded := unpricedWarned.LoadOrStore(modelID, struct{}{})
-	return !loaded
 }

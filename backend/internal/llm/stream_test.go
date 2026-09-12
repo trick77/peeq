@@ -172,14 +172,8 @@ func TestComplete_keepsTheUsageChunkThatFollowsFinishReason(t *testing.T) {
 	}
 	got := totals.Snapshot()
 	got.InferenceNanos, got.PacedNanos = 0, 0
-	// 73 uncached prompt tokens at $0.15/1M, 192 cached at $0.03, 80 output at
-	// $0.50: 10_950 + 5_760 + 40_000. Exactly double what this test expected
-	// before the migration, because peeq's own table came from a models.dev entry
-	// last updated on the model's release day and never revisited, while Z.ai's
-	// page has carried twice those figures since. The rate llmwire ships was read
-	// off the vendor's page and carries its URL and the date it was read.
 	want := Usage{Requests: 1, Accounted: 1, PromptTokens: 265, CachedTokens: 192, CompletionTokens: 80,
-		TotalTokens: 345, CostNanoUSD: 56_710}
+		TotalTokens: 345}
 	if got != want {
 		t.Fatalf("totals = %+v, want %+v", got, want)
 	}

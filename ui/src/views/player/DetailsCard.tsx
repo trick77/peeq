@@ -4,7 +4,6 @@ import {
   bitrateLabel,
   codecLabel,
   formatAgo,
-  formatCostUSD,
   formatDuration,
   formatSize,
   languageLabel,
@@ -154,24 +153,22 @@ function buildGroups(video: Video, stats: VideoEmbeddings | null): Group[] {
     }
   }
 
-  // What the analysis cost at the chat endpoint, summed over every attempt the
+  // What the analysis spent at the chat endpoint, summed over every attempt the
   // queue spent on this video — so a video that failed twice before succeeding
-  // reports all three attempts, which is what was actually paid.
+  // reports all three attempts, which is what was actually used.
   //
   // Every row goes through the same "" -> dropped rule as the rest of the
   // panel, so a video analysed before the backend started recording this has no
-  // Analysis group at all rather than one claiming it was free.
+  // Analysis group at all rather than one claiming nothing was spent.
   const analysis: Row[] = [
-    { k: "Analysis cost", v: formatCostUSD(video.chat_cost_nano_usd) },
     {
       k: "Tokens in",
       v: video.chat_prompt_tokens
         ? GROUPED.format(video.chat_prompt_tokens)
         : "",
-      // Cached tokens are a SUBSET of the figure above, not an addition to it,
-      // and they bill at a fifth of the rate. Worth a line because it is the
-      // one part of the cost a reader can act on — a re-analysis soon after the
-      // first is cheap, days later is not.
+      // Cached tokens are a SUBSET of the figure above, not an addition to it.
+      // Worth a line because it is the one part of the spend a reader can act
+      // on — a re-analysis soon after the first reuses it, days later does not.
       sub: video.chat_cached_tokens
         ? `${GROUPED.format(video.chat_cached_tokens)} cached`
         : undefined,

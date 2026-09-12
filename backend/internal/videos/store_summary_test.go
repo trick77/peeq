@@ -27,8 +27,8 @@ func TestAddChatUsage_accumulatesAcrossRuns(t *testing.T) {
 
 	// Two runs, standing in for an attempt that failed and the retry that
 	// succeeded. Both spent real tokens, so both must be counted.
-	first := ChatUsage{PromptTokens: 1000, CachedTokens: 200, CompletionTokens: 300, CostNanoUSD: 138_000}
-	second := ChatUsage{PromptTokens: 500, CachedTokens: 100, CompletionTokens: 50, CostNanoUSD: 44_000}
+	first := ChatUsage{PromptTokens: 1000, CachedTokens: 200, CompletionTokens: 300}
+	second := ChatUsage{PromptTokens: 500, CachedTokens: 100, CompletionTokens: 50}
 	for _, u := range []ChatUsage{first, second} {
 		if err := s.AddChatUsage("v1", u); err != nil {
 			t.Fatal(err)
@@ -39,7 +39,7 @@ func TestAddChatUsage_accumulatesAcrossRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ChatUsage{PromptTokens: 1500, CachedTokens: 300, CompletionTokens: 350, CostNanoUSD: 182_000}
+	want := ChatUsage{PromptTokens: 1500, CachedTokens: 300, CompletionTokens: 350}
 	if got.ChatUsage != want {
 		t.Fatalf("usage = %+v, want %+v (the second run overwrote rather than added)", got.ChatUsage, want)
 	}

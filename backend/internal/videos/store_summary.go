@@ -100,14 +100,11 @@ func (s *Store) ClearEmbedRev(id string) error {
 	return nil
 }
 
-// ChatUsage is what the chat model has spent on one video: the tokens, and what
-// they cost in nanodollars (billionths of a dollar — integers, because a whole
-// video costs a fraction of a cent and floats drift in exactly those digits).
+// ChatUsage is what the chat model has spent on one video, in tokens.
 //
 // The two token lanes are not disjoint: CachedTokens is a SUBSET of
 // PromptTokens, and the completion count already includes the model's reasoning
-// tokens. Anything deriving a figure from these has to know that; the price was
-// computed upstream in internal/llm, which does.
+// tokens. Anything deriving a figure from these has to know that.
 //
 // Deliberately plain int64s rather than an llm.Usage. This package must not
 // import internal/llm — it is the storage layer, and a dependency on the client
@@ -116,7 +113,6 @@ type ChatUsage struct {
 	PromptTokens     int64
 	CachedTokens     int64
 	CompletionTokens int64
-	CostNanoUSD      int64
 }
 
 // Empty reports whether nothing has been accounted for this video, which is the
@@ -124,7 +120,7 @@ type ChatUsage struct {
 // endpoint never reported usage for. Callers use it to omit a figure rather than
 // display a confident zero.
 func (u ChatUsage) Empty() bool {
-	return u.PromptTokens == 0 && u.CachedTokens == 0 && u.CompletionTokens == 0 && u.CostNanoUSD == 0
+	return u.PromptTokens == 0 && u.CachedTokens == 0 && u.CompletionTokens == 0
 }
 
 // AddChatUsage folds one analysis run's chat spend into a video's running
@@ -142,10 +138,9 @@ func (s *Store) AddChatUsage(id string, u ChatUsage) error {
 		`UPDATE videos SET
 		   chat_prompt_tokens     = chat_prompt_tokens + ?,
 		   chat_cached_tokens     = chat_cached_tokens + ?,
-		   chat_completion_tokens = chat_completion_tokens + ?,
-		   chat_cost_nano_usd     = chat_cost_nano_usd + ?
+		   chat_completion_tokens = chat_completion_tokens + ?
 		 WHERE id = ?`,
-		u.PromptTokens, u.CachedTokens, u.CompletionTokens, u.CostNanoUSD, id)
+		u.PromptTokens, u.CachedTokens, u.CompletionTokens, id)
 	if err != nil {
 		return fmt.Errorf("add video %s chat usage: %w", id, err)
 	}

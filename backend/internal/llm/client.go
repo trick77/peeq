@@ -443,19 +443,6 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	usage := usageFrom(res.rawUsage).toUsage()
 	usage.InferenceNanos = int64(inference)
 	usage.PacedNanos = int64(pacedFor)
-	// Priced here, with the deployment that actually ran, rather than left for
-	// whoever reads the total later. See Usage.CostNanoUSD for why the total has
-	// to be a sum of per-call prices and not a re-derivation from summed tokens.
-	callModel := modelFrom(ctx)
-	usage.CostNanoUSD = res.costNanoUSD
-	if usage.Accounted != 0 && !res.costPriced && shouldWarnUnpriced(callModel) {
-		// A deployment added to this package without a rate. Warned rather than
-		// left to read as a free call: the cost columns would keep filling with
-		// zeros and nothing else would ever say why. Once per model id per
-		// process — see shouldWarnUnpriced for why the volume matters.
-		c.log.Warn("llm: no rate for model, cost not accounted",
-			append(info.LogAttrs(), "model", callModel)...)
-	}
 	TotalsFrom(ctx).Add(usage)
 
 	if len(res.rawUsage) > 0 {
