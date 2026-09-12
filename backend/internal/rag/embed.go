@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/trick77/llmwire"
@@ -166,14 +165,10 @@ func embedError(err error) error {
 	if errors.As(err, &apiErr) && apiErr.StatusCode != 0 {
 		return fmt.Errorf("embedding failed with status %d: %s", apiErr.StatusCode, apiErr.Message)
 	}
-	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "decoding embeddings response"):
+	case errors.Is(err, llmwire.ErrMalformedResponse):
 		return fmt.Errorf("decode embed response: %w", err)
-	case strings.Contains(msg, "embeddings and got"),
-		strings.Contains(msg, "outside the batch"),
-		strings.Contains(msg, "repeats index"),
-		strings.Contains(msg, "no vector for index"):
+	case errors.Is(err, llmwire.ErrResponseShape):
 		return fmt.Errorf("embedding count mismatch: %w", err)
 	}
 	return fmt.Errorf("embed request: %w", err)
