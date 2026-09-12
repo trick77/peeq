@@ -221,11 +221,16 @@ func run() error {
 	// than the vec_chunks table was built to, the whole vector table is invalid.
 	// The width is no longer configurable, so a mismatch now means exactly one
 	// thing: the database predates a change of rag.EmbedModel. This only warns —
-	// it does not rebuild anything; recreating the DB is the operator's job.
+	// it does not rebuild anything.
+	//
+	// The remedy is a NEW MIGRATION, not a fresh database: the DDL that creates
+	// vec_chunks carries its width as a literal, so recreating the database
+	// would rebuild the table at the old width and this warning would fire on
+	// every boot forever.
 	if builtDim, err := ragStore.BuiltDim(ctx); err == nil && builtDim != rag.EmbedDim() {
 		slog.Warn("embedding dimension mismatch; vector table is stale",
 			"built", builtDim, "model", rag.EmbedModel, "model_dim", rag.EmbedDim(),
-			"action", "recreate the database (rm ./data/peeq.db*) to rebuild vec_chunks at the new dimension")
+			"action", "this build's embedding model changed width; ship a migration that rebuilds vec_chunks at model_dim and re-embed")
 	} else if err != nil {
 		slog.Warn("dim-guard: could not read vec_chunks dimension", "err", err)
 	}

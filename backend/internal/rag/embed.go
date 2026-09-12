@@ -2,7 +2,6 @@ package rag
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -28,8 +27,13 @@ import (
 // width come from its profile instead, so there is one fact and nothing to
 // keep in step with it.
 //
-// Changing this is a corpus rebuild. The dim-guard in cmd/peeq says so at boot
-// when the stored table predates the change.
+// Changing this is a corpus rebuild, and NOT by recreating the database: the
+// vec_chunks DDL in store/migrations/0001_init.sql carries the width as a
+// literal, as a migration that has run must, so a fresh database would come back
+// at the old width. A model change needs a new migration that rebuilds the table
+// at EmbedDim(). store's TestVecChunksWidthMatchesTheEmbeddingModel is what
+// keeps the literal and the profile equal, and the dim-guard in cmd/peeq says
+// so at boot when a stored table predates the change.
 const EmbedModel = "text-embedding-3-small"
 
 // embedProfile is the registry's description of EmbedModel. Resolved once, at
@@ -49,8 +53,9 @@ func mustEmbedProfile() *llmwire.Profile {
 	return p
 }
 
-// EmbedDim is the width of every vector EmbedModel returns, and therefore of
-// the vec_chunks table. Read from the model's profile, never stated here.
+// EmbedDim is the width of every vector EmbedModel returns, and therefore what
+// the vec_chunks table must be built to. Read from the model's profile; the one
+// other place it appears is the migration DDL, and a test holds the two equal.
 func EmbedDim() int { return embedProfile.Embedding.DefaultDimensions }
 
 // defaultEmbedTimeout bounds one embeddings call end to end. Embeddings are
@@ -140,9 +145,12 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 		return fail(fmt.Errorf("embedding count mismatch: got %d, want %d", len(resp.Vectors), len(inputs)))
 	}
 
+	// One token figure, not two. An embeddings call has no completion side, so
+	// the endpoint's total_tokens equals its prompt_tokens — and llmwire's merged
+	// usage carries only the input lane, so there is nothing else to read anyway.
+	// The old embed_tokens_total was the same number under a second name.
 	attrs := append(ident, "duration_ms", time.Since(started).Milliseconds(),
-		"embed_tokens_in", llm.FormatTokens(valueOr(resp.Usage.Input.Total)),
-		"embed_tokens_total", llm.FormatTokens(totalTokens(resp.Usage)))
+		"embed_tokens_in", llm.FormatTokens(valueOr(resp.Usage.Input.Total)))
 	for _, w := range warnings {
 		attrs = append(attrs, "warning", w.String())
 	}
@@ -169,22 +177,6 @@ func embedError(err error) error {
 		return fmt.Errorf("embedding count mismatch: %w", err)
 	}
 	return fmt.Errorf("embed request: %w", err)
-}
-
-// totalTokens reads total_tokens off the endpoint's own usage object. llmwire
-// models the lanes and not the sum, and this endpoint reports the sum; the raw
-// bytes are kept for exactly this kind of field.
-func totalTokens(u llmwire.Usage) int64 {
-	var raw struct {
-		Total int64 `json:"total_tokens"`
-	}
-	if len(u.Raw) > 0 {
-		_ = json.Unmarshal(u.Raw, &raw)
-	}
-	if raw.Total == 0 {
-		return valueOr(u.Input.Total)
-	}
-	return raw.Total
 }
 
 func valueOr(p *int64) int64 {
