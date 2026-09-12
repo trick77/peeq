@@ -166,14 +166,11 @@ func (c *Client) runStream(ctx context.Context, wire *llmwire.Client, req llmwir
 // response headers within 1m0s", "stream idle for 1m30s", "exceeded the 15m0s
 // call cap"), which are already the strings this package used to produce.
 func chatError(err error) error {
-	// A 429 arrives as *RateLimitError, which EMBEDS *APIError but declares no
-	// Unwrap — so errors.As against *APIError does not match it, and the one
-	// status an operator greps for most would have fallen through to the generic
-	// branch. Checked first, by type, rather than relying on unwrapping.
-	var rl *llmwire.RateLimitError
-	if errors.As(err, &rl) && rl.APIError != nil {
-		return statusError(rl.APIError)
-	}
+	// One check covers every refusal, 429 included: llmwire v0.0.6 gave
+	// RateLimitError an Unwrap, so a rate limit now reaches *APIError the same way
+	// every other status does. Before that it did not — embedding is not
+	// unwrapping — and this function carried a second branch for the one status
+	// that mattered most. The table test below is what makes removing it safe.
 	var apiErr *llmwire.APIError
 	if errors.As(err, &apiErr) {
 		return statusError(apiErr)
