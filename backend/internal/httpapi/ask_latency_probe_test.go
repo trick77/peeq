@@ -53,16 +53,10 @@ func TestAskEffortSweep(t *testing.T) {
 	if os.Getenv("PEEQ_ASK_SWEEP") != "1" {
 		t.Skip("manual: set PEEQ_ASK_SWEEP=1 (calls the real chat endpoint)")
 	}
-	baseURL := os.Getenv("BACKEND_CHAT_BASE_URL")
-	if baseURL == "" {
-		t.Fatal("BACKEND_CHAT_BASE_URL is unset — load .env first")
+	client, err := llm.NewClient(llm.Config{CallTimeout: 5 * time.Minute}, nil)
+	if err != nil {
+		t.Fatalf("%v — load .env first", err)
 	}
-
-	client := llm.NewClient(llm.Config{
-		BaseURL:     baseURL,
-		APIKey:      os.Getenv("BACKEND_CHAT_API_KEY"),
-		CallTimeout: 5 * time.Minute,
-	}, nil)
 
 	type run struct {
 		effort   string
@@ -203,13 +197,10 @@ func TestAskEffortTiers(t *testing.T) {
 	if os.Getenv("PEEQ_ASK_SWEEP") != "1" {
 		t.Skip("manual: set PEEQ_ASK_SWEEP=1 (calls the real chat endpoint)")
 	}
-	baseURL := os.Getenv("BACKEND_CHAT_BASE_URL")
-	if baseURL == "" {
-		t.Fatal("BACKEND_CHAT_BASE_URL is unset — load .env first")
+	client, err := llm.NewClient(llm.Config{CallTimeout: 5 * time.Minute}, nil)
+	if err != nil {
+		t.Fatalf("%v — load .env first", err)
 	}
-	client := llm.NewClient(llm.Config{
-		BaseURL: baseURL, APIKey: os.Getenv("BACKEND_CHAT_API_KEY"), CallTimeout: 5 * time.Minute,
-	}, nil)
 
 	const q = "Why do endurance athletes cramp late in a race?"
 	const repeats = 8
@@ -257,13 +248,10 @@ func TestAskEffortQuality(t *testing.T) {
 	if os.Getenv("PEEQ_ASK_SWEEP") != "1" {
 		t.Skip("manual: set PEEQ_ASK_SWEEP=1 (calls the real chat endpoint)")
 	}
-	baseURL := os.Getenv("BACKEND_CHAT_BASE_URL")
-	if baseURL == "" {
-		t.Fatal("BACKEND_CHAT_BASE_URL is unset — load .env first")
+	client, err := llm.NewClient(llm.Config{CallTimeout: 5 * time.Minute}, nil)
+	if err != nil {
+		t.Fatalf("%v — load .env first", err)
 	}
-	client := llm.NewClient(llm.Config{
-		BaseURL: baseURL, APIKey: os.Getenv("BACKEND_CHAT_API_KEY"), CallTimeout: 5 * time.Minute,
-	}, nil)
 
 	for _, q := range sweepQuestions {
 		t.Logf("\n──────── %s", q)

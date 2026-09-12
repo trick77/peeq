@@ -26,7 +26,7 @@ func TestCompleteSendsModelAndEffortAndReturnsContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL, APIKey: "k"}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, APIKey: "k"}, srv.Client())
 	out, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestComplete_shallowLowersEffort(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
 	if _, err := c.Complete(Shallow(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestComplete_shortGateRoutesToTheGateDeployment(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
 	if _, err := c.Complete(ShortGate(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestComplete_shallowDoesNotChangeTheDeployment(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
 	if _, err := c.Complete(Shallow(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestCompleteErrorsOnNon2xx(t *testing.T) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err == nil {
 		t.Fatal("expected error")
 	}
@@ -171,7 +171,7 @@ func TestComplete_pacesRequestsByInterval(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL, RequestInterval: 100 * time.Millisecond}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, RequestInterval: 100 * time.Millisecond}, srv.Client())
 	start := time.Now()
 	for i := 0; i < 2; i++ {
 		if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
@@ -189,7 +189,7 @@ func TestComplete_zeroIntervalDoesNotPace(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client()) // RequestInterval 0
+	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client()) // RequestInterval 0
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestComplete_maxTokensAndReasoningEffortFromContext(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
 	ctx := WithMaxTokens(WithReasoningEffort(context.Background(), "low"), 4000)
 	if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
@@ -237,7 +237,7 @@ func TestComplete_maxTokensOmittedByDefault(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestComplete_failOnEarlyFinish(t *testing.T) {
 		io.WriteString(w, sseFinish("partial", "content_filter"))
 	}))
 	defer cf.Close()
-	c := NewClient(Config{BaseURL: cf.URL}, cf.Client())
+	c := mustClient(t, Config{BaseURL: cf.URL}, cf.Client())
 	if _, err := c.Complete(FailOnEarlyFinish(context.Background()), []Message{{Role: "user", Content: "hi"}}); err == nil {
 		t.Error("want an error when content_filter ends the answer under FailOnEarlyFinish")
 	}
@@ -272,7 +272,7 @@ func TestComplete_failOnEarlyFinish(t *testing.T) {
 		io.WriteString(w, sseFinish("partial", "length"))
 	}))
 	defer ln.Close()
-	lc := NewClient(Config{BaseURL: ln.URL}, ln.Client())
+	lc := mustClient(t, Config{BaseURL: ln.URL}, ln.Client())
 	if out, err := lc.Complete(FailOnEarlyFinish(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil || out != "partial" {
 		t.Fatalf("length under flag: out=%q err=%v, want partial/nil", out, err)
 	}
@@ -290,7 +290,7 @@ func TestModelFor_namesWhatTheRequestCarries(t *testing.T) {
 		io.WriteString(w, sseStream("news", ""))
 	}))
 	defer srv.Close()
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
 
 	for _, tc := range []struct {
 		name string
@@ -321,7 +321,7 @@ func TestComplete_jsonObjectIsOptIn(t *testing.T) {
 		io.WriteString(w, sseStream("{}", ""))
 	}))
 	defer srv.Close()
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
 
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)

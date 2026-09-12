@@ -62,8 +62,11 @@ func EmbedDim() int { return embedProfile.Embedding.DefaultDimensions }
 // mid-way, and one cap on the whole call is the honest bound.
 const defaultEmbedTimeout = 1 * time.Minute
 
-// EmbedConfig configures the embedding client. Logger is optional and defaults
-// to slog.Default(). HeartbeatInterval is how often an in-flight request logs
+// EmbedConfig configures the embedding client. BaseURL and APIKey override the
+// env vars EmbedModel's profile names (BACKEND_EMBED_BASE_URL and
+// BACKEND_EMBED_API_KEY); left empty, llmwire reads those itself, and a test
+// points BaseURL at its fake. Logger is optional and defaults to
+// slog.Default(). HeartbeatInterval is how often an in-flight request logs
 // that it is still waiting (0 uses llm.DefaultHeartbeat; negative disables it).
 type EmbedConfig struct {
 	BaseURL           string
@@ -79,27 +82,32 @@ type EmbedClient struct {
 	heartbeat time.Duration
 }
 
-// NewEmbedClient builds an EmbedClient. hc is optional.
-func NewEmbedClient(cfg EmbedConfig, hc *http.Client) *EmbedClient {
+// NewEmbedClient builds an EmbedClient. hc is optional. The error is a missing
+// BACKEND_EMBED_BASE_URL or BACKEND_EMBED_API_KEY, named.
+func NewEmbedClient(cfg EmbedConfig, hc *http.Client) (*EmbedClient, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
 	if cfg.HeartbeatInterval == 0 {
 		cfg.HeartbeatInterval = llm.DefaultHeartbeat
 	}
+	wire, err := llmwire.FromEnv(EmbedModel, llmwire.Config{
+		BaseURL:    cfg.BaseURL,
+		APIKey:     cfg.APIKey,
+		HTTPClient: hc,
+		// The whole-call cap is the bound that matters on a non-streamed
+		// route; the header and idle bounds sit underneath it and only name
+		// which phase went quiet when it does.
+		CallTimeout: defaultEmbedTimeout,
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &EmbedClient{
-		wire: llmwire.New(llmwire.Config{
-			BaseURL:    cfg.BaseURL,
-			APIKey:     cfg.APIKey,
-			HTTPClient: hc,
-			// The whole-call cap is the bound that matters on a non-streamed
-			// route; the header and idle bounds sit underneath it and only name
-			// which phase went quiet when it does.
-			CallTimeout: defaultEmbedTimeout,
-		}),
+		wire:      wire,
 		log:       cfg.Logger,
 		heartbeat: cfg.HeartbeatInterval,
-	}
+	}, nil
 }
 
 // Model names the deployment this client embeds against. The answer trace has

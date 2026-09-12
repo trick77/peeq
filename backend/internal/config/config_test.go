@@ -26,8 +26,6 @@ func TestLoad_devAuthLoopbackOK(t *testing.T) {
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	t.Setenv("BACKEND_PUBLIC_URL", "")
-	t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
-	t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
 	if _, err := Load(); err != nil {
 		t.Fatalf("loopback dev auth must pass: %v", err)
 	}
@@ -41,15 +39,12 @@ func TestLoad_missingSecretFails(t *testing.T) {
 }
 
 func TestLoad_allowAnonymousYoutube_requiresDevAuth(t *testing.T) {
-	// This test drives os.Setenv/Clearenv directly (like
-	// TestLoadRequiresAIEndpoints below) rather than t.Setenv, since it needs
-	// to fully replace the env between subcases; restore a clean env after so
+	// This test drives os.Setenv/Clearenv directly rather than t.Setenv, since
+	// it needs to fully replace the env between subcases; restore a clean env after so
 	// later tests in this file aren't polluted by leftover vars.
 	t.Cleanup(os.Clearenv)
 	base := map[string]string{
 		"BACKEND_SESSION_SECRET":          "s",
-		"BACKEND_CHAT_BASE_URL":           "http://chat",
-		"BACKEND_EMBED_BASE_URL":          "http://emb",
 		"BACKEND_ALLOW_ANONYMOUS_YOUTUBE": "true",
 	}
 	setEnv := func(m map[string]string) {
@@ -101,8 +96,6 @@ func TestLoad_allowAnonymousYoutube_defaultFalse(t *testing.T) {
 	t.Setenv("BACKEND_SESSION_SECRET", "x")
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
-	t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
-	t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -112,37 +105,19 @@ func TestLoad_allowAnonymousYoutube_defaultFalse(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresAIEndpoints(t *testing.T) {
-	base := map[string]string{
-		"BACKEND_SESSION_SECRET": "s", "BACKEND_AUTH_MODE": "dev", "BACKEND_ADDR": "127.0.0.1:8080",
-		"BACKEND_CHAT_BASE_URL": "http://chat", "BACKEND_EMBED_BASE_URL": "http://emb",
-	}
-	setEnv := func(m map[string]string) {
-		os.Clearenv()
-		for k, v := range m {
-			os.Setenv(k, v)
-		}
-	}
-	setEnv(base)
+func TestLoad_defaults(t *testing.T) {
+	t.Setenv("BACKEND_SESSION_SECRET", "s")
+	t.Setenv("BACKEND_AUTH_MODE", "dev")
+	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("expected ok, got %v", err)
 	}
-	// No model and no width here: both are constants of the build now
-	// (llm.ModelFor, rag.EmbedModel / rag.EmbedDim), not configuration.
-	if cfg.ChatBaseURL != "http://chat" || cfg.EmbedBaseURL != "http://emb" || cfg.DefaultSubLang != "en" {
+	// No endpoint, model or width here: the endpoints are read by llmwire from
+	// the env vars each model's profile names, and the models are constants of
+	// the build (llm.ModelFor, rag.EmbedModel / rag.EmbedDim).
+	if cfg.DefaultSubLang != "en" {
 		t.Fatalf("defaults wrong: %+v", cfg)
-	}
-	for _, drop := range []string{"BACKEND_CHAT_BASE_URL", "BACKEND_EMBED_BASE_URL"} {
-		m := map[string]string{}
-		for k, v := range base {
-			m[k] = v
-		}
-		delete(m, drop)
-		setEnv(m)
-		if _, err := Load(); err == nil {
-			t.Fatalf("expected error when %s missing", drop)
-		}
 	}
 }
 
@@ -152,8 +127,6 @@ func TestLoad_summarizeDelays(t *testing.T) {
 		t.Setenv("BACKEND_AUTH_MODE", "dev")
 		t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 		t.Setenv("BACKEND_PUBLIC_URL", "")
-		t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
-		t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
 	}
 
 	setRequired()
@@ -202,8 +175,6 @@ func TestLoad_chatStreamIdleTimeout(t *testing.T) {
 		t.Setenv("BACKEND_AUTH_MODE", "dev")
 		t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 		t.Setenv("BACKEND_PUBLIC_URL", "")
-		t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
-		t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
 	}
 
 	setRequired()
@@ -243,8 +214,6 @@ func baseEnv(t *testing.T) {
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	t.Setenv("BACKEND_PUBLIC_URL", "")
-	t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
-	t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
 }
 
 func TestLoad_summaryTokensAndCallTimeout(t *testing.T) {

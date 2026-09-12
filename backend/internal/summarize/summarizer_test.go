@@ -62,7 +62,11 @@ func TestClassifyRunsOnTheGateDeploymentAndTheSummaryDoesNot(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := New(llm.NewClient(llm.Config{BaseURL: srv.URL}, srv.Client()))
+	client, err := llm.NewClient(llm.Config{BaseURL: srv.URL}, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(client)
 
 	if _, err := s.Classify(context.Background(), "A title", "A summary.",
 		[]videos.Category{{ID: "science", Label: "Science"}}); err != nil {

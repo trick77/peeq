@@ -191,30 +191,11 @@ func run() error {
 	// Settings records cookie/access transitions to the same feed (post-construction, like OnRecord below).
 	settingsStore.Activity = activityStore
 	ragStore := rag.NewStore(db)
-	embedClient := rag.NewEmbedClient(rag.EmbedConfig{
-		BaseURL: cfg.EmbedBaseURL, APIKey: cfg.EmbedAPIKey,
-		Logger: slog.Default(),
-	}, nil)
-	chatClient := llm.NewClient(llm.Config{
-		BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey,
-		EmulateOpenCode: cfg.ChatEmulateOpenCode,
-		RequestInterval: cfg.SummarizeRequestDelay, Logger: slog.Default(),
-		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.ChatCallTimeout,
-	}, nil)
+	embedClient, chatClient, askClient, err := newModelClients(cfg)
+	if err != nil {
+		return err
+	}
 	summarizer := summarize.New(chatClient, summarize.WithSummaryChunkTokens(cfg.SummaryChunkTokens))
-
-	// A SECOND chat client, for the interactive Ask answer. The one above
-	// serializes every call through a pacing mutex sized for a background
-	// summarize queue, so sharing it would park a typed question behind however
-	// much of that backlog is in flight. This one has no pacing and a much
-	// shorter cap: a person is waiting for it, and an answer that has not
-	// started arriving in a minute or so is better abandoned than waited out.
-	askClient := llm.NewClient(llm.Config{
-		BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey,
-		EmulateOpenCode: cfg.ChatEmulateOpenCode,
-		RequestInterval: 0, Logger: slog.Default(),
-		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.AskCallTimeout,
-	}, nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -791,4 +772,38 @@ func serve(ctx context.Context, srv *http.Server, hub *sse.Hub) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// newModelClients builds the embedding client and the two chat clients.
+// Endpoints and keys come from the env vars each model's llmwire profile
+// names; a missing one is the error here, named, before anything listens.
+//
+// There are TWO chat clients on purpose. The first serializes every call
+// through a pacing mutex sized for a background summarize queue, so sharing
+// it would park a typed question behind however much of that backlog is in
+// flight. The Ask one has no pacing and a much shorter cap: a person is
+// waiting for it, and an answer that has not started arriving in a minute or
+// so is better abandoned than waited out.
+func newModelClients(cfg config.Config) (*rag.EmbedClient, *llm.Client, *llm.Client, error) {
+	embedClient, err := rag.NewEmbedClient(rag.EmbedConfig{Logger: slog.Default()}, nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	chatClient, err := llm.NewClient(llm.Config{
+		EmulateOpenCode: cfg.ChatEmulateOpenCode,
+		RequestInterval: cfg.SummarizeRequestDelay, Logger: slog.Default(),
+		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.ChatCallTimeout,
+	}, nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	askClient, err := llm.NewClient(llm.Config{
+		EmulateOpenCode: cfg.ChatEmulateOpenCode,
+		RequestInterval: 0, Logger: slog.Default(),
+		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.AskCallTimeout,
+	}, nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return embedClient, chatClient, askClient, nil
 }
