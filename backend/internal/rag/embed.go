@@ -1,55 +1,87 @@
 package rag
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
+	"github.com/trick77/llmwire"
 	// For the shared logging vocabulary: the call identity the worker puts on
 	// the context, the heartbeat, and the token formatting, so an embed line
 	// reads like a chat line. llm depends on nothing in peeq, so no cycle.
 	"github.com/trick77/peeq/internal/llm"
 )
 
-const (
-	defaultEmbedTimeout = 1 * time.Minute
-	maxEmbedErrorBody   = 4 << 10
-)
+// EmbedModel is the deployment every vector in this database was produced by.
+//
+// A constant, not configuration, for the same reason the chat model is: the
+// width of every vector column, the similarity index and every stored chunk are
+// all built to THIS model's output, so it is a property of the build. It used
+// to be BACKEND_EMBED_MODEL, with the width in a second variable that had to
+// agree with it — and when the two disagreed the only signal was a warning at
+// boot while the vector table was already stale. Pinning the model lets the
+// width come from its profile instead, so there is one fact and nothing to
+// keep in step with it.
+//
+// Changing this is a corpus rebuild, and NOT by recreating the database: the
+// vec_chunks DDL in store/migrations/0001_init.sql carries the width as a
+// literal, as a migration that has run must, so a fresh database would come back
+// at the old width. A model change needs a new migration that rebuilds the table
+// at EmbedDim(). store's TestVecChunksWidthMatchesTheEmbeddingModel is what
+// keeps the literal and the profile equal, and the dim-guard in cmd/peeq says
+// so at boot when a stored table predates the change.
+const EmbedModel = "text-embedding-3-small"
 
-// EmbedConfig configures the OpenAI-compatible embedding client. Logger is
-// optional and defaults to slog.Default(). HeartbeatInterval is how often an
-// in-flight request logs that it is still waiting (0 uses
-// llm.DefaultHeartbeat; negative disables it).
+// embedProfile is the registry's description of EmbedModel. Resolved once, at
+// init, and a failure is a panic on purpose: the id above is compiled in, so if
+// llmwire has no profile for it that is a build error in everything but name,
+// and the first test to import this package says so.
+var embedProfile = mustEmbedProfile()
+
+func mustEmbedProfile() *llmwire.Profile {
+	p, err := llmwire.Default().Lookup(EmbedModel)
+	if err != nil {
+		panic("rag: EmbedModel has no llmwire profile: " + err.Error())
+	}
+	if p.Endpoint != llmwire.EndpointEmbeddings {
+		panic("rag: EmbedModel is not an embeddings model: " + EmbedModel)
+	}
+	return p
+}
+
+// EmbedDim is the width of every vector EmbedModel returns, and therefore what
+// the vec_chunks table must be built to. Read from the model's profile; the one
+// other place it appears is the migration DDL, and a test holds the two equal.
+func EmbedDim() int { return embedProfile.Embedding.DefaultDimensions }
+
+// defaultEmbedTimeout bounds one embeddings call end to end. Embeddings are
+// not streamed, so unlike the chat client there is no answer to cut off
+// mid-way, and one cap on the whole call is the honest bound.
+const defaultEmbedTimeout = 1 * time.Minute
+
+// EmbedConfig configures the embedding client. Logger is optional and defaults
+// to slog.Default(). HeartbeatInterval is how often an in-flight request logs
+// that it is still waiting (0 uses llm.DefaultHeartbeat; negative disables it).
 type EmbedConfig struct {
 	BaseURL           string
 	APIKey            string
-	Model             string
 	Logger            *slog.Logger
 	HeartbeatInterval time.Duration
 }
 
 // EmbedClient generates embeddings via an OpenAI-compatible /embeddings endpoint.
 type EmbedClient struct {
-	baseURL   string
-	apiKey    string
-	model     string
-	http      *http.Client
+	wire      *llmwire.Client
 	log       *slog.Logger
 	heartbeat time.Duration
 }
 
 // NewEmbedClient builds an EmbedClient. hc is optional.
 func NewEmbedClient(cfg EmbedConfig, hc *http.Client) *EmbedClient {
-	if hc == nil {
-		hc = &http.Client{Timeout: defaultEmbedTimeout}
-	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -57,51 +89,34 @@ func NewEmbedClient(cfg EmbedConfig, hc *http.Client) *EmbedClient {
 		cfg.HeartbeatInterval = llm.DefaultHeartbeat
 	}
 	return &EmbedClient{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"), apiKey: cfg.APIKey, model: cfg.Model,
-		http: hc, log: cfg.Logger, heartbeat: cfg.HeartbeatInterval,
+		wire: llmwire.New(llmwire.Config{
+			BaseURL:    cfg.BaseURL,
+			APIKey:     cfg.APIKey,
+			HTTPClient: hc,
+			// The whole-call cap is the bound that matters on a non-streamed
+			// route; the header and idle bounds sit underneath it and only name
+			// which phase went quiet when it does.
+			CallTimeout: defaultEmbedTimeout,
+		}),
+		log:       cfg.Logger,
+		heartbeat: cfg.HeartbeatInterval,
 	}
 }
 
-// Model names the deployment this client embeds against. It is configuration,
-// not a secret — the same string already rides on every request body — and the
-// answer trace has to say which model turned the question into a vector.
-func (c *EmbedClient) Model() string { return c.model }
-
-type embedRequest struct {
-	Model string   `json:"model"`
-	Input []string `json:"input"`
-}
-
-type embedResponse struct {
-	Data []struct {
-		Index     int       `json:"index"`
-		Embedding []float32 `json:"embedding"`
-	} `json:"data"`
-	// Usage is optional; embedding endpoints report only input tokens, and
-	// some report nothing at all.
-	Usage struct {
-		PromptTokens int64 `json:"prompt_tokens"`
-		TotalTokens  int64 `json:"total_tokens"`
-	} `json:"usage"`
-}
+// Model names the deployment this client embeds against. The answer trace has
+// to say which model turned the question into a vector.
+func (c *EmbedClient) Model() string { return EmbedModel }
 
 // Embed returns one vector per input, aligned to input order. Empty input yields
 // no vectors and no request.
+//
+// ONE log record per call, success or failure — a hard invariant the logging
+// tests pin. llmwire's own warnings are folded into that record rather than
+// logged separately, because a second line per call would break the count and
+// bury the failures that matter.
 func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
 	if len(inputs) == 0 {
 		return nil, nil
-	}
-	body, err := json.Marshal(embedRequest{Model: c.model, Input: inputs})
-	if err != nil {
-		return nil, fmt.Errorf("marshal embed request: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/embeddings", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create embed request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
 	// The worker embeds inside a step context carrying the video's identity, so
@@ -118,31 +133,57 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 	stop := llm.StartHeartbeat(ctx, c.log, c.heartbeat, "embed: still waiting for response", ident...)
 	defer stop()
 
-	resp, err := c.http.Do(req)
+	resp, warnings, err := c.wire.Embed(ctx, llmwire.EmbedRequest{Model: EmbedModel, Inputs: inputs})
 	if err != nil {
-		return fail(fmt.Errorf("embed request: %w", err))
+		return fail(embedError(err))
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, maxEmbedErrorBody))
-		return fail(fmt.Errorf("embedding failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg))))
+	// llmwire places each vector by the response's own index and refuses a
+	// count mismatch, a gap or a repeat, so what comes back is already aligned
+	// to the inputs. The check that used to live here is now upstream, with
+	// tests of its own.
+	if len(resp.Vectors) != len(inputs) {
+		return fail(fmt.Errorf("embedding count mismatch: got %d, want %d", len(resp.Vectors), len(inputs)))
 	}
-	var parsed embedResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return fail(fmt.Errorf("decode embed response: %w", err))
+
+	// One token figure, not two. An embeddings call has no completion side, so
+	// the endpoint's total_tokens equals its prompt_tokens — and llmwire's merged
+	// usage carries only the input lane, so there is nothing else to read anyway.
+	// The old embed_tokens_total was the same number under a second name.
+	attrs := append(ident, "duration_ms", time.Since(started).Milliseconds(),
+		"embed_tokens_in", llm.FormatTokens(valueOr(resp.Usage.Input.Total)))
+	for _, w := range warnings {
+		attrs = append(attrs, "warning", w.String())
 	}
-	if len(parsed.Data) != len(inputs) {
-		return fail(fmt.Errorf("embedding count mismatch: got %d, want %d", len(parsed.Data), len(inputs)))
+	c.log.Debug("embed: request done", attrs...)
+	return resp.Vectors, nil
+}
+
+// embedError keeps this package's error phrasing over llmwire's, for the same
+// reason the chat client does: the strings are what the summarize worker's
+// activity log and the operator runbook quote.
+func embedError(err error) error {
+	var apiErr *llmwire.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode != 0 {
+		return fmt.Errorf("embedding failed with status %d: %s", apiErr.StatusCode, apiErr.Message)
 	}
-	c.log.Debug("embed: request done", append(ident, "duration_ms", time.Since(started).Milliseconds(),
-		"embed_tokens_in", llm.FormatTokens(parsed.Usage.PromptTokens),
-		"embed_tokens_total", llm.FormatTokens(parsed.Usage.TotalTokens))...)
-	sort.Slice(parsed.Data, func(i, j int) bool { return parsed.Data[i].Index < parsed.Data[j].Index })
-	out := make([][]float32, len(parsed.Data))
-	for i, d := range parsed.Data {
-		out[i] = d.Embedding
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "decoding embeddings response"):
+		return fmt.Errorf("decode embed response: %w", err)
+	case strings.Contains(msg, "embeddings and got"),
+		strings.Contains(msg, "outside the batch"),
+		strings.Contains(msg, "repeats index"),
+		strings.Contains(msg, "no vector for index"):
+		return fmt.Errorf("embedding count mismatch: %w", err)
 	}
-	return out, nil
+	return fmt.Errorf("embed request: %w", err)
+}
+
+func valueOr(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // maxEmbedInputs caps how many texts ride in one /embeddings request.
@@ -151,6 +192,10 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 // one-minute HTTP timeout — already the tightest thing in this package for a
 // long video. Chapter chunks roughly double the count, and the backfill sends
 // every video in the library through here, so the request has to be bounded.
+//
+// llmwire batches at the same size internally, so a call at or under this
+// count is exactly one request; the split here exists for the gap between
+// batches, which llmwire deliberately does not model.
 const maxEmbedInputs = 64
 
 // EmbedBatched is Embed for input sets large enough that one request would be

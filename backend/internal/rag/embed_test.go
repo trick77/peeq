@@ -23,7 +23,7 @@ func TestEmbedReturnsVectorsInInputOrder(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL, Model: "e5"}, srv.Client())
+	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL}, srv.Client())
 	vecs, err := c.Embed(context.Background(), []string{"a", "b"})
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestEmbedBatchedSplitsAndPreservesOrder(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL, Model: "m"}, srv.Client())
+	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL}, srv.Client())
 	inputs := make([]string, 150)
 	for i := range inputs {
 		inputs[i] = "t" + strconv.Itoa(i)
@@ -97,7 +97,7 @@ func TestEmbedBatchedSingleRequestBelowThreshold(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL, Model: "m"}, srv.Client())
+	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL}, srv.Client())
 	if _, err := c.EmbedBatched(context.Background(), []string{"a", "b"}, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -128,12 +128,60 @@ func TestEmbedBatchedFailsWholeCallOnBatchError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL, Model: "m"}, srv.Client())
+	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL}, srv.Client())
 	inputs := make([]string, 130)
 	for i := range inputs {
 		inputs[i] = "t"
 	}
 	if _, err := c.EmbedBatched(context.Background(), inputs, 0); err == nil {
 		t.Fatal("a failing batch must fail the whole call")
+	}
+}
+
+// The pinned model is what every vector in the database was built to, and its
+// width is what vec_chunks is built to. Both are read off the llmwire profile,
+// so this is the contract the boot dim-guard and the worker's IndexMeta rest on:
+// the model exists upstream, it is an embeddings model, and its width is the
+// one this repo's schema was created at.
+func TestEmbedModel_isPinnedAndProfiled(t *testing.T) {
+	if EmbedModel != "text-embedding-3-small" {
+		t.Fatalf("EmbedModel = %q; changing it is a corpus rebuild, and this test is where "+
+			"that decision is made deliberately", EmbedModel)
+	}
+	if got := EmbedDim(); got != 1536 {
+		t.Fatalf("EmbedDim() = %d, want 1536: vec_chunks was created at that width", got)
+	}
+	c := NewEmbedClient(EmbedConfig{BaseURL: "http://example.invalid"}, nil)
+	if c.Model() != EmbedModel {
+		t.Errorf("Model() = %q, want the pinned constant", c.Model())
+	}
+	// The width is read from the profile every time, never cached in a second
+	// place this package could drift from.
+	if c.Model() != EmbedModel || EmbedDim() != 1536 {
+		t.Error("model and width disagree with the profile")
+	}
+}
+
+// The request goes out under the pinned model id, whatever the caller thinks.
+func TestEmbed_sendsThePinnedModel(t *testing.T) {
+	var gotModel string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotModel = body.Model
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"index": 0, "embedding": []float32{0.1}}},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL}, srv.Client())
+	if _, err := c.Embed(context.Background(), []string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotModel != EmbedModel {
+		t.Errorf("model on the wire = %q, want %q", gotModel, EmbedModel)
 	}
 }

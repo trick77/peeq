@@ -35,8 +35,8 @@ Run after any change to captions, embeddings, summaries, chapters, or global sea
 
 1. Boot with a real YouTube cookie, a running **chat endpoint** (`BACKEND_CHAT_BASE_URL` +
    `BACKEND_CHAT_API_KEY` — Z.ai's general endpoint, see AGENTS.md), and a running **embeddings
-   endpoint** (`BACKEND_EMBED_BASE_URL` + `BACKEND_EMBED_API_KEY` + `BACKEND_EMBED_MODEL` +
-   `BACKEND_EMBED_DIM`). peeq will refuse to start without the base URLs and the embedding model.
+   endpoint** (`BACKEND_EMBED_BASE_URL` + `BACKEND_EMBED_API_KEY`; the model itself is a
+   constant, `rag.EmbedModel`). peeq will refuse to start without the two base URLs.
    The two are separate providers: the chat swap to GLM does not touch embeddings.
 2. Download a real video and confirm its captions are present:
    - Check that VTT captions are extracted (if the video has YouTube-hosted captions or subtitles).

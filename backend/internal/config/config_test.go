@@ -28,7 +28,6 @@ func TestLoad_devAuthLoopbackOK(t *testing.T) {
 	t.Setenv("BACKEND_PUBLIC_URL", "")
 	t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
 	t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
-	t.Setenv("BACKEND_EMBED_MODEL", "e5")
 	if _, err := Load(); err != nil {
 		t.Fatalf("loopback dev auth must pass: %v", err)
 	}
@@ -51,7 +50,6 @@ func TestLoad_allowAnonymousYoutube_requiresDevAuth(t *testing.T) {
 		"BACKEND_SESSION_SECRET":          "s",
 		"BACKEND_CHAT_BASE_URL":           "http://chat",
 		"BACKEND_EMBED_BASE_URL":          "http://emb",
-		"BACKEND_EMBED_MODEL":             "e5",
 		"BACKEND_ALLOW_ANONYMOUS_YOUTUBE": "true",
 	}
 	setEnv := func(m map[string]string) {
@@ -105,7 +103,6 @@ func TestLoad_allowAnonymousYoutube_defaultFalse(t *testing.T) {
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
 	t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
-	t.Setenv("BACKEND_EMBED_MODEL", "e5")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -118,7 +115,7 @@ func TestLoad_allowAnonymousYoutube_defaultFalse(t *testing.T) {
 func TestLoadRequiresAIEndpoints(t *testing.T) {
 	base := map[string]string{
 		"BACKEND_SESSION_SECRET": "s", "BACKEND_AUTH_MODE": "dev", "BACKEND_ADDR": "127.0.0.1:8080",
-		"BACKEND_CHAT_BASE_URL": "http://chat", "BACKEND_EMBED_BASE_URL": "http://emb", "BACKEND_EMBED_MODEL": "e5",
+		"BACKEND_CHAT_BASE_URL": "http://chat", "BACKEND_EMBED_BASE_URL": "http://emb",
 	}
 	setEnv := func(m map[string]string) {
 		os.Clearenv()
@@ -131,10 +128,12 @@ func TestLoadRequiresAIEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected ok, got %v", err)
 	}
-	if cfg.ChatBaseURL != "http://chat" || cfg.EmbedModel != "e5" || cfg.EmbedDim != 1536 || cfg.DefaultSubLang != "en" {
+	// No model and no width here: both are constants of the build now
+	// (llm.ModelFor, rag.EmbedModel / rag.EmbedDim), not configuration.
+	if cfg.ChatBaseURL != "http://chat" || cfg.EmbedBaseURL != "http://emb" || cfg.DefaultSubLang != "en" {
 		t.Fatalf("defaults wrong: %+v", cfg)
 	}
-	for _, drop := range []string{"BACKEND_CHAT_BASE_URL", "BACKEND_EMBED_BASE_URL", "BACKEND_EMBED_MODEL"} {
+	for _, drop := range []string{"BACKEND_CHAT_BASE_URL", "BACKEND_EMBED_BASE_URL"} {
 		m := map[string]string{}
 		for k, v := range base {
 			m[k] = v
@@ -155,7 +154,6 @@ func TestLoad_summarizeDelays(t *testing.T) {
 		t.Setenv("BACKEND_PUBLIC_URL", "")
 		t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
 		t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
-		t.Setenv("BACKEND_EMBED_MODEL", "e5")
 	}
 
 	setRequired()
@@ -206,7 +204,6 @@ func TestLoad_chatStreamIdleTimeout(t *testing.T) {
 		t.Setenv("BACKEND_PUBLIC_URL", "")
 		t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
 		t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
-		t.Setenv("BACKEND_EMBED_MODEL", "e5")
 	}
 
 	setRequired()
@@ -248,7 +245,6 @@ func baseEnv(t *testing.T) {
 	t.Setenv("BACKEND_PUBLIC_URL", "")
 	t.Setenv("BACKEND_CHAT_BASE_URL", "http://chat")
 	t.Setenv("BACKEND_EMBED_BASE_URL", "http://emb")
-	t.Setenv("BACKEND_EMBED_MODEL", "e5")
 }
 
 func TestLoad_summaryTokensAndCallTimeout(t *testing.T) {

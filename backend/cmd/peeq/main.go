@@ -192,7 +192,7 @@ func run() error {
 	settingsStore.Activity = activityStore
 	ragStore := rag.NewStore(db)
 	embedClient := rag.NewEmbedClient(rag.EmbedConfig{
-		BaseURL: cfg.EmbedBaseURL, APIKey: cfg.EmbedAPIKey, Model: cfg.EmbedModel,
+		BaseURL: cfg.EmbedBaseURL, APIKey: cfg.EmbedAPIKey,
 		Logger: slog.Default(),
 	}, nil)
 	chatClient := llm.NewClient(llm.Config{
@@ -217,13 +217,20 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Boot dim-guard: if the configured embedding dim differs from the vec_chunks
-	// table's built dim, the whole vector table is invalid. This only warns —
-	// it does not rebuild anything; recreating the DB is the operator's job.
-	if builtDim, err := ragStore.BuiltDim(ctx); err == nil && builtDim != cfg.EmbedDim {
+	// Boot dim-guard: if this build's embedding model produces a different width
+	// than the vec_chunks table was built to, the whole vector table is invalid.
+	// The width is no longer configurable, so a mismatch now means exactly one
+	// thing: the database predates a change of rag.EmbedModel. This only warns —
+	// it does not rebuild anything.
+	//
+	// The remedy is a NEW MIGRATION, not a fresh database: the DDL that creates
+	// vec_chunks carries its width as a literal, so recreating the database
+	// would rebuild the table at the old width and this warning would fire on
+	// every boot forever.
+	if builtDim, err := ragStore.BuiltDim(ctx); err == nil && builtDim != rag.EmbedDim() {
 		slog.Warn("embedding dimension mismatch; vector table is stale",
-			"built", builtDim, "configured", cfg.EmbedDim,
-			"action", "recreate the database (rm ./data/peeq.db*) to rebuild vec_chunks at the new dimension")
+			"built", builtDim, "model", rag.EmbedModel, "model_dim", rag.EmbedDim(),
+			"action", "this build's embedding model changed width; ship a migration that rebuilds vec_chunks at model_dim and re-embed")
 	} else if err != nil {
 		slog.Warn("dim-guard: could not read vec_chunks dimension", "err", err)
 	}
@@ -338,7 +345,7 @@ func run() error {
 	summarizeWorker := summarize.NewWorker(summarize.WorkerDeps{
 		Jobs: summaryJobsStore, Videos: videosStore, Rag: ragStore,
 		Summarizer: summarizer, Embedder: embedClient,
-		EmbedModel: cfg.EmbedModel, EmbedDim: cfg.EmbedDim,
+		EmbedModel: rag.EmbedModel, EmbedDim: rag.EmbedDim(),
 		VideoDelay: cfg.SummarizeVideoDelay,
 		Activity:   activityStore,
 		OnPhase: func(videoID, status, phase string) {

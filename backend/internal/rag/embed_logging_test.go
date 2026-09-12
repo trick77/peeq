@@ -23,7 +23,7 @@ func embedRecords(t *testing.T, handler http.HandlerFunc, inputs []string) ([]ma
 	defer srv.Close()
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL, Model: "e5", Logger: log}, srv.Client())
+	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL, Logger: log}, srv.Client())
 	_, err := c.Embed(context.Background(), inputs)
 
 	var recs []map[string]any
@@ -114,7 +114,7 @@ func TestEmbed_logsTheVideoIdentityFromTheContext(t *testing.T) {
 	defer srv.Close()
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL, Model: "e5", Logger: log}, srv.Client())
+	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL, Logger: log}, srv.Client())
 
 	// The summarize worker embeds inside a step context carrying the video.
 	ctx := llm.WithStep(llm.WithCall(context.Background(), llm.CallInfo{
@@ -148,7 +148,7 @@ func TestEmbed_heartbeatsWhileWaiting(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	c := NewEmbedClient(EmbedConfig{
-		BaseURL: srv.URL, Model: "e5", Logger: log, HeartbeatInterval: 10 * time.Millisecond,
+		BaseURL: srv.URL, Logger: log, HeartbeatInterval: 10 * time.Millisecond,
 	}, srv.Client())
 
 	ctx := llm.WithCall(context.Background(), llm.CallInfo{VideoID: "vid1", Title: "A Title"})
@@ -178,7 +178,7 @@ func TestEmbed_heartbeatDisabledByNegativeInterval(t *testing.T) {
 	defer srv.Close()
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL, Model: "e5", Logger: log, HeartbeatInterval: -1}, srv.Client())
+	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL, Logger: log, HeartbeatInterval: -1}, srv.Client())
 	if _, err := c.Embed(context.Background(), []string{"a"}); err != nil {
 		t.Fatal(err)
 	}
