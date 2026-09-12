@@ -154,9 +154,6 @@ type Client struct {
 	interval  time.Duration
 	log       *slog.Logger
 	heartbeat time.Duration
-	idle      time.Duration
-	header    time.Duration
-	cap       time.Duration
 
 	mu     sync.Mutex
 	nextAt time.Time // earliest time the next request may start
@@ -222,9 +219,6 @@ func NewClient(cfg Config, hc *http.Client) *Client {
 		interval:  cfg.RequestInterval,
 		log:       cfg.Logger,
 		heartbeat: cfg.HeartbeatInterval,
-		idle:      cfg.StreamIdleTimeout,
-		header:    cfg.HeaderTimeout,
-		cap:       cfg.CallTimeout,
 	}
 }
 
