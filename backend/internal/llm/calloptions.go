@@ -2,7 +2,7 @@ package llm
 
 import "context"
 
-// Per-call knobs carried on the context, same pattern as thinking.go and
+// Per-call knobs carried on the context, same pattern as Shallow below and
 // CallInfo: they keep the Completer interface one method wide so every fake that
 // implements it keeps compiling, while letting each summarize stage tune the
 // request independently instead of sharing one hardcoded shape.
@@ -16,7 +16,8 @@ type reasoningEffortKey struct{}
 // so callers that never opt in are unchanged.
 //
 // This is the ONLY depth control the endpoint offers — thinking itself cannot be
-// switched off (see thinking.go), and only low/high/max are accepted. It was
+// switched off (llmwire's profile records the refusal), and only low/high/max
+// are accepted. It was
 // inert under MiMo, where high and low returned the same reasoning-token
 // distribution and the same latency; that is no longer true, and the comment
 // that used to say so has been removed rather than kept, because acting on it
@@ -25,7 +26,7 @@ type reasoningEffortKey struct{}
 // Effort is chosen by what is waiting on the call, not by token cost. The
 // default is max — Z.ai's own default and their recommendation for this model —
 // and only Shallow opts out, for the one gate under a hard timeout (see
-// thinking.go).
+// Shallow below).
 //
 // Tokens barely separate the levels (the whole summary of a 40-minute video
 // reasons for ~144 tokens at max), so nothing should be tuned downward to save
@@ -57,6 +58,35 @@ func reasoningEffortFrom(ctx context.Context) string {
 		return lowReasoningEffort
 	}
 	return reasoningEffort
+}
+
+// --- shallow ------------------------------------------------------------------
+
+type shallowKey struct{}
+
+// Shallow returns a context whose LLM calls ask for the least reasoning the
+// model allows (lowReasoningEffort). It is for a step that is a lookup rather
+// than a deduction AND that something is waiting on — today only the Ask
+// understand gate, which sits in front of the first byte of an answer under a
+// 10s timeout.
+//
+// It is not a cost lever. Reasoning at low is nearly free on this model
+// (measured: 0 tokens on a classification, 53 on the understand gate) but so is
+// reasoning at high, so saving tokens is never the reason to reach for this.
+// Latency is: low answers the understand gate in 2.5s where max takes 7.4s.
+//
+// A step with no one waiting on it should NOT use this. The default is max, and
+// the offline summary calls take it as-is — see WithReasoningEffort.
+func Shallow(ctx context.Context) context.Context {
+	return context.WithValue(ctx, shallowKey{}, true)
+}
+
+// ShallowFrom reports whether the calls made with ctx want the shallowest
+// reasoning. Absent a value the answer is no, so a caller that never opts in is
+// unchanged.
+func ShallowFrom(ctx context.Context) bool {
+	shallow, ok := ctx.Value(shallowKey{}).(bool)
+	return ok && shallow
 }
 
 // --- model --------------------------------------------------------------------
@@ -153,7 +183,7 @@ type maxTokensKey struct{}
 // cap counts reasoning tokens too, so it bounds a runaway but does not by itself
 // guarantee output on a deep call: one that spends the whole budget reasoning
 // still returns empty, with finish_reason "length" and no content. Reasoning can
-// no longer be switched off to avoid that (see thinking.go), so leave headroom —
+// no longer be switched off to avoid that, so leave headroom —
 // or, if something is waiting on the call, lower the effort with Shallow.
 func WithMaxTokens(ctx context.Context, n int) context.Context {
 	return context.WithValue(ctx, maxTokensKey{}, n)

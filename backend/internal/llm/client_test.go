@@ -55,16 +55,14 @@ func TestCompleteSendsModelAndEffortAndReturnsContent(t *testing.T) {
 	if gotBody["top_p"] != 0.95 {
 		t.Fatalf("top_p = %v, want 0.95", gotBody["top_p"])
 	}
-	if ct, ok := thinkingObj(t, gotBody)["clear_thinking"].(bool); !ok || ct {
-		t.Fatalf("clear_thinking = %v, want false", thinkingObj(t, gotBody)["clear_thinking"])
-	}
 	if gotBody["stream"] != true {
 		t.Fatalf("stream = %v", gotBody["stream"])
 	}
-	// Thinking is always on: the endpoint rejects "disabled" outright, so this
-	// is the only value that can ever go out, and it must go out explicitly.
-	if got := thinkingType(t, gotBody); got != "enabled" {
-		t.Fatalf("thinking.type = %q", got)
+	// No hand-built thinking object. Depth is reasoning_effort, rendered by
+	// llmwire from its profile; the object peeq used to add rode in ExtraBody
+	// and is exactly the kind of by-hand wire knob this package no longer owns.
+	if _, ok := gotBody["thinking"]; ok {
+		t.Fatalf("request carried a thinking object: %v", gotBody["thinking"])
 	}
 	// No stream_options. Z.ai does not take the parameter and sends usage on the
 	// final frame regardless; sending it would be an undocumented field.
@@ -75,9 +73,9 @@ func TestCompleteSendsModelAndEffortAndReturnsContent(t *testing.T) {
 }
 
 // Shallow cannot switch thinking off — the endpoint refuses that outright with
-// code 1210 — so it must lower reasoning_effort instead and leave thinking
-// enabled. A regression that sent "disabled" would fail every call in prod.
-func TestComplete_shallowLowersEffortAndLeavesThinkingEnabled(t *testing.T) {
+// code 1210 — so it lowers reasoning_effort instead. A regression that sent a
+// thinking:{"type":"disabled"} object would fail every call in prod.
+func TestComplete_shallowLowersEffort(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -90,8 +88,8 @@ func TestComplete_shallowLowersEffortAndLeavesThinkingEnabled(t *testing.T) {
 	if _, err := c.Complete(Shallow(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := thinkingType(t, gotBody); got != "enabled" {
-		t.Fatalf("thinking.type = %q, want enabled even when shallow", got)
+	if _, ok := gotBody["thinking"]; ok {
+		t.Fatalf("shallow sent a thinking object: %v", gotBody["thinking"])
 	}
 	if gotBody["reasoning_effort"] != lowReasoningEffort {
 		t.Fatalf("reasoning_effort = %v, want %v", gotBody["reasoning_effort"], lowReasoningEffort)
@@ -154,23 +152,6 @@ func TestComplete_shallowDoesNotChangeTheDeployment(t *testing.T) {
 	if gotBody["model"] != model {
 		t.Fatalf("model = %v, want the default: shallow reasoning is not the same as the gate deployment", gotBody["model"])
 	}
-}
-
-// thinkingType digs the switch out of a decoded request body, failing the test
-// when the field is missing entirely — an absent object is exactly the bug these
-// tests exist to catch, and it would otherwise read as an empty type.
-func thinkingType(t *testing.T, body map[string]any) string {
-	t.Helper()
-	return thinkingObj(t, body)["type"].(string)
-}
-
-func thinkingObj(t *testing.T, body map[string]any) map[string]any {
-	t.Helper()
-	obj, ok := body["thinking"].(map[string]any)
-	if !ok {
-		t.Fatalf("request carried no thinking object: %v", body)
-	}
-	return obj
 }
 
 func TestCompleteErrorsOnNon2xx(t *testing.T) {

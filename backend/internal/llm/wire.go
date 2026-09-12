@@ -2,7 +2,6 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -50,10 +49,10 @@ func (s *streamCounters) attrs() []any {
 type wireResult struct {
 	content      string
 	finishReason string
-	// rawUsage is the endpoint's own usage object, verbatim. Fed straight into
-	// usageFrom, so "reported a zero" stays distinguishable from "reported
-	// nothing".
-	rawUsage json.RawMessage
+	// usage is llmwire's decoded accounting. Its lanes are pointers, so
+	// "reported a zero" stays distinguishable from "reported nothing", and Raw
+	// carries the endpoint's own bytes for the debug line.
+	usage    llmwire.Usage
 	events   int64
 	chars    int64
 	warnings []llmwire.Warning
@@ -61,12 +60,11 @@ type wireResult struct {
 
 // chatRequestFor maps peeq's context knobs onto an llmwire request.
 //
-// Everything the model needs that llmwire models is a field; the one thing it
-// does not model is Z.ai's thinking object, which rides in ExtraBody. That is
-// not a workaround: llmwire's profile for this model says reasoning is
-// controlled by reasoning_effort, which is true, and Z.ai accepts the extra
-// object alongside it. Sending it keeps the wire byte-identical to what this
-// deployment has been answering for months.
+// Everything the model needs is a field llmwire models; nothing rides in
+// ExtraBody. The thinking:{"type":"enabled"} object peeq used to send by hand
+// is gone: measured against api.z.ai, reasoning_effort alone drives depth (5
+// reasoning tokens at low, 43 at max on the same prompt) and the model thinks
+// whether or not the object is present, exactly as llmwire's profile records.
 //
 // temperature and top_p are deliberately NOT set here. llmwire sends the
 // profile's recommended values (1.0 and 0.95) when the caller expresses no
@@ -77,7 +75,6 @@ func chatRequestFor(ctx context.Context, messages []Message) llmwire.ChatRequest
 		Model:     modelFrom(ctx),
 		Messages:  toWireMessages(messages),
 		Reasoning: llmwire.ReasoningEffort(reasoningEffortFrom(ctx)),
-		ExtraBody: map[string]any{"thinking": thinkingOptionFor(ctx)},
 	}
 	if n := maxTokensFrom(ctx); n > 0 {
 		req.MaxTokens = &n
@@ -139,9 +136,8 @@ func (c *Client) runStream(ctx context.Context, wire *llmwire.Client, req llmwir
 		return res, chatError(err)
 	}
 
-	usage := stream.Usage()
 	res.content = content.String()
-	res.rawUsage = usage.Raw
+	res.usage = stream.Usage()
 	res.warnings = stream.Warnings()
 	return res, nil
 }

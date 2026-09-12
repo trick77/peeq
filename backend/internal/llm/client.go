@@ -7,15 +7,15 @@
 // The upstream is Z.ai (api.z.ai/api/paas/v4), which cannot be asked to skip
 // reasoning: GLM-5.3-Flash rejects thinking:{"type":"disabled"} outright with
 // code 1210, "This model always engages in thinking and cannot be disabled;
-// please use low, high, or max". So thinking is sent enabled on every call and
-// reasoning_effort is the only depth control — see calloptions.go for the tiers
-// and thinking.go for the one step that asks for the shallowest of them.
+// please use low, high, or max". reasoning_effort is the only depth control —
+// see calloptions.go for the tiers and for Shallow, the one step that asks for
+// the shallowest of them. llmwire renders it; nothing about thinking is sent
+// by hand.
 // Modeled on loom's llm/client.go, minus loom's tool/vision/streaming machinery.
 package llm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -281,62 +281,32 @@ func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 // Sending it anyway is accepted and ignored rather than rejected, but it is an
 // undocumented field on this endpoint, so it is not sent.
 
-// chatUsage mirrors the OpenAI-compatible `usage` object. Everything in it is
-// optional — endpoints vary in how much of the breakdown they report, and a
-// missing field must read as "not reported", not as an error.
-type chatUsage struct {
-	PromptTokens        int64 `json:"prompt_tokens"`
-	CompletionTokens    int64 `json:"completion_tokens"`
-	TotalTokens         int64 `json:"total_tokens"`
-	PromptTokensDetails struct {
-		CachedTokens int64 `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
-	CompletionTokensDetails struct {
-		ReasoningTokens int64 `json:"reasoning_tokens"`
-	} `json:"completion_tokens_details"`
-}
-
-func (u chatUsage) toUsage() Usage {
-	return Usage{
-		Requests:         1,
-		Accounted:        boolToCount(u.reported()),
-		PromptTokens:     u.PromptTokens,
-		CachedTokens:     u.PromptTokensDetails.CachedTokens,
-		CompletionTokens: u.CompletionTokens,
-		ReasoningTokens:  u.CompletionTokensDetails.ReasoningTokens,
-		TotalTokens:      u.TotalTokens,
-	}
-}
-
-// boolToCount turns "this call reported usage" into the counter Usage keeps,
-// so a total can say how many of its calls were actually accounted for.
-func boolToCount(b bool) int64 {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-// reported says the endpoint sent a usage object with something in it, so its
-// zeros are answers rather than silence. Mirrors loom's TokenUsage.Present.
-func (u chatUsage) reported() bool {
-	return u.PromptTokens != 0 || u.CompletionTokens != 0 || u.TotalTokens != 0 ||
-		u.PromptTokensDetails.CachedTokens != 0 || u.CompletionTokensDetails.ReasoningTokens != 0
-}
-
-// usageFrom decodes a raw usage object; an absent, null or malformed one yields
-// the zero chatUsage, i.e. "not reported", never an error.
+// usageFromWire folds llmwire's decoded accounting into this package's Usage.
+// llmwire's lanes are pointers — nil is "not reported" — so Accounted is
+// whether any lane arrived at all, and a reported zero stays a zero.
 //
-// The bytes are carried around raw rather than decoded where they are found, so
-// the same bytes feed both chatUsage and the debug line that shows what the
-// endpoint really sent — which is what settles whether a zero is the endpoint's
-// answer or a field name we do not know about.
-func usageFrom(raw json.RawMessage) chatUsage {
-	var u chatUsage
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &u)
+// llmwire has no total lane: the OpenAI-compatible total_tokens is by
+// definition prompt + completion, so it is derived here rather than read.
+func usageFromWire(w llmwire.Usage) Usage {
+	u := Usage{
+		Requests:         1,
+		PromptTokens:     valueOr(w.Input.Total),
+		CachedTokens:     valueOr(w.Input.CacheRead),
+		CompletionTokens: valueOr(w.Output.Total),
+		ReasoningTokens:  valueOr(w.Output.Reasoning),
+	}
+	u.TotalTokens = u.PromptTokens + u.CompletionTokens
+	if w.Input.Total != nil || w.Input.CacheRead != nil || w.Output.Total != nil || w.Output.Reasoning != nil {
+		u.Accounted = 1
 	}
 	return u
+}
+
+func valueOr(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // Complete runs a single streamed chat completion and returns the concatenated
@@ -440,13 +410,13 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	// returns, so the deliberate gap between calls is accounted separately
 	// instead of inflating the model's apparent latency.
 	inference := time.Since(started)
-	usage := usageFrom(res.rawUsage).toUsage()
+	usage := usageFromWire(res.usage)
 	usage.InferenceNanos = int64(inference)
 	usage.PacedNanos = int64(pacedFor)
 	TotalsFrom(ctx).Add(usage)
 
-	if len(res.rawUsage) > 0 {
-		c.log.Debug("llm: usage raw", append(info.LogAttrs(), "usage", truncate(string(res.rawUsage), maxRawUsage))...)
+	if len(res.usage.Raw) > 0 {
+		c.log.Debug("llm: usage raw", append(info.LogAttrs(), "usage", truncate(string(res.usage.Raw), maxRawUsage))...)
 	} else {
 		c.log.Debug("llm: no usage reported", info.LogAttrs()...)
 	}
