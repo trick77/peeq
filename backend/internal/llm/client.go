@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/trick77/llmwire"
 )
@@ -282,11 +281,15 @@ func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 // undocumented field on this endpoint, so it is not sent.
 
 // usageFromWire folds llmwire's decoded accounting into this package's Usage.
-// llmwire's lanes are pointers — nil is "not reported" — so Accounted is
-// whether any lane arrived at all, and a reported zero stays a zero.
+// llmwire's lanes are pointers — nil is "not reported" — and Total says whether
+// either token side arrived, so a reported zero stays a zero without this
+// package re-deriving that from the pointers.
 //
-// llmwire has no total lane: the OpenAI-compatible total_tokens is by
-// definition prompt + completion, so it is derived here rather than read.
+// Accounted keys on Total's ok, not on Reported: Reported also fires on a usage
+// object that carries no token lane at all (a bare total_tokens, an empty
+// details object), and banking such a call as 0/0/0 would log zeros as complete
+// sums and write them to the video row. A call counts as accounted only when a
+// token count did arrive.
 func usageFromWire(w llmwire.Usage) Usage {
 	u := Usage{
 		Requests:         1,
@@ -295,8 +298,8 @@ func usageFromWire(w llmwire.Usage) Usage {
 		CompletionTokens: valueOr(w.Output.Total),
 		ReasoningTokens:  valueOr(w.Output.Reasoning),
 	}
-	u.TotalTokens = u.PromptTokens + u.CompletionTokens
-	if w.Input.Total != nil || w.Input.CacheRead != nil || w.Output.Total != nil || w.Output.Reasoning != nil {
+	var ok bool
+	if u.TotalTokens, ok = w.Total(); ok {
 		u.Accounted = 1
 	}
 	return u
@@ -416,7 +419,7 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	TotalsFrom(ctx).Add(usage)
 
 	if len(res.usage.Raw) > 0 {
-		c.log.Debug("llm: usage raw", append(info.LogAttrs(), "usage", truncate(string(res.usage.Raw), maxRawUsage))...)
+		c.log.Debug("llm: usage raw", append(info.LogAttrs(), "usage", llmwire.Truncate(string(res.usage.Raw), maxRawUsage))...)
 	} else {
 		c.log.Debug("llm: no usage reported", info.LogAttrs()...)
 	}
@@ -445,18 +448,3 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 // classification was this package's deliverable when it streamed by hand, and it
 // is preserved verbatim in the tests below — the strings are asserted, not the
 // mechanism.
-
-// truncate caps a log value, marking it so a cut is never mistaken for the
-// endpoint's own output. It cuts on a rune boundary: a byte-offset cut can
-// split a multi-byte character and put invalid UTF-8 in the log, which is not
-// hypothetical against an endpoint that returns non-ASCII field values.
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + "…(truncated)"
-}
