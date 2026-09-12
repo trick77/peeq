@@ -12,8 +12,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trick77/llmwire"
+	"github.com/trick77/peeq/internal/config"
 	"github.com/trick77/peeq/internal/sse"
 )
+
+// The endpoints are llmwire's to read from the environment; what main owns is
+// refusing to boot, with the variable named, when one is missing.
+func TestNewModelClients_namesTheMissingVariable(t *testing.T) {
+	vars := []string{"BACKEND_EMBED_BASE_URL", "BACKEND_EMBED_API_KEY", "BACKEND_CHAT_BASE_URL", "BACKEND_CHAT_API_KEY"}
+	for _, v := range vars {
+		t.Setenv(v, "x")
+	}
+	if _, _, _, err := newModelClients(config.Config{}); err != nil {
+		t.Fatalf("all four set: %v", err)
+	}
+	for _, v := range vars {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv(v, "")
+			_, _, _, err := newModelClients(config.Config{})
+			var me *llmwire.MissingEnvError
+			if !errors.As(err, &me) || me.Var != v {
+				t.Fatalf("got %v, want a MissingEnvError naming %s", err, v)
+			}
+		})
+	}
+}
 
 // TestResolveYtdlpBin_picksUpNewlyAppearedBinary proves the resolver used on
 // every yt-dlp invocation (finding 2) reflects the current state of YtdlpDir:

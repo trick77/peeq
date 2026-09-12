@@ -3,11 +3,14 @@ package rag
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/trick77/llmwire"
 )
 
 func TestEmbedReturnsVectorsInInputOrder(t *testing.T) {
@@ -195,4 +198,15 @@ func mustEmbedClient(t testing.TB, cfg EmbedConfig, hc *http.Client) *EmbedClien
 		t.Fatalf("NewEmbedClient: %v", err)
 	}
 	return c
+}
+
+// With no BaseURL the constructor asks llmwire for the profile's variables,
+// and a missing one comes back named rather than as a client that dials "".
+func TestNewEmbedClient_withoutBaseURLNamesTheMissingVariable(t *testing.T) {
+	t.Setenv("BACKEND_EMBED_BASE_URL", "")
+	_, err := NewEmbedClient(EmbedConfig{}, nil)
+	var me *llmwire.MissingEnvError
+	if !errors.As(err, &me) || me.Var != "BACKEND_EMBED_BASE_URL" {
+		t.Fatalf("got %v", err)
+	}
 }
