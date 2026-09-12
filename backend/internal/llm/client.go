@@ -1,5 +1,6 @@
 // Package llm is peeq's lean OpenAI-compatible chat client, configured via
-// BACKEND_CHAT_BASE_URL and BACKEND_CHAT_API_KEY. The model below is a real
+// BACKEND_CHAT_BASE_URL, BACKEND_CHAT_API_KEY and BACKEND_CHAT_EMULATE_OPENCODE.
+// The model below is a real
 // upstream model identifier sent on the wire, not a config name — it is
 // deliberately NOT renamed alongside those env vars.
 //
@@ -126,9 +127,13 @@ func wantsJSONObject(ctx context.Context) bool { return jsonObjectFrom(ctx) }
 // environment variable — the other two exist as fields so a test can drive them
 // without mutating package state, which is the difference between a test that
 // proves the header bound fires and a test that waits sixty real seconds.
+//
+// EmulateOpenCode presents every request as the opencode client (see NewClient);
+// it is BACKEND_CHAT_EMULATE_OPENCODE and off by default.
 type Config struct {
 	BaseURL           string
 	APIKey            string
+	EmulateOpenCode   bool
 	RequestInterval   time.Duration
 	Logger            *slog.Logger
 	HeartbeatInterval time.Duration
@@ -202,14 +207,13 @@ func NewClient(cfg Config, hc *http.Client) *Client {
 		wire: llmwire.New(llmwire.Config{
 			BaseURL: cfg.BaseURL,
 			APIKey:  cfg.APIKey,
-			// Presents as the opencode client: its User-Agent and the session
-			// header pair, with a session id llmwire mints and rotates after an
-			// idle gap. Inherited from the MiMo token-plan days, where the
-			// endpoint is an opencode-facing product and a neutral User-Agent is
-			// not what its traffic looks like. Inert on Z.ai, which neither
-			// requires the headers nor issues ids of that shape; kept because it
-			// costs nothing and the next endpoint may care again.
-			EmulateOpenCode: true,
+			// Opt-in: presents as the opencode client — its User-Agent and the
+			// session header pair, with a session id llmwire mints and rotates
+			// after an idle gap. Needed on an endpoint sold as one client's
+			// backend, where a neutral User-Agent is not what its traffic looks
+			// like (the MiMo token plan). Inert on Z.ai, which neither requires
+			// the headers nor issues ids of that shape, so it defaults to off.
+			EmulateOpenCode: cfg.EmulateOpenCode,
 			HeaderTimeout:   cfg.HeaderTimeout,
 			IdleTimeout:     cfg.StreamIdleTimeout,
 			CallTimeout:     cfg.CallTimeout,

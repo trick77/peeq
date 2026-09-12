@@ -15,8 +15,9 @@ import (
 // The opencode identity — the client string, the session header pair, the
 // ses_-shaped id and its minting — is llmwire's now, switched on with one flag
 // in NewClient. What this package still owns, and therefore still tests, is
-// that the flag is ON and the identity reaches the wire on every call from one
-// client with one id. The shape and rotation of the id are llmwire's to test.
+// that Config.EmulateOpenCode is wired to that flag: on, the identity reaches
+// the wire on every call from one client with one id; off, none of it does.
+// The shape and rotation of the id are llmwire's to test.
 func TestCompleteSendsTheOpenCodeIdentity(t *testing.T) {
 	var seen []http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +26,7 @@ func TestCompleteSendsTheOpenCodeIdentity(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	c := NewClient(Config{BaseURL: srv.URL, EmulateOpenCode: true}, srv.Client())
 	for _, video := range []string{"vid-a", "vid-b"} {
 		ctx := WithCall(context.Background(), CallInfo{VideoID: video})
 		if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
@@ -59,5 +60,29 @@ func TestCompleteSendsTheOpenCodeIdentity(t *testing.T) {
 	// burst of calls — does not care which video the burst belongs to.
 	if other := seen[1].Get(llmwire.HeaderSessionID); other != id {
 		t.Fatalf("a second video changed the session to %q; one client is one session", other)
+	}
+}
+
+// Off by default: a plain endpoint gets a plain client. Neither the opencode
+// string nor the session pair may leak onto the wire when nobody asked for it.
+func TestCompleteWithoutEmulationSendsNoOpenCodeIdentity(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		io.WriteString(w, sseStream("hi", ""))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if ua := got.Get("User-Agent"); ua != llmwire.DefaultUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", ua, llmwire.DefaultUserAgent)
+	}
+	for _, h := range []string{llmwire.HeaderSessionID, llmwire.HeaderSessionAffinity} {
+		if v := got.Get(h); v != "" {
+			t.Fatalf("%s = %q sent with emulation off", h, v)
+		}
 	}
 }
