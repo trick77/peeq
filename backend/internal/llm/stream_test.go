@@ -116,7 +116,7 @@ func TestComplete_concatenatesContentDeltas(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
 	got, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestComplete_streamsWithoutStreamOptions(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestComplete_keepsTheUsageChunkThatFollowsFinishReason(t *testing.T) {
 	defer srv.Close()
 
 	totals := &Totals{}
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
 	ctx := WithTotals(context.Background(), totals)
 	if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestComplete_skipsMalformedDataLinesRatherThanLosingTheAnswer(t *testing.T)
 	}))
 	defer srv.Close()
 
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
 	got, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
 		t.Fatalf("one bad line discarded a finished answer: %v", err)
@@ -211,7 +211,7 @@ func TestComplete_countsReasoningDeltasButExcludesThemFromTheResult(t *testing.T
 	}))
 	defer srv.Close()
 
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
 	got, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestComplete_namesTheHeaderBoundWhenNothingArrives(t *testing.T) {
 	defer srv.Close()
 	defer close(release)
 
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), HeaderTimeout: 80 * time.Millisecond}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), HeaderTimeout: 80 * time.Millisecond}), srv.Client())
 	_, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err == nil {
 		t.Fatal("want an error")
@@ -255,7 +255,7 @@ func TestComplete_namesTheIdleBoundAndHowFarItGot(t *testing.T) {
 	defer srv.Close()
 	defer close(release)
 
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), StreamIdleTimeout: 80 * time.Millisecond}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), StreamIdleTimeout: 80 * time.Millisecond}), srv.Client())
 	_, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err == nil {
 		t.Fatal("want an error")
@@ -297,7 +297,7 @@ func TestComplete_keepalivesDoNotHoldOffTheIdleBound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), StreamIdleTimeout: 80 * time.Millisecond}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), StreamIdleTimeout: 80 * time.Millisecond}), srv.Client())
 	_, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err == nil {
 		t.Fatal("want the idle bound to fire: comments are not progress")
@@ -320,7 +320,7 @@ func TestComplete_reasoningDeltasHoldOffTheIdleBound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), StreamIdleTimeout: 150 * time.Millisecond}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), StreamIdleTimeout: 150 * time.Millisecond}), srv.Client())
 	got, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
 		t.Fatalf("a thinking model was treated as a stalled one: %v", err)
@@ -347,7 +347,7 @@ func TestComplete_namesTheCallCapWhenAStreamNeverFinishes(t *testing.T) {
 	defer srv.Close()
 
 	// Idle is deliberately far larger than the cap, so only the cap can fire.
-	c := NewClient(fastBounds(Config{
+	c := mustClient(t, fastBounds(Config{
 		BaseURL: srv.URL, Logger: discardLogger(),
 		StreamIdleTimeout: 5 * time.Second, CallTimeout: 150 * time.Millisecond,
 	}), srv.Client())
@@ -377,7 +377,7 @@ func TestComplete_parentCancellationIsNotBlamedOnABound(t *testing.T) {
 		time.Sleep(60 * time.Millisecond)
 		cancel()
 	}()
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
 	_, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}})
 	if err == nil {
 		t.Fatal("want an error")
@@ -400,7 +400,7 @@ func TestComplete_heartbeatReportsWhatHasArrived(t *testing.T) {
 	defer srv.Close()
 
 	log, buf := capture()
-	c := NewClient(fastBounds(Config{
+	c := mustClient(t, fastBounds(Config{
 		BaseURL: srv.URL, Logger: log, HeartbeatInterval: 20 * time.Millisecond,
 	}), srv.Client())
 
@@ -441,7 +441,7 @@ func TestComplete_failureLineCarriesItsOwnCounts(t *testing.T) {
 	defer close(release)
 
 	log, buf := capture()
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: log, StreamIdleTimeout: 80 * time.Millisecond}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: log, StreamIdleTimeout: 80 * time.Millisecond}), srv.Client())
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err == nil {
 		t.Fatal("want an error")
 	}
@@ -475,7 +475,7 @@ func TestComplete_acceptsDataLinesWithoutTheSpace(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+	got, err := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
 		Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -501,7 +501,7 @@ func TestComplete_countsRunesNotBytes(t *testing.T) {
 	defer srv.Close()
 
 	log, buf := capture()
-	_, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client()).
+	_, err := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client()).
 		Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err == nil {
 		t.Fatal("a stream that stops without finishing must be an error")
@@ -525,7 +525,7 @@ func TestComplete_reportsAStreamThatEndsWithNothing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+	_, err := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
 		Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err == nil {
 		t.Fatal("expected an error")
@@ -547,7 +547,7 @@ func TestCompleteStream_deliversDeltasInOrder(t *testing.T) {
 	defer srv.Close()
 
 	var got []string
-	whole, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+	whole, err := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
 		CompleteStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, func(d string) {
 			got = append(got, d)
 		})
@@ -572,7 +572,7 @@ func TestCompleteStream_nilCallbackIsTheCompletePath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+	got, err := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
 		CompleteStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
 	if err != nil {
 		t.Fatalf("CompleteStream: %v", err)
@@ -587,7 +587,7 @@ func TestCompleteStream_nilCallbackIsTheCompletePath(t *testing.T) {
 // whole-request timeout could reappear in it and silently cut streams again —
 // the exact failure this package was rewritten to remove.
 func TestNewClient_defaultTransportBoundsHeadersAndNotTheWholeRequest(t *testing.T) {
-	c := NewClient(Config{BaseURL: "http://example.invalid/v1", HeaderTimeout: 7 * time.Second}, nil)
+	c := mustClient(t, Config{BaseURL: "http://example.invalid/v1", HeaderTimeout: 7 * time.Second}, nil)
 
 	if c.http.Timeout != 0 {
 		t.Errorf("whole-request timeout = %v, want none: it caps body reads and cuts streams", c.http.Timeout)
@@ -623,7 +623,7 @@ func TestComplete_warnsWhenTheAnswerEndedEarly(t *testing.T) {
 	defer srv.Close()
 
 	log, buf := capture()
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client())
 	got, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
 		t.Fatalf("a length-limited answer must not be an error: %v", err)
@@ -649,7 +649,7 @@ func TestComplete_doesNotWarnOnANormalFinish(t *testing.T) {
 	defer srv.Close()
 
 	log, buf := capture()
-	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client())
+	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client())
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +682,7 @@ func TestComplete_statusErrorsKeepTheirPhrasing(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			_, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+			_, err := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
 				Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 			if err == nil {
 				t.Fatal("expected an error")
@@ -705,7 +705,7 @@ func TestComplete_midStreamErrorFrameNamesTheCode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+	_, err := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
 		Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err == nil {
 		t.Fatal("an error frame inside a 200 must not read as a finished answer")
@@ -716,4 +716,15 @@ func TestComplete_midStreamErrorFrameNamesTheCode(t *testing.T) {
 	if strings.Contains(err.Error(), "status 0") {
 		t.Errorf("err invents an HTTP status: %v", err)
 	}
+}
+
+// mustClient is NewClient for a test whose Config names its fake server, so
+// the only way it can fail is a bug in the constructor.
+func mustClient(t testing.TB, cfg Config, hc *http.Client) *Client {
+	t.Helper()
+	c, err := NewClient(cfg, hc)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return c
 }

@@ -26,7 +26,7 @@ func TestCompleteSendsTheOpenCodeIdentity(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL, EmulateOpenCode: true}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, EmulateOpenCode: true}, srv.Client())
 	for _, video := range []string{"vid-a", "vid-b"} {
 		ctx := WithCall(context.Background(), CallInfo{VideoID: video})
 		if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
@@ -73,7 +73,7 @@ func TestCompleteWithoutEmulationSendsNoOpenCodeIdentity(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Config{BaseURL: srv.URL}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}

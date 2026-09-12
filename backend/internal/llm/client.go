@@ -1,7 +1,8 @@
-// Package llm is peeq's lean OpenAI-compatible chat client, configured via
-// BACKEND_CHAT_BASE_URL, BACKEND_CHAT_API_KEY and BACKEND_CHAT_EMULATE_OPENCODE.
-// The model below is a real
-// upstream model identifier sent on the wire, not a config name — it is
+// Package llm is peeq's lean OpenAI-compatible chat client. The endpoint and
+// key come from the env vars the model's llmwire profile names
+// (BACKEND_CHAT_BASE_URL and BACKEND_CHAT_API_KEY), read by llmwire.FromEnv in
+// NewClient; BACKEND_CHAT_EMULATE_OPENCODE is peeq's own. The model below is a
+// real upstream model identifier sent on the wire, not a config name — it is
 // deliberately NOT renamed alongside those env vars.
 //
 // The upstream is Z.ai (api.z.ai/api/paas/v4), which cannot be asked to skip
@@ -111,8 +112,9 @@ const (
 // wire shape is llmwire's to render; what stays here is the decision.
 func wantsJSONObject(ctx context.Context) bool { return jsonObjectFrom(ctx) }
 
-// Config configures the chat client. BaseURL is the OpenAI-compatible root
-// (the client appends /chat/completions). APIKey is optional. RequestInterval
+// Config configures the chat client. BaseURL and APIKey override the env vars
+// the model's profile names; left empty (the production case) llmwire reads
+// those vars itself, and a test points BaseURL at its fake. RequestInterval
 // is the minimum gap between requests — breathing room for a slow or
 // rate-limited endpoint; 0 disables it. Logger defaults to slog.Default().
 // HeartbeatInterval is how often an in-flight request logs that it is still
@@ -166,7 +168,9 @@ type Client struct {
 // NewClient builds a Client. hc is optional; the default has NO whole-request
 // timeout (see the consts above — it would truncate a stream) and instead
 // carries ResponseHeaderTimeout as a backstop under the stallGuard.
-func NewClient(cfg Config, hc *http.Client) *Client {
+//
+// The error is a missing BACKEND_CHAT_BASE_URL or BACKEND_CHAT_API_KEY, named.
+func NewClient(cfg Config, hc *http.Client) (*Client, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -202,27 +206,31 @@ func NewClient(cfg Config, hc *http.Client) *Client {
 		tr.ResponseHeaderTimeout = cfg.HeaderTimeout + headerBackstopHeadroom
 		hc = &http.Client{Transport: tr}
 	}
+	wire, err := llmwire.FromEnv(model, llmwire.Config{
+		BaseURL: cfg.BaseURL,
+		APIKey:  cfg.APIKey,
+		// Opt-in: presents as the opencode client — its User-Agent and the
+		// session header pair, with a session id llmwire mints and rotates
+		// after an idle gap. Needed on an endpoint sold as one client's
+		// backend, where a neutral User-Agent is not what its traffic looks
+		// like (the MiMo token plan). Inert on Z.ai, which neither requires
+		// the headers nor issues ids of that shape, so it defaults to off.
+		EmulateOpenCode: cfg.EmulateOpenCode,
+		HeaderTimeout:   cfg.HeaderTimeout,
+		IdleTimeout:     cfg.StreamIdleTimeout,
+		CallTimeout:     cfg.CallTimeout,
+		HTTPClient:      hc,
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &Client{
-		wire: llmwire.New(llmwire.Config{
-			BaseURL: cfg.BaseURL,
-			APIKey:  cfg.APIKey,
-			// Opt-in: presents as the opencode client — its User-Agent and the
-			// session header pair, with a session id llmwire mints and rotates
-			// after an idle gap. Needed on an endpoint sold as one client's
-			// backend, where a neutral User-Agent is not what its traffic looks
-			// like (the MiMo token plan). Inert on Z.ai, which neither requires
-			// the headers nor issues ids of that shape, so it defaults to off.
-			EmulateOpenCode: cfg.EmulateOpenCode,
-			HeaderTimeout:   cfg.HeaderTimeout,
-			IdleTimeout:     cfg.StreamIdleTimeout,
-			CallTimeout:     cfg.CallTimeout,
-			HTTPClient:      hc,
-		}),
+		wire:      wire,
 		http:      hc,
 		interval:  cfg.RequestInterval,
 		log:       cfg.Logger,
 		heartbeat: cfg.HeartbeatInterval,
-	}
+	}, nil
 }
 
 // pace blocks until at least RequestInterval has elapsed since the previous

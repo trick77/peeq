@@ -41,15 +41,13 @@ type Config struct {
 	OIDC          OIDCConfig
 	Dev           DevUserConfig
 
-	// AI integration: chat + embeddings endpoints (required at boot). Neither
-	// model is configuration: both are constants (llm.ModelFor, rag.EmbedModel),
-	// because prompts, token caps and the vector table's width are all built to
-	// them. The embedding width in particular used to be a second variable that
-	// had to agree with the model; now it comes from the model's profile.
-	ChatBaseURL  string
-	ChatAPIKey   string
-	EmbedBaseURL string
-	EmbedAPIKey  string
+	// AI integration: no endpoint here. Each model's llmwire profile names the
+	// env vars its client reads (BACKEND_CHAT_BASE_URL and BACKEND_CHAT_API_KEY
+	// for glm-5.3-flash, BACKEND_EMBED_BASE_URL and BACKEND_EMBED_API_KEY for
+	// the embedding model) and llmwire.FromEnv reads them at boot, so a
+	// missing one is a boot error there. Neither model is
+	// configuration: both are constants (llm.ModelFor, rag.EmbedModel), because
+	// prompts, token caps and the vector table's width are all built to them.
 	// SearchMaxDistance bounds the semantic lane: hits at or beyond this L2
 	// distance are dropped rather than ranked. Vectors are unit length, so
 	// L2 = sqrt(2-2*cos); see rag.DefaultMaxDistance for the calibration.
@@ -177,10 +175,6 @@ func Load() (Config, error) {
 		},
 	}
 
-	cfg.ChatBaseURL = env("BACKEND_CHAT_BASE_URL", "")
-	cfg.ChatAPIKey = env("BACKEND_CHAT_API_KEY", "")
-	cfg.EmbedBaseURL = env("BACKEND_EMBED_BASE_URL", "")
-	cfg.EmbedAPIKey = env("BACKEND_EMBED_API_KEY", "")
 	cfg.DefaultSubLang = env("BACKEND_DEFAULT_SUB_LANG", "en")
 	cfg.SearchMaxDistance = defaultSearchMaxDistance
 	if v := env("BACKEND_ALLOW_ANONYMOUS_YOUTUBE", ""); v != "" {
@@ -247,13 +241,6 @@ func Load() (Config, error) {
 
 	if cfg.SessionSecret == "" {
 		return Config{}, fmt.Errorf("BACKEND_SESSION_SECRET is required")
-	}
-
-	if cfg.ChatBaseURL == "" {
-		return Config{}, fmt.Errorf("BACKEND_CHAT_BASE_URL is required")
-	}
-	if cfg.EmbedBaseURL == "" {
-		return Config{}, fmt.Errorf("BACKEND_EMBED_BASE_URL is required")
 	}
 
 	switch cfg.AuthMode {

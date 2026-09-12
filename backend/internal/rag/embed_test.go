@@ -23,7 +23,7 @@ func TestEmbedReturnsVectorsInInputOrder(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL}, srv.Client())
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
 	vecs, err := c.Embed(context.Background(), []string{"a", "b"})
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestEmbedBatchedSplitsAndPreservesOrder(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL}, srv.Client())
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
 	inputs := make([]string, 150)
 	for i := range inputs {
 		inputs[i] = "t" + strconv.Itoa(i)
@@ -97,7 +97,7 @@ func TestEmbedBatchedSingleRequestBelowThreshold(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL}, srv.Client())
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
 	if _, err := c.EmbedBatched(context.Background(), []string{"a", "b"}, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestEmbedBatchedFailsWholeCallOnBatchError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL}, srv.Client())
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
 	inputs := make([]string, 130)
 	for i := range inputs {
 		inputs[i] = "t"
@@ -151,7 +151,7 @@ func TestEmbedModel_isPinnedAndProfiled(t *testing.T) {
 	if got := EmbedDim(); got != 1536 {
 		t.Fatalf("EmbedDim() = %d, want 1536: vec_chunks was created at that width", got)
 	}
-	c := NewEmbedClient(EmbedConfig{BaseURL: "http://example.invalid"}, nil)
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: "http://example.invalid"}, nil)
 	if c.Model() != EmbedModel {
 		t.Errorf("Model() = %q, want the pinned constant", c.Model())
 	}
@@ -177,11 +177,22 @@ func TestEmbed_sendsThePinnedModel(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewEmbedClient(EmbedConfig{BaseURL: srv.URL}, srv.Client())
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
 	if _, err := c.Embed(context.Background(), []string{"a"}); err != nil {
 		t.Fatal(err)
 	}
 	if gotModel != EmbedModel {
 		t.Errorf("model on the wire = %q, want %q", gotModel, EmbedModel)
 	}
+}
+
+// mustEmbedClient is NewEmbedClient for a test whose EmbedConfig names its
+// fake server, so the only way it can fail is a bug in the constructor.
+func mustEmbedClient(t testing.TB, cfg EmbedConfig, hc *http.Client) *EmbedClient {
+	t.Helper()
+	c, err := NewEmbedClient(cfg, hc)
+	if err != nil {
+		t.Fatalf("NewEmbedClient: %v", err)
+	}
+	return c
 }

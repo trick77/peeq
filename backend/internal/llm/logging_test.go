@@ -89,7 +89,7 @@ func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
 	}))
 	defer srv.Close()
 	log, buf := capture()
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 
 	totals := &Totals{}
 	ctx := WithTotals(WithCall(context.Background(), CallInfo{VideoID: "vid1", Title: "A Title", Channel: "A Channel"}), totals)
@@ -137,7 +137,7 @@ func TestComplete_logsAReportedZeroRatherThanDroppingIt(t *testing.T) {
 	}))
 	defer srv.Close()
 	log, buf := capture()
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestComplete_logsRawUsageAndTheAbsenceOfIt(t *testing.T) {
 		}))
 		defer srv.Close()
 		log, buf := capture()
-		c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+		c := mustClient(t, Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 		if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 			t.Fatal(err)
 		}
@@ -173,7 +173,7 @@ func TestComplete_logsRawUsageAndTheAbsenceOfIt(t *testing.T) {
 		}))
 		defer srv.Close()
 		log, buf := capture()
-		c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+		c := mustClient(t, Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 		totals := &Totals{}
 		ctx := WithTotals(WithCall(context.Background(), CallInfo{VideoID: "vid1"}), totals)
 		if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
@@ -201,7 +201,7 @@ func TestComplete_rawUsageIsCapped(t *testing.T) {
 	}))
 	defer srv.Close()
 	log, buf := capture()
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestComplete_rawUsageCutsOnARuneBoundary(t *testing.T) {
 				strings.Repeat("x", shift)+strings.Repeat("é", maxRawUsage)+`"}`))
 		}))
 		log, buf := capture()
-		c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+		c := mustClient(t, Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 		_, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 		srv.Close()
 		if err != nil {
@@ -244,7 +244,7 @@ func TestComplete_inferenceTimeExcludesPacing(t *testing.T) {
 	defer srv.Close()
 	log, _ := capture()
 	const interval = 300 * time.Millisecond
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log, RequestInterval: interval}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log, RequestInterval: interval}, srv.Client())
 
 	totals := &Totals{}
 	ctx := WithTotals(WithCall(context.Background(), CallInfo{VideoID: "vid1"}), totals)
@@ -277,7 +277,7 @@ func TestComplete_accumulatesTotalsAcrossCalls(t *testing.T) {
 	}))
 	defer srv.Close()
 	log, _ := capture()
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 
 	totals := &Totals{}
 	ctx := WithTotals(WithCall(context.Background(), CallInfo{VideoID: "vid1"}), totals)
@@ -302,7 +302,7 @@ func TestComplete_totalsSurviveANestedWithCall(t *testing.T) {
 	}))
 	defer srv.Close()
 	log, _ := capture()
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 
 	totals := &Totals{}
 	ctx := WithTotals(context.Background(), totals)
@@ -322,7 +322,7 @@ func TestComplete_worksWithoutCallInfo(t *testing.T) {
 	}))
 	defer srv.Close()
 	log, buf := capture()
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 
 	// No WithCall: a caller that never attached identity (or a nil Totals)
 	// must still complete, and simply log less.
@@ -346,7 +346,7 @@ func TestWithStage_ridesAlongToTheHeartbeatAndTheLogLines(t *testing.T) {
 	}))
 	defer srv.Close()
 	log, buf := capture()
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log, HeartbeatInterval: 10 * time.Millisecond}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log, HeartbeatInterval: 10 * time.Millisecond}, srv.Client())
 
 	// The worker sets step and stage together; a stall must say which stage of
 	// which video is stuck, not just that something is slow.
@@ -379,7 +379,7 @@ func TestComplete_heartbeatsWhileWaiting(t *testing.T) {
 	}))
 	defer srv.Close()
 	log, buf := capture()
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log, HeartbeatInterval: 10 * time.Millisecond}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log, HeartbeatInterval: 10 * time.Millisecond}, srv.Client())
 
 	ctx := WithCall(context.Background(), CallInfo{VideoID: "vid1", Title: "A Title", Channel: "A Channel"})
 	go func() {
@@ -410,7 +410,7 @@ func TestComplete_heartbeatDisabledByNegativeInterval(t *testing.T) {
 	}))
 	defer srv.Close()
 	log, buf := capture()
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log, HeartbeatInterval: -1}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log, HeartbeatInterval: -1}, srv.Client())
 	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +454,7 @@ func TestComplete_logsFailuresWithDurationAndKeepsErrorText(t *testing.T) {
 			srv := httptest.NewServer(tc.handler)
 			defer srv.Close()
 			log, buf := capture()
-			c := NewClient(Config{BaseURL: srv.URL, Logger: log}, srv.Client())
+			c := mustClient(t, Config{BaseURL: srv.URL, Logger: log}, srv.Client())
 
 			ctx := WithCall(context.Background(), CallInfo{VideoID: "vid1", Title: "A Title"})
 			_, err := c.Complete(WithStep(ctx, "summary"), []Message{{Role: "user", Content: "hi"}})
@@ -483,7 +483,7 @@ func TestComplete_logsPacingSeparatelyFromLatency(t *testing.T) {
 	log, buf := capture()
 	// An interval well past the 1s log threshold, so the second call's wait is
 	// reported as pacing rather than read as a slow endpoint.
-	c := NewClient(Config{BaseURL: srv.URL, Logger: log, RequestInterval: 1200 * time.Millisecond}, srv.Client())
+	c := mustClient(t, Config{BaseURL: srv.URL, Logger: log, RequestInterval: 1200 * time.Millisecond}, srv.Client())
 	for i := 0; i < 2; i++ {
 		if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
 			t.Fatal(err)
