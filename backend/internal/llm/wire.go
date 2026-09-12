@@ -14,20 +14,19 @@ import (
 // The seam onto llmwire.
 //
 // What moved out of this package: the SSE scanner, the three-bound stall guard
-// that named which bound fired, and the request struct. All three
-// existed in near-identical form in five backends, and every model quirk learned
-// here had to be relearned there — which is what llmwire exists to stop.
+// that named which bound fired, the request struct, and the usage decoding. All
+// four existed in near-identical form in five backends, and every model quirk
+// learned here had to be relearned there — which is what llmwire exists to stop.
 //
 // What deliberately stayed: pacing, the heartbeat, the CallInfo/Totals
-// accounting, the context knobs, the per-video session headers, and every log
-// line. Those are peeq's policy, not wire protocol, and a library that owned
-// them would be a framework.
+// accounting, the context knobs, and every log line. Those are peeq's policy,
+// not wire protocol, and a library that owned them would be a framework.
 //
-// The usage seam is the important one: llmwire hands back the endpoint's own
-// usage bytes verbatim in Usage.Raw, so chatUsage, usageFrom and Accounted are
-// unchanged and still answer "did this endpoint report a zero, or report
-// nothing". Decoding twice is deliberate — the alternative is trusting a second
-// mapping to preserve a distinction this package's logging is built on.
+// The usage seam: llmwire decodes the endpoint's usage object into typed lanes
+// whose nil means "not reported", and keeps the bytes in Usage.Raw for the debug
+// line. usageFromWire (client.go) folds those lanes into this package's Usage
+// and derives Accounted from lane presence, so "reported a zero" and "reported
+// nothing" stay distinguishable without a second parser.
 
 // streamCounters are the live counts the heartbeat reads while the stream is
 // still being consumed. Atomic because the consuming goroutine writes them as
