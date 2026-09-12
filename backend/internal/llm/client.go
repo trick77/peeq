@@ -13,17 +13,17 @@
 package llm
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/trick77/llmwire"
 )
 
 // Three bounds replace the single whole-request timeout this client used while
@@ -80,12 +80,13 @@ const (
 	// is the one place that knows which strings the endpoint accepts.
 	reasoningEffort = maxReasoningEffort
 
-	// Z.ai's recommended sampling settings for GLM-5.3-Flash. Sent explicitly
-	// because the endpoint's own fallbacks are lower (around 0.5 and 0.7), so
-	// omitting them does not mean "the model's defaults" — it means running it
-	// off its recommended operating point.
-	chatTemperature = 1.0
-	chatTopP        = 0.95
+	// Z.ai's recommended sampling settings for GLM-5.3-Flash live in llmwire's
+	// profile now, as its recommended values, and it sends them whenever a caller
+	// expresses no preference — which peeq never does. They are sent rather than
+	// omitted because this endpoint's own fallbacks are lower (around 0.5 and
+	// 0.7), so leaving them out does not mean "the model's defaults", it means
+	// running the model off its recommended operating point. The values are
+	// asserted on the wire in client_test.go.
 	// defaultHeaderTimeout is how long the endpoint may take to send response
 	// headers. Generous next to the ~2.5s observed, because it competes with
 	// nothing — a stall costs a minute now instead of five.
@@ -99,17 +100,17 @@ const (
 	// summarize worker sets no deadline of its own, so without this there would
 	// be no cap at all.
 	defaultCallTimeout = 15 * time.Minute
-	maxErrorBody       = 4 << 10
-	pacedLogThreshold  = time.Second
-	maxRawUsage        = 1 << 10
+	// headerBackstopHeadroom keeps the transport's ResponseHeaderTimeout later
+	// than the bound llmwire names, so the named failure wins the race. See
+	// NewClient.
+	headerBackstopHeadroom = 30 * time.Second
+	pacedLogThreshold      = time.Second
+	maxRawUsage            = 1 << 10
 )
 
-func responseFormatFor(ctx context.Context) *responseFormat {
-	if jsonObjectFrom(ctx) {
-		return &responseFormat{Type: responseFormatJSONObject}
-	}
-	return nil
-}
+// wantsJSONObject reports whether this call asked to be constrained to JSON. The
+// wire shape is llmwire's to render; what stays here is the decision.
+func wantsJSONObject(ctx context.Context) bool { return jsonObjectFrom(ctx) }
 
 // Config configures the chat client. BaseURL is the OpenAI-compatible root
 // (the client appends /chat/completions). APIKey is optional. RequestInterval
@@ -186,8 +187,16 @@ func NewClient(cfg Config, hc *http.Client) *Client {
 		// Clone the stdlib default rather than build a bare Transport, so proxy
 		// support, dial timeouts and connection pooling stay at their tuned
 		// values instead of being dropped.
+		//
+		// The backstop sits DELIBERATELY LATER than the bound llmwire enforces.
+		// Both watch the same thing, and when the transport wins the error is its
+		// generic "timeout awaiting response headers" instead of llmwire's named
+		// bound — losing exactly the classification the split bounds exist to
+		// provide. The headroom makes the named one reliably first. It also does
+		// not apply over HTTP/2 at all, which is what this endpoint negotiates,
+		// so it is a backstop and never the mechanism.
 		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.ResponseHeaderTimeout = cfg.HeaderTimeout
+		tr.ResponseHeaderTimeout = cfg.HeaderTimeout + headerBackstopHeadroom
 		hc = &http.Client{Transport: tr}
 	}
 	return &Client{
@@ -234,28 +243,14 @@ func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 	}
 }
 
-// No tool_stream here, which Z.ai also recommends for streaming: it streams tool
-// CALL arguments as they are generated, and peeq sends no tools at all. There is
-// nothing for it to stream.
-type chatRequest struct {
-	Model           string          `json:"model"`
-	Messages        []Message       `json:"messages"`
-	ReasoningEffort string          `json:"reasoning_effort"`
-	Thinking        thinkingOption  `json:"thinking"`
-	Temperature     float64         `json:"temperature"`
-	TopP            float64         `json:"top_p"`
-	MaxTokens       int             `json:"max_tokens,omitempty"`
-	Stream          bool            `json:"stream"`
-	ResponseFormat  *responseFormat `json:"response_format,omitempty"`
-}
-
-// responseFormat constrains the reply shape. Omitted unless AsJSONObject asks
-// for it — see there for why the prompt alone is not enough on this model.
-type responseFormat struct {
-	Type string `json:"type"`
-}
-
-const responseFormatJSONObject = "json_object"
+// The request struct that used to live here is gone: llmwire renders the body
+// now, from the fields chatRequestFor fills in. What it sent is still asserted,
+// on the wire, by the tests in client_test.go — the body is the contract, not the
+// struct that produced it.
+//
+// Two absences that were deliberate and still are, recorded because a future
+// reader will wonder. No tool_stream: it streams tool CALL arguments as they are
+// generated and peeq sends no tools, so there is nothing for it to stream.
 
 // No stream_options here, deliberately. MiMo needed stream_options.include_usage
 // to send the trailing usage chunk at all, without which every chat_tokens_*
@@ -344,9 +339,14 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 
 // CompleteStream is Complete with a callback invoked for every content
 // fragment as it arrives, for callers relaying the answer to a browser rather
-// than waiting for it. onDelta runs on the reader goroutine, so it must not
-// block; the returned string is still the whole answer, so a caller that
-// streams and a caller that buffers see exactly the same text.
+// than waiting for it. The returned string is still the whole answer, so a
+// caller that streams and a caller that buffers see exactly the same text.
+//
+// onDelta now runs on the CALLING goroutine, not the socket reader: llmwire
+// reads ahead into an unbounded queue precisely so a slow consumer cannot stop
+// the idle guard being re-armed and get itself reported as a stalled model. A
+// callback that blocks therefore delays this call and nothing else — it no
+// longer risks killing the stream — but it is still the wrong place for work.
 //
 // Every bound, counter and log line is shared with Complete — there is one
 // request path, not two.
@@ -361,56 +361,41 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 		// this, RequestInterval looks like latency.
 		c.log.Debug("llm: paced", append(info.LogAttrs(), "waited_ms", pacedFor.Milliseconds())...)
 	}
-	body, err := json.Marshal(chatRequest{
-		Model: modelFrom(ctx), Messages: messages, ReasoningEffort: reasoningEffortFrom(ctx),
-		Thinking: thinkingOptionFor(ctx), Temperature: chatTemperature, TopP: chatTopP,
-		MaxTokens: maxTokensFrom(ctx), Stream: true,
-		ResponseFormat: responseFormatFor(ctx),
-	})
-	if err != nil {
-		return "", fmt.Errorf("marshal chat request: %w", err)
-	}
+	wireReq := chatRequestFor(ctx, messages)
 
-	// Two nested contexts, because their failures mean different things and the
-	// error has to say which: callCtx is the overall cap, reqCtx is what the
-	// stallGuard cancels. Cancelling reqCtx leaves callCtx's deadline intact to
-	// be distinguished from it afterwards.
-	callCtx, cancelCall := context.WithTimeout(ctx, c.cap)
-	defer cancelCall()
-	reqCtx, cancelReq := context.WithCancel(callCtx)
-	defer cancelReq()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("create chat request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("User-Agent", chatUserAgent)
-	// Session headers pin the many calls one video costs to a single upstream
-	// node. Both names carry the same value; the upstream sends the pair too.
-	// Accept-Encoding is left unset on purpose so net/http keeps negotiating and
-	// decompressing gzip transparently — setting it by hand would hand us a
-	// compressed body to decode ourselves, mid-stream.
+	// A client per call, because the session headers are per call: they pin the
+	// many requests one video costs to a single upstream node, and llmwire's
+	// header map is per client. This is cheap — the *http.Client, and with it the
+	// connection pool, is the one built in NewClient and shared across every
+	// call; only a small struct and a two-entry map are new.
+	//
+	// Accept-Encoding stays unset so net/http keeps negotiating and decompressing
+	// gzip transparently. Setting it by hand would hand us a compressed body to
+	// decode ourselves, mid-stream. llmwire leaves it alone for the same reason.
 	sessionID := chatSessionID(info.VideoID)
-	req.Header.Set("X-Session-Id", sessionID)
-	req.Header.Set("X-Session-Affinity", sessionID)
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
+	wire := llmwire.New(llmwire.Config{
+		BaseURL:   c.baseURL,
+		APIKey:    c.apiKey,
+		UserAgent: chatUserAgent,
+		Headers: map[string]string{
+			"X-Session-Id":       sessionID,
+			"X-Session-Affinity": sessionID,
+		},
+		HeaderTimeout: c.header,
+		IdleTimeout:   c.idle,
+		CallTimeout:   c.cap,
+		HTTPClient:    c.http,
+	})
 
 	started := time.Now()
 	c.log.Debug("llm: request start", append(info.LogAttrs(),
-		"model", modelFrom(ctx), "messages", len(messages), "request_bytes", len(body),
+		"model", modelFrom(ctx), "messages", len(messages),
 		"reasoning_effort", reasoningEffortFrom(ctx))...)
 
 	var counters streamCounters
 	stop := StartHeartbeatFunc(ctx, c.log, c.heartbeat, "llm: still waiting for response",
 		counters.attrs, info.LogAttrs()...)
 	defer stop()
-
-	guard := newStallGuard(cancelReq, c.header, stallHeaders)
-	defer guard.stop()
 
 	// The failure line carries this call's OWN counts. Before streaming there
 	// was nothing to report but a duration, so a reader reaching for numbers
@@ -426,22 +411,24 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 		return "", err
 	}
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fail(fmt.Errorf("chat request: %w", c.explain(ctx, callCtx, guard, err)))
+	// One call, one error path. llmwire names the bound that gave up — "no
+	// response headers within 1m0s", "stream idle for 1m30s", "exceeded the 15m0s
+	// call cap" — and surfaces a non-2xx as a typed error carrying the status and
+	// the endpoint's own message, so the classification this package used to do
+	// by hand arrives already done.
+	res, err := c.runStream(ctx, wire, wireReq, &counters, onDelta)
+	for _, w := range res.warnings {
+		// DEBUG, not WARN. A warning here means llmwire coerced something or
+		// could not price the call, and the commonest by far is "this response
+		// carried no usage object" — which this package already reports once, as
+		// `llm: no usage reported`, and which happens on every failed call. At
+		// WARN it would put a second line on every one of those and bury the
+		// failures that matter.
+		c.log.Debug("llm: wire warning", append(info.LogAttrs(),
+			"kind", string(w.Kind), "feature", w.Feature, "details", w.Details)...)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
-		return fail(fmt.Errorf("chat failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg))))
-	}
-	// Headers are in, so the bound that matters from here is silence, not
-	// arrival. Every event re-arms this inside readStream.
-	guard.arm(c.idle, stallIdle)
-
-	res, err := readStream(resp.Body, guard, &counters, c.idle, onDelta)
 	if err != nil {
-		return fail(fmt.Errorf("chat stream: %w", c.explain(ctx, callCtx, guard, err)))
+		return fail(err)
 	}
 
 	// A finish_reason other than "stop" means the endpoint ended the answer on
@@ -467,8 +454,8 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	// whoever reads the total later. See Usage.CostNanoUSD for why the total has
 	// to be a sum of per-call prices and not a re-derivation from summed tokens.
 	callModel := modelFrom(ctx)
-	usage.CostNanoUSD = costNanoUSD(callModel, usage)
-	if usage.Accounted != 0 && shouldWarnUnpriced(callModel) {
+	usage.CostNanoUSD = res.costNanoUSD
+	if usage.Accounted != 0 && !res.costPriced && shouldWarnUnpriced(callModel) {
 		// A deployment added to this package without a rate. Warned rather than
 		// left to read as a free call: the cost columns would keep filling with
 		// zeros and nothing else would ever say why. Once per model id per
@@ -487,7 +474,7 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	// duration, so printing duration_ms here too would be the same number
 	// twice. status and the stream counts are what this line adds on top of
 	// the accounting.
-	attrs := append(info.LogAttrs(), "status", resp.StatusCode,
+	attrs := append(info.LogAttrs(),
 		"chunks", res.events, "finish_reason", res.finishReason)
 	c.log.Debug("llm: request done", append(attrs, usage.LogAttrs()...)...)
 	// Opt-in: a caller that must not persist a truncated answer (the single-pass
@@ -502,27 +489,12 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	return res.content, nil
 }
 
-// explain replaces the bare "context canceled" a cancelled request returns with
-// the bound that actually gave up. Without it every one of these three failures
-// looks identical in the log, which is the exact problem streaming was adopted
-// to solve — so the classification, not the streaming, is the deliverable.
-//
-// Order matters: the guard is checked first because it cancels reqCtx directly,
-// and a parent that is also done would otherwise mask it.
-func (c *Client) explain(parent, call context.Context, guard *stallGuard, err error) error {
-	if reason := guard.firedReason(); reason != "" {
-		switch reason {
-		case stallHeaders:
-			return fmt.Errorf("%s within %s", reason, c.header)
-		default:
-			return fmt.Errorf("%s for %s", reason, c.idle)
-		}
-	}
-	if call.Err() != nil && parent.Err() == nil {
-		return fmt.Errorf("exceeded the %s call cap", c.cap)
-	}
-	return err
-}
+// Naming which bound gave up now happens in llmwire, which owns the guard: it
+// returns "no response headers within 1m0s", "stream idle for 1m30s" or
+// "exceeded the 15m0s call cap" rather than a bare "context canceled". That
+// classification was this package's deliverable when it streamed by hand, and it
+// is preserved verbatim in the tests below — the strings are asserted, not the
+// mechanism.
 
 // truncate caps a log value, marking it so a cut is never mistaken for the
 // endpoint's own output. It cuts on a rune boundary: a byte-offset cut can

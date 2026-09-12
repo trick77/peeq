@@ -44,11 +44,16 @@ func TestCompleteSendsModelAndEffortAndReturnsContent(t *testing.T) {
 	}
 	// Z.ai's recommended sampling point. Omitting these does not give "the
 	// model's defaults", it gives lower ones, so absence is the bug to catch.
-	if gotBody["temperature"] != chatTemperature {
-		t.Fatalf("temperature = %v", gotBody["temperature"])
+	//
+	// Literals on purpose. The values come from llmwire's profile now, and the
+	// whole point of this assertion is that the right numbers reach the wire —
+	// comparing against the same constant the renderer read would pass whatever
+	// that constant became.
+	if gotBody["temperature"] != 1.0 {
+		t.Fatalf("temperature = %v, want 1.0", gotBody["temperature"])
 	}
-	if gotBody["top_p"] != chatTopP {
-		t.Fatalf("top_p = %v", gotBody["top_p"])
+	if gotBody["top_p"] != 0.95 {
+		t.Fatalf("top_p = %v, want 0.95", gotBody["top_p"])
 	}
 	if ct, ok := thinkingObj(t, gotBody)["clear_thinking"].(bool); !ok || ct {
 		t.Fatalf("clear_thinking = %v, want false", thinkingObj(t, gotBody)["clear_thinking"])
@@ -347,8 +352,10 @@ func TestComplete_jsonObjectIsOptIn(t *testing.T) {
 	if _, err := c.Complete(AsJSONObject(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
 		t.Fatal(err)
 	}
+	// The literal is the assertion: this is the string the endpoint understands,
+	// and it is rendered by llmwire now.
 	rf, _ := gotBody["response_format"].(map[string]any)
-	if rf == nil || rf["type"] != responseFormatJSONObject {
-		t.Fatalf("response_format = %v, want type %q", gotBody["response_format"], responseFormatJSONObject)
+	if rf == nil || rf["type"] != "json_object" {
+		t.Fatalf("response_format = %v, want type %q", gotBody["response_format"], "json_object")
 	}
 }

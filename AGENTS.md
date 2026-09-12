@@ -41,10 +41,23 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - `glm-5.3-flash` on Z.ai, hardcoded in `internal/llm/client.go`, never env vars.
 - `BACKEND_CHAT_BASE_URL` = Z.ai GENERAL endpoint `https://api.z.ai/api/paas/v4` (no `/v1`). NEVER
   the Coding Plan endpoint `/api/coding/paas/v4` — restricted to Z.ai's own tools, forbids peeq.
+- **The wire protocol is `github.com/trick77/llmwire`.** What that library owns, and what therefore
+  must NOT be reimplemented here: the SSE parsing, the header/idle/call bounds and the text naming
+  which one fired, the request body, and the rate table. This package owns pacing, the heartbeat,
+  the `CallInfo`/`Totals` accounting, the context knobs and the per-video session headers.
 - **Thinking can't be switched off.** `thinking:{"type":"disabled"}` → 400 code 1210. Only
-  `low`/`high`/`max` effort accepted; `none`/`minimal`/`medium`/`xhigh` rejected.
-- Default effort `max` (Z.ai's own default + recommendation). Also send their `temperature: 1` /
-  `top_p: 0.95` — omitting these gives LOWER values, not "the defaults".
+  `low`/`high`/`max` effort accepted; `none`/`minimal`/`medium`/`xhigh` rejected. This now lives in
+  llmwire's profile for the model, which is where a fix belongs if Z.ai ever changes it.
+- Default effort `max` (Z.ai's own default + recommendation). `temperature: 1` / `top_p: 0.95` come
+  from the profile's recommended values — omitting them gives LOWER values, not "the defaults", so
+  llmwire sends them when the caller expresses no preference. Do not set them here.
+- **Keepalives do not hold the idle bound off.** A `: ping` proves the socket is alive and says
+  nothing about progress, so only `data:` frames re-arm it — reasoning deltas included, which is why
+  a long silent think is still safe. Measured: the longest comment-only gap this endpoint produced
+  was 1.4s against a 90s bound.
+- **Cost doubled on 2026-09-12** and older rows are at the old rate. peeq's table came from
+  models.dev, whose entry is dated the model's release day and was never updated; llmwire ships
+  Z.ai's own 0.15/0.03/0.50 per 1M with the source URL and the date it was read.
 - `llm.Shallow(ctx)` (→`low`) is a LATENCY lever, not cost. One caller: the Ask understand gate,
   hard 10s timeout. Tokens barely differ per level; time does (keypoints 12.8s high → 69.9s max).
   Use only with a latency reason, written down. Classification is NOT such a reason: measured, `low`

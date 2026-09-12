@@ -9,10 +9,42 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// The SSE framing the fixtures build. These used to be package constants next to
+// the scanner that consumed them; the scanner now lives in llmwire, so the
+// fixtures own the strings they write.
+const (
+	dataPrefix = "data:"
+	doneMarker = "[DONE]"
+
+	// The bound names llmwire reports when it gives up. Pinned here as literals
+	// on purpose, rather than imported: these strings are what an operator greps
+	// for in a job log, so peeq's contract is the TEXT. Importing the constant
+	// would let a rename upstream pass silently and quietly break every runbook
+	// that mentions them.
+	stallHeaders = "no response headers"
+	stallIdle    = "stream idle"
+)
+
+// decodeJSON reads a captured request body, failing the test rather than the
+// handler so an assertion error points at the test that made it.
+func decodeJSON(t *testing.T, r *http.Request, v any) {
+	t.Helper()
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatalf("read request body: %v", err)
+	}
+	if err := json.Unmarshal(b, v); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 // sseEvent frames one payload as the endpoint frames it: a data line and a
 // blank separator.
@@ -140,8 +172,14 @@ func TestComplete_keepsTheUsageChunkThatFollowsFinishReason(t *testing.T) {
 	}
 	got := totals.Snapshot()
 	got.InferenceNanos, got.PacedNanos = 0, 0
+	// 73 uncached prompt tokens at $0.15/1M, 192 cached at $0.03, 80 output at
+	// $0.50: 10_950 + 5_760 + 40_000. Exactly double what this test expected
+	// before the migration, because peeq's own table came from a models.dev entry
+	// last updated on the model's release day and never revisited, while Z.ai's
+	// page has carried twice those figures since. The rate llmwire ships was read
+	// off the vendor's page and carries its URL and the date it was read.
 	want := Usage{Requests: 1, Accounted: 1, PromptTokens: 265, CachedTokens: 192, CompletionTokens: 80,
-		TotalTokens: 345, CostNanoUSD: 28_355}
+		TotalTokens: 345, CostNanoUSD: 56_710}
 	if got != want {
 		t.Fatalf("totals = %+v, want %+v", got, want)
 	}
@@ -237,16 +275,51 @@ func TestComplete_namesTheIdleBoundAndHowFarItGot(t *testing.T) {
 	}
 }
 
-// Keepalives prove the socket is alive without making progress. They must hold
-// the idle bound off — otherwise a quiet-but-healthy stream dies — and the
-// overall cap must then be what stops an endpoint that never finishes.
-func TestComplete_keepalivesHoldOffTheIdleBound(t *testing.T) {
+// A DELIBERATE CHANGE OF POLICY, and the one behavioural difference this
+// migration makes on a healthy stream.
+//
+// This package used to re-arm the idle bound on every line, keepalives included.
+// llmwire re-arms on `data:` frames only, because a comment proves the socket is
+// alive and says nothing about the model making progress — so an upstream
+// emitting `: ping` on a timer could hold a stalled model open until the
+// 15-minute call cap. loom took the opposite view and re-armed on nothing;
+// llmwire merged the two, and measured the case before choosing: the longest
+// comment-only gap either endpoint produced was 1.396s against a 90s bound.
+//
+// What peeq gives up is tolerance for an endpoint that goes quiet for longer
+// than StreamIdleTimeout while sending only comments. What it gains is a stalled
+// model failing in 90 seconds rather than 15 minutes. Reasoning deltas are
+// `data:` frames, so the long silent think this endpoint is known for still
+// re-arms the bound.
+func TestComplete_keepalivesDoNotHoldOffTheIdleBound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Ten keepalives at 20ms span 200ms, well past the 150ms idle bound,
-		// while each individual gap stays far enough below it that a scheduling
-		// hiccup on a loaded CI machine cannot fail this by itself.
+		// Comments only, well past the idle bound. Under the old policy this
+		// answered "survived"; now the bound fires.
 		for i := 0; i < 10; i++ {
 			flush(t, w, ": ping\n\n")
+			time.Sleep(20 * time.Millisecond)
+		}
+		flush(t, w, sseStream("survived", ""))
+	}))
+	defer srv.Close()
+
+	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), StreamIdleTimeout: 80 * time.Millisecond}), srv.Client())
+	_, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+	if err == nil {
+		t.Fatal("want the idle bound to fire: comments are not progress")
+	}
+	if !strings.Contains(err.Error(), stallIdle) {
+		t.Fatalf("err = %v, want it to name %q", err, stallIdle)
+	}
+}
+
+// The other half of that rule, and the reason it is safe: a reasoning delta IS a
+// data frame, so a model that thinks for a long time before saying anything
+// keeps the bound re-armed and is not mistaken for a stalled one.
+func TestComplete_reasoningDeltasHoldOffTheIdleBound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for i := 0; i < 10; i++ {
+			flush(t, w, sseEvent(`{"choices":[{"delta":{"reasoning_content":"thinking"},"index":0}]}`))
 			time.Sleep(20 * time.Millisecond)
 		}
 		flush(t, w, sseStream("survived", ""))
@@ -256,7 +329,7 @@ func TestComplete_keepalivesHoldOffTheIdleBound(t *testing.T) {
 	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger(), StreamIdleTimeout: 150 * time.Millisecond}), srv.Client())
 	got, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
-		t.Fatalf("keepalives did not re-arm the idle bound: %v", err)
+		t.Fatalf("a thinking model was treated as a stalled one: %v", err)
 	}
 	if got != "survived" {
 		t.Fatalf("content = %q, want %q", got, "survived")
@@ -396,170 +469,158 @@ func TestComplete_failureLineCarriesItsOwnCounts(t *testing.T) {
 // SSE allows the space after "data:" to be omitted. Matching only the spaced
 // form would drop every event from such an endpoint as if it were a comment —
 // silently, with no error to point at.
-func TestReadStream_acceptsDataLinesWithoutTheSpace(t *testing.T) {
-	var counters streamCounters
-	guard := newStallGuard(func() {}, time.Hour, stallIdle)
-	defer guard.stop()
+//
+// The scanner is llmwire's now, so this asserts the property end to end rather
+// than calling the parser: what matters to peeq is that such an endpoint still
+// produces an answer.
+func TestComplete_acceptsDataLinesWithoutTheSpace(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, dataPrefix+`{"choices":[{"delta":{"content":"tight"},"finish_reason":"stop"}]}`+"\n\n")
+		_, _ = io.WriteString(w, dataPrefix+doneMarker+"\n\n")
+	}))
+	defer srv.Close()
 
-	body := `data:{"choices":[{"delta":{"content":"tight"},"finish_reason":"stop","index":0}]}` + "\n\n" +
-		"data:[DONE]\n\n"
-	res, err := readStream(strings.NewReader(body), guard, &counters, time.Hour, nil)
+	got, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+		Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Complete: %v", err)
 	}
-	if res.content != "tight" {
-		t.Fatalf("content = %q, want %q", res.content, "tight")
+	if got != "tight" {
+		t.Errorf("content = %q, want %q", got, "tight")
 	}
 }
 
-// chars counts runes, so non-ASCII output is not reported as more text than the
-// model produced.
-func TestReadStream_countsRunesNotBytes(t *testing.T) {
-	var counters streamCounters
-	guard := newStallGuard(func() {}, time.Hour, stallIdle)
-	defer guard.stop()
+// The character count the heartbeat and the failure line report is in RUNES.
+// This endpoint returns non-ASCII routinely, and a byte count reads as more
+// output than the model produced — the kind of number nobody can reconcile
+// later. Asserted through the failure line, which is where the count surfaces.
+func TestComplete_countsRunesNotBytes(t *testing.T) {
+	// Four runes, ten bytes.
+	const answer = "héllo…"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		// No finish_reason and no [DONE]: the stream just stops, which is the
+		// failure that makes the counts visible.
+		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"`+answer+`"}}]}`))
+	}))
+	defer srv.Close()
 
-	// Five runes, ten bytes in UTF-8.
-	body := `data: {"choices":[{"delta":{"content":"héllö"},"finish_reason":"stop","index":0}]}` + "\n\n" +
-		"data: [DONE]\n\n"
-	res, err := readStream(strings.NewReader(body), guard, &counters, time.Hour, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.chars != 5 {
-		t.Fatalf("chars = %d, want 5 (runes, not bytes)", res.chars)
-	}
-}
-
-func TestReadStream_reportsAStreamThatEndsWithNothing(t *testing.T) {
-	// An endpoint that closes the connection with neither output nor a
-	// finish_reason has not answered, and must not look like an empty summary.
-	var counters streamCounters
-	guard := newStallGuard(func() {}, time.Hour, stallIdle)
-	defer guard.stop()
-
-	_, err := readStream(strings.NewReader(": ping\n\n"), guard, &counters, time.Hour, nil)
+	log, buf := capture()
+	_, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client()).
+		Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	if err == nil {
-		t.Fatal("want an error")
+		t.Fatal("a stream that stops without finishing must be an error")
+	}
+	rec := find(buf.records(t), "llm: request failed")
+	if rec == nil {
+		t.Fatal("no failure line")
+	}
+	if got := rec["chars"]; got != float64(len([]rune(answer))) {
+		t.Errorf("chars = %v, want %d runes (not %d bytes)", got, len([]rune(answer)), len(answer))
+	}
+}
+
+// A stream that simply stops is an error, not a short answer: a dropped
+// connection ends the scan exactly like a finished one, so accepting what
+// arrived would persist a truncated summary as a complete one.
+func TestComplete_reportsAStreamThatEndsWithNothing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flush(t, w, ": ping\n\n")
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+		Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+	if err == nil {
+		t.Fatal("expected an error")
 	}
 	if !strings.Contains(err.Error(), "without finish_reason") {
-		t.Fatalf("err = %v", err)
+		t.Errorf("err = %v, want it to name the missing completion", err)
 	}
 }
 
-func TestStallGuard_firesOnceAndRemembersTheArmedReason(t *testing.T) {
-	// Atomic because the guard calls cancel from the timer goroutine while the
-	// test reads the count.
-	var fired atomic.Int64
-	g := newStallGuard(func() { fired.Add(1) }, time.Hour, stallHeaders)
-	g.arm(10*time.Millisecond, stallIdle)
+// Deltas reach the callback in order and whole: a caller relaying to a browser
+// and a caller buffering must see exactly the same text.
+func TestCompleteStream_deliversDeltasInOrder(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"one "}}]}`))
+		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"two"},"finish_reason":"stop"}]}`))
+		flush(t, w, sseEvent(doneMarker))
+	}))
+	defer srv.Close()
 
-	// Wait on the CANCEL, not on the reason. fire() publishes the reason under
-	// the mutex but calls cancel() after unlocking — deliberately, so the
-	// caller's function never runs under the guard's lock — which leaves a
-	// window where firedReason() already answers and the counter is still 0.
-	// Polling the reason and then asserting the count raced that window and
-	// failed with "cancel called 0 times". Once the count is 1 the reason is
-	// necessarily published too, so this order has no window at all.
-	deadline := time.Now().Add(2 * time.Second)
-	for fired.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
+	var got []string
+	whole, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+		CompleteStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, func(d string) {
+			got = append(got, d)
+		})
+	if err != nil {
+		t.Fatalf("CompleteStream: %v", err)
 	}
-	// Separated from the count assertion below so the two failures never read
-	// alike: a guard that never fired within the window is a stalled runner,
-	// while a count other than 1 is a real defect. Both used to print "cancel
-	// called 0 times, want 1", and this file has already cost more than one
-	// misdiagnosis.
-	if fired.Load() == 0 {
-		t.Fatal("guard never fired within 2s of a 10ms deadline — runner stalled, not a miscount")
+	if strings.Join(got, "") != whole {
+		t.Errorf("streamed %q but returned %q; they must agree", strings.Join(got, ""), whole)
 	}
-	if got := fired.Load(); got != 1 {
-		t.Fatalf("cancel called %d times, want 1", got)
-	}
-	if got := g.firedReason(); got != stallIdle {
-		t.Fatalf("reason = %q, want %q", got, stallIdle)
-	}
-	// Re-arming after the fact must not resurrect a call already being
-	// cancelled, nor overwrite the reason the log is about to report.
-	g.arm(time.Hour, stallHeaders)
-	if got := g.firedReason(); got != stallIdle {
-		t.Fatalf("reason after late arm = %q, want %q", got, stallIdle)
-	}
-	g.stop()
-	// Still exactly one: neither the late arm nor stop() may fire it again.
-	if got := fired.Load(); got != 1 {
-		t.Fatalf("cancel called %d times after late arm, want 1", got)
+	if len(got) != 2 {
+		t.Errorf("got %d fragments, want 2", len(got))
 	}
 }
 
-// The stale-firing window: an event lands after the timer has expired and its
-// callback is already scheduled, but before that callback takes the mutex.
-// time.Reset is powerless against an in-flight AfterFunc callback, so without
-// the deadline check in fire() this cancels a stream that had just revived —
-// and labels it with the reason arm() just wrote rather than the bound that
-// elapsed. Driving fire() directly is what makes the window reachable at all;
-// by wall-clock it is microseconds wide.
-func TestStallGuard_ignoresAFiringOvertakenByAnEvent(t *testing.T) {
-	var fired atomic.Int64
-	g := newStallGuard(func() { fired.Add(1) }, time.Hour, stallHeaders)
-	defer g.stop()
+// A nil callback is the Complete path, and must not panic on its way through
+// the same code.
+func TestCompleteStream_nilCallbackIsTheCompletePath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"quiet"},"finish_reason":"stop"}]}`))
+		flush(t, w, sseEvent(doneMarker))
+	}))
+	defer srv.Close()
 
-	// Expire the header deadline WITHOUT letting the runtime schedule a firing
-	// of its own. Writing the fields directly is the point: `arm(-time.Second,
-	// …)` would call timer.Reset with a negative duration, so the runtime runs
-	// the real callback at once, on its own goroutine, racing everything below.
-	// When it won that race — landing before the re-arm on the next line — it
-	// fired legitimately (the deadline really had passed) and recorded
-	// stallHeaders, and the assertion then blamed the code under test for the
-	// test's own timer. That is the flake that reddened Backend CI on PRs
-	// touching nothing near this package.
-	//
-	// This test drives fire() by hand precisely because the window is
-	// microseconds wide by wall-clock; the timer must stay out of it. It keeps
-	// its original one-hour arming throughout and never fires on its own.
-	g.mu.Lock()
-	g.pending = stallHeaders
-	g.deadline = time.Now().Add(-time.Second)
-	g.mu.Unlock()
-
-	// The event lands and re-arms for idleness — the order a real stream
-	// produces when its first byte arrives right on the bound.
-	g.arm(time.Hour, stallIdle)
-
-	// The firing the expired deadline had already scheduled now runs.
-	g.fire()
-
-	if got := g.firedReason(); got != "" {
-		t.Fatalf("stale firing cancelled a revived stream, blaming %q", got)
+	got, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+		CompleteStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatalf("CompleteStream: %v", err)
 	}
-	if got := fired.Load(); got != 0 {
-		t.Fatalf("cancel called %d times, want 0", got)
+	if got != "quiet" {
+		t.Errorf("content = %q", got)
 	}
 }
 
-// A second firing must not cancel twice. The timer is re-armed by fire() on the
-// stale path, so a real deadline followed by that rescheduled callback is an
-// ordinary sequence, not a contrived one.
-func TestStallGuard_secondFiringIsANoOp(t *testing.T) {
-	var fired atomic.Int64
-	g := newStallGuard(func() { fired.Add(1) }, time.Hour, stallHeaders)
-	defer g.stop()
+// The nil-client path is what production actually uses: cmd/peeq passes nil, so
+// every real request runs through the transport built here. Left untested, a
+// whole-request timeout could reappear in it and silently cut streams again —
+// the exact failure this package was rewritten to remove.
+func TestNewClient_defaultTransportBoundsHeadersAndNotTheWholeRequest(t *testing.T) {
+	c := NewClient(Config{BaseURL: "http://example.invalid/v1", HeaderTimeout: 7 * time.Second}, nil)
 
-	g.arm(-time.Second, stallIdle)
-	g.fire()
-	g.fire()
-
-	if got := fired.Load(); got != 1 {
-		t.Fatalf("cancel called %d times, want 1", got)
+	if c.http.Timeout != 0 {
+		t.Errorf("whole-request timeout = %v, want none: it caps body reads and cuts streams", c.http.Timeout)
 	}
-	if got := g.firedReason(); got != stallIdle {
-		t.Fatalf("reason = %q, want %q", got, stallIdle)
+	tr, ok := c.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport = %T, want *http.Transport", c.http.Transport)
+	}
+	// Deliberately LATER than the bound llmwire enforces, so the named failure
+	// wins the race against this generic one. Equal values made a transport win
+	// report "timeout awaiting response headers" instead of "no response headers
+	// within 7s".
+	if want := 7*time.Second + headerBackstopHeadroom; tr.ResponseHeaderTimeout != want {
+		t.Errorf("ResponseHeaderTimeout = %v, want %v (the configured bound plus headroom)",
+			tr.ResponseHeaderTimeout, want)
+	}
+	// Cloned from the stdlib default rather than built bare, so proxy support
+	// and dial timeouts survive.
+	if tr.Proxy == nil {
+		t.Error("transport lost proxy support")
 	}
 }
 
-// A model that stops because it hit a token limit has produced a partial
-// answer. That is not retried — retrying truncates again — so the only defence
-// against an unexplainable half summary later is that it was logged.
+// A finish_reason other than "stop" means the endpoint ended the answer on its
+// own terms. Not an error — retrying an answer the model chose to cut would just
+// cut it again — but not silent either: a half summary nobody can explain later
+// is worse than a warning nobody reads.
 func TestComplete_warnsWhenTheAnswerEndedEarly(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"cut off mid-"},"finish_reason":"length","index":0}]}`))
@@ -578,7 +639,7 @@ func TestComplete_warnsWhenTheAnswerEndedEarly(t *testing.T) {
 	}
 	rec := find(buf.records(t), "llm: answer ended early")
 	if rec == nil {
-		t.Fatal("a truncated answer was accepted silently")
+		t.Fatal("a cut-short answer was accepted silently")
 	}
 	if rec["finish_reason"] != "length" || rec["level"] != "WARN" {
 		t.Errorf("warning record = %v", rec)
@@ -603,102 +664,62 @@ func TestComplete_doesNotWarnOnANormalFinish(t *testing.T) {
 	}
 }
 
-// The nil-client path is what production actually uses: cmd/peeq passes nil, so
-// every real request runs through the transport built here. Left untested, a
-// whole-request timeout could reappear in it and silently truncate streams
-// again — the exact failure this package was rewritten to remove.
-func TestNewClient_defaultTransportBoundsHeadersAndNotTheWholeRequest(t *testing.T) {
-	c := NewClient(Config{BaseURL: "http://example.invalid/v1", HeaderTimeout: 7 * time.Second}, nil)
+// Every refusal an operator greps for renders in this package's own phrasing.
+//
+// 429 is the one that nearly got away: llmwire returns it as *RateLimitError,
+// which embeds *APIError but declares no Unwrap, so a type check against
+// *APIError alone silently misses exactly the status the summarize worker's
+// retry path cares about most.
+func TestComplete_statusErrorsKeepTheirPhrasing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"429", 429, `{"error":{"message":"slow down","code":"1302"}}`, "chat failed with status 429: slow down"},
+		{"500", 500, `{"error":{"message":"boom","code":"1000"}}`, "chat failed with status 500: boom"},
+		{"401", 401, `{"error":{"message":"bad key","code":"401"}}`, "chat failed with status 401: bad key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
 
-	if c.http.Timeout != 0 {
-		t.Errorf("whole-request timeout = %v, want none: it caps body reads and truncates streams", c.http.Timeout)
-	}
-	tr, ok := c.http.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("transport = %T, want *http.Transport", c.http.Transport)
-	}
-	if tr.ResponseHeaderTimeout != 7*time.Second {
-		t.Errorf("ResponseHeaderTimeout = %v, want the configured 7s", tr.ResponseHeaderTimeout)
-	}
-	// Cloned from the stdlib default rather than built bare, so proxy support
-	// and dial timeouts survive.
-	if tr.Proxy == nil {
-		t.Error("transport lost proxy support")
+			_, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+				Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if err.Error() != tc.want {
+				t.Errorf("err = %q, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
-// The mirror case: nothing revived it, so the firing is real and must report
-// the bound whose deadline actually elapsed.
-func TestStallGuard_firesWhenTheDeadlineTrulyPassed(t *testing.T) {
-	var fired atomic.Int64
-	g := newStallGuard(func() { fired.Add(1) }, time.Hour, stallHeaders)
-	defer g.stop()
+// A failure delivered INSIDE a 200 — an error frame mid-stream — has no HTTP
+// status to report. It must name the endpoint's own code rather than print
+// "status 0", and must not be mistaken for a stream that merely stopped.
+func TestComplete_midStreamErrorFrameNamesTheCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"half"},"index":0}]}`))
+		flush(t, w, sseEvent(`{"error":{"message":"upstream gave up","code":"1210"}}`))
+	}))
+	defer srv.Close()
 
-	g.arm(-time.Second, stallIdle)
-	g.fire()
-
-	if got := g.firedReason(); got != stallIdle {
-		t.Fatalf("reason = %q, want %q", got, stallIdle)
+	_, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+		Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+	if err == nil {
+		t.Fatal("an error frame inside a 200 must not read as a finished answer")
 	}
-	if got := fired.Load(); got != 1 {
-		t.Fatalf("cancel called %d times, want 1", got)
+	if !strings.Contains(err.Error(), "upstream gave up") || !strings.Contains(err.Error(), "1210") {
+		t.Errorf("err = %v, want the endpoint's own message and code", err)
 	}
-}
-
-// decodeJSON reads a request body into v, matching the io.ReadAll + Unmarshal
-// pattern the older tests in this package already use.
-func decodeJSON(t *testing.T, r *http.Request, v any) {
-	t.Helper()
-	b, err := io.ReadAll(r.Body)
-	if err != nil {
-		t.Fatalf("read request body: %v", err)
-	}
-	if err := json.Unmarshal(b, v); err != nil {
-		t.Fatalf("decode request body: %v", err)
-	}
-}
-
-// discardLogger is for the tests that assert on behaviour rather than output.
-// The client logs at debug on every call, and dumping that into the test
-// output buries the failures that matter.
-func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
-
-// CompleteStream must deliver fragments as they arrive AND return the same
-// whole answer Complete would, so a streaming caller and a buffering caller
-// never see different text.
-func TestReadStreamDeliversDeltasInOrder(t *testing.T) {
-	body := "data: {\"choices\":[{\"delta\":{\"content\":\"Yes — \"}}]}\n\n" +
-		"data: {\"choices\":[{\"delta\":{\"content\":\"twice.\"}}]}\n\n" +
-		"data: [DONE]\n\n"
-	var counters streamCounters
-	guard := newStallGuard(func() {}, time.Hour, stallIdle)
-	var got []string
-	res, err := readStream(strings.NewReader(body), guard, &counters, time.Hour, func(d string) {
-		got = append(got, d)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(got, "|") != "Yes — |twice." {
-		t.Errorf("deltas = %v, want the fragments in arrival order", got)
-	}
-	if res.content != "Yes — twice." {
-		t.Errorf("content = %q, want the concatenation of the deltas", res.content)
-	}
-}
-
-// A nil callback is the buffered path; it must not panic.
-func TestReadStreamNilDeltaCallback(t *testing.T) {
-	body := "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n"
-	var counters streamCounters
-	guard := newStallGuard(func() {}, time.Hour, stallIdle)
-	res, err := readStream(strings.NewReader(body), guard, &counters, time.Hour, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.content != "hi" {
-		t.Errorf("content = %q", res.content)
+	if strings.Contains(err.Error(), "status 0") {
+		t.Errorf("err invents an HTTP status: %v", err)
 	}
 }
