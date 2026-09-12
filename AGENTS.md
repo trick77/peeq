@@ -55,9 +55,8 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   nothing about progress, so only `data:` frames re-arm it — reasoning deltas included, which is why
   a long silent think is still safe. Measured: the longest comment-only gap this endpoint produced
   was 1.4s against a 90s bound.
-- **Cost doubled on 2026-09-12** and older rows are at the old rate. peeq's table came from
-  models.dev, whose entry is dated the model's release day and was never updated; llmwire ships
-  Z.ai's own 0.15/0.03/0.50 per 1M with the source URL and the date it was read.
+- Rates live in llmwire's profile, with the vendor URL and the date they were read. A rate from a
+  published catalogue is not a source: check the vendor's own page.
 - `llm.Shallow(ctx)` (→`low`) is a LATENCY lever, not cost. One caller: the Ask understand gate,
   hard 10s timeout. Tokens barely differ per level; time does (keypoints 12.8s high → 69.9s max).
   Use only with a latency reason, written down. Classification is NOT such a reason: measured, `low`
