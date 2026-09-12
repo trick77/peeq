@@ -50,14 +50,16 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   the Coding Plan endpoint `/api/coding/paas/v4` — restricted to Z.ai's own tools, forbids peeq.
 - **The wire protocol is `github.com/trick77/llmwire`.** What that library owns, and what therefore
   must NOT be reimplemented here: the SSE parsing, the header/idle/call bounds and the text naming
-  which one fired, the request body, and the opencode identity (the User-Agent, the
-  session header pair and the id). That identity is `BACKEND_CHAT_EMULATE_OPENCODE`, default off,
-  passed through `llm.Config.EmulateOpenCode`; inert on Z.ai, needed on the MiMo token plan.
-  This package owns pacing, the heartbeat, the `CallInfo`/`Totals` accounting and the context knobs.
-  One `llmwire.Client` per `llm.Client`, never one per call: the session id lives on it.
+  which one fired, the request body (no `ExtraBody`, ever), the usage decoding, and the opencode
+  identity (the User-Agent, the session header pair and the id). That identity is
+  `BACKEND_CHAT_EMULATE_OPENCODE`, default off, passed through `llm.Config.EmulateOpenCode`; inert
+  on Z.ai, needed on the MiMo token plan. This package owns pacing, the heartbeat, the
+  `CallInfo`/`Totals` accounting and the context knobs. One `llmwire.Client` per `llm.Client`,
+  never one per call: the session id lives on it.
 - **Thinking can't be switched off.** `thinking:{"type":"disabled"}` → 400 code 1210. Only
-  `low`/`high`/`max` effort accepted; `none`/`minimal`/`medium`/`xhigh` rejected. This now lives in
-  llmwire's profile for the model, which is where a fix belongs if Z.ai ever changes it.
+  `low`/`high`/`max` effort accepted; `none`/`minimal`/`medium`/`xhigh` rejected. This lives in
+  llmwire's profile for the model, which is where a fix belongs if Z.ai ever changes it. peeq sends
+  NO `thinking` object: measured, `reasoning_effort` alone drives depth (5 vs 43 reasoning tokens).
 - Default effort `max` (Z.ai's own default + recommendation). `temperature: 1` / `top_p: 0.95` come
   from the profile's recommended values — omitting them gives LOWER values, not "the defaults", so
   llmwire sends them when the caller expresses no preference. Do not set them here.
