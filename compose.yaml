@@ -45,6 +45,8 @@ services:
       # reaches the container.
       BACKEND_CHAT_BASE_URL: "${BACKEND_CHAT_BASE_URL}"
       BACKEND_CHAT_API_KEY: "${BACKEND_CHAT_API_KEY}"
+      # Opt-in opencode identity on chat requests. Empty keeps the code default (off).
+      BACKEND_CHAT_EMULATE_OPENCODE: "${BACKEND_CHAT_EMULATE_OPENCODE:-}"
       BACKEND_EMBED_BASE_URL: "${BACKEND_EMBED_BASE_URL}"
       BACKEND_EMBED_API_KEY: "${BACKEND_EMBED_API_KEY}"
       # How far a semantic hit may sit from the question before it counts as

@@ -197,6 +197,7 @@ func run() error {
 	}, nil)
 	chatClient := llm.NewClient(llm.Config{
 		BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey,
+		EmulateOpenCode: cfg.ChatEmulateOpenCode,
 		RequestInterval: cfg.SummarizeRequestDelay, Logger: slog.Default(),
 		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.ChatCallTimeout,
 	}, nil)
@@ -210,6 +211,7 @@ func run() error {
 	// started arriving in a minute or so is better abandoned than waited out.
 	askClient := llm.NewClient(llm.Config{
 		BaseURL: cfg.ChatBaseURL, APIKey: cfg.ChatAPIKey,
+		EmulateOpenCode: cfg.ChatEmulateOpenCode,
 		RequestInterval: 0, Logger: slog.Default(),
 		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.AskCallTimeout,
 	}, nil)
