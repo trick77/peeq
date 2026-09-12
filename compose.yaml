@@ -47,9 +47,6 @@ services:
       BACKEND_CHAT_API_KEY: "${BACKEND_CHAT_API_KEY}"
       BACKEND_EMBED_BASE_URL: "${BACKEND_EMBED_BASE_URL}"
       BACKEND_EMBED_API_KEY: "${BACKEND_EMBED_API_KEY}"
-      BACKEND_EMBED_MODEL: "${BACKEND_EMBED_MODEL}"
-      # Must match the embedding model's real output dimension.
-      BACKEND_EMBED_DIM: "${BACKEND_EMBED_DIM:-1536}"
       # How far a semantic hit may sit from the question before it counts as
       # "not about this" — L2 on unit vectors, so cosine is 1 - d²/2. Empty
       # keeps the code default; negative opts out of the bound entirely, which

@@ -3167,9 +3167,9 @@ button.sleeppick.armed {
   font-variant-numeric: tabular-nums;
   text-align: right;
   /* The model name is the one value here that is not a number, and it is
-     whatever BACKEND_EMBED_MODEL holds — a local model's id
-     ("Qwen/Qwen3-Embedding-0.6B") has no space to break at. Wrap it rather
-     than let it push the group wider than its column. */
+     whatever model embedded that video — a row written under an earlier build
+     may name a local model id ("Qwen/Qwen3-Embedding-0.6B") with no space to
+     break at. Wrap it rather than let it push the group wider than its column. */
   overflow-wrap: anywhere;
 }
 /* The dimension under the model name: one fact about the other, not a row of

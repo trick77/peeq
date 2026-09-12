@@ -37,8 +37,15 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   `yt-dlp`, both needing a real userland. See the comment in `backend/Containerfile` for why this
   deviates from loom's distroless-static runtime.
 
+## Models
+- **Both model ids are constants of the build, never env vars.** Chat: `glm-5.3-flash` in
+  `internal/llm/client.go`. Embeddings: `rag.EmbedModel`, with the vector width read from its
+  llmwire profile via `rag.EmbedDim()` — never stated in this repo. Prompts, token caps and the
+  `vec_chunks` width are all built to these models, so a swap is a code change and, for embeddings,
+  a database rebuild. There used to be a `BACKEND_EMBED_DIM` that had to agree with the model; the
+  only signal when it did not was a boot warning over an already-stale vector table.
+
 ## Chat model
-- `glm-5.3-flash` on Z.ai, hardcoded in `internal/llm/client.go`, never env vars.
 - `BACKEND_CHAT_BASE_URL` = Z.ai GENERAL endpoint `https://api.z.ai/api/paas/v4` (no `/v1`). NEVER
   the Coding Plan endpoint `/api/coding/paas/v4` — restricted to Z.ai's own tools, forbids peeq.
 - **The wire protocol is `github.com/trick77/llmwire`.** What that library owns, and what therefore

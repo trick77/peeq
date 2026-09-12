@@ -41,13 +41,15 @@ type Config struct {
 	OIDC          OIDCConfig
 	Dev           DevUserConfig
 
-	// AI integration: chat + embeddings endpoints (required at boot).
+	// AI integration: chat + embeddings endpoints (required at boot). Neither
+	// model is configuration: both are constants (llm.ModelFor, rag.EmbedModel),
+	// because prompts, token caps and the vector table's width are all built to
+	// them. The embedding width in particular used to be a second variable that
+	// had to agree with the model; now it comes from the model's profile.
 	ChatBaseURL  string
 	ChatAPIKey   string
 	EmbedBaseURL string
 	EmbedAPIKey  string
-	EmbedModel   string
-	EmbedDim     int
 	// SearchMaxDistance bounds the semantic lane: hits at or beyond this L2
 	// distance are dropped rather than ranked. Vectors are unit length, so
 	// L2 = sqrt(2-2*cos); see rag.DefaultMaxDistance for the calibration.
@@ -173,9 +175,7 @@ func Load() (Config, error) {
 	cfg.ChatAPIKey = env("BACKEND_CHAT_API_KEY", "")
 	cfg.EmbedBaseURL = env("BACKEND_EMBED_BASE_URL", "")
 	cfg.EmbedAPIKey = env("BACKEND_EMBED_API_KEY", "")
-	cfg.EmbedModel = env("BACKEND_EMBED_MODEL", "")
 	cfg.DefaultSubLang = env("BACKEND_DEFAULT_SUB_LANG", "en")
-	cfg.EmbedDim = 1536
 	cfg.SearchMaxDistance = defaultSearchMaxDistance
 	if v := env("BACKEND_ALLOW_ANONYMOUS_YOUTUBE", ""); v != "" {
 		b, err := strconv.ParseBool(v)
@@ -197,14 +197,6 @@ func Load() (Config, error) {
 		// resolution in httpapi.New.
 		cfg.SearchMaxDistance = f
 	}
-	if v := env("BACKEND_EMBED_DIM", ""); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return Config{}, fmt.Errorf("BACKEND_EMBED_DIM must be a positive integer")
-		}
-		cfg.EmbedDim = n
-	}
-
 	reqDelay, err := envDuration("BACKEND_SUMMARIZE_REQUEST_DELAY", 10*time.Second)
 	if err != nil {
 		return Config{}, err
@@ -249,9 +241,6 @@ func Load() (Config, error) {
 	}
 	if cfg.EmbedBaseURL == "" {
 		return Config{}, fmt.Errorf("BACKEND_EMBED_BASE_URL is required")
-	}
-	if cfg.EmbedModel == "" {
-		return Config{}, fmt.Errorf("BACKEND_EMBED_MODEL is required")
 	}
 
 	switch cfg.AuthMode {
