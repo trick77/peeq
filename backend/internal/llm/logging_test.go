@@ -102,11 +102,17 @@ func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
 	tokensOnly := got
 	tokensOnly.InferenceNanos, tokensOnly.PacedNanos = 0, 0
 	// Cost is part of the accounting the client books, not a separate concern:
-	// 400 uncached prompt tokens at 75 + 800 cached at 15 + 340 completion at
-	// 250 nanodollars. Reasoning is inside CompletionTokens and is not priced
+	// 400 uncached prompt tokens at 150 + 800 cached at 30 + 340 completion at
+	// 500 nanodollars. Reasoning is inside CompletionTokens and is not priced
 	// again.
+	//
+	// Double the figure this test asserted before the migration. peeq's own rate
+	// table was read from models.dev, whose glm-5.3-flash entry is dated the
+	// model's release day and was never updated; Z.ai's own page lists twice as
+	// much on every lane. llmwire's table carries the vendor URL and the date it
+	// was verified, which is what makes a disagreement like this findable.
 	want := Usage{Requests: 1, Accounted: 1, PromptTokens: 1200, CachedTokens: 800, CompletionTokens: 340,
-		ReasoningTokens: 250, TotalTokens: 1540, CostNanoUSD: 127_000}
+		ReasoningTokens: 250, TotalTokens: 1540, CostNanoUSD: 254_000}
 	if tokensOnly != want {
 		t.Fatalf("totals = %+v, want %+v", tokensOnly, want)
 	}
