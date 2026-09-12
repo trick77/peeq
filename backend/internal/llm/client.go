@@ -281,10 +281,15 @@ func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 // undocumented field on this endpoint, so it is not sent.
 
 // usageFromWire folds llmwire's decoded accounting into this package's Usage.
-// llmwire's lanes are pointers — nil is "not reported" — and it says itself
-// whether anything was reported (Reported) and what the two sides sum to
-// (Total), so a reported zero stays a zero without this package re-deriving
-// either from the pointers.
+// llmwire's lanes are pointers — nil is "not reported" — and Total says whether
+// either token side arrived, so a reported zero stays a zero without this
+// package re-deriving that from the pointers.
+//
+// Accounted keys on Total's ok, not on Reported: Reported also fires on a usage
+// object that carries no token lane at all (a bare total_tokens, an empty
+// details object), and banking such a call as 0/0/0 would log zeros as complete
+// sums and write them to the video row. A call counts as accounted only when a
+// token count did arrive.
 func usageFromWire(w llmwire.Usage) Usage {
 	u := Usage{
 		Requests:         1,
@@ -293,8 +298,8 @@ func usageFromWire(w llmwire.Usage) Usage {
 		CompletionTokens: valueOr(w.Output.Total),
 		ReasoningTokens:  valueOr(w.Output.Reasoning),
 	}
-	u.TotalTokens, _ = w.Total()
-	if w.Reported() {
+	var ok bool
+	if u.TotalTokens, ok = w.Total(); ok {
 		u.Accounted = 1
 	}
 	return u
