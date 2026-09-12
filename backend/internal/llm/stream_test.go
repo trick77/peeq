@@ -616,3 +616,110 @@ func TestNewClient_defaultTransportBoundsHeadersAndNotTheWholeRequest(t *testing
 		t.Error("transport lost proxy support")
 	}
 }
+
+// A finish_reason other than "stop" means the endpoint ended the answer on its
+// own terms. Not an error — retrying an answer the model chose to cut would just
+// cut it again — but not silent either: a half summary nobody can explain later
+// is worse than a warning nobody reads.
+func TestComplete_warnsWhenTheAnswerEndedEarly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"cut off mid-"},"finish_reason":"length","index":0}]}`))
+		flush(t, w, sseEvent(doneMarker))
+	}))
+	defer srv.Close()
+
+	log, buf := capture()
+	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client())
+	got, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+	if err != nil {
+		t.Fatalf("a length-limited answer must not be an error: %v", err)
+	}
+	if got != "cut off mid-" {
+		t.Fatalf("content = %q", got)
+	}
+	rec := find(buf.records(t), "llm: answer ended early")
+	if rec == nil {
+		t.Fatal("a cut-short answer was accepted silently")
+	}
+	if rec["finish_reason"] != "length" || rec["level"] != "WARN" {
+		t.Errorf("warning record = %v", rec)
+	}
+}
+
+// A "stop" finish is the normal case and must stay quiet, or the warning above
+// becomes noise nobody reads.
+func TestComplete_doesNotWarnOnANormalFinish(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flush(t, w, sseStream("fine", ""))
+	}))
+	defer srv.Close()
+
+	log, buf := capture()
+	c := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: log}), srv.Client())
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := find(buf.records(t), "llm: answer ended early"); rec != nil {
+		t.Errorf("warned about a normal finish: %v", rec)
+	}
+}
+
+// Every refusal an operator greps for renders in this package's own phrasing.
+//
+// 429 is the one that nearly got away: llmwire returns it as *RateLimitError,
+// which embeds *APIError but declares no Unwrap, so a type check against
+// *APIError alone silently misses exactly the status the summarize worker's
+// retry path cares about most.
+func TestComplete_statusErrorsKeepTheirPhrasing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"429", 429, `{"error":{"message":"slow down","code":"1302"}}`, "chat failed with status 429: slow down"},
+		{"500", 500, `{"error":{"message":"boom","code":"1000"}}`, "chat failed with status 500: boom"},
+		{"401", 401, `{"error":{"message":"bad key","code":"401"}}`, "chat failed with status 401: bad key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			_, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+				Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if err.Error() != tc.want {
+				t.Errorf("err = %q, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A failure delivered INSIDE a 200 — an error frame mid-stream — has no HTTP
+// status to report. It must name the endpoint's own code rather than print
+// "status 0", and must not be mistaken for a stream that merely stopped.
+func TestComplete_midStreamErrorFrameNamesTheCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"half"},"index":0}]}`))
+		flush(t, w, sseEvent(`{"error":{"message":"upstream gave up","code":"1210"}}`))
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
+		Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+	if err == nil {
+		t.Fatal("an error frame inside a 200 must not read as a finished answer")
+	}
+	if !strings.Contains(err.Error(), "upstream gave up") || !strings.Contains(err.Error(), "1210") {
+		t.Errorf("err = %v, want the endpoint's own message and code", err)
+	}
+	if strings.Contains(err.Error(), "status 0") {
+		t.Errorf("err invents an HTTP status: %v", err)
+	}
+}

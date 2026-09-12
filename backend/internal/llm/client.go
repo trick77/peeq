@@ -80,12 +80,13 @@ const (
 	// is the one place that knows which strings the endpoint accepts.
 	reasoningEffort = maxReasoningEffort
 
-	// Z.ai's recommended sampling settings for GLM-5.3-Flash. Sent explicitly
-	// because the endpoint's own fallbacks are lower (around 0.5 and 0.7), so
-	// omitting them does not mean "the model's defaults" — it means running it
-	// off its recommended operating point.
-	chatTemperature = 1.0
-	chatTopP        = 0.95
+	// Z.ai's recommended sampling settings for GLM-5.3-Flash live in llmwire's
+	// profile now, as its recommended values, and it sends them whenever a caller
+	// expresses no preference — which peeq never does. They are sent rather than
+	// omitted because this endpoint's own fallbacks are lower (around 0.5 and
+	// 0.7), so leaving them out does not mean "the model's defaults", it means
+	// running the model off its recommended operating point. The values are
+	// asserted on the wire in client_test.go.
 	// defaultHeaderTimeout is how long the endpoint may take to send response
 	// headers. Generous next to the ~2.5s observed, because it competes with
 	// nothing — a stall costs a minute now instead of five.
@@ -107,12 +108,9 @@ const (
 	maxRawUsage            = 1 << 10
 )
 
-func responseFormatFor(ctx context.Context) *responseFormat {
-	if jsonObjectFrom(ctx) {
-		return &responseFormat{Type: responseFormatJSONObject}
-	}
-	return nil
-}
+// wantsJSONObject reports whether this call asked to be constrained to JSON. The
+// wire shape is llmwire's to render; what stays here is the decision.
+func wantsJSONObject(ctx context.Context) bool { return jsonObjectFrom(ctx) }
 
 // Config configures the chat client. BaseURL is the OpenAI-compatible root
 // (the client appends /chat/completions). APIKey is optional. RequestInterval
@@ -245,28 +243,14 @@ func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 	}
 }
 
-// No tool_stream here, which Z.ai also recommends for streaming: it streams tool
-// CALL arguments as they are generated, and peeq sends no tools at all. There is
-// nothing for it to stream.
-type chatRequest struct {
-	Model           string          `json:"model"`
-	Messages        []Message       `json:"messages"`
-	ReasoningEffort string          `json:"reasoning_effort"`
-	Thinking        thinkingOption  `json:"thinking"`
-	Temperature     float64         `json:"temperature"`
-	TopP            float64         `json:"top_p"`
-	MaxTokens       int             `json:"max_tokens,omitempty"`
-	Stream          bool            `json:"stream"`
-	ResponseFormat  *responseFormat `json:"response_format,omitempty"`
-}
-
-// responseFormat constrains the reply shape. Omitted unless AsJSONObject asks
-// for it — see there for why the prompt alone is not enough on this model.
-type responseFormat struct {
-	Type string `json:"type"`
-}
-
-const responseFormatJSONObject = "json_object"
+// The request struct that used to live here is gone: llmwire renders the body
+// now, from the fields chatRequestFor fills in. What it sent is still asserted,
+// on the wire, by the tests in client_test.go — the body is the contract, not the
+// struct that produced it.
+//
+// Two absences that were deliberate and still are, recorded because a future
+// reader will wonder. No tool_stream: it streams tool CALL arguments as they are
+// generated and peeq sends no tools, so there is nothing for it to stream.
 
 // No stream_options here, deliberately. MiMo needed stream_options.include_usage
 // to send the trailing usage chunk at all, without which every chat_tokens_*
@@ -355,9 +339,14 @@ func (c *Client) Complete(ctx context.Context, messages []Message) (string, erro
 
 // CompleteStream is Complete with a callback invoked for every content
 // fragment as it arrives, for callers relaying the answer to a browser rather
-// than waiting for it. onDelta runs on the reader goroutine, so it must not
-// block; the returned string is still the whole answer, so a caller that
-// streams and a caller that buffers see exactly the same text.
+// than waiting for it. The returned string is still the whole answer, so a
+// caller that streams and a caller that buffers see exactly the same text.
+//
+// onDelta now runs on the CALLING goroutine, not the socket reader: llmwire
+// reads ahead into an unbounded queue precisely so a slow consumer cannot stop
+// the idle guard being re-armed and get itself reported as a stalled model. A
+// callback that blocks therefore delays this call and nothing else — it no
+// longer risks killing the stream — but it is still the wrong place for work.
 //
 // Every bound, counter and log line is shared with Complete — there is one
 // request path, not two.

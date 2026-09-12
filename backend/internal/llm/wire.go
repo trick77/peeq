@@ -88,7 +88,7 @@ func chatRequestFor(ctx context.Context, messages []Message) llmwire.ChatRequest
 	if n := maxTokensFrom(ctx); n > 0 {
 		req.MaxTokens = &n
 	}
-	if responseFormatFor(ctx) != nil {
+	if wantsJSONObject(ctx) {
 		req.ResponseFormat = llmwire.ResponseFormat{Kind: llmwire.FormatJSONObject}
 	}
 	return req
@@ -166,11 +166,37 @@ func (c *Client) runStream(ctx context.Context, wire *llmwire.Client, req llmwir
 // response headers within 1m0s", "stream idle for 1m30s", "exceeded the 15m0s
 // call cap"), which are already the strings this package used to produce.
 func chatError(err error) error {
+	// A 429 arrives as *RateLimitError, which EMBEDS *APIError but declares no
+	// Unwrap — so errors.As against *APIError does not match it, and the one
+	// status an operator greps for most would have fallen through to the generic
+	// branch. Checked first, by type, rather than relying on unwrapping.
+	var rl *llmwire.RateLimitError
+	if errors.As(err, &rl) && rl.APIError != nil {
+		return statusError(rl.APIError)
+	}
 	var apiErr *llmwire.APIError
-	if errors.As(err, &apiErr) && apiErr.StatusCode != 0 {
-		return fmt.Errorf("chat failed with status %d: %s", apiErr.StatusCode, apiErr.Message)
+	if errors.As(err, &apiErr) {
+		return statusError(apiErr)
 	}
 	return fmt.Errorf("chat: %w", err)
+}
+
+// statusError renders an endpoint refusal in this package's own phrasing.
+//
+// StatusCode is 0 for a failure delivered INSIDE a 200 — an error frame in the
+// middle of a stream, which this endpoint does send. There is no status to
+// report there, and printing "status 0" would send a reader looking for an HTTP
+// code that never existed. Before the migration those frames were skipped
+// entirely and surfaced as "ended without finish_reason", which said nothing
+// about the actual failure; naming the endpoint's own code is strictly better.
+func statusError(e *llmwire.APIError) error {
+	if e.StatusCode == 0 {
+		if e.Code != "" {
+			return fmt.Errorf("chat failed mid-stream (code %s): %s", e.Code, e.Message)
+		}
+		return fmt.Errorf("chat failed mid-stream: %s", e.Message)
+	}
+	return fmt.Errorf("chat failed with status %d: %s", e.StatusCode, e.Message)
 }
 
 // unpricedWarned throttles the no-rate warning to once per model id per process.
