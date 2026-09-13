@@ -153,6 +153,11 @@ type Config struct {
 	StreamIdleTimeout time.Duration
 	HeaderTimeout     time.Duration
 	CallTimeout       time.Duration
+	// EmulateOpenCode presents every request as the opencode client: its
+	// User-Agent and the session header pair. A provider marked for it in
+	// llmwire's profiles.yaml has it regardless; this adds it for one that
+	// is not marked, and cannot take it away.
+	EmulateOpenCode bool
 }
 
 // Message is one chat message.
@@ -202,7 +207,7 @@ func NewClient(cfg Config, hc *http.Client) (*Client, error) {
 	wire, err := llmwire.FromEnv(model, llmwire.Config{
 		BaseURL:         cfg.BaseURL,
 		APIKey:          cfg.APIKey,
-		EmulateOpenCode: true,
+		EmulateOpenCode: cfg.EmulateOpenCode,
 		HeaderTimeout:   cfg.HeaderTimeout,
 		IdleTimeout:     cfg.StreamIdleTimeout,
 		CallTimeout:     cfg.CallTimeout,
