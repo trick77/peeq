@@ -381,3 +381,27 @@ func TestComposeGivesOptionalSettingsADefault(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_emulateOpenCodeIsTheOperatorsSwitch(t *testing.T) {
+	t.Setenv("BACKEND_SESSION_SECRET", "x")
+	t.Setenv("BACKEND_AUTH_MODE", "dev")
+	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
+	t.Setenv("BACKEND_PUBLIC_URL", "")
+
+	t.Setenv("LLMWIRE_EMULATE_OPENCODE", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ChatEmulateOpenCode {
+		t.Fatal("off unless LLMWIRE_EMULATE_OPENCODE says so")
+	}
+	t.Setenv("LLMWIRE_EMULATE_OPENCODE", "true")
+	if cfg, err = Load(); err != nil || !cfg.ChatEmulateOpenCode {
+		t.Fatalf("LLMWIRE_EMULATE_OPENCODE=true: on=%v err=%v", cfg.ChatEmulateOpenCode, err)
+	}
+	t.Setenv("LLMWIRE_EMULATE_OPENCODE", "maybe")
+	if _, err = Load(); err == nil {
+		t.Fatal("a non-boolean must fail the boot")
+	}
+}
