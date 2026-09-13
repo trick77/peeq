@@ -1,7 +1,7 @@
-// Package llm is peeq's lean OpenAI-compatible chat client. The endpoint and
-// key come from the env vars the model's llmwire profile names
-// (LLMWIRE_ZAI_BASE_URL and LLMWIRE_ZAI_API_KEY), read by llmwire.FromEnv in
-// NewClient; BACKEND_CHAT_EMULATE_OPENCODE is peeq's own. The model below is a
+// Package llm is peeq's lean OpenAI-compatible chat client. The host comes
+// from the model's llmwire profile and the key from the env var that profile
+// names (LLMWIRE_ZAI_API_KEY), read by llmwire.FromEnv in NewClient;
+// BACKEND_CHAT_EMULATE_OPENCODE is peeq's own. The model below is a
 // real upstream model identifier sent on the wire, not a config name — it is
 // deliberately NOT renamed alongside those env vars.
 //
@@ -186,7 +186,7 @@ type Client struct {
 // bound, so the named failure wins the race against the transport's generic
 // one.
 //
-// The error is a missing LLMWIRE_ZAI_BASE_URL or LLMWIRE_ZAI_API_KEY, named.
+// The error is a missing LLMWIRE_ZAI_API_KEY, named.
 func NewClient(cfg Config, hc *http.Client) (*Client, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()

@@ -200,13 +200,15 @@ func mustEmbedClient(t testing.TB, cfg EmbedConfig, hc *http.Client) *EmbedClien
 	return c
 }
 
-// With no BaseURL the constructor asks llmwire for the profile's variables,
-// and a missing one comes back named rather than as a client that dials "".
+// With no BaseURL the constructor takes the host from the profile and asks
+// llmwire for the key variable; a missing one comes back named rather than as
+// a client that dials "".
 func TestNewEmbedClient_withoutBaseURLNamesTheMissingVariable(t *testing.T) {
 	t.Setenv("LLMWIRE_OPENAI_BASE_URL", "")
+	t.Setenv("LLMWIRE_OPENAI_API_KEY", "")
 	_, err := NewEmbedClient(EmbedConfig{}, nil)
 	var me *llmwire.MissingEnvError
-	if !errors.As(err, &me) || me.Var != "LLMWIRE_OPENAI_BASE_URL" {
+	if !errors.As(err, &me) || me.Var != "LLMWIRE_OPENAI_API_KEY" {
 		t.Fatalf("got %v", err)
 	}
 }
