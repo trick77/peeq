@@ -153,7 +153,7 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 	// usage carries only the input lane, so there is nothing else to read anyway.
 	// The old embed_tokens_total was the same number under a second name.
 	attrs := append(ident, "duration_ms", time.Since(started).Milliseconds(),
-		"embed_tokens_in", llm.FormatTokens(valueOr(resp.Usage.Input.Total)))
+		"embed_tokens_in", llm.FormatTokens(llmwire.Tokens(resp.Usage.Input.Total)))
 	if len(warnings) > 0 {
 		attrs = append(attrs, "warnings", llmwire.Warnings(warnings))
 	}
@@ -176,13 +176,6 @@ func embedError(err error) error {
 		return fmt.Errorf("embedding count mismatch: %w", err)
 	}
 	return fmt.Errorf("embed request: %w", err)
-}
-
-func valueOr(p *int64) int64 {
-	if p == nil {
-		return 0
-	}
-	return *p
 }
 
 // maxEmbedInputs caps how many texts ride in one /embeddings request.
