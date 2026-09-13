@@ -165,6 +165,14 @@ type jsonObjectKey struct{}
 // preamble containing a brace away from handing back garbage, and the caller
 // tolerates a parse failure by returning empty. This removes the guesswork
 // instead of widening the salvage.
+//
+// json_schema is NOT an upgrade from this, and the salvage stays. llmwire's
+// profile records Z.ai honouring json_schema with strict, so it was tried as a
+// way to retire extractJSON: measured on a keypoints-shaped prompt, 3 runs at
+// low effort, strict schema, the raw reply parsed 2/3 — the third came back
+// wrapped in a ```json fence despite the schema. Same failure shape as the
+// prompt-only case, so the fence is the model's habit and no response_format
+// switches it off.
 func AsJSONObject(ctx context.Context) context.Context {
 	return context.WithValue(ctx, jsonObjectKey{}, true)
 }

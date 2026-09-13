@@ -297,23 +297,16 @@ func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 func usageFromWire(w llmwire.Usage) Usage {
 	u := Usage{
 		Requests:         1,
-		PromptTokens:     valueOr(w.Input.Total),
-		CachedTokens:     valueOr(w.Input.CacheRead),
-		CompletionTokens: valueOr(w.Output.Total),
-		ReasoningTokens:  valueOr(w.Output.Reasoning),
+		PromptTokens:     llmwire.Tokens(w.Input.Total),
+		CachedTokens:     llmwire.Tokens(w.Input.CacheRead),
+		CompletionTokens: llmwire.Tokens(w.Output.Total),
+		ReasoningTokens:  llmwire.Tokens(w.Output.Reasoning),
 	}
 	var ok bool
 	if u.TotalTokens, ok = w.Total(); ok {
 		u.Accounted = 1
 	}
 	return u
-}
-
-func valueOr(p *int64) int64 {
-	if p == nil {
-		return 0
-	}
-	return *p
 }
 
 // Complete runs a single streamed chat completion and returns the concatenated
