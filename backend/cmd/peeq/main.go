@@ -790,7 +790,6 @@ func newModelClients(cfg config.Config) (*rag.EmbedClient, *llm.Client, *llm.Cli
 		return nil, nil, nil, err
 	}
 	chatClient, err := llm.NewClient(llm.Config{
-		EmulateOpenCode: cfg.ChatEmulateOpenCode,
 		RequestInterval: cfg.SummarizeRequestDelay, Logger: slog.Default(),
 		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.ChatCallTimeout,
 	}, nil)
@@ -798,7 +797,6 @@ func newModelClients(cfg config.Config) (*rag.EmbedClient, *llm.Client, *llm.Cli
 		return nil, nil, nil, err
 	}
 	askClient, err := llm.NewClient(llm.Config{
-		EmulateOpenCode: cfg.ChatEmulateOpenCode,
 		RequestInterval: 0, Logger: slog.Default(),
 		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.AskCallTimeout,
 	}, nil)

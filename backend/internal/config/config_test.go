@@ -264,34 +264,6 @@ func TestLoad_invalidCallTimeoutFails(t *testing.T) {
 	}
 }
 
-// The opencode identity is opt-in: unset is off, and a value that is not a
-// boolean is a boot error naming the variable rather than a silent off.
-func TestLoad_chatEmulateOpenCode(t *testing.T) {
-	baseEnv(t)
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.ChatEmulateOpenCode {
-		t.Fatal("ChatEmulateOpenCode must default to false")
-	}
-
-	t.Setenv("BACKEND_CHAT_EMULATE_OPENCODE", "true")
-	cfg, err = Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !cfg.ChatEmulateOpenCode {
-		t.Fatal("BACKEND_CHAT_EMULATE_OPENCODE=true must switch the identity on")
-	}
-
-	t.Setenv("BACKEND_CHAT_EMULATE_OPENCODE", "banana")
-	_, err = Load()
-	if err == nil || !strings.Contains(err.Error(), "BACKEND_CHAT_EMULATE_OPENCODE") {
-		t.Fatalf("want an error naming BACKEND_CHAT_EMULATE_OPENCODE for a non-boolean, got: %v", err)
-	}
-}
-
 // TestLoad_searchMaxDistance covers the parse and the values that would
 // otherwise pass silently. NaN and Inf are the dangerous ones: they satisfy
 // ParseFloat and survive an `f < 0` test, and a NaN bound makes every distance
@@ -390,7 +362,6 @@ func TestComposeGivesOptionalSettingsADefault(t *testing.T) {
 		"BACKEND_ASK_CALL_TIMEOUT",
 		"BACKEND_CHAT_CALL_TIMEOUT",
 		"BACKEND_CHAT_STREAM_IDLE_TIMEOUT",
-		"BACKEND_CHAT_EMULATE_OPENCODE",
 		"BACKEND_SUMMARIZE_REQUEST_DELAY",
 		"BACKEND_SUMMARIZE_VIDEO_DELAY",
 		"BACKEND_SUMMARIZE_SUMMARY_TOKENS",
