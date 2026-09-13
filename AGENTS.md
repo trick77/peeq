@@ -8,7 +8,7 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - One feature branch per phase (`feat/phase-N-...`). Conventional commits.
 - TDD: failing test first, then the minimal implementation.
 - Keep files focused — one clear responsibility each.
-- Phase 3 needs chat + embeddings endpoints (`BACKEND_CHAT_*`, `BACKEND_EMBED_*`); tests fake them
+- Phase 3 needs chat + embeddings endpoints (`LLMWIRE_ZAI_*`, `LLMWIRE_OPENAI_*`); tests fake them
   with httptest — never call a real LLM/embeddings endpoint or the real yt-dlp binary.
 - Flows needing a real cookie/AI endpoints aren't automated — run `docs/manual-verification.md` by hand.
 
