@@ -81,12 +81,6 @@ type Config struct {
 	// internal/llm; the whole-call cap is ChatCallTimeout below.
 	ChatStreamIdleTimeout time.Duration
 
-	// ChatEmulateOpenCode presents the chat calls as the opencode client: its
-	// User-Agent and session header pair. The provider entry in llmwire's
-	// profiles.yaml switches it on for a host it knows to be sold that way;
-	// this is the operator's switch for one it does not mark. Off by default,
-	// and it only adds the identity. LLMWIRE_EMULATE_OPENCODE.
-	ChatEmulateOpenCode bool
 	// ChatCallTimeout is the backstop on a single chat call's total duration.
 	// Tunable because single-pass summaries send a whole transcript in one call,
 	// so the ceiling that used to bound ~600-token map calls now has to cover a
@@ -183,13 +177,6 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("BACKEND_ALLOW_ANONYMOUS_YOUTUBE must be a boolean")
 		}
 		cfg.AllowAnonymousYoutube = b
-	}
-	if v := env("LLMWIRE_EMULATE_OPENCODE", ""); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("LLMWIRE_EMULATE_OPENCODE must be a boolean")
-		}
-		cfg.ChatEmulateOpenCode = b
 	}
 	if v := env("BACKEND_SEARCH_MAX_DISTANCE", ""); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
