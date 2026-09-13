@@ -408,22 +408,22 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	// and the non-streaming client accepted it silently too. But it stops being
 	// silent: a half summary that nobody can explain later is worse than a
 	// warning nobody reads.
-	if res.finishReason != "" && res.finishReason != "stop" {
+	if res.wire.FinishReason != "" && res.wire.FinishReason != "stop" {
 		c.log.Warn("llm: answer ended early", append(info.LogAttrs(),
-			"finish_reason", res.finishReason, "chars", res.chars)...)
+			"finish_reason", res.wire.FinishReason, "chars", res.chars)...)
 	}
 
 	// Inference is measured from `started`, which is taken after pace()
 	// returns, so the deliberate gap between calls is accounted separately
 	// instead of inflating the model's apparent latency.
 	inference := time.Since(started)
-	usage := usageFromWire(res.usage)
+	usage := usageFromWire(res.wire.Usage)
 	usage.InferenceNanos = int64(inference)
 	usage.PacedNanos = int64(pacedFor)
 	TotalsFrom(ctx).Add(usage)
 
-	if len(res.usage.Raw) > 0 {
-		c.log.Debug("llm: usage raw", append(info.LogAttrs(), "usage", llmwire.Truncate(string(res.usage.Raw), maxRawUsage))...)
+	if len(res.wire.Usage.Raw) > 0 {
+		c.log.Debug("llm: usage raw", append(info.LogAttrs(), "usage", llmwire.Truncate(string(res.wire.Usage.Raw), maxRawUsage))...)
 	} else {
 		c.log.Debug("llm: no usage reported", info.LogAttrs()...)
 	}
@@ -432,7 +432,7 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	// twice. status and the stream counts are what this line adds on top of
 	// the accounting.
 	attrs := append(info.LogAttrs(),
-		"chunks", res.events, "finish_reason", res.finishReason)
+		"chunks", res.events, "finish_reason", res.wire.FinishReason)
 	c.log.Debug("llm: request done", append(attrs, usage.LogAttrs()...)...)
 	// Opt-in: a caller that must not persist a truncated answer (the single-pass
 	// summary) turns a refusal/filter early-end into an error so the job retries,
@@ -443,11 +443,11 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	// come back identical on every attempt, so an error here would only walk the
 	// job down its backoff ladder to the same partial answer. The warn line above
 	// still says the answer is partial.
-	if failOnEarlyFinishFrom(ctx) && res.finishReason != "" &&
-		res.finishReason != "stop" && !deterministicCut(res.finishReason) {
-		return "", fmt.Errorf("chat ended early: finish_reason=%s", res.finishReason)
+	if failOnEarlyFinishFrom(ctx) && res.wire.FinishReason != "" &&
+		res.wire.FinishReason != "stop" && !deterministicCut(res.wire.FinishReason) {
+		return "", fmt.Errorf("chat ended early: finish_reason=%s", res.wire.FinishReason)
 	}
-	return res.content, nil
+	return res.wire.Content, nil
 }
 
 // deterministicCut reports whether a finish_reason is a cut that every retry

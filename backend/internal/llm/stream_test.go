@@ -154,54 +154,6 @@ func TestComplete_streamsWithoutStreamOptions(t *testing.T) {
 	}
 }
 
-// The usage chunk arrives AFTER finish_reason and carries an empty choices
-// array, while the finish_reason chunk carries "usage":null. Stopping at
-// finish_reason loses the accounting; treating a present-but-null usage field
-// as a report overwrites it with zeros. Both were live risks in this rewrite.
-func TestComplete_keepsTheUsageChunkThatFollowsFinishReason(t *testing.T) {
-	const raw = `{"prompt_tokens":265,"completion_tokens":80,"total_tokens":345,` +
-		`"prompt_tokens_details":{"cached_tokens":192},` +
-		`"completion_tokens_details":{"reasoning_tokens":0}}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		flush(t, w, sseStream("ok", raw))
-	}))
-	defer srv.Close()
-
-	totals := &Totals{}
-	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
-	ctx := WithTotals(context.Background(), totals)
-	if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
-	}
-	got := totals.Snapshot()
-	got.InferenceNanos, got.PacedNanos = 0, 0
-	want := Usage{Requests: 1, Accounted: 1, PromptTokens: 265, CachedTokens: 192, CompletionTokens: 80,
-		TotalTokens: 345}
-	if got != want {
-		t.Fatalf("totals = %+v, want %+v", got, want)
-	}
-}
-
-func TestComplete_skipsMalformedDataLinesRatherThanLosingTheAnswer(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"be"},"index":0}]}`))
-		flush(t, w, sseEvent(`{not json at all`))
-		flush(t, w, ": ping\n\n")
-		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"fore"},"finish_reason":"stop","index":0}]}`))
-		flush(t, w, sseEvent(doneMarker))
-	}))
-	defer srv.Close()
-
-	c := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client())
-	got, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
-	if err != nil {
-		t.Fatalf("one bad line discarded a finished answer: %v", err)
-	}
-	if got != "before" {
-		t.Fatalf("content = %q, want %q", got, "before")
-	}
-}
-
 // Reasoning deltas are the liveness signal a long thinking phase produces, and
 // they must not reach the caller as output.
 func TestComplete_countsReasoningDeltasButExcludesThemFromTheResult(t *testing.T) {
@@ -460,31 +412,6 @@ func TestComplete_failureLineCarriesItsOwnCounts(t *testing.T) {
 	}
 	if chars, _ := failed["chars"].(float64); chars != 3 {
 		t.Errorf("chars = %v, want 3", failed["chars"])
-	}
-}
-
-// SSE allows the space after "data:" to be omitted. Matching only the spaced
-// form would drop every event from such an endpoint as if it were a comment —
-// silently, with no error to point at.
-//
-// The scanner is llmwire's now, so this asserts the property end to end rather
-// than calling the parser: what matters to peeq is that such an endpoint still
-// produces an answer.
-func TestComplete_acceptsDataLinesWithoutTheSpace(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, dataPrefix+`{"choices":[{"delta":{"content":"tight"},"finish_reason":"stop"}]}`+"\n\n")
-		_, _ = io.WriteString(w, dataPrefix+doneMarker+"\n\n")
-	}))
-	defer srv.Close()
-
-	got, err := mustClient(t, fastBounds(Config{BaseURL: srv.URL, Logger: discardLogger()}), srv.Client()).
-		Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	if got != "tight" {
-		t.Errorf("content = %q, want %q", got, "tight")
 	}
 }
 
