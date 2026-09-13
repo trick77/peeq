@@ -41,11 +41,11 @@ type Config struct {
 	OIDC          OIDCConfig
 	Dev           DevUserConfig
 
-	// AI integration: no endpoint here. Each model's llmwire profile names the
-	// env vars its client reads (LLMWIRE_ZAI_BASE_URL and LLMWIRE_ZAI_API_KEY
-	// for glm-5.3-flash, LLMWIRE_OPENAI_BASE_URL and LLMWIRE_OPENAI_API_KEY for
-	// the embedding model) and llmwire.FromEnv reads them at boot, so a
-	// missing one is a boot error there. Neither model is
+	// AI integration: no endpoint here. Each model's llmwire profile carries
+	// its host and names the key variable its client reads
+	// (LLMWIRE_ZAI_API_KEY for glm-5.3-flash, LLMWIRE_OPENAI_API_KEY for the
+	// embedding model); llmwire.FromEnv reads them at boot, so a missing one
+	// is a boot error there. Neither model is
 	// configuration: both are constants (llm.ModelFor, rag.EmbedModel), because
 	// prompts, token caps and the vector table's width are all built to them.
 	// SearchMaxDistance bounds the semantic lane: hits at or beyond this L2
