@@ -146,11 +146,7 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 	}
 	// llmwire places each vector by the response's own index and refuses a
 	// count mismatch, a gap or a repeat, so what comes back is already aligned
-	// to the inputs. The check that used to live here is now upstream, with
-	// tests of its own.
-	if len(resp.Vectors) != len(inputs) {
-		return fail(fmt.Errorf("embedding count mismatch: got %d, want %d", len(resp.Vectors), len(inputs)))
-	}
+	// to the inputs; nothing is re-checked here.
 
 	// One token figure, not two. An embeddings call has no completion side, so
 	// the endpoint's total_tokens equals its prompt_tokens — and llmwire's merged
@@ -158,8 +154,8 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 	// The old embed_tokens_total was the same number under a second name.
 	attrs := append(ident, "duration_ms", time.Since(started).Milliseconds(),
 		"embed_tokens_in", llm.FormatTokens(valueOr(resp.Usage.Input.Total)))
-	for _, w := range warnings {
-		attrs = append(attrs, "warning", w.String())
+	if len(warnings) > 0 {
+		attrs = append(attrs, "warnings", llmwire.Warnings(warnings))
 	}
 	c.log.Debug("embed: request done", attrs...)
 	return resp.Vectors, nil
@@ -230,9 +226,6 @@ func (c *EmbedClient) EmbedBatched(ctx context.Context, inputs []string, gap tim
 		vecs, err := c.Embed(ctx, inputs[start:end])
 		if err != nil {
 			return nil, fmt.Errorf("embed batch %d-%d: %w", start, end, err)
-		}
-		if len(vecs) != end-start {
-			return nil, fmt.Errorf("embed batch %d-%d: got %d vectors for %d inputs", start, end, len(vecs), end-start)
 		}
 		out = append(out, vecs...)
 	}
