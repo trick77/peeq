@@ -634,7 +634,6 @@ func mustClient(t testing.TB, cfg Config, hc *http.Client) *Client {
 // llmwire for the key variable; a missing one comes back named rather than as
 // a client that dials "".
 func TestNewClient_withoutBaseURLNamesTheMissingVariable(t *testing.T) {
-	t.Setenv("LLMWIRE_ZAI_BASE_URL", "")
 	t.Setenv("LLMWIRE_ZAI_API_KEY", "")
 	_, err := NewClient(Config{}, nil)
 	var me *llmwire.MissingEnvError

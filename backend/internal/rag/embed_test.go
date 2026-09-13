@@ -204,7 +204,6 @@ func mustEmbedClient(t testing.TB, cfg EmbedConfig, hc *http.Client) *EmbedClien
 // llmwire for the key variable; a missing one comes back named rather than as
 // a client that dials "".
 func TestNewEmbedClient_withoutBaseURLNamesTheMissingVariable(t *testing.T) {
-	t.Setenv("LLMWIRE_OPENAI_BASE_URL", "")
 	t.Setenv("LLMWIRE_OPENAI_API_KEY", "")
 	_, err := NewEmbedClient(EmbedConfig{}, nil)
 	var me *llmwire.MissingEnvError
