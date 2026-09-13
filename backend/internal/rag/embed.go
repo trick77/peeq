@@ -63,8 +63,8 @@ func EmbedDim() int { return embedProfile.Embedding.DefaultDimensions }
 const defaultEmbedTimeout = 1 * time.Minute
 
 // EmbedConfig configures the embedding client. BaseURL and APIKey override the
-// env vars EmbedModel's profile names (BACKEND_EMBED_BASE_URL and
-// BACKEND_EMBED_API_KEY); left empty, llmwire reads those itself, and a test
+// env vars EmbedModel's profile names (LLMWIRE_OPENAI_BASE_URL and
+// LLMWIRE_OPENAI_API_KEY); left empty, llmwire reads those itself, and a test
 // points BaseURL at its fake. Logger is optional and defaults to
 // slog.Default(). HeartbeatInterval is how often an in-flight request logs
 // that it is still waiting (0 uses llm.DefaultHeartbeat; negative disables it).
@@ -83,7 +83,7 @@ type EmbedClient struct {
 }
 
 // NewEmbedClient builds an EmbedClient. hc is optional. The error is a missing
-// BACKEND_EMBED_BASE_URL or BACKEND_EMBED_API_KEY, named.
+// LLMWIRE_OPENAI_BASE_URL or LLMWIRE_OPENAI_API_KEY, named.
 func NewEmbedClient(cfg EmbedConfig, hc *http.Client) (*EmbedClient, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()

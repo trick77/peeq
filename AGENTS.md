@@ -46,7 +46,7 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   only signal when it did not was a boot warning over an already-stale vector table.
 
 ## Chat model
-- `BACKEND_CHAT_BASE_URL` = Z.ai GENERAL endpoint `https://api.z.ai/api/paas/v4` (no `/v1`). NEVER
+- `LLMWIRE_ZAI_BASE_URL` = Z.ai GENERAL endpoint `https://api.z.ai/api/paas/v4` (no `/v1`). NEVER
   the Coding Plan endpoint `/api/coding/paas/v4` — restricted to Z.ai's own tools, forbids peeq.
 - **The wire protocol is `github.com/trick77/llmwire`.** What that library owns, and what therefore
   must NOT be reimplemented here: the SSE parsing, the header/idle/call bounds and the text naming

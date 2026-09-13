@@ -33,9 +33,9 @@ Run after any change to channels, scanning, or the download pipeline.
 
 Run after any change to captions, embeddings, summaries, chapters, or global search.
 
-1. Boot with a real YouTube cookie, a running **chat endpoint** (`BACKEND_CHAT_BASE_URL` +
-   `BACKEND_CHAT_API_KEY` — Z.ai's general endpoint, see AGENTS.md), and a running **embeddings
-   endpoint** (`BACKEND_EMBED_BASE_URL` + `BACKEND_EMBED_API_KEY`; the model itself is a
+1. Boot with a real YouTube cookie, a running **chat endpoint** (`LLMWIRE_ZAI_BASE_URL` +
+   `LLMWIRE_ZAI_API_KEY` — Z.ai's general endpoint, see AGENTS.md), and a running **embeddings
+   endpoint** (`LLMWIRE_OPENAI_BASE_URL` + `LLMWIRE_OPENAI_API_KEY`; the model itself is a
    constant, `rag.EmbedModel`). peeq will refuse to start without the two base URLs.
    The two are separate providers: the chat swap to GLM does not touch embeddings.
 2. Download a real video and confirm its captions are present:
