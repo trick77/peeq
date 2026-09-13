@@ -80,6 +80,7 @@ vi.mock("./api", () => ({
   cancelDownload: vi.fn().mockResolvedValue(undefined),
   streamDownloads: vi.fn().mockResolvedValue(undefined),
   listVideos: vi.fn().mockResolvedValue([]),
+  getVideoCounts: vi.fn().mockResolvedValue({ filters: {}, categories: {} }),
   // Up next fetches the timed schedule; History fetches the log. Both are one
   // rail click away, so the barrel needs them even in tests that never open
   // those pages.
@@ -134,6 +135,7 @@ vi.mock("./api/videos", () => ({
   deleteVideo: vi.fn(),
   redownload: vi.fn(),
   listVideos: vi.fn().mockResolvedValue([]),
+  getVideoCounts: vi.fn().mockResolvedValue({ filters: {}, categories: {} }),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
   thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
   // The Inbox card's poster. Only reached once a test puts an item in the

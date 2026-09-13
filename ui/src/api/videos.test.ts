@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   listVideos,
   getVideo,
+  getVideoCounts,
   deleteVideo,
   setFavorite,
   setWatched,
@@ -52,6 +53,19 @@ describe("videos api", () => {
     await listVideos({ q: "deep field", sort: "oldest", channel: "UC1" });
     const [url] = f.mock.calls[0];
     expect(url).toBe("/api/videos?q=deep+field&sort=oldest&channel=UC1");
+  });
+
+  it("getVideoCounts GETs /api/videos/counts, carrying only q", async () => {
+    const f = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async () =>
+          new Response('{"filters":{},"categories":{}}', { status: 200 }),
+      );
+    await getVideoCounts();
+    expect(f.mock.calls[0][0]).toBe("/api/videos/counts");
+    await getVideoCounts({ q: "deep field" });
+    expect(f.mock.calls[1][0]).toBe("/api/videos/counts?q=deep+field");
   });
 
   it("getVideo GETs /api/videos/{id}, encoding the id", async () => {

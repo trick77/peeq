@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VideoCard } from "../components/VideoCard";
-import type { Video } from "../api/types";
+import type { Video, VideoCounts, VideoFilter } from "../api/types";
 
 // baseVideo is a minimal, valid Video row; each test overrides only the
 // fields that drive the lifecycle line being asserted.
@@ -496,6 +496,7 @@ describe("VideoCard lifecycle line", () => {
 // setFavorite, setWatched, redownload).
 vi.mock("../api", () => ({
   listVideos: vi.fn(),
+  getVideoCounts: vi.fn(),
   getSettings: vi.fn().mockResolvedValue({ retention_days: 14 }),
   listDownloads: vi.fn().mockResolvedValue([]),
   streamDownloads: vi.fn().mockImplementation(() => new Promise(() => {})),
@@ -505,7 +506,58 @@ vi.mock("../api", () => ({
 }));
 
 import { Library } from "./Library";
-import { listVideos, listDownloads, setFavorite, setWatched } from "../api";
+import {
+  listVideos,
+  getVideoCounts,
+  listDownloads,
+  setFavorite,
+  setWatched,
+} from "../api";
+
+// countsOf is what the server would answer for this library: the chip row
+// computed from a list of rows with videos.Store.List's filter semantics. The
+// tests hand the same fixtures to it that they hand to listVideos, so the
+// numbers on the chips and the rows in the grid come from one source.
+const CHIP_FILTERS: VideoFilter[] = [
+  "all",
+  "unwatched",
+  "in_progress",
+  "watched",
+  "favorites",
+];
+function inChip(v: Video, f: VideoFilter): boolean {
+  switch (f) {
+    case "unwatched":
+      return (
+        v.status === "downloaded" &&
+        !v.watched &&
+        v.resume_position_seconds === 0
+      );
+    case "in_progress":
+      return (
+        v.status === "downloaded" && !v.watched && v.resume_position_seconds > 0
+      );
+    case "watched":
+      return v.watched && v.status !== "tombstoned";
+    case "favorites":
+      return v.favorite;
+    default:
+      return true;
+  }
+}
+function countsOf(rows: Video[]): VideoCounts {
+  const filters = {} as VideoCounts["filters"];
+  const categories = {} as VideoCounts["categories"];
+  for (const f of CHIP_FILTERS) {
+    const hits = rows.filter((v) => inChip(v, f));
+    filters[f] = hits.length;
+    categories[f] = {};
+    for (const v of hits) {
+      categories[f][v.category] = (categories[f][v.category] ?? 0) + 1;
+    }
+  }
+  return { filters, categories };
+}
 
 function categoryVideo(overrides: Partial<Video> = {}): Video {
   return {
@@ -538,6 +590,11 @@ function categoryVideo(overrides: Partial<Video> = {}): Video {
 describe("Library category chips", () => {
   beforeEach(() => {
     vi.mocked(listVideos).mockReset();
+    // An empty chip row by default; a test that reads a number, or clicks a
+    // category chip (which only exists while its count is above zero), hands
+    // getVideoCounts the same fixtures it hands listVideos.
+    vi.mocked(getVideoCounts).mockReset();
+    vi.mocked(getVideoCounts).mockResolvedValue(countsOf([]));
   });
 
   afterEach(() => {
@@ -577,23 +634,23 @@ describe("Library category chips", () => {
 
   // A chip's number answers "how many would I see if I clicked this", so with a
   // query in the search box it has to be scoped to that query too. The counts
-  // come from their own filter:"all" fetch, which therefore has to carry `q` —
-  // otherwise a chip reads 65 above a grid of 3.
+  // come from their own getVideoCounts fetch, which therefore has to carry `q`
+  // — otherwise a chip reads 65 above a grid of 3.
   // Two effects write the counts: the query's own, and the one that refires when
   // a download finishes — and the second carries whatever query was in the box at
   // the time. Without an epoch of their own, its late response repaints every
   // chip with the older query's numbers, and unlike the grid the counts have
   // nothing to correct them until the query changes again.
   it("ignores a queue-triggered count response the search has moved past", async () => {
-    const deferred: Array<(v: Video[]) => void> = [];
-    vi.mocked(listVideos).mockImplementation((opts) => {
-      // Only the counts' fetch (filter "all") is held open; the grid's resolves
-      // straight away so the page renders.
-      if (opts?.filter === "all") {
-        return new Promise<Video[]>((resolve) => deferred.push(resolve));
-      }
-      return Promise.resolve([categoryVideo({ id: "v1", title: "a video" })]);
-    });
+    const deferred: Array<(c: VideoCounts) => void> = [];
+    // Only the counts are held open; the grid's fetch resolves straight away
+    // so the page renders.
+    vi.mocked(getVideoCounts).mockImplementation(
+      () => new Promise<VideoCounts>((resolve) => deferred.push(resolve)),
+    );
+    vi.mocked(listVideos).mockResolvedValue([
+      categoryVideo({ id: "v1", title: "a video" }),
+    ]);
 
     const { rerender } = render(
       <Library
@@ -627,16 +684,20 @@ describe("Library category chips", () => {
     await waitFor(() => expect(deferred.length).toBe(3));
 
     // The newest query answers first, then the queue's older one arrives late.
-    deferred[2]([
-      categoryVideo({ id: "a", title: "kubernetes one" }),
-      categoryVideo({ id: "b", title: "kubernetes two" }),
-    ]);
-    deferred[1]([
-      categoryVideo({ id: "c" }),
-      categoryVideo({ id: "d" }),
-      categoryVideo({ id: "e" }),
-      categoryVideo({ id: "f" }),
-    ]);
+    deferred[2](
+      countsOf([
+        categoryVideo({ id: "a", title: "kubernetes one" }),
+        categoryVideo({ id: "b", title: "kubernetes two" }),
+      ]),
+    );
+    deferred[1](
+      countsOf([
+        categoryVideo({ id: "c" }),
+        categoryVideo({ id: "d" }),
+        categoryVideo({ id: "e" }),
+        categoryVideo({ id: "f" }),
+      ]),
+    );
 
     // The chips still report the query the user is actually looking at.
     await waitFor(() => {
@@ -648,16 +709,18 @@ describe("Library category chips", () => {
   });
 
   it("scopes the chip counts to the search query", async () => {
+    const library = [
+      categoryVideo({ id: "v1", title: "matching video" }),
+      categoryVideo({ id: "v2", title: "other video" }),
+      categoryVideo({ id: "v3", title: "another one" }),
+    ];
+    const matching = (q?: string) =>
+      q ? library.filter((v) => v.title.includes(q)) : library;
     vi.mocked(listVideos).mockImplementation((opts) =>
-      Promise.resolve(
-        opts?.q
-          ? [categoryVideo({ id: "v1", title: "matching video" })]
-          : [
-              categoryVideo({ id: "v1", title: "matching video" }),
-              categoryVideo({ id: "v2", title: "other video" }),
-              categoryVideo({ id: "v3", title: "another one" }),
-            ],
-      ),
+      Promise.resolve(matching(opts?.q)),
+    );
+    vi.mocked(getVideoCounts).mockImplementation((opts) =>
+      Promise.resolve(countsOf(matching(opts?.q))),
     );
     render(
       <Library
@@ -669,12 +732,12 @@ describe("Library category chips", () => {
     await screen.findByText("matching video");
 
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith(
-        expect.objectContaining({ filter: "all", q: "matching" }),
+      expect(getVideoCounts).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "matching" }),
       );
     });
     // Every chip reports the searched slice, not the whole library — the watch
-    // chips and the category row both, since both count off the same list.
+    // chips and the category row both, since both come from the same answer.
     await waitFor(() => {
       const all = Array.from(document.querySelectorAll(".chips .chip")).find(
         (c) => c.textContent?.startsWith("All"),
@@ -692,26 +755,23 @@ describe("Library category chips", () => {
   // the box afterwards would leave the user on All categories.
   it("keeps the chosen category when a search matches none of it", async () => {
     const user = userEvent.setup();
+    const ai = categoryVideo({
+      id: "v1",
+      title: "an ai video",
+      category: "ai",
+    });
+    const tech = categoryVideo({
+      id: "v2",
+      title: "kubernetes talk",
+      category: "tech",
+    });
+    // The query matches a video, but not one in the AI category.
+    const matching = (q?: string) => (q ? [tech] : [ai, tech]);
     vi.mocked(listVideos).mockImplementation((opts) =>
-      Promise.resolve(
-        opts?.q
-          ? // The query matches a video, but not one in the AI category.
-            [
-              categoryVideo({
-                id: "v2",
-                title: "kubernetes talk",
-                category: "tech",
-              }),
-            ]
-          : [
-              categoryVideo({ id: "v1", title: "an ai video", category: "ai" }),
-              categoryVideo({
-                id: "v2",
-                title: "kubernetes talk",
-                category: "tech",
-              }),
-            ],
-      ),
+      Promise.resolve(matching(opts?.q)),
+    );
+    vi.mocked(getVideoCounts).mockImplementation((opts) =>
+      Promise.resolve(countsOf(matching(opts?.q))),
     );
     const { rerender } = render(
       <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
@@ -729,8 +789,8 @@ describe("Library category chips", () => {
       />,
     );
     await waitFor(() => {
-      expect(listVideos).toHaveBeenCalledWith(
-        expect.objectContaining({ filter: "all", q: "kubernetes" }),
+      expect(getVideoCounts).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "kubernetes" }),
       );
     });
     // Still selected and still on the row — reading 0, which is the honest
@@ -855,9 +915,9 @@ describe("Library category chips", () => {
     expect(screen.getByRole("button", { name: /Watched/ })).toHaveClass("on");
   });
 
-  // The server leaves swept videos out of the watched filter, so the count has
-  // to leave them out too — it is computed here from the unfiltered list, and a
-  // chip reading 2 above a grid of 1 is the count lying about the click.
+  // The server leaves swept videos out of the watched filter, and its counts
+  // leave them out too: the chip shows what the server answered, and a chip
+  // reading 2 above a grid of 1 is the count lying about the click.
   it("does not count a swept video on the Watched chip", async () => {
     const here = categoryVideo({
       id: "here",
@@ -874,6 +934,7 @@ describe("Library category chips", () => {
     vi.mocked(listVideos).mockImplementation((opts) =>
       Promise.resolve(opts?.filter === "watched" ? [here] : [here, swept]),
     );
+    vi.mocked(getVideoCounts).mockResolvedValue(countsOf([here, swept]));
     render(
       <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
     );
@@ -911,6 +972,7 @@ describe("Library category chips", () => {
       if (opts?.category === "ai") return [aiVideo];
       return [aiVideo, newsVideo];
     });
+    vi.mocked(getVideoCounts).mockResolvedValue(countsOf([aiVideo, newsVideo]));
 
     render(
       <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
@@ -945,6 +1007,7 @@ describe("Library category chips", () => {
       if (opts?.category === "ai") return [aiVideo];
       return [aiVideo, newsVideo];
     });
+    vi.mocked(getVideoCounts).mockResolvedValue(countsOf([aiVideo, newsVideo]));
 
     render(
       <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
@@ -968,9 +1031,9 @@ describe("Library category chips", () => {
   });
 
   it("scopes the category row to the active status chip", async () => {
-    // allVideos (the unfiltered load) drives the category row: an unwatched AI
-    // video and a watched News video. Each status chip should only offer the
-    // categories present among videos matching it.
+    // The server's counts drive the category row: an unwatched AI video and a
+    // watched News video. Each status chip should only offer the categories
+    // present among videos matching it.
     const aiUnwatched = categoryVideo({
       id: "v1",
       title: "ai vid",
@@ -989,6 +1052,9 @@ describe("Library category chips", () => {
       if (opts?.filter === "unwatched") return [aiUnwatched];
       return [];
     });
+    vi.mocked(getVideoCounts).mockResolvedValue(
+      countsOf([aiUnwatched, newsWatched]),
+    );
 
     render(
       <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
@@ -1038,6 +1104,9 @@ describe("Library category chips", () => {
       if (opts?.filter === "watched") return [newsWatched];
       return [aiUnwatched];
     });
+    vi.mocked(getVideoCounts).mockResolvedValue(
+      countsOf([aiUnwatched, newsWatched]),
+    );
 
     render(
       <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
@@ -1074,6 +1143,7 @@ describe("Library category chips", () => {
       category: "ai",
     });
     vi.mocked(listVideos).mockResolvedValue([aiVideo]);
+    vi.mocked(getVideoCounts).mockResolvedValue(countsOf([aiVideo]));
 
     const { rerender } = render(
       <Library
@@ -1257,6 +1327,37 @@ describe("Library category chips", () => {
     expect(
       await screen.findByRole("button", { name: "Mark unwatched" }),
     ).toBeInTheDocument();
+  });
+
+  // A toggle moves the video between chips, and the chip numbers are the
+  // server's: they are asked for again once the toggle has landed, so the
+  // Watched chip reads 1 without waiting for a download to finish.
+  it("refetches the chip counts once a watched toggle lands", async () => {
+    const v = categoryVideo({ id: "v1", watched: false });
+    vi.mocked(listVideos).mockResolvedValue([v]);
+    vi.mocked(getVideoCounts).mockResolvedValue(countsOf([v]));
+    vi.mocked(setWatched).mockResolvedValue({
+      watched: true,
+      state_version: 2,
+    });
+    render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
+    await screen.findByText("A Test Video");
+    const chipCount = (name: string) =>
+      Array.from(document.querySelectorAll(".chips .chip"))
+        .find((c) => c.textContent?.startsWith(name))
+        ?.querySelector(".n")?.textContent;
+    await waitFor(() => expect(chipCount("Watched")).toBe("0"));
+
+    vi.mocked(getVideoCounts).mockResolvedValue(
+      countsOf([{ ...v, watched: true }]),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
+
+    await waitFor(() => expect(setWatched).toHaveBeenCalledWith("v1", true));
+    await waitFor(() => expect(chipCount("Watched")).toBe("1"));
+    expect(chipCount("Unwatched")).toBe("0");
   });
 
   it("reverts the optimistic watched flip when setWatched fails", async () => {

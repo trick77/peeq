@@ -4,12 +4,19 @@ import { PillStrip } from "../components/PillStrip";
 import { SearchField } from "../components/SearchField";
 import {
   listVideos,
+  getVideoCounts,
   getSettings,
   setFavorite,
   setWatched,
   redownload,
 } from "../api";
-import type { Video, VideoFilter, VideoSort, Settings } from "../api/types";
+import type {
+  Video,
+  VideoCounts,
+  VideoFilter,
+  VideoSort,
+  Settings,
+} from "../api/types";
 import { CATEGORIES } from "../categories";
 import { controlClass } from "../ui";
 
@@ -61,9 +68,10 @@ export const INBOX_SORT_OPTIONS = SORT_OPTIONS.filter(
 );
 
 // matchesFilter mirrors videos.Store.List's SQL WHERE clauses (see
-// backend/internal/videos/store.go), so the chip counts computed here from
-// the unfiltered "all" list agree with what each chip's own listVideos(id)
-// call actually returns.
+// backend/internal/videos/store.go). It is only consulted for the optimistic
+// hide below (`visible`): a card the user just toggled has to leave the grid
+// before the server is asked again. The chip numbers themselves are the
+// server's (getVideoCounts), so this is no longer counting anything.
 //
 // One branch is deliberately WIDER than its SQL counterpart rather than an
 // exact mirror: "unwatched" also accepts queued/downloading, where the Go
@@ -159,7 +167,7 @@ export function Library({
   const [category, setCategory] = useState<string>("all");
   const [sort, setSort] = useState<VideoSort>("added_newest");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [allVideos, setAllVideos] = useState<Video[]>([]);
+  const [counts, setCounts] = useState<VideoCounts | null>(null);
   const [videos, setVideos] = useState<Video[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -171,12 +179,13 @@ export function Library({
   // stays highlighted. Every filtered fetch claims an epoch; a response that no
   // longer holds the latest one is dropped.
   const filteredEpoch = useRef(0);
-  // The counts have exactly the same problem, and needed their own epoch: two
-  // effects call setAllVideos (the query's own, and the queue's), and the
-  // queue-triggered one carries whatever query was in the box when the download
-  // finished. Type on past it and its late response would repaint every chip
-  // with the older query's numbers — where the grid self-corrects on the next
-  // keystroke, the counts would sit wrong until the query changed again.
+  // The counts have exactly the same problem, and needed their own epoch: three
+  // callers call setCounts (the query's own effect, the queue's, and a toggle
+  // settling), and the queue-triggered one carries whatever query was in the
+  // box when the download finished. Type on past it and its late response
+  // would repaint every chip with the older query's numbers — where the grid
+  // self-corrects on the next keystroke, the counts would sit wrong until the
+  // query changed again.
   const countsEpoch = useRef(0);
 
   // Settings (for the "Expires in N days" calc) load once — nothing the user
@@ -195,18 +204,20 @@ export function Library({
     };
   }, []);
 
-  // The list every count is derived from: unfiltered by chip and category, but
-  // NOT by search. A count has to answer "how many would I see if I clicked
-  // this", and with a query in the box the answer is scoped to that query — a
-  // chip reading 65 next to a grid of 3 is the count lying about the click.
-  // Same endpoint and same `q` as the grid's own fetch below, so the server
-  // decides what matches and the two can never disagree about it.
+  // The chip numbers: unscoped by chip and category, but NOT by search. A count
+  // has to answer "how many would I see if I clicked this", and with a query
+  // in the box the answer is scoped to that query — a chip reading 65 next to
+  // a grid of 3 is the count lying about the click. The server computes them
+  // with the same WHERE clauses as the grid's own fetch below, so the two can
+  // never disagree about what matches — and it sends five numbers per chip
+  // instead of every row in the library, which is what made a 300-video
+  // library slow to open.
   useEffect(() => {
     let active = true;
     const epoch = ++countsEpoch.current;
-    listVideos({ filter: "all", q: debouncedQuery })
-      .then((v) => {
-        if (active && epoch === countsEpoch.current) setAllVideos(v);
+    getVideoCounts({ q: debouncedQuery })
+      .then((c) => {
+        if (active && epoch === countsEpoch.current) setCounts(c);
       })
       .catch(() => {});
     return () => {
@@ -251,16 +262,11 @@ export function Library({
   // for "Music, matching this text": nothing. The chip row keeps the selected
   // category visible even at 0 (see catChips below) so it can still be undone.
   useEffect(() => {
-    if (debouncedQuery !== "") return;
-    if (
-      category !== "all" &&
-      !allVideos.some(
-        (v) => matchesFilter(v, filter) && v.category === category,
-      )
-    ) {
+    if (debouncedQuery !== "" || counts === null) return;
+    if (category !== "all" && !counts.categories[filter]?.[category]) {
       setCategory("all");
     }
-  }, [filter, allVideos, debouncedQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filter, counts, debouncedQuery]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A video only enters the Library once its download finishes, so the list
   // has to refresh when one does. App.tsx already owns the single SSE
@@ -279,16 +285,16 @@ export function Library({
     }
     let active = true;
     const epoch = ++filteredEpoch.current;
-    const counts = ++countsEpoch.current;
+    const countsClaim = ++countsEpoch.current;
     // Carries the query for the same reason the counts' own effect does: without
     // it, a download finishing would quietly swap search-scoped counts back for
     // whole-library ones while the query is still in the box. `active` alone is
     // not enough of a guard: this effect only re-runs on queueSignal, so its
     // cleanup does not fire when the user types — the epoch is what drops this
     // response once a newer query has claimed the counts.
-    listVideos({ filter: "all", q: debouncedQuery })
-      .then((v) => {
-        if (active && counts === countsEpoch.current) setAllVideos(v);
+    getVideoCounts({ q: debouncedQuery })
+      .then((c) => {
+        if (active && countsClaim === countsEpoch.current) setCounts(c);
       })
       .catch(() => {});
     listVideos({ filter, category, q: debouncedQuery, sort })
@@ -310,9 +316,20 @@ export function Library({
     setVideos((prev) =>
       prev.map((v) => (v.id === id ? { ...v, ...patch } : v)),
     );
-    setAllVideos((prev) =>
-      prev.map((v) => (v.id === id ? { ...v, ...patch } : v)),
-    );
+  }
+
+  // A toggle moves a video between chips, so the numbers are asked for again
+  // once the server has taken it. Not adjusted by hand: the server owns the
+  // definition of every chip (see matchesFilter's note), and a wrong guess
+  // here would sit on screen until the next refetch. The epoch is claimed
+  // like everywhere else so a slow answer cannot overwrite a newer query's.
+  function refreshCounts() {
+    const epoch = ++countsEpoch.current;
+    getVideoCounts({ q: debouncedQuery })
+      .then((c) => {
+        if (epoch === countsEpoch.current) setCounts(c);
+      })
+      .catch(() => {});
   }
 
   // Both toggles roll back on failure AND say so: a card that silently flips
@@ -320,13 +337,13 @@ export function Library({
   // click it again. The Archive tab and the Player report the same failures;
   // this was the last of the three that didn't.
   async function handleToggleFavorite(id: string) {
-    const current =
-      videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
+    const current = videos.find((v) => v.id === id);
     if (!current) return;
     const next = !current.favorite;
     applyLocalUpdate(id, { favorite: next });
     try {
       await setFavorite(id, next);
+      refreshCounts();
     } catch (e) {
       applyLocalUpdate(id, { favorite: current.favorite });
       setError((e as Error).message);
@@ -334,8 +351,7 @@ export function Library({
   }
 
   async function handleToggleWatched(id: string) {
-    const current =
-      videos.find((v) => v.id === id) ?? allVideos.find((v) => v.id === id);
+    const current = videos.find((v) => v.id === id);
     if (!current) return;
     const next = !current.watched;
     // The API answers with the watched flag alone, so the zeroed resume
@@ -345,6 +361,7 @@ export function Library({
     applyLocalUpdate(id, { watched: next, resume_position_seconds: 0 });
     try {
       await setWatched(id, next);
+      refreshCounts();
     } catch (e) {
       applyLocalUpdate(id, {
         watched: current.watched,
@@ -385,7 +402,7 @@ export function Library({
 
   // Category row scoped to the active watch-status chip, so it only offers
   // categories that actually exist under the current top-level filter.
-  const catScope = allVideos.filter((v) => matchesFilter(v, filter));
+  const catCounts = counts?.categories[filter] ?? {};
 
   function renderCard(video: Video) {
     return (
@@ -439,9 +456,7 @@ export function Library({
               onClick={() => setFilter(chip.id)}
             >
               {chip.label}{" "}
-              <span className="n">
-                {allVideos.filter((v) => matchesFilter(v, chip.id)).length}
-              </span>
+              <span className="n">{counts?.filters[chip.id] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -453,11 +468,12 @@ export function Library({
             className={`catchip${category === "all" ? " on" : ""}`}
             onClick={() => setCategory("all")}
           >
-            All categories <span className="n">{catScope.length}</span>
+            All categories{" "}
+            <span className="n">{counts?.filters[filter] ?? 0}</span>
           </button>
           {CATEGORIES.filter(
             (c) =>
-              catScope.some((v) => v.category === c.id) ||
+              (catCounts[c.id] ?? 0) > 0 ||
               // The selected one always stays on the row, even when the current
               // search leaves it with nothing: it is what the grid is filtered by,
               // and a lit filter you cannot see is a filter you cannot undo.
@@ -470,10 +486,7 @@ export function Library({
               onClick={() => setCategory(c.id)}
             >
               <span className="dotc" style={{ background: c.color }} />
-              {c.label}{" "}
-              <span className="n">
-                {catScope.filter((v) => v.category === c.id).length}
-              </span>
+              {c.label} <span className="n">{catCounts[c.id] ?? 0}</span>
             </button>
           ))}
         </div>
