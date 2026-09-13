@@ -164,9 +164,9 @@ type Message struct {
 // Client calls an OpenAI-compatible /chat/completions endpoint.
 type Client struct {
 	// wire is the one llmwire client every call goes through. One, not one per
-	// call: it presents as opencode (see NewClient), and that identity carries a
-	// session id that llmwire mints and rotates itself — building a client per
-	// call would mint a session per call, which is not what a session is.
+	// call: on a provider that presents as opencode, that identity carries a
+	// session id llmwire mints and rotates itself — building a client per call
+	// would mint a session per call, which is not what a session is.
 	wire      *llmwire.Client
 	interval  time.Duration
 	log       *slog.Logger
