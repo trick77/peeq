@@ -43,12 +43,12 @@ services:
       # AI endpoints. Values come from .env — see .env.example. Compose reads
       # .env for ${} interpolation only, so anything not listed here never
       # reaches the container.
-      BACKEND_CHAT_BASE_URL: "${BACKEND_CHAT_BASE_URL}"
-      BACKEND_CHAT_API_KEY: "${BACKEND_CHAT_API_KEY}"
+      LLMWIRE_ZAI_BASE_URL: "${LLMWIRE_ZAI_BASE_URL}"
+      LLMWIRE_ZAI_API_KEY: "${LLMWIRE_ZAI_API_KEY}"
       # Opt-in opencode identity on chat requests. Empty keeps the code default (off).
       BACKEND_CHAT_EMULATE_OPENCODE: "${BACKEND_CHAT_EMULATE_OPENCODE:-}"
-      BACKEND_EMBED_BASE_URL: "${BACKEND_EMBED_BASE_URL}"
-      BACKEND_EMBED_API_KEY: "${BACKEND_EMBED_API_KEY}"
+      LLMWIRE_OPENAI_BASE_URL: "${LLMWIRE_OPENAI_BASE_URL}"
+      LLMWIRE_OPENAI_API_KEY: "${LLMWIRE_OPENAI_API_KEY}"
       # How far a semantic hit may sit from the question before it counts as
       # "not about this" — L2 on unit vectors, so cosine is 1 - d²/2. Empty
       # keeps the code default; negative opts out of the bound entirely, which

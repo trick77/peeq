@@ -42,8 +42,8 @@ type Config struct {
 	Dev           DevUserConfig
 
 	// AI integration: no endpoint here. Each model's llmwire profile names the
-	// env vars its client reads (BACKEND_CHAT_BASE_URL and BACKEND_CHAT_API_KEY
-	// for glm-5.3-flash, BACKEND_EMBED_BASE_URL and BACKEND_EMBED_API_KEY for
+	// env vars its client reads (LLMWIRE_ZAI_BASE_URL and LLMWIRE_ZAI_API_KEY
+	// for glm-5.3-flash, LLMWIRE_OPENAI_BASE_URL and LLMWIRE_OPENAI_API_KEY for
 	// the embedding model) and llmwire.FromEnv reads them at boot, so a
 	// missing one is a boot error there. Neither model is
 	// configuration: both are constants (llm.ModelFor, rag.EmbedModel), because

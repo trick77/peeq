@@ -1,6 +1,6 @@
 // Package llm is peeq's lean OpenAI-compatible chat client. The endpoint and
 // key come from the env vars the model's llmwire profile names
-// (BACKEND_CHAT_BASE_URL and BACKEND_CHAT_API_KEY), read by llmwire.FromEnv in
+// (LLMWIRE_ZAI_BASE_URL and LLMWIRE_ZAI_API_KEY), read by llmwire.FromEnv in
 // NewClient; BACKEND_CHAT_EMULATE_OPENCODE is peeq's own. The model below is a
 // real upstream model identifier sent on the wire, not a config name — it is
 // deliberately NOT renamed alongside those env vars.
@@ -169,7 +169,7 @@ type Client struct {
 // timeout (see the consts above — it would truncate a stream) and instead
 // carries ResponseHeaderTimeout as a backstop under the stallGuard.
 //
-// The error is a missing BACKEND_CHAT_BASE_URL or BACKEND_CHAT_API_KEY, named.
+// The error is a missing LLMWIRE_ZAI_BASE_URL or LLMWIRE_ZAI_API_KEY, named.
 func NewClient(cfg Config, hc *http.Client) (*Client, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
