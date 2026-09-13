@@ -100,12 +100,8 @@ const (
 	// summarize worker sets no deadline of its own, so without this there would
 	// be no cap at all.
 	defaultCallTimeout = 15 * time.Minute
-	// headerBackstopHeadroom keeps the transport's ResponseHeaderTimeout later
-	// than the bound llmwire names, so the named failure wins the race. See
-	// NewClient.
-	headerBackstopHeadroom = 30 * time.Second
-	pacedLogThreshold      = time.Second
-	maxRawUsage            = 1 << 10
+	pacedLogThreshold  = time.Second
+	maxRawUsage        = 1 << 10
 )
 
 // wantsJSONObject reports whether this call asked to be constrained to JSON. The
@@ -156,7 +152,6 @@ type Client struct {
 	// session id that llmwire mints and rotates itself — building a client per
 	// call would mint a session per call, which is not what a session is.
 	wire      *llmwire.Client
-	http      *http.Client
 	interval  time.Duration
 	log       *slog.Logger
 	heartbeat time.Duration
@@ -165,9 +160,11 @@ type Client struct {
 	nextAt time.Time // earliest time the next request may start
 }
 
-// NewClient builds a Client. hc is optional; the default has NO whole-request
-// timeout (see the consts above — it would truncate a stream) and instead
-// carries ResponseHeaderTimeout as a backstop under the stallGuard.
+// NewClient builds a Client. hc is optional: left nil, llmwire builds one with
+// NO whole-request timeout (see the consts above — it would cut a stream
+// mid-answer) and a ResponseHeaderTimeout sitting 30s later than the header
+// bound, so the named failure wins the race against the transport's generic
+// one.
 //
 // The error is a missing LLMWIRE_ZAI_BASE_URL or LLMWIRE_ZAI_API_KEY, named.
 func NewClient(cfg Config, hc *http.Client) (*Client, error) {
@@ -185,26 +182,6 @@ func NewClient(cfg Config, hc *http.Client) (*Client, error) {
 	}
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = defaultCallTimeout
-	}
-	if hc == nil {
-		// Built after the defaults are resolved, so the backstop matches the
-		// bound the caller actually configured rather than silently reverting to
-		// the package default.
-		//
-		// Clone the stdlib default rather than build a bare Transport, so proxy
-		// support, dial timeouts and connection pooling stay at their tuned
-		// values instead of being dropped.
-		//
-		// The backstop sits DELIBERATELY LATER than the bound llmwire enforces.
-		// Both watch the same thing, and when the transport wins the error is its
-		// generic "timeout awaiting response headers" instead of llmwire's named
-		// bound — losing exactly the classification the split bounds exist to
-		// provide. The headroom makes the named one reliably first. It also does
-		// not apply over HTTP/2 at all, which is what this endpoint negotiates,
-		// so it is a backstop and never the mechanism.
-		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.ResponseHeaderTimeout = cfg.HeaderTimeout + headerBackstopHeadroom
-		hc = &http.Client{Transport: tr}
 	}
 	wire, err := llmwire.FromEnv(model, llmwire.Config{
 		BaseURL: cfg.BaseURL,
@@ -226,7 +203,6 @@ func NewClient(cfg Config, hc *http.Client) (*Client, error) {
 	}
 	return &Client{
 		wire:      wire,
-		http:      hc,
 		interval:  cfg.RequestInterval,
 		log:       cfg.Logger,
 		heartbeat: cfg.HeartbeatInterval,

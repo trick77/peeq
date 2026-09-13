@@ -585,35 +585,6 @@ func TestCompleteStream_nilCallbackIsTheCompletePath(t *testing.T) {
 	}
 }
 
-// The nil-client path is what production actually uses: cmd/peeq passes nil, so
-// every real request runs through the transport built here. Left untested, a
-// whole-request timeout could reappear in it and silently cut streams again —
-// the exact failure this package was rewritten to remove.
-func TestNewClient_defaultTransportBoundsHeadersAndNotTheWholeRequest(t *testing.T) {
-	c := mustClient(t, Config{BaseURL: "http://example.invalid/v1", HeaderTimeout: 7 * time.Second}, nil)
-
-	if c.http.Timeout != 0 {
-		t.Errorf("whole-request timeout = %v, want none: it caps body reads and cuts streams", c.http.Timeout)
-	}
-	tr, ok := c.http.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("transport = %T, want *http.Transport", c.http.Transport)
-	}
-	// Deliberately LATER than the bound llmwire enforces, so the named failure
-	// wins the race against this generic one. Equal values made a transport win
-	// report "timeout awaiting response headers" instead of "no response headers
-	// within 7s".
-	if want := 7*time.Second + headerBackstopHeadroom; tr.ResponseHeaderTimeout != want {
-		t.Errorf("ResponseHeaderTimeout = %v, want %v (the configured bound plus headroom)",
-			tr.ResponseHeaderTimeout, want)
-	}
-	// Cloned from the stdlib default rather than built bare, so proxy support
-	// and dial timeouts survive.
-	if tr.Proxy == nil {
-		t.Error("transport lost proxy support")
-	}
-}
-
 // A finish_reason other than "stop" means the endpoint ended the answer on its
 // own terms. Not an error — retrying an answer the model chose to cut would just
 // cut it again — but not silent either: a half summary nobody can explain later
