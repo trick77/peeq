@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"unicode/utf8"
 
@@ -43,15 +42,18 @@ func (s *streamCounters) attrs() []any {
 	return []any{"chunks", s.events.Load(), "chars", s.chars.Load()}
 }
 
-// wireResult is one completed call, in the shape the logging and accounting
-// below already expect.
+// wireResult is one completed call: llmwire's own result (content, finish
+// reason, and the decoded usage whose pointer lanes keep "reported a zero"
+// distinct from "reported nothing", with Raw for the debug line) plus the
+// counts this package kept while it was streaming and the warnings.
+//
+// events and chars are peeq's counters, not StreamResult's: StreamResult is
+// written once, when the stream ends, so the heartbeat cannot read it mid-call,
+// and the done line uses the same numbers the heartbeat showed rather than a
+// second definition of "chunk" (llmwire counts data: frames; this counts
+// content, reasoning and finish events).
 type wireResult struct {
-	content      string
-	finishReason string
-	// usage is llmwire's decoded accounting. Its lanes are pointers, so
-	// "reported a zero" stays distinguishable from "reported nothing", and Raw
-	// carries the endpoint's own bytes for the debug line.
-	usage    llmwire.Usage
+	wire     llmwire.StreamResult
 	events   int64
 	chars    int64
 	warnings []llmwire.Warning
@@ -109,12 +111,10 @@ func (c *Client) runStream(ctx context.Context, wire *llmwire.Client, req llmwir
 	}
 	defer stream.Close()
 
-	var content strings.Builder
 	for stream.Next() {
 		ev := stream.Event()
 		switch ev.Kind {
 		case llmwire.EventContent:
-			content.WriteString(ev.Text)
 			if onDelta != nil {
 				onDelta(ev.Text)
 			}
@@ -123,21 +123,17 @@ func (c *Client) runStream(ctx context.Context, wire *llmwire.Client, req llmwir
 			// model produced.
 			res.chars = counters.chars.Add(int64(utf8.RuneCountInString(ev.Text)))
 			res.events = counters.events.Add(1)
-		case llmwire.EventReasoning:
-			res.events = counters.events.Add(1)
-		case llmwire.EventFinish:
-			res.finishReason = ev.FinishReason
+		case llmwire.EventReasoning, llmwire.EventFinish:
 			res.events = counters.events.Add(1)
 		}
 	}
+	res.warnings = stream.Warnings()
 	if err := stream.Err(); err != nil {
-		res.warnings = stream.Warnings()
 		return res, chatError(err)
 	}
-
-	res.content = content.String()
-	res.usage = stream.Usage()
-	res.warnings = stream.Warnings()
+	// Content, finish reason and usage are llmwire's to assemble; valid now that
+	// Next has returned false.
+	res.wire = stream.Result()
 	return res, nil
 }
 
