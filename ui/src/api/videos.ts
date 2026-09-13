@@ -2,6 +2,7 @@ import { api } from "./http";
 import type {
   PlaybackGrant,
   Video,
+  VideoCounts,
   VideoEmbeddings,
   VideoFilter,
   VideoSort,
@@ -32,6 +33,21 @@ export async function listVideos(
   return api.get<Video[]>(
     `/api/videos${qs ? `?${qs}` : ""}`,
     "failed to load videos",
+  );
+}
+
+// getVideoCounts answers "how many would I see if I clicked this" for every
+// chip, scoped to the same q the grid's own fetch carries. It replaces loading
+// the whole library to count it client-side.
+export async function getVideoCounts(
+  opts: { q?: string } = {},
+): Promise<VideoCounts> {
+  const p = new URLSearchParams();
+  if (opts.q) p.set("q", opts.q);
+  const qs = p.toString();
+  return api.get<VideoCounts>(
+    `/api/videos/counts${qs ? `?${qs}` : ""}`,
+    "failed to load video counts",
   );
 }
 

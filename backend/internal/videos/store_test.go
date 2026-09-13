@@ -1173,3 +1173,126 @@ func TestChannelName_fallbacks(t *testing.T) {
 		}
 	}
 }
+
+// TestCounts_agreesWithList is the contract the Library relies on: a chip's
+// number is exactly the length of the list the chip opens, for every chip and
+// every category under it, with and without a query.
+func TestCounts_agreesWithList(t *testing.T) {
+	s := New(openTestDB(t))
+	ready := func(id, title, category string) {
+		t.Helper()
+		if err := s.Upsert(Video{ID: id, URL: "u", Title: title}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetDownloaded(id, DownloadedResult{MediaPath: "/m/" + id + ".mp4"}); err != nil {
+			t.Fatal(err)
+		}
+		if category != "" {
+			if err := s.SetCategory(id, category); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	ready("fresh", "Go generics", "tech")
+	ready("half", "Go channels", "tech")
+	ready("seen", "Piano basics", "music")
+	ready("swept", "Guitar basics", "music")
+	ready("fav", "Untagged", "")
+	if _, _, err := s.SetResume("half", 42, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"seen", "swept"} {
+		if _, err := s.SetWatched(id, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Tombstone("swept"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetFavorite("fav", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetFavorite("seen", true); err != nil {
+		t.Fatal(err)
+	}
+	// In flight: in no chip at all.
+	if err := s.Upsert(Video{ID: "queued", URL: "u", Title: "Go queued"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetStatus("queued", "queued", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, q := range []string{"", "go", "basics", "nothing-matches"} {
+		c, err := s.Counts(CountOptions{Query: q})
+		if err != nil {
+			t.Fatalf("counts q=%q: %v", q, err)
+		}
+		for _, f := range CountFilters {
+			rows, err := s.List(ListOptions{Filter: f, Query: q})
+			if err != nil {
+				t.Fatalf("list %s q=%q: %v", f, q, err)
+			}
+			n, ok := c.Filters[f]
+			if !ok {
+				t.Fatalf("counts q=%q: filter %s missing", q, f)
+			}
+			if n != len(rows) {
+				t.Errorf("counts q=%q filters[%s] = %d, list has %d", q, f, n, len(rows))
+			}
+			cats, ok := c.Categories[f]
+			if !ok {
+				t.Fatalf("counts q=%q: categories[%s] missing", q, f)
+			}
+			want := map[string]int{}
+			for _, v := range rows {
+				if v.Category != "" {
+					want[v.Category]++
+				}
+			}
+			if len(cats) != len(want) {
+				t.Errorf("counts q=%q categories[%s] = %v, want %v", q, f, cats, want)
+			}
+			for cat, wn := range want {
+				if cats[cat] != wn {
+					t.Errorf("counts q=%q categories[%s][%s] = %d, want %d", q, f, cat, cats[cat], wn)
+				}
+			}
+		}
+	}
+
+	// Spot-check the numbers themselves so a List bug cannot hide behind an
+	// agreeing Counts bug.
+	c, err := s.Counts(CountOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{"all": 5, "unwatched": 2, "in_progress": 1, "watched": 1, "favorites": 2}
+	for f, n := range want {
+		if c.Filters[f] != n {
+			t.Errorf("filters[%s] = %d, want %d", f, c.Filters[f], n)
+		}
+	}
+	if c.Categories["unwatched"]["tech"] != 1 || c.Categories["all"]["music"] != 2 {
+		t.Errorf("categories = %v", c.Categories)
+	}
+	if _, has := c.Categories["all"][""]; has {
+		t.Errorf("uncategorised rows must not appear as a category key: %v", c.Categories["all"])
+	}
+}
+
+func TestCounts_emptyLibrary_hasEveryKey(t *testing.T) {
+	s := New(openTestDB(t))
+	c, err := s.Counts(CountOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range CountFilters {
+		if n, ok := c.Filters[f]; !ok || n != 0 {
+			t.Errorf("filters[%s] = %d,%v want 0,true", f, n, ok)
+		}
+		if cats, ok := c.Categories[f]; !ok || cats == nil || len(cats) != 0 {
+			t.Errorf("categories[%s] = %v,%v want empty map", f, cats, ok)
+		}
+	}
+}

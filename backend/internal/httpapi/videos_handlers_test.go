@@ -1983,3 +1983,120 @@ func TestVideoDTO_indexedNeedsBothAModelAndACurrentRecipe(t *testing.T) {
 		})
 	}
 }
+
+// TestVideosCounts_shapeAndQuery covers GET /api/videos/counts: every chip key
+// present, categories scoped per chip, and ?q= narrowing the numbers exactly
+// as it narrows the list.
+func TestVideosCounts_shapeAndQuery(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	for id, title := range map[string]string{"v1": "Go generics", "v2": "Piano basics"} {
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: title}); err != nil {
+			t.Fatalf("seed video: %v", err)
+		}
+		if err := deps.Videos.SetDownloaded(id, videos.DownloadedResult{MediaPath: "/m/" + id + ".mp4"}); err != nil {
+			t.Fatalf("set downloaded: %v", err)
+		}
+	}
+	if err := deps.Videos.SetCategory("v1", "tech"); err != nil {
+		t.Fatalf("set category: %v", err)
+	}
+	if _, err := deps.Videos.SetWatched("v2", true); err != nil {
+		t.Fatalf("set watched: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	get := func(path string) videos.Counts {
+		t.Helper()
+		rec := doReq(t, h, cookie, http.MethodGet, path, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, body = %s", path, rec.Code, rec.Body.String())
+		}
+		var got videos.Counts
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return got
+	}
+
+	got := get("/api/videos/counts")
+	for _, f := range videos.CountFilters {
+		if _, ok := got.Filters[f]; !ok {
+			t.Errorf("filters[%s] missing: %v", f, got.Filters)
+		}
+		if _, ok := got.Categories[f]; !ok {
+			t.Errorf("categories[%s] missing: %v", f, got.Categories)
+		}
+	}
+	if got.Filters["all"] != 2 || got.Filters["unwatched"] != 1 || got.Filters["watched"] != 1 {
+		t.Errorf("filters = %v", got.Filters)
+	}
+	if got.Categories["unwatched"]["tech"] != 1 || got.Categories["watched"]["uncategorized"] != 1 || len(got.Categories["watched"]) != 1 {
+		t.Errorf("categories = %v", got.Categories)
+	}
+
+	got = get("/api/videos/counts?q=piano")
+	if got.Filters["all"] != 1 || got.Filters["unwatched"] != 0 || got.Filters["watched"] != 1 {
+		t.Errorf("filters (q=piano) = %v", got.Filters)
+	}
+}
+
+func TestVideosCounts_requiresAuth(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	h := New(deps)
+	req := httptest.NewRequest(http.MethodGet, "/api/videos/counts", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/videos/counts (no auth) status = %d, want 401", rec.Code)
+	}
+}
+
+func TestVideosCounts_storeError_500(t *testing.T) {
+	deps, _, db := videosTestDepsDB(t)
+	if _, err := db.Exec(`DROP TABLE videos`); err != nil {
+		t.Fatalf("drop videos table: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/counts", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /api/videos/counts (store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestVideosCounts_noStoreConfigured_zeroed covers the s.videos == nil branch:
+// the client reads every key, so the zero answer still carries them all.
+func TestVideosCounts_noStoreConfigured_zeroed(t *testing.T) {
+	db := openTestDB(t)
+	sessions := auth.NewSessionStore(db, false)
+	users := auth.NewUserStore(db)
+	deps := Deps{
+		AuthService:    auth.NewService(nil, sessions, users),
+		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		DevAuthClaims: auth.Claims{
+			Subject:           "dev-tester",
+			PreferredUsername: "dev",
+			Email:             "dev@example.local",
+			Name:              "Dev Tester",
+		},
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/counts", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/videos/counts (no store) status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got videos.Counts
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, f := range videos.CountFilters {
+		if n, ok := got.Filters[f]; !ok || n != 0 {
+			t.Errorf("filters[%s] = %d,%v", f, n, ok)
+		}
+		if cats, ok := got.Categories[f]; !ok || cats == nil {
+			t.Errorf("categories[%s] = %v,%v", f, cats, ok)
+		}
+	}
+}
