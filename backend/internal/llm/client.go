@@ -104,6 +104,26 @@ const (
 	maxRawUsage        = 1 << 10
 )
 
+// chatProfile is llmwire's description of model. Resolved once, at init, and a
+// failure is a panic on purpose, for the same reason rag does it for the
+// embedding model: the id is compiled in, so a missing profile is a build error
+// in everything but name, and the first test to import this package says so.
+var chatProfile = mustChatProfile()
+
+func mustChatProfile() *llmwire.Profile {
+	p, err := llmwire.Default().Lookup(model)
+	if err != nil {
+		panic("llm: model has no llmwire profile: " + err.Error())
+	}
+	return p
+}
+
+// MaxOutputTokens is the completion cap the model itself enforces, from its
+// profile. A WithMaxTokens value above it is not an error on the wire — the
+// endpoint just ignores the excess — so the callers that pin a cap assert
+// against this in their tests instead.
+func MaxOutputTokens() int { return int(chatProfile.Limits.MaxOutput) }
+
 // wantsJSONObject reports whether this call asked to be constrained to JSON. The
 // wire shape is llmwire's to render; what stays here is the decision.
 func wantsJSONObject(ctx context.Context) bool { return jsonObjectFrom(ctx) }
@@ -417,13 +437,26 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	// Opt-in: a caller that must not persist a truncated answer (the single-pass
 	// summary) turns a refusal/filter early-end into an error so the job retries,
 	// rather than accepting the partial content. Accounting above still ran, so
-	// the tokens this call spent are recorded either way. "length" is tolerated
-	// (that cut is our own max_tokens; retrying would just re-truncate).
+	// the tokens this call spent are recorded either way. A deterministic cut is
+	// tolerated: "length" is our own max_tokens, and Z.ai's
+	// "model_context_window_exceeded" is the prompt itself being too big — both
+	// come back identical on every attempt, so an error here would only walk the
+	// job down its backoff ladder to the same partial answer. The warn line above
+	// still says the answer is partial.
 	if failOnEarlyFinishFrom(ctx) && res.finishReason != "" &&
-		res.finishReason != "stop" && res.finishReason != "length" {
+		res.finishReason != "stop" && !deterministicCut(res.finishReason) {
 		return "", fmt.Errorf("chat ended early: finish_reason=%s", res.finishReason)
 	}
 	return res.content, nil
+}
+
+// deterministicCut reports whether a finish_reason is a cut that every retry
+// would repeat: the caller's own max_tokens ("length") or the model's context
+// window ("model_context_window_exceeded", a Z.ai vocabulary word llmwire's
+// profile records). A refusal or filter is NOT one — the same prompt can pass
+// on the next attempt — which is what FailOnEarlyFinish exists to retry.
+func deterministicCut(finishReason string) bool {
+	return finishReason == "length" || finishReason == "model_context_window_exceeded"
 }
 
 // Naming which bound gave up now happens in llmwire, which owns the guard: it

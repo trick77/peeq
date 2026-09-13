@@ -210,3 +210,24 @@ func TestNewEmbedClient_withoutBaseURLNamesTheMissingVariable(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// Same contract as the chat client: the phrasing is this package's, the chain
+// is llmwire's, so a caller can still classify the failure by errors.Is.
+func TestEmbed_statusErrorsKeepLlmwiresChain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"slow down"}}`))
+	}))
+	defer srv.Close()
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
+	_, err := c.Embed(context.Background(), []string{"a"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if got := err.Error(); got != "embedding failed with status 429: slow down" {
+		t.Errorf("err = %q, the phrasing changed", got)
+	}
+	if !errors.Is(err, llmwire.ErrRateLimited) {
+		t.Errorf("errors.Is(err, ErrRateLimited) = false; the chain to llmwire is cut")
+	}
+}

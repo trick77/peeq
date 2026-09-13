@@ -167,7 +167,7 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 func embedError(err error) error {
 	var apiErr *llmwire.APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode != 0 {
-		return fmt.Errorf("embedding failed with status %d: %s", apiErr.StatusCode, apiErr.Message)
+		return llm.Rephrase(err, fmt.Sprintf("embedding failed with status %d: %s", apiErr.StatusCode, apiErr.Message))
 	}
 	switch {
 	case errors.Is(err, llmwire.ErrMalformedResponse):

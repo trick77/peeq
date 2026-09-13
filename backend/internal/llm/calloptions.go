@@ -205,8 +205,10 @@ type failEarlyKey struct{}
 // than a natural "stop" or a token-limit "length"), instead of returning the
 // partial content as success. It is for calls whose truncated output must not be
 // persisted — the single-pass summary, where a content_filter cut would silently
-// store half a summary of the whole video. "length" is deliberately tolerated:
-// that cut is our own max_tokens, and retrying would just re-truncate.
+// store half a summary of the whole video. A deterministic cut is deliberately
+// tolerated — "length" is our own max_tokens, "model_context_window_exceeded"
+// the prompt outgrowing the model — because retrying would just re-cut (see
+// deterministicCut in client.go).
 func FailOnEarlyFinish(ctx context.Context) context.Context {
 	return context.WithValue(ctx, failEarlyKey{}, true)
 }
