@@ -179,13 +179,12 @@ export function Library({
   // stays highlighted. Every filtered fetch claims an epoch; a response that no
   // longer holds the latest one is dropped.
   const filteredEpoch = useRef(0);
-  // The counts have exactly the same problem, and needed their own epoch: three
-  // callers call setCounts (the query's own effect, the queue's, and a toggle
-  // settling), and the queue-triggered one carries whatever query was in the
-  // box when the download finished. Type on past it and its late response
-  // would repaint every chip with the older query's numbers — where the grid
-  // self-corrects on the next keystroke, the counts would sit wrong until the
-  // query changed again.
+  // The counts have exactly the same problem, and needed their own epoch: two
+  // effects call setCounts (the query's own, and the queue's), and the
+  // queue-triggered one carries whatever query was in the box when the download
+  // finished. Type on past it and its late response would repaint every chip
+  // with the older query's numbers — where the grid self-corrects on the next
+  // keystroke, the counts would sit wrong until the query changed again.
   const countsEpoch = useRef(0);
 
   // Settings (for the "Expires in N days" calc) load once — nothing the user
@@ -212,6 +211,15 @@ export function Library({
   // never disagree about what matches — and it sends five numbers per chip
   // instead of every row in the library, which is what made a 300-video
   // library slow to open.
+  //
+  // countsTick is how a settled toggle asks for the numbers again: it re-runs
+  // THIS effect, which reads the live debouncedQuery, rather than fetching from
+  // the toggle handler. That handler is a closure over the render it was
+  // clicked in, and it resolves after an await — by which time the user may
+  // have typed. A fetch from there would carry the old query, claim the
+  // newest epoch, and repaint every chip with whole-library numbers over a
+  // searched grid, with nothing to correct them until the query changed.
+  const [countsTick, setCountsTick] = useState(0);
   useEffect(() => {
     let active = true;
     const epoch = ++countsEpoch.current;
@@ -223,7 +231,7 @@ export function Library({
     return () => {
       active = false;
     };
-  }, [debouncedQuery]);
+  }, [debouncedQuery, countsTick]);
 
   // Debounce the search box so typing "abyss" fires one request, not five.
   useEffect(() => {
@@ -321,15 +329,10 @@ export function Library({
   // A toggle moves a video between chips, so the numbers are asked for again
   // once the server has taken it. Not adjusted by hand: the server owns the
   // definition of every chip (see matchesFilter's note), and a wrong guess
-  // here would sit on screen until the next refetch. The epoch is claimed
-  // like everywhere else so a slow answer cannot overwrite a newer query's.
+  // here would sit on screen until the next refetch. Bumps the counts effect
+  // instead of fetching here — see countsTick for why.
   function refreshCounts() {
-    const epoch = ++countsEpoch.current;
-    getVideoCounts({ q: debouncedQuery })
-      .then((c) => {
-        if (epoch === countsEpoch.current) setCounts(c);
-      })
-      .catch(() => {});
+    setCountsTick((t) => t + 1);
   }
 
   // Both toggles roll back on failure AND say so: a card that silently flips

@@ -1360,6 +1360,48 @@ describe("Library category chips", () => {
     expect(chipCount("Unwatched")).toBe("0");
   });
 
+  // The toggle handler is a closure over the render it was clicked in and only
+  // gets to ask for counts after its await. Type in between and a fetch from
+  // there would carry the OLD query and still win the epoch, repainting the
+  // chips with whole-library numbers over a searched grid.
+  it("asks for the counts with the live query when a toggle lands after typing", async () => {
+    const v = categoryVideo({ id: "v1", title: "kubernetes talk" });
+    vi.mocked(listVideos).mockResolvedValue([v]);
+    vi.mocked(getVideoCounts).mockResolvedValue(countsOf([v]));
+    let landed: () => void = () => {};
+    vi.mocked(setWatched).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          landed = () => resolve({ watched: true, state_version: 2 });
+        }),
+    );
+    const { rerender } = render(
+      <Library onOpenVideo={() => {}} search="" onSearchChange={() => {}} />,
+    );
+    await screen.findByText("kubernetes talk");
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark watched" }));
+    await waitFor(() => expect(setWatched).toHaveBeenCalledWith("v1", true));
+    rerender(
+      <Library onOpenVideo={() => {}} search="kub" onSearchChange={() => {}} />,
+    );
+    await waitFor(() =>
+      expect(getVideoCounts).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "kub" }),
+      ),
+    );
+    vi.mocked(getVideoCounts).mockClear();
+
+    landed();
+    await waitFor(() => expect(getVideoCounts).toHaveBeenCalled());
+    expect(getVideoCounts).toHaveBeenCalledWith(
+      expect.objectContaining({ q: "kub" }),
+    );
+    expect(getVideoCounts).not.toHaveBeenCalledWith(
+      expect.objectContaining({ q: "" }),
+    );
+  });
+
   it("reverts the optimistic watched flip when setWatched fails", async () => {
     const v = categoryVideo({ id: "v1", watched: false });
     vi.mocked(listVideos).mockResolvedValue([v]);
