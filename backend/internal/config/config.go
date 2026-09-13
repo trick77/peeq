@@ -87,12 +87,6 @@ type Config struct {
 	// much larger request. 0 uses internal/llm's default (15m).
 	ChatCallTimeout time.Duration
 
-	// ChatEmulateOpenCode makes every chat request present as the opencode
-	// client: its User-Agent and the session header pair (see llmwire). Off by
-	// default; opt in for an endpoint sold as one client's backend that treats
-	// a neutral User-Agent as a bot (the MiMo token plan). Inert on Z.ai.
-	ChatEmulateOpenCode bool
-
 	// AllowAnonymousYoutube is a dev-only escape hatch: when true, the yt-dlp
 	// Runner is permitted to run WITHOUT a cookie (see internal/ytdlp
 	// cookieGate). It exists because authenticated yt-dlp requests currently
@@ -223,13 +217,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.ChatCallTimeout = callTimeout
-	if v := env("BACKEND_CHAT_EMULATE_OPENCODE", ""); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("BACKEND_CHAT_EMULATE_OPENCODE must be a boolean")
-		}
-		cfg.ChatEmulateOpenCode = b
-	}
 
 	if v := os.Getenv("BACKEND_SUMMARIZE_SUMMARY_TOKENS"); v != "" {
 		n, err := strconv.Atoi(v)

@@ -36,7 +36,6 @@ services:
       # AI keys. Unlike the rest of this file these can't be hardcoded, so
       # the dev stack needs a populated .env. The hosts are llmwire's.
       LLMWIRE_ZAI_API_KEY: "${LLMWIRE_ZAI_API_KEY}"
-      BACKEND_CHAT_EMULATE_OPENCODE: "${BACKEND_CHAT_EMULATE_OPENCODE:-}"
       LLMWIRE_OPENAI_API_KEY: "${LLMWIRE_OPENAI_API_KEY}"
       BACKEND_DEFAULT_SUB_LANG: "${BACKEND_DEFAULT_SUB_LANG:-en}"
       BACKEND_LOG_LEVEL: "${BACKEND_LOG_LEVEL:-debug}"

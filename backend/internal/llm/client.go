@@ -1,7 +1,7 @@
 // Package llm is peeq's lean OpenAI-compatible chat client. The host comes
 // from the model's llmwire profile and the key from the env var that profile
-// names (LLMWIRE_ZAI_API_KEY), read by llmwire.FromEnv in NewClient;
-// BACKEND_CHAT_EMULATE_OPENCODE is peeq's own. The model below is a
+// names (LLMWIRE_ZAI_API_KEY), read by llmwire.FromEnv in NewClient. The
+// opencode identity, where a host needs it, is the provider's in llmwire. The model below is a
 // real upstream model identifier sent on the wire, not a config name — it is
 // deliberately NOT renamed alongside those env vars.
 //
@@ -144,13 +144,9 @@ func wantsJSONObject(ctx context.Context) bool { return jsonObjectFrom(ctx) }
 // environment variable — the other two exist as fields so a test can drive them
 // without mutating package state, which is the difference between a test that
 // proves the header bound fires and a test that waits sixty real seconds.
-//
-// EmulateOpenCode presents every request as the opencode client (see NewClient);
-// it is BACKEND_CHAT_EMULATE_OPENCODE and off by default.
 type Config struct {
 	BaseURL           string
 	APIKey            string
-	EmulateOpenCode   bool
 	RequestInterval   time.Duration
 	Logger            *slog.Logger
 	HeartbeatInterval time.Duration
@@ -206,17 +202,12 @@ func NewClient(cfg Config, hc *http.Client) (*Client, error) {
 	wire, err := llmwire.FromEnv(model, llmwire.Config{
 		BaseURL: cfg.BaseURL,
 		APIKey:  cfg.APIKey,
-		// Opt-in: presents as the opencode client — its User-Agent and the
-		// session header pair, with a session id llmwire mints and rotates
-		// after an idle gap. Needed on an endpoint sold as one client's
-		// backend, where a neutral User-Agent is not what its traffic looks
-		// like (the MiMo token plan). Inert on Z.ai, which neither requires
-		// the headers nor issues ids of that shape, so it defaults to off.
-		EmulateOpenCode: cfg.EmulateOpenCode,
-		HeaderTimeout:   cfg.HeaderTimeout,
-		IdleTimeout:     cfg.StreamIdleTimeout,
-		CallTimeout:     cfg.CallTimeout,
-		HTTPClient:      hc,
+		// The opencode identity, where a host needs it, is the provider's in
+		// llmwire's profiles.yaml; FromEnv switches it on. Z.ai needs none.
+		HeaderTimeout: cfg.HeaderTimeout,
+		IdleTimeout:   cfg.StreamIdleTimeout,
+		CallTimeout:   cfg.CallTimeout,
+		HTTPClient:    hc,
 	})
 	if err != nil {
 		return nil, err
