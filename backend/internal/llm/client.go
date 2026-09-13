@@ -200,14 +200,13 @@ func NewClient(cfg Config, hc *http.Client) (*Client, error) {
 		cfg.CallTimeout = defaultCallTimeout
 	}
 	wire, err := llmwire.FromEnv(model, llmwire.Config{
-		BaseURL: cfg.BaseURL,
-		APIKey:  cfg.APIKey,
-		// The opencode identity, where a host needs it, is the provider's in
-		// llmwire's profiles.yaml; FromEnv switches it on. Z.ai needs none.
-		HeaderTimeout: cfg.HeaderTimeout,
-		IdleTimeout:   cfg.StreamIdleTimeout,
-		CallTimeout:   cfg.CallTimeout,
-		HTTPClient:    hc,
+		BaseURL:         cfg.BaseURL,
+		APIKey:          cfg.APIKey,
+		EmulateOpenCode: true,
+		HeaderTimeout:   cfg.HeaderTimeout,
+		IdleTimeout:     cfg.StreamIdleTimeout,
+		CallTimeout:     cfg.CallTimeout,
+		HTTPClient:      hc,
 	})
 	if err != nil {
 		return nil, err
