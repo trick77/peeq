@@ -45,6 +45,8 @@ services:
       # reaches the container.
       LLMWIRE_ZAI_API_KEY: "${LLMWIRE_ZAI_API_KEY}"
       LLMWIRE_OPENAI_API_KEY: "${LLMWIRE_OPENAI_API_KEY}"
+      # Read by llmwire itself, never by peeq: forwarded so it reaches it.
+      LLMWIRE_EMULATE_OPENCODE: "${LLMWIRE_EMULATE_OPENCODE:-}"
       # How far a semantic hit may sit from the question before it counts as
       # "not about this" — L2 on unit vectors, so cosine is 1 - d²/2. Empty
       # keeps the code default; negative opts out of the bound entirely, which
