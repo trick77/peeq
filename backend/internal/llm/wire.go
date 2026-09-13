@@ -160,7 +160,7 @@ func chatError(err error) error {
 	// that mattered most. The table test below is what makes removing it safe.
 	var apiErr *llmwire.APIError
 	if errors.As(err, &apiErr) {
-		return statusError(apiErr)
+		return statusError(err, apiErr)
 	}
 	return fmt.Errorf("chat: %w", err)
 }
@@ -173,12 +173,38 @@ func chatError(err error) error {
 // code that never existed. Before the migration those frames were skipped
 // entirely and surfaced as "ended without finish_reason", which said nothing
 // about the actual failure; naming the endpoint's own code is strictly better.
-func statusError(e *llmwire.APIError) error {
-	if e.StatusCode == 0 {
-		if e.Code != "" {
-			return fmt.Errorf("chat failed mid-stream (code %s): %s", e.Code, e.Message)
-		}
-		return fmt.Errorf("chat failed mid-stream: %s", e.Message)
+//
+// cause is the error as llmwire returned it, kept reachable through Unwrap so
+// errors.Is(err, llmwire.ErrRateLimited) and errors.As on *RateLimitError (the
+// Retry-After) still work on what this package hands out. A plain fmt.Errorf
+// without %w used to cut that chain, which nothing noticed only because nothing
+// downstream asked yet.
+func statusError(cause error, e *llmwire.APIError) error {
+	var msg string
+	switch {
+	case e.StatusCode == 0 && e.Code != "":
+		msg = fmt.Sprintf("chat failed mid-stream (code %s): %s", e.Code, e.Message)
+	case e.StatusCode == 0:
+		msg = "chat failed mid-stream: " + e.Message
+	default:
+		msg = fmt.Sprintf("chat failed with status %d: %s", e.StatusCode, e.Message)
 	}
-	return fmt.Errorf("chat failed with status %d: %s", e.StatusCode, e.Message)
+	return Rephrase(cause, msg)
 }
+
+// Rephrase returns an error whose text is msg and whose chain is cause's:
+// Error() says what the runbook greps for, Unwrap keeps llmwire's typed error
+// behind it. Rendering with %w instead would prefix llmwire's own text, which
+// is exactly what the rephrasing exists to avoid. Exported for the embedding
+// client, which rephrases the same way.
+func Rephrase(cause error, msg string) error {
+	return &rephrasedError{msg: msg, cause: cause}
+}
+
+type rephrasedError struct {
+	msg   string
+	cause error
+}
+
+func (e *rephrasedError) Error() string { return e.msg }
+func (e *rephrasedError) Unwrap() error { return e.cause }
