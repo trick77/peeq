@@ -109,7 +109,7 @@ func (c *Client) runStream(ctx context.Context, wire *llmwire.Client, req llmwir
 		res.warnings = warnings
 		return res, chatError(err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	for stream.Next() {
 		ev := stream.Event()

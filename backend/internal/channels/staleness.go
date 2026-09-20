@@ -70,7 +70,7 @@ func (s *Store) AutoUnsubscribe(channelID, reason, at string) error {
 	if err != nil {
 		return fmt.Errorf("auto unsubscribe %s: %w", channelID, err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`DELETE FROM subscriptions WHERE channel_id = ?`, channelID); err != nil {
 		return fmt.Errorf("auto unsubscribe %s: delete subscription: %w", channelID, err)
@@ -100,7 +100,7 @@ ORDER BY au.at DESC, c.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list auto unsubscribed: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []AutoUnsubscribed
 	for rows.Next() {
@@ -194,7 +194,7 @@ ORDER BY last_seen`,
 	if err != nil {
 		return nil, fmt.Errorf("dormant channels: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Dormant
 	for rows.Next() {

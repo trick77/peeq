@@ -54,7 +54,7 @@ func backoffFor(ladder []time.Duration, attempts int) time.Duration {
 	if attempts > len(ladder) {
 		return ladder[len(ladder)-1]
 	}
-	return ladder[attempts-1]
+	return ladder[attempts-1] //nolint:gosec // attempts is clamped to >= 1 above and the > len(ladder) case returned already, so this index is in range
 }
 
 type Job struct {
@@ -121,9 +121,11 @@ func (s *Store) ListFailed() ([]Job, error) {
 // list runs the shared column set against a caller-supplied tail. The tail is a
 // literal at every call site — this takes no user input.
 func (s *Store) list(tail, what string) ([]Job, error) {
-	rows, err := s.db.Query(`
+	const listHead = `
 		SELECT id, video_id, state, attempts, max_attempts, last_error
-		FROM summary_jobs ` + tail)
+		FROM summary_jobs `
+	query := listHead + tail //nolint:gosec // only fixed SQL structure is interpolated (literal conditions, a ?-placeholder list, or a closed switch); every value is a bound ? parameter
+	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("summaryjobs: %s: %w", what, err)
 	}

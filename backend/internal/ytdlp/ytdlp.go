@@ -587,7 +587,7 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 	// Resolve the binary path fresh on every invocation (not once at boot),
 	// so a self-updated yt-dlp written to disk after startup is used without
 	// requiring a restart.
-	cmd := exec.CommandContext(ctx, r.cfg.BinResolver(), fullArgs...)
+	cmd := exec.CommandContext(ctx, r.cfg.BinResolver(), fullArgs...) //nolint:gosec // argv, no shell. Every URL reaches here through Canonicalize, which url.Parse-es it, requires scheme and host, allowlists the youtube hosts and returns a rebuilt https://www.youtube.com/... literal, so a '-' prefixed string cannot become a flag
 
 	if onLine == nil {
 		var stdout, stderr bytes.Buffer

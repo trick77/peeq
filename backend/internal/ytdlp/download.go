@@ -241,7 +241,7 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 	}
 
 	stagingDir := filepath.Join(r.cfg.MediaDir, ".staging", req.VideoID)
-	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+	if err := os.MkdirAll(stagingDir, 0o750); err != nil {
 		return nil, fmt.Errorf("ytdlp: create staging dir: %w", err)
 	}
 
@@ -325,7 +325,7 @@ func isRetryable(err error) bool {
 // mediaDir/<channelID>/<videoID> location, and assembles the Result.
 func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result, error) {
 	infoPath := filepath.Join(stagingDir, videoID+".info.json")
-	infoBytes, err := os.ReadFile(infoPath)
+	infoBytes, err := os.ReadFile(infoPath) //nolint:gosec // infoPath is built from the staging dir this function just created under the configured media dir, not from user input
 	if err != nil {
 		return nil, fmt.Errorf("ytdlp: read info json: %w", err)
 	}
@@ -339,7 +339,7 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 	}
 
 	finalDir := filepath.Join(mediaDir, info.ChannelID, videoID)
-	if err := os.MkdirAll(filepath.Dir(finalDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(finalDir), 0o750); err != nil {
 		return nil, fmt.Errorf("ytdlp: create channel dir: %w", err)
 	}
 	// finalDir is unique to this video id, so if it already exists it can

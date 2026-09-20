@@ -100,7 +100,7 @@ func run() error {
 	// volume), so create them up front rather than fail deep inside a
 	// download or self-update attempt.
 	for _, dir := range []string{filepath.Dir(cfg.DBPath), cfg.MediaDir, cfg.YtdlpDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("create dir %q: %w", dir, err)
 		}
 	}

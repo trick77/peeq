@@ -873,7 +873,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		// seen/queued/unavailable rows never appear in the inbox. The serve
 		// endpoint self-heals anything this misses.
 		if entry.State == channelvideos.StatePending && s.d.MediaDir != "" {
-			go s.prefetchPendingThumbnail(entry.VideoID, entry.ThumbnailURL)
+			go s.prefetchPendingThumbnail(entry.VideoID, entry.ThumbnailURL) //nolint:gosec // deliberately detached: the prefetch must outlive the scan loop, so a request-scoped context would cancel it (see the comment above)
 		}
 	}
 
@@ -1234,7 +1234,7 @@ func (s *Scheduler) enqueueAuto(e ytdlp.ChannelEntry, sub *channels.Subscription
 	// channel that isn't added anymore. This is not fully atomic across
 	// stores; full atomicity is a documented follow-up.
 	if c, err := s.d.Channels.Get(sub.ChannelID); err != nil || c == nil || c.AddedAt == "" {
-		return nil
+		return nil //nolint:nilerr // a Get failure is treated as not-added: skip the enqueue rather than risk a stray videos row and job for a channel that may have just been deleted
 	}
 	if err := s.d.Videos.Upsert(videos.Video{
 		ID: e.ID, URL: e.URL, Title: e.Title, ChannelID: sub.ChannelID,

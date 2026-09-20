@@ -903,7 +903,7 @@ func (w *Worker) storeTranscript(videoID, subtitleRelPath, mediaPath string) {
 			w.deps.Logger.Warn("download worker: transcript path rejected", "video_id", videoID, "err", err)
 			return
 		}
-		data, rerr := os.ReadFile(safe)
+		data, rerr := os.ReadFile(safe) //nolint:gosec // path comes from media.SafeMediaPath, which rejects traversal and symlink escape and returns the resolved path (see safepath_test.go)
 		if rerr != nil {
 			w.deps.Logger.Warn("download worker: read transcript failed", "video_id", videoID, "err", rerr)
 			return
@@ -936,7 +936,7 @@ func (w *Worker) storeThumbnail(videoID, thumbPath string) {
 		w.deps.Logger.Warn("download worker: thumbnail path rejected", "video_id", videoID, "err", err)
 		return
 	}
-	data, err := os.ReadFile(safe)
+	data, err := os.ReadFile(safe) //nolint:gosec // path comes from media.SafeMediaPath, which rejects traversal and symlink escape and returns the resolved path (see safepath_test.go)
 	if err != nil {
 		w.deps.Logger.Warn("download worker: read thumbnail failed", "video_id", videoID, "err", err)
 		return

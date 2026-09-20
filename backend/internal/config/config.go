@@ -24,6 +24,7 @@ const defaultSearchMaxDistance = 1.25
 type AuthMode string
 
 const (
+	// AuthModeNone disables authentication entirely.
 	AuthModeNone AuthMode = ""
 	AuthModeOIDC AuthMode = "oidc"
 	AuthModeDev  AuthMode = "dev"

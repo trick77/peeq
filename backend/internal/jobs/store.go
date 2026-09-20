@@ -239,11 +239,11 @@ func (s *Store) ActiveIDsForVideos(videoIDs []string) ([]int64, error) {
 		args[i] = v
 	}
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT id FROM download_jobs WHERE state IN ('pending','running') AND video_id IN (`+ph+`)`, args...)
+		`SELECT id FROM download_jobs WHERE state IN ('pending','running') AND video_id IN (`+ph+`)`, args...) //nolint:gosec // only fixed SQL structure is interpolated (literal conditions, a ?-placeholder list, or a closed switch); every value is a bound ? parameter
 	if err != nil {
 		return nil, fmt.Errorf("active job ids: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64
@@ -264,7 +264,7 @@ func (s *Store) List() ([]Job, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Job
 	for rows.Next() {

@@ -103,7 +103,7 @@ func (c *Client) Segments(ctx context.Context, videoID string, durationSeconds f
 	if err != nil {
 		return nil, fmt.Errorf("sponsorblock: GET segments for %s: %w", videoID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch {
 	case resp.StatusCode == http.StatusNotFound:

@@ -66,6 +66,7 @@ type Store struct {
 	OnRecord func(Event)
 }
 
+// New returns an activity store backed by db.
 func New(db *sql.DB) *Store { return &Store{db: db} }
 
 // Record inserts one terminal event, trims the log back to maxRows, and fires
@@ -156,7 +157,7 @@ func (s *Store) Recent(beforeID int64, limit int, search string) (Page, error) {
 		if i == 0 {
 			q += ` WHERE ` + cond
 		} else {
-			q += ` AND ` + cond
+			q += ` AND ` + cond //nolint:gosec // only fixed SQL structure is interpolated (literal conditions, a ?-placeholder list, or a closed switch); every value is a bound ? parameter
 		}
 	}
 	q += ` ORDER BY id DESC LIMIT ?`
@@ -166,7 +167,7 @@ func (s *Store) Recent(beforeID int64, limit int, search string) (Page, error) {
 	if err != nil {
 		return Page{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Event
 	for rows.Next() {

@@ -301,7 +301,7 @@ func (w *Worker) storeTranscript(videoID, relPath string) error {
 	if err != nil {
 		return fmt.Errorf("resolve caption path: %w", err)
 	}
-	data, err := os.ReadFile(safe)
+	data, err := os.ReadFile(safe) //nolint:gosec // path comes from media.SafeMediaPath, which rejects traversal and symlink escape and returns the resolved path (see safepath_test.go)
 	if err != nil {
 		return fmt.Errorf("read caption: %w", err)
 	}
