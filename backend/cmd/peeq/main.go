@@ -515,15 +515,7 @@ func run() error {
 	}
 	handler := httpapi.New(deps)
 
-	srv := &http.Server{
-		Addr:    cfg.Addr,
-		Handler: handler,
-		// net/http writes its own failures (request-parse errors, superfluous
-		// WriteHeader, TLS handshake failures) here. Without this they bypass
-		// slog entirely: unstructured, untimestamped, unfiltered by
-		// BACKEND_LOG_LEVEL.
-		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
-	}
+	srv := newServer(cfg.Addr, handler)
 
 	err = serve(ctx, srv, sseHub)
 	// serve can return either because ctx was cancelled (signal) or because
@@ -751,6 +743,29 @@ func logJSRuntime(ctx context.Context, bin string) {
 // context.DeadlineExceeded, one connected client at a time. Closing the hub
 // first closes every subscriber channel, so the stream handler's select sees
 // its channel close and returns immediately, and Shutdown completes fast.
+// newServer builds the API server with its timeouts set explicitly, so they are
+// assertable rather than left at http.Server's zero values (which mean "no
+// limit" and leave a stalled client holding a goroutine and a descriptor).
+//
+// ReadHeaderTimeout alone is what closes slow loris. ReadTimeout and
+// WriteTimeout stay unset on purpose: internal/sse streams text/event-stream
+// responses that a write deadline would truncate, and ReadTimeout bounds the
+// whole request including the body, cancelling r.Context() once the body is
+// read.
+func newServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// net/http writes its own failures (request-parse errors, superfluous
+		// WriteHeader, TLS handshake failures) here. Without this they bypass
+		// slog entirely: unstructured, untimestamped, unfiltered by
+		// BACKEND_LOG_LEVEL.
+		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
+	}
+}
+
 func serve(ctx context.Context, srv *http.Server, hub *sse.Hub) error {
 	errCh := make(chan error, 1)
 	go func() {
