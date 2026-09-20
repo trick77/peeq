@@ -23,11 +23,14 @@ const defaultSearchMaxDistance = 1.25
 // AuthMode selects how peeq signs users in.
 type AuthMode string
 
+// The supported authentication modes.
 const (
 	// AuthModeNone disables authentication entirely.
 	AuthModeNone AuthMode = ""
+	// AuthModeOIDC signs users in against an OIDC provider.
 	AuthModeOIDC AuthMode = "oidc"
-	AuthModeDev  AuthMode = "dev"
+	// AuthModeDev is the local development mode.
+	AuthModeDev AuthMode = "dev"
 )
 
 // Config holds all runtime settings. Secrets come from ENV only.
