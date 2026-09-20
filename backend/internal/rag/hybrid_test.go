@@ -28,7 +28,7 @@ func TestFuseRRFPrefersBothLists(t *testing.T) {
 	if len(out) != 3 {
 		t.Fatalf("len = %d, want 3", len(out))
 	}
-	if !(out[0].Ordinal == 1) {
+	if out[0].Ordinal != 1 {
 		t.Errorf("top ordinal = %d, want 1 (found by both lists)", out[0].Ordinal)
 	}
 }

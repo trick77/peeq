@@ -23,7 +23,7 @@ import (
 // no_transcript short-circuit never reaches the Summarizer.
 type failCompleter struct{ t *testing.T }
 
-func (f failCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (f failCompleter) Complete(_ context.Context, _ []llm.Message) (string, error) {
 	f.t.Fatal("Completer.Complete should not be called for a no-transcript video")
 	return "", nil
 }
@@ -32,7 +32,7 @@ func (f failCompleter) Complete(ctx context.Context, m []llm.Message) (string, e
 // no_transcript short-circuit never reaches the Embedder.
 type failEmbedder struct{ t *testing.T }
 
-func (f failEmbedder) EmbedBatched(ctx context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
+func (f failEmbedder) EmbedBatched(_ context.Context, _ []string, _ time.Duration) ([][]float32, error) {
 	f.t.Fatal("Embedder.Embed should not be called for a no-transcript video")
 	return nil, nil
 }
@@ -41,7 +41,7 @@ func (f failEmbedder) EmbedBatched(ctx context.Context, inputs []string, _ time.
 // summarizer_test.go's fakeCompleter.
 type fakeWorkerCompleter struct{}
 
-func (fakeWorkerCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (fakeWorkerCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
 		sys := m[0].Content
 		if strings.Contains(sys, "cohesive summary") {
@@ -62,7 +62,7 @@ func (fakeWorkerCompleter) Complete(ctx context.Context, m []llm.Message) (strin
 // the category at its 'uncategorized' default.
 type classifyErrCompleter struct{}
 
-func (classifyErrCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (classifyErrCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	sys := m[0].Content
 	switch {
 	case strings.Contains(sys, "cohesive summary"):
@@ -80,14 +80,14 @@ func (classifyErrCompleter) Complete(ctx context.Context, m []llm.Message) (stri
 // swallowing it (regression test for the silent summarize-worker error).
 type failingEmbedder struct{}
 
-func (failingEmbedder) EmbedBatched(ctx context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
+func (failingEmbedder) EmbedBatched(_ context.Context, _ []string, _ time.Duration) ([][]float32, error) {
 	return nil, errors.New("boom")
 }
 
 // fakeWorkerEmbedder returns a dim-length vector per input.
 type fakeWorkerEmbedder struct{ dim int }
 
-func (f fakeWorkerEmbedder) EmbedBatched(ctx context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
+func (f fakeWorkerEmbedder) EmbedBatched(_ context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
 	out := make([][]float32, len(inputs))
 	for i := range inputs {
 		v := make([]float32, f.dim)
@@ -404,7 +404,7 @@ func (f *fakeActivityRecorder) Record(e activity.Event) { f.events = append(f.ev
 // test can drive the failJob path rather than the post-summary requeue path.
 type summaryErrCompleter struct{}
 
-func (summaryErrCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (summaryErrCompleter) Complete(_ context.Context, _ []llm.Message) (string, error) {
 	return "", errors.New("summary boom")
 }
 
@@ -758,7 +758,7 @@ func TestWorkerChunkTimestampsAreExactAndMonotonic(t *testing.T) {
 // modelling a flaky reasoning endpoint that eventually cooperates.
 type keyPointsFailOnceCompleter struct{ kpCalls int }
 
-func (c *keyPointsFailOnceCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (c *keyPointsFailOnceCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	sys := m[0].Content
 	switch {
 	case strings.Contains(sys, "cohesive summary"):
@@ -782,7 +782,7 @@ type countingEmbedder struct {
 	calls int
 }
 
-func (c *countingEmbedder) EmbedBatched(ctx context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
+func (c *countingEmbedder) EmbedBatched(_ context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
 	c.calls++
 	out := make([][]float32, len(inputs))
 	for i := range inputs {
@@ -1001,7 +1001,7 @@ func TestIdleSweepParksFailuresAndAdvances(t *testing.T) {
 	_ = failFor
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
-		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		Summarizer: New(completerFunc(func(_ context.Context, m []llm.Message) (string, error) {
 			// The classify user message carries the title; fail only v-b's.
 			if strings.Contains(m[1].Content, "v-b video") {
 				return "", errors.New("classify boom")
@@ -1056,7 +1056,7 @@ func TestIdleSweepParksUnusableReply(t *testing.T) {
 	calls := 0
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
-		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		Summarizer: New(completerFunc(func(_ context.Context, _ []llm.Message) (string, error) {
 			calls++
 			return "I'm not sure about this one.", nil
 		})),
@@ -1107,7 +1107,7 @@ func TestIdleSweepSurvivesCategoryWriteFailure(t *testing.T) {
 	calls := 0
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
-		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		Summarizer: New(completerFunc(func(_ context.Context, _ []llm.Message) (string, error) {
 			calls++
 			return "ai", nil
 		})),
@@ -1201,7 +1201,7 @@ func TestClassifyDoesNotOverwriteAPickMadeDuringTheJob(t *testing.T) {
 
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
-		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		Summarizer: New(completerFunc(func(_ context.Context, m []llm.Message) (string, error) {
 			sys := m[0].Content
 			if strings.Contains(sys, "cohesive summary") {
 				// The user picks a category on the Player while the summary
@@ -1244,7 +1244,7 @@ func TestIdleSweepDoesNotOverwriteAPickMadeDuringClassify(t *testing.T) {
 
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
-		Summarizer: New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+		Summarizer: New(completerFunc(func(_ context.Context, _ []llm.Message) (string, error) {
 			if err := h.videos.SetCategory("v-raced", "gaming"); err != nil {
 				t.Errorf("simulate manual pick: %v", err)
 			}
@@ -1517,7 +1517,7 @@ func TestWorkerEmptyTranscriptDiscardsStaleAnalysis(t *testing.T) {
 // step downstream has something to build chapter chunks from.
 type chapterCompleter struct{}
 
-func (chapterCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (chapterCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
 		sys := m[0].Content
 		if strings.Contains(sys, "cohesive summary") {
@@ -1538,7 +1538,7 @@ func (chapterCompleter) Complete(ctx context.Context, m []llm.Message) (string, 
 // key-points call, which is the fragile step embedding now runs behind.
 type keyPointsFailCompleter struct{}
 
-func (keyPointsFailCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (keyPointsFailCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
 		sys := m[0].Content
 		if strings.Contains(sys, "cohesive summary") {
@@ -1760,7 +1760,7 @@ func TestFallbackReindexesAReprocessedVideoWithStaleRev(t *testing.T) {
 // is the artifact the output backstop has to catch.
 type sponsorSpyCompleter struct{ seen *[]string }
 
-func (c sponsorSpyCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (c sponsorSpyCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	for _, msg := range m {
 		*c.seen = append(*c.seen, msg.Content)
 	}

@@ -558,7 +558,7 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 			return nil, fmt.Errorf("ytdlp: write cookie temp file: %w", err)
 		}
 		cookieFile = f
-		defer os.Remove(cookieFile)
+		defer func() { _ = os.Remove(cookieFile) }()
 	}
 
 	// The throttle applies unconditionally, before AND after the cookie
@@ -587,7 +587,7 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 	// Resolve the binary path fresh on every invocation (not once at boot),
 	// so a self-updated yt-dlp written to disk after startup is used without
 	// requiring a restart.
-	cmd := exec.CommandContext(ctx, r.cfg.BinResolver(), fullArgs...)
+	cmd := exec.CommandContext(ctx, r.cfg.BinResolver(), fullArgs...) //nolint:gosec // argv, no shell. Every URL reaches here through Canonicalize, which url.Parse-es it, requires scheme and host, allowlists the youtube hosts and returns a rebuilt https://www.youtube.com/... literal, so a '-' prefixed string cannot become a flag
 
 	if onLine == nil {
 		var stdout, stderr bytes.Buffer
@@ -680,17 +680,17 @@ func writeCookieTempFile(text string) (string, error) {
 	name := f.Name()
 
 	if err := f.Chmod(0o600); err != nil {
-		f.Close()
-		os.Remove(name)
+		_ = f.Close()
+		_ = os.Remove(name)
 		return "", err
 	}
 	if _, err := f.WriteString(text); err != nil {
-		f.Close()
-		os.Remove(name)
+		_ = f.Close()
+		_ = os.Remove(name)
 		return "", err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(name)
+		_ = os.Remove(name)
 		return "", err
 	}
 	return name, nil

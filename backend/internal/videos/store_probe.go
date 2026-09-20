@@ -56,7 +56,7 @@ LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list unprobed videos: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []ProbeCandidate
 	for rows.Next() {

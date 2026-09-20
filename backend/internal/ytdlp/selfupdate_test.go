@@ -42,7 +42,7 @@ func TestUpdateLatest_usesInjectedDownloader(t *testing.T) {
 	t.Cleanup(func() { downloader = prev })
 
 	var gotDest string
-	downloader = func(ctx context.Context, destPath string) (string, error) {
+	downloader = func(_ context.Context, destPath string) (string, error) {
 		gotDest = destPath
 		if err := os.WriteFile(destPath, []byte("fake binary"), 0o755); err != nil {
 			return "", err
@@ -69,7 +69,7 @@ func TestUpdateLatest_propagatesDownloaderError(t *testing.T) {
 	prev := downloader
 	t.Cleanup(func() { downloader = prev })
 
-	downloader = func(ctx context.Context, destPath string) (string, error) {
+	downloader = func(_ context.Context, _ string) (string, error) {
 		return "", os.ErrPermission
 	}
 
@@ -84,7 +84,7 @@ func TestUpdateLatest_propagatesDownloaderError(t *testing.T) {
 // executable.
 func TestDownloadReleaseFrom_success_replacesFile(t *testing.T) {
 	const body = "#!/bin/sh\necho 2099.01.01\n"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(body))
 	}))
@@ -138,7 +138,7 @@ func TestDownloadReleaseFrom_success_replacesFile(t *testing.T) {
 // that regression is fixed: the old bytes are byte-for-byte unchanged
 // after a failed download attempt.
 func TestDownloadReleaseFrom_failure_leavesExistingBinaryIntact(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("server error"))
 	}))
@@ -185,7 +185,7 @@ func TestDownloadReleaseFrom_failure_leavesExistingBinaryIntact(t *testing.T) {
 // This test hijacks the raw connection to force exactly that: a 200
 // status followed by a short, incomplete body.
 func TestDownloadReleaseFrom_midDownloadFailure_leavesExistingBinaryIntact(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hj, ok := w.(http.Hijacker)
 		if !ok {
 			return

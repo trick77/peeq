@@ -16,5 +16,8 @@ func freeBytes(dir string) (uint64, error) {
 	if err := syscall.Statfs(dir, &stat); err != nil {
 		return 0, err
 	}
-	return stat.Bavail * uint64(stat.Bsize), nil
+	// Bsize is a filesystem block size reported by the kernel: always positive
+	// and a small power of two, so the int64 to uint64 conversion (linux; on
+	// darwin Bsize is already unsigned) cannot wrap.
+	return stat.Bavail * uint64(stat.Bsize), nil //nolint:gosec // see above
 }

@@ -64,7 +64,7 @@ type fetcher struct {
 	calls   int
 }
 
-func (f *fetcher) Subtitles(ctx context.Context, videoID, rawURL, subLang string) (string, error) {
+func (f *fetcher) Subtitles(_ context.Context, _, _, _ string) (string, error) {
 	i := f.calls
 	f.calls++
 	var err error

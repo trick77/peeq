@@ -33,6 +33,7 @@ package videos
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -324,7 +325,7 @@ func (s *Store) Get(id string) (*Video, error) {
 		"SELECT "+videoColumns+" "+videoFrom+" WHERE v.id = ?", id,
 	)
 	v, err := scanVideo(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -529,7 +530,7 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list videos (%+v): %w", opts, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := []Video{}
 	for rows.Next() {
@@ -593,15 +594,13 @@ func (s *Store) countByCategory(filter, query string) (map[string]int, int, erro
 		conds = append(conds, c)
 		args = append(args, arg)
 	}
-	rows, err := s.db.QueryContext(context.Background(),
-		"SELECT COALESCE(v.category, ''), COUNT(*) FROM videos v WHERE "+
-			strings.Join(conds, " AND ")+" GROUP BY v.category",
-		args...,
-	)
+	const countHead = "SELECT COALESCE(v.category, ''), COUNT(*) FROM videos v WHERE "
+	countQuery := countHead + strings.Join(conds, " AND ") + " GROUP BY v.category" //nolint:gosec // only fixed SQL structure is interpolated (literal conditions, a ?-placeholder list, or a closed switch); every value is a bound ? parameter
+	rows, err := s.db.QueryContext(context.Background(), countQuery, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count videos (%s): %w", filter, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	cats := map[string]int{}
 	total := 0
 	for rows.Next() {
@@ -651,7 +650,7 @@ func (s *Store) ChannelDirectory() ([]ChannelRef, error) {
 	if err != nil {
 		return nil, fmt.Errorf("channel directory: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []ChannelRef{}
 	for rows.Next() {
 		var c ChannelRef

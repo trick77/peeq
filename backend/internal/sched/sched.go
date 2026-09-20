@@ -107,6 +107,6 @@ func NextSlotAfter(after time.Time, period, slot time.Duration) time.Time {
 // The returned closure is NOT safe for concurrent use — each background loop is
 // a single goroutine and holds its own.
 func PseudoRand() func() float64 {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r := rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // scheduling jitter, not a secret: no security property depends on this value
 	return r.Float64
 }

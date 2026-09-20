@@ -20,7 +20,7 @@ type countingCompleter struct {
 	calls int
 }
 
-func (c *countingCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (c *countingCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	c.calls++
 	// The classify step wants a bare category id, and NormalizeCategory would
 	// turn prose into "uncategorized" — which is also what a skipped classify

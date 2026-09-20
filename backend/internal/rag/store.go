@@ -18,6 +18,7 @@ type Store struct {
 	db *sql.DB
 }
 
+// NewStore returns a RAG store backed by db.
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
 // ChunkRow is one transcript window to index.
@@ -69,12 +70,12 @@ func deleteVideoTx(ctx context.Context, tx *sql.Tx, videoID string) error {
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		ids = append(ids, id)
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}
@@ -112,7 +113,7 @@ func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID string, meta Ind
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := deleteVideoTx(ctx, tx, videoID); err != nil {
 		return err
 	}
@@ -154,7 +155,7 @@ func (s *Store) DeleteVideoChunks(ctx context.Context, videoID string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := deleteVideoTx(ctx, tx, videoID); err != nil {
 		return err
 	}
@@ -202,7 +203,7 @@ func (s *Store) ChunkStats(ctx context.Context, videoID string) ([]KindCount, er
 	if err != nil {
 		return nil, fmt.Errorf("rag: chunk stats %s: %w", videoID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []KindCount
 	for rows.Next() {
 		var k KindCount
@@ -290,7 +291,7 @@ func (s *Store) RetrieveWithinFiltered(ctx context.Context, queryEmbedding []flo
 	if err != nil {
 		return nil, fmt.Errorf("retrieve: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Hit
 	for rows.Next() {
 		var h Hit
@@ -349,15 +350,16 @@ func (s *Store) SearchFTSFiltered(ctx context.Context, match string, n int, f Fi
 		where = append(where, conds...)
 		args = append(args, fargs...)
 	}
-	q += "\n\t\tWHERE " + strings.Join(where, " AND ") + `
+	const ftsTail = `
 		ORDER BY bm25(fts_chunks)
 		LIMIT ?`
+	q += "\n\t\tWHERE " + strings.Join(where, " AND ") + ftsTail //nolint:gosec // only fixed SQL structure is interpolated (literal conditions, a ?-placeholder list, or a closed switch); every value is a bound ? parameter
 	args = append(args, n)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("fts search: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Hit
 	for rows.Next() {
 		var h Hit

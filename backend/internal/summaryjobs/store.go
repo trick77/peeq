@@ -54,9 +54,11 @@ func backoffFor(ladder []time.Duration, attempts int) time.Duration {
 	if attempts > len(ladder) {
 		return ladder[len(ladder)-1]
 	}
-	return ladder[attempts-1]
+	return ladder[attempts-1] //nolint:gosec // attempts is clamped to >= 1 above and the > len(ladder) case returned already, so this index is in range
 }
 
+// Job is one video's summarization work item, with the retry bookkeeping the
+// worker uses to decide between another attempt and a permanent failure.
 type Job struct {
 	ID          int64
 	VideoID     string
@@ -66,6 +68,7 @@ type Job struct {
 	LastError   string
 }
 
+// Store is the summary job queue, backed by the summary_jobs table.
 type Store struct {
 	db *sql.DB
 	// failSQL carries this store's retry ladder, rendered once at construction.
@@ -121,13 +124,15 @@ func (s *Store) ListFailed() ([]Job, error) {
 // list runs the shared column set against a caller-supplied tail. The tail is a
 // literal at every call site — this takes no user input.
 func (s *Store) list(tail, what string) ([]Job, error) {
-	rows, err := s.db.Query(`
+	const listHead = `
 		SELECT id, video_id, state, attempts, max_attempts, last_error
-		FROM summary_jobs ` + tail)
+		FROM summary_jobs `
+	query := listHead + tail //nolint:gosec // only fixed SQL structure is interpolated (literal conditions, a ?-placeholder list, or a closed switch); every value is a bound ? parameter
+	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("summaryjobs: %s: %w", what, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Job
 	for rows.Next() {
 		var j Job
@@ -234,7 +239,7 @@ func buildFailSQL(ladder []time.Duration) string {
 // re-claimed on the very next turn of the worker loop. Without that a fast-
 // failing endpoint spends every attempt in about a minute and the outage becomes
 // permanent for whatever was in the queue.
-func (s *Store) Fail(id int64, attempts int, lastErr string) (terminal bool, err error) {
+func (s *Store) Fail(id int64, _ int, lastErr string) (terminal bool, err error) {
 	var state string
 	err = s.db.QueryRow(s.failSQL, lastErr, id).Scan(&state)
 	if err != nil {

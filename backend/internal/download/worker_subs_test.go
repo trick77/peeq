@@ -41,7 +41,7 @@ func TestSucceedPersistsSubtitleAndEnqueuesSummary(t *testing.T) {
 	spy := &spySummaryJobs{}
 
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			gotSubLang = req.SubLang
 			return &ytdlp.Result{
 				MediaPath:       "/media/v1/v1.mp4",

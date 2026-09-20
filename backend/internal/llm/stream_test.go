@@ -110,7 +110,7 @@ func fastBounds(cfg Config) Config {
 }
 
 func TestComplete_concatenatesContentDeltas(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		for _, part := range []string{"Hello", ", ", "world"} {
 			flush(t, w, sseEvent(`{"choices":[{"delta":{"content":`+strconv.Quote(part)+`},"finish_reason":null,"index":0}]}`))
 		}
@@ -157,7 +157,7 @@ func TestComplete_streamsWithoutStreamOptions(t *testing.T) {
 // Reasoning deltas are the liveness signal a long thinking phase produces, and
 // they must not reach the caller as output.
 func TestComplete_countsReasoningDeltasButExcludesThemFromTheResult(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		for _, part := range []string{"The user", " wants", " a count"} {
 			flush(t, w, sseEvent(`{"choices":[{"delta":{"content":null,"reasoning_content":`+strconv.Quote(part)+`},"index":0}]}`))
 		}
@@ -182,7 +182,7 @@ func TestComplete_countsReasoningDeltasButExcludesThemFromTheResult(t *testing.T
 
 func TestComplete_namesTheHeaderBoundWhenNothingArrives(t *testing.T) {
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		<-release // never writes, so no headers are ever sent
 	}))
 	defer srv.Close()
@@ -200,7 +200,7 @@ func TestComplete_namesTheHeaderBoundWhenNothingArrives(t *testing.T) {
 
 func TestComplete_namesTheIdleBoundAndHowFarItGot(t *testing.T) {
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// Headers and two events arrive, then the socket goes silent — the shape
 		// of the stall that motivated all of this.
 		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"partial"},"index":0}]}`))
@@ -241,7 +241,7 @@ func TestComplete_namesTheIdleBoundAndHowFarItGot(t *testing.T) {
 // `data:` frames, so the long silent think this endpoint is known for still
 // re-arms the bound.
 func TestComplete_keepalivesDoNotHoldOffTheIdleBound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// Comments only, well past the idle bound. Under the old policy this
 		// answered "survived"; now the bound fires.
 		for i := 0; i < 10; i++ {
@@ -266,7 +266,7 @@ func TestComplete_keepalivesDoNotHoldOffTheIdleBound(t *testing.T) {
 // data frame, so a model that thinks for a long time before saying anything
 // keeps the bound re-armed and is not mistaken for a stalled one.
 func TestComplete_reasoningDeltasHoldOffTheIdleBound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		for i := 0; i < 10; i++ {
 			flush(t, w, sseEvent(`{"choices":[{"delta":{"reasoning_content":"thinking"},"index":0}]}`))
 			time.Sleep(20 * time.Millisecond)
@@ -320,7 +320,7 @@ func TestComplete_namesTheCallCapWhenAStreamNeverFinishes(t *testing.T) {
 // blame the endpoint for a shutdown.
 func TestComplete_parentCancellationIsNotBlamedOnABound(t *testing.T) {
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"x"},"index":0}]}`))
 		<-release
 	}))
@@ -346,7 +346,7 @@ func TestComplete_parentCancellationIsNotBlamedOnABound(t *testing.T) {
 
 func TestComplete_heartbeatReportsWhatHasArrived(t *testing.T) {
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"abcde"},"index":0}]}`))
 		<-release
 		flush(t, w, sseEvent(`{"choices":[{"delta":{},"finish_reason":"stop","index":0}]}`))
@@ -388,7 +388,7 @@ func TestComplete_heartbeatReportsWhatHasArrived(t *testing.T) {
 // read as a 6.5s request in the incident this change came from.
 func TestComplete_failureLineCarriesItsOwnCounts(t *testing.T) {
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"abc"},"index":0}]}`))
 		<-release
 	}))
@@ -422,7 +422,7 @@ func TestComplete_failureLineCarriesItsOwnCounts(t *testing.T) {
 func TestComplete_countsRunesNotBytes(t *testing.T) {
 	// Four runes, ten bytes.
 	const answer = "héllo…"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		// No finish_reason and no [DONE]: the stream just stops, which is the
 		// failure that makes the counts visible.
@@ -449,7 +449,7 @@ func TestComplete_countsRunesNotBytes(t *testing.T) {
 // connection ends the scan exactly like a finished one, so accepting what
 // arrived would persist a truncated summary as a complete one.
 func TestComplete_reportsAStreamThatEndsWithNothing(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flush(t, w, ": ping\n\n")
 	}))
@@ -468,7 +468,7 @@ func TestComplete_reportsAStreamThatEndsWithNothing(t *testing.T) {
 // Deltas reach the callback in order and whole: a caller relaying to a browser
 // and a caller buffering must see exactly the same text.
 func TestCompleteStream_deliversDeltasInOrder(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"one "}}]}`))
 		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"two"},"finish_reason":"stop"}]}`))
@@ -495,7 +495,7 @@ func TestCompleteStream_deliversDeltasInOrder(t *testing.T) {
 // A nil callback is the Complete path, and must not panic on its way through
 // the same code.
 func TestCompleteStream_nilCallbackIsTheCompletePath(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"quiet"},"finish_reason":"stop"}]}`))
 		flush(t, w, sseEvent(doneMarker))
@@ -517,7 +517,7 @@ func TestCompleteStream_nilCallbackIsTheCompletePath(t *testing.T) {
 // cut it again — but not silent either: a half summary nobody can explain later
 // is worse than a warning nobody reads.
 func TestComplete_warnsWhenTheAnswerEndedEarly(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"cut off mid-"},"finish_reason":"length","index":0}]}`))
 		flush(t, w, sseEvent(doneMarker))
 	}))
@@ -544,7 +544,7 @@ func TestComplete_warnsWhenTheAnswerEndedEarly(t *testing.T) {
 // A "stop" finish is the normal case and must stay quiet, or the warning above
 // becomes noise nobody reads.
 func TestComplete_doesNotWarnOnANormalFinish(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		flush(t, w, sseStream("fine", ""))
 	}))
 	defer srv.Close()
@@ -577,7 +577,7 @@ func TestComplete_statusErrorsKeepTheirPhrasing(t *testing.T) {
 		{"401", 401, `{"error":{"message":"bad key","code":"401"}}`, "chat failed with status 401: bad key"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tc.status)
 				_, _ = io.WriteString(w, tc.body)
 			}))
@@ -599,7 +599,7 @@ func TestComplete_statusErrorsKeepTheirPhrasing(t *testing.T) {
 // status to report. It must name the endpoint's own code rather than print
 // "status 0", and must not be mistaken for a stream that merely stopped.
 func TestComplete_midStreamErrorFrameNamesTheCode(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flush(t, w, sseEvent(`{"choices":[{"delta":{"content":"half"},"index":0}]}`))
 		flush(t, w, sseEvent(`{"error":{"message":"upstream gave up","code":"1210"}}`))

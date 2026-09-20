@@ -12,6 +12,8 @@ import (
 // upstream (loom) and to leave room for multi-user support later.
 type Role string
 
+// The roles a user can hold. Peeq is single-user, so the authenticated user is
+// always RoleAdmin; RoleUser exists for parity with upstream.
 const (
 	RoleAdmin Role = "admin"
 	RoleUser  Role = "user"

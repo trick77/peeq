@@ -78,7 +78,7 @@ func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string)
 	}
 
 	dir := SummaryDir(r.cfg.MediaDir, videoID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("ytdlp: create summary dir: %w", err)
 	}
 

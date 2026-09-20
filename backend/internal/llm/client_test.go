@@ -155,7 +155,7 @@ func TestComplete_shallowDoesNotChangeTheDeployment(t *testing.T) {
 }
 
 func TestCompleteErrorsOnNon2xx(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -166,7 +166,7 @@ func TestCompleteErrorsOnNon2xx(t *testing.T) {
 }
 
 func TestComplete_pacesRequestsByInterval(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, sseStream("ok", ""))
 	}))
 	defer srv.Close()
@@ -184,7 +184,7 @@ func TestComplete_pacesRequestsByInterval(t *testing.T) {
 }
 
 func TestComplete_zeroIntervalDoesNotPace(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, sseStream("ok", ""))
 	}))
 	defer srv.Close()
@@ -252,7 +252,7 @@ func TestComplete_maxTokensOmittedByDefault(t *testing.T) {
 func TestComplete_failOnEarlyFinish(t *testing.T) {
 	// content_filter under the flag → error, so a truncated answer is not
 	// persisted (the summary call retries instead).
-	cf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, sseFinish("partial", "content_filter"))
 	}))
 	defer cf.Close()
@@ -268,7 +268,7 @@ func TestComplete_failOnEarlyFinish(t *testing.T) {
 
 	// length is tolerated even under the flag: that cut is our own max_tokens,
 	// and retrying would just re-truncate.
-	ln := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ln := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, sseFinish("partial", "length"))
 	}))
 	defer ln.Close()

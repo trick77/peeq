@@ -27,7 +27,7 @@ func shareMetaDeps(t *testing.T) (Deps, string) {
 	t.Helper()
 	deps, mediaDir, _ := shareTestDeps(t)
 	deps.Shell = testShell
-	deps.Static = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	deps.Static = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(testShell)
 	})

@@ -24,7 +24,7 @@ type fakeCompleter struct {
 	i       int
 }
 
-func (f *fakeCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (f *fakeCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
 		sys := m[0].Content
 		if strings.Contains(sys, "cohesive summary") {
@@ -147,7 +147,7 @@ func TestKeyPointsParsesProseWrappedJSON(t *testing.T) {
 
 func TestClassifyReturnsRawReplyAndSendsAllowedIDs(t *testing.T) {
 	var gotSystem, gotUser string
-	fc := completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	fc := completerFunc(func(_ context.Context, m []llm.Message) (string, error) {
 		gotSystem = m[0].Content
 		gotUser = m[1].Content
 		return " ai \n", nil
@@ -182,7 +182,7 @@ func TestClassifyReturnsRawReplyAndSendsAllowedIDs(t *testing.T) {
 
 func TestClassifyRendersHintsOnePerLine(t *testing.T) {
 	var gotSystem string
-	fc := completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	fc := completerFunc(func(_ context.Context, m []llm.Message) (string, error) {
 		gotSystem = m[0].Content
 		return "sports", nil
 	})
@@ -227,7 +227,7 @@ func TestSummarizeText_emptyTranscriptErrors(t *testing.T) {
 func TestSummarizeText_singlePassIsOneCallAtFullEffort(t *testing.T) {
 	var calls int
 	var efforts []string
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	s := New(completerFunc(func(ctx context.Context, _ []llm.Message) (string, error) {
 		calls++
 		efforts = append(efforts, llm.EffortFor(ctx))
 		return "Overall prose summary.", nil
@@ -248,7 +248,7 @@ func TestSummarizeText_singlePassIsOneCallAtFullEffort(t *testing.T) {
 }
 
 func TestSummarizeText_singlePassErrorPropagates(t *testing.T) {
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	s := New(completerFunc(func(_ context.Context, _ []llm.Message) (string, error) {
 		return "", errors.New("boom")
 	}))
 	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err == nil {
@@ -260,7 +260,7 @@ func TestSummarizeText_singlePassErrorPropagates(t *testing.T) {
 // reasoning and ended on "length") must NOT be stored as a blank summary — it
 // errors so the job retries instead. Whitespace-only counts as empty.
 func TestSummarizeText_emptySinglePassErrors(t *testing.T) {
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	s := New(completerFunc(func(_ context.Context, _ []llm.Message) (string, error) {
 		return "  \n ", nil
 	}))
 	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err == nil {
@@ -269,7 +269,7 @@ func TestSummarizeText_emptySinglePassErrors(t *testing.T) {
 }
 
 func TestSummarizeText_emptyReduceErrors(t *testing.T) {
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	s := New(completerFunc(func(_ context.Context, m []llm.Message) (string, error) {
 		if strings.Contains(m[0].Content, "cohesive summary") {
 			return "", nil // reduce yields nothing
 		}
@@ -313,7 +313,7 @@ func TestSummarizeText_coarseFallbackRunsBothStagesAtFullEffort(t *testing.T) {
 }
 
 func TestSummarizeText_coarseMapErrorPropagates(t *testing.T) {
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	s := New(completerFunc(func(_ context.Context, _ []llm.Message) (string, error) {
 		return "", errors.New("map boom")
 	}), WithSummaryChunkTokens(300))
 	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err == nil {
@@ -322,7 +322,7 @@ func TestSummarizeText_coarseMapErrorPropagates(t *testing.T) {
 }
 
 func TestSummarizeText_coarseReduceErrorPropagates(t *testing.T) {
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	s := New(completerFunc(func(_ context.Context, m []llm.Message) (string, error) {
 		if strings.Contains(m[0].Content, "cohesive summary") {
 			return "", errors.New("reduce boom")
 		}
@@ -340,7 +340,7 @@ func TestSummarizeText_coarseReduceErrorPropagates(t *testing.T) {
 func TestClassify_isAShortGateAtDefaultEffort(t *testing.T) {
 	var gate bool
 	var effort string
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	s := New(completerFunc(func(ctx context.Context, _ []llm.Message) (string, error) {
 		gate = llm.ShortGateFrom(ctx)
 		effort = llm.EffortFor(ctx)
 		return "science", nil
@@ -362,7 +362,7 @@ func TestClassify_isAShortGateAtDefaultEffort(t *testing.T) {
 // of thousands of tokens), so keypointsMaxTokens is the only remaining guard.
 func TestKeyPoints_isNotAShortGate(t *testing.T) {
 	var gate bool
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	s := New(completerFunc(func(ctx context.Context, _ []llm.Message) (string, error) {
 		gate = llm.ShortGateFrom(ctx)
 		return `{"key_points":[{"ts":0,"text":"intro"}]}`, nil
 	}))
@@ -380,7 +380,7 @@ func TestKeyPoints_isNotAShortGate(t *testing.T) {
 // reply: a ">>" speaker marker copied out of the captions, a leading bullet, and
 // quotes wrapped around the whole line.
 func TestKeyPoints_sanitizesModelText(t *testing.T) {
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	s := New(completerFunc(func(_ context.Context, _ []llm.Message) (string, error) {
 		return `{"chapters":[{"ts":0,"title":">> Intro"}],` +
 			`"key_points":[{"ts":9,"text":"- >>  Explains the \"weight drop\" here."},` +
 			`{"ts":20,"text":"\"A quoted line on its own.\""}]}`, nil
@@ -430,7 +430,7 @@ func TestFormatCues_rendersCueTextVerbatim(t *testing.T) {
 // one too.
 func TestSummarizeText_stripsSpeakerMarkers(t *testing.T) {
 	var seen string
-	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+	s := New(completerFunc(func(_ context.Context, m []llm.Message) (string, error) {
 		seen = m[1].Content
 		return "A summary.", nil
 	}))

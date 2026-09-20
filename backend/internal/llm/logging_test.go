@@ -84,7 +84,7 @@ const usageJSON = `{"prompt_tokens":1200,"completion_tokens":340,"total_tokens":
 var usageBody = sseStream("ok", usageJSON)
 
 func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, usageBody)
 	}))
 	defer srv.Close()
@@ -130,7 +130,7 @@ func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
 func TestComplete_logsAReportedZeroRatherThanDroppingIt(t *testing.T) {
 	// MiMo-shaped reply: the details objects are there, the numbers in them are
 	// zero. That zero is the answer and must reach the log.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, sseStream("ok", `{"prompt_tokens":900,"completion_tokens":100,"total_tokens":1000,`+
 			`"prompt_tokens_details":{"cached_tokens":0},`+
 			`"completion_tokens_details":{"reasoning_tokens":0}}`))
@@ -149,7 +149,7 @@ func TestComplete_logsAReportedZeroRatherThanDroppingIt(t *testing.T) {
 
 func TestComplete_logsRawUsageAndTheAbsenceOfIt(t *testing.T) {
 	t.Run("reported", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			io.WriteString(w, usageBody)
 		}))
 		defer srv.Close()
@@ -168,7 +168,7 @@ func TestComplete_logsRawUsageAndTheAbsenceOfIt(t *testing.T) {
 		}
 	})
 	t.Run("absent", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			io.WriteString(w, sseStream("ok", ""))
 		}))
 		defer srv.Close()
@@ -196,7 +196,7 @@ func TestComplete_rawUsageIsCapped(t *testing.T) {
 	// A hostile or chatty endpoint must not be able to push an unbounded blob
 	// into the log through the raw-usage line.
 	padding := strings.Repeat("x", maxRawUsage*2)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, sseStream("ok", `{"prompt_tokens":5,"note":"`+padding+`"}`))
 	}))
 	defer srv.Close()
@@ -219,7 +219,7 @@ func TestComplete_rawUsageCutsOnARuneBoundary(t *testing.T) {
 	// the payload by 0-3 ASCII bytes walks the cut across every byte position
 	// of a multi-byte rune, so at least one case cuts mid-character.
 	for shift := 0; shift < 4; shift++ {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			io.WriteString(w, sseStream("ok", `{"prompt_tokens":5,"note":"`+
 				strings.Repeat("x", shift)+strings.Repeat("é", maxRawUsage)+`"}`))
 		}))
@@ -238,7 +238,7 @@ func TestComplete_rawUsageCutsOnARuneBoundary(t *testing.T) {
 }
 
 func TestComplete_inferenceTimeExcludesPacing(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, usageBody)
 	}))
 	defer srv.Close()
@@ -272,7 +272,7 @@ func TestComplete_inferenceTimeExcludesPacing(t *testing.T) {
 }
 
 func TestComplete_accumulatesTotalsAcrossCalls(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, usageBody)
 	}))
 	defer srv.Close()
@@ -297,7 +297,7 @@ func TestComplete_accumulatesTotalsAcrossCalls(t *testing.T) {
 // exactly the shape of the Ask handler, whose two model calls each build their
 // own CallInfo.
 func TestComplete_totalsSurviveANestedWithCall(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, usageBody)
 	}))
 	defer srv.Close()
@@ -317,7 +317,7 @@ func TestComplete_totalsSurviveANestedWithCall(t *testing.T) {
 }
 
 func TestComplete_worksWithoutCallInfo(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, usageBody)
 	}))
 	defer srv.Close()
@@ -340,7 +340,7 @@ func TestComplete_worksWithoutCallInfo(t *testing.T) {
 
 func TestWithStage_ridesAlongToTheHeartbeatAndTheLogLines(t *testing.T) {
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		<-release
 		io.WriteString(w, usageBody)
 	}))
@@ -373,7 +373,7 @@ func TestWithStage_ridesAlongToTheHeartbeatAndTheLogLines(t *testing.T) {
 
 func TestComplete_heartbeatsWhileWaiting(t *testing.T) {
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		<-release
 		io.WriteString(w, usageBody)
 	}))
@@ -404,7 +404,7 @@ func TestComplete_heartbeatsWhileWaiting(t *testing.T) {
 }
 
 func TestComplete_heartbeatDisabledByNegativeInterval(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(30 * time.Millisecond)
 		io.WriteString(w, usageBody)
 	}))
@@ -427,7 +427,7 @@ func TestComplete_logsFailuresWithDurationAndKeepsErrorText(t *testing.T) {
 	}{
 		{
 			name:    "non-2xx",
-			handler: func(w http.ResponseWriter, r *http.Request) { http.Error(w, "boom", http.StatusInternalServerError) },
+			handler: func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "boom", http.StatusInternalServerError) },
 			wantErr: "chat failed with status 500",
 		},
 		{
@@ -435,7 +435,7 @@ func TestComplete_logsFailuresWithDurationAndKeepsErrorText(t *testing.T) {
 			// page is the realistic version. Nothing parses as an event, so the
 			// stream ends unfinished rather than returning an empty summary.
 			name:    "not an event stream",
-			handler: func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "not json") },
+			handler: func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "not json") },
 			wantErr: "without finish_reason",
 		},
 		{
@@ -443,7 +443,7 @@ func TestComplete_logsFailuresWithDurationAndKeepsErrorText(t *testing.T) {
 			// finish_reason and no [DONE]. Returning the fragment would store
 			// half a summary permanently; it must be an error the queue retries.
 			name: "truncated mid-answer",
-			handler: func(w http.ResponseWriter, r *http.Request) {
+			handler: func(w http.ResponseWriter, _ *http.Request) {
 				io.WriteString(w, sseEvent(`{"choices":[{"delta":{"content":"half an ans"},"index":0}]}`))
 			},
 			wantErr: "without finish_reason",
@@ -476,7 +476,7 @@ func TestComplete_logsFailuresWithDurationAndKeepsErrorText(t *testing.T) {
 }
 
 func TestComplete_logsPacingSeparatelyFromLatency(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, usageBody)
 	}))
 	defer srv.Close()
