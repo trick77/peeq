@@ -1352,8 +1352,8 @@ func answerMessages(q string, excerpts []string, applied, relaxed []string, coun
 		if counts.Videos == 0 {
 			b.WriteString("\n\nLibrary counts, under those constraints: no videos at all.")
 		} else {
-			b.WriteString(fmt.Sprintf("\n\nLibrary counts, under those constraints: %d videos across %d channels, %s in total.",
-				counts.Videos, counts.Channels, humanDuration(counts.DurationSeconds)))
+			fmt.Fprintf(&b, "\n\nLibrary counts, under those constraints: %d videos across %d channels, %s in total.",
+				counts.Videos, counts.Channels, humanDuration(counts.DurationSeconds))
 		}
 	}
 	b.WriteString("\n\nExcerpts:\n\n")

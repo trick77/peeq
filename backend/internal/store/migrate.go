@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -40,7 +41,7 @@ func Migrate(db *sql.DB) error {
 		if err == nil {
 			continue // already applied
 		}
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 

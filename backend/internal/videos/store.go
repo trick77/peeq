@@ -33,6 +33,7 @@ package videos
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -324,7 +325,7 @@ func (s *Store) Get(id string) (*Video, error) {
 		"SELECT "+videoColumns+" "+videoFrom+" WHERE v.id = ?", id,
 	)
 	v, err := scanVideo(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

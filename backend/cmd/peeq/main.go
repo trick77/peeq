@@ -109,7 +109,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := store.Migrate(db); err != nil {
 		return err

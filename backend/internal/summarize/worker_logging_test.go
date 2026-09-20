@@ -13,10 +13,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/summaryjobs"
-	"time"
 
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/videos"

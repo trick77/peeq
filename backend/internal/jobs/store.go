@@ -104,7 +104,7 @@ WHERE id = (
 )
 RETURNING `+selectColumns)
 	j, err := scanRow(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

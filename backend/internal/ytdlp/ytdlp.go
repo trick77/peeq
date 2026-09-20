@@ -558,7 +558,7 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 			return nil, fmt.Errorf("ytdlp: write cookie temp file: %w", err)
 		}
 		cookieFile = f
-		defer os.Remove(cookieFile)
+		defer func() { _ = os.Remove(cookieFile) }()
 	}
 
 	// The throttle applies unconditionally, before AND after the cookie
@@ -680,17 +680,17 @@ func writeCookieTempFile(text string) (string, error) {
 	name := f.Name()
 
 	if err := f.Chmod(0o600); err != nil {
-		f.Close()
-		os.Remove(name)
+		_ = f.Close()
+		_ = os.Remove(name)
 		return "", err
 	}
 	if _, err := f.WriteString(text); err != nil {
-		f.Close()
-		os.Remove(name)
+		_ = f.Close()
+		_ = os.Remove(name)
 		return "", err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(name)
+		_ = os.Remove(name)
 		return "", err
 	}
 	return name, nil

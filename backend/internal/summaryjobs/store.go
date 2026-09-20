@@ -129,7 +129,7 @@ func (s *Store) list(tail, what string) ([]Job, error) {
 	if err != nil {
 		return nil, fmt.Errorf("summaryjobs: %s: %w", what, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Job
 	for rows.Next() {
 		var j Job

@@ -8,6 +8,7 @@ package channelvideos
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -249,7 +250,7 @@ func (s *Store) Get(videoID string) (*Entry, error) {
 	row := s.db.QueryRowContext(context.Background(),
 		`SELECT `+selectColumns+` FROM channel_videos WHERE video_id = ?`, videoID)
 	e, err := scanRow(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
