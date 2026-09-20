@@ -731,18 +731,6 @@ func logJSRuntime(ctx context.Context, bin string) {
 	slog.Info("yt-dlp JavaScript runtime detected", "runtime", v)
 }
 
-// serve starts srv and blocks until either the server fails to start/serve
-// (in which case that error is returned immediately, without waiting for
-// ctx) or ctx is cancelled (in which case srv is shut down gracefully).
-//
-// hub.Close() is called before srv.Shutdown: http.Server.Shutdown does NOT
-// cancel in-flight request contexts, it only waits for handlers to return —
-// so an open SSE stream (which otherwise blocks on r.Context().Done(), which
-// never fires during a graceful shutdown while the client stays connected)
-// would make Shutdown block for the full 10s timeout and return
-// context.DeadlineExceeded, one connected client at a time. Closing the hub
-// first closes every subscriber channel, so the stream handler's select sees
-// its channel close and returns immediately, and Shutdown completes fast.
 // newServer builds the API server with its timeouts set explicitly, so they are
 // assertable rather than left at http.Server's zero values (which mean "no
 // limit" and leave a stalled client holding a goroutine and a descriptor).
@@ -766,6 +754,18 @@ func newServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
+// serve starts srv and blocks until either the server fails to start/serve
+// (in which case that error is returned immediately, without waiting for
+// ctx) or ctx is cancelled (in which case srv is shut down gracefully).
+//
+// hub.Close() is called before srv.Shutdown: http.Server.Shutdown does NOT
+// cancel in-flight request contexts, it only waits for handlers to return —
+// so an open SSE stream (which otherwise blocks on r.Context().Done(), which
+// never fires during a graceful shutdown while the client stays connected)
+// would make Shutdown block for the full 10s timeout and return
+// context.DeadlineExceeded, one connected client at a time. Closing the hub
+// first closes every subscriber channel, so the stream handler's select sees
+// its channel close and returns immediately, and Shutdown completes fast.
 func serve(ctx context.Context, srv *http.Server, hub *sse.Hub) error {
 	errCh := make(chan error, 1)
 	go func() {
