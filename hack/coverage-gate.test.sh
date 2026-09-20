@@ -15,8 +15,8 @@ check() { # check <label> <expected-exit> <actual-exit>
   fi
 }
 
-# 80 of 100 lines covered outside cmd/peeq -> 80.0%.
-# cmd/peeq contributes 100 lines, all uncovered, and must be ignored entirely:
+# 80 of 100 lines covered outside cmd/ -> 80.0%.
+# cmd/ contributes 100 lines, all uncovered, and must be ignored entirely:
 # including it would report 80/200 = 40.0%, a materially different number.
 gen_lines() { # gen_lines <count> <hits>
   local i
@@ -65,8 +65,8 @@ check "fails when below floor" 1 $?
 out=$(COVERAGE_FLOORS="$TMP/floors-under" COVERAGE_FILE="$TMP/backend.xml" \
   ./hack/coverage-gate.sh backend 2>&1)
 case "$out" in
-  *80.0*) echo "  ok   excludes cmd/peeq (reports 80.0%, not 40.0%)" ;;
-  *)      echo "  FAIL excludes cmd/peeq — got: $out"; fail=1 ;;
+  *80.0*) echo "  ok   excludes cmd/ (reports 80.0%, not 40.0%)" ;;
+  *)      echo "  FAIL excludes cmd/ — got: $out"; fail=1 ;;
 esac
 
 COVERAGE_FLOORS="$TMP/floors-under" COVERAGE_FILE="$TMP/backend-malformed.xml" \
