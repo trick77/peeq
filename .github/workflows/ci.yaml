@@ -38,6 +38,9 @@ jobs:
       # gofmt is not covered by `go vet`. Five files had already drifted out of
       # gofmt shape before this check existed, so it is worth enforcing rather
       # than trusting editors to do it.
+      # From the repo root, not backend/: hack/strip-comment-lines.go is outside
+      # the module, so `go vet ./...` above never sees it, and
+      # patch-coverage.sh runs it on every build.
       - name: gofmt
         run: |
           unformatted="$(gofmt -l .)"
@@ -46,6 +49,7 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+        working-directory: .
       - run: mkdir -p ../coverage
       # The race detector needs cgo; this is independent of the app's
       # CGO_ENABLED=0 build invariant enforced by the `go build` step above.
@@ -70,6 +74,13 @@ jobs:
         working-directory: .
       - name: Backend patch coverage
         run: ./hack/patch-coverage.sh "origin/${{ github.base_ref || 'master' }}"
+        working-directory: .
+      # The gate scripts decide whether a PR may merge, so they get tested too.
+      # Both test files already existed here; nothing ran them.
+      - name: Gate self-tests
+        run: |
+          ./hack/coverage-gate.test.sh
+          ./hack/strip-comment-lines.test.sh
         working-directory: .
 
   ui:
