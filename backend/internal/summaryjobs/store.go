@@ -57,6 +57,8 @@ func backoffFor(ladder []time.Duration, attempts int) time.Duration {
 	return ladder[attempts-1] //nolint:gosec // attempts is clamped to >= 1 above and the > len(ladder) case returned already, so this index is in range
 }
 
+// Job is one video's summarization work item, with the retry bookkeeping the
+// worker uses to decide between another attempt and a permanent failure.
 type Job struct {
 	ID          int64
 	VideoID     string
@@ -66,6 +68,7 @@ type Job struct {
 	LastError   string
 }
 
+// Store is the summary job queue, backed by the summary_jobs table.
 type Store struct {
 	db *sql.DB
 	// failSQL carries this store's retry ladder, rendered once at construction.
@@ -236,7 +239,7 @@ func buildFailSQL(ladder []time.Duration) string {
 // re-claimed on the very next turn of the worker loop. Without that a fast-
 // failing endpoint spends every attempt in about a minute and the outage becomes
 // permanent for whatever was in the queue.
-func (s *Store) Fail(id int64, attempts int, lastErr string) (terminal bool, err error) {
+func (s *Store) Fail(id int64, _ int, lastErr string) (terminal bool, err error) {
 	var state string
 	err = s.db.QueryRow(s.failSQL, lastErr, id).Scan(&state)
 	if err != nil {

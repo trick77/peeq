@@ -31,7 +31,7 @@ type fakeResolver struct {
 	panics bool
 }
 
-func (f *fakeResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+func (f *fakeResolver) ResolveChannel(_ context.Context, url string) (ytdlp.ChannelInfo, error) {
 	f.mu.Lock()
 	f.urls = append(f.urls, url)
 	f.mu.Unlock()

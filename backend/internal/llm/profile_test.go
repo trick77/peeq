@@ -41,7 +41,7 @@ func TestReasoningEffortConstsMatchTheProfile(t *testing.T) {
 // can still ask errors.Is for the rate-limit class and errors.As for the
 // Retry-After. A plain fmt.Errorf without %w used to cut that, silently.
 func TestComplete_statusErrorsKeepLlmwiresChain(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "7")
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = io.WriteString(w, `{"error":{"message":"slow down","code":"1302"}}`)
@@ -72,7 +72,7 @@ func TestComplete_statusErrorsKeepLlmwiresChain(t *testing.T) {
 // hits the same wall on every attempt, so FailOnEarlyFinish must not turn it
 // into a retry. A filter or refusal still is one.
 func TestComplete_failOnEarlyFinishToleratesAContextWindowCut(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, sseFinish("partial", "model_context_window_exceeded"))
 	}))
 	defer srv.Close()

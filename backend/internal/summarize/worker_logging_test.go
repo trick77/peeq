@@ -147,7 +147,7 @@ func (u *usageCompleter) sawStep(step string) bool {
 // the shape that makes the queue retry a job.
 type keypointsErrCompleter struct{}
 
-func (keypointsErrCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (keypointsErrCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	sys := m[0].Content
 	switch {
 	case strings.Contains(sys, "cohesive summary"):
@@ -645,7 +645,7 @@ func TestAnalysisRunNilIsAnInertRun(t *testing.T) {
 // recover.
 type panicCompleter struct{}
 
-func (panicCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+func (panicCompleter) Complete(_ context.Context, _ []llm.Message) (string, error) {
 	panic("boom")
 }
 

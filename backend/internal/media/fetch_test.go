@@ -15,7 +15,7 @@ import (
 // the way — since migration 0023 every image peeq caches lives in a row.
 func TestFetchImageBytes_returnsBodyAndMime(t *testing.T) {
 	body := []byte("\xff\xd8\xff fake jpeg bytes")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
 		_, _ = w.Write(body)
 	}))
@@ -37,7 +37,7 @@ func TestFetchImageBytes_returnsBodyAndMime(t *testing.T) {
 // the type alone: a server that appends "; charset=..." must not make a
 // perfectly good image look like an unknown type.
 func TestFetchImageBytes_toleratesCharsetParameter(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/webp; charset=binary")
 		_, _ = w.Write([]byte("RIFFfake"))
 	}))
@@ -55,7 +55,7 @@ func TestFetchImageBytes_toleratesCharsetParameter(t *testing.T) {
 // TestFetchImageBytes_rejectsNonImage asserts an HTML error page served with a
 // 200 is not handed back as if it were an avatar.
 func TestFetchImageBytes_rejectsNonImage(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte("<html>nope</html>"))
 	}))
@@ -70,7 +70,7 @@ func TestFetchImageBytes_rejectsNonImage(t *testing.T) {
 // TestFetchImageBytes_rejectsOversizeBody asserts a hostile or broken server
 // cannot bloat the database through this path.
 func TestFetchImageBytes_rejectsOversizeBody(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
 		_, _ = w.Write(make([]byte, maxImageBytes+1024))
 	}))
@@ -121,7 +121,7 @@ func TestFetchImageBytes_rejectsUnreachableHost(t *testing.T) {
 // typed error, which is what lets a caller tell a permanent 404 (try the next
 // candidate) from a 5xx (worth retrying).
 func TestFetchImageBytes_rejectsNon200Status(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
@@ -136,7 +136,7 @@ func TestFetchImageBytes_rejectsNon200Status(t *testing.T) {
 // TestFetchImageBytes_rejectsTruncatedBody asserts a connection that dies
 // mid-body is an error rather than a half image the caller would store.
 func TestFetchImageBytes_rejectsTruncatedBody(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
 		w.Header().Set("Content-Length", "1024")
 		_, _ = w.Write([]byte("short"))

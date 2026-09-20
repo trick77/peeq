@@ -561,7 +561,7 @@ func (v ytdlpVersioner) UpdateLatest(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-func (v ytdlpVersioner) Latest(ctx context.Context) (string, time.Time, string) {
+func (v ytdlpVersioner) Latest(_ context.Context) (string, time.Time, string) {
 	if v.status == nil {
 		return "", time.Time{}, ""
 	}

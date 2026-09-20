@@ -215,7 +215,7 @@ func TestNewEmbedClient_withoutBaseURLNamesTheMissingVariable(t *testing.T) {
 // Same contract as the chat client: the phrasing is this package's, the chain
 // is llmwire's, so a caller can still classify the failure by errors.Is.
 func TestEmbed_statusErrorsKeepLlmwiresChain(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte(`{"error":{"message":"slow down"}}`))
 	}))

@@ -109,7 +109,7 @@ type fakeDownloadsRunner struct {
 	calls int
 }
 
-func (f *fakeDownloadsRunner) Metadata(ctx context.Context, url string) (*ytdlp.Meta, error) {
+func (f *fakeDownloadsRunner) Metadata(_ context.Context, _ string) (*ytdlp.Meta, error) {
 	f.calls++
 	if f.err != nil {
 		return nil, f.err

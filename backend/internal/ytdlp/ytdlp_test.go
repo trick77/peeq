@@ -1140,7 +1140,7 @@ func TestStartHook_doesNotFireWhenTheWaitIsCancelled(t *testing.T) {
 	r := New(RunnerConfig{
 		Bin:            fakeBinPath(t),
 		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
-		Sleep:          func(ctx context.Context, _ time.Duration) error { return context.Canceled },
+		Sleep:          func(_ context.Context, _ time.Duration) error { return context.Canceled },
 	})
 
 	ctx := WithStartHook(context.Background(), func() { fired = true })

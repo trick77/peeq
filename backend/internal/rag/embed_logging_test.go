@@ -41,7 +41,7 @@ func embedRecords(t *testing.T, handler http.HandlerFunc, inputs []string) ([]ma
 }
 
 func TestEmbed_logsUsageOnSuccess(t *testing.T) {
-	recs, err := embedRecords(t, func(w http.ResponseWriter, r *http.Request) {
+	recs, err := embedRecords(t, func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"data":  []map[string]any{{"index": 0, "embedding": []float32{0.1}}},
 			"usage": map[string]any{"prompt_tokens": 4200, "total_tokens": 4200},
@@ -70,19 +70,19 @@ func TestEmbed_logsEveryFailurePath(t *testing.T) {
 	}{
 		{
 			name:    "non-2xx",
-			handler: func(w http.ResponseWriter, r *http.Request) { http.Error(w, "boom", http.StatusBadGateway) },
+			handler: func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "boom", http.StatusBadGateway) },
 			inputs:  []string{"a"},
 			wantErr: "embedding failed with status 502",
 		},
 		{
 			name:    "undecodable body",
-			handler: func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "not json") },
+			handler: func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "not json") },
 			inputs:  []string{"a"},
 			wantErr: "decode embed response",
 		},
 		{
 			name: "count mismatch",
-			handler: func(w http.ResponseWriter, r *http.Request) {
+			handler: func(w http.ResponseWriter, _ *http.Request) {
 				json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "embedding": []float32{0.1}}}})
 			},
 			inputs:  []string{"a", "b"},
@@ -106,7 +106,7 @@ func TestEmbed_logsEveryFailurePath(t *testing.T) {
 }
 
 func TestEmbed_logsTheVideoIdentityFromTheContext(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]any{{"index": 0, "embedding": []float32{0.1}}},
 		})
@@ -138,7 +138,7 @@ func TestEmbed_logsTheVideoIdentityFromTheContext(t *testing.T) {
 
 func TestEmbed_heartbeatsWhileWaiting(t *testing.T) {
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		<-release
 		json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]any{{"index": 0, "embedding": []float32{0.1}}},
@@ -169,7 +169,7 @@ func TestEmbed_heartbeatsWhileWaiting(t *testing.T) {
 }
 
 func TestEmbed_heartbeatDisabledByNegativeInterval(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(30 * time.Millisecond)
 		json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]any{{"index": 0, "embedding": []float32{0.1}}},
@@ -188,7 +188,7 @@ func TestEmbed_heartbeatDisabledByNegativeInterval(t *testing.T) {
 }
 
 func TestEmbed_emptyInputMakesNoRequestAndNoLog(t *testing.T) {
-	recs, err := embedRecords(t, func(w http.ResponseWriter, r *http.Request) {
+	recs, err := embedRecords(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("no request expected for empty input")
 	}, nil)
 	if err != nil {

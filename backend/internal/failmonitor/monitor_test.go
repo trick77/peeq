@@ -37,7 +37,7 @@ func TestResetClears(t *testing.T) {
 	}
 }
 
-func TestConcurrentFailReset(t *testing.T) {
+func TestConcurrentFailReset(_ *testing.T) {
 	m := New(1000, func() {})
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
