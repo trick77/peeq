@@ -44,7 +44,9 @@ export type LiveQueue = {
   refreshQueue: () => void;
   refreshSummaries: () => void;
   refreshPending: () => void;
-  refreshStatus: () => void;
+  // Resolves once every light has been re-read (or failed to be), so a caller
+  // can hold a control until the shell reflects the change.
+  refreshStatus: () => Promise<void>;
   cancelDownload: (jobId: number) => Promise<void>;
 };
 
@@ -178,17 +180,37 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
       .catch(() => {});
   }, []);
 
-  // Re-read the two status lights a settings change can flip: the cookie
-  // (after a paste) and the worker's pause state (after resume). Best-effort
-  // like every read here — a light that cannot be read keeps its last value.
-  const refreshStatus = useCallback(() => {
-    cookieHealth()
-      .then((h) => setCookieStatus(h.status))
-      .catch(() => {});
-    downloadsStatus()
-      .then((s) => setDownloadStatus(s))
-      .catch(() => {});
-  }, []);
+  // Best-effort like every read here: a light that cannot be read keeps its
+  // last value.
+  const refreshCookie = useCallback(
+    () =>
+      cookieHealth()
+        .then((h) => setCookieStatus(h.status))
+        .catch(() => {}),
+    [],
+  );
+  const refreshYtdlp = useCallback(
+    () =>
+      getYtdlpVersion()
+        .then((v) => setYtdlp(v))
+        .catch(() => {}),
+    [],
+  );
+
+  // Re-read the status lights a settings change can flip: the cookie (after a
+  // paste), the worker's pause state (after resume) and the yt-dlp version
+  // (after an update).
+  const refreshStatus = useCallback(
+    () =>
+      Promise.all([
+        refreshCookie(),
+        refreshYtdlp(),
+        downloadsStatus()
+          .then((s) => setDownloadStatus(s))
+          .catch(() => {}),
+      ]).then(() => {}),
+    [refreshCookie, refreshYtdlp],
+  );
 
   // Cancel a download from the Queue page, then refresh so the row leaves the
   // list even if no further progress/terminal SSE arrives for it. The failure
@@ -202,37 +224,17 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
     if (!enabled) return;
     refreshQueue();
     refreshSummaries();
-    let active = true;
-    cookieHealth()
-      .then((h) => {
-        if (active) setCookieStatus(h.status);
-      })
-      .catch(() => {});
-    getYtdlpVersion()
-      .then((v) => {
-        if (active) setYtdlp(v);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [enabled, refreshQueue, refreshSummaries]);
+    void refreshCookie();
+    void refreshYtdlp();
+  }, [enabled, refreshQueue, refreshSummaries, refreshCookie, refreshYtdlp]);
 
   // When the worker reports it is paused (a cookie problem stalled the queue),
   // refresh the cookie status so the rail's indicator reflects the current
   // blocked/expired/absent state rather than a stale "active".
   useEffect(() => {
     if (!downloadStatus.paused) return;
-    let active = true;
-    cookieHealth()
-      .then((h) => {
-        if (active) setCookieStatus(h.status);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [downloadStatus.paused]);
+    void refreshCookie();
+  }, [downloadStatus.paused, refreshCookie]);
 
   // How many jobs are pending or running. A plain count is what the queue poll
   // and the rail's queue badge want.
@@ -288,19 +290,20 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
     // event when it claims the job (within a poll interval), which re-arms this
     // effect — the poll does not itself observe an unclaimed pending summary.
     if (activeDownloads === 0 && summaries.length === 0) return;
+    // refreshQueue also re-reads the stalled-queue state, so the diagnostic
+    // banner clears/appears as the worker pauses or resumes.
     const id = window.setInterval(() => {
-      listDownloads()
-        .then(adoptJobs)
-        .catch(() => {});
+      refreshQueue();
       refreshSummaries();
-      // Refresh the stalled-queue state alongside the queue so the diagnostic
-      // banner clears/appears as the worker pauses or resumes.
-      downloadsStatus()
-        .then((s) => setDownloadStatus(s))
-        .catch(() => {});
     }, POLL_MS);
     return () => window.clearInterval(id);
-  }, [enabled, activeDownloads, summaries.length, adoptJobs, refreshSummaries]);
+  }, [
+    enabled,
+    activeDownloads,
+    summaries.length,
+    refreshQueue,
+    refreshSummaries,
+  ]);
 
   // The one SSE stream carries download "progress", summary "summary", and
   // background-work "activity" events (see the shared hub in main.go). Every
