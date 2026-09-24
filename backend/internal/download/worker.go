@@ -8,6 +8,7 @@ package download
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,6 +116,10 @@ type Deps struct {
 	Videos   *videos.Store
 	Settings *settings.Store
 	Runner   Runner
+	// DB is the handle the Jobs and Videos stores share. succeed opens one
+	// transaction on it so a job's 'done' and its video's 'downloaded' land
+	// together; production and the test harness always set it.
+	DB *sql.DB
 
 	// Prober, when set, is run against the finished file right after
 	// SetDownloaded persists, so a new download shows its media facts on
@@ -600,7 +605,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		// boot's ResetOrphans reclaims it. Do not write a terminal state.
 		return
 	case dlErr == nil:
-		w.succeed(job, video, res)
+		w.succeed(ctx, job, video, res)
 	case ctxInterrupted:
 		// Not a user cancel, not shutdown, yet the context was cancelled →
 		// the watchdog fired. Treat as a retryable timeout.
@@ -757,39 +762,30 @@ func (w *Worker) retry(ctx context.Context, job *jobs.Job, video *videos.Video, 
 	w.sleep(ctx, w.deps.Backoff(newAttempts))
 }
 
-// succeed persists a finished download and marks the job done. The job's 'done'
-// write is attempted FIRST and is guarded (state = 'running'): if a Cancel
-// raced in after our cancel-flag read — taking the store path and marking the
-// row canceled — Finish returns ErrNotRunning and we settle as canceled
-// instead of persisting the download, so a canceled job is never resurrected
-// to done.
-func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) {
-	switch err := w.deps.Jobs.Finish(job.ID, jobs.StateDone, "", ""); {
+// succeed persists a finished download and marks the job done — in ONE
+// transaction. The job's 'done' write is guarded (state = 'running'): if a
+// Cancel raced in after our cancel-flag read — taking the store path and
+// marking the row canceled — it reports ErrNotRunning, nothing is committed,
+// and we settle as canceled instead of persisting the download, so a canceled
+// job is never resurrected to done.
+//
+// One transaction because the two writes used to be separate, and a failed
+// second one left the job 'done' with the video stuck in 'downloading' — a
+// state nothing revisits: EnqueueMissing wants 'downloaded', the Library's
+// re-download button wants 'error'. Now both land or neither does. When
+// neither does, the job is still 'running', so it goes through the ordinary
+// retry ladder: the file just written is removed (the row does not point at
+// it, and a retry re-downloads into the same place), and the last attempt
+// leaves the video in 'error' where the user can retry it by hand.
+func (w *Worker) succeed(ctx context.Context, job *jobs.Job, video *videos.Video, res *ytdlp.Result) {
+	switch err := w.complete(ctx, job, video, res); {
 	case errors.Is(err, jobs.ErrNotRunning):
 		w.settleCanceled(job, video)
 		return
 	case err != nil:
-		w.deps.Logger.Error("download worker: finish done failed", "job_id", job.ID, "err", err)
-		return
-	}
-	if err := w.deps.Videos.SetDownloaded(video.ID, videos.DownloadedResult{
-		MediaPath:            res.MediaPath,
-		FilesizeBytes:        res.FilesizeBytes,
-		FormatUsed:           res.FormatUsed,
-		SponsorblockSegments: marshalSegments(res.SponsorblockSegments),
-		AudioLanguage:        res.AudioLanguage,
-		ChaptersJSON:         res.ChaptersJSON,
-		PublishedAt:          res.PublishedAt,
-		Description:          res.Description,
-		MediaType:            res.MediaType,
-		LiveStatus:           res.LiveStatus,
-		YTTags:               marshalStrings(res.Tags),
-		YTCategories:         marshalStrings(res.Categories),
-	}); err != nil {
-		w.deps.Logger.Error("download worker: set downloaded failed", "video_id", video.ID, "err", err)
-		// Do not enqueue a summary job: the video row was not updated with
-		// audio_language/chapters, so a summary job would run against
-		// stale/incomplete data.
+		w.deps.Logger.Error("download worker: persist download failed", "job_id", job.ID, "video_id", video.ID, "err", err)
+		media.RemoveVideoFiles(w.deps.MediaDir, res.MediaPath)
+		w.retry(ctx, job, video, err.Error())
 		return
 	}
 
@@ -843,7 +839,7 @@ func (w *Worker) succeed(job *jobs.Job, video *videos.Video, res *ytdlp.Result) 
 	}
 	w.recordActivity(activity.Event{
 		Kind: activity.KindDownload, Outcome: activity.OutcomeOK,
-		SubjectID: video.ID, Subject: video.Title, Summary: "downloaded",
+		SubjectID: video.ID, Subject: firstNonEmpty(video.Title, video.ID), Summary: "downloaded",
 		Detail: humanSize(res.FilesizeBytes),
 	})
 }
@@ -886,6 +882,36 @@ func (w *Worker) probeDownloaded(videoID, mediaPath string) {
 	if err := w.deps.Videos.SetProbed(videoID, mediaprobe.StoreResult(info)); err != nil {
 		w.deps.Logger.Error("download worker: store probe failed", "video_id", videoID, "err", err)
 	}
+}
+
+// complete commits the job's 'done' and the video's 'downloaded' as one unit.
+// Both stores share w.deps.DB, so a transaction on it covers both writes.
+func (w *Worker) complete(ctx context.Context, job *jobs.Job, video *videos.Video, res *ytdlp.Result) error {
+	tx, err := w.deps.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := w.deps.Jobs.FinishIn(ctx, tx, job.ID, jobs.StateDone, "", ""); err != nil {
+		return err
+	}
+	if err := w.deps.Videos.SetDownloadedIn(ctx, tx, video.ID, videos.DownloadedResult{
+		MediaPath:            res.MediaPath,
+		FilesizeBytes:        res.FilesizeBytes,
+		FormatUsed:           res.FormatUsed,
+		SponsorblockSegments: marshalSegments(res.SponsorblockSegments),
+		AudioLanguage:        res.AudioLanguage,
+		ChaptersJSON:         res.ChaptersJSON,
+		PublishedAt:          res.PublishedAt,
+		Description:          res.Description,
+		MediaType:            res.MediaType,
+		LiveStatus:           res.LiveStatus,
+		YTTags:               marshalStrings(res.Tags),
+		YTCategories:         marshalStrings(res.Categories),
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // storeTranscript reads the .vtt yt-dlp wrote into the row, then unlinks every

@@ -2,6 +2,7 @@ package videos
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -72,11 +73,22 @@ func (s *Store) SetRequestedFormat(id, format string) error {
 // SponsorBlock during this download, so the backfill worker must not
 // immediately ask again for a video whose segments just arrived for free.
 func (s *Store) SetDownloaded(id string, res DownloadedResult) error {
+	return s.SetDownloadedIn(context.Background(), s.db, id, res)
+}
+
+// Execer is the slice of *sql.DB and *sql.Tx SetDownloadedIn needs.
+type Execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// SetDownloadedIn is SetDownloaded against the given executor, so the
+// download worker can commit it in the same transaction as the job's 'done'.
+func (s *Store) SetDownloadedIn(ctx context.Context, x Execer, id string, res DownloadedResult) error {
 	segments := res.SponsorblockSegments
 	if segments == "" {
 		segments = "[]"
 	}
-	_, err := s.db.ExecContext(context.Background(), `
+	_, err := x.ExecContext(ctx, `
 UPDATE videos
 SET media_path = ?,
 	filesize_bytes = ?, format_used = ?, sponsorblock_segments = ?,

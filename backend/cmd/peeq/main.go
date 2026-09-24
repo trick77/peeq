@@ -274,6 +274,7 @@ func run() error {
 	prober := mediaprobe.New(mediaprobe.Config{})
 
 	worker := download.New(download.Deps{
+		DB:             db,
 		Jobs:           jobsStore,
 		Videos:         videosStore,
 		Settings:       settingsStore,
