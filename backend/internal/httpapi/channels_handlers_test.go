@@ -3373,3 +3373,91 @@ func TestPendingDownload_videoLookupError_500(t *testing.T) {
 		t.Fatalf("jobs enqueued = %d, want 0", n)
 	}
 }
+
+// TestChannelsPut_notSubscribed_writesNothing asserts a request that is
+// going to be refused with "channel is not subscribed" leaves the
+// channel-level switches untouched. The handler used to write auto_summary
+// and keep_reads first and only then discover the subscription was missing,
+// so the client saw a failure while half the change had been saved.
+func TestChannelsPut_notSubscribed_writesNothing(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UChalf", Name: "Half"}})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@half"}); rr.Code != http.StatusCreated {
+		t.Fatalf("add status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	// Both switches are flipped away from their column defaults (auto_summary
+	// defaults to on, keep_reads to off), so a half-save is visible either way.
+	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UChalf", map[string]any{"auto_summary": false, "keep_reads": true, "autodownload": true})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("PUT status = %d, want 400, body=%s", rr.Code, rr.Body.String())
+	}
+	c, err := deps.Channels.Get("UChalf")
+	if err != nil || c == nil {
+		t.Fatalf("get channel: %v %v", c, err)
+	}
+	if !c.AutoSummary || c.KeepReads {
+		t.Fatalf("refused request was half-saved: auto_summary=%v keep_reads=%v", c.AutoSummary, c.KeepReads)
+	}
+	// The channel-level switches alone are still accepted on an unsubscribed
+	// channel.
+	rr = putJSONWithCookie(t, h, cookie, "/api/channels/UChalf", map[string]any{"auto_summary": false})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT auto_summary only: status = %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsPut_unknownChannel_mixedRequest_404 pins the status for a
+// channel that does not exist: 404, not the 400 a merely unsubscribed channel
+// gets, so an API-token client can tell the two apart.
+func TestChannelsPut_unknownChannel_mixedRequest_404(t *testing.T) {
+	h := newChannelsTestServer(t, &testResolver{})
+	cookie := loginAndGetCookie(t, h)
+	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UCnope", map[string]any{"auto_summary": true, "autodownload": true})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("PUT status = %d, want 404, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsPut_refusalPathChannelReadError_500 covers the channel read
+// on the refusal path: the subscription is missing, so the handler has to
+// look at the channel to choose between 404 and 400, and a failed look is a
+// 500. A renamed column breaks the channels read while the subscriptions
+// UPDATE that precedes it still runs.
+func TestChannelsPut_refusalPathChannelReadError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`ALTER TABLE channels RENAME COLUMN subscriber_count TO subscriber_count_x`); err != nil {
+		t.Fatalf("rename column: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UCx", map[string]any{"autodownload": true})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("PUT status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestChannelsPut_responseReadError_500 covers the read that fills the
+// unspecified switches into the response: the write itself succeeded, but
+// answering 200 with made-up values would tell the caller its switches had
+// just been turned off, so a failed read is a 500.
+func TestChannelsPut_responseReadError_500(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCread", Name: "Read"}})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@read"}); rr.Code != http.StatusCreated {
+		t.Fatalf("add status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	// SetKeepReads touches only keep_reads; the read selects every column.
+	if _, err := deps.Channels.DB().Exec(`ALTER TABLE channels RENAME COLUMN subscriber_count TO subscriber_count_x`); err != nil {
+		t.Fatalf("rename column: %v", err)
+	}
+	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UCread", map[string]any{"keep_reads": true})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("PUT status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+	c, err := deps.Channels.Get("UCread")
+	if err == nil {
+		t.Fatalf("expected the channel read to fail after the rename, got %+v", c)
+	}
+}

@@ -756,9 +756,41 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// auto_summary is written first, and against a different table. It is a
-	// property of the CHANNEL — "do I want peeq to read this channel's videos"
-	// — and survives an unsubscribe/resubscribe, so it must not be gated on a
+	// The subscription-level fields go first: UpdateConfig is one atomic
+	// statement that is REFUSED (not-subscribed) rather than half-applied, so
+	// running it before the channel-level writes below means a refused request
+	// has written nothing. The other order — the one this handler used to have
+	// — saved auto_summary and keep_reads and only then discovered there was no
+	// subscription, answering 400 for a change that was half on disk.
+	autodownload, formatOverride, ok, err := s.channels.UpdateConfig(id, req.Autodownload, req.FormatOverride)
+	if err != nil {
+		serverError(w, r, err, "update config failed")
+		return
+	}
+	// "Not subscribed" is only an error for the two fields that live on the
+	// subscription. A request that carried nothing but the channel-level
+	// switches goes on to do its whole job below; rejecting it here would make
+	// those toggles unusable on an added-but-unsubscribed channel.
+	if !ok && (req.Autodownload != nil || req.FormatOverride != nil) {
+		// A channel that does not exist at all is a 404, as it is for every
+		// other write on this route; only a real channel without a
+		// subscription is the 400.
+		c, err := s.channels.Get(id)
+		if err != nil {
+			serverError(w, r, err, "load channel failed")
+			return
+		}
+		if c == nil {
+			writeJSONError(w, http.StatusNotFound, "channel not found")
+			return
+		}
+		writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
+		return
+	}
+
+	// auto_summary is written against a different table. It is a property of
+	// the CHANNEL — "do I want peeq to read this channel's videos" — and
+	// survives an unsubscribe/resubscribe, so it must not be gated on a
 	// subscription row existing.
 	autoSummary := false
 	if req.AutoSummary != nil {
@@ -793,9 +825,16 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 
 	// Whatever this request did not set, report as stored rather than as the
 	// zero value a caller would otherwise read as "it just got turned off". One
-	// read serves both fields and both responses below.
+	// read serves both fields and both responses below. A failed read is a
+	// 500 even though every write above succeeded: answering 200 with made-up
+	// values would tell the caller its switches had just been turned off.
 	if req.AutoSummary == nil || req.KeepReads == nil {
-		if c, err := s.channels.Get(id); err == nil && c != nil {
+		c, err := s.channels.Get(id)
+		if err != nil {
+			serverError(w, r, err, "load channel failed")
+			return
+		}
+		if c != nil {
 			if req.AutoSummary == nil {
 				autoSummary = c.AutoSummary
 			}
@@ -805,20 +844,7 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	autodownload, formatOverride, ok, err := s.channels.UpdateConfig(id, req.Autodownload, req.FormatOverride)
-	if err != nil {
-		serverError(w, r, err, "update config failed")
-		return
-	}
-	// "Not subscribed" is only an error for the two fields that live on the
-	// subscription. A request that carried nothing but the channel-level
-	// switches has already done its whole job above, and rejecting it here would
-	// make those toggles unusable on an added-but-unsubscribed channel.
 	if !ok {
-		if req.Autodownload != nil || req.FormatOverride != nil {
-			writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
-			return
-		}
 		writeJSON(w, map[string]any{"id": id, "auto_summary": autoSummary, "keep_reads": keepReads})
 		return
 	}
