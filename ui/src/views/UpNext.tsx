@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useJobProgress } from "../shell/progressStore";
 import { Button } from "../ui";
 import { PillStrip } from "../components/PillStrip";
 import {
@@ -166,7 +167,6 @@ function planOf(item: UpcomingItem): string {
 
 export function UpNext({
   jobs,
-  progressByJobId,
   summaries,
   summaryPhaseByVideoId,
   search = "",
@@ -177,10 +177,6 @@ export function UpNext({
   stalled,
 }: {
   jobs: Job[];
-  progressByJobId?: Record<
-    number,
-    { percent: number; speed: string; eta: string }
-  >;
   summaries: SummaryJob[];
   summaryPhaseByVideoId?: Record<string, string>;
   /**
@@ -666,7 +662,6 @@ export function UpNext({
                   <DownloadRow
                     key={`d${row.job.job_id}`}
                     job={row.job}
-                    progress={progressByJobId?.[row.job.job_id]}
                     live
                     onCancel={cancelJob}
                     onOpenVideo={onOpenVideo}
@@ -698,7 +693,6 @@ export function UpNext({
                   <DownloadRow
                     key={`d${row.job.job_id}`}
                     job={row.job}
-                    progress={undefined}
                     live={false}
                     onCancel={cancelJob}
                     onOpenVideo={onOpenVideo}
@@ -927,7 +921,6 @@ function VideoIdLink({ id }: { id: string }) {
 // as the same component.
 function DownloadRow({
   job,
-  progress,
   live,
   onCancel,
   onOpenVideo,
@@ -935,13 +928,15 @@ function DownloadRow({
   stalled,
 }: {
   job: Job;
-  progress?: { percent: number; speed: string; eta: string };
   live: boolean;
   onCancel: (jobId: number) => void;
   onOpenVideo?: (videoId: string) => void;
   channelBit: (name?: string, id?: string) => React.ReactNode;
   stalled?: "youtube" | "disk" | "cookie";
 }) {
+  // Each row follows its own job in the progress store, so a tick re-renders
+  // this row and nothing else on the page (see progressStore).
+  const progress = useJobProgress(live ? job.job_id : null);
   // A row whose video has no title yet is a video that was added by URL and
   // hasn't reached the front of the queue. Which placeholder it gets depends on
   // whether the queue is moving at all: with YouTube work stopped, "reading

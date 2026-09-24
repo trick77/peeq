@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, memo } from "react";
 import type { MouseEvent } from "react";
 import { Icon } from "../icons";
 import { AUTO_SKIP } from "../components/Scrubber";
@@ -27,7 +27,7 @@ const SKIP_FORWARD = 30;
 // shares the player route (a video read from the Inbox lives at /video/<id>
 // too), and while reading one the dock must still show, because something
 // really is still playing behind it.
-export function NowDock({
+function NowDockImpl({
   playing,
   onOpenPlayer,
   onStop,
@@ -250,3 +250,8 @@ export function NowDock({
     </div>
   );
 }
+
+// Memoised: a shell re-render (a queue poll, an answer token) must not reach
+// this unless one of its own props changed. Every prop App hands it is stable
+// or a value, which is what makes the memo hold.
+export const NowDock = memo(NowDockImpl);

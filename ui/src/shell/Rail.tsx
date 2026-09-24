@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, memo } from "react";
 import type { YtdlpVersion } from "../api/ytdlp";
 import { Icon } from "../icons";
 import { CookieStatus } from "./CookieStatus";
@@ -9,7 +9,7 @@ import { SECTIONS, type ViewId } from "./nav";
 // Re-exported here because Rail was where the rest of the app imported it from.
 export type { ViewId } from "./nav";
 
-export function Rail({
+function RailImpl({
   active,
   onNavigate,
   collapsed = false,
@@ -197,3 +197,8 @@ export function Rail({
     </aside>
   );
 }
+
+// Memoised: a shell re-render (a queue poll, an answer token) must not reach
+// this unless one of its own props changed. Every prop App hands it is stable
+// or a value, which is what makes the memo hold.
+export const Rail = memo(RailImpl);

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { searchVideos, type SearchMode } from "./api/search";
 import {
   streamAnswer,
@@ -94,250 +94,262 @@ export function useSearchState(): SearchState {
   // and asking again the only way to see it.
   const runIds = useRef<Record<SearchMode, number>>({ find: 0, ask: 0 });
 
-  function patchTab(m: SearchMode, patch: Partial<TabState>) {
+  const patchTab = useCallback((m: SearchMode, patch: Partial<TabState>) => {
     setTabs((prev) => ({ ...prev, [m]: { ...prev[m], ...patch } }));
-  }
-
-  function runSearch(q: string, m: SearchMode) {
-    const trimmed = q.trim();
-    const id = ++runIds.current[m];
-    if (m === "ask") {
-      answerAbort.current?.abort();
-      setAnswer(null);
-    }
-    if (!trimmed) {
-      // The error line belongs to the query that failed. Emptying the box
-      // retires that query, so leaving the error up would strand a complaint
-      // about a search that is no longer on screen.
-      patchTab(m, {
-        results: null,
-        searchedQuery: null,
-        error: null,
-        loading: false,
-      });
-      return;
-    }
-    patchTab(m, { loading: true, error: null });
-    // Ask makes ONE request. Its moments are the ones the answer cited, which
-    // the answer stream already carries — a second /api/search would spend
-    // another embedding call and another keyword ladder to produce a wider list
-    // that this view no longer shows.
-    if (m === "ask") {
-      runAnswer(trimmed, id);
-      return;
-    }
-    searchVideos(trimmed, m)
-      .then((r) => {
-        if (id !== runIds.current[m]) return;
-        patchTab(m, { results: r, searchedQuery: trimmed, loading: false });
-      })
-      .catch((err: Error) => {
-        if (id !== runIds.current[m]) return;
-        // Clear any previous query's results so the error state doesn't
-        // render stale result cards underneath the error line.
-        patchTab(m, {
-          error: err.message,
-          results: null,
-          searchedQuery: null,
-          loading: false,
-        });
-      });
-  }
+  }, []);
 
   // runAnswer streams the grounded answer for one search. It shares the Ask
   // tab's ticket with the search that started it, so a superseded run cannot
   // write over a newer one's answer.
-  function runAnswer(q: string, id: number) {
-    const ac = new AbortController();
-    answerAbort.current = ac;
-    // The first phase: the backend is working out what the question is about,
-    // and nothing is on the wire yet. Starting at "understanding" rather than at
-    // a generic streaming state is what lets the panel say so.
-    setAnswer({ status: "understanding", text: "", sources: [] });
-    let phase: AnswerState["status"] = "understanding";
-    let topic = "";
-    let sources: AnswerSource[] = [];
-    let videos: AnswerVideo[] = [];
-    let coverage: AnswerVideo[] = [];
-    let filters: string[] = [];
-    let relaxed: string[] = [];
-    let unresolvedChannels: string[] = [];
-    let counts: LibraryCount | undefined;
-    // How the answer was made. It arrives last, so it is only ever read by the
-    // settled panel — but it has to be threaded through BOTH setAnswer calls
-    // below, because the one in .finally() rebuilds the state from scratch and
-    // would otherwise drop it at the exact moment the panel starts showing it.
-    let trace: TraceStage[] | undefined;
-    let text = "";
-    let failed = false;
-    // Whether retrieval reported at all. An empty source list means the library
-    // covers nothing; never hearing one means the request broke, and the two
-    // must not read the same on screen.
-    let retrieved = false;
+  const runAnswer = useCallback(
+    (q: string, id: number) => {
+      const ac = new AbortController();
+      answerAbort.current = ac;
+      // The first phase: the backend is working out what the question is about,
+      // and nothing is on the wire yet. Starting at "understanding" rather than at
+      // a generic streaming state is what lets the panel say so.
+      setAnswer({ status: "understanding", text: "", sources: [] });
+      let phase: AnswerState["status"] = "understanding";
+      let topic = "";
+      let sources: AnswerSource[] = [];
+      let videos: AnswerVideo[] = [];
+      let coverage: AnswerVideo[] = [];
+      let filters: string[] = [];
+      let relaxed: string[] = [];
+      let unresolvedChannels: string[] = [];
+      let counts: LibraryCount | undefined;
+      // How the answer was made. It arrives last, so it is only ever read by the
+      // settled panel — but it has to be threaded through BOTH setAnswer calls
+      // below, because the one in .finally() rebuilds the state from scratch and
+      // would otherwise drop it at the exact moment the panel starts showing it.
+      let trace: TraceStage[] | undefined;
+      let text = "";
+      let failed = false;
+      // Whether retrieval reported at all. An empty source list means the library
+      // covers nothing; never hearing one means the request broke, and the two
+      // must not read the same on screen.
+      let retrieved = false;
 
-    // settle writes the moments once the answer is done with them. They are the
-    // cited ones and nothing else:
-    //
-    //   the library covers nothing -> [] , so EmptyResult offers Find instead
-    //   the answer cited moments   -> those moments, in citation order
-    //   anything else              -> null, and no Matches section at all
-    //
-    // The last row covers a failed answer and an answer that named no moment.
-    // Both used to fall back to the whole retrieved set, which is how a question
-    // about transients ended up listing videos that never mention them.
-    const settle = () => {
-      const empty = retrieved && sources.length === 0;
-      const cited = empty
-        ? []
-        : groupCited(citedInOrder(text, sources), videos);
-      patchTab("ask", {
-        results: empty || cited.length ? cited : null,
-        searchedQuery: q,
-        loading: false,
-      });
-    };
-
-    streamAnswer(
-      q,
-      (e) => {
-        if (id !== runIds.current.ask) return;
-        switch (e.type) {
-          case "progress":
-            phase = "retrieving";
-            topic = e.topic;
-            filters = e.filters ?? [];
-            unresolvedChannels = e.unresolvedChannels ?? [];
-            break;
-          case "sources":
-            sources = e.sources;
-            videos = e.videos;
-            coverage = e.coverage;
-            filters = e.filters ?? [];
-            relaxed = e.relaxed ?? [];
-            unresolvedChannels = e.unresolvedChannels ?? [];
-            counts = e.counts;
-            retrieved = true;
-            // Retrieval is done and the model call starts here — the long, silent
-            // part of the wait. This is the transition the panel could not see
-            // before: the frame already arrived, nothing acted on it.
-            phase = "generating";
-            break;
-          case "trace":
-            trace = e.stages;
-            break;
-          case "token":
-            text += e.text;
-            break;
-          case "error":
-            failed = true;
-            break;
-          case "done":
-            break;
-        }
-        setAnswer({
-          status: e.type === "done" ? "done" : phase,
-          topic,
-          text,
-          sources,
-          videos,
-          coverage,
-          filters,
-          relaxed,
-          unresolvedChannels,
-          counts,
-          trace,
-          failed,
-        });
-        // The done frame is the normal end, and acting on it rather than
-        // waiting for the socket to close puts the moments up a beat sooner.
-        // settle is idempotent, so the safety net below can run again.
-        if (e.type === "done") settle();
-      },
-      ac.signal,
-    )
-      // Whatever text arrived is kept — truncated is more use than blank — but
-      // a stream that broke before saying anything has to SAY so. Ask makes one
-      // request now, so there is no longer a parallel /api/search whose own
-      // error line covers this: swallowing it left the whole page below the box
-      // blank, and pressing enter looked like it did nothing at all. A 401
-      // arrives here as AuthExpiredError ("auth expired") and reads the same way
-      // it does in Find, which is the only place it is ever surfaced.
+      // settle writes the moments once the answer is done with them. They are the
+      // cited ones and nothing else:
       //
-      // An abort is not a failure: starting a newer search rejects this promise
-      // on purpose, and that does not owe the reader an error.
-      .catch((err: Error) => {
-        if (id !== runIds.current.ask || ac.signal.aborted) return;
-        patchTab("ask", { error: err.message });
-      })
-      .finally(() => {
-        if (id !== runIds.current.ask) return;
-        // Every way the stream can end comes through here: a done frame, a
-        // broken connection, or an abort when a newer search starts. Settling
-        // only on `done` left the other two streaming forever — a blinking
-        // caret over a spinner that never stopped.
+      //   the library covers nothing -> [] , so EmptyResult offers Find instead
+      //   the answer cited moments   -> those moments, in citation order
+      //   anything else              -> null, and no Matches section at all
+      //
+      // The last row covers a failed answer and an answer that named no moment.
+      // Both used to fall back to the whole retrieved set, which is how a question
+      // about transients ended up listing videos that never mention them.
+      const settle = () => {
+        const empty = retrieved && sources.length === 0;
+        const cited = empty
+          ? []
+          : groupCited(citedInOrder(text, sources), videos);
+        patchTab("ask", {
+          results: empty || cited.length ? cited : null,
+          searchedQuery: q,
+          loading: false,
+        });
+      };
+
+      streamAnswer(
+        q,
+        (e) => {
+          if (id !== runIds.current.ask) return;
+          switch (e.type) {
+            case "progress":
+              phase = "retrieving";
+              topic = e.topic;
+              filters = e.filters ?? [];
+              unresolvedChannels = e.unresolvedChannels ?? [];
+              break;
+            case "sources":
+              sources = e.sources;
+              videos = e.videos;
+              coverage = e.coverage;
+              filters = e.filters ?? [];
+              relaxed = e.relaxed ?? [];
+              unresolvedChannels = e.unresolvedChannels ?? [];
+              counts = e.counts;
+              retrieved = true;
+              // Retrieval is done and the model call starts here — the long, silent
+              // part of the wait. This is the transition the panel could not see
+              // before: the frame already arrived, nothing acted on it.
+              phase = "generating";
+              break;
+            case "trace":
+              trace = e.stages;
+              break;
+            case "token":
+              text += e.text;
+              break;
+            case "error":
+              failed = true;
+              break;
+            case "done":
+              break;
+          }
+          setAnswer({
+            status: e.type === "done" ? "done" : phase,
+            topic,
+            text,
+            sources,
+            videos,
+            coverage,
+            filters,
+            relaxed,
+            unresolvedChannels,
+            counts,
+            trace,
+            failed,
+          });
+          // The done frame is the normal end, and acting on it rather than
+          // waiting for the socket to close puts the moments up a beat sooner.
+          // settle is idempotent, so the safety net below can run again.
+          if (e.type === "done") settle();
+        },
+        ac.signal,
+      )
+        // Whatever text arrived is kept — truncated is more use than blank — but
+        // a stream that broke before saying anything has to SAY so. Ask makes one
+        // request now, so there is no longer a parallel /api/search whose own
+        // error line covers this: swallowing it left the whole page below the box
+        // blank, and pressing enter looked like it did nothing at all. A 401
+        // arrives here as AuthExpiredError ("auth expired") and reads the same way
+        // it does in Find, which is the only place it is ever surfaced.
         //
-        // Nothing written and nothing to report means no panel at all. A
-        // reported failure keeps one: with no moments below it either, dropping
-        // it would leave a page that says nothing happened.
-        setAnswer(
-          text || failed
-            ? {
-                status: "done",
-                text,
-                sources,
-                videos,
-                coverage,
-                filters,
-                relaxed,
-                unresolvedChannels,
-                counts,
-                trace,
-                failed,
-              }
-            : null,
-        );
-        settle();
-      });
-  }
+        // An abort is not a failure: starting a newer search rejects this promise
+        // on purpose, and that does not owe the reader an error.
+        .catch((err: Error) => {
+          if (id !== runIds.current.ask || ac.signal.aborted) return;
+          patchTab("ask", { error: err.message });
+        })
+        .finally(() => {
+          if (id !== runIds.current.ask) return;
+          // Every way the stream can end comes through here: a done frame, a
+          // broken connection, or an abort when a newer search starts. Settling
+          // only on `done` left the other two streaming forever — a blinking
+          // caret over a spinner that never stopped.
+          //
+          // Nothing written and nothing to report means no panel at all. A
+          // reported failure keeps one: with no moments below it either, dropping
+          // it would leave a page that says nothing happened.
+          setAnswer(
+            text || failed
+              ? {
+                  status: "done",
+                  text,
+                  sources,
+                  videos,
+                  coverage,
+                  filters,
+                  relaxed,
+                  unresolvedChannels,
+                  counts,
+                  trace,
+                  failed,
+                }
+              : null,
+          );
+          settle();
+        });
+    },
+    [patchTab],
+  );
 
-  const tab = tabs[mode];
-
-  return {
-    mode,
-    tab,
-    answer,
-    // Switching tabs shows what that tab already held. It does NOT carry the
-    // current text across and it does NOT search: the two modes read a query
-    // differently, so silently re-running Find's keywords as a question (or the
-    // reverse) spends a model call on something nobody asked for.
-    //
-    // Leaving Ask no longer aborts a generation in flight either. It costs
-    // nothing to let it land, and coming back to a finished answer beats coming
-    // back to one that stopped mid-sentence.
-    setMode,
-    setQuery: (q: string) => patchTab(mode, { query: q }),
-    submit: () => runSearch(tab.query, mode),
-    clearQuery: () => patchTab(mode, { query: "" }),
-    clearResults: () => {
-      // Retiring this tab's ticket is what makes the clear stick: a request
-      // still in flight would otherwise land afterwards and repopulate the page
-      // the reader just emptied. Both modes, not just Ask — the header only
-      // offers this button once results are on screen, so the race is not
-      // reachable today, but "cleared" has to mean cleared whatever the button
-      // is wired to next.
-      runIds.current[mode]++;
-      // A generation still being written is part of what is being put away.
-      // Unlike leaving the view, this says the reader is done with it.
-      if (mode === "ask") {
+  const runSearch = useCallback(
+    (q: string, m: SearchMode) => {
+      const trimmed = q.trim();
+      const id = ++runIds.current[m];
+      if (m === "ask") {
         answerAbort.current?.abort();
         setAnswer(null);
       }
-      patchTab(mode, {
-        results: null,
-        searchedQuery: null,
-        error: null,
-        loading: false,
-      });
+      if (!trimmed) {
+        // The error line belongs to the query that failed. Emptying the box
+        // retires that query, so leaving the error up would strand a complaint
+        // about a search that is no longer on screen.
+        patchTab(m, {
+          results: null,
+          searchedQuery: null,
+          error: null,
+          loading: false,
+        });
+        return;
+      }
+      patchTab(m, { loading: true, error: null });
+      // Ask makes ONE request. Its moments are the ones the answer cited, which
+      // the answer stream already carries — a second /api/search would spend
+      // another embedding call and another keyword ladder to produce a wider list
+      // that this view no longer shows.
+      if (m === "ask") {
+        runAnswer(trimmed, id);
+        return;
+      }
+      searchVideos(trimmed, m)
+        .then((r) => {
+          if (id !== runIds.current[m]) return;
+          patchTab(m, { results: r, searchedQuery: trimmed, loading: false });
+        })
+        .catch((err: Error) => {
+          if (id !== runIds.current[m]) return;
+          // Clear any previous query's results so the error state doesn't
+          // render stale result cards underneath the error line.
+          patchTab(m, {
+            error: err.message,
+            results: null,
+            searchedQuery: null,
+            loading: false,
+          });
+        });
     },
-  };
+    [patchTab, runAnswer],
+  );
+
+  const tab = tabs[mode];
+
+  // One object per change of the state it carries, not per render: App holds
+  // this and re-renders on every answer token, and a fresh object each time
+  // made every consumer of it re-render too.
+  return useMemo(
+    () => ({
+      mode,
+      tab,
+      answer,
+      // Switching tabs shows what that tab already held. It does NOT carry the
+      // current text across and it does NOT search: the two modes read a query
+      // differently, so silently re-running Find's keywords as a question (or the
+      // reverse) spends a model call on something nobody asked for.
+      //
+      // Leaving Ask no longer aborts a generation in flight either. It costs
+      // nothing to let it land, and coming back to a finished answer beats coming
+      // back to one that stopped mid-sentence.
+      setMode,
+      setQuery: (q: string) => patchTab(mode, { query: q }),
+      submit: () => runSearch(tab.query, mode),
+      clearQuery: () => patchTab(mode, { query: "" }),
+      clearResults: () => {
+        // Retiring this tab's ticket is what makes the clear stick: a request
+        // still in flight would otherwise land afterwards and repopulate the page
+        // the reader just emptied. Both modes, not just Ask — the header only
+        // offers this button once results are on screen, so the race is not
+        // reachable today, but "cleared" has to mean cleared whatever the button
+        // is wired to next.
+        runIds.current[mode]++;
+        // A generation still being written is part of what is being put away.
+        // Unlike leaving the view, this says the reader is done with it.
+        if (mode === "ask") {
+          answerAbort.current?.abort();
+          setAnswer(null);
+        }
+        patchTab(mode, {
+          results: null,
+          searchedQuery: null,
+          error: null,
+          loading: false,
+        });
+      },
+    }),
+    [mode, tab, answer, patchTab, runSearch],
+  );
 }

@@ -13,6 +13,7 @@ import {
 import { getYtdlpVersion } from "../api/ytdlp";
 import type { SSEEvent } from "../api/stream";
 import type { Job } from "../api/types";
+import { useProgressByJobId, resetProgressForTests } from "./progressStore";
 
 vi.mock("../api", () => ({
   listDownloads: vi.fn(),
@@ -46,6 +47,7 @@ const healthy = {
 let pushFrame: ((e: SSEEvent) => void) | null = null;
 
 beforeEach(() => {
+  resetProgressForTests();
   vi.mocked(listDownloads).mockReset().mockResolvedValue([]);
   vi.mocked(listSummaries).mockReset().mockResolvedValue([]);
   vi.mocked(listPending).mockReset().mockResolvedValue([]);
@@ -86,10 +88,13 @@ describe("useLiveQueue", () => {
     expect(streamDownloads).toHaveBeenCalledTimes(1);
   });
 
-  it("prunes progress for jobs that have left the queue", async () => {
+  it("publishes progress to the store and prunes jobs that have left the queue", async () => {
     vi.mocked(listDownloads).mockResolvedValue([job(7, "running")]);
-    const { result } = renderHook(() => useLiveQueue(true));
-    await waitFor(() => expect(result.current.jobsLoaded).toBe(true));
+    const { result } = renderHook(() => ({
+      live: useLiveQueue(true),
+      progress: useProgressByJobId(),
+    }));
+    await waitFor(() => expect(result.current.live.jobsLoaded).toBe(true));
     await waitFor(() => expect(pushFrame).not.toBeNull());
 
     act(() => {
@@ -98,12 +103,12 @@ describe("useLiveQueue", () => {
         data: { job_id: 7, percent: 40, speed: "1MB/s", eta: "10s" },
       });
     });
-    expect(result.current.progressByJobId[7]?.percent).toBe(40);
+    expect(result.current.progress[7]?.percent).toBe(40);
 
     vi.mocked(listDownloads).mockResolvedValue([]);
-    act(() => result.current.refreshQueue());
-    await waitFor(() => expect(result.current.jobs).toHaveLength(0));
-    expect(result.current.progressByJobId[7]).toBeUndefined();
+    act(() => result.current.live.refreshQueue());
+    await waitFor(() => expect(result.current.live.jobs).toHaveLength(0));
+    expect(result.current.progress[7]).toBeUndefined();
   });
 
   it("a progress frame for an unknown job re-lists the queue", async () => {
