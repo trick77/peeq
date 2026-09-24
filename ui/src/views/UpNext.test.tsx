@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  within,
+  fireEvent,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { UpNext } from "./UpNext";
 import type { Job, SummaryJob } from "../api/types";
@@ -48,7 +54,7 @@ function soon(minutes: number) {
     .replace("T", " ");
 }
 
-const noop = () => {};
+const noop = () => Promise.resolve();
 
 describe("UpNext", () => {
   beforeEach(() => {
@@ -1265,5 +1271,30 @@ describe("UpNext skip", () => {
       await screen.findByText(/subscribe to a channel/i);
       expect(screen.queryByText("Gave up")).toBeNull();
     });
+  });
+
+  it("shows a notice when a cancel fails, and keeps the row", async () => {
+    const onCancel = vi.fn().mockRejectedValue(new Error("gone"));
+    render(
+      <UpNext
+        jobs={[
+          {
+            job_id: 4,
+            video_id: "v4",
+            title: "Queued clip",
+            channel_name: "",
+            state: "pending",
+            priority: 0,
+          } as never,
+        ]}
+        summaries={[]}
+        onCancel={onCancel}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /couldn’t cancel/i,
+    );
+    expect(screen.getByText("Queued clip")).toBeInTheDocument();
   });
 });

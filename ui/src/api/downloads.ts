@@ -111,6 +111,7 @@ export type SummaryEventData = {
 export function streamDownloads(
   onEvent: (event: SSEEvent) => void,
   signal?: AbortSignal,
+  onOpen?: () => void,
 ): Promise<void> {
-  return streamSSE("/api/downloads/stream", onEvent, signal);
+  return streamSSE("/api/downloads/stream", onEvent, signal, onOpen);
 }

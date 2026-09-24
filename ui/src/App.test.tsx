@@ -80,7 +80,9 @@ vi.mock("./api", () => ({
   listPending: vi.fn().mockResolvedValue([]),
   listSummaries: vi.fn().mockResolvedValue([]),
   cancelDownload: vi.fn().mockResolvedValue(undefined),
-  streamDownloads: vi.fn().mockResolvedValue(undefined),
+  // Never resolves: a closed stream now reconnects and re-lists, which would
+  // change the call counts below. A stream that stays open is the normal case.
+  streamDownloads: vi.fn().mockReturnValue(new Promise<void>(() => {})),
   listVideos: vi.fn().mockResolvedValue([]),
   // Up next fetches the timed schedule; History fetches the log. Both are one
   // rail click away, so the barrel needs them even in tests that never open
@@ -252,7 +254,7 @@ describe("App dock bootstrap", () => {
       status: "valid",
       present: true,
     });
-    vi.mocked(streamDownloads).mockResolvedValue(undefined);
+    vi.mocked(streamDownloads).mockReturnValue(new Promise<void>(() => {}));
   });
 
   it("refreshes the download queue after the Add view queues a video", async () => {
@@ -337,7 +339,7 @@ describe("App deep links", () => {
       status: "valid",
       present: true,
     });
-    vi.mocked(streamDownloads).mockResolvedValue(undefined);
+    vi.mocked(streamDownloads).mockReturnValue(new Promise<void>(() => {}));
     // Default both video sources to empty so a test that overrides one does
     // not leak its fixture into the next (clearAllMocks keeps implementations).
     vi.mocked(listVideos).mockResolvedValue([]);
@@ -879,7 +881,7 @@ describe("App queue and summaries", () => {
       status: "valid",
       present: true,
     });
-    vi.mocked(streamDownloads).mockResolvedValue(undefined);
+    vi.mocked(streamDownloads).mockReturnValue(new Promise<void>(() => {}));
     vi.mocked(listDownloads).mockResolvedValue([]);
     vi.mocked(listSummaries).mockResolvedValue([]);
     vi.mocked(cancelDownload).mockResolvedValue(undefined);
@@ -912,7 +914,7 @@ describe("App queue and summaries", () => {
         event: "summary",
         data: { video_id: "s1", status: "running", phase: "summarizing" },
       });
-      return Promise.resolve();
+      return new Promise<void>(() => {});
     });
     // The event triggers a re-list; return the now-active job.
     vi.mocked(listSummaries).mockResolvedValue([
@@ -961,7 +963,7 @@ describe("App queue and summaries", () => {
         event: "activity",
         data: { id: 7, at: "2026-07-25 08:00:00", kind: "scan", outcome: "ok" },
       });
-      return Promise.resolve();
+      return new Promise<void>(() => {});
     });
 
     render(<App />);

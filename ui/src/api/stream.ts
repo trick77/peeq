@@ -12,10 +12,14 @@ export type SSEEvent = { event: string; data: unknown };
 // can reuse the same-origin cookie session and get an AbortSignal) and
 // invokes onEvent for every well-formed `event: ...\ndata: ...\n\n` frame.
 // Resolves when the stream ends (server closes or the AbortSignal fires).
+// onOpen, when given, fires once the server has accepted the subscription
+// (a 2xx with a body) and before any frame: the moment from which nothing
+// published by the hub can be missed.
 export async function streamSSE(
   path: string,
   onEvent: (event: SSEEvent) => void,
   signal?: AbortSignal,
+  onOpen?: () => void,
 ): Promise<void> {
   const response = await fetch(path, { signal });
   if (response.status === 401) {
@@ -27,6 +31,7 @@ export async function streamSSE(
   if (!response.body) {
     throw new Error(`stream ${path} has no body`);
   }
+  onOpen?.();
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
