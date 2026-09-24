@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Icon } from "../../icons";
 import { formatDuration } from "../../format";
 import { seekOnClick } from "../../selection";
@@ -44,7 +45,7 @@ function sourceLabels(chapters: Video["chapters"]): string[] {
 // text rather than buttons that could only do nothing: no focus stop, no hover
 // affordance, no pointer. The markup is otherwise identical, since every rule
 // involved is element-agnostic.
-export function ContentsCard({
+function ContentsCardImpl({
   video,
   seek,
 }: {
@@ -104,3 +105,7 @@ export function ContentsCard({
     </div>
   );
 }
+
+// Memoised: the Player re-renders on every timeupdate while a video plays,
+// and this card's props (the video record and a stable seek) do not change with the playhead.
+export const ContentsCard = memo(ContentsCardImpl);

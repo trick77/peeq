@@ -1,5 +1,5 @@
 import { expectText } from "../api/http";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, memo } from "react";
 import { Icon } from "../icons";
 import { formatDuration } from "../format";
 import { seekOnClick } from "../selection";
@@ -26,7 +26,7 @@ import {
 // deliberately pulls in no session-gated code, so a component that fetched
 // through the API client could not be used there at all. The caller decides
 // which URL the VTT comes from — token-gated, session-gated, either way.
-export function TranscriptCard({
+function TranscriptCardImpl({
   vttUrl,
   filenameBase,
   seek,
@@ -394,3 +394,7 @@ export function TranscriptCard({
     </div>
   );
 }
+
+// Memoised: the Player re-renders on every timeupdate while a video plays,
+// and this card's props (the VTT URL and filename base (strings), a stable seek and a class name) do not change with the playhead.
+export const TranscriptCard = memo(TranscriptCardImpl);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Icon } from "../icons";
 import { Spinner, tocGridStyle } from "../ui";
 import {
@@ -123,13 +123,15 @@ export function Share({ token }: { token: string | null }) {
   }, [video]);
 
   // seek jumps the player to a chapter, highlight or cue's moment and starts it.
-  function seek(ts: number) {
+  // Stable: TranscriptCard is memoised, and a fresh function per render would
+  // re-render it on every timeupdate.
+  const seek = useCallback((ts: number) => {
     const el = videoRef.current;
     if (!el) return;
     el.currentTime = ts;
     setCurrentTime(ts);
     void el.play().catch(() => {});
-  }
+  }, []);
 
   // scrubTo is the scrubber's own seek. It sets the position WITHOUT starting
   // playback: dragging the bar of a paused video shouldn't start it, whereas
