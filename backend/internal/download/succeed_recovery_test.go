@@ -80,8 +80,11 @@ func TestSucceed_persistFailureRetriesThenErrors(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(mediaDir, "chan1", "vid1", "vid1.mp4")); !os.IsNotExist(err) {
 		t.Fatalf("media file left on disk with no row pointing at it (stat err = %v)", err)
 	}
+	// fail writes the video's status before it records the Activity row, so
+	// the status wait above can return a beat early; wait for the row too.
+	waitFor(t, "activity row", func() bool { return len(rec.all()) == 1 })
 	evs := rec.all()
-	if len(evs) != 1 || evs[0].Kind != activity.KindDownload || evs[0].Outcome != activity.OutcomeFail {
+	if evs[0].Kind != activity.KindDownload || evs[0].Outcome != activity.OutcomeFail {
 		t.Fatalf("activity = %+v, want one download failure row", evs)
 	}
 }
