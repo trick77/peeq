@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // CaptionExhausted is the attempt count that means "never fetch captions for
@@ -41,9 +42,15 @@ type CaptionCandidate struct {
 // NextCaptionCandidate returns the oldest pending ledger row that is due a
 // caption fetch, or nil when there is nothing to do.
 //
-// "Due" is four conditions: the row is still awaiting a decision, its channel
-// has not opted out, the ladder has not run out, and the next-attempt stamp
-// has passed. A NULL stamp means "never attempted", which is due immediately —
+// "Due" is five conditions: the row is still awaiting a decision, its channel
+// has not opted out, the video is not in the download pipeline (no videos row,
+// or one at 'new' or 'error' — a video the user queued by URL or the extension
+// has a row in queued/downloading/downloaded and never touches the ledger, so
+// without this the fetcher would reset its status and overwrite the download's
+// transcript; 'error' stays readable so a failed URL download does not leave
+// the inbox card waiting for captions forever), the ladder has not run out, and
+// the next-attempt stamp has passed. A NULL
+// stamp means "never attempted", which is due immediately —
 // that is the fresh-discovery case and the one that matters most, since a
 // summary is only useful before the user has already scrolled past the card.
 //
@@ -64,12 +71,14 @@ SELECT cv.video_id, cv.channel_id, cv.title, cv.url, cv.duration_seconds,
        cv.published_at, cv.thumbnail_url, cv.caption_attempts
   FROM channel_videos cv
   JOIN channels c ON c.id = cv.channel_id
+  LEFT JOIN videos v ON v.id = cv.video_id
  WHERE cv.state = 'pending'
    AND c.auto_summary = 1
+   AND (v.id IS NULL OR v.status IN (?, ?))
    AND cv.caption_attempts < ?
    AND (cv.next_caption_attempt_at IS NULL OR cv.next_caption_attempt_at <= datetime('now'))
  ORDER BY cv.discovered_at ASC, cv.video_id ASC
- LIMIT 1`, CaptionMaxAttempts,
+ LIMIT 1`, videos.StatusNew, videos.StatusError, CaptionMaxAttempts,
 	).Scan(&c.VideoID, &c.ChannelID, &c.Title, &c.URL, &duration,
 		&publishedAt, &c.ThumbnailURL, &c.Attempts)
 	if err == sql.ErrNoRows {

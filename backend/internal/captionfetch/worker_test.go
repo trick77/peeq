@@ -63,7 +63,7 @@ type fetcher struct {
 	errs    []error
 	calls   int
 	// onCall, when set, runs before each scripted answer with the call's ctx —
-	// for a test that has to cancel the worker from inside the fetch.
+	// for a test that has to change the world from inside the fetch.
 	onCall func(context.Context)
 }
 

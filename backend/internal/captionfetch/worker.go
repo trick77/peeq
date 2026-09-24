@@ -77,7 +77,8 @@ type Ledger interface {
 // VideoStore is the slice of videos.Store the worker needs.
 type VideoStore interface {
 	Upsert(v videos.Video) error
-	SetStatus(id, status, errMsg string) error
+	Get(id string) (*videos.Video, error)
+	GetTranscript(id string) (*videos.Transcript, error)
 	SetAudioLanguage(id, audioLang string) error
 	SetTranscript(id, source, vtt string) error
 	SetSummaryStatus(id, status, errMsg string) error
@@ -203,6 +204,19 @@ func (w *Worker) pass(ctx context.Context) {
 		return
 	}
 
+	// The candidate query excluded videos in the download pipeline, but the
+	// fetch above waited on the shared pacer, and the user may have queued this
+	// video meanwhile — by URL, or from the Inbox. A download that finished in
+	// that window stored the full transcript; a caption read must not replace
+	// it with a truncated one, nor enqueue a second analysis.
+	if taken, err := w.claimedByPipeline(c.VideoID); err != nil {
+		w.d.Logger.Error("captionfetch: re-check video failed", "video_id", c.VideoID, "err", err)
+		return
+	} else if taken {
+		w.d.Logger.Debug("captionfetch: video entered the pipeline during the fetch; keeping the download's data", "video_id", c.VideoID)
+		return
+	}
+
 	// The transcript goes into the row and the file it came from goes away
 	// (migration 0023). source='caption' is what the ".summaries/" path prefix
 	// used to say: this video was read to help decide whether to download it, so
@@ -231,26 +245,47 @@ func (w *Worker) pass(ctx context.Context) {
 	w.d.Logger.Info("captionfetch: queued for summary", "video_id", c.VideoID, "title", c.Title)
 }
 
-// ensureRow creates or refreshes the videos row for a candidate at StatusNew —
-// "recorded, nothing requested yet", which is precisely what an inbox video
-// with a summary is.
+// ensureRow creates or refreshes the videos row for a candidate. A fresh row
+// starts at StatusNew (the column's default) — "recorded, nothing requested
+// yet", which is precisely what an inbox video with a summary is — and an
+// existing one keeps whatever status it has.
 //
 // videos.Store.Upsert writes only metadata columns; it never touches summary,
 // subtitle_path, summary_status or status. That is what lets this run over a
 // row that already has analysis without destroying it, and it is the same
-// property the download path depends on.
+// property the download path depends on. This used to force StatusNew after
+// the upsert, which rolled back a video the user had meanwhile queued by URL;
+// NextCaptionCandidate now skips any row past 'new', and the only row this can
+// still race with is one queued between that query and this upsert, whose
+// status the upsert leaves alone (and claimedByPipeline re-checks the row
+// after the fetch before anything else is written).
 func (w *Worker) ensureRow(c *channelvideos.CaptionCandidate) error {
-	if err := w.d.Videos.Upsert(videos.Video{
+	return w.d.Videos.Upsert(videos.Video{
 		ID:              c.VideoID,
 		URL:             c.URL,
 		Title:           ytdlp.NormalizeTitle(c.Title),
 		ChannelID:       c.ChannelID,
 		DurationSeconds: int64(c.DurationSeconds),
 		PublishedAt:     c.PublishedAt,
-	}); err != nil {
-		return err
+	})
+}
+
+// claimedByPipeline reports whether the video's row moved past the states a
+// caption read may write to (see NextCaptionCandidate), or already carries a
+// download's transcript. Either way the download owns the row now.
+func (w *Worker) claimedByPipeline(videoID string) (bool, error) {
+	v, err := w.d.Videos.Get(videoID)
+	if err != nil {
+		return false, err
 	}
-	return w.d.Videos.SetStatus(c.VideoID, videos.StatusNew, "")
+	if v != nil && v.Status != videos.StatusNew && v.Status != videos.StatusError {
+		return true, nil
+	}
+	tr, err := w.d.Videos.GetTranscript(videoID)
+	if err != nil {
+		return false, err
+	}
+	return tr != nil && tr.Source == videos.TranscriptSourceDownload, nil
 }
 
 // settleWithout closes the ladder for a video whose captions never arrived.
