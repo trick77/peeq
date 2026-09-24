@@ -1125,6 +1125,29 @@ describe("App session check", () => {
   }, 20000);
 });
 
+describe("App inbox count", () => {
+  beforeEach(() => {
+    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    // A stream that stays open and delivers nothing: an earlier suite's
+    // stream fires an activity event on connect, which would count here.
+    vi.mocked(streamDownloads).mockReturnValue(new Promise<void>(() => {}));
+    // Call counts are the assertion here, so start each test from zero.
+    vi.mocked(listPending).mockClear();
+  });
+
+  it("is read once on sign-in and not again on every navigation", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
+    await waitFor(() => expect(listPending).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /Channels/ }));
+    fireEvent.click(screen.getByRole("button", { name: /History/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Library/ }));
+    await screen.findByPlaceholderText("Search titles");
+    expect(listPending).toHaveBeenCalledTimes(1);
+  }, 15000);
+});
+
 describe("App session expiry", () => {
   beforeEach(() => {
     // The session-check suite above leaves getMe rejecting; this one needs a

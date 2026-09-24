@@ -209,9 +209,22 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
     if (!enabled) return;
     refreshQueue();
     refreshSummaries();
+    // The inbox count once here, then only when it can have moved: an
+    // activity event (a scan surfaced videos, retention removed some), a
+    // reconnect's catch-up, or a page that acted on an item. It used to be
+    // re-read on every navigation, pulling the whole pending list — with its
+    // thumbnails and metadata — just to move a badge.
+    refreshPending();
     void refreshCookie();
     void refreshYtdlp();
-  }, [enabled, refreshQueue, refreshSummaries, refreshCookie, refreshYtdlp]);
+  }, [
+    enabled,
+    refreshQueue,
+    refreshSummaries,
+    refreshPending,
+    refreshCookie,
+    refreshYtdlp,
+  ]);
 
   // When the worker reports it is paused (a cookie problem stalled the queue),
   // refresh the cookie status so the rail's indicator reflects the current

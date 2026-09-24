@@ -76,6 +76,15 @@ describe("useLiveQueue", () => {
     expect(streamDownloads).not.toHaveBeenCalled();
   });
 
+  it("reads the inbox count once when enabled, not on every render", async () => {
+    vi.mocked(listPending).mockResolvedValue([{ video_id: "p1" } as never]);
+    const { result, rerender } = renderHook(() => useLiveQueue(true));
+    await waitFor(() => expect(result.current.pendingCount).toBe(1));
+    rerender();
+    rerender();
+    expect(listPending).toHaveBeenCalledTimes(1);
+  });
+
   it("loads both lanes and the status lights once enabled", async () => {
     vi.mocked(listDownloads).mockResolvedValue([job(1), job(2, "running")]);
     const { result } = renderHook(() => useLiveQueue(true));
@@ -223,12 +232,12 @@ describe("useLiveQueue", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(connects).toBe(1);
       expect(listDownloads).toHaveBeenCalledTimes(1);
-      expect(listPending).not.toHaveBeenCalled();
+      expect(listPending).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1000);
       expect(connects).toBe(2);
       expect(listDownloads).toHaveBeenCalledTimes(2);
       expect(listSummaries).toHaveBeenCalledTimes(2);
-      expect(listPending).toHaveBeenCalledTimes(1);
+      expect(listPending).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

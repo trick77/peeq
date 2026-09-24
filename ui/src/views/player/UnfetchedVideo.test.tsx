@@ -62,6 +62,22 @@ describe("UnfetchedVideo", () => {
     expect(await screen.findByText("Queued for download.")).toBeTruthy();
   });
 
+  it("reports both decisions as an inbox change", async () => {
+    const onPendingChanged = vi.fn();
+    const { unmount } = render(
+      <UnfetchedVideo video={video()} onPendingChanged={onPendingChanged} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Download/ }));
+    expect(onPendingChanged).toHaveBeenCalledTimes(1);
+    unmount();
+
+    render(
+      <UnfetchedVideo video={video()} onPendingChanged={onPendingChanged} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Ignore/ }));
+    expect(onPendingChanged).toHaveBeenCalledTimes(2);
+  });
+
   // Ignoring deletes the row and the summary server-side, so the page's subject
   // is gone: the caller has to be told to leave.
   it("tells the caller to leave after an ignore", async () => {

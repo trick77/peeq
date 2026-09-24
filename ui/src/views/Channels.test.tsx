@@ -633,6 +633,26 @@ describe("Channels", () => {
     });
   });
 
+  it("reports a deleted channel as an inbox change", async () => {
+    const user = userEvent.setup();
+    const onPendingChanged = vi.fn();
+    render(<Channels onPendingChanged={onPendingChanged} />);
+    await screen.findByText("Added Channel");
+    const row = screen
+      .getByText("Added Channel")
+      .closest(".channel-row") as HTMLElement;
+    await openRowMenu(user, row);
+    await user.click(
+      within(row).getByRole("menuitem", { name: /delete channel/i }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /delete channel/i }),
+    );
+    await waitFor(() => expect(deleteChannel).toHaveBeenCalledWith("c1"));
+    await waitFor(() => expect(onPendingChanged).toHaveBeenCalledTimes(1));
+  });
+
   it("clicking a channel's name opens its page", async () => {
     const user = userEvent.setup();
     const onOpenChannel = vi.fn();

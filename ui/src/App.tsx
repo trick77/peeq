@@ -379,16 +379,6 @@ export function App() {
     };
   }, [authChecked, user]);
 
-  // The rail's "Inbox" badge reflects the channel_videos ledger's pending
-  // count (Task 14), not the download-jobs queue — loaded once on sign-in and
-  // refetched whenever the user navigates into the Inbox view itself, so
-  // acting on an item (download/ignore) there updates the badge without a
-  // manual refresh.
-  useEffect(() => {
-    if (!authChecked || !user) return;
-    refreshPending();
-  }, [authChecked, user, view, refreshPending]);
-
   // The callbacks below are handed to memoised shell pieces (Player, the rail,
   // the dock), so they are stable — and declared here, above the early
   // returns, because hooks cannot follow them.
@@ -602,6 +592,7 @@ export function App() {
                 onDeleted={handlePlayerDeleted}
                 onOpenChannel={openChannel}
                 onQueued={refreshQueue}
+                onPendingChanged={refreshPending}
                 // No summaryOrigin and no back link: this Player is only ever
                 // the video being watched. A page being READ is the other
                 // branch below, which is exactly why the two are separate —
@@ -800,6 +791,7 @@ function ViewSwitch({
           onDeleted={onDeleted}
           onOpenChannel={onOpenChannel}
           onQueued={onQueued}
+          onPendingChanged={onPendingChanged}
           onMediaKnown={onMediaKnown}
           summaryEvent={summaryEvent}
           // Where the summary page goes back to, and what it calls that place.
@@ -836,15 +828,17 @@ function ViewSwitch({
       // Stay on the Add page after queuing (per the mockup — the preview
       // card confirms the queue, it doesn't jump into Player before the
       // download has even started); onOpenVideo is Library's job.
-      return <Add onQueued={onQueued} />;
+      return <Add onQueued={onQueued} onPendingChanged={onPendingChanged} />;
     case "inbox":
       // onCountChange keeps the rail badge in sync while the user acts on
-      // items (Download/Ignore) without leaving this view — the
-      // nav-refetch effect above only covers count changes that happen
-      // while the user is elsewhere. onQueued seeds the download poll the
-      // moment an item is approved (mirroring Add), so a video queued while
-      // the worker is paused — which emits no progress SSE — still appears on
-      // Queue immediately instead of only after the queue next drains.
+      // items (Download/Ignore) here. The count is otherwise read once on
+      // sign-in and again on every activity event and reconnect; every other
+      // page that moves an item out of the inbox (a summary page's decision,
+      // a pasted URL the inbox held, a deleted channel) reports it through
+      // onPendingChanged. onQueued seeds the download poll the moment an item
+      // is approved (mirroring Add), so a video queued while the worker is
+      // paused — which emits no progress SSE — still appears on Queue
+      // immediately instead of only after the queue next drains.
       return (
         <Inbox
           onCountChange={setPendingCount}
@@ -884,6 +878,7 @@ function ViewSwitch({
       return (
         <Channels
           onOpenChannel={onOpenChannel}
+          onPendingChanged={onPendingChanged}
           search={channelSearch}
           onSearchChange={onChannelSearchChange}
         />
