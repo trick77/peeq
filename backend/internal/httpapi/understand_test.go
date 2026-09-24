@@ -192,6 +192,7 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 	})
 
 	t.Run("call fails", func(t *testing.T) {
+		logs := captureLogs(t)
 		s := &server{understand: &fakeUnderstander{err: errors.New("upstream down")}}
 		u, d := s.understandQuery(context.Background(), q)
 		if d.status != understandFailed {
@@ -200,13 +201,25 @@ func TestUnderstandQueryDegradesToTheRawQuestion(t *testing.T) {
 		if u.Topic != "" || u.Counting {
 			t.Errorf("a failed call must degrade to the raw question, got %+v", u)
 		}
+		// The diag keeps only the status; the cause must reach the log, and
+		// the question must not.
+		if !strings.Contains(logs.String(), "understand failed") || !strings.Contains(logs.String(), "upstream down") {
+			t.Errorf("log should carry the cause, got: %s", logs.String())
+		}
+		if strings.Contains(logs.String(), "bike geometry") {
+			t.Errorf("log must not carry the question, got: %s", logs.String())
+		}
 	})
 
 	t.Run("unparseable reply", func(t *testing.T) {
+		logs := captureLogs(t)
 		s := &server{understand: &fakeUnderstander{reply: "bike geometry, probably"}}
 		_, d := s.understandQuery(context.Background(), q)
 		if d.status != understandFailed {
 			t.Errorf("status = %q, want failed", d.status)
+		}
+		if !strings.Contains(logs.String(), "unparseable reply") || strings.Contains(logs.String(), "probably") {
+			t.Errorf("log should name the reason and never the reply, got: %s", logs.String())
 		}
 	})
 

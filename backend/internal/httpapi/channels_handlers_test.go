@@ -3535,3 +3535,27 @@ func TestPendingDownload_retryAfterLedgerFailure_noDuplicateJob(t *testing.T) {
 		t.Fatalf("p1 should be cleared from pending: %s", body)
 	}
 }
+
+// TestChannelsDelete_activeJobsError_500 asserts a failure to list the
+// channel's active jobs stops the delete before any row goes: a running
+// yt-dlp child must not survive the rows it is downloading for. The error
+// used to be swallowed, so the cascade ran with nothing cancelled.
+func TestChannelsDelete_activeJobsError_500(t *testing.T) {
+	logs := captureLogs(t)
+	h := newChannelsDeleteServer(t)
+	h.seedChannel("UC1")
+	h.seedDownloadedVideo("UC1", "v1", "UC1/v1.mp4")
+	if _, err := h.channels.DB().Exec(`DROP TABLE download_jobs`); err != nil {
+		t.Fatalf("drop download_jobs: %v", err)
+	}
+	rr := doDelete(t, h, "/api/channels/UC1")
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(logs.String(), `client_message="delete failed"`) || !strings.Contains(logs.String(), "download_jobs") {
+		t.Fatalf("log should carry the cause, got: %s", logs.String())
+	}
+	if c, _ := h.channels.Get("UC1"); c == nil {
+		t.Fatal("channel was deleted although its jobs could not be read")
+	}
+}
