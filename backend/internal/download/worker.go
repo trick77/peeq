@@ -166,8 +166,12 @@ type Deps struct {
 	// PollInterval is how long the loop waits before re-checking the queue
 	// when it found nothing to claim.
 	PollInterval time.Duration
-	// Backoff returns how long to wait before requeueing a job after a
-	// retryable failure, given the job's new attempts count.
+	// Backoff returns how long a job waits before it can be claimed again
+	// after a retryable failure, given the job's new attempts count. The job
+	// is requeued at once with that wait stamped on its row (next_attempt_at,
+	// see jobs.Store.BumpAfter); for a failure that says something about
+	// YouTube rather than the job (a 429 or 5xx, ytdlp.RetryableError) the
+	// loop also stops claiming for the same duration — see retry.
 	Backoff func(attempts int) time.Duration
 	// OnProgress, if set, is called for every progress update of every job
 	// (the SSE fan-out hooks in here later).
@@ -221,6 +225,10 @@ type Worker struct {
 	curJobID        int64
 	curCancel       context.CancelFunc
 	cancelRequested bool
+	// cooldownUntil is the instant before which the loop claims nothing: set
+	// by a YouTube-side retryable failure (429/5xx), which is a signal about
+	// the host, not about the job that happened to see it. See retry.
+	cooldownUntil time.Time
 }
 
 // New builds a Worker, filling in defaults for the optional Deps fields.
@@ -304,6 +312,14 @@ func (w *Worker) Run(ctx context.Context) {
 			// Kill-switch engaged: don't claim or run anything. Re-check each
 			// poll so a resume proceeds automatically.
 			if !w.sleep(ctx, w.deps.PollInterval) {
+				return
+			}
+			continue
+		}
+		if remaining := w.cooldownRemaining(); remaining > 0 {
+			// YouTube asked for a breather: hitting it with the next job would
+			// only spend that job's attempts on the same answer.
+			if !w.sleep(ctx, min(remaining, w.deps.PollInterval)) {
 				return
 			}
 			continue
@@ -408,8 +424,10 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	}
 	if serr != nil {
 		// Requeue without burning an attempt: this is our fault, not the job's.
+		// Spaced by a poll interval so a persistent settings fault does not
+		// spin the loop re-claiming the same job with no wait in between.
 		w.deps.Logger.Error("download worker: load settings failed", "job_id", job.ID, "err", serr)
-		switch err := w.deps.Jobs.Bump(job.ID, job.Attempts, "load settings: "+serr.Error()); {
+		switch err := w.deps.Jobs.BumpAfter(job.ID, job.Attempts, "load settings: "+serr.Error(), w.deps.PollInterval); {
 		case errors.Is(err, jobs.ErrNotRunning):
 			w.settleCanceled(job, video)
 		case err != nil:
@@ -468,14 +486,14 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 			return
 		}
 		if capFired {
-			w.retry(ctx, job, video, "metadata preflight timeout: no progress")
+			w.retry(job, video, "metadata preflight timeout: no progress", false)
 			return
 		}
 		if merr != nil {
 			// countFail=false: a preflight blip for one URL must not nudge the
 			// global auto-pause breaker. Cookie/blocked still pause; unavailable
 			// still fails.
-			w.classify(ctx, job, video, merr, false)
+			w.classify(job, video, merr, false)
 			return
 		}
 		video.Title = meta.Title
@@ -496,7 +514,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 			// concurrent writer must not park the video in 'error' and make the
 			// user re-add it by hand.
 			w.deps.Logger.Error("download worker: save metadata failed", "job_id", job.ID, "err", err)
-			w.retry(ctx, job, video, "save metadata: "+err.Error())
+			w.retry(job, video, "save metadata: "+err.Error(), false)
 			return
 		}
 		// Cache the channel's identity so the Channels list has a row to join
@@ -609,9 +627,9 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	case ctxInterrupted:
 		// Not a user cancel, not shutdown, yet the context was cancelled →
 		// the watchdog fired. Treat as a retryable timeout.
-		w.retry(ctx, job, video, "watchdog timeout: no progress")
+		w.retry(job, video, "watchdog timeout: no progress", false)
 	default:
-		w.classify(ctx, job, video, dlErr, true)
+		w.classify(job, video, dlErr, true)
 	}
 }
 
@@ -658,7 +676,7 @@ func (w *Worker) settleCanceled(job *jobs.Job, video *videos.Video) {
 // preflight, where a single freshly-added URL's transient blip must not nudge
 // the global breaker. Cookie/blocked errors pause regardless (they never touch
 // the monitor); terminal errors fail regardless.
-func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Video, err error, countFail bool) {
+func (w *Worker) classify(job *jobs.Job, video *videos.Video, err error, countFail bool) {
 	var terminal *ytdlp.TerminalError
 	switch {
 	case errors.Is(err, ytdlp.ErrBlocked):
@@ -690,9 +708,34 @@ func (w *Worker) classify(ctx context.Context, job *jobs.Job, video *videos.Vide
 			w.deps.FailMonitor.Fail(video.ID)
 		}
 		// RetryableError and any unexpected error (network, exec) get the
-		// bounded retry treatment.
-		w.retry(ctx, job, video, err.Error())
+		// bounded retry treatment. A RetryableError is YouTube's answer (429 or
+		// 5xx), which the next job would get too, so it also cools the loop.
+		var retryable *ytdlp.RetryableError
+		w.retry(job, video, err.Error(), errors.As(err, &retryable))
 	}
+}
+
+// coolDown stops the loop from claiming for d, on top of the failed job's own
+// row stamp. Extending, never shortening: two failures in a row keep the later
+// deadline.
+func (w *Worker) coolDown(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	until := time.Now().Add(d)
+	w.mu.Lock()
+	if until.After(w.cooldownUntil) {
+		w.cooldownUntil = until
+	}
+	w.mu.Unlock()
+}
+
+// cooldownRemaining reports how much of a YouTube-side cool-off is left, or
+// zero when the loop may claim.
+func (w *Worker) cooldownRemaining() time.Duration {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return time.Until(w.cooldownUntil)
 }
 
 // pause requeues the job without burning an attempt, flips cookie_status
@@ -732,9 +775,18 @@ func (w *Worker) requeuePaused(job *jobs.Job) {
 	}
 }
 
-// retry either requeues the job after backoff (attempts++), or, once the
-// per-job max is reached, fails it terminally.
-func (w *Worker) retry(ctx context.Context, job *jobs.Job, video *videos.Video, msg string) {
+// retry records a failed attempt and requeues the job, or fails it on the
+// last attempt. The wait before the job can be claimed again is a stamp on
+// its row (jobs.Store.BumpAfter), so this goroutine goes straight on to the
+// next claimable job instead of sleeping the backoff with the whole queue
+// behind it — which is what it used to do, up to five minutes at a time.
+//
+// hostSide says the failure was YouTube's answer (a 429 or 5xx) rather than
+// this job's own fault (a watchdog timeout, a failed persist): then the next
+// job would only get the same answer, so the loop cools down for the same
+// duration as well. That keeps the old queue-wide breather exactly where it
+// protected something, and drops it where it only stalled unrelated work.
+func (w *Worker) retry(job *jobs.Job, video *videos.Video, msg string, hostSide bool) {
 	newAttempts := job.Attempts + 1
 	if newAttempts >= job.MaxAttempts {
 		// Terminal failure: record the final attempt count AND fail in one
@@ -748,10 +800,8 @@ func (w *Worker) retry(ctx context.Context, job *jobs.Job, video *videos.Video, 
 		w.fail(job, video, newAttempts, msg, "")
 		return
 	}
-	// Record the attempt, then wait out the backoff before it can be
-	// reclaimed. (The job is already pending after Bump, but the same
-	// goroutine won't reclaim it until this returns.)
-	switch err := w.deps.Jobs.Bump(job.ID, newAttempts, msg); {
+	backoff := w.deps.Backoff(newAttempts)
+	switch err := w.deps.Jobs.BumpAfter(job.ID, newAttempts, msg, backoff); {
 	case errors.Is(err, jobs.ErrNotRunning):
 		// Canceled out from under us: settle as canceled and do not requeue.
 		w.settleCanceled(job, video)
@@ -759,7 +809,9 @@ func (w *Worker) retry(ctx context.Context, job *jobs.Job, video *videos.Video, 
 	case err != nil:
 		w.deps.Logger.Error("download worker: bump failed", "job_id", job.ID, "err", err)
 	}
-	w.sleep(ctx, w.deps.Backoff(newAttempts))
+	if hostSide {
+		w.coolDown(backoff)
+	}
 }
 
 // succeed persists a finished download and marks the job done — in ONE
@@ -785,7 +837,7 @@ func (w *Worker) succeed(ctx context.Context, job *jobs.Job, video *videos.Video
 	case err != nil:
 		w.deps.Logger.Error("download worker: persist download failed", "job_id", job.ID, "video_id", video.ID, "err", err)
 		media.RemoveVideoFiles(w.deps.MediaDir, res.MediaPath)
-		w.retry(ctx, job, video, err.Error())
+		w.retry(job, video, err.Error(), false)
 		return
 	}
 

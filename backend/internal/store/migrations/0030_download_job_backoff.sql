@@ -1,0 +1,18 @@
+-- Move a download's retry backoff out of the worker and into the row.
+--
+-- A retryable download failure (rate limit, network) used to be waited out by
+-- the worker goroutine itself: Bump put the job back to 'pending' and the loop
+-- slept the backoff — up to five minutes — before claiming anything again.
+-- There is one download goroutine, so every other job in the queue waited too:
+-- a single throttled video stalled the whole queue for as long as its backoff.
+--
+-- next_attempt_at is the mechanism summary_jobs (migration 0027) and
+-- channel_videos.next_caption_attempt_at (0020) already use: a wall-clock floor
+-- ClaimNext filters on. The worker records the attempt and moves straight on
+-- to the next claimable job; the throttled one becomes claimable again when
+-- its stamp passes, and the wait survives a restart.
+--
+-- NULL means claimable now, which is what a freshly enqueued job wants, and
+-- what a requeue that must not wait (a kill-switch or cookie pause, which the
+-- loop's own gate parks) writes explicitly.
+ALTER TABLE download_jobs ADD COLUMN next_attempt_at TEXT;

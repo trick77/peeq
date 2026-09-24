@@ -65,6 +65,9 @@ type downloadItem struct {
 	Attempts    int    `json:"attempts"`
 	LastError   string `json:"last_error,omitempty"`
 	EnqueuedAt  string `json:"enqueued_at,omitempty"`
+	// NextAttemptAt is set on a pending job that is waiting out a retry
+	// backoff (SQLite datetime text, UTC); later jobs run ahead of it.
+	NextAttemptAt string `json:"next_attempt_at,omitempty"`
 }
 
 // handleDownloadsPost is the session-authenticated entry point that adds a
@@ -268,6 +271,8 @@ func (s *server) handleDownloadsList(w http.ResponseWriter, r *http.Request) {
 			Attempts:   j.Attempts,
 			LastError:  j.LastError,
 			EnqueuedAt: j.EnqueuedAt,
+
+			NextAttemptAt: j.NextAttemptAt,
 		}
 		if s.videos != nil {
 			if v, err := s.videos.Get(j.VideoID); err == nil && v != nil {
