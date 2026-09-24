@@ -416,6 +416,18 @@ func (summaryErrCompleter) Complete(_ context.Context, _ []llm.Message) (string,
 // recorded.
 func seedFailingVideo(t *testing.T, id string, maxAttempts int, completer Completer) *fakeActivityRecorder {
 	t.Helper()
+	_, w, rec := seedFailingVideoHarness(t, id, maxAttempts, completer)
+	if _, err := w.processOne(context.Background()); err == nil {
+		t.Fatal("processOne err = nil, want non-nil (the seeded failure)")
+	}
+	return rec
+}
+
+// seedFailingVideoHarness is seedFailingVideo without the run: it hands back
+// the harness, the worker and the recorder so a test can drive processOne with
+// a context of its own.
+func seedFailingVideoHarness(t *testing.T, id string, maxAttempts int, completer Completer) (*workerHarness, *Worker, *fakeActivityRecorder) {
+	t.Helper()
 	h := newWorkerHarness(t)
 
 	relPath := id + "/captions.en.vtt"
@@ -454,10 +466,7 @@ func seedFailingVideo(t *testing.T, id string, maxAttempts int, completer Comple
 		EmbedModel: "test-model",
 		EmbedDim:   1536,
 		Activity:   rec})
-	if _, err := w.processOne(context.Background()); err == nil {
-		t.Fatal("processOne err = nil, want non-nil (the seeded failure)")
-	}
-	return rec
+	return h, w, rec
 }
 
 // A terminally failed job writes exactly one Activity row, naming the step that

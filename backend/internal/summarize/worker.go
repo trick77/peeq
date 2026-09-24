@@ -97,7 +97,9 @@ func (w *Worker) Run(ctx context.Context) {
 			return
 		}
 		did, err := w.processOne(ctx)
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
+			// A shutdown mid-analysis surfaces as an error too; it is logged at
+			// Debug where it happened, not as a failure here.
 			w.d.Logger.Error("summarize worker: process", "err", err)
 		}
 		// Idle: poll again shortly. Busy: pause VideoDelay so the LLM endpoint
@@ -156,7 +158,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// analyses that begin and never end.
 	transcript, terr := w.d.Videos.GetTranscript(video.ID)
 	if terr != nil {
-		return true, w.failJob(job, video, run, "load transcript: "+terr.Error())
+		return true, w.failJob(ctx, job, video, run, "load transcript: "+terr.Error())
 	}
 	if transcript == nil {
 		w.finishNoTranscript(job, video, "no transcript")
@@ -172,7 +174,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 
 	parsed, perr := subtitles.ParseVTT(strings.NewReader(transcript.VTT))
 	if perr != nil {
-		return true, w.failJob(job, video, run, "parse vtt: "+perr.Error())
+		return true, w.failJob(ctx, job, video, run, "parse vtt: "+perr.Error())
 	}
 	if parsed.Transcript == "" {
 		w.discardStaleAnalysis(ctx, video)
@@ -228,10 +230,10 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		sctx, done := run.step("summary")
 		s, serr := w.d.Summarizer.SummarizeText(sctx, forSummary.Transcript)
 		if serr != nil {
-			return true, w.failJob(job, video, run, serr.Error())
+			return true, w.failJob(ctx, job, video, run, serr.Error())
 		}
 		if err := w.d.Videos.SetSummaryText(video.ID, s); err != nil {
-			return true, w.failJob(job, video, run, err.Error())
+			return true, w.failJob(ctx, job, video, run, err.Error())
 		}
 		// No chunk count here: chat_requests already says how many map calls the
 		// transcript cost, without chunking it a second time just to log it.
@@ -270,7 +272,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// call twice.
 	if isInboxRead(video, transcript.Source) {
 		if err := w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryDone, ""); err != nil {
-			return true, w.failJob(job, video, run, err.Error())
+			return true, w.failJob(ctx, job, video, run, err.Error())
 		}
 		outcome := "done_inbox"
 		if video.ChannelKeepReads {
@@ -279,7 +281,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 			w.emit(video.ID, videos.SummaryDone, PhaseEmbedding)
 			ectx, edone := run.step("embedding")
 			if err := w.embedAndStore(ectx, video.ID, parsed, summary, nil); err != nil {
-				return true, w.failJob(job, video, run, err.Error())
+				return true, w.failJob(ctx, job, video, run, err.Error())
 			}
 			edone()
 			outcome = "done_inbox_indexed"
@@ -377,7 +379,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 					run.ident()...)
 			}
 		}
-		return true, w.requeueJob(job, video, run, "keypoints", err.Error())
+		return true, w.requeueJob(ctx, job, video, run, "keypoints", err.Error())
 	}
 	// Backstop over the input filter above. The model was handed a cue index with
 	// the suppressed passages missing, but a timestamp it infers rather than
@@ -394,7 +396,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		chapters, keyPoints = dc, dk
 	}
 	if err := w.d.Videos.SetKeyPoints(video.ID, encodeChapters(chapters), encodeKeyPoints(keyPoints)); err != nil {
-		return true, w.requeueJob(job, video, run, "keypoints", err.Error())
+		return true, w.requeueJob(ctx, job, video, run, "keypoints", err.Error())
 	}
 	done("chapters", len(chapters), "key_points", len(keyPoints))
 
@@ -429,7 +431,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		// the finished summary text — an endpoint outage made that the common case.
 		// What actually failed is the index, and the video reports that through
 		// `indexed` on its DTO instead.
-		return true, w.requeueJob(job, video, run, "embedding", err.Error())
+		return true, w.requeueJob(ctx, job, video, run, "embedding", err.Error())
 	}
 	edone("chapters", len(chapters))
 	w.emit(video.ID, videos.SummaryDone, "")
@@ -830,7 +832,10 @@ func (w *Worker) emit(videoID, status, phase string) {
 // returns a non-nil error so the caller (processOne) surfaces the failure
 // to the Run loop, which logs it. Jobs.Fail's own return is often nil on
 // the common path, so it must never be returned as-is.
-func (w *Worker) failJob(job *summaryjobs.Job, video *videos.Video, run *analysisRun, msg string) error {
+func (w *Worker) failJob(ctx context.Context, job *summaryjobs.Job, video *videos.Video, run *analysisRun, msg string) error {
+	if err := w.interrupted(ctx, job, run); err != nil {
+		return err
+	}
 	videoID := video.ID
 	if err := w.d.Videos.SetSummaryStatus(videoID, videos.SummaryError, msg); err != nil {
 		w.d.Logger.Error("summarize worker: set error status", "video_id", videoID, "err", err)
@@ -864,7 +869,10 @@ func (w *Worker) failJob(job *summaryjobs.Job, video *videos.Video, run *analysi
 // in rather than hardcoding one is what lets embedding share this path: before,
 // embedding called failJob and so reported "Summarization failed" on a video
 // whose summary was finished and on screen.
-func (w *Worker) requeueJob(job *summaryjobs.Job, video *videos.Video, run *analysisRun, step, msg string) error {
+func (w *Worker) requeueJob(ctx context.Context, job *summaryjobs.Job, video *videos.Video, run *analysisRun, step, msg string) error {
+	if err := w.interrupted(ctx, job, run); err != nil {
+		return err
+	}
 	// will_retry=false means Jobs.Fail is about to mark this failed for good
 	// rather than requeue it — same vocabulary as the finished line.
 	w.d.Logger.Warn("summarize worker: "+step+" step failed",
@@ -928,4 +936,20 @@ func toRagChapters(chapters []Chapter) []rag.Chapter {
 		out = append(out, rag.Chapter{TS: c.TS, Title: c.Title})
 	}
 	return out
+}
+
+// interrupted reports a process shutdown that landed mid-analysis, which is
+// not this video's summary failing. Nothing terminal is written: no
+// summary_status=error for the card to show, no burned attempt with its
+// backoff, no Activity row. The job stays 'running' and the boot-time orphan
+// sweep reclaims it, the same rule the download worker applies. The run still
+// gets its terminal line: the endpoint has billed the tokens the partial
+// stream spent, so they are banked against the video like a panic's are.
+func (w *Worker) interrupted(ctx context.Context, job *summaryjobs.Job, run *analysisRun) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	run.finished("interrupted")
+	w.d.Logger.Debug("summarize worker: interrupted by shutdown", "job_id", job.ID, "video_id", job.VideoID)
+	return ctx.Err()
 }

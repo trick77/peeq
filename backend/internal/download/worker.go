@@ -455,6 +455,13 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 			w.settleCanceled(job, video)
 			return
 		}
+		if ctx.Err() != nil {
+			// Parent shutdown mid-preflight: the same rule as the download path
+			// below — leave the job 'running' for the next boot's ResetOrphans
+			// and write nothing. Classifying the context error would burn an
+			// attempt, and on the last one fail the video, for a restart.
+			return
+		}
 		if capFired {
 			w.retry(ctx, job, video, "metadata preflight timeout: no progress")
 			return

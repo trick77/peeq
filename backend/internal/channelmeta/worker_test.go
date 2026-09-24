@@ -29,14 +29,25 @@ type fakeResolver struct {
 	info   ytdlp.ChannelInfo
 	err    error
 	panics bool
+	// onCall, when set, runs with the call's ctx before the canned answer —
+	// for a test that cancels the worker from inside the resolve. When it
+	// leaves the ctx cancelled, the answer is ctx.Err(), as a real Runner's
+	// would be.
+	onCall func(context.Context)
 }
 
-func (f *fakeResolver) ResolveChannel(_ context.Context, url string) (ytdlp.ChannelInfo, error) {
+func (f *fakeResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
 	f.mu.Lock()
 	f.urls = append(f.urls, url)
 	f.mu.Unlock()
 	if f.panics {
 		panic("yt-dlp went sideways")
+	}
+	if f.onCall != nil {
+		f.onCall(ctx)
+		if ctx.Err() != nil {
+			return ytdlp.ChannelInfo{}, ctx.Err()
+		}
 	}
 	return f.info, f.err
 }
@@ -765,6 +776,12 @@ func TestWorker_capStillCatchesAStallOnceRunning(t *testing.T) {
 	}
 	if got.Name == "Never Arrives" {
 		t.Fatal("a stalled resolve wrote its metadata anyway")
+	}
+	// A stall cancels the capped context, which must not be mistaken for a
+	// process shutdown: it IS an attempt, and resolved_at records it so the
+	// page-visit resolver does not re-fetch the channel on every visit.
+	if got.ResolvedAt == "2026-07-01 00:00:00" {
+		t.Fatal("a stalled resolve did not record the attempt (resolved_at unchanged)")
 	}
 
 	// And it is reported as a stall rather than as a bare "context canceled",
