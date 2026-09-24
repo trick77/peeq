@@ -67,7 +67,7 @@ type fetcher struct {
 	onCall func(context.Context)
 }
 
-func (f *fetcher) Subtitles(_ context.Context, _, _, _ string) (string, error) {
+func (f *fetcher) Subtitles(ctx context.Context, _, _, _ string) (string, error) {
 	i := f.calls
 	f.calls++
 	if f.onCall != nil {
