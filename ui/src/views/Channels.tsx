@@ -1,6 +1,17 @@
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { PillStrip } from "../components/PillStrip";
+import type { ActivityEvent } from "../api/types";
+import { channelMatchesFilter } from "./channelFilter";
+
+// newestScanId is the id of the newest scan event in the buffer, or 0.
+function newestScanId(live: ActivityEvent[]): number {
+  let newest = 0;
+  for (const e of live) {
+    if (e.kind === "scan" && e.id > newest) newest = e.id;
+  }
+  return newest;
+}
 import {
   listChannels,
   subscribeChannel,
@@ -129,11 +140,17 @@ export function Channels({
   search = "",
   onSearchChange,
   onPendingChanged,
+  live = [],
 }: {
   // onPendingChanged — a deleted channel takes its inbox items with it
   // (channel_videos cascades) and records no activity event, so the rail's
   // count is the shell's to re-read.
   onPendingChanged?: () => void;
+  // live — the newest activity events off the session's SSE stream. A scan
+  // changes what a row says (its pending count, its newest video, dormancy),
+  // and with the chips no longer refetching, a scan landing is what refreshes
+  // the list — the same signal the channel page uses.
+  live?: ActivityEvent[];
   // onOpenChannel — optional: wired by App (Task 11), rendered as channel
   // name links in Task 15.
   onOpenChannel?: (id: string) => void;
@@ -145,7 +162,6 @@ export function Channels({
 } = {}) {
   const [filter, setFilter] = useState<ChannelFilter>("subscribed");
   const [sort, setSort] = useState<ChannelSort>("name");
-  const [channels, setChannels] = useState<Channel[]>([]);
   const [error, setError] = useState<string | null>(null);
   // notice carries the outcome of the ⋮ menu's "Scan now" — an inline banner
   // under the chips, matching the channel tabs' own scan feedback. There is no
@@ -156,59 +172,29 @@ export function Channels({
   const [pendingDelete, setPendingDelete] = useState<Channel | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [tombstones, setTombstones] = useState<AutoUnsubscribedChannel[]>([]);
-  // allChannels is the whole list, fetched with filter "all" rather than derived
-  // from `channels`. `channels` follows the active chip (e.g. "Auto-add"), and
-  // two things here must not depend on which chip is lit: the review band (a
-  // dormant channel with autodownload off would silently drop out of the one
-  // alert on the page) and the chip counts (a chip cannot count a slice it was
-  // never sent). Both read this list; nothing else needs it.
+  // allChannels is the whole list, the one thing fetched. The chip's rows, the
+  // chip counts and the review band are all read off it: a chip narrows it in
+  // place (channelMatchesFilter), the counts are the size of each narrowing,
+  // and the band needs the dormant rows whatever chip is lit.
   const [allChannels, setAllChannels] = useState<Channel[]>([]);
   const dormant = allChannels.filter((c) => c.dormant);
+  // The chip's list is the unfiltered one narrowed here, not a second fetch:
+  // every chip is a subset of "all", the page holds "all" for the counts and
+  // the review band anyway, and the search box already narrows client-side.
+  // A chip click used to be a request, and every toggle two.
+  const channels = allChannels.filter((c) => channelMatchesFilter(c, filter));
 
-  // filterRef mirrors filter so the async handlers below can refetch the
-  // filter that is active NOW. Reading `filter` after an await would use the
-  // value captured when the handler was created: toggle a row, switch chips
-  // while the request is in flight, and the resumed handler would overwrite
-  // the list with the old filter's channels while the new chip stays lit.
-  const filterRef = useRef(filter);
-  filterRef.current = filter;
-
-  // Each list has a sequence that drops out-of-order responses. Two fetches of
-  // the same list can be in flight at once (rapid chip clicks, or a chip click
-  // racing a toggle's refetch); without this the slower one wins whichever
-  // was asked for last. A local mutation bumps both (see invalidateLoads), so
-  // a response that left before it cannot paint the pre-mutation row back.
-  const loadSeq = useRef(0);
+  // A sequence that drops out-of-order responses: two fetches can be in
+  // flight at once (a toggle's refetch racing another's), and without this
+  // the slower one wins. A local mutation bumps it (see invalidateLoads), so a
+  // response that left before it cannot paint the pre-mutation row back.
   const allSeq = useRef(0);
-
-  function fetchLatest(
-    seqRef: MutableRefObject<number>,
-    f: ChannelFilter,
-    set: (cs: Channel[]) => void,
-  ) {
-    const seq = ++seqRef.current;
-    listChannels(f)
-      .then((cs) => {
-        if (seq !== seqRef.current) return; // a newer fetch superseded this one
-        set(cs);
-      })
-      .catch((e: Error) => {
-        if (seq !== seqRef.current) return;
-        setError(e.message);
-      });
-  }
-
-  function load(f: ChannelFilter) {
-    setError(null);
-    fetchLatest(loadSeq, f, setChannels);
-  }
 
   // invalidateLoads makes every response still in flight land as stale. Called
   // by each local mutation: a list that left the server before the row was
   // toggled or deleted would otherwise arrive as the newest answer and put the
   // old row back.
   function invalidateLoads() {
-    loadSeq.current += 1;
     allSeq.current += 1;
   }
 
@@ -216,9 +202,30 @@ export function Channels({
     // Drop any "Scan now" notice: it reports on one row the user clicked, and
     // that row may not even be in the list the new chip is about to show.
     setNotice(null);
-    load(filter);
+    // A chip click is not a request — except after a failed load, where it is
+    // the one retry a user can reach without leaving the page.
+    if (error) loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
+
+  // Refetch when a scan lands, for any channel: the rows carry what a scan
+  // changes. Keyed on the newest scan id rather than the buffer, so an
+  // unrelated event (a download, a summary) does not refetch, and a scan
+  // already in the buffer when the page opened does not either — the mount
+  // fetch sees its result. Same shape as the channel page's.
+  const newestScan = newestScanId(live);
+  const seenScan = useRef<number | null>(null);
+  useEffect(() => {
+    if (seenScan.current === null) {
+      seenScan.current = newestScan;
+      return;
+    }
+    if (newestScan > seenScan.current) {
+      seenScan.current = newestScan;
+      loadAll();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newestScan]);
 
   // The auto-unsubscribed list does not depend on the filter chips (it is
   // its own, separate surface), so it loads once on mount rather than
@@ -229,12 +236,21 @@ export function Channels({
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  // loadAll refreshes the unfiltered list behind the review band and the chip
-  // counts. Called on mount and again after anything that could change either —
-  // subscribe, unsubscribe, dismiss, resubscribe, delete — never as a side
-  // effect of the filter chips, which have their own load().
+  // loadAll refreshes the one list everything reads: the chip's rows, the
+  // counts and the review band. Called on mount and again after anything
+  // that could change it — subscribe, unsubscribe, dismiss, resubscribe,
+  // delete — never on a chip click, which only narrows what is held.
   function loadAll() {
-    fetchLatest(allSeq, "all", setAllChannels);
+    const seq = ++allSeq.current;
+    listChannels("all")
+      .then((cs) => {
+        if (seq !== allSeq.current) return; // a newer fetch superseded this one
+        setAllChannels(cs);
+      })
+      .catch((e: Error) => {
+        if (seq !== allSeq.current) return;
+        setError(e.message);
+      });
   }
 
   useEffect(() => {
@@ -242,15 +258,10 @@ export function Channels({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Patches both lists: `channels` so the visible row updates, and allChannels so
-  // the chip counts and the review band move with it. A toggle that patched only
-  // the first would leave "Subscribed 12" beside a row that now says otherwise
-  // until the refetch landed.
+  // Patches the one list every surface reads, so the row, the chip counts and
+  // the review band move together before the refetch lands.
   function applyLocalUpdate(id: string, patch: Partial<Channel>) {
     invalidateLoads();
-    setChannels((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, ...patch } : c)),
-    );
     setAllChannels((prev) =>
       prev.map((c) => (c.id === id ? { ...c, ...patch } : c)),
     );
@@ -271,7 +282,6 @@ export function Channels({
       } else {
         await unsubscribeChannel(c.id);
       }
-      load(filterRef.current);
       loadAll();
     } catch (err) {
       applyLocalUpdate(c.id, {
@@ -312,8 +322,8 @@ export function Channels({
   async function handleAutoSummary(c: Channel) {
     setError(null);
     const next = !c.auto_summary;
-    // Through applyLocalUpdate like every other row toggle, so the two lists
-    // never disagree about a row and in-flight fetches are invalidated.
+    // Through applyLocalUpdate like every other row toggle, so in-flight
+    // fetches are invalidated and cannot put the old value back.
     applyLocalUpdate(c.id, { auto_summary: next });
     try {
       await updateChannel(c.id, { auto_summary: next });
@@ -335,9 +345,6 @@ export function Channels({
       await deleteChannel(c.id);
       onPendingChanged?.();
       invalidateLoads();
-      setChannels((prev) => prev.filter((x) => x.id !== c.id));
-      // The counts and the review band read the unfiltered list, so a deleted
-      // channel has to leave that one too or every chip stays one too high.
       setAllChannels((prev) => prev.filter((x) => x.id !== c.id));
       // A "Scan now" notice may be reporting on the row that just vanished;
       // leaving it up promises a scan for a channel that no longer exists.
@@ -381,7 +388,6 @@ export function Channels({
     try {
       await resubscribeChannel(c.id);
       setTombstones((prev) => prev.filter((x) => x.id !== c.id));
-      load(filterRef.current);
       loadAll();
     } catch (err) {
       setError((err as Error).message);
@@ -412,39 +418,14 @@ export function Channels({
     .sort((a, b) => compareChannels(a, b, sort));
   const hasNonDormant = channels.some((c) => !c.dormant);
 
-  // Chip counts come off allChannels — the same unfiltered list the review band
-  // reads — because `channels` only ever holds the ACTIVE chip's slice and so
-  // could never say what the other four hold. The predicates below mirror
-  // channels.Store.List's ?filter= clauses one for one:
-  //
-  //   subscribed    — has a subscription row
-  //   notsubscribed — added, but no subscription (the added check is what keeps
-  //                   the download-only rows out; they have no subscription
-  //                   either, and they are what the next pill is for)
-  //   downloaded    — never added, listed only via a downloaded video. Inside an
-  //                   "all" list, !added already implies that: the server's base
-  //                   clause admits a row only if it was added OR has downloads.
-  //   autodownload  — autodownload on, which lives on the subscription row and
-  //                   so is already a subset of subscribed
-  //
-  // Counted through `listable` as well, so a query in the search box narrows the
-  // numbers with the list — a chip saying 40 above three rows is the number
-  // lying about what clicking it does.
+  // Chip counts are the size of each chip's narrowing of allChannels, through
+  // the same predicate that narrows the rows (channelFilter.ts) — and through
+  // `listable` as well, so a query in the search box narrows the numbers with
+  // the list: a chip saying 40 above three rows is the number lying about
+  // what clicking it does.
   const chipCount = (f: ChannelFilter) =>
-    allChannels.filter(listable).filter((c) => {
-      switch (f) {
-        case "subscribed":
-          return c.subscribed;
-        case "notsubscribed":
-          return c.added && !c.subscribed;
-        case "downloaded":
-          return !c.added;
-        case "autodownload":
-          return c.autodownload;
-        default:
-          return true;
-      }
-    }).length;
+    allChannels.filter(listable).filter((c) => channelMatchesFilter(c, f))
+      .length;
 
   return (
     <>

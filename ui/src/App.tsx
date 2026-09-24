@@ -877,6 +877,7 @@ function ViewSwitch({
     case "channels":
       return (
         <Channels
+          live={liveActivity}
           onOpenChannel={onOpenChannel}
           onPendingChanged={onPendingChanged}
           search={channelSearch}

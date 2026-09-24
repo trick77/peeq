@@ -69,6 +69,13 @@ async function openRowMenu(
   await user.click(within(row).getByRole("button", { name: /actions for/i }));
 }
 
+// showAll switches the page from its default Subscribed chip to All, so a
+// test about rows the fixtures mark as not subscribed can see them. The chips
+// narrow the one fetched list in place, so this costs no request.
+async function showAll() {
+  await userEvent.click(await screen.findByRole("button", { name: /^All\b/ }));
+}
+
 describe("Channels", () => {
   beforeEach(() => {
     vi.mocked(listChannels).mockReset();
@@ -89,6 +96,7 @@ describe("Channels", () => {
 
   it("lists both not-subscribed and subscribed channels", async () => {
     render(<Channels />);
+    await showAll();
     expect(await screen.findByText("Added Channel")).toBeInTheDocument();
     expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
   });
@@ -102,6 +110,7 @@ describe("Channels", () => {
       baseChannel({ id: "c3", name: "Nameless", handle: "" }),
     ]);
     render(<Channels />);
+    await showAll();
     const withHandle = (await screen.findByText("Added Channel")).closest(
       ".channel-row",
     ) as HTMLElement;
@@ -120,6 +129,7 @@ describe("Channels", () => {
   it("clicking a not-subscribed channel's star calls subscribeChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
+    await showAll();
     await screen.findByText("Added Channel");
     const row = screen
       .getByText("Added Channel")
@@ -140,6 +150,7 @@ describe("Channels", () => {
       baseChannel({ id: "UCbare", name: "", handle: "" }),
     ]);
     render(<Channels />);
+    await showAll();
 
     expect(await screen.findByText("@handleonly")).toBeInTheDocument();
     expect(screen.getByText("UCbare")).toBeInTheDocument();
@@ -163,14 +174,15 @@ describe("Channels", () => {
 
   // The page opens on Subscribed, not All: it is about the channels you follow,
   // and defaulting to All led with channels the user never subscribed to.
-  it("loads the subscribed filter on mount", async () => {
+  it("opens on the subscribed chip, narrowing the one list it fetches", async () => {
     render(<Channels />);
-    await waitFor(() =>
-      expect(listChannels).toHaveBeenCalledWith("subscribed"),
-    );
+    expect(await screen.findByText("Subbed Channel")).toBeInTheDocument();
+    expect(screen.queryByText("Added Channel")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Subscribed\b/ })).toHaveClass(
       "on",
     );
+    expect(listChannels).toHaveBeenCalledTimes(1);
+    expect(listChannels).toHaveBeenCalledWith("all");
   });
 
   // Each chip carries the number of channels it would show. They are counted off
@@ -212,9 +224,28 @@ describe("Channels", () => {
       expect(countFor("Auto-add")).toBe("1");
     });
 
+    it("From downloads and Auto-add show exactly their rows", async () => {
+      const user = userEvent.setup();
+      vi.mocked(listChannels).mockResolvedValue(roster);
+      render(<Channels />);
+      await screen.findByText("Auto One");
+
+      await user.click(
+        screen.getByRole("button", { name: /^From downloads\b/ }),
+      );
+      expect(screen.getByText("Download Four")).toBeInTheDocument();
+      expect(screen.queryByText("Auto One")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /^Auto-add\b/ }));
+      expect(screen.getByText("Auto One")).toBeInTheDocument();
+      expect(screen.queryByText("Download Four")).not.toBeInTheDocument();
+      expect(listChannels).toHaveBeenCalledTimes(1);
+    });
+
     it("narrows every count to the search query", async () => {
       vi.mocked(listChannels).mockResolvedValue(roster);
       render(<Channels search="four" />);
+      await showAll();
       await screen.findByText("Download Four");
 
       await waitFor(() => expect(countFor("All")).toBe("1"));
@@ -233,25 +264,33 @@ describe("Channels", () => {
         ?.querySelector(".n")?.textContent;
     let resolveStale: (list: Channel[]) => void = () => {};
     let allCalls = 0;
-    vi.mocked(listChannels).mockImplementation((filter) => {
-      if (filter !== "all") return Promise.resolve([notSubscribed, subscribed]);
+    vi.mocked(listChannels).mockImplementation(() => {
       allCalls += 1;
-      // The first unfiltered list (mount) is held back; the one a toggle
-      // requests answers at once.
-      if (allCalls === 1) {
+      // Mount answers at once; the first toggle's refetch is held back; the
+      // second toggle's refetch answers at once with a shorter list.
+      if (allCalls === 2) {
         return new Promise<Channel[]>((r) => {
           resolveStale = r;
         });
       }
-      return Promise.resolve([subscribed]);
+      if (allCalls >= 3) return Promise.resolve([subscribed]);
+      return Promise.resolve([notSubscribed, subscribed]);
     });
     render(<Channels />);
+    await showAll();
     await screen.findByText("Subbed Channel");
-    const row = screen
+    const subbed = screen
       .getByText("Subbed Channel")
       .closest(".channel-row") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: /unsubscribe/i }));
+    await user.click(
+      within(subbed).getByRole("button", { name: /unsubscribe/i }),
+    );
     await waitFor(() => expect(allCalls).toBe(2));
+    const added = screen
+      .getByText("Added Channel")
+      .closest(".channel-row") as HTMLElement;
+    await user.click(within(added).getByRole("button", { name: /subscribe/i }));
+    await waitFor(() => expect(allCalls).toBe(3));
     await waitFor(() => expect(countFor("All")).toBe("1"));
 
     resolveStale([notSubscribed, subscribed, subscribed]);
@@ -260,74 +299,61 @@ describe("Channels", () => {
     expect(countFor("All")).toBe("1");
   });
 
-  it("filter chips drive listChannels(filter)", async () => {
+  it("a chip click after a failed load is the retry", async () => {
     const user = userEvent.setup();
+    vi.mocked(listChannels).mockRejectedValueOnce(new Error("down"));
     render(<Channels />);
-    await screen.findByText("Added Channel");
-    vi.mocked(listChannels).mockClear();
-
+    expect(await screen.findByText("down")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^All\b/ }));
-    await waitFor(() => expect(listChannels).toHaveBeenCalledWith("all"));
-
-    // "Not subscribed" is the label; the filter id is "notsubscribed".
-    vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: /^Not subscribed\b/ }));
-    await waitFor(() =>
-      expect(listChannels).toHaveBeenCalledWith("notsubscribed"),
-    );
-
-    // "From downloads" — channels in the list only because the library holds
-    // a video downloaded from them. It sits next to "Not subscribed" (added,
-    // but not followed), which is a different thing entirely, so the
-    // label-to-filter mapping is worth pinning.
-    vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: /^From downloads\b/ }));
-    await waitFor(() =>
-      expect(listChannels).toHaveBeenCalledWith("downloaded"),
-    );
-
-    vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: /^Auto-add\b/ }));
-    await waitFor(() =>
-      expect(listChannels).toHaveBeenCalledWith("autodownload"),
-    );
-
-    vi.mocked(listChannels).mockClear();
-    await user.click(screen.getByRole("button", { name: /^Subscribed\b/ }));
-    await waitFor(() =>
-      expect(listChannels).toHaveBeenCalledWith("subscribed"),
-    );
+    expect(await screen.findByText("Subbed Channel")).toBeInTheDocument();
+    expect(listChannels).toHaveBeenCalledTimes(2);
   });
 
-  // A slow response for an abandoned filter must not overwrite the list the
-  // active chip asked for. Without the sequence guard the stale "subscribed"
-  // response (the mount default) resolves last and wins, showing every channel
-  // under "Not subscribed".
-  it("a stale filter response does not overwrite the active filter's list", async () => {
-    const user = userEvent.setup();
-    let releaseSubscribed: (() => void) | undefined;
-    vi.mocked(listChannels).mockImplementation((f) => {
-      if (f === "subscribed") {
-        return new Promise((resolve) => {
-          releaseSubscribed = () => resolve([notSubscribed, subscribed]);
-        });
-      }
-      return Promise.resolve([notSubscribed]);
+  it("refetches when a scan lands, and not for a scan already in the buffer", async () => {
+    const scan = (id: number) => ({
+      id,
+      at: "2026-07-25 06:12:00",
+      kind: "scan",
+      outcome: "ok",
+      subject_id: "c2",
+      subject: "Subbed Channel",
     });
-
-    render(<Channels />);
-    // The initial "subscribed" load is still in flight; switch to
-    // "Not subscribed".
-    await user.click(screen.getByRole("button", { name: /^Not subscribed\b/ }));
-    expect(await screen.findByText("Added Channel")).toBeInTheDocument();
-    expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
-
-    // Now let the abandoned "subscribed" request resolve — it must be ignored.
-    releaseSubscribed?.();
-    await waitFor(() =>
-      expect(listChannels).toHaveBeenCalledWith("notsubscribed"),
+    const { rerender } = render(<Channels live={[scan(1)]} />);
+    await screen.findByText("Subbed Channel");
+    expect(listChannels).toHaveBeenCalledTimes(1);
+    rerender(
+      <Channels
+        live={[
+          scan(1),
+          { id: 2, at: "2026-07-25 06:13:00", kind: "download", outcome: "ok" },
+        ]}
+      />,
     );
+    expect(listChannels).toHaveBeenCalledTimes(1);
+    rerender(<Channels live={[scan(1), scan(3)]} />);
+    await waitFor(() => expect(listChannels).toHaveBeenCalledTimes(2));
+  });
+
+  it("filter chips narrow the list in place, without another request", async () => {
+    const user = userEvent.setup();
+    render(<Channels />);
+    await screen.findByText("Subbed Channel");
+    expect(listChannels).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: /^All\b/ }));
+    expect(screen.getByText("Added Channel")).toBeInTheDocument();
+    expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
+
+    // "Not subscribed" is the label; the predicate is added && !subscribed.
+    await user.click(screen.getByRole("button", { name: /^Not subscribed\b/ }));
+    expect(screen.getByText("Added Channel")).toBeInTheDocument();
     expect(screen.queryByText("Subbed Channel")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Subscribed\b/ }));
+    expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
+    expect(screen.queryByText("Added Channel")).not.toBeInTheDocument();
+
+    expect(listChannels).toHaveBeenCalledTimes(1);
   });
 
   // Every empty state but "All"'s points at the All chip: a filtered view can
@@ -356,6 +382,7 @@ describe("Channels", () => {
   describe("the auto-add marker", () => {
     it("marks a channel with autodownload on, and only that one", async () => {
       render(<Channels />);
+      await showAll();
       await screen.findByText("Subbed Channel");
 
       const subbedRow = screen
@@ -572,6 +599,7 @@ describe("Channels", () => {
     it("is not offered for a channel that is not subscribed", async () => {
       const user = userEvent.setup();
       render(<Channels />);
+      await showAll();
       await screen.findByText("Added Channel");
       const row = screen
         .getByText("Added Channel")
@@ -589,6 +617,7 @@ describe("Channels", () => {
 
   it("the search box filters the list by name or handle", async () => {
     const { rerender } = render(<Channels search="" />);
+    await showAll();
     await screen.findByText("Added Channel");
     expect(screen.getByText("Subbed Channel")).toBeInTheDocument();
 
@@ -609,6 +638,7 @@ describe("Channels", () => {
   it("delete opens a confirm dialog, then calls deleteChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
+    await showAll();
     await screen.findByText("Added Channel");
     const row = screen
       .getByText("Added Channel")
@@ -637,6 +667,7 @@ describe("Channels", () => {
     const user = userEvent.setup();
     const onPendingChanged = vi.fn();
     render(<Channels onPendingChanged={onPendingChanged} />);
+    await showAll();
     await screen.findByText("Added Channel");
     const row = screen
       .getByText("Added Channel")
@@ -657,6 +688,7 @@ describe("Channels", () => {
     const user = userEvent.setup();
     const onOpenChannel = vi.fn();
     render(<Channels onOpenChannel={onOpenChannel} />);
+    await showAll();
     await screen.findByText("Added Channel");
 
     await user.click(screen.getByRole("button", { name: "Added Channel" }));
@@ -667,6 +699,7 @@ describe("Channels", () => {
   it("cancelling the delete dialog does not call deleteChannel", async () => {
     const user = userEvent.setup();
     render(<Channels />);
+    await showAll();
     await screen.findByText("Added Channel");
     const row = screen
       .getByText("Added Channel")
@@ -690,6 +723,7 @@ describe("Channels", () => {
     const user = userEvent.setup();
     vi.mocked(deleteChannel).mockRejectedValue(new Error("nope, still busy"));
     render(<Channels />);
+    await showAll();
     await screen.findByText("Added Channel");
     const row = screen
       .getByText("Added Channel")
@@ -734,6 +768,7 @@ describe("Channels", () => {
 
     it("hides the band entirely when nothing is dormant", async () => {
       render(<Channels />);
+      await showAll();
       await screen.findByText("Added Channel");
       expect(screen.queryByText(/needs? review/)).not.toBeInTheDocument();
     });
@@ -787,6 +822,7 @@ describe("Channels", () => {
     it("lists auto-unsubscribed channels with the reason and a re-subscribe button", async () => {
       vi.mocked(listAutoUnsubscribedChannels).mockResolvedValue([tombstone]);
       render(<Channels />);
+      await showAll();
       await screen.findByText("Added Channel");
 
       expect(await screen.findByText("Vanished Channel")).toBeInTheDocument();
