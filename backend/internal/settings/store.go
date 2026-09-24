@@ -148,6 +148,8 @@ WHERE id = 1`,
 // returned as-is so callers (the HTTP handler) can surface it to the user.
 func (s *Store) SetCookie(ctx context.Context, text string, status string) error {
 	if text != "" {
+		// Returned unwrapped: the handler tells a rejected paste (400) from a
+		// failed write (500) with errors.Is(err, cookie.ErrInvalid).
 		if err := cookie.Validate(text); err != nil {
 			return err
 		}

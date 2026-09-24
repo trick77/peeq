@@ -264,7 +264,7 @@ func TestSettingsHandlers_putCookieResumesWorker(t *testing.T) {
 	h := New(deps)
 	sessionCookie := loginAndGetCookie(t, h)
 
-	putCookie := func(t *testing.T, body string) int {
+	putCookie := func(t *testing.T, body string) (int, string) {
 		t.Helper()
 		payload, _ := json.Marshal(map[string]string{"cookie": body})
 		req := httptest.NewRequest(http.MethodPut, "/api/settings/cookie", bytes.NewReader(payload))
@@ -272,19 +272,23 @@ func TestSettingsHandlers_putCookieResumesWorker(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		return rec.Code
+		return rec.Code, rec.Body.String()
 	}
 
-	// Rejected cookie: 400, worker must NOT be resumed.
-	if code := putCookie(t, "garbage"); code != http.StatusBadRequest {
+	// Rejected cookie: 400 whose body starts with the prefix the extension
+	// shows verbatim (extension/send.test.js fixtures it); worker must NOT be
+	// resumed.
+	if code, body := putCookie(t, "garbage"); code != http.StatusBadRequest {
 		t.Fatalf("PUT invalid cookie status = %d, want 400", code)
+	} else if !strings.Contains(body, `"error":"invalid cookie: `) {
+		t.Fatalf("PUT invalid cookie body = %s, want the invalid-cookie prefix", body)
 	}
 	if n := fw.resumes(); n != 0 {
 		t.Fatalf("Resume called %d times after a rejected cookie, want 0", n)
 	}
 
 	// Valid cookie: 200, worker resumed exactly once.
-	if code := putCookie(t, validYouTubeCookieBody); code != http.StatusOK {
+	if code, _ := putCookie(t, validYouTubeCookieBody); code != http.StatusOK {
 		t.Fatalf("PUT valid cookie status = %d, want 200", code)
 	}
 	if n := fw.resumes(); n != 1 {
@@ -599,5 +603,33 @@ func TestSettingsHandlers_requireAuth(t *testing.T) {
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s status = %d, want 401", req.Method, req.URL.Path, rec.Code)
 		}
+	}
+}
+
+// TestSettingsHandlers_putCookie_dbError_500 asserts that a store failure
+// while writing a VALID cookie is a logged 500 and not a 400 that blames the
+// user and echoes the database error. Before this, every SetCookie error was
+// answered with "invalid cookie: " + err.Error(). The status read that
+// precedes the write still succeeds (only Exec is broken), so the failure
+// lands exactly on the UPDATE.
+func TestSettingsHandlers_putCookie_dbError_500(t *testing.T) {
+	logs := captureLogs(t)
+	deps, flaky := testDepsFlakySettings(t)
+	flaky.failExec = true
+	h := New(deps)
+	payload, _ := json.Marshal(map[string]string{"cookie": validYouTubeCookieBody})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/cookie", bytes.NewReader(payload))
+	req.AddCookie(loginAndGetCookie(t, h))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "forced exec failure") {
+		t.Fatalf("body leaks the database error: %s", rec.Body.String())
+	}
+	if !strings.Contains(logs.String(), "request failed") || !strings.Contains(logs.String(), "forced exec failure") {
+		t.Fatalf("log should carry the cause, got: %s", logs.String())
 	}
 }

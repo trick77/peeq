@@ -3,6 +3,7 @@
 package cookie
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -76,13 +77,20 @@ func Parse(text string) (Cookies, error) {
 	return cookies, nil
 }
 
+// ErrInvalid is wrapped by every Validate failure, so a caller can tell the
+// user's input being unusable (answer 400, show the text) from a later store
+// failure (answer 500, log the cause) with errors.Is instead of by parsing
+// the message.
+var ErrInvalid = errors.New("invalid cookie")
+
 // Validate parses text as a Netscape cookie file and confirms it contains a
 // usable YouTube session: at least one ".youtube.com" (or "youtube.com")
-// line, and at least one recognized session cookie name among them.
+// line, and at least one recognized session cookie name among them. Every
+// failure wraps ErrInvalid.
 func Validate(text string) error {
 	cookies, err := Parse(text)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 
 	var sawYouTube bool
@@ -99,10 +107,10 @@ func Validate(text string) error {
 	}
 
 	if !sawYouTube {
-		return fmt.Errorf("cookie file has no .youtube.com entries")
+		return fmt.Errorf("%w: cookie file has no .youtube.com entries", ErrInvalid)
 	}
 	if !sawSessionCookie {
-		return fmt.Errorf("cookie file has no YouTube session cookie (need one of SID, __Secure-3PSID, __Secure-1PSID)")
+		return fmt.Errorf("%w: cookie file has no YouTube session cookie (need one of SID, __Secure-3PSID, __Secure-1PSID)", ErrInvalid)
 	}
 	return nil
 }

@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
+	"github.com/trick77/peeq/internal/cookie"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
@@ -158,7 +160,13 @@ func (s *server) applyCookie(w http.ResponseWriter, r *http.Request, minimalAck 
 		return
 	}
 	if err := s.settings.SetCookie(r.Context(), req.Cookie, settings.CookieValid); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid cookie: "+err.Error())
+		// Validate's errors already read "invalid cookie: …", so the 400 body is
+		// unchanged; anything else is the row failing to write, which is ours.
+		if errors.Is(err, cookie.ErrInvalid) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		serverError(w, r, err, "store cookie failed")
 		return
 	}
 	// A valid cookie is now stored: un-wedge the download worker if it paused

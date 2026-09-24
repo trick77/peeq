@@ -1,6 +1,7 @@
 package cookie_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,5 +111,30 @@ func TestParse_extensionOutput(t *testing.T) {
 	// that stopped emitting the prefix would slip through this lock.
 	if !strings.Contains(text, "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t") {
 		t.Error("fixture has no #HttpOnly_ prefixed line; the serializer stopped marking httpOnly cookies")
+	}
+}
+
+// TestValidate_failuresWrapErrInvalid asserts every validation failure is
+// recognisable with errors.Is, so a caller can tell "the user pasted garbage"
+// (a 400) from "the row could not be written" (a 500) without parsing text.
+func TestValidate_failuresWrapErrInvalid(t *testing.T) {
+	cases := []struct{ name, text string }{
+		{"garbage", "not a cookie file"},
+		{"no youtube lines", "example.com\tTRUE\t/\tFALSE\t0\tSID\tabc\n"},
+		{"no session", ".youtube.com\tTRUE\t/\tFALSE\t0\tPREF\tabc\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := cookie.Validate(tc.text)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !errors.Is(err, cookie.ErrInvalid) {
+				t.Errorf("error %v is not ErrInvalid", err)
+			}
+			if !strings.HasPrefix(err.Error(), "invalid cookie: ") {
+				t.Errorf("message %q should start with the sentinel text", err.Error())
+			}
+		})
 	}
 }
