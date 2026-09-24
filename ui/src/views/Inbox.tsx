@@ -294,6 +294,28 @@ export function Inbox({
   // which is why the flicker was the Inbox's alone.
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Whether `items` is the ledger's answer. False until the first list lands
+  // and again after a list that failed: the count is then unknown, and the
+  // rail is told so rather than left on the last number that happened to
+  // arrive. An action that fails (Download, Ignore) leaves this alone — the
+  // list is still what the server said, one card fewer or not.
+  const [countKnown, setCountKnown] = useState(false);
+  // The count the rail shows is reported from here, as an effect on the
+  // length, rather than from inside the setItems updaters that change it. An
+  // updater runs during render — calling the parent's setter from there is
+  // the "cannot update a component while rendering a different component"
+  // warning, and StrictMode invokes updaters twice. Held in a ref so a parent
+  // re-render with a new callback does not re-report an unchanged count.
+  // Nothing is reported before the first list has settled: the shell has its
+  // own count until then, and an `undefined` on mount would blank it.
+  const onCountChangeRef = useRef(onCountChange);
+  useEffect(() => {
+    onCountChangeRef.current = onCountChange;
+  });
+  useEffect(() => {
+    if (!loaded) return;
+    onCountChangeRef.current?.(countKnown ? items.length : undefined);
+  }, [items.length, loaded, countKnown]);
   const [busyId, setBusyId] = useState<string | null>(null);
   // channel filter: "all" or a specific channel_id. For the common case of a
   // channel dumping a week of uploads at once, this narrows the grid (and the
@@ -341,16 +363,16 @@ export function Inbox({
       .then((list) => {
         if (!alive.current) return;
         setItems(list);
-        onCountChange?.(list.length);
+        setCountKnown(true);
       })
       .catch((e: Error) => {
         if (!alive.current) return;
         setError(e.message);
-        // The count is no longer known — say so rather than leaving the rail
-        // showing the last number that happened to arrive. undefined draws no
-        // pill; a stale 5 claims five items are waiting, which is exactly what
-        // the failed request could not confirm.
-        onCountChange?.(undefined);
+        // The count is no longer known — the effect above tells the rail so
+        // rather than leaving it on the last number that happened to arrive.
+        // undefined draws no pill; a stale 5 claims five items are waiting,
+        // which is exactly what the failed request could not confirm.
+        setCountKnown(false);
       })
       // Settled, not succeeded: a failed fetch has also finished telling us what
       // it can, and leaving the page on "Loading…" under its own error message
@@ -467,11 +489,7 @@ export function Inbox({
   // step of Download all — so the hover lock is armed in one place.
   function remove(videoID: string) {
     setHoverLocked(true);
-    setItems((prev) => {
-      const next = prev.filter((i) => i.video_id !== videoID);
-      onCountChange?.(next.length);
-      return next;
-    });
+    setItems((prev) => prev.filter((i) => i.video_id !== videoID));
   }
 
   async function handleDownload(item: PendingItem) {
