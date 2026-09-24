@@ -152,7 +152,7 @@ describe("useLiveQueue", () => {
     await waitFor(() => expect(result.current.pendingCount).toBe(1));
   });
 
-  it("refreshStatus re-reads the cookie light and the download status", async () => {
+  it("refreshStatus re-reads every light and resolves once they have landed", async () => {
     const { result } = renderHook(() => useLiveQueue(true));
     await waitFor(() => expect(result.current.cookieStatus).toBe("valid"));
     vi.mocked(cookieHealth).mockResolvedValue({ status: "stale" });
@@ -160,9 +160,14 @@ describe("useLiveQueue", () => {
       ...healthy,
       youtube_paused: true,
     });
-    act(() => result.current.refreshStatus());
-    await waitFor(() => expect(result.current.cookieStatus).toBe("stale"));
-    await waitFor(() => expect(result.current.stalled).toBe("youtube"));
+    vi.mocked(getYtdlpVersion).mockResolvedValue({
+      installed: "2",
+      latest: "2",
+    } as never);
+    await act(() => result.current.refreshStatus());
+    expect(result.current.cookieStatus).toBe("stale");
+    expect(result.current.stalled).toBe("youtube");
+    expect(result.current.ytdlp).toMatchObject({ installed: "2" });
   });
 
   it("cancelDownload rejects when the API does, and still re-lists", async () => {

@@ -352,4 +352,41 @@ describe("Settings", () => {
     }
     expect(within(section).getAllByRole("button")).toHaveLength(4);
   });
+
+  it("tells the shell when the cookie was saved, so the rail light updates", async () => {
+    const onStatusChanged = vi.fn();
+    render(<Settings onStatusChanged={onStatusChanged} />);
+    await screen.findByRole("button", { name: /Save cookie/i });
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByLabelText("YouTube cookie"),
+      ".youtube.com\tTRUE\t/\tTRUE\t123\tSID\tabc",
+    );
+    await user.click(screen.getByRole("button", { name: /Save cookie/i }));
+    await waitFor(() => expect(putCookie).toHaveBeenCalled());
+    await waitFor(() => expect(onStatusChanged).toHaveBeenCalledTimes(1));
+  });
+
+  it("tells the shell when YouTube activity is paused or resumed", async () => {
+    const onStatusChanged = vi.fn();
+    render(<Settings onStatusChanged={onStatusChanged} />);
+    const toggle = await screen.findByRole("checkbox", {
+      name: /pause all youtube activity/i,
+    });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(pauseYoutube).toHaveBeenCalled());
+    await waitFor(() => expect(onStatusChanged).toHaveBeenCalledTimes(1));
+  });
+
+  it("tells the shell when yt-dlp was updated, so the rail stops offering it", async () => {
+    vi.mocked(updateYtdlp).mockResolvedValue({
+      version: "2026.08.15",
+      previous_version: "2026.01.01",
+      updated: true,
+    });
+    const onStatusChanged = vi.fn();
+    render(<Settings onStatusChanged={onStatusChanged} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Update$/ }));
+    await waitFor(() => expect(onStatusChanged).toHaveBeenCalledTimes(1));
+  });
 });

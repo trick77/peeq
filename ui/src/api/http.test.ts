@@ -5,6 +5,7 @@ import {
   ApiError,
   onAuthExpired,
   notifyAuthExpired,
+  expectText,
 } from "./http";
 
 describe("api http client", () => {
@@ -108,6 +109,17 @@ describe("auth expiry listener", () => {
       AuthExpiredError,
     );
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 401 on expectText notifies too, and a 2xx yields the body", async () => {
+    const listener = listen(vi.fn());
+    await expect(
+      expectText(new Response("", { status: 401 }), "x"),
+    ).rejects.toBeInstanceOf(AuthExpiredError);
+    expect(listener).toHaveBeenCalledTimes(1);
+    await expect(
+      expectText(new Response("WEBVTT", { status: 200 }), "x"),
+    ).resolves.toBe("WEBVTT");
   });
 
   it("a 401 on api.postNoContent notifies too", async () => {

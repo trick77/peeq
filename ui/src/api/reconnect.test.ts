@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { streamWithBackoff } from "./reconnect";
+import { streamWithBackoff, HEALTHY_OPEN_MS } from "./reconnect";
 import { AuthExpiredError } from "./http";
 import type { SSEEvent } from "./stream";
 
@@ -16,8 +16,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// A connect that is accepted and then closes at once, like a proxy timing
-// out the stream. `opened` false: the server never accepted it (down).
+// A connect that is accepted and then closes at once, like a proxy answering
+// with a page instead of a stream. `opened` false: the server never accepted
+// it (down).
 function closesImmediately(
   opened = true,
 ): Connect & { mock: ReturnType<typeof vi.fn> } {
@@ -30,17 +31,47 @@ function closesImmediately(
   return connect;
 }
 
+// A connect that is accepted and stays open for `liveMs` before the server
+// closes it: a healthy stream cut by a proxy idle timeout.
+function livesFor(liveMs: number): Connect & { calls: number } {
+  const connect = (async (_onEvent, _signal, onOpen) => {
+    connect.calls += 1;
+    onOpen();
+    await new Promise<void>((r) => setTimeout(r, liveMs));
+  }) as Connect & { calls: number };
+  connect.calls = 0;
+  return connect;
+}
+
 describe("streamWithBackoff", () => {
-  it("reconnects after the stream closes, waiting the base delay first", async () => {
-    const connect = closesImmediately();
+  it("reconnects after a healthy stream is cut, waiting the base delay first", async () => {
+    const connect = livesFor(HEALTHY_OPEN_MS);
     const ac = new AbortController();
     void streamWithBackoff(connect, () => {}, ac.signal, { baseMs: 1000 });
+    await vi.advanceTimersByTimeAsync(HEALTHY_OPEN_MS);
+    expect(connect.calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(connect.calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(connect.calls).toBe(2);
+    ac.abort();
+  });
+
+  it("keeps backing off when the server accepts and closes at once", async () => {
+    const connect = closesImmediately();
+    const ac = new AbortController();
+    void streamWithBackoff(connect, () => {}, ac.signal, {
+      baseMs: 1000,
+      maxMs: 4000,
+    });
     await vi.advanceTimersByTimeAsync(0);
     expect(connect.mock).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(999);
-    expect(connect.mock).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(connect.mock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(connect.mock).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(connect.mock).toHaveBeenCalledTimes(4);
     ac.abort();
   });
 
@@ -64,19 +95,23 @@ describe("streamWithBackoff", () => {
     ac.abort();
   });
 
-  it("an accepted subscription resets the delay to the base, even with no frame", async () => {
+  it("a subscription that lived resets the delay to the base, even with no frame", async () => {
     let calls = 0;
     const connect: Connect = async (_onEvent, _signal, onOpen) => {
       calls += 1;
-      // The third attempt is accepted (and then closes, idle).
-      if (calls === 3) onOpen();
+      // The third attempt is accepted and stays up (idle) before it is cut.
+      if (calls === 3) {
+        onOpen();
+        await new Promise<void>((r) => setTimeout(r, HEALTHY_OPEN_MS));
+      }
     };
     const ac = new AbortController();
     void streamWithBackoff(connect, () => {}, ac.signal, { baseMs: 1000 });
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(1000); // → 2
-    await vi.advanceTimersByTimeAsync(2000); // → 3, which got a frame
+    await vi.advanceTimersByTimeAsync(2000); // → 3, healthy
     expect(calls).toBe(3);
+    await vi.advanceTimersByTimeAsync(HEALTHY_OPEN_MS); // …cut
     await vi.advanceTimersByTimeAsync(1000); // back to base, not 4s
     expect(calls).toBe(4);
     ac.abort();
@@ -135,7 +170,7 @@ describe("streamWithBackoff", () => {
     ac.abort();
   });
 
-  it("calls onReconnect once each reconnect is accepted, never for the first open or a refused attempt", async () => {
+  it("calls onReconnect on every accepted open after the first attempt, never on a refusal", async () => {
     let calls = 0;
     const connect: Connect = async (_onEvent, _signal, onOpen) => {
       calls += 1;
@@ -156,6 +191,26 @@ describe("streamWithBackoff", () => {
     expect(onReconnect).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2000);
     expect(calls).toBe(3);
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+    ac.abort();
+  });
+
+  it("catches up on the first open when earlier attempts were refused", async () => {
+    let calls = 0;
+    const connect: Connect = async (_onEvent, _signal, onOpen) => {
+      calls += 1;
+      if (calls === 2) onOpen();
+    };
+    const onReconnect = vi.fn();
+    const ac = new AbortController();
+    void streamWithBackoff(connect, () => {}, ac.signal, {
+      baseMs: 1000,
+      onReconnect,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onReconnect).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(calls).toBe(2);
     expect(onReconnect).toHaveBeenCalledTimes(1);
     ac.abort();
   });
