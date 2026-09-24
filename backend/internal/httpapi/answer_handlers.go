@@ -298,7 +298,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 
 	writer, err := sse.NewWriter(w)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "streaming unsupported")
+		serverError(w, r, err, "streaming unsupported")
 		return
 	}
 	stopHeartbeat := writer.Heartbeat(r.Context(), sseHeartbeatInterval)

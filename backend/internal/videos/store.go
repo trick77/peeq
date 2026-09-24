@@ -528,7 +528,7 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 		args...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list videos (%+v): %w", opts, err)
+		return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -536,12 +536,12 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 	for rows.Next() {
 		v, err := scanVideo(rows)
 		if err != nil {
-			return nil, fmt.Errorf("list videos (%+v): %w", opts, err)
+			return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
 		}
 		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list videos (%+v): %w", opts, err)
+		return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
 	}
 	return out, nil
 }

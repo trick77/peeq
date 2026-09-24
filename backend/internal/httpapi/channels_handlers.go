@@ -174,7 +174,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusConflict, "cookie required")
 			return
 		}
-		writeJSONError(w, http.StatusBadGateway, "resolve channel failed: "+err.Error())
+		upstreamError(w, r, err, "resolve channel failed")
 		return
 	}
 	ucid, name := info.UCID, info.Name
@@ -225,7 +225,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	// channel that is subscribed and will keep being scanned.
 	subscribed, err := s.channelSubscribed(ucid)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "load subscription state failed")
+		serverError(w, r, err, "load subscription state failed")
 		return
 	}
 	writeJSONStatus(w, http.StatusCreated, map[string]any{"id": ucid, "name": name, "subscribed": subscribed})
@@ -630,7 +630,7 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 				"refresh timed out: YouTube did not answer in "+resolveCap.String())
 			return
 		}
-		writeJSONError(w, http.StatusBadGateway, "refresh failed: "+err.Error())
+		upstreamError(w, r, err, "refresh failed")
 		return
 	}
 	// No onChannelResolved here: that hook exists so a test can await the

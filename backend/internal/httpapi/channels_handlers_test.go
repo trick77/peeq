@@ -3288,3 +3288,47 @@ func TestChannelAdd_storesArtworkOnTheRow(t *testing.T) {
 		}
 	}
 }
+
+// TestChannelsPost_subscriptionStateError_logs500 asserts that a store fault
+// while reading back the subscription state after a successful add is a
+// logged 500, not a silent one: before this the branch wrote the generic
+// message without ever recording the cause.
+func TestChannelsPost_subscriptionStateError_logs500(t *testing.T) {
+	logs := captureLogs(t)
+	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UClog", Name: "Log"}})
+	h := New(deps)
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE subscriptions`); err != nil {
+		t.Fatalf("drop subscriptions table: %v", err)
+	}
+	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@log"})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "load subscription state failed") {
+		t.Fatalf("body = %s, want the subscription-state message", rr.Body.String())
+	}
+	out := logs.String()
+	if !strings.Contains(out, "request failed") ||
+		!strings.Contains(out, `client_message="load subscription state failed"`) ||
+		!strings.Contains(out, "subscriptions") {
+		t.Fatalf("log should carry the cause of that branch, got: %s", out)
+	}
+}
+
+// TestChannelsPost_resolveFailure_logsWarn asserts a yt-dlp failure on the
+// add path leaves a log line. The 502 body keeps carrying yt-dlp's text for
+// the UI; the operator used to get nothing but the access line.
+func TestChannelsPost_resolveFailure_logsWarn(t *testing.T) {
+	logs := captureLogs(t)
+	h := newChannelsTestServer(t, &testResolver{err: errors.New("yt-dlp said no")})
+	rr := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@x"})
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "yt-dlp said no") {
+		t.Fatalf("body should keep the resolver text, got %s", rr.Body.String())
+	}
+	if !strings.Contains(logs.String(), "upstream request failed") || !strings.Contains(logs.String(), "yt-dlp said no") {
+		t.Fatalf("log should carry the cause, got: %s", logs.String())
+	}
+}
