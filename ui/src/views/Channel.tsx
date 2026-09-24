@@ -178,6 +178,21 @@ export function ChannelState({ detail }: { detail: ChannelDetail }) {
   );
 }
 
+// newestScanId is the id of the newest scan event for `channelId` in the
+// buffer, or 0 when there is none.
+export function newestScanId(
+  live: ActivityEvent[],
+  channelId: string | null,
+): number {
+  let newest = 0;
+  for (const e of live) {
+    if (e.kind === "scan" && e.subject_id === channelId && e.id > newest) {
+      newest = e.id;
+    }
+  }
+  return newest;
+}
+
 export function Channel({
   channelId,
   onOpenVideo,
@@ -253,38 +268,27 @@ export function Channel({
 
   useEffect(() => {
     channelIdRef.current = channelId;
-    handledScanID.current = 0;
     setDetail(null);
     setTab("archive");
     setDescOpen(false);
-    reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
 
-  // handledScanID is the newest scan event already acted on. App keeps `live` as
-  // a rolling buffer of the last 50 events, so a matching scan event STAYS in it:
-  // without this high-water mark the effect below would refetch again on every
-  // later unrelated event (a download, a summary) for as long as that scan sat in
-  // the buffer, turning one scan into dozens of channel requests.
-  const handledScanID = useRef(0);
+  // The id of the newest scan of THIS channel in the buffer, or 0. App keeps
+  // `live` as a rolling buffer of the last 50 events, so a scan event stays in
+  // it while unrelated events (a download, a summary) arrive after it: keying
+  // the fetch below on this id, not on the buffer, is what makes one scan cost
+  // one refetch — and a scan already there when the page opens costs none,
+  // since the mount fetch sees its result.
+  const newestScan = newestScanId(live, channelId);
 
-  // Refetch when a scan for THIS channel lands, so last_scanned_at and
-  // next_scan_at move on their own and the Scan now button leaves its "Queued"
-  // state without a reload. Filtered by subject id — another channel's scan says
-  // nothing about this page.
+  // Fetch on open, and again whenever a scan for this channel lands, so
+  // last_scanned_at and next_scan_at move on their own and the Scan now button
+  // leaves its "Queued" state without a reload. Declared after the reset above
+  // so an open finds the page cleared before the fetch is fired.
   useEffect(() => {
-    if (!channelId) return;
-    let newest = 0;
-    for (const e of live) {
-      if (e.kind === "scan" && e.subject_id === channelId && e.id > newest) {
-        newest = e.id;
-      }
-    }
-    if (newest === 0 || newest <= handledScanID.current) return;
-    handledScanID.current = newest;
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, channelId]);
+  }, [channelId, newestScan]);
 
   // Measure after layout, and only while the clamp is actually on: an
   // expanded paragraph never overflows, so measuring one would say "no
