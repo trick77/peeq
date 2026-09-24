@@ -1149,8 +1149,11 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	e, err := s.ledger.Get(id)
-	if err != nil || e == nil ||
-		(e.State != channelvideos.StatePending && e.State != channelvideos.StateIgnored) {
+	if err != nil {
+		serverError(w, r, err, "load pending failed")
+		return
+	}
+	if e == nil || (e.State != channelvideos.StatePending && e.State != channelvideos.StateIgnored) {
 		writeJSONError(w, http.StatusNotFound, "pending item not found")
 		return
 	}
@@ -1164,7 +1167,14 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	// list (e.g. added manually via the video URL), do NOT re-enqueue a
 	// duplicate: just clear it from Pending and report it back as already
 	// downloaded.
-	if v, verr := s.videos.Get(e.VideoID); verr == nil && v != nil && v.Status == videos.StatusDownloaded {
+	v, err := s.videos.Get(e.VideoID)
+	if err != nil {
+		// A store fault must not read as "not downloaded": that path would
+		// overwrite a downloaded row with 'queued' and enqueue a duplicate.
+		serverError(w, r, err, "load video failed")
+		return
+	}
+	if v != nil && v.Status == videos.StatusDownloaded {
 		if err := s.ledger.SetState(e.VideoID, channelvideos.StateQueued); err != nil {
 			serverError(w, r, err, "update pending failed")
 			return
@@ -1229,7 +1239,11 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	e, err := s.ledger.Get(id)
-	if err != nil || e == nil {
+	if err != nil {
+		serverError(w, r, err, "load pending failed")
+		return
+	}
+	if e == nil {
 		writeJSONError(w, http.StatusNotFound, "pending item not found")
 		return
 	}

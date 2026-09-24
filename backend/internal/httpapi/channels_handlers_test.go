@@ -2275,11 +2275,6 @@ func TestPendingList_storeError_500(t *testing.T) {
 	if _, err := h.channels.DB().Exec(`DROP TABLE channel_videos`); err != nil {
 		t.Fatalf("drop channel_videos table: %v", err)
 	}
-	rr := postJSON(t, h, "/api/pending/x/ignore", nil) // sanity: ledger still reachable enough to 404
-	if rr.Code != http.StatusInternalServerError && rr.Code != http.StatusNotFound {
-		t.Fatalf("sanity ignore status = %d", rr.Code)
-	}
-
 	req := httptest.NewRequest(http.MethodGet, "/api/pending", nil)
 	req.AddCookie(loginAndGetCookie(t, h))
 	rec := httptest.NewRecorder()
@@ -2322,8 +2317,10 @@ func TestPendingDownload_upsertVideoStoreError_500(t *testing.T) {
 	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
 		t.Fatalf("insert p1: %v", err)
 	}
-	if _, err := h.channels.DB().Exec(`DROP TABLE videos`); err != nil {
-		t.Fatalf("drop videos table: %v", err)
+	// The lookup before the upsert must still work (it has its own 500 test),
+	// so block only the insert.
+	if _, err := h.channels.DB().Exec(`CREATE TRIGGER block_insert BEFORE INSERT ON videos BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
+		t.Fatalf("create trigger: %v", err)
 	}
 
 	rr := postJSON(t, h, "/api/pending/p1/download", nil)
@@ -3321,5 +3318,58 @@ func TestChannelsPost_resolveFailure_logsWarn(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "upstream request failed") || !strings.Contains(logs.String(), "yt-dlp said no") {
 		t.Fatalf("log should carry the cause, got: %s", logs.String())
+	}
+}
+
+// TestPending_ledgerError_500 asserts a ledger read failure on the download
+// and ignore paths is a logged 500, not the 404 the combined
+// `err != nil || e == nil` condition used to answer: a store fault must not
+// look like a missing row.
+func TestPending_ledgerError_500(t *testing.T) {
+	for _, path := range []string{"/api/pending/p1/download", "/api/pending/p1/ignore"} {
+		t.Run(path, func(t *testing.T) {
+			logs := captureLogs(t)
+			h := newPendingTestServer(t)
+			if _, err := h.channels.DB().Exec(`DROP TABLE channel_videos`); err != nil {
+				t.Fatalf("drop channel_videos table: %v", err)
+			}
+			rr := postJSON(t, h, path, nil)
+			if rr.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(logs.String(), `client_message="load pending failed"`) {
+				t.Fatalf("log should carry the cause, got: %s", logs.String())
+			}
+		})
+	}
+}
+
+// TestPendingDownload_videoLookupError_500 asserts a videos read failure
+// after the ledger row was found is a 500 too. It used to be read as "not
+// downloaded", which would have overwritten a downloaded row with 'queued'
+// and enqueued a duplicate job.
+func TestPendingDownload_videoLookupError_500(t *testing.T) {
+	logs := captureLogs(t)
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+	if _, err := h.channels.DB().Exec(`DROP TABLE videos`); err != nil {
+		t.Fatalf("drop videos table: %v", err)
+	}
+	rr := postJSON(t, h, "/api/pending/p1/download", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(logs.String(), `client_message="load video failed"`) {
+		t.Fatalf("log should carry the cause, got: %s", logs.String())
+	}
+	var n int
+	if err := h.channels.DB().QueryRow(`SELECT COUNT(*) FROM download_jobs`).Scan(&n); err != nil {
+		t.Fatalf("count jobs: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("jobs enqueued = %d, want 0", n)
 	}
 }
