@@ -10,12 +10,12 @@ import {
 } from "../api";
 import { getYtdlpVersion, type YtdlpVersion } from "../api/ytdlp";
 import { streamWithBackoff } from "../api/reconnect";
+import { publishProgress, pruneProgress } from "./progressStore";
 import type { SSEEvent } from "../api/stream";
 import type { DownloadsStatus, SummaryEventData } from "../api/downloads";
 import type { SummaryStatus } from "../api/enums";
 import type {
   ActivityEvent,
-  DownloadProgress,
   DownloadProgressEvent,
   Job,
   SummaryJob,
@@ -32,7 +32,6 @@ export type LiveQueue = {
   summaryPhaseByVideoId: Record<string, string>;
   summaryEvent: SummaryEvent | null;
   liveActivity: ActivityEvent[];
-  progressByJobId: Record<number, DownloadProgress>;
   pendingCount: number | undefined;
   setPendingCount: (n: number | undefined) => void;
   cookieStatus: string | undefined;
@@ -108,31 +107,17 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
     youtube_paused: false,
     youtube_pause_reason: "",
   });
-  // Live download progress for the rail's dock: accumulated per job from the
-  // SSE feed directly rather than re-polling listDownloads() on every tick
-  // (that fires multiple times a second while a download is active). Pruned
-  // to the jobs still listed every time the list is adopted, so it stays
-  // bounded to the queue rather than growing for every job of the session.
-  const [progressByJobId, setProgressByJobId] = useState<
-    Record<number, DownloadProgress>
-  >({});
   const jobsRef = useRef<Job[]>([]);
   useEffect(() => {
     jobsRef.current = jobs;
   }, [jobs]);
 
-  // Every listDownloads() consumer goes through here, so the prune above has
-  // one place to happen.
+  // Every listDownloads() consumer goes through here, so the progress store
+  // is pruned to the listed jobs in one place (see progressStore).
   const adoptJobs = useCallback((list: Job[]) => {
     setJobs(list);
     setJobsLoaded(true);
-    setProgressByJobId((prev) => {
-      const next: Record<number, DownloadProgress> = {};
-      for (const j of list) {
-        if (prev[j.job_id] !== undefined) next[j.job_id] = prev[j.job_id];
-      }
-      return next;
-    });
+    pruneProgress(list.map((j) => j.job_id));
   }, []);
 
   // Refetch the queue on demand — used when a view queues something itself
@@ -350,14 +335,9 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
       }
       if (evt.event !== "progress") return;
       const data = evt.data as DownloadProgressEvent;
-      setProgressByJobId((prev) => ({
-        ...prev,
-        [data.job_id]: {
-          percent: data.percent,
-          speed: data.speed,
-          eta: data.eta,
-        },
-      }));
+      // Straight to the store, not to state: a tick must re-render the lane
+      // that draws it and nothing else.
+      publishProgress(data);
       // A progress event for a job we haven't seen yet means a download
       // was queued after the initial listDownloads() load (e.g. from the
       // Add view) — refresh the queue once so the dock's "N queued" count
@@ -396,7 +376,6 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
     summaryPhaseByVideoId,
     summaryEvent,
     liveActivity,
-    progressByJobId,
     pendingCount,
     setPendingCount,
     cookieStatus,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, memo } from "react";
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
@@ -122,7 +122,7 @@ const fmt = formatDuration;
 // the approved Phase 3 mockup (mixed layout: Summary + Highlights sit beside
 // the video in a sticky sidebar; Contents and the collapsible Transcript run
 // full-width below it).
-export function Player({
+function PlayerImpl({
   videoId,
   seekTo,
   onSeekConsumed,
@@ -1698,3 +1698,8 @@ export function Player({
     </div>
   );
 }
+
+// Memoised: a shell re-render (a queue poll, an answer token) must not reach
+// this unless one of its own props changed. Every prop App hands it is stable
+// or a value, which is what makes the memo hold.
+export const Player = memo(PlayerImpl);

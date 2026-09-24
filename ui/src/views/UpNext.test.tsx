@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { UpNext } from "./UpNext";
+import { publishProgress, resetProgressForTests } from "../shell/progressStore";
 import type { Job, SummaryJob } from "../api/types";
 
 vi.mock("../api", () => ({
@@ -58,6 +59,7 @@ const noop = () => Promise.resolve();
 
 describe("UpNext", () => {
   beforeEach(() => {
+    resetProgressForTests();
     vi.mocked(listUpcoming).mockReset();
     vi.mocked(listUpcoming).mockResolvedValue({ items: [], truncated: 0 });
     vi.mocked(listFailedSummaries).mockReset();
@@ -131,10 +133,10 @@ describe("UpNext", () => {
   });
 
   it("puts a running download under Now, with its bar and its eta", async () => {
+    publishProgress({ job_id: 9, percent: 62, speed: "8MiB/s", eta: "00:41" });
     render(
       <UpNext
         jobs={[job({ job_id: 9, title: "A Long Video", channel_name: "Chan" })]}
-        progressByJobId={{ 9: { percent: 62, speed: "8MiB/s", eta: "00:41" } }}
         summaries={[]}
         onCancel={noop}
       />,
@@ -161,10 +163,10 @@ describe("UpNext", () => {
   // way, so the first ticks arrive with the percent alone. Neither separator
   // may show up on its own then — a trailing "3% ·" reads like a truncation.
   it("shows only the percent while speed and eta are still unknown", () => {
+    publishProgress({ job_id: 4, percent: 3, speed: "", eta: "" });
     render(
       <UpNext
         jobs={[job({ job_id: 4, title: "Just started" })]}
-        progressByJobId={{ 4: { percent: 3, speed: "", eta: "" } }}
         summaries={[]}
         onCancel={noop}
       />,

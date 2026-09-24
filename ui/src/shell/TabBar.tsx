@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import { Icon } from "../icons";
 import { MORE_ITEMS, TAB_ITEMS, type NavItem, type ViewId } from "./nav";
 
@@ -13,7 +13,7 @@ import { MORE_ITEMS, TAB_ITEMS, type NavItem, type ViewId } from "./nav";
 // The other five live behind "More". That sheet is the same scrim/Escape
 // pattern as ConfirmDialog, deliberately: a phone has one modal idiom and this
 // is it.
-export function TabBar({
+function TabBarImpl({
   active,
   onNavigate,
   pendingCount,
@@ -177,3 +177,8 @@ export function TabBar({
     </>
   );
 }
+
+// Memoised: a shell re-render (a queue poll, an answer token) must not reach
+// this unless one of its own props changed. Every prop App hands it is stable
+// or a value, which is what makes the memo hold.
+export const TabBar = memo(TabBarImpl);

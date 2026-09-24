@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
 import { SignIn } from "./shell/SignIn";
 import { useAuthBootstrap } from "./shell/useAuthBootstrap";
@@ -191,9 +191,11 @@ export function App() {
   // It is also what keeps two Players from rendering a <video> into the one
   // shared host: dropping the marker promotes the page to the Player that owns
   // playback, and the other one stops being rendered at all.
-  function handleMediaKnown(id: string, hasMedia: boolean) {
-    if (hasMedia && summaryOrigin?.id === id) setSummaryOrigin(null);
-  }
+  // Stable (functional update, no deps): it is a Player prop, and the Player
+  // is memoised so a shell re-render does not reach it.
+  const handleMediaKnown = useCallback((id: string, hasMedia: boolean) => {
+    setSummaryOrigin((prev) => (hasMedia && prev?.id === id ? null : prev));
+  }, []);
   // setView keeps every existing call site (the rail, the banner's "fix
   // cookie", ViewSwitch's back/deleted handlers) unchanged — it just pushes a
   // new URL. navigate is stable, so this is too.
@@ -290,7 +292,6 @@ export function App() {
     summaryPhaseByVideoId,
     summaryEvent,
     liveActivity,
-    progressByJobId,
     pendingCount,
     setPendingCount,
     cookieStatus,
@@ -388,6 +389,69 @@ export function App() {
     refreshPending();
   }, [authChecked, user, view, refreshPending]);
 
+  // The callbacks below are handed to memoised shell pieces (Player, the rail,
+  // the dock), so they are stable — and declared here, above the early
+  // returns, because hooks cannot follow them.
+  // openChannel is the channel page's only entry point: there is no rail
+  // item for it, so this is called from every place a channel name appears.
+  const openChannel = useCallback(
+    (id: string) => navigate({ view: "channel", channelId: id }),
+    [navigate],
+  );
+
+  // stopPlayback — the dock's ✕. Ends the sitting rather than pausing it, so
+  // it also drops the server-side now-playing pointer: leaving it would have
+  // the rail keep offering to reopen the thing you just closed, on this device
+  // and on every other one.
+  //
+  // The element is paused before the state change rather than left to the
+  // unmount, so the sound stops on the click instead of on the next commit.
+  const stopPlayback = useCallback(() => {
+    hostedVideo()?.pause();
+    setPlaybackVideoId(null);
+    setNowPlaying(null);
+    setPersistedVideoId(null);
+    setPlaybackState(null).catch(() => {});
+  }, []);
+
+  // The dock's tile, title and chevron all lead back to the player page. It is
+  // the same navigation the rail's "Now playing" performs, minus the pointer
+  // re-read: the dock is showing what is playing in this tab right now, so
+  // there is nothing to go and ask the server about.
+  const openPlayingVideo = useCallback(() => {
+    setPendingSeek(undefined);
+    setSummaryOrigin(null);
+    navigate({ view: "player", videoId: playbackVideoId });
+  }, [navigate, playbackVideoId]);
+
+  // Player props that used to be inline arrows, recreated every render.
+  const clearPendingSeek = useCallback(() => setPendingSeek(undefined), []);
+  // Through navigate, not setView: setView is rebuilt on every route change
+  // (it reads the route), and a prop that changes on navigation would defeat
+  // the Player's memo exactly when the hidden Player is most expensive. For
+  // a plain view the two are the same call.
+  const goToLibrary = useCallback(
+    () => navigate({ view: "library" }),
+    [navigate],
+  );
+  const handlePlayerDeleted = useCallback(() => {
+    // The file is gone, so there is nothing left to play or to dock — and the
+    // backend has already dropped the pointer.
+    setPlaybackVideoId(null);
+    setNowPlaying(null);
+    setPersistedVideoId(null);
+    goToLibrary();
+  }, [goToLibrary]);
+  // Where the summary page goes back to, as a stable function per origin.
+  const backFromSummary = useMemo(
+    () =>
+      readingSummaryFrom
+        ? () => navigate({ view: readingSummaryFrom })
+        : undefined,
+    [readingSummaryFrom, navigate],
+  );
+  const toggleCollapsed = useCallback(() => setSidebarCollapsed((v) => !v), []);
+
   // The public share page renders above everything else — no rail, no top bar,
   // and crucially before the auth gate below, since its whole point is to work
   // for a recipient who is not signed in.
@@ -464,37 +528,6 @@ export function App() {
     navigate({ view: "player", videoId: id });
   }
 
-  // openChannel is the channel page's only entry point: there is no rail
-  // item for it, so this is called from every place a channel name appears.
-  function openChannel(id: string) {
-    navigate({ view: "channel", channelId: id });
-  }
-
-  // stopPlayback — the dock's ✕. Ends the sitting rather than pausing it, so
-  // it also drops the server-side now-playing pointer: leaving it would have
-  // the rail keep offering to reopen the thing you just closed, on this device
-  // and on every other one.
-  //
-  // The element is paused before the state change rather than left to the
-  // unmount, so the sound stops on the click instead of on the next commit.
-  function stopPlayback() {
-    hostedVideo()?.pause();
-    setPlaybackVideoId(null);
-    setNowPlaying(null);
-    setPersistedVideoId(null);
-    setPlaybackState(null).catch(() => {});
-  }
-
-  // The dock's tile, title and chevron all lead back to the player page. It is
-  // the same navigation the rail's "Now playing" performs, minus the pointer
-  // re-read: the dock is showing what is playing in this tab right now, so
-  // there is nothing to go and ask the server about.
-  function openPlayingVideo() {
-    setPendingSeek(undefined);
-    setSummaryOrigin(null);
-    navigate({ view: "player", videoId: playbackVideoId });
-  }
-
   // The rail and the phone's tab bar are the same navigation in two shapes, so
   // they are handed the same three answers rather than each working them out.
   //
@@ -533,7 +566,7 @@ export function App() {
           active={navActive}
           onNavigate={setView}
           collapsed={railCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+          onToggleCollapsed={toggleCollapsed}
           pendingCount={pendingCount}
           upNextCount={navUpNextCount}
           upNextLive={navUpNextLive}
@@ -565,15 +598,8 @@ export function App() {
                 visible={showPlayerPage}
                 onNowPlaying={handleNowPlaying}
                 seekTo={pendingSeek}
-                onSeekConsumed={() => setPendingSeek(undefined)}
-                onDeleted={() => {
-                  // The file is gone, so there is nothing left to play or to
-                  // dock — and the backend has already dropped the pointer.
-                  setPlaybackVideoId(null);
-                  setNowPlaying(null);
-                  setPersistedVideoId(null);
-                  setView("library");
-                }}
+                onSeekConsumed={clearPendingSeek}
+                onDeleted={handlePlayerDeleted}
                 onOpenChannel={openChannel}
                 onQueued={refreshQueue}
                 // No summaryOrigin and no back link: this Player is only ever
@@ -602,7 +628,7 @@ export function App() {
               onOpenVideoAt={openVideoAt}
               onOpenVideoFromSearch={openVideoFromSearch}
               onOpenChannel={openChannel}
-              onSeekConsumed={() => setPendingSeek(undefined)}
+              onSeekConsumed={clearPendingSeek}
               search={search}
               summaryOrigin={readingSummaryFrom}
               summaryEvent={summaryEvent}
@@ -615,6 +641,8 @@ export function App() {
               setView={setView}
               setPendingCount={setPendingCount}
               onQueued={refreshQueue}
+              onDeleted={goToLibrary}
+              onBackFromSummary={backFromSummary}
               onStatusChanged={refreshStatus}
               onPendingChanged={refreshPending}
               librarySearch={librarySearch}
@@ -629,7 +657,6 @@ export function App() {
               onInboxSearchChange={setInboxSearch}
               queueSignal={queueSignal}
               jobs={jobs}
-              progressByJobId={progressByJobId}
               summaries={summaries}
               summaryPhaseByVideoId={summaryPhaseByVideoId}
               onCancelDownload={onCancelDownload}
@@ -672,6 +699,8 @@ function ViewSwitch({
   setView,
   setPendingCount,
   onQueued,
+  onDeleted,
+  onBackFromSummary,
   onStatusChanged,
   onPendingChanged,
   librarySearch,
@@ -686,7 +715,6 @@ function ViewSwitch({
   onInboxSearchChange,
   queueSignal,
   jobs,
-  progressByJobId,
   summaries,
   summaryPhaseByVideoId,
   onCancelDownload,
@@ -719,6 +747,8 @@ function ViewSwitch({
   // no pill for it, which is deliberately not the same claim as "empty".
   setPendingCount: (n: number | undefined) => void;
   onQueued: () => void;
+  onDeleted: () => void;
+  onBackFromSummary?: () => void;
   onStatusChanged: () => void;
   onPendingChanged: () => void;
   librarySearch: string;
@@ -733,10 +763,6 @@ function ViewSwitch({
   onInboxSearchChange: (value: string) => void;
   queueSignal: string;
   jobs: Job[];
-  progressByJobId: Record<
-    number,
-    { percent: number; speed: string; eta: string }
-  >;
   summaries: SummaryJob[];
   summaryPhaseByVideoId: Record<string, string>;
   onCancelDownload: (jobId: number) => Promise<void>;
@@ -771,7 +797,7 @@ function ViewSwitch({
           videoId={selectedVideoId}
           seekTo={pendingSeek}
           onSeekConsumed={onSeekConsumed}
-          onDeleted={() => setView("library")}
+          onDeleted={onDeleted}
           onOpenChannel={onOpenChannel}
           onQueued={onQueued}
           onMediaKnown={onMediaKnown}
@@ -782,9 +808,7 @@ function ViewSwitch({
           // gets no back link at all, rather than the "Back to inbox" it used to
           // claim regardless of how it was reached.
           summaryOrigin={summaryOrigin}
-          onBackFromSummary={
-            summaryOrigin ? () => setView(summaryOrigin) : undefined
-          }
+          onBackFromSummary={onBackFromSummary}
           // The Prev/Next stepper walks the Inbox, so it is passed only when
           // that is where this page came from. A search result that happens to
           // also sit in the inbox would otherwise show "3 of 40" and offer to
@@ -836,7 +860,6 @@ function ViewSwitch({
       return (
         <UpNext
           jobs={jobs}
-          progressByJobId={progressByJobId}
           summaries={summaries}
           summaryPhaseByVideoId={summaryPhaseByVideoId}
           search={upNextSearch}
