@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -99,8 +97,7 @@ func (s *server) skipTarget(w http.ResponseWriter, r *http.Request) (id string, 
 	var req skipRequest
 	// An absent body is the ordinary skip, so EOF is not an error here — only
 	// malformed JSON is.
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeJSONOptional(w, r, &req, maxJSONBody, "invalid request body") {
 		return "", "", false
 	}
 	if req.At != "" {

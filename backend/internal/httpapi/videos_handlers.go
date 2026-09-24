@@ -386,7 +386,9 @@ func (s *server) handleFavoriteVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req favoriteRequest
-	_ = json.NewDecoder(r.Body).Decode(&req) // empty/invalid body => toggle
+	if !decodeJSONLenient(w, r, &req, maxJSONBody) { // empty/invalid body => toggle
+		return
+	}
 
 	newVal := !v.Favorite
 	if req.Favorite != nil {
@@ -419,7 +421,10 @@ func (s *server) handleCategoryVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req categoryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Category == nil {
+	if !decodeJSON(w, r, &req, maxJSONBody, "category (string) is required") {
+		return
+	}
+	if req.Category == nil {
 		writeJSONError(w, http.StatusBadRequest, "category (string) is required")
 		return
 	}
@@ -465,7 +470,10 @@ func (s *server) handleWatchedVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req watchedRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Watched == nil {
+	if !decodeJSON(w, r, &req, maxJSONBody, "watched (bool) is required") {
+		return
+	}
+	if req.Watched == nil {
 		writeJSONError(w, http.StatusBadRequest, "watched (bool) is required")
 		return
 	}
@@ -515,7 +523,10 @@ func (s *server) handleResumeVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req resumeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Position == nil {
+	if !decodeJSON(w, r, &req, maxJSONBody, "position (number) is required") {
+		return
+	}
+	if req.Position == nil {
 		writeJSONError(w, http.StatusBadRequest, "position (number) is required")
 		return
 	}

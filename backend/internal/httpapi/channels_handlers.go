@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -158,7 +157,10 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req channelsPostRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.URL) == "" {
+	if !decodeJSON(w, r, &req, maxJSONBody, "url is required") {
+		return
+	}
+	if strings.TrimSpace(req.URL) == "" {
 		writeJSONError(w, http.StatusBadRequest, "url is required")
 		return
 	}
@@ -738,8 +740,7 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var req channelsPutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeJSON(w, r, &req, maxJSONBody, "invalid request body") {
 		return
 	}
 

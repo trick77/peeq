@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/trick77/peeq/internal/playback"
@@ -63,8 +62,7 @@ func (s *server) handleGetPlaybackState(w http.ResponseWriter, r *http.Request) 
 // writes an hour for a value that doesn't change between them.
 func (s *server) handlePutPlaybackState(w http.ResponseWriter, r *http.Request) {
 	var req playbackPutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeJSON(w, r, &req, maxJSONBody, "invalid request body") {
 		return
 	}
 	if s.playback == nil {
