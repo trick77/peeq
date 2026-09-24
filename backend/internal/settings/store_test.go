@@ -3,11 +3,13 @@ package settings
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/activity"
+	"github.com/trick77/peeq/internal/cookie"
 	"github.com/trick77/peeq/internal/store"
 )
 
@@ -51,8 +53,13 @@ func TestGet_defaults(t *testing.T) {
 
 func TestSetCookie_rejectsInvalid(t *testing.T) {
 	s := openTestDB(t)
-	if err := s.SetCookie(context.Background(), "garbage", "valid"); err == nil {
+	err := s.SetCookie(context.Background(), "garbage", "valid")
+	if err == nil {
 		t.Fatal("expected SetCookie to reject invalid cookie text")
+	}
+	// The handler's 400-vs-500 split rides on this chain staying intact.
+	if !errors.Is(err, cookie.ErrInvalid) {
+		t.Fatalf("SetCookie error %v does not wrap cookie.ErrInvalid", err)
 	}
 	got, err := s.Get(context.Background())
 	if err != nil {
