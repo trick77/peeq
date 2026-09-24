@@ -25,6 +25,7 @@ import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareControl } from "../components/ShareControl";
 import type { Video, VideoEmbeddings } from "../api/types";
 import type { SummaryStatus } from "../api/enums";
+import { ApiError } from "../api/http";
 import { formatDuration, gradientClassFor } from "../format";
 // Only the download filename helper is needed here now: parsing, finding and
 // copying all moved into components/TranscriptCard with the markup.
@@ -41,6 +42,14 @@ import { MetaHeader } from "./player/MetaHeader";
 import { useResumeSync } from "./player/useResumeSync";
 import { park, useParkedAt, videoHostNode } from "../videoHost";
 import type { NowPlaying } from "../nowPlaying";
+
+// refusalOr picks the message for a failed action: a 409 is the server saying
+// why it refused, in words written for the user ("only failed or removed
+// videos can be re-downloaded"), so those are shown as they are; any other
+// failure gets the generic line, since its text is for a log, not a stage.
+function refusalOr(e: unknown, fallback: string): string {
+  return e instanceof ApiError && e.status === 409 ? e.message : fallback;
+}
 
 // JUMP_SETTLE_SECONDS — how much playback a jumped-to moment has to survive
 // before the playhead is worth storing.
@@ -762,6 +771,15 @@ export function Player({
   // Callers reached from an async continuation must check openVideoIdRef
   // first: a toast raised after the user has moved on both misattributes the
   // message and schedules a timer the unmount cleanup can no longer clear.
+  // failToast is showToast for an action that failed after an await: only if
+  // the video it was about is still the one open, and always in the warning
+  // shape. `error` is never an option for these — a non-null error replaces
+  // the whole player, which unmounts the <video> and stops playback, and
+  // losing the video is worse than the failure itself.
+  function failToast(id: string, text: string) {
+    if (openVideoIdRef.current === id) showToast(text, "warning", "warn");
+  }
+
   function showToast(text: string, icon: IconName, tone: "info" | "warn") {
     setToast({ text, icon, tone });
     if (toastTimerRef.current !== undefined) {
@@ -1124,11 +1142,15 @@ export function Player({
   async function handleDelete() {
     if (!video) return;
     setDeleting(true);
+    const id = video.id;
     try {
-      await deleteVideo(video.id);
-      onDeleted();
-    } catch (e) {
-      setError((e as Error).message);
+      await deleteVideo(id);
+      // Guarded like every continuation that resumes after an await: the
+      // dialog can be dismissed mid-request and another video opened, and
+      // onDeleted tears down whatever is playing NOW.
+      if (openVideoIdRef.current === id) onDeleted();
+    } catch {
+      failToast(id, "Couldn't delete the video.");
       setDeleting(false);
       setConfirmDelete(false);
     }
@@ -1194,7 +1216,10 @@ export function Player({
       );
       showToast("Reprocessing", "refresh", "info");
     } catch (e) {
-      setError((e as Error).message);
+      // A 409 carries the reason the server refused (a re-download replacing
+      // the transcript, no transcript to reprocess) and that reason is what
+      // the user needs; anything else gets the generic line.
+      failToast(id, refusalOr(e, "Couldn't reprocess the video."));
     } finally {
       setReprocessing(false);
     }
@@ -1204,21 +1229,22 @@ export function Player({
     // Guard on redownloading too: like Reprocess, the menu closes on click, so
     // a reopened-menu double click would otherwise queue a second re-download.
     if (!video || redownloading) return;
+    const id = video.id;
     setRedownloading(true);
     try {
-      await redownload(video.id);
+      await redownload(id);
       // The video is 'queued' now. Nothing refetches this page's record — the
       // SSE subscription above only carries summary events — so without this
       // the stage would go on saying the file was deleted and go on offering
       // the button, and a second press would hit the endpoint's 409 ("only
       // failed or removed videos can be re-downloaded") and surface it as a
-      // page error. Functional form: `video` is a stale closure by now.
+      // failure toast. Functional form: `video` is a stale closure by now.
       setVideo((prev) =>
-        prev && prev.id === video.id ? { ...prev, status: "queued" } : prev,
+        prev && prev.id === id ? { ...prev, status: "queued" } : prev,
       );
       onQueued?.();
     } catch (e) {
-      setError((e as Error).message);
+      failToast(id, refusalOr(e, "Couldn't queue the re-download."));
     } finally {
       setRedownloading(false);
     }

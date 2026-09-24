@@ -1550,6 +1550,22 @@ describe("Player", () => {
       await waitFor(() => expect(onDeleted).toHaveBeenCalled());
     });
 
+    it("toasts when the delete fails, closes the dialog and keeps the video", async () => {
+      vi.mocked(deleteVideo).mockRejectedValueOnce(new Error("delete boom"));
+      const onDeleted = vi.fn();
+      render(<Player videoId="v1" onDeleted={onDeleted} />);
+      await openMenu();
+      fireEvent.click(await screen.findByRole("menuitem", { name: /delete/i }));
+      fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+      expect(
+        await screen.findByText("Couldn't delete the video."),
+      ).toBeInTheDocument();
+      expect(onDeleted).not.toHaveBeenCalled();
+      expect(document.querySelector("video")).not.toBeNull();
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(screen.queryByText(/delete boom/i)).toBeNull();
+    });
+
     it("cancelling the confirm dialog does not delete", async () => {
       render(<Player videoId="v1" onDeleted={() => {}} />);
       await openMenu();
@@ -1782,7 +1798,7 @@ describe("Player", () => {
       expect(screen.queryByText("Prose one.")).toBeNull();
     });
 
-    it("surfaces an error when the reprocess request fails", async () => {
+    it("toasts when the reprocess request fails, and keeps the video playing", async () => {
       vi.mocked(getVideo).mockResolvedValue(
         makeVideo({ summary_status: "error", has_subtitles: true }),
       );
@@ -1792,7 +1808,35 @@ describe("Player", () => {
       fireEvent.click(
         await screen.findByRole("menuitem", { name: /Reprocess video/i }),
       );
-      expect(await screen.findByText(/reprocess boom/i)).toBeInTheDocument();
+      expect(
+        await screen.findByText("Couldn't reprocess the video."),
+      ).toBeInTheDocument();
+      // The failure is a notice over the stage, not a page replacement: the
+      // <video> is still there and the menu can be opened again.
+      expect(document.querySelector("video")).not.toBeNull();
+      expect(document.querySelector(".stage-toast.warn")).not.toBeNull();
+      expect(screen.queryByText(/reprocess boom/i)).toBeNull();
+    });
+
+    it("shows the server's reason when reprocessing is refused", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ summary_status: "error", has_subtitles: true }),
+      );
+      vi.mocked(reprocess).mockRejectedValueOnce(
+        new ApiError(
+          409,
+          "download in progress; the transcript is being replaced",
+        ),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: /Reprocess video/i }),
+      );
+      expect(
+        await screen.findByText(/transcript is being replaced/),
+      ).toBeInTheDocument();
+      expect(document.querySelector("video")).not.toBeNull();
     });
   });
 
@@ -2280,11 +2324,55 @@ describe("Player", () => {
     await waitFor(() => expect(redownload).toHaveBeenCalledWith("v1"));
   });
 
+  it("toasts when the re-download cannot be queued, and keeps offering it", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", status: "tombstoned", has_media: false }),
+    );
+    vi.mocked(redownload).mockRejectedValueOnce(new Error("queue boom"));
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const stage = await waitFor(() => {
+      const el = document.querySelector(".stage-gone");
+      if (!el) throw new Error("stage not rendered yet");
+      return el as HTMLElement;
+    });
+    fireEvent.click(
+      within(stage).getByRole("button", { name: /re-download/i }),
+    );
+    expect(
+      await screen.findByText("Couldn't queue the re-download."),
+    ).toBeInTheDocument();
+    expect(
+      within(stage).getByRole("button", { name: /re-download/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/queue boom/i)).toBeNull();
+  });
+
+  it("shows the server's reason when the re-download is refused", async () => {
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v1", status: "tombstoned", has_media: false }),
+    );
+    vi.mocked(redownload).mockRejectedValueOnce(
+      new ApiError(409, "only failed or removed videos can be re-downloaded"),
+    );
+    render(<Player videoId="v1" onDeleted={() => {}} />);
+    const stage = await waitFor(() => {
+      const el = document.querySelector(".stage-gone");
+      if (!el) throw new Error("stage not rendered yet");
+      return el as HTMLElement;
+    });
+    fireEvent.click(
+      within(stage).getByRole("button", { name: /re-download/i }),
+    );
+    expect(
+      await screen.findByText(/only failed or removed videos/),
+    ).toBeInTheDocument();
+  });
+
   // Once it is queued there is nothing left to re-download, and the endpoint
   // says so with a 409 ("only failed or removed videos can be re-downloaded").
   // Nothing refetches this page — the SSE subscription carries summary events
   // only — so a button left standing would invite a second press whose only
-  // outcome is an error line on a page where the action in fact succeeded.
+  // outcome is a failure toast where the action in fact succeeded.
   it("retires the stage's Re-download once the video is queued", async () => {
     vi.mocked(getVideo).mockResolvedValue(
       makeVideo({ id: "v1", status: "tombstoned", has_media: false }),
