@@ -17,15 +17,17 @@ import (
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
-// resolveCap bounds a channel metadata resolve, measured from the moment yt-dlp
-// starts rather than from when the call is entered — both handlers below arm it
-// through ytdlp.WithStartHook. Shared by the two so the same work has the same
-// bound whichever way a person triggered it.
+// defaultResolveCap bounds a channel metadata resolve, measured from the
+// moment yt-dlp starts rather than from when the call is entered — both
+// handlers below arm it through ytdlp.WithStartHook. Shared by the two so the
+// same work has the same bound whichever way a person triggered it.
 //
-// A var rather than a const only so the tests can shorten it: the production
-// value is two minutes, and what needs asserting is which side of the start
-// hook the clock runs on, not how long it is.
-var resolveCap = 2 * time.Minute
+// It lives on the server (Deps.ResolveCap, this when zero) rather than in a
+// package variable so a test can shorten it for its own server only: the
+// background resolve goroutine outlives the request that started it, and a
+// package variable one test rewrote while another test's goroutine still read
+// it was a data race under -race.
+const defaultResolveCap = 2 * time.Minute
 
 // ChannelResolver is channelmeta.Resolver: the yt-dlp call that turns a
 // canonicalized channel url into the channel's identity and metadata. It moved
@@ -535,7 +537,7 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 		// were already hung. It runs from the process actually starting now.
 		rctx, cancel := context.WithCancel(ytdlp.WithInteractive(context.Background()))
 		defer cancel()
-		bound := ytdlp.NewDeferredTimer(resolveCap, cancel)
+		bound := ytdlp.NewDeferredTimer(s.resolveCap, cancel)
 		err := s.metadata.Resolve(ytdlp.WithStartHook(rctx, bound.Start), channelID, cached)
 		stoppedInTime := bound.Stop()
 		if err != nil {
@@ -544,7 +546,7 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 			// ordinary case when the call returns before reaching exec. Only
 			// the timer cancels rctx, so that is what tells the two apart.
 			if !stoppedInTime && rctx.Err() != nil {
-				slog.Warn("channel resolve stalled", "channel_id", channelID, "after", resolveCap)
+				slog.Warn("channel resolve stalled", "channel_id", channelID, "after", s.resolveCap)
 			}
 			slog.Warn("channel resolve failed", "channel_id", channelID, "err", err)
 		}
@@ -608,7 +610,7 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	rctx, cancel := context.WithCancel(
 		ytdlp.WithInteractive(context.WithoutCancel(r.Context())))
 	defer cancel()
-	bound := ytdlp.NewDeferredTimer(resolveCap, cancel)
+	bound := ytdlp.NewDeferredTimer(s.resolveCap, cancel)
 	err = s.metadata.Resolve(ytdlp.WithStartHook(rctx, bound.Start), id, c)
 	stoppedInTime := bound.Stop()
 	if err != nil {
@@ -625,9 +627,9 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 		// the timer cancels rctx. Without that term every ordinary resolve
 		// failure would be reported as a timeout.
 		if !stoppedInTime && rctx.Err() != nil {
-			slog.Warn("channel refresh stalled", "channel_id", id, "after", resolveCap)
+			slog.Warn("channel refresh stalled", "channel_id", id, "after", s.resolveCap)
 			writeJSONError(w, http.StatusGatewayTimeout,
-				"refresh timed out: YouTube did not answer in "+resolveCap.String())
+				"refresh timed out: YouTube did not answer in "+s.resolveCap.String())
 			return
 		}
 		upstreamError(w, r, err, "refresh failed")

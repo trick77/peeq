@@ -3045,15 +3045,6 @@ func (p *pacingResolver) ResolveChannel(ctx context.Context, _ string) (ytdlp.Ch
 	return p.info, nil
 }
 
-// shortResolveCap shrinks the production two minutes for the duration of one
-// test. Restored on cleanup so ordering between tests cannot matter.
-func shortResolveCap(t *testing.T, d time.Duration) {
-	t.Helper()
-	prev := resolveCap
-	resolveCap = d
-	t.Cleanup(func() { resolveCap = prev })
-}
-
 // THE REGRESSION, on the interactive path. WithInteractive skips the background
 // reservation queue but NOT the throttle, so a user-triggered refresh still
 // waits — and a cap armed on entry counted that wait as though yt-dlp were
@@ -3062,13 +3053,13 @@ func shortResolveCap(t *testing.T, d time.Duration) {
 // Queueing (120ms) outlasts the whole cap (60ms); the work (10ms) is well
 // inside it.
 func TestChannelRefresh_capDoesNotCountThePacerWait(t *testing.T) {
-	shortResolveCap(t, 60*time.Millisecond)
 	resolver := &pacingResolver{
 		queued:  120 * time.Millisecond,
 		working: 10 * time.Millisecond,
 		info:    ytdlp.ChannelInfo{UCID: "UCslow", Name: "Refreshed Name"},
 	}
 	deps := channelsTestDeps(t, resolver)
+	deps.ResolveCap = 60 * time.Millisecond
 	h := New(deps)
 	seedVideoRow(t, deps, "v1", "UCslow", "Slow Channel")
 
@@ -3082,13 +3073,13 @@ func TestChannelRefresh_capDoesNotCountThePacerWait(t *testing.T) {
 // reported as a timeout rather than as the bare "context canceled" it surfaces
 // as. 504, not 502 — the request did not fail, it ran out of time.
 func TestChannelRefresh_stalledResolve_504(t *testing.T) {
-	shortResolveCap(t, 40*time.Millisecond)
 	resolver := &pacingResolver{
 		queued:  5 * time.Millisecond,
 		working: 3 * time.Second,
 		info:    ytdlp.ChannelInfo{UCID: "UChang", Name: "Never Arrives"},
 	}
 	deps := channelsTestDeps(t, resolver)
+	deps.ResolveCap = 40 * time.Millisecond
 	h := New(deps)
 	seedVideoRow(t, deps, "v1", "UChang", "Hanging Channel")
 
