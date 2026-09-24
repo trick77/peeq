@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Icon } from "../icons";
 import { PillStrip } from "../components/PillStrip";
 import {
@@ -168,23 +168,43 @@ export function Channels({
   const filterRef = useRef(filter);
   filterRef.current = filter;
 
-  // loadSeq drops out-of-order responses. Two listChannels calls can be in
-  // flight at once (rapid chip clicks, or a chip click racing a toggle's
-  // refetch); without this the slower one wins whichever chip is active.
+  // Each list has a sequence that drops out-of-order responses. Two fetches of
+  // the same list can be in flight at once (rapid chip clicks, or a chip click
+  // racing a toggle's refetch); without this the slower one wins whichever
+  // was asked for last. A local mutation bumps both (see invalidateLoads), so
+  // a response that left before it cannot paint the pre-mutation row back.
   const loadSeq = useRef(0);
+  const allSeq = useRef(0);
+
+  function fetchLatest(
+    seqRef: MutableRefObject<number>,
+    f: ChannelFilter,
+    set: (cs: Channel[]) => void,
+  ) {
+    const seq = ++seqRef.current;
+    listChannels(f)
+      .then((cs) => {
+        if (seq !== seqRef.current) return; // a newer fetch superseded this one
+        set(cs);
+      })
+      .catch((e: Error) => {
+        if (seq !== seqRef.current) return;
+        setError(e.message);
+      });
+  }
 
   function load(f: ChannelFilter) {
     setError(null);
-    const seq = ++loadSeq.current;
-    listChannels(f)
-      .then((cs) => {
-        if (seq !== loadSeq.current) return; // a newer load superseded this one
-        setChannels(cs);
-      })
-      .catch((e: Error) => {
-        if (seq !== loadSeq.current) return;
-        setError(e.message);
-      });
+    fetchLatest(loadSeq, f, setChannels);
+  }
+
+  // invalidateLoads makes every response still in flight land as stale. Called
+  // by each local mutation: a list that left the server before the row was
+  // toggled or deleted would otherwise arrive as the newest answer and put the
+  // old row back.
+  function invalidateLoads() {
+    loadSeq.current += 1;
+    allSeq.current += 1;
   }
 
   useEffect(() => {
@@ -209,9 +229,7 @@ export function Channels({
   // subscribe, unsubscribe, dismiss, resubscribe, delete — never as a side
   // effect of the filter chips, which have their own load().
   function loadAll() {
-    listChannels("all")
-      .then(setAllChannels)
-      .catch((e: Error) => setError(e.message));
+    fetchLatest(allSeq, "all", setAllChannels);
   }
 
   useEffect(() => {
@@ -224,6 +242,7 @@ export function Channels({
   // the first would leave "Subscribed 12" beside a row that now says otherwise
   // until the refetch landed.
   function applyLocalUpdate(id: string, patch: Partial<Channel>) {
+    invalidateLoads();
     setChannels((prev) =>
       prev.map((c) => (c.id === id ? { ...c, ...patch } : c)),
     );
@@ -288,15 +307,13 @@ export function Channels({
   async function handleAutoSummary(c: Channel) {
     setError(null);
     const next = !c.auto_summary;
-    setChannels((prev) =>
-      prev.map((x) => (x.id === c.id ? { ...x, auto_summary: next } : x)),
-    );
+    // Through applyLocalUpdate like every other row toggle, so the two lists
+    // never disagree about a row and in-flight fetches are invalidated.
+    applyLocalUpdate(c.id, { auto_summary: next });
     try {
       await updateChannel(c.id, { auto_summary: next });
     } catch (err) {
-      setChannels((prev) =>
-        prev.map((x) => (x.id === c.id ? { ...x, auto_summary: !next } : x)),
-      );
+      applyLocalUpdate(c.id, { auto_summary: !next });
       setError((err as Error).message);
     }
   }
@@ -311,6 +328,7 @@ export function Channels({
     setDeleteBusy(true);
     try {
       await deleteChannel(c.id);
+      invalidateLoads();
       setChannels((prev) => prev.filter((x) => x.id !== c.id));
       // The counts and the review band read the unfiltered list, so a deleted
       // channel has to leave that one too or every chip stays one too high.

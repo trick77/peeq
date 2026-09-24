@@ -223,6 +223,43 @@ describe("Channels", () => {
     });
   });
 
+  it("a stale unfiltered list that lands late does not overwrite a newer one", async () => {
+    // Two toggles in a row fire two loadAll()s; the earlier response can land
+    // last. The counts must show the newer answer, not the older.
+    const user = userEvent.setup();
+    const countFor = (label: string) =>
+      Array.from(document.querySelectorAll(".chips .chip"))
+        .find((c) => c.textContent?.startsWith(label))
+        ?.querySelector(".n")?.textContent;
+    let resolveStale: (list: Channel[]) => void = () => {};
+    let allCalls = 0;
+    vi.mocked(listChannels).mockImplementation((filter) => {
+      if (filter !== "all") return Promise.resolve([notSubscribed, subscribed]);
+      allCalls += 1;
+      // The first unfiltered list (mount) is held back; the one a toggle
+      // requests answers at once.
+      if (allCalls === 1) {
+        return new Promise<Channel[]>((r) => {
+          resolveStale = r;
+        });
+      }
+      return Promise.resolve([subscribed]);
+    });
+    render(<Channels />);
+    await screen.findByText("Subbed Channel");
+    const row = screen
+      .getByText("Subbed Channel")
+      .closest(".channel-row") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: /unsubscribe/i }));
+    await waitFor(() => expect(allCalls).toBe(2));
+    await waitFor(() => expect(countFor("All")).toBe("1"));
+
+    resolveStale([notSubscribed, subscribed, subscribed]);
+    // Give the stale promise every chance to land, then check it did nothing.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(countFor("All")).toBe("1");
+  });
+
   it("filter chips drive listChannels(filter)", async () => {
     const user = userEvent.setup();
     render(<Channels />);

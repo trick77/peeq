@@ -1245,6 +1245,63 @@ describe("Channel", () => {
     });
   });
 
+  it("does not refetch on mount for a scan that was already in the buffer", async () => {
+    // App keeps the last 50 events. Opening a channel page while one of its
+    // scans sits in that buffer used to fetch the channel twice: once for the
+    // page, once for the scan the mount had no memory of having seen.
+    render(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        live={[
+          {
+            id: 4,
+            at: "2026-07-25 06:12:00",
+            kind: "scan",
+            outcome: "ok",
+            subject_id: "UCa",
+            subject: "Uncanny Expeditions",
+          },
+        ]}
+      />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    // Settle, then count: the second fetch this guards against would fire in
+    // the same commit as the first.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it("still refetches for a scan that lands after the page opened", async () => {
+    const seen = {
+      id: 4,
+      at: "2026-07-25 06:12:00",
+      kind: "scan",
+      outcome: "ok",
+      subject_id: "UCa",
+      subject: "Uncanny Expeditions",
+    };
+    const { rerender } = render(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        live={[seen]}
+      />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    rerender(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        live={[seen, { ...seen, id: 5 }]}
+      />,
+    );
+    await waitFor(() => expect(getChannel).toHaveBeenCalledTimes(2));
+  });
+
   it("refetches once per scan, not again on every later event", async () => {
     // App keeps `live` as a rolling buffer, so a matching scan event stays in it.
     // Without a high-water mark every later unrelated event would refetch again.
