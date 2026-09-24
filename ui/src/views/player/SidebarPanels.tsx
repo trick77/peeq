@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Icon } from "../../icons";
 import { Spinner } from "../../ui";
 import { formatDuration } from "../../format";
@@ -16,7 +17,7 @@ const DONE_STATUSES = new Set([
 ]);
 
 // SummaryCard renders the prose summary and every non-done state it can be in.
-export function SummaryCard({ video }: { video: Video }) {
+function SummaryCardImpl({ video }: { video: Video }) {
   return (
     /* summarypanel is a placement hook, not a style: in one column the four
        panels are ordered individually (see .playgrid's media query), and both
@@ -81,7 +82,7 @@ export function SummaryCard({ video }: { video: Video }) {
 // contract as ContentsCard: presentational, with the Player's seek passed in —
 // and an omitted seek meaning there is no <video> to move, which renders the
 // rows as plain text instead of buttons that could only do nothing.
-export function HighlightsCard({
+function HighlightsCardImpl({
   video,
   seek,
 }: {
@@ -131,3 +132,9 @@ export function HighlightsCard({
     </div>
   );
 }
+
+// Both memoised: the Player re-renders on every timeupdate while a video
+// plays, and neither card's props — the video record, and for Highlights a
+// stable seek — change with the playhead.
+export const SummaryCard = memo(SummaryCardImpl);
+export const HighlightsCard = memo(HighlightsCardImpl);

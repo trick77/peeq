@@ -355,6 +355,23 @@ export function Player({
     onConflict: (id) => void handleStaleState(id),
   });
   const resumeAppliedRef = useRef(false);
+
+  // seek — shared by the scrubber and every intelligence-panel click target
+  // (chapters, highlights, transcript cues): sets the <video>'s currentTime
+  // directly and keeps the state/positionRef bookkeeping in sync.
+  //
+  // Stable: it is a prop of the memoised cards below, and a fresh function per
+  // render would re-render every one of them on every timeupdate.
+  const seek = useCallback(
+    (seconds: number) => {
+      const el = videoRef.current;
+      if (!el) return;
+      el.currentTime = seconds;
+      setCurrentTime(seconds);
+      notePosition(seconds);
+    },
+    [notePosition],
+  );
   // stageSlotRef is the empty box on the player page the shared <video> parks
   // into. The element is not a child of this component's tree in the DOM sense
   // — it is portalled into videoHost's node, which this effect relocates — so
@@ -1002,17 +1019,6 @@ export function Player({
     seek(0);
     forgetPosition();
     showToast("Marked watched on another device.", "check", "info");
-  }
-
-  // seek — shared by the scrubber and every intelligence-panel click target
-  // (chapters, highlights, transcript cues): sets the <video>'s currentTime
-  // directly and keeps the state/positionRef bookkeeping in sync.
-  function seek(seconds: number) {
-    const el = videoRef.current;
-    if (!el) return;
-    el.currentTime = seconds;
-    setCurrentTime(seconds);
-    notePosition(seconds);
   }
 
   async function handleToggleFavorite() {

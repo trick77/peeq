@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Icon } from "../../icons";
 import type { Video, VideoEmbeddings } from "../../api/types";
 import {
@@ -232,7 +233,7 @@ function glanceOf(video: Video): string {
 // videos and fetches the index stats the first time the panel is opened, so a
 // failed request renders the panel one group short rather than an apology
 // under the video.
-export function DetailsCard({
+function DetailsCardImpl({
   video,
   stats,
   open,
@@ -320,3 +321,7 @@ export function DetailsCard({
     </div>
   );
 }
+
+// Memoised: the Player re-renders on every timeupdate while a video plays,
+// and this card's props (the video record, the index stats object (replaced only when refetched), the open flag and a stable onToggle) do not change with the playhead.
+export const DetailsCard = memo(DetailsCardImpl);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MutableRefObject } from "react";
+import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { setResume } from "../../api/videos";
 import { ApiError } from "../../api/http";
 
@@ -101,57 +101,68 @@ export function useResumeSync(opts: ResumeSyncOptions): ResumeSync {
   // A 409 is reported only for a ping. A flush also runs from the unmount
   // cleanup, where there is no page left to toast and no playhead to rewind;
   // a refused flush simply means the position the server holds is right.
-  function writeResume(id: string, seconds: number, mode: ResumeWriteMode) {
-    const epoch = watchedEpochRef.current;
-    setResume(id, seconds, stateVersionRef.current ?? undefined)
-      .then((res) => {
-        if (openVideoIdRef.current !== id) return;
-        stateVersionRef.current = res.state_version;
-        // Only a true is adopted: writing a position can never un-watch a
-        // video server-side, so a false carries no news — while a response
-        // already in flight when the user pressed the toggle carries a stale
-        // one. The epoch is the other half of that guard.
-        if (res.watched && epoch === watchedEpochRef.current) {
-          optsRef.current.onAdoptWatched(id);
-        }
-      })
-      .catch((e: unknown) => {
-        if (mode === "ping" && e instanceof ApiError && e.status === 409) {
-          optsRef.current.onConflict(id);
-        }
-      });
-  }
+  const writeResume = useCallback(
+    (id: string, seconds: number, mode: ResumeWriteMode) => {
+      const epoch = watchedEpochRef.current;
+      setResume(id, seconds, stateVersionRef.current ?? undefined)
+        .then((res) => {
+          if (openVideoIdRef.current !== id) return;
+          stateVersionRef.current = res.state_version;
+          // Only a true is adopted: writing a position can never un-watch a
+          // video server-side, so a false carries no news — while a response
+          // already in flight when the user pressed the toggle carries a stale
+          // one. The epoch is the other half of that guard.
+          if (res.watched && epoch === watchedEpochRef.current) {
+            optsRef.current.onAdoptWatched(id);
+          }
+        })
+        .catch((e: unknown) => {
+          if (mode === "ping" && e instanceof ApiError && e.status === 409) {
+            optsRef.current.onConflict(id);
+          }
+        });
+    },
+    [],
+  );
 
-  function notePosition(seconds: number) {
+  // All stable: they touch only refs, so the page can hand them to memoised
+  // children (seek → the cards) without breaking the memo.
+  const notePosition = useCallback((seconds: number) => {
     positionRef.current = seconds;
     positionKnownRef.current = true;
-  }
+  }, []);
 
-  function forgetPosition() {
+  const forgetPosition = useCallback(() => {
     positionRef.current = 0;
     positionKnownRef.current = false;
-  }
+  }, []);
 
-  function writeNow(id: string, seconds: number) {
-    lastSentRef.current = Date.now();
-    notePosition(seconds);
-    writeResume(id, seconds, "ping");
-  }
-
-  function forceNextPing() {
-    lastSentRef.current = 0;
-  }
-
-  function throttledPing(id: string, seconds: number) {
-    const now = Date.now();
-    if (
-      jumpAnchorRef.current === null &&
-      now - lastSentRef.current >= RESUME_THROTTLE_MS
-    ) {
-      lastSentRef.current = now;
+  const writeNow = useCallback(
+    (id: string, seconds: number) => {
+      lastSentRef.current = Date.now();
+      notePosition(seconds);
       writeResume(id, seconds, "ping");
-    }
-  }
+    },
+    [notePosition, writeResume],
+  );
+
+  const forceNextPing = useCallback(() => {
+    lastSentRef.current = 0;
+  }, []);
+
+  const throttledPing = useCallback(
+    (id: string, seconds: number) => {
+      const now = Date.now();
+      if (
+        jumpAnchorRef.current === null &&
+        now - lastSentRef.current >= RESUME_THROTTLE_MS
+      ) {
+        lastSentRef.current = now;
+        writeResume(id, seconds, "ping");
+      }
+    },
+    [writeResume],
+  );
 
   // Flush the latest position on leaving. The throttled ping can leave up to
   // RESUME_THROTTLE_MS of progress unwritten, and every way of leaving —
@@ -176,8 +187,7 @@ export function useResumeSync(opts: ResumeSyncOptions): ResumeSync {
       window.removeEventListener("pagehide", flush);
       flush();
     };
-    // writeResume reads only refs, so the id is the effect's one input.
-  }, [videoId]);
+  }, [videoId, writeResume]);
 
   // Reset for the next video. Declared AFTER the flush effect: React runs the
   // cleanups of both in order before either body, so the flush above still
