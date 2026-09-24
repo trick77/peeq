@@ -6,8 +6,8 @@ package summarize
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 
@@ -367,6 +367,12 @@ const keyPointRules = " Each key point DESCRIBES what happens at one moment: one
 	"and no surrounding quotes, brackets, bullets or markdown. " +
 	"Use only timestamps that appear in the cue index. Output JSON only."
 
+// ErrKeyPointsUnparsable is returned by KeyPoints when the model's reply was
+// not the JSON it was asked for. It is a degradation, not a failure: the
+// caller logs it with the video's identity and stores no chapters or key
+// points, rather than failing the job over decoration.
+var ErrKeyPointsUnparsable = errors.New("summarize: key points reply was not JSON")
+
 // KeyPoints extracts key points — and chapters, when yt-dlp did not supply them
 // — from the already-computed summary plus the cue index. It is the worker's
 // fragile last step, split out so a failure here retries only this call and
@@ -423,8 +429,10 @@ func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subti
 	// for response_format json_object (see llm.AsJSONObject), so reaching here at
 	// all means the endpoint ignored that, which is worth knowing about.
 	if err := json.Unmarshal([]byte(extractJSON(raw)), &parsed); err != nil {
-		slog.Warn("summarize: key points JSON did not parse, dropping chapters and key points",
-			"err", err, "reply_chars", len(raw), "reply_head", head(raw, 120))
+		// The worker owns the log line: it knows which video this is, which
+		// this function does not, and a line without the video id cannot be
+		// acted on.
+		return nil, nil, fmt.Errorf("%w: %v (reply_chars=%d, reply_head=%q)", ErrKeyPointsUnparsable, err, len(raw), head(raw, 120))
 	}
 
 	if wantChapters {
