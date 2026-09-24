@@ -38,6 +38,7 @@ import (
 	"strings"
 
 	"github.com/trick77/peeq/internal/rag"
+	"github.com/trick77/peeq/internal/store"
 )
 
 // Video mirrors the columns of the videos table this package reads or
@@ -201,11 +202,17 @@ func New(db *sql.DB) *Store {
 // bytes now (0022) and the column is gone (0024), so there is no pointer left to
 // get wrong — which is the durable version of that fix.
 func (s *Store) Upsert(v Video) error {
+	return upsertTx(context.Background(), s.db, v)
+}
+
+// upsertTx is Upsert against any execer, so UpsertAndEnqueueDownload can run
+// the identical statement inside its transaction.
+func upsertTx(ctx context.Context, db store.DBTX, v Video) error {
 	availability := v.Availability
 	if availability == "" {
 		availability = "unknown"
 	}
-	_, err := s.db.ExecContext(context.Background(), `
+	_, err := db.ExecContext(ctx, `
 INSERT INTO videos (id, url, title, channel_id, channel_name, duration_seconds,
 	published_at, description, availability, requested_format)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

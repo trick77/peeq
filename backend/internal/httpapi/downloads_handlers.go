@@ -203,18 +203,13 @@ func (s *server) enqueueDownloadByURL(rawURL string, requeueExisting bool) (item
 		}, true, nil
 	}
 
-	if existing == nil {
-		if err := s.videos.Upsert(videos.Video{ID: id, URL: watchURL}); err != nil {
-			return downloadItem{}, false, &enqueueError{status: http.StatusInternalServerError, message: "save video failed", cause: err}
-		}
-	}
-	// Upsert deliberately never touches status (so re-running metadata on an
-	// already-downloaded video can't wipe its state); a fresh add must be
-	// marked 'queued' explicitly.
-	if err := s.videos.SetStatus(id, videos.StatusQueued, ""); err != nil {
-		return downloadItem{}, false, &enqueueError{status: http.StatusInternalServerError, message: "save video failed", cause: err}
-	}
-
+	// One transaction for the status flip, the job row and any pending Inbox
+	// row for this video (see videos.Store.EnqueueDownload): a failed insert
+	// used to leave a 'queued' video with no job, and the Inbox row stayed
+	// 'pending' forever because this path never touched the ledger. Upsert
+	// rules are unchanged: an existing row keeps its metadata, and neither
+	// form touches status except to set 'queued'.
+	//
 	// Deliberately NOT adding the video's channel here. Adding one video by
 	// URL is a one-off; adding (and subscribing) a channel stays an explicit
 	// action, and only an added channel is ever scanned for new videos.
@@ -225,11 +220,19 @@ func (s *server) enqueueDownloadByURL(rawURL string, requeueExisting bool) (item
 	// subscribable, but never scanned. The video keeps its channel_id on its
 	// own row either way; videos has no foreign key to channels, so a
 	// channel_id with no added channel behind it is a normal, supported state.
-
-	jobID, err := s.jobs.Enqueue(id, downloadPriority)
-	if err != nil {
-		return downloadItem{}, false, &enqueueError{status: http.StatusInternalServerError, message: "enqueue job failed", cause: err}
+	var jobID int64
+	if existing == nil {
+		jobID, err = s.videos.UpsertAndEnqueueDownload(videos.Video{ID: id, URL: watchURL}, downloadPriority)
+	} else {
+		jobID, err = s.videos.EnqueueDownload(id, downloadPriority)
 	}
+	if err != nil {
+		return downloadItem{}, false, &enqueueError{status: http.StatusInternalServerError, message: "enqueue failed", cause: err}
+	}
+	// A pending Inbox row for this video just left the Inbox inside that
+	// transaction; its cached poster is reclaimed here, as the Inbox's own
+	// approve does. A no-op when there was no such row.
+	s.removePendingThumbnail(id)
 
 	// Title/channel are intentionally absent: they are not known until the
 	// worker's metadata preflight runs. The UI shows a generic "added to the

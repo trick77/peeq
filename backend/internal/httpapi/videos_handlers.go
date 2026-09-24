@@ -714,11 +714,10 @@ func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "restart retention clock failed")
 		return
 	}
-	if err := s.videos.SetStatus(v.ID, videos.StatusQueued, ""); err != nil {
-		serverError(w, r, err, "requeue failed")
-		return
-	}
-	if _, err := s.jobs.Enqueue(v.ID, downloadPriority); err != nil {
+	// Status flip and job row in one transaction (videos.Store.EnqueueDownload).
+	// The clock restart above stays outside it: it is idempotent and harmless
+	// on its own if the enqueue then fails.
+	if _, err := s.videos.EnqueueDownload(v.ID, downloadPriority); err != nil {
 		serverError(w, r, err, "enqueue failed")
 		return
 	}

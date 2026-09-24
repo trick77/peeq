@@ -70,15 +70,19 @@ func scanRow(sc interface{ Scan(...any) error }) (Job, error) {
 	return j, nil
 }
 
+// EnqueueSQL is the one statement that creates a download job: (video_id,
+// priority) in, the new id out. Exported so videos.Store can run it inside
+// the transaction that also flips the video to 'queued' — the two are one
+// fact, and a status flip without a job row is a video nothing will ever
+// pick up. Enqueue below is the same statement on its own.
+const EnqueueSQL = `INSERT INTO download_jobs (video_id, priority) VALUES (?, ?) RETURNING id`
+
 // Enqueue inserts a new pending job for videoID at the given priority
 // (higher runs first) and returns its autoincrement id. The referenced
 // video row must already exist (foreign_keys is ON).
 func (s *Store) Enqueue(videoID string, priority int) (int64, error) {
 	var id int64
-	err := s.db.QueryRowContext(context.Background(),
-		`INSERT INTO download_jobs (video_id, priority) VALUES (?, ?) RETURNING id`,
-		videoID, priority,
-	).Scan(&id)
+	err := s.db.QueryRowContext(context.Background(), EnqueueSQL, videoID, priority).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue job: %w", err)
 	}

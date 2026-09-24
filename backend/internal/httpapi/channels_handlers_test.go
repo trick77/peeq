@@ -2366,10 +2366,10 @@ func TestPendingDownload_enqueueStoreError_500(t *testing.T) {
 	}
 }
 
-// TestPendingDownload_finalSetStateStoreError_500 covers the closing
-// ledger.SetState error branch of the main download path: Upsert,
-// SetStatus, and Enqueue all succeed, but the channel_videos state update
-// itself is blocked.
+// TestPendingDownload_finalSetStateStoreError_500 covers a blocked
+// channel_videos state update on the main download path. The pending row's
+// move to 'queued' is part of the enqueue transaction, so the block rolls
+// the whole approve back: no video row, no job, nothing half done.
 func TestPendingDownload_finalSetStateStoreError_500(t *testing.T) {
 	h := newPendingTestServer(t)
 	h.seedChannel("UC1")
@@ -2384,12 +2384,15 @@ func TestPendingDownload_finalSetStateStoreError_500(t *testing.T) {
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500, body=%s", rr.Code, rr.Body.String())
 	}
-	// The video itself must have been queued even though flipping the
-	// ledger row's state failed — this is the handler's actual sequencing,
-	// documented rather than asserted as a promise.
 	v, err := h.videos.Get("p1")
-	if err != nil || v == nil {
+	if err != nil {
 		t.Fatalf("get video: %v", err)
+	}
+	if v != nil {
+		t.Fatalf("video row should have been rolled back with the failed approve, got %+v", v)
+	}
+	if jl, _ := h.jobs.List(); len(jl) != 0 {
+		t.Fatalf("jobs = %+v, want none", jl)
 	}
 }
 
@@ -3459,5 +3462,76 @@ func TestChannelsPut_responseReadError_500(t *testing.T) {
 	c, err := deps.Channels.Get("UCread")
 	if err == nil {
 		t.Fatalf("expected the channel read to fail after the rename, got %+v", c)
+	}
+}
+
+// TestPendingDownload_queuedVideo_noDuplicate asserts approving an Inbox row
+// whose video is already queued (added by URL or from the extension while it
+// sat on the Inbox) does not enqueue a second job: the row is cleared from
+// Pending and the caller is told it is queued. The guard used to fire only
+// for 'downloaded'.
+func TestPendingDownload_queuedVideo_noDuplicate(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "pending"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+	if err := h.videos.Upsert(videos.Video{ID: "p1", URL: "https://www.youtube.com/watch?v=p1", ChannelID: "UC1"}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if err := h.videos.SetStatus("p1", videos.StatusQueued, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("p1", 0); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	rr := postJSON(t, h, "/api/pending/p1/download", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("download status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"queued"`) {
+		t.Fatalf("body = %s, want queued", rr.Body.String())
+	}
+	if jl, _ := h.jobs.List(); len(jl) != 1 {
+		t.Fatalf("jobs = %+v, want exactly the one that already existed", jl)
+	}
+	if body := getJSON(t, h, "/api/pending"); strings.Contains(body, "p1") {
+		t.Fatalf("p1 should be cleared from pending: %s", body)
+	}
+}
+
+// TestPendingDownload_retryAfterLedgerFailure_noDuplicateJob asserts a
+// retried approve cannot double-enqueue. An 'ignored' row is the case: the
+// transaction leaves it alone, the ledger write after the commit fails, and
+// the retry lands on the in-pipeline guard instead of enqueueing again.
+func TestPendingDownload_retryAfterLedgerFailure_noDuplicateJob(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{VideoID: "p1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=p1", DurationSeconds: 600, State: "ignored"}); err != nil {
+		t.Fatalf("insert p1: %v", err)
+	}
+	if _, err := h.channels.DB().Exec(`CREATE TRIGGER block_ledger BEFORE UPDATE ON channel_videos BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	if rr := postJSON(t, h, "/api/pending/p1/download", nil); rr.Code != http.StatusInternalServerError {
+		t.Fatalf("first download status = %d, want 500, body=%s", rr.Code, rr.Body.String())
+	}
+	// The job was committed before the ledger write failed.
+	if jl, _ := h.jobs.List(); len(jl) != 1 {
+		t.Fatalf("jobs after the failed first approve = %+v, want 1", jl)
+	}
+	if _, err := h.channels.DB().Exec(`DROP TRIGGER block_ledger`); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+	if rr := postJSON(t, h, "/api/pending/p1/download", nil); rr.Code != http.StatusOK {
+		t.Fatalf("second download status = %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	var n int
+	if err := h.channels.DB().QueryRow(`SELECT COUNT(*) FROM download_jobs WHERE video_id = 'p1'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("jobs = %d err=%v, want exactly 1", n, err)
+	}
+	if body := getJSON(t, h, "/api/pending"); strings.Contains(body, "p1") {
+		t.Fatalf("p1 should be cleared from pending: %s", body)
 	}
 }
