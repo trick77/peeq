@@ -63,7 +63,15 @@ function ytdlpCheckNote(v: YtdlpVersion | null): string {
 // echoed back by the backend, so this view never pre-fills the textarea —
 // only cookie_status/cookie_updated_at (via GET /api/settings) are ever
 // displayed.
-export function Settings() {
+export type SettingsProps = {
+  // Called after a change the shell's status lights read: a saved cookie, the
+  // kill-switch flipped, or yt-dlp updated. Without it the rail light and the
+  // queue banner stayed on their last value until the queue poll next ran —
+  // and that poll only runs while something is in flight.
+  onStatusChanged?: () => void;
+};
+
+export function Settings({ onStatusChanged }: SettingsProps = {}) {
   const [settings, setSettingsState] = useState<SettingsType | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -148,6 +156,7 @@ export function Settings() {
       const s = await putCookie(cookieText);
       adoptSettings(s);
       setCookieText("");
+      onStatusChanged?.();
     } catch (err) {
       setCookieError((err as Error).message ?? "Failed to save cookie.");
     } finally {
@@ -294,6 +303,7 @@ export function Settings() {
         version: res.version,
         update_available: false,
       }));
+      onStatusChanged?.();
       if (res.updated && res.previous_version) {
         setYtdlpNote(`Updated ${res.previous_version} → ${res.version}.`);
       } else if (res.updated) {
@@ -335,6 +345,7 @@ export function Settings() {
       if (paused) await pauseYoutube();
       else await resumeYoutube();
       adoptSettings(await refreshSettings());
+      onStatusChanged?.();
     } catch (err) {
       setError((err as Error).message);
     }

@@ -1,4 +1,4 @@
-import { throwAuthExpired } from "../api/http";
+import { expectText } from "../api/http";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { formatDuration } from "../format";
@@ -95,14 +95,10 @@ export function TranscriptCard({
     setLoading(true);
     setError(null);
     fetch(vttUrl)
-      .then((res) => {
-        // A raw fetch (the body is text, not JSON) still owes the shell its
-        // 401: an expired session must land on the sign-in card, not on a
-        // "failed to load" line inside a dead page.
-        if (res.status === 401) throwAuthExpired();
-        if (!res.ok) throw new Error("failed to load transcript");
-        return res.text();
-      })
+      // Through the shared mapping, so a 401 on this text body signs the
+      // user out like any other request instead of reading "failed to load"
+      // inside a dead page.
+      .then((res) => expectText(res, "failed to load transcript"))
       .then((text) => {
         if (!active) return;
         setParsed(parseVtt(text));

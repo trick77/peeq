@@ -37,6 +37,11 @@ export type ReconnectOptions = {
 
 const DEFAULT_BASE_MS = 1000;
 const DEFAULT_MAX_MS = 30_000;
+// How long an accepted subscription has to stay open to count as healthy.
+// A 200 that ends at once — a proxy answering with an HTML page, a buffering
+// gateway EOF-ing on its read timeout — must keep backing off, or the loop
+// would reconnect and re-read every list at the base rate forever.
+export const HEALTHY_OPEN_MS = 2000;
 
 export async function streamWithBackoff(
   connect: StreamConnect,
@@ -47,18 +52,19 @@ export async function streamWithBackoff(
   const base = opts.baseMs ?? DEFAULT_BASE_MS;
   const max = opts.maxMs ?? DEFAULT_MAX_MS;
   let delay = base;
-  let opens = 0;
+  let attempts = 0;
   for (;;) {
     if (signal.aborted) return;
+    attempts += 1;
+    let openedAt: number | null = null;
     try {
       await connect(onEvent, signal, () => {
-        // An accepted subscription is the health signal, not a data frame:
-        // an idle stream sends only keepalive comments, which the reader
-        // drops, so resetting on frames alone would leave the delay parked
-        // at the cap after any outage.
-        delay = base;
-        opens += 1;
-        if (opens > 1) opts.onReconnect?.();
+        openedAt = Date.now();
+        // Anything before this open — a refused attempt, a dropped stream —
+        // is a gap the lists were read across, so they are read again now
+        // that nothing more can be missed. The first attempt of the session
+        // has no gap: the caller's own initial reads cover it.
+        if (attempts > 1) opts.onReconnect?.();
       });
     } catch (err) {
       if (err instanceof AuthExpiredError) return;
@@ -67,6 +73,13 @@ export async function streamWithBackoff(
       // or by the abort check at the top of the loop.
     }
     if (signal.aborted) return;
+    // An accepted subscription that lived is the health signal, not a data
+    // frame: an idle stream sends only keepalive comments, which the reader
+    // drops, so resetting on frames alone would leave the delay parked at
+    // the cap after any outage. One that died at once is not health.
+    const healthy =
+      openedAt !== null && Date.now() - openedAt >= HEALTHY_OPEN_MS;
+    if (healthy) delay = base;
     await sleep(delay, signal);
     delay = Math.min(delay * 2, max);
   }

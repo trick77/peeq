@@ -73,6 +73,25 @@ export async function expectJSON<T>(
   return response.json() as Promise<T>;
 }
 
+// expectText is the sibling for a text body (a .vtt, a plain file): the same
+// 401 and non-2xx mapping, then response.text(). Any raw fetch of a non-JSON
+// URL goes through it, so a 401 there still signs the user out.
+export async function expectText(
+  response: Response,
+  fallbackMessage: string,
+): Promise<string> {
+  if (response.status === 401) {
+    throwAuthExpired();
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      await readErrorMessage(response, fallbackMessage),
+    );
+  }
+  return response.text();
+}
+
 // expectNoContent is expectJSON's sibling for endpoints that reply 2xx with
 // an empty (or irrelevant) body — e.g. 202 Accepted for a fire-and-forget
 // job. It preserves the same 401 -> AuthExpiredError / non-2xx -> ApiError

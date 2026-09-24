@@ -3,6 +3,7 @@ import { Rail, type ViewId } from "./shell/Rail";
 import { SignIn } from "./shell/SignIn";
 import { useAuthBootstrap } from "./shell/useAuthBootstrap";
 import { useLiveQueue } from "./shell/useLiveQueue";
+import { DownloadStatusBanner } from "./shell/DownloadStatusBanner";
 import { takeAuthFailed } from "./authError";
 import { getPlaybackState, resumeYoutube } from "./api";
 import type { DownloadsStatus } from "./api/downloads";
@@ -21,7 +22,6 @@ import { Search } from "./views/Search";
 import { useSearchState, type SearchState } from "./searchState";
 import { Share } from "./views/Share";
 import { useRoute } from "./route";
-import { Button } from "./ui";
 import { TabBar } from "./shell/TabBar";
 import { NowDock } from "./shell/NowDock";
 import { MOBILE_QUERY, useMediaQuery } from "./shell/useMediaQuery";
@@ -304,6 +304,12 @@ export function App() {
     refreshStatus,
     cancelDownload: onCancelDownload,
   } = useLiveQueue(authChecked && !!user);
+  // The banner's Resume: flip the kill-switch, then re-read the lights so the
+  // banner clears (or says why it did not) without waiting for the poll.
+  const resumeAndRefresh = useCallback(async () => {
+    await resumeYoutube();
+    await refreshStatus();
+  }, [refreshStatus]);
   // Search boxes for the two list pages that have one. Each view now renders
   // its own field, in its own toolbar row above the chips; the state stays
   // lifted here so that a query survives leaving the page and coming back —
@@ -540,10 +546,7 @@ export function App() {
           <DownloadStatusBanner
             status={downloadStatus}
             onFixCookie={() => setView("settings")}
-            onResume={async () => {
-              await resumeYoutube();
-              refreshStatus();
-            }}
+            onResume={resumeAndRefresh}
           />
           {/* The player is mounted OUTSIDE the view switch and stays mounted
               once a video is open, because the <video> element lives in its
@@ -612,6 +615,7 @@ export function App() {
               setView={setView}
               setPendingCount={setPendingCount}
               onQueued={refreshQueue}
+              onStatusChanged={refreshStatus}
               librarySearch={librarySearch}
               channelSearch={channelSearch}
               historySearch={historySearch}
@@ -649,70 +653,6 @@ export function App() {
   );
 }
 
-// DownloadStatusBanner shows why the download queue is stalled, so a paused
-// queue is diagnosable at a glance instead of looking silently broken. Renders
-// nothing when the queue is healthy. Low disk takes precedence over the cookie
-// pause (a full disk blocks downloads regardless of cookie state). The
-// YouTube kill-switch pause (youtube_paused) outranks both and is checked
-// first, since it is a deliberate all-activity stop the user asked for.
-function DownloadStatusBanner({
-  status,
-  onFixCookie,
-  onResume,
-}: {
-  status: DownloadsStatus;
-  onFixCookie: () => void;
-  onResume: () => void;
-}) {
-  if (status.youtube_paused) {
-    const auto = status.youtube_pause_reason !== "";
-    return (
-      <div className="errline" role="status">
-        <span className="msg">
-          <b>YouTube activity is paused.</b>{" "}
-          {auto
-            ? status.youtube_pause_reason
-            : "You paused all downloads and channel scans."}
-        </span>
-        <Button type="button" onClick={onResume}>
-          Resume
-        </Button>
-      </div>
-    );
-  }
-  if (status.low_disk) {
-    return (
-      <div className="errline" role="status">
-        Downloads paused — low disk space. Free up space to resume.
-      </div>
-    );
-  }
-  if (status.paused) {
-    return (
-      <div className="errline" role="status">
-        Downloads paused — re-paste your YouTube cookie in{" "}
-        <button
-          type="button"
-          onClick={onFixCookie}
-          style={{
-            background: "none",
-            border: "none",
-            padding: 0,
-            color: "inherit",
-            textDecoration: "underline",
-            cursor: "pointer",
-            font: "inherit",
-          }}
-        >
-          Settings
-        </button>
-        .
-      </div>
-    );
-  }
-  return null;
-}
-
 function ViewSwitch({
   view,
   selectedVideoId,
@@ -731,6 +671,7 @@ function ViewSwitch({
   setView,
   setPendingCount,
   onQueued,
+  onStatusChanged,
   librarySearch,
   channelSearch,
   historySearch,
@@ -776,6 +717,7 @@ function ViewSwitch({
   // no pill for it, which is deliberately not the same claim as "empty".
   setPendingCount: (n: number | undefined) => void;
   onQueued: () => void;
+  onStatusChanged: () => void;
   librarySearch: string;
   channelSearch: string;
   historySearch: string;
@@ -930,6 +872,6 @@ function ViewSwitch({
         />
       );
     case "settings":
-      return <Settings />;
+      return <Settings onStatusChanged={onStatusChanged} />;
   }
 }
