@@ -1597,3 +1597,45 @@ func TestAskLanesRecordsARungThatErrored(t *testing.T) {
 		t.Errorf("rung %q carries no duration, which is the whole point for an error", diag.rungs[0])
 	}
 }
+
+// TestReprocess_resetFails_500_noJob asserts the reset is one write: when it
+// is refused nothing has been wiped and no job is queued, so the video keeps
+// the analysis it had instead of losing it to a request that then failed.
+func TestReprocess_resetFails_500_noJob(t *testing.T) {
+	deps, db := searchTestDepsWithDB(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: "/media/v1.mp4"}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
+	if err := deps.Videos.SetSummary("v1", "prose", "", ""); err != nil {
+		t.Fatalf("seed summary: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER no_reset BEFORE UPDATE OF summary_status ON videos
+		BEGIN SELECT RAISE(ABORT, 'reset blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	spy := &spySummaryJobs{}
+	deps.SummaryJobs = spy
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+	if spy.lastID != "" {
+		t.Fatalf("a summary job was enqueued (%q) although the reset failed", spy.lastID)
+	}
+	v, _ := deps.Videos.Get("v1")
+	if v == nil || v.Summary != "prose" || v.SummaryStatus != "done" {
+		t.Fatalf("row was half-wiped by a refused reset: %+v", v)
+	}
+}

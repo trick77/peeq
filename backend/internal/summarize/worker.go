@@ -364,7 +364,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		//
 		// A stale rev counts as "never indexed" for this purpose. embed_model is
 		// set once and never cleared, so on its own it would let Reprocess —
-		// which wipes the summary and calls ClearEmbedRev, but does not delete
+		// which wipes the summary and zeroes embed_rev, but does not delete
 		// chunks — leave the OLD summary chunk indexed and served by search for
 		// as long as key points keeps failing, with nothing left to repair it.
 		// Reading video.EmbedRev is safe here: the only writer that raises it

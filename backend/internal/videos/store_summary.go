@@ -89,9 +89,46 @@ func (s *Store) SetKeyPoints(id, chaptersJSON, keyPointsJSON string) error {
 	return nil
 }
 
+// ResetForReprocess wipes every artifact the pipeline derives from the
+// transcript, in ONE statement, so the summarize worker starts over on the
+// next job: the prose summary, chapters and key points (the pipeline is
+// resumable and skips the summary step whenever summary <> ”, so a redo
+// that kept the text would hand back exactly what the user asked to be
+// redone); the category (classification is skipped for a video that has
+// one, which would make a wrong category permanent, and Reprocess is the
+// only way a user can correct it); embed_rev (embedding is gated on the
+// content recipe, so without this the old summary chunk would stay indexed
+// against a video whose summary is gone); and the SponsorBlock sentinel
+// (clearing it makes the video sort first in the worker's stale-claim
+// query, so its segments are re-read on the next pass — on a tombstoned
+// video the reset lands but nothing acts on it until a re-download puts the
+// file back, which is right).
+//
+// One UPDATE rather than the five separate writes the Reprocess handler used
+// to make: a failure part-way through left a video with its summary wiped
+// but its category pinned, or every artifact wiped and no job queued.
+func (s *Store) ResetForReprocess(id string) error {
+	res, err := s.db.ExecContext(context.Background(), `
+UPDATE videos
+   SET summary_status = ?, summary_error = '',
+       summary = '', chapters = '', key_points = '',
+       category = ?, category_manual = 0,
+       embed_rev = 0,
+       sponsorblock_refreshed_at = ''
+ WHERE id = ?`, SummaryPending, UncategorizedCategory, id)
+	if err != nil {
+		return fmt.Errorf("reset video %s for reprocess: %w", id, err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("reset video %s for reprocess: rows affected: %w", id, err)
+	} else if n == 0 {
+		return fmt.Errorf("reset video %s for reprocess: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
 // ClearEmbedRev marks a video's search index stale, so the next summarize or
-// re-embed pass rebuilds it. Used by Reprocess, which throws away the stored
-// analysis the index was built from.
+// re-embed pass rebuilds it.
 func (s *Store) ClearEmbedRev(id string) error {
 	_, err := s.db.ExecContext(context.Background(),
 		`UPDATE videos SET embed_rev=0 WHERE id=?`, id)

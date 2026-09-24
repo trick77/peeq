@@ -2,6 +2,7 @@ package videos
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 )
@@ -500,5 +501,57 @@ func TestResetSetMatchesTheSweep(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestResetForReprocess_wipesEveryDerivedArtifact pins the one statement
+// Reprocess relies on: everything the pipeline derives from the transcript
+// goes in a single UPDATE, so a failure leaves the row exactly as it was
+// rather than half-wiped with no job behind it.
+func TestResetForReprocess_wipesEveryDerivedArtifact(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetSummary("v1", "prose", `[{"t":1}]`, `["k"]`); err != nil {
+		t.Fatalf("set summary: %v", err)
+	}
+	if err := s.SetSummaryStatus("v1", SummaryError, "boom"); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if err := s.SetCategory("v1", "Science & Research"); err != nil {
+		t.Fatalf("set category: %v", err)
+	}
+	if _, err := s.db.Exec(`UPDATE videos SET embed_rev = 3, sponsorblock_refreshed_at = '2026-01-01 00:00:00' WHERE id = 'v1'`); err != nil {
+		t.Fatalf("seed rev/sentinel: %v", err)
+	}
+
+	if err := s.ResetForReprocess("v1"); err != nil {
+		t.Fatalf("ResetForReprocess: %v", err)
+	}
+	v, err := s.Get("v1")
+	if err != nil || v == nil {
+		t.Fatalf("get: %v %v", v, err)
+	}
+	if v.SummaryStatus != SummaryPending || v.SummaryError != "" || v.Summary != "" || v.Chapters != "" || v.KeyPoints != "" {
+		t.Fatalf("summary artifacts not reset: %+v", v)
+	}
+	if v.Category != UncategorizedCategory || v.EmbedRev != 0 {
+		t.Fatalf("category/embed_rev not reset: category=%q embed_rev=%d", v.Category, v.EmbedRev)
+	}
+	var manual int
+	var sentinel string
+	if err := s.db.QueryRow(`SELECT category_manual, sponsorblock_refreshed_at FROM videos WHERE id = 'v1'`).Scan(&manual, &sentinel); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if manual != 0 || sentinel != "" {
+		t.Fatalf("category_manual=%d sponsorblock_refreshed_at=%q, want 0 and empty", manual, sentinel)
+	}
+}
+
+func TestResetForReprocess_unknownID(t *testing.T) {
+	s := newTestStore(t)
+	if !errors.Is(s.ResetForReprocess("nope"), ErrNotFound) {
+		t.Fatal("expected ErrNotFound for an unknown id")
 	}
 }
