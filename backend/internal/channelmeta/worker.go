@@ -189,12 +189,21 @@ func (w *Worker) claim() *channels.Channel {
 // being the real problem.
 func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
 	channelID := cached.ID
+	var err error
 	defer func() {
 		// This parses yt-dlp output and remote HTTP responses, both external
 		// input. An unrecovered panic here would take down the whole process,
 		// so it is contained the way every other peeq worker contains one.
 		if r := recover(); r != nil {
 			w.d.Logger.Error("channel metadata: recovered from panic", "channel_id", channelID, "panic", r)
+		}
+		if err != nil && ctx.Err() != nil {
+			// Process shutdown mid-resolve: the channel is not rescheduled a
+			// week out and no attempt is recorded against it — it is still due,
+			// and the next boot claims it again. A resolve that COMPLETED before
+			// the shutdown landed settles normally: its row is written and a
+			// second full resolve at boot would be wasted work.
+			return
 		}
 		w.settle(channelID)
 	}()
@@ -213,11 +222,16 @@ func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	bound := ytdlp.NewDeferredTimer(w.d.ResolveTimeout, cancel)
-	err := w.d.Refresher.Resolve(ytdlp.WithStartHook(rctx, bound.Start), channelID, cached)
+	err = w.d.Refresher.Resolve(ytdlp.WithStartHook(withParent(rctx, ctx), bound.Start), channelID, cached)
 	// Stop unconditionally, and NOT inside the && below: it is what disarms the
 	// timer, so short-circuiting past it on the success path would leave an
 	// AfterFunc holding cancel alive for the rest of the cap.
 	stoppedInTime := bound.Stop()
+	if err != nil && ctx.Err() != nil {
+		// Shutdown mid-refresh: not a failure, not a stall. See the deferred
+		// settle above for why nothing is written.
+		return
+	}
 	// A cap that fired means yt-dlp really did stall — the hook only arms the
 	// timer once the process is running — so this says so rather than reporting
 	// the bare "context canceled" it surfaces as.

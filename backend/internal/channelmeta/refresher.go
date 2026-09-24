@@ -100,7 +100,13 @@ func (f *Refresher) Resolve(ctx context.Context, channelID string, cached *chann
 
 	info, err := f.Resolver.ResolveChannel(ctx, url)
 	if err != nil {
-		recordAttempt()
+		// A process shutdown that interrupts the call is not an attempt:
+		// recording it would stamp resolved_at and hide the channel from the
+		// next boot's resolve pass. A fired stall cap cancels ctx too, and that
+		// IS an attempt — see interruptedByShutdown for how they are told apart.
+		if !interruptedByShutdown(ctx) {
+			recordAttempt()
+		}
 		return err
 	}
 
