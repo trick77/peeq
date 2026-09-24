@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -900,18 +901,16 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "summaries are not configured")
 		return
 	}
-	// Everything the pipeline derived from the transcript goes in one write
-	// (see videos.Store.ResetForReprocess for what and why), so a refused reset
-	// leaves the video exactly as it was. If the enqueue below then fails, the
-	// row sits at summary_status='pending' with no job — the shape
-	// summaryjobs.EnqueueMissing re-queues at the next boot, so that window
-	// heals itself.
-	if err := s.videos.ResetForReprocess(id); err != nil {
-		serverError(w, r, err, "reset for reprocess failed")
-		return
-	}
-	if _, err := s.summaryJobs.Enqueue(id); err != nil {
-		serverError(w, r, err, "enqueue summary job failed")
+	// The reset and the job are one transaction (videos.Store.ResetAndEnqueueSummary
+	// says what is wiped and why); a refused request leaves the video exactly
+	// as it was, and a queued job never runs on top of a half-wiped row.
+	if _, err := s.videos.ResetAndEnqueueSummary(id); err != nil {
+		if errors.Is(err, videos.ErrNotFound) {
+			// Swept or deleted between the lookup above and the write.
+			writeJSONError(w, http.StatusNotFound, "video not found")
+			return
+		}
+		serverError(w, r, err, "reprocess failed")
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)

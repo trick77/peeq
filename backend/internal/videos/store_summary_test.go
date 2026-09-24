@@ -522,8 +522,8 @@ func TestResetForReprocess_wipesEveryDerivedArtifact(t *testing.T) {
 	if err := s.SetCategory("v1", "Science & Research"); err != nil {
 		t.Fatalf("set category: %v", err)
 	}
-	if _, err := s.db.Exec(`UPDATE videos SET embed_rev = 3, sponsorblock_refreshed_at = '2026-01-01 00:00:00' WHERE id = 'v1'`); err != nil {
-		t.Fatalf("seed rev/sentinel: %v", err)
+	if _, err := s.db.Exec(`UPDATE videos SET embed_rev = 3, sponsorblock_refreshed_at = '2026-01-01 00:00:00', sponsorblock_segments = '[{"category":"sponsor"}]' WHERE id = 'v1'`); err != nil {
+		t.Fatalf("seed rev/sentinel/segments: %v", err)
 	}
 
 	if err := s.ResetForReprocess("v1"); err != nil {
@@ -540,12 +540,53 @@ func TestResetForReprocess_wipesEveryDerivedArtifact(t *testing.T) {
 		t.Fatalf("category/embed_rev not reset: category=%q embed_rev=%d", v.Category, v.EmbedRev)
 	}
 	var manual int
-	var sentinel string
-	if err := s.db.QueryRow(`SELECT category_manual, sponsorblock_refreshed_at FROM videos WHERE id = 'v1'`).Scan(&manual, &sentinel); err != nil {
+	var sentinel, segments string
+	if err := s.db.QueryRow(`SELECT category_manual, sponsorblock_refreshed_at, sponsorblock_segments FROM videos WHERE id = 'v1'`).Scan(&manual, &sentinel, &segments); err != nil {
 		t.Fatalf("read row: %v", err)
 	}
 	if manual != 0 || sentinel != "" {
 		t.Fatalf("category_manual=%d sponsorblock_refreshed_at=%q, want 0 and empty", manual, sentinel)
+	}
+	// The stored segments stay until the re-fetch overwrites them: playback
+	// keeps skipping sponsor reads meanwhile.
+	if segments != `[{"category":"sponsor"}]` {
+		t.Fatalf("sponsorblock_segments = %q, want the seeded segments untouched", segments)
+	}
+}
+
+// TestResetAndEnqueueSummary_isOneTransaction pins that a blocked job insert
+// rolls the reset back with it.
+func TestResetAndEnqueueSummary_isOneTransaction(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetSummary("v1", "prose", "", ""); err != nil {
+		t.Fatalf("set summary: %v", err)
+	}
+	jobID, err := s.ResetAndEnqueueSummary("v1")
+	if err != nil || jobID == 0 {
+		t.Fatalf("ResetAndEnqueueSummary: id=%d err=%v", jobID, err)
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM summary_jobs WHERE video_id = 'v1'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("summary jobs = %d err=%v, want 1", n, err)
+	}
+	if err := s.SetSummary("v1", "prose again", "", ""); err != nil {
+		t.Fatalf("set summary: %v", err)
+	}
+	if _, err := s.db.Exec(`CREATE TRIGGER no_job BEFORE INSERT ON summary_jobs BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	if _, err := s.ResetAndEnqueueSummary("v1"); err == nil {
+		t.Fatal("expected the blocked enqueue to fail the call")
+	}
+	v, _ := s.Get("v1")
+	if v.Summary != "prose again" || v.SummaryStatus != SummaryDone {
+		t.Fatalf("reset should have rolled back: %+v", v)
+	}
+	if _, err := s.ResetAndEnqueueSummary("nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
 

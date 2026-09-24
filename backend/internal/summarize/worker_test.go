@@ -1736,7 +1736,7 @@ func TestFallbackReindexesAReprocessedVideoWithStaleRev(t *testing.T) {
 		[][]float32{make([]float32, 1536)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.videos.ClearEmbedRev("vr1"); err != nil {
+	if _, err := h.db.Exec(`UPDATE videos SET embed_rev = 0 WHERE id = 'vr1'`); err != nil {
 		t.Fatal(err)
 	}
 

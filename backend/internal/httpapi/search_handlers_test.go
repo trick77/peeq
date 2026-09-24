@@ -90,6 +90,18 @@ type spySummaryJobs struct {
 	err    error
 }
 
+// summaryJobCount reads what the reprocess endpoint now writes in the same
+// transaction as the reset; the spy above only sees the download-path
+// enqueues that still go through the SummaryEnqueuer.
+func summaryJobCount(t *testing.T, db *sql.DB, videoID string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM summary_jobs WHERE video_id = ?`, videoID).Scan(&n); err != nil {
+		t.Fatalf("count summary jobs: %v", err)
+	}
+	return n
+}
+
 func (s *spySummaryJobs) Enqueue(videoID string) (int64, error) {
 	s.lastID = videoID
 	if s.err != nil {
@@ -307,7 +319,7 @@ func TestSearchUnavailable_returns503(t *testing.T) {
 // TestReprocessEnqueues asserts POST .../reprocess resets summary_status
 // to pending and hands the video id to SummaryJobs, returning 202.
 func TestReprocessEnqueues(t *testing.T) {
-	deps := searchTestDeps(t)
+	deps, db := searchTestDepsWithDB(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
@@ -342,8 +354,7 @@ func TestReprocessEnqueues(t *testing.T) {
 	if containsCandidate(before, "v1") {
 		t.Fatalf("v1 should not be a stale sponsorblock candidate before reprocess")
 	}
-	spy := &spySummaryJobs{}
-	deps.SummaryJobs = spy
+	deps.SummaryJobs = &spySummaryJobs{}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
@@ -355,8 +366,8 @@ func TestReprocessEnqueues(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
 	}
-	if spy.lastID != "v1" {
-		t.Fatalf("SummaryJobs.Enqueue called with %q, want v1", spy.lastID)
+	if n := summaryJobCount(t, db, "v1"); n != 1 {
+		t.Fatalf("summary jobs = %d, want 1", n)
 	}
 	got, err := deps.Videos.Get("v1")
 	if err != nil || got == nil {
@@ -453,7 +464,7 @@ func TestReprocess_noJobsConfigured503(t *testing.T) {
 // is no transcript to summarize and re-enqueuing would only flip its valid, kept
 // summary to no_transcript.
 func TestReprocess_tombstonedWithoutSubtitleReturns409(t *testing.T) {
-	deps := searchTestDeps(t)
+	deps, db := searchTestDepsWithDB(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
@@ -463,8 +474,7 @@ func TestReprocess_tombstonedWithoutSubtitleReturns409(t *testing.T) {
 	if err := deps.Videos.Tombstone("v1"); err != nil {
 		t.Fatalf("tombstone v1: %v", err)
 	}
-	spy := &spySummaryJobs{}
-	deps.SummaryJobs = spy
+	deps.SummaryJobs = &spySummaryJobs{}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
@@ -476,8 +486,8 @@ func TestReprocess_tombstonedWithoutSubtitleReturns409(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
 	}
-	if spy.lastID != "" {
-		t.Fatalf("SummaryJobs.Enqueue called with %q, want not called", spy.lastID)
+	if n := summaryJobCount(t, db, "v1"); n != 0 {
+		t.Fatalf("summary jobs = %d, want none", n)
 	}
 	got, err := deps.Videos.Get("v1")
 	if err != nil || got == nil {
@@ -526,7 +536,7 @@ func TestReprocess_missingSubtitleReturns409(t *testing.T) {
 func TestReprocess_downloadInFlightReturns409(t *testing.T) {
 	for _, status := range []string{videos.StatusQueued, videos.StatusDownloading} {
 		t.Run(status, func(t *testing.T) {
-			deps := searchTestDeps(t)
+			deps, db := searchTestDepsWithDB(t)
 			if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 				t.Fatalf("seed v1: %v", err)
 			}
@@ -545,8 +555,7 @@ func TestReprocess_downloadInFlightReturns409(t *testing.T) {
 			if err := deps.Videos.SetStatus("v1", status, ""); err != nil {
 				t.Fatalf("seed %s status: %v", status, err)
 			}
-			spy := &spySummaryJobs{}
-			deps.SummaryJobs = spy
+			deps.SummaryJobs = &spySummaryJobs{}
 			h := New(deps)
 			cookie := loginAndGetCookie(t, h)
 
@@ -558,8 +567,8 @@ func TestReprocess_downloadInFlightReturns409(t *testing.T) {
 			if rec.Code != http.StatusConflict {
 				t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
 			}
-			if spy.lastID != "" {
-				t.Fatalf("SummaryJobs.Enqueue called with %q, want not called", spy.lastID)
+			if n := summaryJobCount(t, db, "v1"); n != 0 {
+				t.Fatalf("summary jobs = %d, want none", n)
 			}
 		})
 	}
@@ -570,7 +579,7 @@ func TestReprocess_downloadInFlightReturns409(t *testing.T) {
 // summary, category, chunks, embeddings — can still be rebuilt from it. Losing
 // the media must not cost the video its place in search.
 func TestReprocess_tombstonedWithSubtitleReturns202(t *testing.T) {
-	deps := searchTestDeps(t)
+	deps, db := searchTestDepsWithDB(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
@@ -589,8 +598,7 @@ func TestReprocess_tombstonedWithSubtitleReturns202(t *testing.T) {
 	if err := deps.Videos.Tombstone("v1"); err != nil {
 		t.Fatalf("tombstone v1: %v", err)
 	}
-	spy := &spySummaryJobs{}
-	deps.SummaryJobs = spy
+	deps.SummaryJobs = &spySummaryJobs{}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
@@ -602,8 +610,8 @@ func TestReprocess_tombstonedWithSubtitleReturns202(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
 	}
-	if spy.lastID != "v1" {
-		t.Fatalf("SummaryJobs.Enqueue called with %q, want v1", spy.lastID)
+	if n := summaryJobCount(t, db, "v1"); n != 1 {
+		t.Fatalf("summary jobs = %d, want 1", n)
 	}
 }
 
@@ -611,7 +619,7 @@ func TestReprocess_tombstonedWithSubtitleReturns202(t *testing.T) {
 // companion: a normal downloaded video with a subtitle present must still
 // be enqueued for (re)summarization.
 func TestReprocess_downloadedWithSubtitleReturns202(t *testing.T) {
-	deps := searchTestDeps(t)
+	deps, db := searchTestDepsWithDB(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
@@ -627,8 +635,7 @@ func TestReprocess_downloadedWithSubtitleReturns202(t *testing.T) {
 	if err := deps.Videos.SetSummaryStatus("v1", "done", ""); err != nil {
 		t.Fatalf("seed summary status: %v", err)
 	}
-	spy := &spySummaryJobs{}
-	deps.SummaryJobs = spy
+	deps.SummaryJobs = &spySummaryJobs{}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
@@ -640,8 +647,8 @@ func TestReprocess_downloadedWithSubtitleReturns202(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
 	}
-	if spy.lastID != "v1" {
-		t.Fatalf("SummaryJobs.Enqueue called with %q, want v1", spy.lastID)
+	if n := summaryJobCount(t, db, "v1"); n != 1 {
+		t.Fatalf("summary jobs = %d, want 1", n)
 	}
 }
 
@@ -755,8 +762,7 @@ func TestReprocess_sponsorblockResetFailureIs500(t *testing.T) {
 	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
-	spy := &spySummaryJobs{}
-	deps.SummaryJobs = spy
+	deps.SummaryJobs = &spySummaryJobs{}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
@@ -779,8 +785,8 @@ func TestReprocess_sponsorblockResetFailureIs500(t *testing.T) {
 	}
 	// The reset runs before the enqueue, so a failure must not leave a job
 	// queued — that job would burn an LLM call and report success.
-	if spy.lastID != "" {
-		t.Fatalf("enqueued %q, want no job after the reset failed", spy.lastID)
+	if n := summaryJobCount(t, db, "v1"); n != 0 {
+		t.Fatalf("summary jobs = %d, want none after the reset failed", n)
 	}
 }
 
@@ -1619,8 +1625,7 @@ func TestReprocess_resetFails_500_noJob(t *testing.T) {
 		BEGIN SELECT RAISE(ABORT, 'reset blocked'); END`); err != nil {
 		t.Fatalf("create trigger: %v", err)
 	}
-	spy := &spySummaryJobs{}
-	deps.SummaryJobs = spy
+	deps.SummaryJobs = &spySummaryJobs{}
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
@@ -1631,11 +1636,50 @@ func TestReprocess_resetFails_500_noJob(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
 	}
-	if spy.lastID != "" {
-		t.Fatalf("a summary job was enqueued (%q) although the reset failed", spy.lastID)
+	if n := summaryJobCount(t, db, "v1"); n != 0 {
+		t.Fatalf("summary jobs = %d, want none after the reset failed", n)
 	}
 	v, _ := deps.Videos.Get("v1")
 	if v == nil || v.Summary != "prose" || v.SummaryStatus != "done" {
 		t.Fatalf("row was half-wiped by a refused reset: %+v", v)
+	}
+}
+
+// TestReprocess_enqueueFails_500_rowUntouched is the other half of the
+// transaction: when the job cannot be inserted, the reset rolls back with
+// it, so the video keeps its analysis instead of sitting at 'pending' with
+// nothing queued to rebuild it.
+func TestReprocess_enqueueFails_500_rowUntouched(t *testing.T) {
+	deps, db := searchTestDepsWithDB(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: "/media/v1.mp4"}); err != nil {
+		t.Fatalf("seed downloaded: %v", err)
+	}
+	if err := deps.Videos.SetTranscript("v1", videos.TranscriptSourceDownload, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
+	if err := deps.Videos.SetSummary("v1", "prose", "", ""); err != nil {
+		t.Fatalf("seed summary: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER no_job BEFORE INSERT ON summary_jobs
+		BEGIN SELECT RAISE(ABORT, 'enqueue blocked'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	deps.SummaryJobs = &spySummaryJobs{}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	req := httptest.NewRequest(http.MethodPost, "/api/videos/v1/reprocess", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+	v, _ := deps.Videos.Get("v1")
+	if v == nil || v.Summary != "prose" || v.SummaryStatus != "done" {
+		t.Fatalf("reset should have rolled back with the failed enqueue: %+v", v)
 	}
 }
