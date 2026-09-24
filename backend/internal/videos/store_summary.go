@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/trick77/peeq/internal/store"
+	"github.com/trick77/peeq/internal/summaryjobs"
 )
 
 // SetAudioLanguage records the language a video's captions are in.
@@ -89,14 +92,76 @@ func (s *Store) SetKeyPoints(id, chaptersJSON, keyPointsJSON string) error {
 	return nil
 }
 
-// ClearEmbedRev marks a video's search index stale, so the next summarize or
-// re-embed pass rebuilds it. Used by Reprocess, which throws away the stored
-// analysis the index was built from.
-func (s *Store) ClearEmbedRev(id string) error {
-	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET embed_rev=0 WHERE id=?`, id)
+// ResetAndEnqueueSummary wipes every artifact the pipeline derives from the
+// transcript and queues the job that rebuilds them, in ONE transaction. The
+// two are one fact: a reset with no job behind it is a video that sits at
+// summary_status='pending' with no summary, no category and a stale index
+// until someone clicks Reprocess again — the boot sweep only re-queues
+// videos with no summary_jobs row at all, and a reprocessed video keeps its
+// old row forever — and a job behind an unfinished reset would rebuild on
+// top of the old text.
+//
+// What the reset wipes, and why: the prose summary, chapters and key points
+// (the pipeline is resumable and skips the summary step whenever
+// summary <> ”, so a redo that kept the text would hand back exactly what
+// the user asked to be redone); the category (classification is skipped for
+// a video that has one, which would make a wrong category permanent, and
+// Reprocess is the only way a user can correct it); embed_rev (embedding is
+// gated on the content recipe, so without this the old summary chunk would
+// stay indexed against a video whose summary is gone); and the SponsorBlock
+// refresh sentinel (clearing it makes the video sort first in the worker's
+// stale-claim query, so its segments are re-read on the next pass). The
+// stored segments themselves are left in place until that re-fetch
+// overwrites them, so playback keeps skipping sponsor reads meanwhile — and
+// on a tombstoned video, where nothing is claimed until a re-download puts
+// the file back, indefinitely. That is right: segments exist to be skipped
+// during playback, and there is nothing to play.
+//
+// ErrNotFound when no such video exists.
+func (s *Store) ResetAndEnqueueSummary(id string) (jobID int64, err error) {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("clear video %s embed rev: %w", id, err)
+		return 0, fmt.Errorf("reset video %s for reprocess: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := resetForReprocessTx(ctx, tx, id); err != nil {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, summaryjobs.EnqueueSQL, id)
+	if err != nil {
+		return 0, fmt.Errorf("reset video %s for reprocess: enqueue: %w", id, err)
+	}
+	if jobID, err = res.LastInsertId(); err != nil {
+		return 0, fmt.Errorf("reset video %s for reprocess: job id: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("reset video %s for reprocess: commit: %w", id, err)
+	}
+	return jobID, nil
+}
+
+// ResetForReprocess is the reset half of ResetAndEnqueueSummary on its own.
+func (s *Store) ResetForReprocess(id string) error {
+	return resetForReprocessTx(context.Background(), s.db, id)
+}
+
+func resetForReprocessTx(ctx context.Context, x store.DBTX, id string) error {
+	res, err := x.ExecContext(ctx, `
+UPDATE videos
+   SET summary_status = ?, summary_error = '',
+       summary = '', chapters = '', key_points = '',
+       category = ?, category_manual = 0,
+       embed_rev = 0,
+       sponsorblock_refreshed_at = ''
+ WHERE id = ?`, SummaryPending, UncategorizedCategory, id)
+	if err != nil {
+		return fmt.Errorf("reset video %s for reprocess: %w", id, err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("reset video %s for reprocess: rows affected: %w", id, err)
+	} else if n == 0 {
+		return fmt.Errorf("reset video %s for reprocess: %w", id, ErrNotFound)
 	}
 	return nil
 }

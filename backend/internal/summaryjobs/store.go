@@ -86,9 +86,14 @@ func NewWithBackoff(db *sql.DB, ladder []time.Duration) *Store {
 	return &Store{db: db, failSQL: buildFailSQL(ladder)}
 }
 
+// EnqueueSQL is the one statement that creates a summary job. Exported so
+// videos.Store can run it inside the transaction that resets a video for
+// reprocess: the wiped analysis and the job that rebuilds it are one fact.
+const EnqueueSQL = `INSERT INTO summary_jobs (video_id) VALUES (?)`
+
 // Enqueue inserts a pending job for videoID and returns its id.
 func (s *Store) Enqueue(videoID string) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO summary_jobs (video_id) VALUES (?)`, videoID)
+	res, err := s.db.Exec(EnqueueSQL, videoID)
 	if err != nil {
 		return 0, fmt.Errorf("summaryjobs: enqueue: %w", err)
 	}

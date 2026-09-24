@@ -2,8 +2,9 @@ package videos
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+
+	"github.com/trick77/peeq/internal/store"
 )
 
 // DownloadedResult is the outcome of a successful download, mapped from
@@ -76,10 +77,9 @@ func (s *Store) SetDownloaded(id string, res DownloadedResult) error {
 	return s.SetDownloadedIn(context.Background(), s.db, id, res)
 }
 
-// Execer is the slice of *sql.DB and *sql.Tx SetDownloadedIn needs.
-type Execer interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
+// Execer is the slice of *sql.DB and *sql.Tx SetDownloadedIn needs: the
+// shared store.DBTX, under the name the download worker knows it by.
+type Execer = store.DBTX
 
 // SetDownloadedIn is SetDownloaded against the given executor, so the
 // download worker can commit it in the same transaction as the job's 'done'.

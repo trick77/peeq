@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -900,49 +901,16 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "summaries are not configured")
 		return
 	}
-	if err := s.videos.SetSummaryStatus(id, videos.SummaryPending, ""); err != nil {
-		serverError(w, r, err, "reset summary status failed")
-		return
-	}
-	// Wipe the stored analysis, or this whole endpoint is a no-op. The summarize
-	// pipeline is resumable: it skips the summary step whenever summary <> '', so
-	// that a retry of the fragile key-points step does not pay for the summary a
-	// second time. Reprocess is precisely the case where the existing text is
-	// the thing to throw away.
-	if err := s.videos.ClearSummary(id); err != nil {
-		serverError(w, r, err, "clear summary failed")
-		return
-	}
-	// Clear the category too, so the worker re-classifies. Classification is
-	// skipped for a video that already has one (otherwise every resumed job
-	// would pay for a redundant call), which would make a wrong category
-	// permanent — Reprocess is the only way a user can correct one.
-	if err := s.videos.SetCategory(id, videos.UncategorizedCategory); err != nil {
-		serverError(w, r, err, "reset category failed")
-		return
-	}
-	// Mark the search index stale. Embedding is gated on the content recipe, so
-	// without this a reprocess would clear the summary and then SKIP embedding
-	// entirely — leaving the old summary chunk indexed against a video whose
-	// summary has been thrown away.
-	if err := s.videos.ClearEmbedRev(id); err != nil {
-		serverError(w, r, err, "reset embed rev failed")
-		return
-	}
-	// Force a fresh SponsorBlock fetch: clearing the refresh sentinel makes the
-	// video sort first in the worker's stale-claim query, so its segments are
-	// re-read on the next pass. Independent of the summary job above.
-	//
-	// On a tombstoned video the reset lands but nothing acts on it: that query
-	// claims status='downloaded' rows only. That is right — segments exist to
-	// be skipped during playback, and there is nothing to play — so the fetch
-	// simply waits for a re-download to put the file back.
-	if err := s.videos.ResetSponsorblockRefresh(id); err != nil {
-		serverError(w, r, err, "reset sponsorblock refresh failed")
-		return
-	}
-	if _, err := s.summaryJobs.Enqueue(id); err != nil {
-		serverError(w, r, err, "enqueue summary job failed")
+	// The reset and the job are one transaction (videos.Store.ResetAndEnqueueSummary
+	// says what is wiped and why); a refused request leaves the video exactly
+	// as it was, and a queued job never runs on top of a half-wiped row.
+	if _, err := s.videos.ResetAndEnqueueSummary(id); err != nil {
+		if errors.Is(err, videos.ErrNotFound) {
+			// Swept or deleted between the lookup above and the write.
+			writeJSONError(w, http.StatusNotFound, "video not found")
+			return
+		}
+		serverError(w, r, err, "reprocess failed")
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
