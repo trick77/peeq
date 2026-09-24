@@ -226,6 +226,18 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		hits = s.retrieveFind(r, q)
 	}
 
+	// One read for every video the hits touch, instead of one per distinct
+	// video inside the loop.
+	hitIDs := make([]string, 0, len(hits))
+	for _, h := range hits {
+		hitIDs = append(hitIDs, h.VideoID)
+	}
+	videosByID, err := s.videos.GetMany(hitIDs)
+	if err != nil {
+		serverError(w, r, err, "search failed")
+		return
+	}
+
 	order := make([]string, 0)
 	byVideo := make(map[string]*searchResult)
 	// k budgets the moments actually emitted, so a video that hits
@@ -238,8 +250,8 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		g, ok := byVideo[h.VideoID]
 		if !ok {
-			v, err := s.videos.Get(h.VideoID)
-			if err != nil || v == nil {
+			v := videosByID[h.VideoID]
+			if v == nil {
 				continue
 			}
 			g = &searchResult{Video: toVideoDTO(v)}

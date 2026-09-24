@@ -1162,7 +1162,7 @@ func TestPending_listDownloadIgnore(t *testing.T) {
 	if v == nil || v.Status != "queued" {
 		t.Fatalf("p1 video = %+v", v)
 	}
-	jl, _ := h.jobs.List()
+	jl, _ := h.jobs.ListQueue(100)
 	if len(jl) != 1 || jl[0].VideoID != "p1" || jl[0].Priority != 10 {
 		t.Fatalf("jobs = %+v", jl)
 	}
@@ -1278,7 +1278,7 @@ func TestPendingDownload_alreadyDownloaded_noDuplicate(t *testing.T) {
 		t.Fatalf("body = %s, want already_downloaded", rr.Body.String())
 	}
 	// No new job may have been enqueued.
-	if jl, _ := h.jobs.List(); len(jl) != 0 {
+	if jl, _ := h.jobs.ListQueue(100); len(jl) != 0 {
 		t.Fatalf("jobs = %+v, want none (already-downloaded must not re-enqueue)", jl)
 	}
 	// The video row must remain 'downloaded' (not flipped back to queued).
@@ -2392,7 +2392,7 @@ func TestPendingDownload_finalSetStateStoreError_500(t *testing.T) {
 	if v != nil {
 		t.Fatalf("video row should have been rolled back with the failed approve, got %+v", v)
 	}
-	if jl, _ := h.jobs.List(); len(jl) != 0 {
+	if jl, _ := h.jobs.ListQueue(100); len(jl) != 0 {
 		t.Fatalf("jobs = %+v, want none", jl)
 	}
 }
@@ -3494,7 +3494,7 @@ func TestPendingDownload_queuedVideo_noDuplicate(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"queued"`) {
 		t.Fatalf("body = %s, want queued", rr.Body.String())
 	}
-	if jl, _ := h.jobs.List(); len(jl) != 1 {
+	if jl, _ := h.jobs.ListQueue(100); len(jl) != 1 {
 		t.Fatalf("jobs = %+v, want exactly the one that already existed", jl)
 	}
 	if body := getJSON(t, h, "/api/pending"); strings.Contains(body, "p1") {
@@ -3519,7 +3519,7 @@ func TestPendingDownload_retryAfterLedgerFailure_noDuplicateJob(t *testing.T) {
 		t.Fatalf("first download status = %d, want 500, body=%s", rr.Code, rr.Body.String())
 	}
 	// The job was committed before the ledger write failed.
-	if jl, _ := h.jobs.List(); len(jl) != 1 {
+	if jl, _ := h.jobs.ListQueue(100); len(jl) != 1 {
 		t.Fatalf("jobs after the failed first approve = %+v, want 1", jl)
 	}
 	if _, err := h.channels.DB().Exec(`DROP TRIGGER block_ledger`); err != nil {

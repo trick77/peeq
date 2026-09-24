@@ -848,7 +848,7 @@ func relevantVideos(lanes []rag.Lane, excludeLane int, searchMaxDistance float64
 }
 
 func (s *server) coverageVideos(hits []rag.Hit, relevant map[string]bool) []answerVideo {
-	lookup := &videoLookup{store: s.videos, seen: make(map[string]*videos.Video)}
+	lookup := newVideoLookup(s.videos, hits)
 	seen := make(map[string]bool)
 	out := make([]answerVideo, 0, coverageMaxVideos)
 	for _, h := range hits {
@@ -909,6 +909,26 @@ type excerptCandidate struct {
 type videoLookup struct {
 	store *videos.Store
 	seen  map[string]*videos.Video
+}
+
+// newVideoLookup reads the videos behind hits in one batch up front; get
+// then answers from memory and only reaches the store for an id the batch
+// did not cover (or could not read — errors are not cached, so a retry gets
+// another chance).
+func newVideoLookup(store *videos.Store, hits []rag.Hit) *videoLookup {
+	l := &videoLookup{store: store, seen: make(map[string]*videos.Video, len(hits))}
+	ids := make([]string, 0, len(hits))
+	for _, h := range hits {
+		ids = append(ids, h.VideoID)
+	}
+	if index, err := store.GetMany(ids); err != nil {
+		slog.Warn("answer: video preload failed", "count", len(ids), "err", err)
+	} else {
+		for id, v := range index {
+			l.seen[id] = v
+		}
+	}
+	return l
 }
 
 func (l *videoLookup) get(id string) *videos.Video {
@@ -972,7 +992,7 @@ func (s *server) chooseExcerpts(hits []rag.Hit, compare bool) []excerptCandidate
 	// can arrive twice under two kinds. Spending two of twelve slots on one
 	// passage would crowd out a genuinely different one.
 	seen := make(map[string]bool)
-	lookup := &videoLookup{store: s.videos, seen: make(map[string]*videos.Video)}
+	lookup := newVideoLookup(s.videos, hits)
 	cands := make([]excerptCandidate, 0, len(hits))
 	for _, h := range hits {
 		// A summary chunk describes the whole video and is stored at second 0

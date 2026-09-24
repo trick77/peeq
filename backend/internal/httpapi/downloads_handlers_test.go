@@ -234,7 +234,7 @@ func TestDownloads_postCanonicalizesAndEnqueues(t *testing.T) {
 		t.Fatalf("video availability = %q, want %q (minimal row; worker preflight fills metadata later)", video.Availability, "unknown")
 	}
 
-	allJobs, err := deps.Jobs.List()
+	allJobs, err := deps.Jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestDownloads_postNoCookie_stillEnqueues(t *testing.T) {
 	if runner.calls != 0 {
 		t.Fatalf("Metadata calls = %d, want 0 (POST must not touch yt-dlp)", runner.calls)
 	}
-	allJobs, err := deps.Jobs.List()
+	allJobs, err := deps.Jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestDownloads_cancelMarksCanceled(t *testing.T) {
 		t.Fatalf("POST /api/downloads/{id}/cancel status = %d, body = %s", cancelRec.Code, cancelRec.Body.String())
 	}
 
-	allJobs, err := deps.Jobs.List()
+	allJobs, err := deps.Jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}
@@ -996,5 +996,50 @@ func TestDownloads_requireAuth(t *testing.T) {
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s status = %d, want 401", req.Method, req.URL.Path, rec.Code)
 		}
+	}
+}
+
+// TestDownloads_listJoinsVideosInOneRead pins the batched join: a job whose
+// video row is gone still lists (untitled), and the titles come from one
+// GetMany rather than one Get per job.
+func TestDownloads_listJoinsVideosInOneRead(t *testing.T) {
+	runner := &fakeDownloadsRunner{meta: &ytdlp.Meta{ID: "dQw4w9WgXcQ", Title: "t"}}
+	deps, db := downloadsTestDepsDB(t, runner)
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+	if rec := postDownload(t, h, sessionCookie, "https://youtu.be/dQw4w9WgXcQ"); rec.Code != http.StatusCreated {
+		t.Fatalf("POST status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, err := db.Exec(`UPDATE videos SET title = 'Named' WHERE id = 'dQw4w9WgXcQ'`); err != nil {
+		t.Fatal(err)
+	}
+	// A second job whose video row no longer exists (the FK cascade is off in
+	// this seed on purpose: the row is inserted directly).
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO download_jobs (video_id, state) VALUES ('gone', 'failed')`); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/downloads", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	titles := map[string]string{}
+	for _, it := range got {
+		titles[it["video_id"].(string)], _ = it["title"].(string)
+	}
+	if titles["dQw4w9WgXcQ"] != "Named" {
+		t.Fatalf("titled job missing its title: %v", titles)
+	}
+	if v, ok := titles["gone"]; !ok || v != "" {
+		t.Fatalf("job without a video row should list untitled, got %v", titles)
 	}
 }

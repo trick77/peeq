@@ -1013,7 +1013,7 @@ func TestRedownloadErroredVideoEnqueues(t *testing.T) {
 		t.Fatalf("status = %q, want queued", got.Status)
 	}
 
-	list, err := h.jobs.List()
+	list, err := h.jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}
@@ -1164,7 +1164,7 @@ func TestRedownloadDownloadedVideoRejected(t *testing.T) {
 		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
 	}
 
-	list, err := h.jobs.List()
+	list, err := h.jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}
@@ -1191,7 +1191,7 @@ func TestRedownloadQueuedVideoRejected(t *testing.T) {
 		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
 	}
 
-	list, err := h.jobs.List()
+	list, err := h.jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}

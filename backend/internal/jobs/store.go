@@ -297,12 +297,28 @@ func (s *Store) ActiveIDsForVideos(videoIDs []string) ([]int64, error) {
 	return ids, rows.Err()
 }
 
-// List returns all jobs in claim order (priority DESC, enqueued_at ASC, id
-// ASC), regardless of state.
-func (s *Store) List() ([]Job, error) {
+// ListQueue returns the download queue in claim order (priority DESC,
+// enqueued_at ASC, id ASC): every pending, running and failed job, plus the
+// newest finishedWindow done or canceled ones. Nothing prunes download_jobs
+// — a row goes only when its video is deleted — so listing every state was a
+// read that grew with every job ever created. The page reads pending,
+// running and failed; the finished window is a margin for a client that
+// wants to show what just completed, not a history.
+func (s *Store) ListQueue(finishedWindow int) ([]Job, error) {
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT `+selectColumns+` FROM download_jobs
-		 ORDER BY priority DESC, enqueued_at ASC, id ASC`)
+		`SELECT `+selectColumns+` FROM (
+		    SELECT `+selectColumns+` FROM download_jobs
+		     WHERE state IN (?, ?, ?)
+		    UNION ALL
+		    SELECT * FROM (
+		        SELECT `+selectColumns+` FROM download_jobs
+		         WHERE state IN (?, ?)
+		         ORDER BY id DESC
+		         LIMIT ?
+		    )
+		 )
+		 ORDER BY priority DESC, enqueued_at ASC, id ASC`,
+		StatePending, StateRunning, StateFailed, StateDone, StateCanceled, finishedWindow)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}

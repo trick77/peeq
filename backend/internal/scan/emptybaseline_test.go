@@ -133,7 +133,7 @@ func TestScan_blindBaseline_doesNotQueueBackCatalogueForDownload(t *testing.T) {
 	h.lister.set("UC1", []ytdlp.ChannelEntry{undatedEntry("old1"), undatedEntry("old2")})
 	scanAgain(t, h)
 
-	jobsList, _ := h.jobs.List()
+	jobsList, _ := h.jobs.ListQueue(100)
 	if len(jobsList) != 0 {
 		t.Fatalf("%d back-catalogue downloads were queued, want 0", len(jobsList))
 	}

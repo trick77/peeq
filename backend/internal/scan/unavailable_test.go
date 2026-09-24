@@ -132,7 +132,7 @@ func TestScan_gatedEntry_notQueuedOnAutodownloadChannel(t *testing.T) {
 		t.Fatalf("v1 state = %q, want %q", st, channelvideos.StateUnavailable)
 	}
 	// Autodownload must not queue a guaranteed failure.
-	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
+	if jobsList, _ := h.jobs.ListQueue(100); len(jobsList) != 0 {
 		t.Fatalf("jobs = %d, want 0", len(jobsList))
 	}
 }
@@ -183,7 +183,7 @@ func TestScan_gateLifted_autodownloadQueuesInsteadOfAsking(t *testing.T) {
 	if st := h.ledgerState("v1"); st != "queued" {
 		t.Fatalf("v1 state = %q, want queued", st)
 	}
-	jobsList, _ := h.jobs.List()
+	jobsList, _ := h.jobs.ListQueue(100)
 	if len(jobsList) != 1 {
 		t.Fatalf("jobs = %d, want 1", len(jobsList))
 	}
