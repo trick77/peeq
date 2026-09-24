@@ -65,25 +65,17 @@ type ytdlpJSON struct {
 }
 
 // Metadata fetches metadata for a single video URL by running
-// `<bin> -J --skip-download --no-playlist <watchURL>`. Every call first
-// passes through the cookie gate (see cookieGate): if no cookie is
-// configured, this returns ErrNoCookie and the binary is never invoked.
+// `<bin> -J --skip-download --no-playlist <watchURL>`. The URL is validated
+// first; the call then passes through the pause and cookie gates inside
+// execWithProgress (see cookieGate): if no cookie is configured, this returns
+// ErrNoCookie and the binary is never invoked.
 func (r *Runner) Metadata(ctx context.Context, rawURL string) (*Meta, error) {
-	if err := r.pauseGate(); err != nil {
-		return nil, err
-	}
-
-	cookieText, err := r.cookieGate()
-	if err != nil {
-		return nil, err
-	}
-
 	watchURL, _, _, err := Canonicalize(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("ytdlp: canonicalize url: %w", err)
 	}
 
-	out, err := r.exec(ctx, cookieText, "-J", "--skip-download", "--no-playlist", watchURL)
+	out, err := r.exec(ctx, "-J", "--skip-download", "--no-playlist", watchURL)
 	if err != nil {
 		return nil, err
 	}
