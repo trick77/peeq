@@ -505,7 +505,7 @@ func TestYoutubePauseResume(t *testing.T) {
 	if rec := doRequest(t, h, sessionCookie, http.MethodPost, "/api/youtube/pause"); rec.Code != http.StatusAccepted {
 		t.Fatalf("pause status = %d, want 202, body = %s", rec.Code, rec.Body.String())
 	}
-	if paused, _ := deps.Settings.YoutubePaused(context.Background()); !paused {
+	if paused, _, _ := deps.Settings.YoutubePaused(context.Background()); !paused {
 		t.Fatal("not paused after POST /api/youtube/pause")
 	}
 
@@ -519,7 +519,7 @@ func TestYoutubePauseResume(t *testing.T) {
 	if rec := doRequest(t, h, sessionCookie, http.MethodPost, "/api/youtube/resume"); rec.Code != http.StatusAccepted {
 		t.Fatalf("resume status = %d, want 202, body = %s", rec.Code, rec.Body.String())
 	}
-	if paused, _ := deps.Settings.YoutubePaused(context.Background()); paused {
+	if paused, _, _ := deps.Settings.YoutubePaused(context.Background()); paused {
 		t.Fatal("still paused after resume")
 	}
 	if resetCalls != 1 {

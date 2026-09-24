@@ -262,18 +262,23 @@ UPDATE settings SET youtube_paused = 1, youtube_pause_reason = ?, youtube_paused
 	return nil
 }
 
-// YoutubePaused reports the kill-switch state for the Runner pause-gate and
-// the worker/scan poll-gates. Fails safe to not-paused on read error (a DB
-// blip must never silently freeze all downloads forever).
-func (s *Store) YoutubePaused(ctx context.Context) (bool, string) {
-	var paused bool
-	var reason string
-	err := s.db.QueryRowContext(ctx,
+// YoutubePaused reports the kill-switch state for the Runner pause-gate, the
+// worker/scan poll-gates and the status endpoints. It fails CLOSED: when the
+// row cannot be read it reports paused with an empty reason AND returns the
+// error, so a gate that ignores the error is still shut and a handler can
+// answer 500 instead of inventing a pause the operator never set. It used to
+// fail open so that a DB blip could not freeze downloads, but the gates are
+// polled — the next successful read reopens them by itself — whereas a call
+// let through on a blip talks to YouTube while the operator believes it is
+// paused. Nothing is logged here: the gates poll every second, and the
+// callers that can act on the error are the ones that report it.
+func (s *Store) YoutubePaused(ctx context.Context) (paused bool, reason string, err error) {
+	err = s.db.QueryRowContext(ctx,
 		`SELECT youtube_paused, youtube_pause_reason FROM settings WHERE id = 1`).Scan(&paused, &reason)
 	if err != nil {
-		return false, ""
+		return true, "", err
 	}
-	return paused, reason
+	return paused, reason, nil
 }
 
 // DirectStreamEnabled reports whether auth-free playback grant URLs are allowed,

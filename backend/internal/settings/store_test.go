@@ -120,13 +120,13 @@ func TestSetAndReadYoutubePaused(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 
-	if paused, reason := s.YoutubePaused(ctx); paused || reason != "" {
-		t.Fatalf("default = (%v,%q), want (false,\"\")", paused, reason)
+	if paused, reason, err := s.YoutubePaused(ctx); paused || reason != "" || err != nil {
+		t.Fatalf("default = (%v,%q,%v), want (false,\"\",nil)", paused, reason, err)
 	}
 	if err := s.SetYoutubePaused(ctx, true, "extractor broke"); err != nil {
 		t.Fatal(err)
 	}
-	paused, reason := s.YoutubePaused(ctx)
+	paused, reason, _ := s.YoutubePaused(ctx)
 	if !paused || reason != "extractor broke" {
 		t.Fatalf("after set = (%v,%q), want (true,\"extractor broke\")", paused, reason)
 	}
@@ -137,7 +137,7 @@ func TestSetAndReadYoutubePaused(t *testing.T) {
 	if err := s.SetYoutubePaused(ctx, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	if paused, _ := s.YoutubePaused(ctx); paused {
+	if paused, _, _ := s.YoutubePaused(ctx); paused {
 		t.Fatal("still paused after resume")
 	}
 }

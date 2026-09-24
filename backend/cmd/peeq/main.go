@@ -247,7 +247,10 @@ func run() error {
 			return settingsStore.CookieCredentials(context.Background())
 		},
 		PauseProvider: func() (bool, string) {
-			return settingsStore.YoutubePaused(context.Background())
+			// A read error already reports paused; the Runner needs no more
+			// than that to refuse the call.
+			paused, reason, _ := settingsStore.YoutubePaused(context.Background())
+			return paused, reason
 		},
 		ThrottleFloor:  time.Duration(initialSettings.ThrottleBaseSeconds) * time.Second,
 		MediaDir:       cfg.MediaDir,
@@ -281,7 +284,7 @@ func run() error {
 		MediaDir:       cfg.MediaDir,
 		SummaryJobs:    summaryJobsStore,
 		DefaultSubLang: cfg.DefaultSubLang,
-		YoutubePaused:  func() bool { p, _ := settingsStore.YoutubePaused(context.Background()); return p },
+		YoutubePaused:  func() bool { p, _, _ := settingsStore.YoutubePaused(context.Background()); return p },
 		FailMonitor:    failMonitor,
 		Activity:       activityStore,
 		OnProgress: func(jobID int64, p ytdlp.Progress) {
@@ -319,7 +322,7 @@ func run() error {
 		Prober:         runner,
 		CookieStatus:   func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
 		AllowAnonymous: cfg.AllowAnonymousYoutube,
-		YoutubePaused:  func(ctx context.Context) bool { p, _ := settingsStore.YoutubePaused(ctx); return p },
+		YoutubePaused:  func(ctx context.Context) bool { p, _, _ := settingsStore.YoutubePaused(ctx); return p },
 		FailMonitor:    failMonitor,
 		Activity:       activityStore,
 		MediaDir:       cfg.MediaDir,
@@ -372,7 +375,7 @@ func run() error {
 		Refresher:      metaRefresher,
 		CookieStatus:   func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
 		AllowAnonymous: cfg.AllowAnonymousYoutube,
-		YoutubePaused:  func(ctx context.Context) bool { p, _ := settingsStore.YoutubePaused(ctx); return p },
+		YoutubePaused:  func(ctx context.Context) bool { p, _, _ := settingsStore.YoutubePaused(ctx); return p },
 		Activity:       activityStore,
 	})
 
