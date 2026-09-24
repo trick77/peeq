@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -55,8 +54,7 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req settingsPatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeJSON(w, r, &req, maxJSONBody, "invalid request body") {
 		return
 	}
 	// Reject negative numeric settings before they can be persisted: a
@@ -151,8 +149,7 @@ func (s *server) applyCookie(w http.ResponseWriter, r *http.Request, minimalAck 
 		return
 	}
 	var req cookiePutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeJSON(w, r, &req, maxCookieBody, "invalid request body") {
 		return
 	}
 	if req.Cookie == "" {

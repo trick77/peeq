@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,9 +77,9 @@ type downloadItem struct {
 // unchanged from before the machine route was extracted out of it.
 func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	var req downloadsPostRequest
-	// A malformed body leaves req.URL empty, which enqueueDownloadByURL rejects
-	// as "url is required" — same 400 the inline decode used to produce.
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if !decodeJSON(w, r, &req, maxJSONBody, "url is required") {
+		return
+	}
 
 	item, _, ee := s.enqueueDownloadByURL(req.URL, true)
 	if ee != nil {
@@ -100,7 +99,9 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 // (duplicate) rather than 201.
 func (s *server) handleMachineDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	var req downloadsPostRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if !decodeJSON(w, r, &req, maxJSONBody, "url is required") {
+		return
+	}
 
 	item, duplicate, ee := s.enqueueDownloadByURL(req.URL, false)
 	if ee != nil {

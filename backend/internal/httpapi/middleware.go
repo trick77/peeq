@@ -78,6 +78,11 @@ func logging(next http.Handler) http.Handler {
 			return
 		}
 		start := time.Now()
+		// The server-wide body ceiling goes on before the recorder wraps w:
+		// net/http's limited reader needs the base writer to close the
+		// connection after a 413. Routes that read a body apply their own,
+		// tighter bound through the request.go helpers.
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 		rec := &statusRecorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
 		if rec.status == 0 {

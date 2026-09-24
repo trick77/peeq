@@ -122,8 +122,8 @@ func (s *server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		TTL string `json:"ttl"`
 	}
 	// An empty body is allowed and means the default (never expires).
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&req)
+	if !decodeJSONLenient(w, r, &req, maxJSONBody) {
+		return
 	}
 	ttl, known := shareTTLs[req.TTL]
 	if !known {
