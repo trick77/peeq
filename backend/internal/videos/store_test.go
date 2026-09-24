@@ -1296,3 +1296,26 @@ func TestCounts_emptyLibrary_hasEveryKey(t *testing.T) {
 		}
 	}
 }
+
+// TestList_errorDoesNotEchoQuery asserts a List failure never carries the
+// free-text Query in its message: the error ends up in an ERROR log line via
+// serverError, and a failure log is no place for what the user typed. The
+// enumerated options (filter, category, sort, channel) stay in the message —
+// they say which branch of the query builder failed.
+func TestList_errorDoesNotEchoQuery(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	if _, err := db.Exec(`DROP TABLE videos`); err != nil {
+		t.Fatalf("drop videos: %v", err)
+	}
+	_, err := s.List(ListOptions{Query: "secret-needle"})
+	if err == nil {
+		t.Fatal("expected an error after dropping the table")
+	}
+	if strings.Contains(err.Error(), "secret-needle") {
+		t.Fatalf("error echoes the query text: %v", err)
+	}
+	if !strings.Contains(err.Error(), "filter=") {
+		t.Fatalf("error should still name the enumerated options: %v", err)
+	}
+}
