@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -53,16 +54,23 @@ VALUES (?, ?, ?)`,
 	return Session{Token: token, UserID: userID, ExpiresAt: expiresAt}, nil
 }
 
+// lastSeenGranularity is how stale last_seen_at may be before a lookup
+// refreshes it. The column is a coarse "still in use" marker, and a write
+// on every authenticated request — every thumbnail, every media range —
+// would take SQLite's write lock behind whatever a worker is writing.
+const lastSeenGranularity = time.Minute
+
 // Lookup returns the active session for token.
 func (s *SessionStore) Lookup(ctx context.Context, token string) (Session, bool, error) {
 	var session Session
-	var expires string
+	var expires, lastSeen string
+	hash := hashToken(token)
 	err := s.db.QueryRowContext(ctx, `
-SELECT user_id, expires_at
+SELECT user_id, expires_at, last_seen_at
 FROM sessions
 WHERE token_hash = ? AND expires_at > datetime('now')`,
-		hashToken(token),
-	).Scan(&session.UserID, &expires)
+		hash,
+	).Scan(&session.UserID, &expires, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, false, nil
 	}
@@ -75,13 +83,35 @@ WHERE token_hash = ? AND expires_at > datetime('now')`,
 	}
 	session.Token = token
 	session.ExpiresAt = expiresAt
-	_, _ = s.db.ExecContext(ctx, `
-UPDATE sessions
-SET last_seen_at = datetime('now')
-WHERE token_hash = ? AND last_seen_at < datetime('now', '-1 minute')`,
-		hashToken(token),
-	)
+	s.touch(ctx, hash, lastSeen)
 	return session, true, nil
+}
+
+// touch refreshes last_seen_at when it is at least lastSeenGranularity old.
+// The decision is made from the row Lookup just read, so a request inside
+// the window issues no statement at all: an UPDATE whose WHERE matches
+// nothing still takes the write lock. One cutoff, computed here, serves both
+// the decision and the statement's guard (which stays as the tiebreak
+// between two concurrent stale lookups), so the two cannot disagree at the
+// edge. A stamp that does not parse is stale by definition and is rewritten
+// without the guard, or it would never heal.
+func (s *SessionStore) touch(ctx context.Context, hash, lastSeen string) {
+	cutoff := time.Now().UTC().Add(-lastSeenGranularity)
+	seen, perr := parseDBTime(lastSeen)
+	if perr == nil && seen.After(cutoff) {
+		return
+	}
+	query := `UPDATE sessions SET last_seen_at = datetime('now') WHERE token_hash = ? AND last_seen_at <= ?`
+	args := []any{hash, formatTime(cutoff)}
+	if perr != nil {
+		query = `UPDATE sessions SET last_seen_at = datetime('now') WHERE token_hash = ?`
+		args = args[:1]
+	}
+	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+		// Not a failure of the lookup: the marker is coarse and the next
+		// request retries. Debug, so a busy lock is diagnosable.
+		slog.Debug("session last_seen refresh failed", "err", err)
+	}
 }
 
 // DeleteExpired removes expired sessions and returns how many rows were deleted.
