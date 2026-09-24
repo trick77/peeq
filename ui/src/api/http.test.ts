@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { api, AuthExpiredError, ApiError } from "./http";
+import {
+  api,
+  AuthExpiredError,
+  ApiError,
+  onAuthExpired,
+  notifyAuthExpired,
+} from "./http";
 
 describe("api http client", () => {
   afterEach(() => {
@@ -77,5 +83,73 @@ describe("api http client", () => {
       expect((err as ApiError).status).toBe(409);
       expect((err as ApiError).message).toBe("add failed");
     }
+  });
+});
+
+describe("auth expiry listener", () => {
+  const offs: Array<() => void> = [];
+  const listen = (fn: () => void) => {
+    offs.push(onAuthExpired(fn));
+    return fn;
+  };
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const off of offs.splice(0)) off();
+  });
+
+  it("a 401 on api.get notifies the registered listener once and still rejects", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("", { status: 401 })),
+    );
+    const listener = listen(vi.fn());
+
+    await expect(api.get("/api/videos")).rejects.toBeInstanceOf(
+      AuthExpiredError,
+    );
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 401 on api.postNoContent notifies too", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("", { status: 401 })),
+    );
+    const listener = listen(vi.fn());
+
+    await expect(api.postNoContent("/api/x")).rejects.toBeInstanceOf(
+      AuthExpiredError,
+    );
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-401 failure does not notify", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("", { status: 500 })),
+    );
+    const listener = listen(vi.fn());
+
+    await expect(api.get("/api/videos")).rejects.toBeInstanceOf(ApiError);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("the returned unsubscribe stops notifications, and listeners do not pre-empt each other", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const off = onAuthExpired(first);
+    off();
+    notifyAuthExpired();
+    expect(first).not.toHaveBeenCalled();
+
+    listen(first);
+    listen(second);
+    notifyAuthExpired();
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it("notifying with no listener is a no-op", () => {
+    expect(() => notifyAuthExpired()).not.toThrow();
   });
 });

@@ -4,7 +4,7 @@
 // (event, data) pair and decode the JSON payload themselves. This also
 // means an unrecognized event name (e.g. a heartbeat comment) is simply
 // ignored rather than erroring, per sse.Hub's own heartbeat behavior.
-import { AuthExpiredError } from "./http";
+import { throwAuthExpired } from "./http";
 
 export type SSEEvent = { event: string; data: unknown };
 
@@ -19,7 +19,7 @@ export async function streamSSE(
 ): Promise<void> {
   const response = await fetch(path, { signal });
   if (response.status === 401) {
-    throw new AuthExpiredError();
+    throwAuthExpired();
   }
   if (!response.ok) {
     throw new Error(`stream ${path} failed: ${response.status}`);

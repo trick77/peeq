@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { streamSSE } from "./stream";
-import { AuthExpiredError } from "./http";
+import { AuthExpiredError, onAuthExpired } from "./http";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -175,5 +175,23 @@ describe("streamSSE", () => {
     await expect(streamSSE("/api/downloads/stream", vi.fn())).rejects.toThrow(
       /has no body/,
     );
+  });
+});
+
+describe("streamSSE auth expiry", () => {
+  it("a 401 notifies the auth-expired listener and rejects with AuthExpiredError", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("", { status: 401 }),
+    );
+    const listener = vi.fn();
+    const off = onAuthExpired(listener);
+    try {
+      await expect(
+        streamSSE("/api/downloads/stream", vi.fn()),
+      ).rejects.toBeInstanceOf(AuthExpiredError);
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      off();
+    }
   });
 });

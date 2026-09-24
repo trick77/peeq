@@ -78,4 +78,15 @@ describe("SignIn", () => {
       expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
     });
   });
+
+  it("says why it is here after a session expired mid-use", () => {
+    render(<SignIn expired />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/session expired/i);
+    expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("does not show the expiry line under an unreachable server", () => {
+    render(<SignIn expired unreachable />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/reach the server/i);
+  });
 });

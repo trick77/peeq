@@ -6,6 +6,7 @@ import {
   waitFor,
   fireEvent,
   within,
+  act,
 } from "@testing-library/react";
 import { App } from "./App";
 import {
@@ -27,6 +28,7 @@ import { searchVideos } from "./api/search";
 // are separate, and this is the one the rendered view actually calls.
 import { listPending as listPendingApi } from "./api/pending";
 import { getVideo } from "./api/videos";
+import { notifyAuthExpired } from "./api/http";
 import type { Job, PendingItem, User, Video } from "./api/types";
 
 // An inbox video: discovered, summarised, but with no file yet. Its page is
@@ -1152,4 +1154,25 @@ describe("App session check", () => {
     });
     expect(store.get("peeq.signedIn")).toBe("1");
   }, 20000);
+});
+
+describe("App session expiry", () => {
+  beforeEach(() => {
+    // The session-check suite above leaves getMe rejecting; this one needs a
+    // signed-in shell to expire.
+    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+  });
+
+  it("returns to the sign-in card when a request reports the session expired", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: /Up next/ }, { timeout: 8000 });
+
+    act(() => notifyAuthExpired());
+
+    expect(
+      await screen.findByRole("link", { name: "Sign in" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/session expired/i);
+    expect(screen.queryByRole("button", { name: /Up next/ })).toBeNull();
+  }, 10000);
 });
