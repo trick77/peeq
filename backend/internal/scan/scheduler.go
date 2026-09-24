@@ -353,7 +353,7 @@ func (s *Scheduler) staleUnsubscribe(ctx context.Context, channelID, reason stri
 		}
 		return
 	}
-	if paused, _ := s.d.Settings.YoutubePaused(ctx); paused {
+	if paused, _, _ := s.d.Settings.YoutubePaused(ctx); paused {
 		return
 	}
 	// Allowlist, not a denylist: only "valid" proceeds. The schema's CHECK

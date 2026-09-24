@@ -299,7 +299,12 @@ func (s *server) handleDownloadsStatus(w http.ResponseWriter, r *http.Request) {
 		resp.LowDisk = s.worker.LowDisk()
 	}
 	if s.settings != nil {
-		resp.YoutubePaused, resp.YoutubePauseReason = s.settings.YoutubePaused(r.Context())
+		paused, reason, err := s.settings.YoutubePaused(r.Context())
+		if err != nil {
+			serverError(w, r, err, "read youtube pause state failed")
+			return
+		}
+		resp.YoutubePaused, resp.YoutubePauseReason = paused, reason
 	}
 	writeJSON(w, resp)
 }

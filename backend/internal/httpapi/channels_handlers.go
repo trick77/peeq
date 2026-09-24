@@ -921,7 +921,12 @@ func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.settings != nil {
-		if paused, reason := s.settings.YoutubePaused(r.Context()); paused {
+		paused, reason, err := s.settings.YoutubePaused(r.Context())
+		if err != nil {
+			serverError(w, r, err, "read youtube pause state failed")
+			return
+		}
+		if paused {
 			msg := "YouTube access is paused"
 			if reason != "" {
 				msg += ": " + reason

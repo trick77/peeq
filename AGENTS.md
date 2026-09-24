@@ -125,5 +125,8 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 ## peeq invariants (must hold in every feature that talks to YouTube)
 - **Cookie gate**: never make a YouTube call without a valid, currently-loaded cookie. No valid cookie
   configured → fail closed (refuse), never attempt an anonymous request.
+- **Kill switch fails closed**: `settings.YoutubePaused` reports paused, plus the error, when the
+  row cannot be read; gates may ignore the error, handlers answer 500 with it. Gates are polled,
+  so a blip clears itself; a call let through on a blip does not.
 - **Randomized throttle**: every YouTube call is preceded by a randomized delay (not a fixed interval)
   to avoid a bot-detectable request cadence.
