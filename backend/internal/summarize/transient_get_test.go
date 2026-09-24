@@ -102,3 +102,42 @@ func TestProcessOnePersistentVideoLoadErrorFailsVisibly(t *testing.T) {
 		t.Fatalf("%d activity rows, want 1 terminal failure", n)
 	}
 }
+
+// TestProcessOneMissingVideoFailsForGood covers the defensive branch: a job
+// whose video row is gone is finished as failed, not retried. summary_jobs
+// cascades on the video's delete, so the state is constructed by hand on one
+// dedicated connection with foreign keys off, restored before it returns to
+// the pool.
+func TestProcessOneMissingVideoFailsForGood(t *testing.T) {
+	h := newWorkerHarness(t)
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "https://youtu.be/v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.jobs.Enqueue("v1"); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	conn, err := h.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{`PRAGMA foreign_keys = OFF`, `DELETE FROM videos WHERE id = 'v1'`, `PRAGMA foreign_keys = ON`} {
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(failCompleter{t: t}), Embedder: failEmbedder{t: t},
+		EmbedModel: "test-model", EmbedDim: 4})
+
+	if _, err := w.processOne(ctx); err != nil {
+		t.Fatalf("a missing video is a clean terminal outcome, got err %v", err)
+	}
+	if state, _ := jobState(t, h); state != "failed" {
+		t.Fatalf("job state = %q, want failed", state)
+	}
+}
