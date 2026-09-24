@@ -240,19 +240,11 @@ func (r *Runner) ChannelStreams(ctx context.Context, ucid string, n int) ([]Chan
 // gate + throttle like every other Runner call, so each tab costs its own
 // throttle slot.
 func (r *Runner) channelTab(ctx context.Context, ucid, tab string, n int) ([]ChannelEntry, error) {
-	if err := r.pauseGate(); err != nil {
-		return nil, err
-	}
-
-	cookieText, err := r.cookieGate()
-	if err != nil {
-		return nil, err
-	}
 	items := fmt.Sprintf(":%d:1", n)
 	url := "https://www.youtube.com/channel/" + ucid + "/" + tab
 	args := []string{"-J", "--flat-playlist", "--skip-download", "--playlist-items", items}
 	args = append(args, approximateDateArgs...)
-	out, err := r.exec(ctx, cookieText, append(args, url)...)
+	out, err := r.exec(ctx, append(args, url)...)
 	if err != nil {
 		return nil, err
 	}
@@ -353,15 +345,7 @@ func parseChannelInfo(out []byte) (ChannelInfo, error) {
 // banner — via a metadata-only flat call (--playlist-items 0 fetches no
 // entries). Used at explicit channel-add time.
 func (r *Runner) ResolveChannel(ctx context.Context, channelURL string) (ChannelInfo, error) {
-	if perr := r.pauseGate(); perr != nil {
-		return ChannelInfo{}, perr
-	}
-
-	cookieText, gerr := r.cookieGate()
-	if gerr != nil {
-		return ChannelInfo{}, gerr
-	}
-	out, xerr := r.exec(ctx, cookieText, "-J", "--flat-playlist", "--skip-download", "--playlist-items", "0", channelURL)
+	out, xerr := r.exec(ctx, "-J", "--flat-playlist", "--skip-download", "--playlist-items", "0", channelURL)
 	if xerr != nil {
 		return ChannelInfo{}, xerr
 	}

@@ -55,15 +55,6 @@ func SummaryDir(mediaDir, videoID string) string {
 // Like every other Runner call this passes the cookie and pause gates, and it
 // goes through the pacer WITHOUT WithInteractive — nobody is waiting on it.
 func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string) (string, error) {
-	if err := r.pauseGate(); err != nil {
-		return "", err
-	}
-
-	cookieText, err := r.cookieGate()
-	if err != nil {
-		return "", err
-	}
-
 	if videoID == "" {
 		return "", fmt.Errorf("ytdlp: subtitles requires a non-empty video id")
 	}
@@ -77,6 +68,14 @@ func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string)
 		subLang = "en"
 	}
 
+	// Ask the gates before touching the filesystem: execWithProgress asks them
+	// again, but this call runs once a minute per inbox candidate, and a paused
+	// or cookie-less peeq must not leave an empty summary directory behind on
+	// every tick.
+	if _, err := r.gates(); err != nil {
+		return "", &RefusedError{Err: err}
+	}
+
 	dir := SummaryDir(r.cfg.MediaDir, videoID)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("ytdlp: create summary dir: %w", err)
@@ -84,7 +83,7 @@ func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string)
 
 	ctx = withCallLabel(ctx, videoID)
 
-	if _, execErr := r.exec(ctx, cookieText,
+	if _, execErr := r.exec(ctx,
 		"--skip-download",
 		"--write-subs",
 		"--write-auto-subs",

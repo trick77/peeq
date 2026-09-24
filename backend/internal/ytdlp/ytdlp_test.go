@@ -42,7 +42,7 @@ func TestMetadata_noCookie_doesNotCallBinary(t *testing.T) {
 		CookieProvider: func() (string, string) { return "", "" },
 		Sleep:          func(context.Context, time.Duration) error { return nil },
 	})
-	_, err := r.Metadata(context.Background(), "https://youtu.be/abc")
+	_, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ")
 	if !errors.Is(err, ErrNoCookie) {
 		t.Fatalf("want ErrNoCookie, got %v", err)
 	}
@@ -515,7 +515,7 @@ func TestMetadata_cookieStatusStale_doesNotCallBinary(t *testing.T) {
 			return nil
 		},
 	})
-	_, err := r.Metadata(context.Background(), "https://youtu.be/abc")
+	_, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ")
 	if !errors.Is(err, ErrCookieExpired) {
 		t.Fatalf("want ErrCookieExpired, got %v", err)
 	}
@@ -537,7 +537,7 @@ func TestMetadata_cookieStatusBlocked_doesNotCallBinary(t *testing.T) {
 			return nil
 		},
 	})
-	_, err := r.Metadata(context.Background(), "https://youtu.be/abc")
+	_, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ")
 	if !errors.Is(err, ErrBlocked) {
 		t.Fatalf("want ErrBlocked, got %v", err)
 	}
