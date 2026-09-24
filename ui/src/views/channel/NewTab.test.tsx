@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { NewTab } from "./NewTab";
-import type { ChannelDetail } from "../../api/types";
+import type { ChannelDetail, PendingItem } from "../../api/types";
 
 vi.mock("../../api/pending", () => ({
   listPending: vi.fn().mockResolvedValue([]),
@@ -12,8 +12,27 @@ vi.mock("../../api/channels", () => ({
   scanChannel: vi.fn(),
 }));
 
-import { listPending } from "../../api/pending";
+import { listPending, downloadPending, ignorePending } from "../../api/pending";
 import { DOT } from "../../sep";
+
+function makePending(overrides: Partial<PendingItem> = {}): PendingItem {
+  return {
+    video_id: "p1",
+    channel_id: "UCa",
+    channel_name: "Chan",
+    title: "Pending upload",
+    duration_seconds: 60,
+    url: "https://youtube.com/watch?v=p1",
+    thumbnail_url: "",
+    published_at: "",
+    discovered_at: "2026-07-24 08:00:00",
+    summary_status: "",
+    auto_summary: false,
+    summary_gave_up: false,
+    has_subtitles: false,
+    ...overrides,
+  };
+}
 
 function makeDetail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
   return {
@@ -41,6 +60,12 @@ describe("NewTab", () => {
   beforeEach(() => {
     vi.mocked(listPending).mockReset();
     vi.mocked(listPending).mockResolvedValue([]);
+    // Reset, not cleared: the callback tests queue a rejection, and one a
+    // test never consumed must not detonate in the next test that clicks.
+    vi.mocked(downloadPending).mockReset();
+    vi.mocked(downloadPending).mockResolvedValue(undefined);
+    vi.mocked(ignorePending).mockReset();
+    vi.mocked(ignorePending).mockResolvedValue(undefined);
   });
 
   it("offers Scan now when the channel is subscribed", async () => {
@@ -115,6 +140,77 @@ describe("NewTab", () => {
     expect(rowFor("Undated upload").querySelector(".sub")?.textContent).toBe(
       "1:00",
     );
+  });
+
+  // A download queued from here has to reach the shell: Up next and its badge
+  // only learn about a queued job from the queue re-list (a job the worker has
+  // not started emits no progress), and the rail's Inbox count changes either
+  // way. Without these callbacks a job queued while the worker is paused never
+  // shows anywhere until something else refreshes the queue.
+  describe("shell callbacks", () => {
+    function pendingRow() {
+      vi.mocked(listPending).mockResolvedValue([makePending()]);
+    }
+
+    it("Download tells the shell a job was queued and the inbox changed", async () => {
+      pendingRow();
+      vi.mocked(downloadPending).mockResolvedValue(undefined);
+      const onQueued = vi.fn();
+      const onPendingChanged = vi.fn();
+      render(
+        <NewTab
+          detail={makeDetail()}
+          onChanged={() => {}}
+          onQueued={onQueued}
+          onPendingChanged={onPendingChanged}
+        />,
+      );
+      await screen.findByText("Pending upload");
+      fireEvent.click(screen.getByRole("button", { name: /add/i }));
+      await waitFor(() => expect(downloadPending).toHaveBeenCalledWith("p1"));
+      await waitFor(() => expect(onQueued).toHaveBeenCalledTimes(1));
+      expect(onPendingChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it("Ignore tells the shell the inbox changed, but queues nothing", async () => {
+      pendingRow();
+      vi.mocked(ignorePending).mockResolvedValue(undefined);
+      const onQueued = vi.fn();
+      const onPendingChanged = vi.fn();
+      render(
+        <NewTab
+          detail={makeDetail()}
+          onChanged={() => {}}
+          onQueued={onQueued}
+          onPendingChanged={onPendingChanged}
+        />,
+      );
+      await screen.findByText("Pending upload");
+      fireEvent.click(screen.getByRole("button", { name: /ignore/i }));
+      await waitFor(() => expect(ignorePending).toHaveBeenCalledWith("p1"));
+      await waitFor(() => expect(onPendingChanged).toHaveBeenCalledTimes(1));
+      expect(onQueued).not.toHaveBeenCalled();
+    });
+
+    it("a refused download tells the shell nothing", async () => {
+      pendingRow();
+      vi.mocked(downloadPending).mockRejectedValue(new Error("no cookie"));
+      const onQueued = vi.fn();
+      const onPendingChanged = vi.fn();
+      render(
+        <NewTab
+          detail={makeDetail()}
+          onChanged={() => {}}
+          onQueued={onQueued}
+          onPendingChanged={onPendingChanged}
+        />,
+      );
+      await screen.findByText("Pending upload");
+      fireEvent.click(screen.getByRole("button", { name: /add/i }));
+      expect(await screen.findByText(/no cookie/)).toBeInTheDocument();
+      expect(onQueued).not.toHaveBeenCalled();
+      expect(onPendingChanged).not.toHaveBeenCalled();
+    });
   });
 
   it("links each row title to the video on YouTube, in a new tab", async () => {

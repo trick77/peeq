@@ -616,6 +616,7 @@ export function App() {
               setPendingCount={setPendingCount}
               onQueued={refreshQueue}
               onStatusChanged={refreshStatus}
+              onPendingChanged={refreshPending}
               librarySearch={librarySearch}
               channelSearch={channelSearch}
               historySearch={historySearch}
@@ -672,6 +673,7 @@ function ViewSwitch({
   setPendingCount,
   onQueued,
   onStatusChanged,
+  onPendingChanged,
   librarySearch,
   channelSearch,
   historySearch,
@@ -718,6 +720,7 @@ function ViewSwitch({
   setPendingCount: (n: number | undefined) => void;
   onQueued: () => void;
   onStatusChanged: () => void;
+  onPendingChanged: () => void;
   librarySearch: string;
   channelSearch: string;
   historySearch: string;
@@ -869,6 +872,8 @@ function ViewSwitch({
           onOpenVideo={onOpenVideo}
           onBack={() => setView("channels")}
           live={liveActivity}
+          onQueued={onQueued}
+          onPendingChanged={onPendingChanged}
         />
       );
     case "settings":

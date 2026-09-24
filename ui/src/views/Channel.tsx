@@ -183,10 +183,19 @@ export function Channel({
   onOpenVideo,
   onBack,
   live = [],
+  onQueued,
+  onPendingChanged,
 }: {
   channelId: string | null;
   onOpenVideo: (id: string) => void;
   onBack: () => void;
+  /**
+   * Both passed through to the New tab — see NewTab's props for why. A
+   * download queued there has to reach the shell's queue, and an item that
+   * left the inbox has to reach the rail's count.
+   */
+  onQueued?: () => void;
+  onPendingChanged?: () => void;
   /**
    * Newest activity events pushed over SSE, the same stream the Activity page
    * reads. The channel page needs them because "Scan now" is asynchronous: the
@@ -555,7 +564,14 @@ export function Channel({
         {tab === "archive" ? (
           <ArchiveTab channelId={detail.id} onOpenVideo={onOpenVideo} />
         ) : null}
-        {tab === "new" ? <NewTab detail={detail} onChanged={reload} /> : null}
+        {tab === "new" ? (
+          <NewTab
+            detail={detail}
+            onChanged={reload}
+            onQueued={onQueued}
+            onPendingChanged={onPendingChanged}
+          />
+        ) : null}
         {tab === "settings" ? (
           <SettingsTab detail={detail} onChanged={reload} onDeleted={onBack} />
         ) : null}
