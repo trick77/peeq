@@ -1,3 +1,4 @@
+import { resetSettingsStoreForTests } from "../settingsStore";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,6 +43,7 @@ function tokenSection(): HTMLElement {
 
 describe("Settings — API token", () => {
   beforeEach(() => {
+    resetSettingsStoreForTests();
     vi.mocked(getSettings).mockResolvedValue(baseSettings as never);
     vi.mocked(getAPITokenStatus).mockReset();
     vi.mocked(createAPIToken).mockReset();

@@ -19,7 +19,8 @@ import {
   getVideoEmbeddings,
 } from "../api/videos";
 import { reprocess, subtitlesUrl } from "../api/search";
-import { getSettings, updateSettings } from "../api/settings";
+import { updateSettings } from "../api/settings";
+import { patchSettings, publishSettings, useSettings } from "../settingsStore";
 import { setPlaybackState } from "../api/playback";
 import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareControl } from "../components/ShareControl";
@@ -255,19 +256,51 @@ export function Player({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [ccOn, setCcOn] = useState(false);
-  // subtitlesDefault is the global "show subtitles by default" preference
-  // (settings.subtitles_default). null means "not loaded yet" — distinct
-  // from false, because the effect below must not apply a default it hasn't
-  // actually read, or every video would flash captions-off first.
-  const [subtitlesDefault, setSubtitlesDefault] = useState<boolean | null>(
-    null,
-  );
-  // directStream is the global "allow direct playback links" preference
-  // (settings.direct_stream_enabled). Like subtitlesDefault, null means "not
-  // loaded yet" — and here that distinction is load-bearing: the <video> gets
-  // no src until we know which kind of URL to use, so it can never mount with
-  // the session URL and then swap to a grant, which would reload the media.
-  const [directStream, setDirectStream] = useState<boolean | null>(null);
+  // subtitlesDefault and directStream are global preferences read from the
+  // shared settings store (settings.subtitles_default and
+  // settings.direct_stream_enabled). null means "not loaded yet" — distinct
+  // from false, because the effects below must not apply a default they have
+  // not actually read, or every video would flash captions-off first; and for
+  // directStream that distinction is load-bearing: the <video> gets no src
+  // until we know which kind of URL to use, so it can never mount with the
+  // session URL and then swap to a grant, which would reload the media.
+  // Reading settings is not fatal — playback must work even if they can't be
+  // read — so a failed load falls back to "off", the behaviour peeq had
+  // before these were settings.
+  //
+  // Through the store, not a fetch of its own: this page stays mounted for
+  // the whole session, so a preference changed on the Settings page has to
+  // reach it live, and the store is what carries it here.
+  const { settings: globalSettings, failed: settingsFailed } = useSettings();
+  const subtitlesDefault: boolean | null = globalSettings
+    ? globalSettings.subtitles_default
+    : settingsFailed
+      ? false
+      : null;
+  const directStreamNow: boolean | null = globalSettings
+    ? globalSettings.direct_stream_enabled
+    : settingsFailed
+      ? false
+      : null;
+  // directStream is that preference as it stood when THIS video's src was
+  // chosen, held until the video changes. The store can flip it mid-session
+  // — the Settings page is one click away — and swapping the src of a
+  // playing <video> reloads the media from 0:00. So a change applies to the
+  // next video opened, never to the one in front of you.
+  const [directStreamFor, setDirectStreamFor] = useState<{
+    id: string;
+    on: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!videoId || directStreamNow === null) return;
+    setDirectStreamFor((prev) =>
+      prev && prev.id === videoId ? prev : { id: videoId, on: directStreamNow },
+    );
+  }, [videoId, directStreamNow]);
+  const directStream: boolean | null =
+    directStreamFor && directStreamFor.id === videoId
+      ? directStreamFor.on
+      : null;
   // grant is the minted direct-playback URL, stamped with the video it was
   // minted for. The id is not decoration: the <video> unmounts and remounts on
   // every video change, and without it the new video's element would mount
@@ -572,27 +605,6 @@ export function Player({
       cancelled = true;
     };
   }, [videoId, isPhone, video?.indexed]);
-
-  // Load the global subtitles preference once per mount. A failure is not
-  // fatal — playback must work even if settings can't be read — so it falls
-  // back to "off", the behaviour peeq had before this was a setting.
-  useEffect(() => {
-    let active = true;
-    getSettings()
-      .then((s) => {
-        if (!active) return;
-        setSubtitlesDefault(s.subtitles_default);
-        setDirectStream(s.direct_stream_enabled);
-      })
-      .catch(() => {
-        if (!active) return;
-        setSubtitlesDefault(false);
-        setDirectStream(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   // Mint a grant per video while direct playback is on. AirPlay hands the src
   // to the Apple TV, which fetches it with no session cookie, so the src has to
@@ -1176,8 +1188,12 @@ export function Player({
       next = !ccOn;
     }
     setCcOn(next);
-    setSubtitlesDefault(next);
-    updateSettings({ subtitles_default: next }).catch(() => {});
+    // Optimistic, then the server's answer; on failure the store goes back,
+    // so a write that never landed cannot stay published as the truth.
+    patchSettings({ subtitles_default: next });
+    updateSettings({ subtitles_default: next })
+      .then(publishSettings)
+      .catch(() => patchSettings({ subtitles_default: !next }));
   }
 
   async function handleReprocess() {

@@ -1,3 +1,8 @@
+import {
+  loadSettings,
+  publishSettings,
+  resetSettingsStoreForTests,
+} from "../settingsStore";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
@@ -157,6 +162,12 @@ function stubStorage(seed?: string) {
   return map;
 }
 
+// The settings store is module state: reset it for every describe in this
+// file, not just the first.
+beforeEach(() => {
+  resetSettingsStoreForTests();
+});
+
 describe("Player", () => {
   beforeEach(() => {
     // A fresh clipboard per test, for the same reason the mocks below are
@@ -196,6 +207,7 @@ describe("Player", () => {
     vi.mocked(setCategory).mockReset();
     vi.mocked(setCategory).mockResolvedValue("ai");
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
+    resetSettingsStoreForTests();
     vi.mocked(getSettings).mockReset();
     vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
     vi.mocked(updateSettings).mockReset();
@@ -2646,6 +2658,53 @@ describe("Player", () => {
       render(<Player videoId="v1" onDeleted={() => {}} />);
 
       expect(await findVideoSrc()).toBe("/api/videos/v1/stream");
+    });
+
+    // The Player stays mounted for the whole session, so a preference changed
+    // on the Settings page reaches it through the shared store, not a remount.
+    it("applies a direct-playback change from elsewhere to the next video, not the playing one", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo());
+      vi.mocked(getSettings).mockResolvedValue(makeSettings(false, false));
+      vi.mocked(createPlaybackGrant).mockClear();
+      vi.mocked(createPlaybackGrant).mockResolvedValue({
+        url: "/api/p/tok456/stream",
+        expires_at: "2026-07-29 10:00:00",
+      });
+      const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await findVideoSrc()).toBe("/api/videos/v1/stream");
+
+      // Turned on from the Settings page: the store changes, this video's src
+      // must not — swapping it would reload the media from 0:00.
+      act(() => publishSettings(makeSettings(false, true)));
+      await screen.findByRole("heading", { level: 1 });
+      expect(document.querySelector("video")?.getAttribute("src")).toBe(
+        "/api/videos/v1/stream",
+      );
+      expect(createPlaybackGrant).not.toHaveBeenCalled();
+
+      vi.mocked(getVideo).mockResolvedValue(makeVideo({ id: "v2" }));
+      rerender(<Player videoId="v2" onDeleted={() => {}} />);
+      await waitFor(() =>
+        expect(document.querySelector("video")?.getAttribute("src")).toBe(
+          "/api/p/tok456/stream",
+        ),
+      );
+      expect(createPlaybackGrant).toHaveBeenCalledWith("v2");
+      expect(getSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it("reverts the published subtitles default when the write fails", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+      vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
+      vi.mocked(updateSettings).mockRejectedValueOnce(new Error("down"));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: /^Subtitles (on|off)$/ }),
+      );
+      await waitFor(() => expect(updateSettings).toHaveBeenCalled());
+      await waitFor(async () =>
+        expect((await loadSettings()).subtitles_default).toBe(false),
+      );
     });
 
     // Offering an AirPlay button that hands the TV a URL it cannot fetch would

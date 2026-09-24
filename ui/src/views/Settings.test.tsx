@@ -1,3 +1,4 @@
+import { loadSettings, resetSettingsStoreForTests } from "../settingsStore";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   render,
@@ -55,6 +56,7 @@ import { getYtdlpVersion, updateYtdlp } from "../api/ytdlp";
 describe("Settings", () => {
   beforeEach(() => {
     vi.mocked(getSettings).mockReset();
+    resetSettingsStoreForTests();
     vi.mocked(putCookie).mockReset();
     vi.mocked(updateSettings).mockReset();
     vi.mocked(pauseYoutube).mockReset();
@@ -351,5 +353,23 @@ describe("Settings", () => {
       expect(within(section).getByText(label)).toBeInTheDocument();
     }
     expect(within(section).getAllByRole("button")).toHaveLength(4);
+  });
+
+  it("publishes every saved response to the shared store", async () => {
+    vi.mocked(updateSettings).mockResolvedValue({
+      ...baseSettings,
+      direct_stream_enabled: true,
+    });
+    render(<Settings />);
+    const toggle = await screen.findByRole("checkbox", {
+      name: /allow direct playback links/i,
+    });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(updateSettings).toHaveBeenCalled());
+    // getSettings still answers the old value, so a true here can only have
+    // come from the publish, not from a re-read.
+    await waitFor(async () =>
+      expect((await loadSettings()).direct_stream_enabled).toBe(true),
+    );
   });
 });

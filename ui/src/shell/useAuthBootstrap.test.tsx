@@ -3,10 +3,12 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useAuthBootstrap } from "./useAuthBootstrap";
 import { getMe } from "../api";
 import { notifyAuthExpired } from "../api/http";
+import { invalidateSettings } from "../settingsStore";
 import { writeSignedInHint } from "../signedInHint";
 import type { User } from "../api/types";
 
 vi.mock("../api", () => ({ getMe: vi.fn() }));
+vi.mock("../settingsStore", () => ({ invalidateSettings: vi.fn() }));
 vi.mock("../signedInHint", () => ({
   readSignedInHint: vi.fn(() => false),
   writeSignedInHint: vi.fn(),
@@ -55,6 +57,7 @@ describe("useAuthBootstrap", () => {
     expect(result.current.authChecked).toBe(true);
     expect(result.current.authError).toBe(false);
     expect(writeSignedInHint).toHaveBeenLastCalledWith(false);
+    expect(invalidateSettings).toHaveBeenCalledTimes(1);
     expect(getMe).toHaveBeenCalledTimes(1);
   });
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getMe } from "../api";
 import { onAuthExpired } from "../api/http";
 import { readSignedInHint, writeSignedInHint } from "../signedInHint";
+import { invalidateSettings } from "../settingsStore";
 import type { User } from "../api/types";
 
 // How long a session check may take before a hinted browser stops being shown
@@ -85,6 +86,8 @@ export function useAuthBootstrap(): AuthBootstrap {
       setUser(null);
       setExpired(true);
       writeSignedInHint(false);
+      // Whoever signs in next must not inherit this session's settings.
+      invalidateSettings();
     });
   }, []);
 

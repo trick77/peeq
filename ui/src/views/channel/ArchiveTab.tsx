@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoCard } from "../../components/VideoCard";
 import { listVideos, setFavorite, setWatched } from "../../api/videos";
-import { getSettings } from "../../api";
 import { CATEGORIES } from "../../categories";
 import { SORT_OPTIONS } from "../Library";
 import { controlClass } from "../../ui";
+import { useSettings } from "../../settingsStore";
 import type { Video, VideoSort } from "../../api/types";
 
 export function ArchiveTab({
@@ -20,7 +20,10 @@ export function ArchiveTab({
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [sort, setSort] = useState<VideoSort>("added_newest");
-  const [retentionDays, setRetentionDays] = useState(0);
+  // 0 until the settings land or if they never do: a window of nothing badges
+  // no card, which beats badging the wrong ones.
+  const { settings } = useSettings();
+  const retentionDays = settings?.retention_days ?? 0;
 
   // The Archive tab keeps its own search/category/sort state rather than
   // sharing the Library's: visiting a channel must never change what the
@@ -45,12 +48,6 @@ export function ArchiveTab({
         setError(e.message);
       });
   }, [channelId, debouncedQuery, category, sort]);
-
-  useEffect(() => {
-    getSettings()
-      .then((s) => setRetentionDays(s.retention_days))
-      .catch(() => setRetentionDays(0));
-  }, []);
 
   // Mirrors Library's handleToggleFavorite/handleToggleWatched: flip the
   // field locally first so the card updates without a refetch, then make

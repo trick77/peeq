@@ -5,18 +5,12 @@ import { SearchField } from "../components/SearchField";
 import {
   listVideos,
   getVideoCounts,
-  getSettings,
   setFavorite,
   setWatched,
   redownload,
 } from "../api";
-import type {
-  Video,
-  VideoCounts,
-  VideoFilter,
-  VideoSort,
-  Settings,
-} from "../api/types";
+import { useSettings } from "../settingsStore";
+import type { Video, VideoCounts, VideoFilter, VideoSort } from "../api/types";
 import { CATEGORIES } from "../categories";
 import { controlClass } from "../ui";
 
@@ -169,7 +163,7 @@ export function Library({
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [counts, setCounts] = useState<VideoCounts | null>(null);
   const [videos, setVideos] = useState<Video[]>([]);
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const { settings } = useSettings();
   const [error, setError] = useState<string | null>(null);
   // Two effects fetch the filtered list — the one watching the chips and the
   // one watching the queue — and only the chip effect cancels itself when the
@@ -191,18 +185,6 @@ export function Library({
   // does on this page changes them. The download queue used to be loaded here
   // too, purely to map job_id -> video_id for a per-card progress ring; both are
   // gone with the in-flight cards themselves.
-  useEffect(() => {
-    let active = true;
-    getSettings()
-      .then((s) => {
-        if (active) setSettings(s);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, []);
-
   // The chip numbers: unscoped by chip and category, but NOT by search. A count
   // has to answer "how many would I see if I clicked this", and with a query
   // in the box the answer is scoped to that query — a chip reading 65 next to
