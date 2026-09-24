@@ -11,9 +11,20 @@ import { DOT } from "../../sep";
 export function NewTab({
   detail,
   onChanged,
+  onQueued,
+  onPendingChanged,
 }: {
   detail: ChannelDetail;
   onChanged: () => void;
+  /**
+   * A download job was queued. The shell re-lists the queue on this: a job
+   * the worker has not started yet emits no progress, so without it a video
+   * added while the worker is paused shows nowhere until something else
+   * refreshes Up next and its badge.
+   */
+  onQueued?: () => void;
+  /** An item left the inbox (added or ignored), so the rail's count moved. */
+  onPendingChanged?: () => void;
 }) {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +70,8 @@ export function NewTab({
       else await ignorePending(item.video_id);
       setItems((prev) => prev.filter((i) => i.video_id !== item.video_id));
       onChanged();
+      if (keep) onQueued?.();
+      onPendingChanged?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {

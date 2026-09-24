@@ -230,6 +230,44 @@ describe("Channel", () => {
     });
   });
 
+  it("hands the New tab's queued download on to the shell", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listPending).mockResolvedValue([
+      {
+        video_id: "p1",
+        channel_id: "UCa",
+        channel_name: "Uncanny Expeditions",
+        title: "Pending upload",
+        duration_seconds: 60,
+        url: "https://youtube.com/watch?v=p1",
+        thumbnail_url: "",
+        published_at: "",
+        discovered_at: "2026-07-24 08:00:00",
+        summary_status: "",
+        auto_summary: false,
+        summary_gave_up: false,
+        has_subtitles: false,
+      },
+    ]);
+    const onQueued = vi.fn();
+    const onPendingChanged = vi.fn();
+    render(
+      <Channel
+        channelId="UCa"
+        onOpenVideo={() => {}}
+        onBack={() => {}}
+        onQueued={onQueued}
+        onPendingChanged={onPendingChanged}
+      />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /new/i }));
+    await screen.findByText("Pending upload");
+    await user.click(screen.getByRole("button", { name: /add/i }));
+    await waitFor(() => expect(onQueued).toHaveBeenCalledTimes(1));
+    expect(onPendingChanged).toHaveBeenCalledTimes(1);
+  });
+
   it("the archive tab loads only this channel's videos", async () => {
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
