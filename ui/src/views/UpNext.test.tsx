@@ -324,7 +324,7 @@ describe("UpNext", () => {
 
   it("cancels a download by its job id", async () => {
     const user = userEvent.setup();
-    const onCancel = vi.fn();
+    const onCancel = vi.fn().mockResolvedValue(undefined);
     render(
       <UpNext
         jobs={[job({ job_id: 7, title: "Cancelme" })]}
@@ -338,7 +338,7 @@ describe("UpNext", () => {
 
   it("cancels a waiting download too", async () => {
     const user = userEvent.setup();
-    const onCancel = vi.fn();
+    const onCancel = vi.fn().mockResolvedValue(undefined);
     render(
       <UpNext
         jobs={[job({ job_id: 8, state: "pending", title: "Queued one" })]}
