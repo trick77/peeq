@@ -119,7 +119,20 @@ RETURNING `+selectColumns)
 // was externally moved to 'canceled' can never be resurrected to done/failed.
 // Returns ErrNotRunning (and writes nothing) when the guard matches no row.
 func (s *Store) Finish(id int64, state, lastErr, logTail string) error {
-	res, err := s.db.ExecContext(context.Background(), `
+	return s.FinishIn(context.Background(), s.db, id, state, lastErr, logTail)
+}
+
+// Execer is the slice of *sql.DB and *sql.Tx a guarded write needs, so a
+// caller can run one inside a transaction it owns.
+type Execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// FinishIn is Finish against the given executor — a transaction when the
+// job's terminal state must land together with the video row it describes
+// (see download.Worker.succeed). Same guard, same ErrNotRunning.
+func (s *Store) FinishIn(ctx context.Context, x Execer, id int64, state, lastErr, logTail string) error {
+	res, err := x.ExecContext(ctx, `
 UPDATE download_jobs
 SET state = ?, last_error = ?, log_tail = ?, finished_at = datetime('now')
 WHERE id = ? AND state = 'running'`,

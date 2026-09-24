@@ -113,6 +113,7 @@ func newHarness(t *testing.T, runner *fakeRunner, tune func(*Deps)) *harness {
 	// the worker always caches a downloaded video's channel. Tests that want
 	// the nil path set it back to nil in tune.
 	deps := Deps{
+		DB:           db,
 		Jobs:         h.jobs,
 		Videos:       h.videos,
 		Settings:     h.settings,
@@ -1521,7 +1522,7 @@ func TestSucceed_storesPosterAndTranscriptThenUnlinksThem(t *testing.T) {
 		t.Fatalf("get video: %v", err)
 	}
 
-	h.worker.succeed(job, v, &ytdlp.Result{
+	h.worker.succeed(context.Background(), job, v, &ytdlp.Result{
 		MediaPath:       mediaPath,
 		ThumbnailPath:   thumbPath,
 		SubtitleRelPath: filepath.Join("chan1", "v1", "v1.en.vtt"),
@@ -1578,7 +1579,7 @@ func TestSucceed_toleratesAMissingTranscript(t *testing.T) {
 	}
 	v, _ := h.videos.Get("v2")
 
-	h.worker.succeed(job, v, &ytdlp.Result{MediaPath: mediaPath})
+	h.worker.succeed(context.Background(), job, v, &ytdlp.Result{MediaPath: mediaPath})
 
 	if tr, err := h.videos.GetTranscript("v2"); err != nil || tr != nil {
 		t.Fatalf("a transcript appeared from nowhere: %v, %v", tr, err)
@@ -1618,7 +1619,7 @@ func TestSucceed_survivesUnstorableAssets(t *testing.T) {
 	}
 	v, _ := h.videos.Get("v3")
 
-	h.worker.succeed(job, v, &ytdlp.Result{
+	h.worker.succeed(context.Background(), job, v, &ytdlp.Result{
 		MediaPath:       mediaPath,
 		ThumbnailPath:   filepath.Join(videoDir, "v3.jpg"),         // never written
 		SubtitleRelPath: filepath.Join("chan1", "v3", "v3.en.vtt"), // never written
@@ -1668,7 +1669,7 @@ func TestSucceed_refusesAssetsOutsideTheMediaDir(t *testing.T) {
 	}
 	v, _ := h.videos.Get("v4")
 
-	h.worker.succeed(job, v, &ytdlp.Result{MediaPath: mediaPath, ThumbnailPath: secret})
+	h.worker.succeed(context.Background(), job, v, &ytdlp.Result{MediaPath: mediaPath, ThumbnailPath: secret})
 
 	if th, terr := h.videos.GetThumbnail("v4"); terr != nil || th != nil {
 		t.Fatalf("stored a file from outside the media dir: %v, %v", th, terr)
