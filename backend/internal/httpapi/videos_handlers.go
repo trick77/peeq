@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -340,7 +341,7 @@ func (s *server) handleVideoEmbeddings(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeleteVideo is the manual DELETE endpoint: unconditionally
-// tombstones the video (unlinking the media file from disk to reclaim space,
+// tombstones the video (removing the media file from disk to reclaim space,
 // keeping the thumbnail so the remembered card still has a poster and the
 // subtitle so the transcript survives) while keeping the row for watched
 // history and a future re-download badge. Never-delete-a-playing-video is a
@@ -351,11 +352,18 @@ func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	media.RemoveTombstonedVideoFiles(s.mediaDir, v.MediaPath)
-
+	// The row is the source of truth, so it is written first: a tombstone that
+	// fails leaves the file where the still-'downloaded' row says it is. The
+	// other order left a downloaded row pointing at a file that was gone. A
+	// file that then cannot be removed is an orphan for the operator, not a
+	// failure for the user — the library state is already right.
 	if err := s.videos.Tombstone(v.ID); err != nil {
 		serverError(w, r, err, "delete video failed")
 		return
+	}
+	if err := media.RemoveTombstonedVideoFiles(s.mediaDir, v.MediaPath); err != nil {
+		// The path goes in the log because the row no longer holds it.
+		slog.Warn("tombstoned media removal failed", "video_id", v.ID, "path", v.MediaPath, "err", err)
 	}
 	// A deleted video must not stay "now playing" — the rail would keep offering
 	// to reopen it. Belt and braces with playback.Store.Get's own status filter,

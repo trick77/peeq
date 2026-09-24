@@ -348,3 +348,73 @@ func TestSweepOnce_recordsWhenItReclaims(t *testing.T) {
 		t.Fatalf("summary = %q", e.Summary)
 	}
 }
+
+// seedSweepable writes one aged, watched, non-favorite candidate with a real
+// media file under MediaDir and returns the file's path.
+func seedSweepable(t *testing.T, h *harness, id string) string {
+	t.Helper()
+	if err := h.vs.Upsert(videos.Video{ID: id, URL: "https://youtu.be/" + id}); err != nil {
+		t.Fatalf("upsert %s: %v", id, err)
+	}
+	mediaPath := filepath.Join(h.mediaDir, id+".mp4")
+	if err := os.WriteFile(mediaPath, []byte("fake video bytes"), 0o644); err != nil {
+		t.Fatalf("write media file %s: %v", id, err)
+	}
+	if err := h.vs.SetDownloaded(id, videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
+		t.Fatalf("set downloaded %s: %v", id, err)
+	}
+	if _, err := h.vs.SetWatched(id, true); err != nil {
+		t.Fatalf("set watched %s: %v", id, err)
+	}
+	h.backdateWatchedAt(t, id, "2026-01-01 00:00:00")
+	return mediaPath
+}
+
+// TestSweepOnce_tombstoneFailureKeepsTheFile asserts the row is written
+// before the file is removed: a tombstone that fails leaves the media where
+// the still-'downloaded' row says it is, and the sweep records nothing.
+func TestSweepOnce_tombstoneFailureKeepsTheFile(t *testing.T) {
+	h := newHarness(t, 30)
+	mediaPath := seedSweepable(t, h, "stuck")
+	if _, err := h.db.Exec(`CREATE TRIGGER block_status_update BEFORE UPDATE OF status ON videos BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	if err := h.sw.SweepOnce(); err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if _, err := os.Stat(mediaPath); err != nil {
+		t.Fatalf("media file should survive a failed tombstone, stat: %v", err)
+	}
+	v, err := h.vs.Get("stuck")
+	if err != nil || v == nil || v.Status != videos.StatusDownloaded {
+		t.Fatalf("row should still be downloaded, got %+v err=%v", v, err)
+	}
+	if len(h.rec.events) != 0 {
+		t.Fatalf("nothing was reclaimed, but %d activity events were recorded", len(h.rec.events))
+	}
+}
+
+// TestSweepOnce_removalFailureIsNotReclaimed asserts a file that will not go
+// leaves the row tombstoned (the library state is right) but is not counted
+// as reclaimed space.
+func TestSweepOnce_removalFailureIsNotReclaimed(t *testing.T) {
+	h := newHarness(t, 30)
+	mediaPath := seedSweepable(t, h, "stuck")
+	// A non-empty directory in the file's place makes os.Remove fail.
+	if err := os.Remove(mediaPath); err != nil {
+		t.Fatalf("remove seed file: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(mediaPath, "inner"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := h.sw.SweepOnce(); err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	v, err := h.vs.Get("stuck")
+	if err != nil || v == nil || v.Status != videos.StatusTombstoned {
+		t.Fatalf("row should be tombstoned, got %+v err=%v", v, err)
+	}
+	if len(h.rec.events) != 0 {
+		t.Fatalf("nothing was reclaimed, but %d activity events were recorded", len(h.rec.events))
+	}
+}

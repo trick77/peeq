@@ -145,9 +145,10 @@ func (s *Store) Discard(id string) error {
 // Tombstone marks a video deleted-but-remembered: media_path is cleared and
 // status becomes 'tombstoned', but the row (and its watched history) is kept —
 // a future badge can offer re-download. Tombstone only updates the database;
-// the caller must unlink the actual media file first (it needs config.MediaDir
+// the caller removes the actual media file AFTERWARDS (it needs config.MediaDir
 // and path-safety checks the store doesn't have) via
-// media.RemoveTombstonedVideoFiles.
+// media.RemoveTombstonedVideoFiles. Row first: a tombstone that fails must
+// leave the file where the still-'downloaded' row says it is.
 //
 // media_path is the ONLY thing cleared. The poster and the transcript are rows
 // of their own (0022, 0023) and are untouched by a delete, so the remembered

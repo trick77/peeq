@@ -51,7 +51,9 @@ func TestRemoveTombstonedVideoFilesKeepsEverythingButMedia(t *testing.T) {
 		}
 	}
 
-	RemoveTombstonedVideoFiles(dir, "vid.mp4")
+	if err := RemoveTombstonedVideoFiles(dir, "vid.mp4"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
 
 	if _, err := os.Stat(mediaPath); !os.IsNotExist(err) {
 		t.Errorf("media file still present, want removed")
@@ -104,5 +106,27 @@ func TestRemoveVideoFilesSweepsSubtitleSidecars(t *testing.T) {
 	}
 	if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
 		t.Errorf("subtitle sidecar still present, want removed")
+	}
+}
+
+// TestRemoveTombstonedVideoFilesReportsFailure pins the return value: a
+// missing file is not an error (the row may be tombstoned twice, or the file
+// already swept), anything else is reported so the caller can log the orphan.
+func TestRemoveTombstonedVideoFilesReportsFailure(t *testing.T) {
+	dir := t.TempDir()
+	if err := RemoveTombstonedVideoFiles(dir, "missing.mp4"); err != nil {
+		t.Fatalf("missing file should not be an error, got %v", err)
+	}
+	if err := RemoveTombstonedVideoFiles(dir, ""); err != nil {
+		t.Fatalf("empty path should not be an error, got %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "stuck.mp4", "inner"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := RemoveTombstonedVideoFiles(dir, "stuck.mp4"); err == nil {
+		t.Fatal("a non-empty directory in the file's place should be reported")
+	}
+	if err := RemoveTombstonedVideoFiles(dir, "../outside.mp4"); err == nil {
+		t.Fatal("a path outside the media dir should be reported, not silently skipped")
 	}
 }
