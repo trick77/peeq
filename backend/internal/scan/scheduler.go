@@ -249,6 +249,11 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 		if !requested {
 			return
 		}
+		if ctx.Err() != nil {
+			// Process shutdown: no scan ran and nobody was told, so the request
+			// is still owed an answer. Leave the marker for the next boot.
+			return
+		}
 		if err := s.d.Channels.ClearScanRequest(sub.ChannelID, sub.ScanRequestedAt); err != nil {
 			s.d.Logger.Error("scan: clear scan request failed", "channel", sub.ChannelID, "err", err)
 		}
@@ -264,6 +269,12 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 		}
 	}()
 	if err := s.scanOnce(ctx, sub); err != nil {
+		if ctx.Err() != nil {
+			// Process shutdown mid-scan: not this channel failing. No cookie
+			// flip, no auto-pause count, no "scan failed" row, no backoff, and
+			// a "Scan now" marker stays set — the next boot claims it again.
+			return
+		}
 		// A bot-block or a dead cookie surfaced by a SCAN (not a download) must
 		// flip cookie_status the same way the download worker's pause() does —
 		// otherwise the scheduler's own cookie gate (CookieStatus != "valid")
