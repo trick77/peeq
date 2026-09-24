@@ -11,7 +11,7 @@ import {
   subscribeChannel,
   unsubscribeChannel,
 } from "../../api/channels";
-import { getSettings } from "../../api/settings";
+import { useSettings } from "../../settingsStore";
 import { presetLabel } from "../../formatPresets";
 import { isScanQueued, scanNotice, scheduleLine } from "./schedule";
 import type { ChannelDetail } from "../../api/types";
@@ -33,13 +33,8 @@ export function SettingsTab({
   // The global format preset, so the override list can mark which one
   // "use the global setting" actually resolves to. A failed fetch leaves it
   // "", which badges no row — better than badging the wrong one.
-  const [globalPreset, setGlobalPreset] = useState("");
-
-  useEffect(() => {
-    getSettings()
-      .then((s) => setGlobalPreset(s.format_preset))
-      .catch(() => setGlobalPreset(""));
-  }, []);
+  const { settings } = useSettings();
+  const globalPreset = settings?.format_preset ?? "";
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);

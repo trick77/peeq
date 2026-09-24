@@ -1,3 +1,4 @@
+import { publishSettings, resetSettingsStoreForTests } from "../settingsStore";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
@@ -196,6 +197,7 @@ describe("Player", () => {
     vi.mocked(setCategory).mockReset();
     vi.mocked(setCategory).mockResolvedValue("ai");
     vi.mocked(getVideo).mockResolvedValue(mockVideo);
+    resetSettingsStoreForTests();
     vi.mocked(getSettings).mockReset();
     vi.mocked(getSettings).mockResolvedValue(makeSettings(false));
     vi.mocked(updateSettings).mockReset();
@@ -2646,6 +2648,32 @@ describe("Player", () => {
       render(<Player videoId="v1" onDeleted={() => {}} />);
 
       expect(await findVideoSrc()).toBe("/api/videos/v1/stream");
+    });
+
+    // The Player stays mounted for the whole session, so a preference changed
+    // on the Settings page reaches it through the shared store, not a remount.
+    it("switches to a grant URL when direct playback is turned on elsewhere", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo());
+      vi.mocked(getSettings).mockResolvedValue(makeSettings(false, false));
+      vi.mocked(createPlaybackGrant).mockClear();
+      vi.mocked(createPlaybackGrant).mockResolvedValue({
+        url: "/api/p/tok456/stream",
+        expires_at: "2026-07-29 10:00:00",
+      });
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      expect(await findVideoSrc()).toBe("/api/videos/v1/stream");
+      expect(createPlaybackGrant).not.toHaveBeenCalled();
+
+      act(() => publishSettings(makeSettings(false, true)));
+
+      await waitFor(() =>
+        expect(document.querySelector("video")?.getAttribute("src")).toBe(
+          "/api/p/tok456/stream",
+        ),
+      );
+      expect(createPlaybackGrant).toHaveBeenCalledTimes(1);
+      expect(createPlaybackGrant).toHaveBeenCalledWith("v1");
+      expect(getSettings).toHaveBeenCalledTimes(1);
     });
 
     // Offering an AirPlay button that hands the TV a URL it cannot fetch would

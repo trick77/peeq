@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Icon } from "../icons";
 import { Button, Spinner, t } from "../ui";
 import {
-  getSettings,
   updateSettings,
   putCookie,
   getAPITokenStatus,
@@ -11,6 +10,7 @@ import {
 import { getYtdlpVersion, updateYtdlp, type YtdlpVersion } from "../api/ytdlp";
 import { formatAgo } from "../format";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
+import { publishSettings, refreshSettings } from "../settingsStore";
 import type { Settings as SettingsType } from "../api/types";
 import { DOT } from "../sep";
 import { PRESETS } from "../formatPresets";
@@ -96,10 +96,20 @@ export function Settings() {
   const [tokenCopied, setTokenCopied] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
 
+  // Every settings response this page receives is adopted here: shown, and
+  // published to the store so the Library, the Player and the channel tabs
+  // see the same value without a reload of their own.
+  function adoptSettings(s: SettingsType) {
+    setSettingsState(s);
+    publishSettings(s);
+  }
+
   function load() {
-    getSettings()
+    // A fresh read, not the cached one: a cookie pasted from the extension
+    // since the store last looked has to show up here.
+    refreshSettings()
       .then((s) => {
-        setSettingsState(s);
+        adoptSettings(s);
         setCustomFormat(s.format_custom);
         setLimitRate(s.limit_rate);
         setThrottleBase(s.throttle_base_seconds);
@@ -136,7 +146,7 @@ export function Settings() {
     setCookieError(null);
     try {
       const s = await putCookie(cookieText);
-      setSettingsState(s);
+      adoptSettings(s);
       setCookieText("");
     } catch (err) {
       setCookieError((err as Error).message ?? "Failed to save cookie.");
@@ -153,7 +163,7 @@ export function Settings() {
         : { format_preset: id };
     try {
       const s = await updateSettings(patch);
-      setSettingsState(s);
+      adoptSettings(s);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -165,7 +175,7 @@ export function Settings() {
         format_preset: "custom",
         format_custom: customFormat,
       });
-      setSettingsState(s);
+      adoptSettings(s);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -174,7 +184,7 @@ export function Settings() {
   async function handleSaveLimitRate() {
     try {
       const s = await updateSettings({ limit_rate: limitRate });
-      setSettingsState(s);
+      adoptSettings(s);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -183,7 +193,7 @@ export function Settings() {
   async function handleSaveThrottleBase() {
     try {
       const s = await updateSettings({ throttle_base_seconds: throttleBase });
-      setSettingsState(s);
+      adoptSettings(s);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -197,7 +207,7 @@ export function Settings() {
   async function commitRetention() {
     try {
       const s = await updateSettings({ retention_days: retentionDays });
-      setSettingsState(s);
+      adoptSettings(s);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -208,7 +218,7 @@ export function Settings() {
       const s = await updateSettings({
         min_video_duration_seconds: minVideoDuration,
       });
-      setSettingsState(s);
+      adoptSettings(s);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -220,7 +230,7 @@ export function Settings() {
   async function handleToggleSubtitlesDefault(next: boolean) {
     try {
       const s = await updateSettings({ subtitles_default: next });
-      setSettingsState(s);
+      adoptSettings(s);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -229,7 +239,7 @@ export function Settings() {
   async function handleToggleDirectStream(next: boolean) {
     try {
       const s = await updateSettings({ direct_stream_enabled: next });
-      setSettingsState(s);
+      adoptSettings(s);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -324,7 +334,7 @@ export function Settings() {
     try {
       if (paused) await pauseYoutube();
       else await resumeYoutube();
-      setSettingsState(await getSettings());
+      adoptSettings(await refreshSettings());
     } catch (err) {
       setError((err as Error).message);
     }

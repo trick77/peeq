@@ -1,3 +1,4 @@
+import { resetSettingsStoreForTests } from "../settingsStore";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
@@ -589,6 +590,7 @@ function categoryVideo(overrides: Partial<Video> = {}): Video {
 
 describe("Library category chips", () => {
   beforeEach(() => {
+    resetSettingsStoreForTests();
     vi.mocked(listVideos).mockReset();
     // An empty chip row by default; a test that reads a number, or clicks a
     // category chip (which only exists while its count is above zero), hands

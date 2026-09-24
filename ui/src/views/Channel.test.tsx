@@ -45,6 +45,7 @@ import {
 import { listVideos, setFavorite, setWatched } from "../api/videos";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
 import { getSettings } from "../api/settings";
+import { resetSettingsStoreForTests } from "../settingsStore";
 import type { Settings, Video } from "../api/types";
 import {
   formatRuntime,
@@ -173,6 +174,7 @@ describe("Channel", () => {
     vi.mocked(downloadPending).mockResolvedValue(undefined);
     vi.mocked(ignorePending).mockReset();
     vi.mocked(ignorePending).mockResolvedValue(undefined);
+    resetSettingsStoreForTests();
     vi.mocked(getSettings).mockReset();
     vi.mocked(getSettings).mockResolvedValue(settings());
   });
@@ -1361,6 +1363,7 @@ describe("Channel YouTube metadata", () => {
     vi.mocked(getChannel).mockReset();
     vi.mocked(listVideos).mockReset();
     vi.mocked(listPending).mockReset();
+    resetSettingsStoreForTests();
     vi.mocked(getSettings).mockReset();
     vi.mocked(listVideos).mockResolvedValue([]);
     vi.mocked(listPending).mockResolvedValue([]);
