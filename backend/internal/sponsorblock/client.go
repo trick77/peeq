@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/version"
+
+	"github.com/trick77/peeq/internal/logx"
 )
 
 // DefaultBaseURL is the public SponsorBlock instance.
@@ -92,16 +94,18 @@ func (c *Client) Segments(ctx context.Context, videoID string, durationSeconds f
 	q.Set("actionTypes", `["skip"]`)
 
 	endpoint := c.baseURL + "/api/skipSegments/" + prefix + "?" + q.Encode()
+	// Both errors render the endpoint, query string included; redacted at the
+	// source so no caller can log or store it whole.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("sponsorblock: build request for %s: %w", videoID, err)
+		return nil, fmt.Errorf("sponsorblock: build request for %s: %w", videoID, logx.RedactErr(err))
 	}
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("sponsorblock: GET segments for %s: %w", videoID, err)
+		return nil, fmt.Errorf("sponsorblock: GET segments for %s: %w", videoID, logx.RedactErr(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 

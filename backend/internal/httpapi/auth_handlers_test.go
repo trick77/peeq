@@ -64,8 +64,8 @@ func TestAuthCallback_neverLogsTheAuthCode(t *testing.T) {
 	// Given: OIDC configured with a backend whose Exchange fails with a
 	// *url.Error carrying the auth code in its query string — the code
 	// exchange failure (oidc.go:104-107) is one of the two failure modes
-	// that embeds the callback URL, and only reaches redactErr's redaction
-	// logic if the request first clears the state/nonce cookie checks.
+	// that embeds the callback URL, and only reaches logx.RedactErr's
+	// redaction if the request first clears the state/nonce cookie checks.
 	logs := captureLogs(t)
 	exchangeErr := &url.Error{
 		Op:  "Post",

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/trick77/peeq/internal/logx"
 )
 
 // FetchStatusError is returned when the remote server answers with a non-200
@@ -63,13 +65,16 @@ func FetchImageBytes(ctx context.Context, url string) (string, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	// Both errors render the URL, and a CDN image URL carries a signed query
+	// string that must not reach the logs; redacted here, once, rather than
+	// at every caller that logs the failure.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", nil, fmt.Errorf("fetch image: %w", err)
+		return "", nil, fmt.Errorf("fetch image: %w", logx.RedactErr(err))
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", nil, fmt.Errorf("fetch image: %w", err)
+		return "", nil, fmt.Errorf("fetch image: %w", logx.RedactErr(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {

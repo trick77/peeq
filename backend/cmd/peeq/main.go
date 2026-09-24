@@ -32,6 +32,7 @@ import (
 	"github.com/trick77/peeq/internal/httpapi"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/peeq/internal/logx"
 	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/playback"
 	"github.com/trick77/peeq/internal/playbackgrant"
@@ -56,8 +57,11 @@ func main() {
 	// carries an RFC3339 timestamp (the package default does not guarantee
 	// one). Installed before anything else so the startup banner and any
 	// config-load failure are timestamped too. Level: BACKEND_LOG_LEVEL.
+	// ReplaceAttr scrubs query strings and userinfo from every error logged
+	// under "err" (logx.RedactAttr), so the "never log a URL" rule holds for
+	// every line rather than only where a call site remembered to wrap.
 	logLevel := parseLogLevel(envDefault("BACKEND_LOG_LEVEL", "info"))
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel, ReplaceAttr: logx.RedactAttr})))
 
 	slog.Info("starting peeq", "version", version.Version)
 	if err := run(); err != nil {
