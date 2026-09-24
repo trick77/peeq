@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { Inbox } from "./Inbox";
 import type { PendingItem } from "../api/types";
 
@@ -239,6 +240,57 @@ describe("Inbox", () => {
       .closest(".card") as HTMLElement;
     const byline = cardA.querySelector(".by") as HTMLElement;
     expect(within(byline).queryByRole("button")).toBeNull();
+  });
+
+  // The count used to be pushed from inside a setItems updater — a parent
+  // setState during this component's render, which React warns about and
+  // StrictMode runs twice. It is an effect on the length now, so every
+  // change is reported once, whatever React does with the updater.
+  it("reports each count change exactly once, even under StrictMode", async () => {
+    const user = userEvent.setup();
+    const onCountChange = vi.fn();
+    render(
+      <StrictMode>
+        <Inbox onCountChange={onCountChange} />
+      </StrictMode>,
+    );
+    await screen.findByText("Second pending video");
+    // StrictMode ran the mount effect twice, so the list was fetched twice…
+    await waitFor(() => expect(listPending).toHaveBeenCalledTimes(2));
+    // …and the count was still reported once.
+    await waitFor(() => expect(onCountChange).toHaveBeenCalledWith(2));
+    expect(onCountChange).toHaveBeenCalledTimes(1);
+    onCountChange.mockClear();
+    const row = screen
+      .getByText("Second pending video")
+      .closest(".card") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: /ignore/i }));
+    await waitFor(() => expect(onCountChange).toHaveBeenCalledWith(1));
+    expect(onCountChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps reporting the count after an action has failed", async () => {
+    const user = userEvent.setup();
+    const onCountChange = vi.fn();
+    vi.mocked(downloadPending).mockRejectedValueOnce(new Error("disk full"));
+    render(<Inbox onCountChange={onCountChange} />);
+    await screen.findByText("Second pending video");
+    await waitFor(() => expect(onCountChange).toHaveBeenCalledWith(2));
+    onCountChange.mockClear();
+
+    const first = screen
+      .getByText("First pending video")
+      .closest(".card") as HTMLElement;
+    await user.click(within(first).getByRole("button", { name: /download/i }));
+    expect(await screen.findByText(/disk full/)).toBeInTheDocument();
+    expect(onCountChange).not.toHaveBeenCalled();
+
+    // The error line is up, and the next action still moves the badge.
+    const second = screen
+      .getByText("Second pending video")
+      .closest(".card") as HTMLElement;
+    await user.click(within(second).getByRole("button", { name: /ignore/i }));
+    await waitFor(() => expect(onCountChange).toHaveBeenCalledWith(1));
   });
 
   it("calls onCountChange with the decremented count after Ignore removes a row", async () => {
