@@ -18,12 +18,12 @@ func TestWorker_shutdownDuringPreflightLeavesJobRunning(t *testing.T) {
 	entered := make(chan struct{})
 	var once sync.Once
 	runner := &fakeRunner{
-		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+		metaFn: func(ctx context.Context, _ string) (*ytdlp.Meta, error) {
 			once.Do(func() { close(entered) })
 			<-ctx.Done()
 			return nil, ctx.Err()
 		},
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
 		},
 	}
