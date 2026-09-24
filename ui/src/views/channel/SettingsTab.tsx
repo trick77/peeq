@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "../../ui";
 import { Icon } from "../../icons";
 import { ConfirmDialog } from "../../components/ConfirmDialog";

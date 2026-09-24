@@ -10,13 +10,7 @@ import {
   redownload,
 } from "../api";
 import { useSettings } from "../settingsStore";
-import type {
-  Video,
-  VideoCounts,
-  VideoFilter,
-  VideoSort,
-  Settings,
-} from "../api/types";
+import type { Video, VideoCounts, VideoFilter, VideoSort } from "../api/types";
 import { CATEGORIES } from "../categories";
 import { controlClass } from "../ui";
 

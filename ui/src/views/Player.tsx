@@ -20,7 +20,7 @@ import {
 } from "../api/videos";
 import { reprocess, subtitlesUrl } from "../api/search";
 import { updateSettings } from "../api/settings";
-import { patchSettings, useSettings } from "../settingsStore";
+import { patchSettings, publishSettings, useSettings } from "../settingsStore";
 import { setPlaybackState } from "../api/playback";
 import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareControl } from "../components/ShareControl";
@@ -277,10 +277,29 @@ export function Player({
     : settingsFailed
       ? false
       : null;
-  const directStream: boolean | null = globalSettings
+  const directStreamNow: boolean | null = globalSettings
     ? globalSettings.direct_stream_enabled
     : settingsFailed
       ? false
+      : null;
+  // directStream is that preference as it stood when THIS video's src was
+  // chosen, held until the video changes. The store can flip it mid-session
+  // — the Settings page is one click away — and swapping the src of a
+  // playing <video> reloads the media from 0:00. So a change applies to the
+  // next video opened, never to the one in front of you.
+  const [directStreamFor, setDirectStreamFor] = useState<{
+    id: string;
+    on: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!videoId || directStreamNow === null) return;
+    setDirectStreamFor((prev) =>
+      prev && prev.id === videoId ? prev : { id: videoId, on: directStreamNow },
+    );
+  }, [videoId, directStreamNow]);
+  const directStream: boolean | null =
+    directStreamFor && directStreamFor.id === videoId
+      ? directStreamFor.on
       : null;
   // grant is the minted direct-playback URL, stamped with the video it was
   // minted for. The id is not decoration: the <video> unmounts and remounts on
@@ -1169,8 +1188,12 @@ export function Player({
       next = !ccOn;
     }
     setCcOn(next);
+    // Optimistic, then the server's answer; on failure the store goes back,
+    // so a write that never landed cannot stay published as the truth.
     patchSettings({ subtitles_default: next });
-    updateSettings({ subtitles_default: next }).catch(() => {});
+    updateSettings({ subtitles_default: next })
+      .then(publishSettings)
+      .catch(() => patchSettings({ subtitles_default: !next }));
   }
 
   async function handleReprocess() {

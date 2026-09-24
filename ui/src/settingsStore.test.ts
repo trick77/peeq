@@ -121,4 +121,45 @@ describe("settingsStore", () => {
     await waitFor(() => expect(result.current.settings).toEqual(base));
     expect(result.current.settings?.retention_days).toBe(14);
   });
+
+  it("a fetch that lands after a publish does not overwrite the newer value", async () => {
+    let resolveOld: (s: Settings) => void = () => {};
+    vi.mocked(getSettings).mockReturnValueOnce(
+      new Promise<Settings>((r) => {
+        resolveOld = r;
+      }),
+    );
+    const { result } = renderHook(() => useSettings());
+    act(() => publishSettings({ ...base, subtitles_default: true }));
+    resolveOld({ ...base, subtitles_default: false });
+    await Promise.resolve();
+    expect(result.current.settings?.subtitles_default).toBe(true);
+  });
+
+  it("a fetch that fails after a publish keeps the published value", async () => {
+    let rejectOld: (e: Error) => void = () => {};
+    vi.mocked(getSettings).mockReturnValueOnce(
+      new Promise<Settings>((_r, rej) => {
+        rejectOld = rej;
+      }),
+    );
+    const pending = loadSettings().catch(() => {});
+    const { result } = renderHook(() => useSettings());
+    act(() => publishSettings({ ...base, retention_days: 30 }));
+    rejectOld(new Error("timeout"));
+    await pending;
+    expect(result.current.settings?.retention_days).toBe(30);
+    expect(result.current.failed).toBe(false);
+  });
+
+  it("a mounted reader reloads after an invalidate", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings).toEqual(base));
+    vi.mocked(getSettings).mockResolvedValue({ ...base, retention_days: 5 });
+    act(() => invalidateSettings());
+    await waitFor(() =>
+      expect(result.current.settings?.retention_days).toBe(5),
+    );
+    expect(getSettings).toHaveBeenCalledTimes(2);
+  });
 });

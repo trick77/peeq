@@ -29,9 +29,10 @@ const EMPTY: SettingsSnapshot = Object.freeze({
 
 let snapshot: SettingsSnapshot = EMPTY;
 let inflight: Promise<Settings> | null = null;
-// Bumped by invalidate (and the test reset): a request that was out when the
-// store was cleared must not repopulate it with the answer to a stale
-// question when it finally lands.
+// Bumped by every write that did not come from a fetch — publish, patch,
+// invalidate, the test reset. A request that was out when one of those
+// happened is answering an older question: its answer is returned to the
+// caller that asked, but never written over the newer value.
 let generation = 0;
 const listeners = new Set<() => void>();
 
@@ -81,6 +82,8 @@ export function refreshSettings(): Promise<Settings> {
 // publishSettings is what the Settings page calls with every save's response:
 // the server's view is the truth, and every subscriber sees it.
 export function publishSettings(s: Settings): void {
+  generation += 1;
+  inflight = null;
   set({ settings: s, failed: false });
 }
 
@@ -88,6 +91,8 @@ export function publishSettings(s: Settings): void {
 // updates the subtitles default before the write lands).
 export function patchSettings(patch: SettingsPatch): void {
   if (!snapshot.settings) return;
+  generation += 1;
+  inflight = null;
   set({ settings: { ...snapshot.settings, ...patch }, failed: false });
 }
 
@@ -114,15 +119,19 @@ function getServerSnapshot(): SettingsSnapshot {
   return EMPTY;
 }
 
-// useSettings subscribes a component to the shared value and starts a load
-// if nothing is cached yet.
+// useSettings subscribes a component to the shared value and loads it
+// whenever nothing is cached: on mount (a reader mounting after a failed load
+// is one more chance to get it), and again after an invalidate, so a reader
+// that outlives one (the Player) does not sit on an empty store. A failure
+// leaves `settings` null without changing it, so it cannot re-arm this.
 export function useSettings(): SettingsSnapshot {
   const snap = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const missing = snap.settings === null;
   useEffect(() => {
-    if (!snapshot.settings) {
+    if (missing) {
       loadSettings().catch(() => {});
     }
-  }, []);
+  }, [missing]);
   return snap;
 }
 
