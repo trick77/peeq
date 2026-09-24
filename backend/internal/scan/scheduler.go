@@ -23,7 +23,6 @@ import (
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
-	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
@@ -45,9 +44,10 @@ const (
 	scanBackoffJitter = 15 * time.Minute
 	autoPriority      = 0                     // below manual (10), matching Phase 1
 	sqlTimeLayout     = "2006-01-02 15:04:05" // SQLite datetime('now') text form (UTC)
-	// pendingThumbPrefetchTimeout bounds the whole best-effort thumbnail
-	// prefetch (across its retries and the hqdefault fallback), so a detached
-	// prefetch goroutine can never linger indefinitely.
+	// pendingThumbPrefetchTimeout bounds one best-effort thumbnail prefetch
+	// (across its retries and the hqdefault fallback). It is also the most a
+	// single job can hold one of the prefetchDrainers, which is why there is
+	// more than one of them (see thumbs.go).
 	pendingThumbPrefetchTimeout = 90 * time.Second
 )
 
@@ -140,6 +140,8 @@ type Scheduler struct {
 	d            Deps
 	lastScanTime time.Time // in-memory; enforces betweenChannels spacing
 	rand         func() float64
+	// thumbs feeds the thumbnail drainer Run owns; see thumbs.go.
+	thumbs chan thumbJob
 }
 
 // New builds a Scheduler, filling in defaults for the optional Deps fields.
@@ -156,25 +158,7 @@ func New(d Deps) *Scheduler {
 	if d.listSize <= 0 {
 		d.listSize = defaultListSize
 	}
-	return &Scheduler{d: d, rand: sched.PseudoRand()}
-}
-
-// prefetchPendingThumbnail fetches a newly-pending video's thumbnail and caches
-// it on its ledger row. It runs detached from the scan pass on its own
-// background context so a slow fetch neither blocks the loop nor is cancelled
-// when the pass ends. Best-effort: a failure is logged and left for the serve
-// endpoint to retry on demand.
-func (s *Scheduler) prefetchPendingThumbnail(videoID, thumbnailURL string) {
-	ctx, cancel := context.WithTimeout(context.Background(), pendingThumbPrefetchTimeout)
-	defer cancel()
-	mime, data, err := media.FetchPendingThumbnail(ctx, videoID, thumbnailURL)
-	if err != nil {
-		s.d.Logger.Warn("scan: prefetch pending thumbnail failed", "video", videoID, "err", err)
-		return
-	}
-	if err := s.d.Ledger.SetThumbnail(videoID, mime, data); err != nil {
-		s.d.Logger.Warn("scan: store pending thumbnail failed", "video", videoID, "err", err)
-	}
+	return &Scheduler{d: d, rand: sched.PseudoRand(), thumbs: make(chan thumbJob, prefetchQueueSize)}
 }
 
 // Run is the scan loop; it blocks until ctx is cancelled. Each pass is
@@ -183,6 +167,10 @@ func (s *Scheduler) prefetchPendingThumbnail(videoID, thumbnailURL string) {
 // enforces the betweenChannels spacing, and scans it. A scan error backs the
 // subscription off by scanBackoff without advancing its baseline.
 func (s *Scheduler) Run(ctx context.Context) {
+	// The thumbnail drainers live exactly as long as the loop: Run does not
+	// return until they have stopped, so main's WaitGroup covers them and no
+	// prefetch can write after the database is closed.
+	defer s.runThumbnailDrainers(ctx)()
 	for {
 		if ctx.Err() != nil {
 			return
@@ -877,14 +865,15 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		if err := s.d.Ledger.Insert(entry); err != nil {
 			return err
 		}
-		// A newly-pending upload gets its thumbnail pulled to local disk now,
-		// best-effort and off the scan's critical path (a detached goroutine, so
-		// a slow CDN never stalls the loop), so the inbox card renders from peeq
-		// rather than loading i.ytimg.com in the browser. Only 'pending' —
+		// A newly-pending upload gets its thumbnail cached now, best-effort and
+		// off the scan's critical path (a bounded queue drained by one
+		// goroutine Run owns, so a slow CDN never stalls the loop and a pass
+		// with many uploads never bursts at it), so the inbox card renders from
+		// peeq rather than loading i.ytimg.com in the browser. Only 'pending' —
 		// seen/queued/unavailable rows never appear in the inbox. The serve
 		// endpoint self-heals anything this misses.
 		if entry.State == channelvideos.StatePending && s.d.MediaDir != "" {
-			go s.prefetchPendingThumbnail(entry.VideoID, entry.ThumbnailURL) //nolint:gosec // deliberately detached: the prefetch must outlive the scan loop, so a request-scoped context would cancel it (see the comment above)
+			s.queueThumbnail(entry.VideoID, entry.ThumbnailURL)
 		}
 	}
 

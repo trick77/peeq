@@ -371,10 +371,9 @@ func TestScan_subsequentNewVideo_pendingVsAutodownload(t *testing.T) {
 	}
 }
 
-// TestScan_prefetchesPendingThumbnail asserts a newly-pending upload has its
-// thumbnail fetched and cached to local disk when MediaDir is configured, so
-// the inbox never loads it from YouTube in the browser. The prefetch is a
-// detached goroutine, so the assertion polls for the cached file.
+// TestScan_prefetchesPendingThumbnail: a newly-pending upload's poster is
+// cached on its ledger row by the drainer Run owns (started by hand here,
+// since the test drives scanOnce directly), so the assertion polls.
 func TestScan_prefetchesPendingThumbnail(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
@@ -391,8 +390,11 @@ func TestScan_prefetchesPendingThumbnail(t *testing.T) {
 		{ID: "newp", DurationSeconds: 600, LiveStatus: "not_live", ThumbnailURL: srv.URL},
 	})
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go h.sched.drainThumbnails(ctx)
 	sub, _ := h.channels.ClaimDue(h.nowStr())
-	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
+	if err := h.sched.scanOnce(ctx, sub); err != nil {
 		t.Fatal(err)
 	}
 	if h.ledgerState("newp") != "pending" {
@@ -2208,7 +2210,7 @@ func TestScan_prefetchFailureStoresNothing(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	h.sched.prefetchPendingThumbnail("pf1", dead.URL)
+	h.sched.prefetchPendingThumbnail(context.Background(), thumbJob{videoID: "pf1", url: dead.URL})
 
 	if got, err := h.ledger.GetThumbnail("pf1"); err != nil || got != nil {
 		t.Fatalf("stored a poster from a failed fetch: %v, %v", got, err)
