@@ -198,3 +198,85 @@ func sessionExists(t *testing.T, db DBTX, token string) bool {
 	}
 	return count == 1
 }
+
+// countingDB counts the statements a store issues, so a test can assert that
+// a lookup inside the throttle window writes nothing at all. A trigger
+// cannot see this: an UPDATE whose WHERE matches no row fires no trigger,
+// yet still takes SQLite's write lock.
+type countingDB struct {
+	DBTX
+	execs int
+}
+
+func (c *countingDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	c.execs++
+	return c.DBTX.ExecContext(ctx, query, args...)
+}
+
+// TestSessionStore_LookupSkipsTheWriteWhenRecentlySeen pins that a lookup
+// inside the throttle window issues NO UPDATE. The old statement's WHERE
+// clause matched zero rows most of the time, but an UPDATE that matches
+// nothing still takes the write lock — on every thumbnail and every media
+// range request, behind whatever a worker was writing.
+func TestSessionStore_LookupSkipsTheWriteWhenRecentlySeen(t *testing.T) {
+	db := openTestDB(t)
+	user := insertTestUser(t, db, RoleAdmin)
+	counted := &countingDB{DBTX: db}
+	store := NewSessionStore(counted, false)
+	session, err := store.Create(context.Background(), user.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+	counted.execs = 0
+	// Fresh session: last_seen_at is now, so a lookup writes nothing.
+	for i := 0; i < 3; i++ {
+		if _, ok, err := store.Lookup(context.Background(), session.Token); err != nil || !ok {
+			t.Fatalf("Lookup() ok=%v err=%v", ok, err)
+		}
+	}
+	if counted.execs != 0 {
+		t.Fatalf("recently seen session issued %d writes, want 0", counted.execs)
+	}
+	// Once stale, exactly one, and it lands.
+	if _, err := db.ExecContext(context.Background(), `UPDATE sessions SET last_seen_at = datetime('now', '-2 minutes') WHERE token_hash = ?`, hashToken(session.Token)); err != nil {
+		t.Fatal(err)
+	}
+	stale := sessionLastSeen(t, db, session.Token)
+	if _, ok, err := store.Lookup(context.Background(), session.Token); err != nil || !ok {
+		t.Fatalf("Lookup() ok=%v err=%v", ok, err)
+	}
+	if counted.execs != 1 {
+		t.Fatalf("stale session issued %d writes, want 1", counted.execs)
+	}
+	if got := sessionLastSeen(t, db, session.Token); got == stale {
+		t.Fatalf("last_seen_at not refreshed, still %q", got)
+	}
+	// Exactly at the edge (one granularity old, to the second) counts as
+	// stale on both sides: the decision and the statement's guard share one
+	// cutoff, so the write is issued AND lands.
+	counted.execs = 0
+	if _, err := db.ExecContext(context.Background(), `UPDATE sessions SET last_seen_at = datetime('now', '-60 seconds') WHERE token_hash = ?`, hashToken(session.Token)); err != nil {
+		t.Fatal(err)
+	}
+	edge := sessionLastSeen(t, db, session.Token)
+	if _, ok, err := store.Lookup(context.Background(), session.Token); err != nil || !ok {
+		t.Fatalf("Lookup() ok=%v err=%v", ok, err)
+	}
+	if counted.execs != 1 {
+		t.Fatalf("edge case issued %d writes, want 1", counted.execs)
+	}
+	if got := sessionLastSeen(t, db, session.Token); got == edge {
+		t.Fatalf("edge write matched no row, last_seen_at still %q", got)
+	}
+	// A stamp that does not parse is rewritten without the guard, so it heals.
+	counted.execs = 0
+	if _, err := db.ExecContext(context.Background(), `UPDATE sessions SET last_seen_at = 'now' WHERE token_hash = ?`, hashToken(session.Token)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := store.Lookup(context.Background(), session.Token); err != nil || !ok {
+		t.Fatalf("Lookup() ok=%v err=%v", ok, err)
+	}
+	if got := sessionLastSeen(t, db, session.Token); counted.execs != 1 || got == "now" {
+		t.Fatalf("unparseable stamp: writes=%d last_seen_at=%q, want one write that heals it", counted.execs, got)
+	}
+}
