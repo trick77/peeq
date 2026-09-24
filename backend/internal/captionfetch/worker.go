@@ -177,9 +177,11 @@ func (w *Worker) pass(ctx context.Context) {
 	relPath, err := w.d.Fetcher.Subtitles(ctx, c.VideoID, c.URL, w.d.DefaultSubLang)
 	if err != nil {
 		// Cookie, pause and kill-switch refusals are the system working as
-		// designed, not this video failing. Give the rung back so the video is
-		// not quietly spent while peeq was gated.
-		if refused(err) {
+		// designed, not this video failing, and neither is a process shutdown
+		// that lands mid-fetch. Give the rung back so the video is not quietly
+		// spent; in particular the last rung must not settle the video as
+		// no_transcript, which nothing ever revisits.
+		if ctx.Err() != nil || refused(err) {
 			if rerr := w.d.Ledger.ReturnCaptionAttempt(c.VideoID); rerr != nil {
 				w.d.Logger.Error("captionfetch: return attempt failed", "video_id", c.VideoID, "err", rerr)
 			}

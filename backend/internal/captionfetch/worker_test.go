@@ -62,11 +62,17 @@ type fetcher struct {
 	results []string
 	errs    []error
 	calls   int
+	// onCall, when set, runs before each scripted answer with the call's ctx —
+	// for a test that has to cancel the worker from inside the fetch.
+	onCall func(context.Context)
 }
 
 func (f *fetcher) Subtitles(_ context.Context, _, _, _ string) (string, error) {
 	i := f.calls
 	f.calls++
+	if f.onCall != nil {
+		f.onCall(ctx)
+	}
 	var err error
 	if i < len(f.errs) {
 		err = f.errs[i]
