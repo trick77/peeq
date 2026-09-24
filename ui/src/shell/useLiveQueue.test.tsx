@@ -49,7 +49,9 @@ beforeEach(() => {
   vi.mocked(listDownloads).mockReset().mockResolvedValue([]);
   vi.mocked(listSummaries).mockReset().mockResolvedValue([]);
   vi.mocked(listPending).mockReset().mockResolvedValue([]);
-  vi.mocked(cookieHealth).mockReset().mockResolvedValue({ status: "valid" });
+  vi.mocked(cookieHealth)
+    .mockReset()
+    .mockResolvedValue({ status: "valid", present: true });
   vi.mocked(downloadsStatus).mockReset().mockResolvedValue(healthy);
   vi.mocked(cancelDownload).mockReset().mockResolvedValue(undefined);
   vi.mocked(getYtdlpVersion)
@@ -155,7 +157,10 @@ describe("useLiveQueue", () => {
   it("refreshStatus re-reads the cookie light and the download status", async () => {
     const { result } = renderHook(() => useLiveQueue(true));
     await waitFor(() => expect(result.current.cookieStatus).toBe("valid"));
-    vi.mocked(cookieHealth).mockResolvedValue({ status: "stale" });
+    vi.mocked(cookieHealth).mockResolvedValue({
+      status: "stale",
+      present: true,
+    });
     vi.mocked(downloadsStatus).mockResolvedValue({
       ...healthy,
       youtube_paused: true,
