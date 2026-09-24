@@ -269,5 +269,5 @@ func serveShell(w http.ResponseWriter, shell []byte, tags string) {
 	// Same rule as the SPA handler: this response names the hashed bundles, so it
 	// must be revalidated or a client keeps booting an old build.
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write([]byte(out))
+	_, _ = w.Write([]byte(out)) //nolint:gosec // tags come from buildMeta, which HTML-escapes every dynamic value into a quoted attribute; the shell is the embedded build artifact
 }

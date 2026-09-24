@@ -3,6 +3,7 @@ package videos
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -248,7 +249,7 @@ func (s *Store) NextUnclassified(skip []string) (*Video, error) {
 	q += " ORDER BY v.created_at DESC, v.id DESC LIMIT 1"
 
 	v, err := scanVideo(s.db.QueryRowContext(context.Background(), q, args...))
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

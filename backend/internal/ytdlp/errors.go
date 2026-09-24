@@ -29,6 +29,27 @@ var (
 	ErrPaused = errors.New("ytdlp: youtube paused")
 )
 
+// RefusedError wraps a gate refusal (ErrPaused, ErrNoCookie, ErrCookieExpired
+// or ErrBlocked raised by pauseGate/cookieGate) so a caller can tell "the
+// Runner never started this call" apart from the same sentinel surfaced by
+// Classify after yt-dlp actually ran. Download needs the distinction: a
+// refusal leaves nothing to clean up, so a resumable .part from an earlier
+// rate-limited attempt must survive it. errors.Is still matches the wrapped
+// sentinel, so every other caller keeps its switch unchanged.
+type RefusedError struct {
+	Err error
+}
+
+func (e *RefusedError) Error() string { return e.Err.Error() }
+func (e *RefusedError) Unwrap() error { return e.Err }
+
+// IsRefused reports whether err is a gate refusal — a call the Runner never
+// started — as opposed to a failure of a call that ran.
+func IsRefused(err error) bool {
+	var re *RefusedError
+	return errors.As(err, &re)
+}
+
 // TerminalError is a permanent, non-retryable failure for one specific
 // video: it is gone, private, members-only, age-gated, or geo-blocked, and
 // retrying will not help.

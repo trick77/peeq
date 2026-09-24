@@ -46,14 +46,14 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   only signal when it did not was a boot warning over an already-stale vector table.
 
 ## Chat model
-- `LLMWIRE_ZAI_BASE_URL` = Z.ai GENERAL endpoint `https://api.z.ai/api/paas/v4` (no `/v1`). NEVER
-  the Coding Plan endpoint `/api/coding/paas/v4` — restricted to Z.ai's own tools, forbids peeq.
+- The host is llmwire's (`profiles.yaml` `providers:`), never configured here: Z.ai's GENERAL
+  endpoint. Only `LLMWIRE_ZAI_API_KEY` is peeq's to set; a Coding Plan key does not work, that plan
+  is restricted to Z.ai's own tools and forbids peeq.
 - **The wire protocol is `github.com/trick77/llmwire`.** What that library owns, and what therefore
   must NOT be reimplemented here: the SSE parsing, the header/idle/call bounds and the text naming
   which one fired, the request body (no `ExtraBody`, ever), the usage decoding, and the opencode
-  identity (the User-Agent, the session header pair and the id). That identity is
-  `BACKEND_CHAT_EMULATE_OPENCODE`, default off, passed through `llm.Config.EmulateOpenCode`; inert
-  on Z.ai, needed on the MiMo token plan. This package owns pacing, the heartbeat, the
+  identity (the User-Agent, the session header pair and the id), switched on by the provider
+  entry in llmwire's `profiles.yaml`, never by a peeq setting. This package owns pacing, the heartbeat, the
   `CallInfo`/`Totals` accounting and the context knobs. One `llmwire.Client` per `llm.Client`,
   never one per call: the session id lives on it.
 - **Thinking can't be switched off.** `thinking:{"type":"disabled"}` → 400 code 1210. Only

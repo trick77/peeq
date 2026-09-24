@@ -315,12 +315,12 @@ func (s *server) serveMediaFile(w http.ResponseWriter, r *http.Request, storedPa
 		http.NotFound(w, r)
 		return
 	}
-	f, err := os.Open(safe)
+	f, err := os.Open(safe) //nolint:gosec // path comes from media.SafeMediaPath, which rejects traversal and symlink escape and returns the resolved path (see safepath_test.go)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	stat, err := f.Stat()
 	if err != nil {
 		http.NotFound(w, r)

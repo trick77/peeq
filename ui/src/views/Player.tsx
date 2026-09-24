@@ -11,7 +11,6 @@ import {
   setFavorite,
   setWatched,
   setCategory,
-  setResume,
   deleteVideo,
   redownload,
   streamUrl,
@@ -26,7 +25,6 @@ import { getShareStatus, type ShareStatus } from "../api/share";
 import { ShareControl } from "../components/ShareControl";
 import type { Video, VideoEmbeddings } from "../api/types";
 import type { SummaryStatus } from "../api/enums";
-import { ApiError } from "../api/http";
 import { formatDuration, gradientClassFor } from "../format";
 // Only the download filename helper is needed here now: parsing, finding and
 // copying all moved into components/TranscriptCard with the markup.
@@ -40,14 +38,9 @@ import { SummaryCard, HighlightsCard } from "./player/SidebarPanels";
 import { DetailsCard } from "./player/DetailsCard";
 import { MOBILE_QUERY, useMediaQuery } from "../shell/useMediaQuery";
 import { MetaHeader } from "./player/MetaHeader";
+import { useResumeSync } from "./player/useResumeSync";
 import { park, useParkedAt, videoHostNode } from "../videoHost";
 import type { NowPlaying } from "../nowPlaying";
-
-// RESUME_THROTTLE_MS bounds how often `timeupdate` (which fires ~4x/sec)
-// is allowed to actually POST the resume position — see handleTimeUpdate.
-// visibilitychange/pagehide bypass this throttle entirely (flushOnHide
-// below), so closing the tab never loses more than this much progress.
-const RESUME_THROTTLE_MS = 5000;
 
 // JUMP_SETTLE_SECONDS — how much playback a jumped-to moment has to survive
 // before the playhead is worth storing.
@@ -302,47 +295,29 @@ export function Player({
     null,
   );
   const videoRef = useRef<HTMLVideoElement>(null);
+  const {
+    positionRef,
+    positionKnownRef,
+    stateVersionRef,
+    watchedEpochRef,
+    jumpAnchorRef,
+    openVideoIdRef,
+    notePosition,
+    forgetPosition,
+    writeNow,
+    throttledPing,
+    forceNextPing,
+  } = useResumeSync({
+    videoId,
+    onAdoptWatched: adoptWatched,
+    onConflict: (id) => void handleStaleState(id),
+  });
+  const resumeAppliedRef = useRef(false);
   // stageSlotRef is the empty box on the player page the shared <video> parks
   // into. The element is not a child of this component's tree in the DOM sense
   // — it is portalled into videoHost's node, which this effect relocates — so
   // the stage renders a slot rather than the video itself.
   const stageSlotRef = useRef<HTMLDivElement>(null);
-  const lastSentRef = useRef(0);
-  // positionRef tracks the latest known playhead position independent of
-  // the <video> DOM node itself. On unmount, React nulls out videoRef
-  // *before* this effect's cleanup runs, so reading videoRef.current there
-  // is unreliable — positionRef, updated on every timeupdate, is not.
-  const positionRef = useRef(0);
-  // positionRef starts at 0, which is indistinguishable from "the user
-  // really is at 0:00" — without this guard, flushing on unmount before
-  // loadedMetadata/timeupdate has ever set a real position would overwrite
-  // a legitimately stored resume_position_seconds with 0. Only flush once
-  // a real position has been observed.
-  const positionKnownRef = useRef(false);
-  // stateVersionRef is the video's state_version as this Player last saw it,
-  // echoed on every resume POST so a watched toggle made in another tab or on
-  // another device can't be undone by this client writing its stale position
-  // back (issue #97). null means "not known yet" — a ping before the video has
-  // loaded sends no version and is checked server-side as before, which is
-  // correct: there is no stale read to guard against yet.
-  //
-  // It is refreshed from EVERY response that reports a version, not just
-  // getVideo: the resume POST's own >=90% auto-watch bumps it, so a client
-  // refreshing only from getVideo would 409 against its own threshold crossing.
-  const stateVersionRef = useRef<number | null>(null);
-  // Bumped by the watched toggle, captured by every resume write, checked in
-  // adoptWatched: it invalidates whatever was already in flight when the button
-  // was pressed. Without it, un-watching a video the auto-mark had just flipped
-  // would be reversed a moment later by the very response that flipped it — the
-  // label snapping back under the user's hand.
-  const watchedEpochRef = useRef(0);
-  const resumeAppliedRef = useRef(false);
-  // Where a jump put the playhead, or null when this page was not opened at a
-  // moment. While it is set, no resume position is written: see
-  // JUMP_SETTLE_SECONDS. Cleared once the video has played on from there, and by
-  // the video ending — a video watched to its end is watched however little of
-  // it was played after the jump.
-  const jumpAnchorRef = useRef<number | null>(null);
   // ccAppliedForRef holds the video id the subtitles default was last
   // applied to, so it lands exactly once per video. Without it the toggle
   // and the default-applier fight: toggling also updates subtitlesDefault
@@ -350,13 +325,6 @@ export function Player({
   // immediately re-apply the default on top of the user's click.
   const ccAppliedForRef = useRef<string | null>(null);
   const toastTimerRef = useRef<number | undefined>(undefined);
-  // openVideoIdRef is which video this Player currently has open, readable
-  // from an async continuation that resumed after the answer changed — null
-  // once the component unmounts. `videoId` itself can't do that job: a handler
-  // closes over the value from the render it was created in, so it keeps
-  // claiming the old video forever. Anything that touches state, the playhead
-  // or the toast *after* an await must compare against this first.
-  const openVideoIdRef = useRef<string | null>(null);
   // Sleep timer — "stop playing in N minutes", for watching in bed.
   //
   // It is a budget of milliseconds drained by wall-clock deltas, not a
@@ -379,13 +347,6 @@ export function Player({
 
   useEffect(() => {
     resumeAppliedRef.current = false;
-    positionKnownRef.current = false;
-    stateVersionRef.current = null;
-    // Belongs to the video that was jumped into, so it goes with that video.
-    // Left set, it would suppress the next video's resume writes until that one
-    // happened to pass the same mark.
-    jumpAnchorRef.current = null;
-    openVideoIdRef.current = videoId;
     setVideo(null);
     setError(null);
     setToast(null);
@@ -419,10 +380,6 @@ export function Player({
       .catch(() => {});
     return () => {
       active = false;
-      // Cleared on unmount as well as on a video change; the next run of this
-      // effect sets the new id back immediately, so only a real teardown
-      // leaves it null.
-      openVideoIdRef.current = null;
     };
   }, [videoId]);
 
@@ -528,55 +485,6 @@ export function Player({
     if (!video?.id) return;
     onMediaKnownRef.current?.(video.id, !!video.has_media);
   }, [video?.id, video?.has_media]);
-
-  // Flush the resume position immediately on tab-hide/unload, so the
-  // RESUME_THROTTLE_MS window never costs more than itself worth of
-  // progress even if the tab is closed mid-throttle. The cleanup function
-  // also flushes on unmount — e.g. clicking back to Library, the common
-  // in-SPA exit, which would otherwise silently discard up to
-  // RESUME_THROTTLE_MS worth of progress. Both paths read positionRef
-  // (not videoRef) so they always send the latest playhead position, even
-  // once React has already detached the <video> node's ref on unmount.
-  useEffect(() => {
-    function flush() {
-      if (!video || !positionKnownRef.current) return;
-      // A jump nobody played on from is not progress worth saving — and past the
-      // 90% line it is worse than nothing, since the server would file the video
-      // as watched (JUMP_SETTLE_SECONDS). This is the path that used to do it:
-      // land on a moment near the end, leave at once, and the unmount flush
-      // marked it.
-      if (jumpAnchorRef.current !== null) return;
-      // No 409 branch here, deliberately: this also runs from the unmount
-      // cleanup, where there is no component left to toast and no playhead left
-      // to rewind. A refused flush simply means the position the server already
-      // holds is the right one.
-      //
-      // An ACCEPTED flush must still adopt the version it hands back, exactly
-      // like the throttled ping does: past the 90% threshold this write
-      // auto-marks watched server-side and bumps state_version, so dropping the
-      // response would leave the ref stale and make the very next ping 409
-      // against this Player's own flush — pausing, rewinding to 0:00 and
-      // claiming the video was "marked watched on another device". Guarded on
-      // openVideoIdRef so a late response can't write this video's version into
-      // the ref after the user has moved to another one.
-      const id = video.id;
-      const epoch = watchedEpochRef.current;
-      setResume(id, positionRef.current, stateVersionRef.current ?? undefined)
-        .then((res) => {
-          if (openVideoIdRef.current !== id) return;
-          stateVersionRef.current = res.state_version;
-          adoptWatched(id, res.watched, epoch);
-        })
-        .catch(() => {});
-    }
-    document.addEventListener("visibilitychange", flush);
-    window.addEventListener("pagehide", flush);
-    return () => {
-      document.removeEventListener("visibilitychange", flush);
-      window.removeEventListener("pagehide", flush);
-      flush();
-    };
-  }, [video]);
 
   useEffect(() => {
     return () => {
@@ -919,13 +827,12 @@ export function Player({
     }
     disarmSleep();
     el.pause();
-    // Zeroing lastSentRef makes the throttled resume POST further down this
-    // same handleTimeUpdate fire unthrottled, so the pause point is stored
-    // rather than waiting out a window whose next tick is never coming.
-    // Deliberately not a second flush helper: the block below carries the
-    // openVideoIdRef guard, the state_version adoption and the 409 ->
-    // handleStaleState path that issue #97 exists to protect.
-    lastSentRef.current = 0;
+    // The throttled ping further down this same handleTimeUpdate then fires
+    // unthrottled, so the pause point is stored rather than waiting out a
+    // window whose next tick is never coming — through the one write path,
+    // with its state_version adoption and the 409 -> handleStaleState route
+    // that issue #97 exists to protect.
+    forceNextPing();
     showToast("Paused by sleep timer", "clock", "info");
   }
 
@@ -953,24 +860,7 @@ export function Player({
     // the whole last 10%: it would run out without ever crossing the server's
     // threshold, and the video would sit there unwatched with the credits up.
     const endEl = videoRef.current;
-    if (video?.id && endEl) {
-      const id = video.id;
-      const epoch = watchedEpochRef.current;
-      lastSentRef.current = Date.now();
-      positionRef.current = endEl.currentTime;
-      positionKnownRef.current = true;
-      setResume(id, endEl.currentTime, stateVersionRef.current ?? undefined)
-        .then((res) => {
-          if (openVideoIdRef.current !== id) return;
-          stateVersionRef.current = res.state_version;
-          adoptWatched(id, res.watched, epoch);
-        })
-        .catch((e: unknown) => {
-          if (e instanceof ApiError && e.status === 409) {
-            void handleStaleState(id);
-          }
-        });
-    }
+    if (video?.id && endEl) writeNow(video.id, endEl.currentTime);
     // A video that has run out is no longer one you are in the middle of, so
     // it stops being what playback carries — see onPlaybackEnded. Pressing
     // play again adopts it back, through handlePlay, like any other video.
@@ -991,8 +881,7 @@ export function Player({
     // it must not arrive with the dock. positionRef below is NOT gated: the
     // resume flush reads it, and that has to stay right wherever you are.
     if (visible) setCurrentTime(el.currentTime);
-    positionRef.current = el.currentTime;
-    positionKnownRef.current = true;
+    notePosition(el.currentTime);
     // The jump has been played through: from here the playhead means what it
     // normally means. Any movement away from the landing point counts, in either
     // direction — scrubbing off it is the reader taking charge of the position
@@ -1024,26 +913,7 @@ export function Player({
       }
     }
 
-    const now = Date.now();
-    if (
-      jumpAnchorRef.current === null &&
-      now - lastSentRef.current >= RESUME_THROTTLE_MS
-    ) {
-      lastSentRef.current = now;
-      const id = video.id;
-      const epoch = watchedEpochRef.current;
-      setResume(id, el.currentTime, stateVersionRef.current ?? undefined)
-        .then((res) => {
-          if (openVideoIdRef.current !== id) return;
-          stateVersionRef.current = res.state_version;
-          adoptWatched(id, res.watched, epoch);
-        })
-        .catch((e: unknown) => {
-          if (e instanceof ApiError && e.status === 409) {
-            void handleStaleState(id);
-          }
-        });
-    }
+    throttledPing(video.id, el.currentTime);
   }
 
   // adoptWatched carries the watched flag every resume response hands back into
@@ -1059,21 +929,15 @@ export function Player({
   // position (unlike the manual toggle), and there is no reason to yank the
   // playhead of someone still watching the last 10%.
   //
-  // And only a true is adopted. Writing a position can never un-watch a video
-  // server-side, so a false carries no news — while a response that was already
-  // in flight when the user pressed the button carries a stale one, and adopting
-  // it would flip the label back under their hand. Un-watching stays what it has
-  // always been: the toggle, or handleStaleState answering a 409 (SetWatched
-  // bumps state_version in BOTH directions, so a cross-device un-watch does
-  // reach this Player).
-  //
-  // epoch is the other half of that guard, for the in-flight case the true-only
-  // rule cannot see: a ping sent before the toggle answers after it, still
-  // carrying the watched:true the toggle has just undone.
-  function adoptWatched(id: string, watched: boolean, epoch: number) {
-    if (!watched) return;
-    if (epoch !== watchedEpochRef.current) return;
-    setVideo((v) => (v && v.id === id && !v.watched ? { ...v, watched } : v));
+  // useResumeSync decides WHEN to call this — only for a true, and only when
+  // nothing newer has spoken for the flag (see its watchedEpochRef). Un-watching
+  // stays what it has always been: the toggle, or handleStaleState answering a
+  // 409 (SetWatched bumps state_version in BOTH directions, so a cross-device
+  // un-watch does reach this Player).
+  function adoptWatched(id: string) {
+    setVideo((v) =>
+      v && v.id === id && !v.watched ? { ...v, watched: true } : v,
+    );
   }
 
   // handleStaleState answers a 409 from a resume ping: the video's watched state
@@ -1106,8 +970,7 @@ export function Player({
     }
     videoRef.current?.pause();
     seek(0);
-    positionRef.current = 0;
-    positionKnownRef.current = false;
+    forgetPosition();
     showToast("Marked watched on another device.", "check", "info");
   }
 
@@ -1119,8 +982,7 @@ export function Player({
     if (!el) return;
     el.currentTime = seconds;
     setCurrentTime(seconds);
-    positionRef.current = seconds;
-    positionKnownRef.current = true;
+    notePosition(seconds);
   }
 
   async function handleToggleFavorite() {
@@ -1199,8 +1061,7 @@ export function Player({
     setVideo({ ...video, watched: next, resume_position_seconds: 0 });
     el?.pause();
     seek(0);
-    positionRef.current = 0;
-    positionKnownRef.current = false;
+    forgetPosition();
     if (previousSleepMs !== null) {
       disarmSleep();
       // Said out loud: the pill is one control away from the button just

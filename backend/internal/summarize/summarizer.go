@@ -17,12 +17,14 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 )
 
+// Chapter is one timestamped section of the video.
 type Chapter struct {
 	TS     int    `json:"ts"`
 	Title  string `json:"title"`
 	Source string `json:"source"`
 }
 
+// KeyPoint is one significant claim from the video.
 type KeyPoint struct {
 	TS   int    `json:"ts"`
 	Text string `json:"text"`
@@ -33,6 +35,7 @@ type Completer interface {
 	Complete(ctx context.Context, messages []llm.Message) (string, error)
 }
 
+// Summarizer turns a transcript into a summary, chapters and key points via map-reduce over chunks.
 type Summarizer struct {
 	c Completer
 	// summaryChunkTokens is the coarse chunk budget for the prose summary (in
@@ -55,6 +58,7 @@ func WithSummaryChunkTokens(n int) Option {
 	}
 }
 
+// New returns a summarizer backed by c.
 func New(c Completer, opts ...Option) *Summarizer {
 	s := &Summarizer{c: c, summaryChunkTokens: defaultSummaryChunkTokens}
 	for _, o := range opts {

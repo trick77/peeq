@@ -33,13 +33,11 @@ services:
       BACKEND_DB_PATH: /data/peeq.db
       BACKEND_MEDIA_DIR: /data/media
       BACKEND_YTDLP_DIR: /data/bin
-      # AI endpoints. Unlike the rest of this file these can't be hardcoded —
-      # they point at real endpoints — so the dev stack needs a populated .env.
-      LLMWIRE_ZAI_BASE_URL: "${LLMWIRE_ZAI_BASE_URL}"
+      # AI keys. Unlike the rest of this file these can't be hardcoded, so
+      # the dev stack needs a populated .env. The hosts are llmwire's.
       LLMWIRE_ZAI_API_KEY: "${LLMWIRE_ZAI_API_KEY}"
-      BACKEND_CHAT_EMULATE_OPENCODE: "${BACKEND_CHAT_EMULATE_OPENCODE:-}"
-      LLMWIRE_OPENAI_BASE_URL: "${LLMWIRE_OPENAI_BASE_URL}"
       LLMWIRE_OPENAI_API_KEY: "${LLMWIRE_OPENAI_API_KEY}"
+      LLMWIRE_EMULATE_OPENCODE: "${LLMWIRE_EMULATE_OPENCODE:-}"
       BACKEND_DEFAULT_SUB_LANG: "${BACKEND_DEFAULT_SUB_LANG:-en}"
       BACKEND_LOG_LEVEL: "${BACKEND_LOG_LEVEL:-debug}"
     volumes:

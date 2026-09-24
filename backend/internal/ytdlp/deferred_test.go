@@ -129,7 +129,7 @@ func TestDeferredTimer_withStartHook_capSurvivesAPacerWait(t *testing.T) {
 		CookieProvider: func() (string, string) { return "cookie", "valid" },
 		// Stands in for the pacer's wait. Real elapsed time, so a cap armed on
 		// entry would genuinely expire during it.
-		Sleep: func(ctx context.Context, d time.Duration) error {
+		Sleep: func(_ context.Context, d time.Duration) error {
 			// Only a non-zero duration is a real wait: an idle Runner still
 			// calls Sleep, it just asks for nothing.
 			if d <= 0 {

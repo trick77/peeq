@@ -84,6 +84,7 @@ vi.mock("./api", () => ({
   // change the call counts below. A stream that stays open is the normal case.
   streamDownloads: vi.fn().mockReturnValue(new Promise<void>(() => {})),
   listVideos: vi.fn().mockResolvedValue([]),
+  getVideoCounts: vi.fn().mockResolvedValue({ filters: {}, categories: {} }),
   // Up next fetches the timed schedule; History fetches the log. Both are one
   // rail click away, so the barrel needs them even in tests that never open
   // those pages.
@@ -138,6 +139,7 @@ vi.mock("./api/videos", () => ({
   deleteVideo: vi.fn(),
   redownload: vi.fn(),
   listVideos: vi.fn().mockResolvedValue([]),
+  getVideoCounts: vi.fn().mockResolvedValue({ filters: {}, categories: {} }),
   streamUrl: (id: string) => `/api/videos/${id}/stream`,
   thumbnailUrl: (id: string) => `/api/videos/${id}/thumbnail`,
   // The Inbox card's poster. Only reached once a test puts an item in the

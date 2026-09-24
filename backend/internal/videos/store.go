@@ -33,6 +33,7 @@ package videos
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -324,7 +325,7 @@ func (s *Store) Get(id string) (*Video, error) {
 		"SELECT "+videoColumns+" "+videoFrom+" WHERE v.id = ?", id,
 	)
 	v, err := scanVideo(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -421,6 +422,51 @@ func escapeLike(s string) string {
 // recovery promise above.
 const notInFlight = "v.status NOT IN ('new', 'queued', 'downloading')"
 
+// filterCond is the WHERE fragment for one status chip, "" for all/unknown.
+// Shared by List and Counts so a chip's number and the grid it opens can never
+// disagree about which rows belong to it.
+func filterCond(filter string) string {
+	switch filter {
+	case "unwatched":
+		// Narrower than notInFlight on purpose: "unwatched" answers "what can I
+		// press play on", so a failed or swept row is excluded here even though
+		// it is still reachable through "all". The resume_position_seconds = 0
+		// gate makes "unwatched" mean *never opened* — a partially-watched row
+		// lives under "in_progress" instead, so the two never overlap.
+		return "v.status = 'downloaded' AND v.watched = 0 AND v.resume_position_seconds = 0"
+	case "in_progress":
+		// Started but not finished: the same play-eligible gate as "unwatched",
+		// split off by a non-zero resume position.
+		return "v.status = 'downloaded' AND v.watched = 0 AND v.resume_position_seconds > 0"
+	case "watched":
+		// Tombstoned rows are excluded, even though notInFlight keeps them.
+		// "Watched" is a shelf of things that are here and have been seen, and a
+		// swept video is no longer here — its media was reclaimed precisely
+		// BECAUSE it was watched. Without this, retention makes the filter fill
+		// with everything the sweeper has ever taken, burying the recently
+		// watched videos it exists to show.
+		//
+		// Excluded in SQL rather than dropped by the caller: on such a library
+		// the swept rows are the majority, and there is no reason to carry
+		// thousands of them across the wire to throw them away. They stay
+		// reachable through "all", which is where a re-download starts.
+		return "v.watched = 1 AND v.status <> 'tombstoned'"
+	case "favorites":
+		return "v.favorite = 1"
+	}
+	return ""
+}
+
+// queryCond is the title-substring clause for a search box query; ok is false
+// when the query is blank and no clause applies.
+func queryCond(query string) (cond string, arg any, ok bool) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return "", nil, false
+	}
+	return `v.title LIKE ? ESCAPE '\'`, "%" + escapeLike(q) + "%", true
+}
+
 // List returns videos matching opts, ordered by opts.Sort. The status,
 // category, search, and channel dimensions are orthogonal: all that are set
 // apply together.
@@ -448,41 +494,16 @@ const notInFlight = "v.status NOT IN ('new', 'queued', 'downloading')"
 func (s *Store) List(opts ListOptions) ([]Video, error) {
 	conds := []string{notInFlight}
 	args := []any{}
-	switch opts.Filter {
-	case "unwatched":
-		// Narrower than notInFlight on purpose: "unwatched" answers "what can I
-		// press play on", so a failed or swept row is excluded here even though
-		// it is still reachable through "all". The resume_position_seconds = 0
-		// gate makes "unwatched" mean *never opened* — a partially-watched row
-		// lives under "in_progress" instead, so the two never overlap.
-		conds = append(conds, "v.status = 'downloaded' AND v.watched = 0 AND v.resume_position_seconds = 0")
-	case "in_progress":
-		// Started but not finished: the same play-eligible gate as "unwatched",
-		// split off by a non-zero resume position.
-		conds = append(conds, "v.status = 'downloaded' AND v.watched = 0 AND v.resume_position_seconds > 0")
-	case "watched":
-		// Tombstoned rows are excluded, even though notInFlight keeps them.
-		// "Watched" is a shelf of things that are here and have been seen, and a
-		// swept video is no longer here — its media was reclaimed precisely
-		// BECAUSE it was watched. Without this, retention makes the filter fill
-		// with everything the sweeper has ever taken, burying the recently
-		// watched videos it exists to show.
-		//
-		// Excluded in SQL rather than dropped by the caller: on such a library
-		// the swept rows are the majority, and there is no reason to carry
-		// thousands of them across the wire to throw them away. They stay
-		// reachable through "all", which is where a re-download starts.
-		conds = append(conds, "v.watched = 1 AND v.status <> 'tombstoned'")
-	case "favorites":
-		conds = append(conds, "v.favorite = 1")
+	if c := filterCond(opts.Filter); c != "" {
+		conds = append(conds, c)
 	}
 	if opts.Category != "" && opts.Category != "all" && ValidCategory(opts.Category) {
 		conds = append(conds, "v.category = ?")
 		args = append(args, opts.Category)
 	}
-	if q := strings.TrimSpace(opts.Query); q != "" {
-		conds = append(conds, `v.title LIKE ? ESCAPE '\'`)
-		args = append(args, "%"+escapeLike(q)+"%")
+	if c, arg, ok := queryCond(opts.Query); ok {
+		conds = append(conds, c)
+		args = append(args, arg)
 	}
 	if opts.ChannelID != "" {
 		if opts.ChannelName != "" {
@@ -509,7 +530,7 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list videos (%+v): %w", opts, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := []Video{}
 	for rows.Next() {
@@ -523,6 +544,80 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 		return nil, fmt.Errorf("list videos (%+v): %w", opts, err)
 	}
 	return out, nil
+}
+
+// CountFilters are the status chips the Library shows, in row order. Counts
+// answers for every one of them at once.
+var CountFilters = []string{"all", "unwatched", "in_progress", "watched", "favorites"}
+
+// CountOptions narrows videos.Store.Counts. Only the search query applies:
+// a chip's number answers "how many would I see if I clicked this", which is
+// scoped to the query in the box but never to the chip or category selected.
+type CountOptions struct {
+	Query string
+}
+
+// Counts is the Library's chip row. Filters is keyed by CountFilters;
+// Categories[filter][category] is the category row scoped to that chip.
+// Every filter key is present, a category key only when its count is > 0.
+type Counts struct {
+	Filters    map[string]int            `json:"filters"`
+	Categories map[string]map[string]int `json:"categories"`
+}
+
+// Counts runs the same WHERE clauses List does, once per chip, and returns only
+// the numbers. It exists so the Library can populate its chips without loading
+// every row of the library for a client-side count.
+func (s *Store) Counts(opts CountOptions) (Counts, error) {
+	out := Counts{
+		Filters:    make(map[string]int, len(CountFilters)),
+		Categories: make(map[string]map[string]int, len(CountFilters)),
+	}
+	for _, f := range CountFilters {
+		cats, total, err := s.countByCategory(f, opts.Query)
+		if err != nil {
+			return Counts{}, err
+		}
+		out.Filters[f] = total
+		out.Categories[f] = cats
+	}
+	return out, nil
+}
+
+func (s *Store) countByCategory(filter, query string) (map[string]int, int, error) {
+	conds := []string{notInFlight}
+	args := []any{}
+	if c := filterCond(filter); c != "" {
+		conds = append(conds, c)
+	}
+	if c, arg, ok := queryCond(query); ok {
+		conds = append(conds, c)
+		args = append(args, arg)
+	}
+	const countHead = "SELECT COALESCE(v.category, ''), COUNT(*) FROM videos v WHERE "
+	countQuery := countHead + strings.Join(conds, " AND ") + " GROUP BY v.category" //nolint:gosec // only fixed SQL structure is interpolated (literal conditions, a ?-placeholder list, or a closed switch); every value is a bound ? parameter
+	rows, err := s.db.QueryContext(context.Background(), countQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count videos (%s): %w", filter, err)
+	}
+	defer func() { _ = rows.Close() }()
+	cats := map[string]int{}
+	total := 0
+	for rows.Next() {
+		var cat string
+		var n int
+		if err := rows.Scan(&cat, &n); err != nil {
+			return nil, 0, fmt.Errorf("count videos (%s): %w", filter, err)
+		}
+		total += n
+		if cat != "" {
+			cats[cat] = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("count videos (%s): %w", filter, err)
+	}
+	return cats, total, nil
 }
 
 // ChannelRef is one channel as it appears in the library, for resolving a name
@@ -555,7 +650,7 @@ func (s *Store) ChannelDirectory() ([]ChannelRef, error) {
 	if err != nil {
 		return nil, fmt.Errorf("channel directory: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []ChannelRef{}
 	for rows.Next() {
 		var c ChannelRef

@@ -334,6 +334,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/auth/logout", s.requireAuth(http.HandlerFunc(s.handleAuthLogout)))
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.handleAuthMe)))
 	mux.Handle("GET /api/videos", s.requireAuth(http.HandlerFunc(s.handleListVideos)))
+	mux.Handle("GET /api/videos/counts", s.requireAuth(http.HandlerFunc(s.handleVideoCounts)))
 	mux.Handle("GET /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleGetVideo)))
 	mux.Handle("DELETE /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleDeleteVideo)))
 	mux.Handle("POST /api/videos/{id}/favorite", s.requireAuth(http.HandlerFunc(s.handleFavoriteVideo)))

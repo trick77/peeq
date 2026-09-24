@@ -102,7 +102,8 @@ type RunnerConfig struct {
 	MediaDir string
 	// PauseProvider reports the global youtube_paused kill-switch. When it
 	// returns true, every call is refused with ErrPaused before the binary
-	// runs and before the throttle sleep — the strongest enforcement point.
+	// runs. It is consulted before the throttle sleep and again after it, so
+	// a switch thrown while a call was queued still stops that call.
 	PauseProvider func() (paused bool, reason string)
 	// AllowAnonymous is a dev-only escape hatch (config.AllowAnonymousYoutube):
 	// when true, cookieGate lets an EMPTY cookie through instead of failing
@@ -207,9 +208,10 @@ func (r *Runner) effectiveThrottleFloor() time.Duration {
 }
 
 // cookieGate is the single choke point that enforces the cookie
-// invariant: every run must first observe a non-empty, non-flagged cookie,
-// or it must stop before the binary is ever invoked (and before the
-// throttle sleep, so a known-bad cookie never burns a 20s+ wait).
+// invariant: every run must observe a non-empty, non-flagged cookie, or it
+// must stop before the binary is ever invoked. execWithProgress runs it both
+// before the throttle sleep (so a known-bad cookie never burns a 20s+ wait)
+// and after it (so a cookie that went bad during the wait is not used).
 //
 // The "stale"/"blocked" branches always fail, even when AllowAnonymous is
 // set: those statuses mean a real cookie exists and YouTube rejected it,
@@ -240,14 +242,29 @@ func (r *Runner) cookieGate() (string, error) {
 	return text, nil
 }
 
-// pauseGate enforces the youtube_paused kill-switch. Like cookieGate, it stops
-// before the binary and before the throttle sleep — a paused peeq makes zero
-// yt-dlp calls.
+// pauseGate enforces the youtube_paused kill-switch. Like cookieGate, it runs
+// before and after the throttle sleep and stops before the binary — a paused
+// peeq makes zero yt-dlp calls, including calls that were already queued when
+// the switch was thrown.
 func (r *Runner) pauseGate() error {
 	if paused, _ := r.cfg.PauseProvider(); paused {
 		return ErrPaused
 	}
 	return nil
+}
+
+// gates runs the kill-switch gate and then the cookie gate and returns the
+// cookie text the run may use. execWithProgress calls it twice: once before the
+// throttle wait, so a call already known to be refused never burns a pacer
+// slot or a 20s+ sleep, and once after it, because the wait can last minutes
+// on a busy Runner and the world moves meanwhile — a scan can flag the cookie
+// stale or the operator can throw the kill-switch. Only the second answer is
+// trusted: it is the cookie current when the process actually starts.
+func (r *Runner) gates() (string, error) {
+	if err := r.pauseGate(); err != nil {
+		return "", err
+	}
+	return r.cookieGate()
 }
 
 // throttle spaces out every call peeq makes to YouTube. It runs before EVERY
@@ -526,14 +543,16 @@ func defaultSleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// exec runs the yt-dlp binary with args, after throttling. When cookieText is
-// non-empty it is written to a restricted temp file passed via --cookies;
-// when it is empty (only reachable in dev via AllowAnonymous — see
-// cookieGate) no temp file is written and --cookies is omitted entirely. It
-// never receives a bare id or unparsed user input: callers must pass fully
-// canonicalized URLs in args.
-func (r *Runner) exec(ctx context.Context, cookieText string, args ...string) ([]byte, error) {
-	return r.execWithProgress(ctx, cookieText, nil, args...)
+// exec runs the yt-dlp binary with args, after the gates and the throttle
+// (see execWithProgress). The cookie text it hands the binary is read from
+// the CookieProvider once the throttle wait is over; when it is non-empty it
+// is written to a restricted temp file passed via --cookies, and when it is
+// empty (only reachable in dev via AllowAnonymous — see cookieGate) no temp
+// file is written and --cookies is omitted entirely. It never receives a bare
+// id or unparsed user input: callers must pass fully canonicalized URLs in
+// args.
+func (r *Runner) exec(ctx context.Context, args ...string) ([]byte, error) {
+	return r.execWithProgress(ctx, nil, args...)
 }
 
 // execWithProgress is exec's superset: it goes through the exact same
@@ -541,13 +560,31 @@ func (r *Runner) exec(ctx context.Context, cookieText string, args ...string) ([
 // it streams stdout line by line (for --newline progress parsing) instead
 // of buffering it silently. Download uses this so it shares the identical
 // cookie gate / throttle path as Metadata rather than a parallel one.
-func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine func(string), args ...string) ([]byte, error) {
-	if paused, _ := r.cfg.PauseProvider(); paused {
-		return nil, ErrPaused
+func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args ...string) ([]byte, error) {
+	// First pass: refuse early. A call that is paused or has no usable cookie
+	// must not take a pacer slot or sit through the sleep just to be refused
+	// afterwards. The text is discarded — see gates for why.
+	if _, err := r.gates(); err != nil {
+		return nil, &RefusedError{Err: err}
+	}
+
+	// The throttle applies unconditionally — anonymous calls carry MORE ban
+	// risk (no account to rate-limit, just the host IP), so they must never
+	// skip or shorten it.
+	if err := r.throttle(ctx); err != nil {
+		return nil, err
+	}
+
+	// Second pass, after the wait: the answer that counts. This is the cookie
+	// yt-dlp is handed, and this is where a cookie that went stale or a
+	// kill-switch thrown while the call was queued stops it.
+	cookieText, err := r.gates()
+	if err != nil {
+		return nil, &RefusedError{Err: err}
 	}
 
 	// An empty cookieText only ever reaches here via the anonymous carve-out
-	// in cookieGate (the non-anonymous path fails earlier with ErrNoCookie),
+	// in cookieGate (the non-anonymous path fails above with ErrNoCookie),
 	// so no temp file is written and --cookies is omitted entirely — passing
 	// --cookies pointed at an empty file is NOT equivalent to leaving the
 	// flag off, so the flag must be genuinely absent for an anonymous run.
@@ -558,14 +595,7 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 			return nil, fmt.Errorf("ytdlp: write cookie temp file: %w", err)
 		}
 		cookieFile = f
-		defer os.Remove(cookieFile)
-	}
-
-	// The throttle applies unconditionally, before AND after the cookie
-	// branch above — anonymous calls carry MORE ban risk (no account to
-	// rate-limit, just the host IP), so they must never skip or shorten it.
-	if err := r.throttle(ctx); err != nil {
-		return nil, err
+		defer func() { _ = os.Remove(cookieFile) }()
 	}
 
 	// The queueing is over and the process is about to run: tell a caller that
@@ -587,7 +617,7 @@ func (r *Runner) execWithProgress(ctx context.Context, cookieText string, onLine
 	// Resolve the binary path fresh on every invocation (not once at boot),
 	// so a self-updated yt-dlp written to disk after startup is used without
 	// requiring a restart.
-	cmd := exec.CommandContext(ctx, r.cfg.BinResolver(), fullArgs...)
+	cmd := exec.CommandContext(ctx, r.cfg.BinResolver(), fullArgs...) //nolint:gosec // argv, no shell. Every URL reaches here through Canonicalize, which url.Parse-es it, requires scheme and host, allowlists the youtube hosts and returns a rebuilt https://www.youtube.com/... literal, so a '-' prefixed string cannot become a flag
 
 	if onLine == nil {
 		var stdout, stderr bytes.Buffer
@@ -680,17 +710,17 @@ func writeCookieTempFile(text string) (string, error) {
 	name := f.Name()
 
 	if err := f.Chmod(0o600); err != nil {
-		f.Close()
-		os.Remove(name)
+		_ = f.Close()
+		_ = os.Remove(name)
 		return "", err
 	}
 	if _, err := f.WriteString(text); err != nil {
-		f.Close()
-		os.Remove(name)
+		_ = f.Close()
+		_ = os.Remove(name)
 		return "", err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(name)
+		_ = os.Remove(name)
 		return "", err
 	}
 	return name, nil

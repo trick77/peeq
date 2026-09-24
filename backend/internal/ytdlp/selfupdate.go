@@ -84,7 +84,7 @@ func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("ytdlp: download latest release: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("ytdlp: download latest release: unexpected status %s", resp.Status)
 	}
@@ -97,23 +97,23 @@ func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, err
 	tmpPath := tmp.Name()
 	// Always clean up the temp file on any early return; once the rename
 	// below succeeds this is a no-op (the file no longer exists at tmpPath).
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	written, err := io.Copy(tmp, resp.Body)
 	if err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return "", fmt.Errorf("ytdlp: write downloaded binary: %w", err)
 	}
 	// A Content-Length mismatch means the body was truncated (e.g. the
 	// connection dropped mid-download) even though io.Copy itself didn't
 	// error. Catch that before it ever reaches destPath.
 	if resp.ContentLength >= 0 && written != resp.ContentLength {
-		tmp.Close()
+		_ = tmp.Close()
 		return "", fmt.Errorf("ytdlp: download incomplete: wrote %d bytes, expected %d", written, resp.ContentLength)
 	}
 
 	if err := tmp.Chmod(0o755); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return "", fmt.Errorf("ytdlp: chmod downloaded binary: %w", err)
 	}
 	if err := tmp.Close(); err != nil {

@@ -8,6 +8,7 @@ package failmonitor
 
 import "sync"
 
+// Monitor tracks consecutive distinct-entity failures and engages a callback when a threshold is reached.
 type Monitor struct {
 	mu        sync.Mutex
 	threshold int

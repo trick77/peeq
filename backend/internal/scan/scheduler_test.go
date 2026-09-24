@@ -2137,7 +2137,7 @@ func TestScan_spreadsTheFleetEvenlyAcrossTheDay(t *testing.T) {
 	seen := map[time.Duration]bool{}
 	for i := 0; i < fleet; i++ {
 		at := h.nextScanAtOf(fmt.Sprintf("UC%d", i))
-		slot := time.Duration(at.UTC().Sub(at.UTC().Truncate(24 * time.Hour)))
+		slot := at.UTC().Sub(at.UTC().Truncate(24 * time.Hour))
 		if seen[slot] {
 			t.Fatalf("two channels share the slot %v — that is the convoy, not a spread", slot)
 		}

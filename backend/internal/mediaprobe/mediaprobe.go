@@ -92,7 +92,7 @@ func New(cfg Config) *Prober {
 }
 
 func execRun(ctx context.Context, bin string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, bin, args...).Output()
+	return exec.CommandContext(ctx, bin, args...).Output() //nolint:gosec // argv, no shell. bin is the configured ffprobe path and args are built by Probe from a media.SafeMediaPath-resolved path
 }
 
 // Probe reads path and returns what ffprobe reports about it.

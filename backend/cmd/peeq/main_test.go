@@ -17,15 +17,16 @@ import (
 	"github.com/trick77/peeq/internal/sse"
 )
 
-// The endpoints are llmwire's to read from the environment; what main owns is
-// refusing to boot, with the variable named, when one is missing.
+// The hosts are llmwire's profiles' and the keys are llmwire's to read from
+// the environment; what main owns is refusing to boot, with the variable
+// named, when a key is missing.
 func TestNewModelClients_namesTheMissingVariable(t *testing.T) {
-	vars := []string{"LLMWIRE_OPENAI_BASE_URL", "LLMWIRE_OPENAI_API_KEY", "LLMWIRE_ZAI_BASE_URL", "LLMWIRE_ZAI_API_KEY"}
+	vars := []string{"LLMWIRE_OPENAI_API_KEY", "LLMWIRE_ZAI_API_KEY"}
 	for _, v := range vars {
 		t.Setenv(v, "x")
 	}
 	if _, _, _, err := newModelClients(config.Config{}); err != nil {
-		t.Fatalf("all four set: %v", err)
+		t.Fatalf("both keys set: %v", err)
 	}
 	for _, v := range vars {
 		t.Run(v, func(t *testing.T) {

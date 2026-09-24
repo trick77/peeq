@@ -100,7 +100,7 @@ func run() error {
 	// volume), so create them up front rather than fail deep inside a
 	// download or self-update attempt.
 	for _, dir := range []string{filepath.Dir(cfg.DBPath), cfg.MediaDir, cfg.YtdlpDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("create dir %q: %w", dir, err)
 		}
 	}
@@ -109,7 +109,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := store.Migrate(db); err != nil {
 		return err
@@ -515,15 +515,7 @@ func run() error {
 	}
 	handler := httpapi.New(deps)
 
-	srv := &http.Server{
-		Addr:    cfg.Addr,
-		Handler: handler,
-		// net/http writes its own failures (request-parse errors, superfluous
-		// WriteHeader, TLS handshake failures) here. Without this they bypass
-		// slog entirely: unstructured, untimestamped, unfiltered by
-		// BACKEND_LOG_LEVEL.
-		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
-	}
+	srv := newServer(cfg.Addr, handler)
 
 	err = serve(ctx, srv, sseHub)
 	// serve can return either because ctx was cancelled (signal) or because
@@ -569,7 +561,7 @@ func (v ytdlpVersioner) UpdateLatest(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-func (v ytdlpVersioner) Latest(ctx context.Context) (string, time.Time, string) {
+func (v ytdlpVersioner) Latest(_ context.Context) (string, time.Time, string) {
 	if v.status == nil {
 		return "", time.Time{}, ""
 	}
@@ -739,6 +731,29 @@ func logJSRuntime(ctx context.Context, bin string) {
 	slog.Info("yt-dlp JavaScript runtime detected", "runtime", v)
 }
 
+// newServer builds the API server with its timeouts set explicitly, so they are
+// assertable rather than left at http.Server's zero values (which mean "no
+// limit" and leave a stalled client holding a goroutine and a descriptor).
+//
+// ReadHeaderTimeout alone is what closes slow loris. ReadTimeout and
+// WriteTimeout stay unset on purpose: internal/sse streams text/event-stream
+// responses that a write deadline would truncate, and ReadTimeout bounds the
+// whole request including the body, cancelling r.Context() once the body is
+// read.
+func newServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// net/http writes its own failures (request-parse errors, superfluous
+		// WriteHeader, TLS handshake failures) here. Without this they bypass
+		// slog entirely: unstructured, untimestamped, unfiltered by
+		// BACKEND_LOG_LEVEL.
+		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
+	}
+}
+
 // serve starts srv and blocks until either the server fails to start/serve
 // (in which case that error is returned immediately, without waiting for
 // ctx) or ctx is cancelled (in which case srv is shut down gracefully).
@@ -790,7 +805,6 @@ func newModelClients(cfg config.Config) (*rag.EmbedClient, *llm.Client, *llm.Cli
 		return nil, nil, nil, err
 	}
 	chatClient, err := llm.NewClient(llm.Config{
-		EmulateOpenCode: cfg.ChatEmulateOpenCode,
 		RequestInterval: cfg.SummarizeRequestDelay, Logger: slog.Default(),
 		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.ChatCallTimeout,
 	}, nil)
@@ -798,7 +812,6 @@ func newModelClients(cfg config.Config) (*rag.EmbedClient, *llm.Client, *llm.Cli
 		return nil, nil, nil, err
 	}
 	askClient, err := llm.NewClient(llm.Config{
-		EmulateOpenCode: cfg.ChatEmulateOpenCode,
 		RequestInterval: 0, Logger: slog.Default(),
 		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.AskCallTimeout,
 	}, nil)

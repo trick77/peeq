@@ -86,10 +86,10 @@ func TestParseFTSQueryNeverEmitsUserSyntax(t *testing.T) {
 func splitTokens(s string) []string {
 	var out []string
 	for i := 0; i < len(s); {
-		switch {
-		case s[i] == ' ':
+		switch s[i] {
+		case ' ':
 			i++
-		case s[i] == '"':
+		case '"':
 			j := i + 1
 			for j < len(s) && s[j] != '"' {
 				j++

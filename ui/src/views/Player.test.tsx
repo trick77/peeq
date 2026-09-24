@@ -1045,6 +1045,75 @@ describe("Player", () => {
     expect(secondEl.currentTime).toBeCloseTo(42, 0);
   });
 
+  it("does not re-send the position when a summary event patches the video", async () => {
+    // With captions present the summary effect patches `video` in place on
+    // every event — the path that used to run the flush.
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ has_subtitles: true }));
+    const { rerender } = render(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        summaryEvent={{ videoId: "v1", status: "running" }}
+      />,
+    );
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 30,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 30, 1));
+    vi.mocked(setResume).mockClear();
+
+    // A NEW event object for the same video replaces `video` in place. That
+    // is a render, not a departure: nothing should be flushed for it.
+    rerender(
+      <Player
+        videoId="v1"
+        onDeleted={() => {}}
+        summaryEvent={{ videoId: "v1", status: "running" }}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument(),
+    );
+    expect(setResume).not.toHaveBeenCalled();
+  });
+
+  it("flushes the previous video's last position when switching to another", async () => {
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    const videoEl = await waitFor(() => {
+      const el = document.querySelector("video");
+      if (!el) throw new Error("video element not mounted yet");
+      return el;
+    });
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 50,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 50, 1));
+    vi.mocked(setResume).mockClear();
+    // Inside the throttle window: only a flush can carry this one out.
+    Object.defineProperty(videoEl, "currentTime", {
+      value: 77,
+      writable: true,
+    });
+    fireEvent.timeUpdate(videoEl);
+    expect(setResume).not.toHaveBeenCalled();
+
+    vi.mocked(getVideo).mockResolvedValue(makeVideo({ id: "v2" }));
+    rerender(<Player videoId="v2" onDeleted={() => {}} />);
+
+    await waitFor(() => expect(setResume).toHaveBeenCalledWith("v1", 77, 1));
+    // …and nothing for v2, which has not played yet.
+    expect(setResume).toHaveBeenCalledTimes(1);
+  });
+
   it("posts the current position to setResume on timeupdate", async () => {
     render(<Player videoId="v1" onDeleted={() => {}} />);
 

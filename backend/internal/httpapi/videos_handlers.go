@@ -227,6 +227,39 @@ func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+// handleVideoCounts answers the Library's chip row: how many videos each
+// status chip and each category under it would show, scoped to ?q= like the
+// list itself. It is what lets the Library populate its chips without
+// fetching every row of the library.
+func (s *server) handleVideoCounts(w http.ResponseWriter, r *http.Request) {
+	if s.videos == nil {
+		writeJSON(w, emptyCounts())
+		return
+	}
+	counts, err := s.videos.Counts(videos.CountOptions{
+		Query: r.URL.Query().Get("q"),
+	})
+	if err != nil {
+		serverError(w, r, err, "count videos failed")
+		return
+	}
+	writeJSON(w, counts)
+}
+
+// emptyCounts is the zero chip row: every filter present at 0 with no
+// categories, so the client never sees a missing key.
+func emptyCounts() videos.Counts {
+	c := videos.Counts{
+		Filters:    map[string]int{},
+		Categories: map[string]map[string]int{},
+	}
+	for _, f := range videos.CountFilters {
+		c.Filters[f] = 0
+		c.Categories[f] = map[string]int{}
+	}
+	return c
+}
+
 // handleGetVideo returns one video by id, 404 if it doesn't exist.
 func (s *server) handleGetVideo(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.lookupVideo(w, r)
@@ -519,12 +552,12 @@ func (s *server) handleStreamVideo(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "media not available")
 		return
 	}
-	f, err := os.Open(safe)
+	f, err := os.Open(safe) //nolint:gosec // path comes from media.SafeMediaPath, which rejects traversal and symlink escape and returns the resolved path (see safepath_test.go)
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "media not available")
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	stat, err := f.Stat()
 	if err != nil {

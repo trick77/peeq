@@ -218,7 +218,7 @@ ORDER BY v.watched_at ASC`, cutoffUTC,
 	if err != nil {
 		return nil, fmt.Errorf("sweep candidates: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := []Video{}
 	for rows.Next() {

@@ -100,7 +100,7 @@ type upcomingResponse struct {
 // of every timed one in Merge and shared the same budget of 20, so a backlog of
 // 20+ pending downloads used to return no scheduled items at all — the schedule
 // section vanished exactly when peeq was busiest.
-func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleActivityUpcoming(w http.ResponseWriter, _ *http.Request) {
 	var items []activity.UpcomingItem
 
 	if s.channels != nil {

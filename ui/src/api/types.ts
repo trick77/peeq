@@ -41,6 +41,15 @@ export type User = {
 export type VideoFilter =
   "all" | "unwatched" | "in_progress" | "watched" | "favorites";
 
+// VideoCounts mirrors videos.Counts: the Library's chip row, computed by the
+// server with the same WHERE clauses the list uses. filters carries every
+// VideoFilter; categories[filter] is the category row scoped to that chip and
+// only names categories with a count above zero.
+export type VideoCounts = {
+  filters: Record<VideoFilter, number>;
+  categories: Record<VideoFilter, Record<string, number>>;
+};
+
 // VideoSort mirrors the sort keys videos.Store.List accepts. newest/oldest are
 // the default release-date ordering; the added_* pair ranks by when peeq
 // fetched the file.

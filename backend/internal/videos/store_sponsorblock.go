@@ -44,7 +44,7 @@ LIMIT ?`, SponsorblockRefreshInterval, limit)
 	if err != nil {
 		return nil, fmt.Errorf("claim sponsorblock stale: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []SponsorblockCandidate
 	for rows.Next() {

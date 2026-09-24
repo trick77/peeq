@@ -1,7 +1,7 @@
-// Package llm is peeq's lean OpenAI-compatible chat client. The endpoint and
-// key come from the env vars the model's llmwire profile names
-// (LLMWIRE_ZAI_BASE_URL and LLMWIRE_ZAI_API_KEY), read by llmwire.FromEnv in
-// NewClient; BACKEND_CHAT_EMULATE_OPENCODE is peeq's own. The model below is a
+// Package llm is peeq's lean OpenAI-compatible chat client. The host comes
+// from the model's llmwire profile and the key from the env var that profile
+// names (LLMWIRE_ZAI_API_KEY), read by llmwire.FromEnv in NewClient. The
+// opencode identity, where a host needs it, is the provider's in llmwire. The model below is a
 // real upstream model identifier sent on the wire, not a config name — it is
 // deliberately NOT renamed alongside those env vars.
 //
@@ -144,13 +144,9 @@ func wantsJSONObject(ctx context.Context) bool { return jsonObjectFrom(ctx) }
 // environment variable — the other two exist as fields so a test can drive them
 // without mutating package state, which is the difference between a test that
 // proves the header bound fires and a test that waits sixty real seconds.
-//
-// EmulateOpenCode presents every request as the opencode client (see NewClient);
-// it is BACKEND_CHAT_EMULATE_OPENCODE and off by default.
 type Config struct {
 	BaseURL           string
 	APIKey            string
-	EmulateOpenCode   bool
 	RequestInterval   time.Duration
 	Logger            *slog.Logger
 	HeartbeatInterval time.Duration
@@ -168,9 +164,9 @@ type Message struct {
 // Client calls an OpenAI-compatible /chat/completions endpoint.
 type Client struct {
 	// wire is the one llmwire client every call goes through. One, not one per
-	// call: it presents as opencode (see NewClient), and that identity carries a
-	// session id that llmwire mints and rotates itself — building a client per
-	// call would mint a session per call, which is not what a session is.
+	// call: on a provider that presents as opencode, that identity carries a
+	// session id llmwire mints and rotates itself — building a client per call
+	// would mint a session per call, which is not what a session is.
 	wire      *llmwire.Client
 	interval  time.Duration
 	log       *slog.Logger
@@ -186,7 +182,7 @@ type Client struct {
 // bound, so the named failure wins the race against the transport's generic
 // one.
 //
-// The error is a missing LLMWIRE_ZAI_BASE_URL or LLMWIRE_ZAI_API_KEY, named.
+// The error is a missing LLMWIRE_ZAI_API_KEY, named.
 func NewClient(cfg Config, hc *http.Client) (*Client, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -204,19 +200,12 @@ func NewClient(cfg Config, hc *http.Client) (*Client, error) {
 		cfg.CallTimeout = defaultCallTimeout
 	}
 	wire, err := llmwire.FromEnv(model, llmwire.Config{
-		BaseURL: cfg.BaseURL,
-		APIKey:  cfg.APIKey,
-		// Opt-in: presents as the opencode client — its User-Agent and the
-		// session header pair, with a session id llmwire mints and rotates
-		// after an idle gap. Needed on an endpoint sold as one client's
-		// backend, where a neutral User-Agent is not what its traffic looks
-		// like (the MiMo token plan). Inert on Z.ai, which neither requires
-		// the headers nor issues ids of that shape, so it defaults to off.
-		EmulateOpenCode: cfg.EmulateOpenCode,
-		HeaderTimeout:   cfg.HeaderTimeout,
-		IdleTimeout:     cfg.StreamIdleTimeout,
-		CallTimeout:     cfg.CallTimeout,
-		HTTPClient:      hc,
+		BaseURL:       cfg.BaseURL,
+		APIKey:        cfg.APIKey,
+		HeaderTimeout: cfg.HeaderTimeout,
+		IdleTimeout:   cfg.StreamIdleTimeout,
+		CallTimeout:   cfg.CallTimeout,
+		HTTPClient:    hc,
 	})
 	if err != nil {
 		return nil, err

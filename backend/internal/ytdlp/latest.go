@@ -70,7 +70,7 @@ func latestVersionFrom(ctx context.Context, url string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ytdlp: check latest release: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("ytdlp: check latest release: unexpected status %s", resp.Status)
 	}

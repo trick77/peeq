@@ -145,7 +145,7 @@ func (s *Store) VideoRefs(channelID string) ([]VideoRef, error) {
 	if err != nil {
 		return nil, fmt.Errorf("video refs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []VideoRef
 	for rows.Next() {
 		var r VideoRef
@@ -194,7 +194,7 @@ func (s *Store) DeleteCascade(channelID string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// vec_chunks (vec0) and fts_chunks (fts5) can't ride an FK cascade, so
 	// purge their rows for this channel's videos explicitly, by rowid,
@@ -211,12 +211,12 @@ WHERE v.channel_id = ?`, channelID)
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return fmt.Errorf("scan chunk rowid: %w", err)
 		}
 		chunkIDs = append(chunkIDs, id)
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate chunk rowids for channel: %w", err)
 	}
@@ -486,7 +486,7 @@ WHERE (c.added_at IS NOT NULL OR ` + hasDownloadsPredicate + `)`
 	if err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []ListItem
 	for rows.Next() {
@@ -727,7 +727,7 @@ LIMIT ?`, limit)
 }
 
 func scanDueChannels(rows *sql.Rows) ([]DueChannel, error) {
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []DueChannel
 	for rows.Next() {
 		var d DueChannel

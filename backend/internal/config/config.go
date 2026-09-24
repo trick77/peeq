@@ -23,10 +23,14 @@ const defaultSearchMaxDistance = 1.25
 // AuthMode selects how peeq signs users in.
 type AuthMode string
 
+// The supported authentication modes.
 const (
+	// AuthModeNone disables authentication entirely.
 	AuthModeNone AuthMode = ""
+	// AuthModeOIDC signs users in against an OIDC provider.
 	AuthModeOIDC AuthMode = "oidc"
-	AuthModeDev  AuthMode = "dev"
+	// AuthModeDev is the local development mode.
+	AuthModeDev AuthMode = "dev"
 )
 
 // Config holds all runtime settings. Secrets come from ENV only.
@@ -41,11 +45,11 @@ type Config struct {
 	OIDC          OIDCConfig
 	Dev           DevUserConfig
 
-	// AI integration: no endpoint here. Each model's llmwire profile names the
-	// env vars its client reads (LLMWIRE_ZAI_BASE_URL and LLMWIRE_ZAI_API_KEY
-	// for glm-5.3-flash, LLMWIRE_OPENAI_BASE_URL and LLMWIRE_OPENAI_API_KEY for
-	// the embedding model) and llmwire.FromEnv reads them at boot, so a
-	// missing one is a boot error there. Neither model is
+	// AI integration: no endpoint here. Each model's llmwire profile carries
+	// its host and names the key variable its client reads
+	// (LLMWIRE_ZAI_API_KEY for glm-5.3-flash, LLMWIRE_OPENAI_API_KEY for the
+	// embedding model); llmwire.FromEnv reads them at boot, so a missing one
+	// is a boot error there. Neither model is
 	// configuration: both are constants (llm.ModelFor, rag.EmbedModel), because
 	// prompts, token caps and the vector table's width are all built to them.
 	// SearchMaxDistance bounds the semantic lane: hits at or beyond this L2
@@ -86,12 +90,6 @@ type Config struct {
 	// so the ceiling that used to bound ~600-token map calls now has to cover a
 	// much larger request. 0 uses internal/llm's default (15m).
 	ChatCallTimeout time.Duration
-
-	// ChatEmulateOpenCode makes every chat request present as the opencode
-	// client: its User-Agent and the session header pair (see llmwire). Off by
-	// default; opt in for an endpoint sold as one client's backend that treats
-	// a neutral User-Agent as a bot (the MiMo token plan). Inert on Z.ai.
-	ChatEmulateOpenCode bool
 
 	// AllowAnonymousYoutube is a dev-only escape hatch: when true, the yt-dlp
 	// Runner is permitted to run WITHOUT a cookie (see internal/ytdlp
@@ -223,13 +221,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.ChatCallTimeout = callTimeout
-	if v := env("BACKEND_CHAT_EMULATE_OPENCODE", ""); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("BACKEND_CHAT_EMULATE_OPENCODE must be a boolean")
-		}
-		cfg.ChatEmulateOpenCode = b
-	}
 
 	if v := os.Getenv("BACKEND_SUMMARIZE_SUMMARY_TOKENS"); v != "" {
 		n, err := strconv.Atoi(v)

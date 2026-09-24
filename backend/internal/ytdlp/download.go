@@ -211,21 +211,17 @@ func sponsorblockSegmentsFromInfo(info downloadInfoJSON) []Segment {
 // would be, and it waits out the same 20s+ floor before invoking the
 // binary.
 //
+// The pause and cookie gates run inside execWithProgress, after the request
+// has been validated and the staging directory prepared, so a malformed
+// request is reported as such even while peeq is paused. A gate refusal is
+// returned as a *RefusedError wrapping the sentinel (errors.Is still matches).
+//
 // On a retryable failure (e.g. rate limiting), the staging directory
 // (including any *.part file yt-dlp left behind) is preserved so a retry
 // with --continue can resume it. On any other failure — terminal errors,
 // blocked/cookie errors, or ctx cancellation — the staging directory is
 // removed; there is nothing usable to resume.
 func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(Progress)) (*Result, error) {
-	if err := r.pauseGate(); err != nil {
-		return nil, err
-	}
-
-	cookieText, err := r.cookieGate()
-	if err != nil {
-		return nil, err
-	}
-
 	if req.VideoID == "" {
 		return nil, fmt.Errorf("ytdlp: download requires a non-empty video id")
 	}
@@ -241,7 +237,7 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 	}
 
 	stagingDir := filepath.Join(r.cfg.MediaDir, ".staging", req.VideoID)
-	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+	if err := os.MkdirAll(stagingDir, 0o750); err != nil {
 		return nil, fmt.Errorf("ytdlp: create staging dir: %w", err)
 	}
 
@@ -297,8 +293,12 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		}
 	}
 
-	if _, execErr := r.execWithProgress(ctx, cookieText, onLine, args...); execErr != nil {
-		if !isRetryable(execErr) {
+	if _, execErr := r.execWithProgress(ctx, onLine, args...); execErr != nil {
+		// A refusal (paused, no cookie, cookie flagged) means yt-dlp never ran:
+		// there is nothing of this attempt to clean up, and a .part left by an
+		// earlier rate-limited attempt must survive so the requeued job can
+		// still --continue from it once the gate opens again.
+		if !isRetryable(execErr) && !IsRefused(execErr) {
 			_ = os.RemoveAll(stagingDir)
 		}
 		return nil, execErr
@@ -325,7 +325,7 @@ func isRetryable(err error) bool {
 // mediaDir/<channelID>/<videoID> location, and assembles the Result.
 func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result, error) {
 	infoPath := filepath.Join(stagingDir, videoID+".info.json")
-	infoBytes, err := os.ReadFile(infoPath)
+	infoBytes, err := os.ReadFile(infoPath) //nolint:gosec // infoPath is built from the staging dir this function just created under the configured media dir, not from user input
 	if err != nil {
 		return nil, fmt.Errorf("ytdlp: read info json: %w", err)
 	}
@@ -339,7 +339,7 @@ func finalizeDownload(stagingDir, mediaDir, videoID, formatUsed string) (*Result
 	}
 
 	finalDir := filepath.Join(mediaDir, info.ChannelID, videoID)
-	if err := os.MkdirAll(filepath.Dir(finalDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(finalDir), 0o750); err != nil {
 		return nil, fmt.Errorf("ytdlp: create channel dir: %w", err)
 	}
 	// finalDir is unique to this video id, so if it already exists it can

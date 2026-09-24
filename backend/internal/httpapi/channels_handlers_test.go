@@ -34,7 +34,7 @@ type testResolver struct {
 	calls int
 }
 
-func (r *testResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+func (r *testResolver) ResolveChannel(_ context.Context, _ string) (ytdlp.ChannelInfo, error) {
 	r.calls++
 	if r.err != nil {
 		return ytdlp.ChannelInfo{}, r.err
@@ -1399,7 +1399,7 @@ type dbClosingResolver struct {
 	err error
 }
 
-func (r *dbClosingResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+func (r *dbClosingResolver) ResolveChannel(_ context.Context, _ string) (ytdlp.ChannelInfo, error) {
 	_ = r.db.Close()
 	return ytdlp.ChannelInfo{}, r.err
 }
@@ -1491,7 +1491,7 @@ func TestChannelDetail_resolveFailure_addedRow_markAttemptedError(t *testing.T) 
 // whole server.
 type panickingResolver struct{}
 
-func (panickingResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+func (panickingResolver) ResolveChannel(_ context.Context, _ string) (ytdlp.ChannelInfo, error) {
 	panic("simulated parser bug")
 }
 
@@ -3029,7 +3029,7 @@ type pacingResolver struct {
 	calls   int
 }
 
-func (p *pacingResolver) ResolveChannel(ctx context.Context, url string) (ytdlp.ChannelInfo, error) {
+func (p *pacingResolver) ResolveChannel(ctx context.Context, _ string) (ytdlp.ChannelInfo, error) {
 	p.calls++
 	select {
 	case <-time.After(p.queued):
@@ -3203,7 +3203,7 @@ func TestPendingThumbnail_notPending_404(t *testing.T) {
 // so the second request is served from the row.
 func TestPendingThumbnail_fetchesAndCachesOnMiss(t *testing.T) {
 	var hits int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&hits, 1)
 		w.Header().Set("Content-Type", "image/jpeg")
 		_, _ = w.Write([]byte("\xff\xd8\xff fetched"))

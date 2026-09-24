@@ -234,7 +234,7 @@ func withFailMonitor(fm FailMonitor) func(*Deps) {
 func newTestWorker(t *testing.T, opts ...func(*Deps)) *Worker {
 	t.Helper()
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
 		},
 	}
@@ -258,7 +258,7 @@ func TestWorker_success(t *testing.T) {
 	var pmu sync.Mutex
 
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, _ ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			onProgress(ytdlp.Progress{Percent: 50})
 			return &ytdlp.Result{
 				MediaPath:            "/media/vid/vid.mp4",
@@ -314,7 +314,7 @@ func downloadReqFor(t *testing.T, requested string) ytdlp.DownloadReq {
 	var rmu sync.Mutex
 
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			rmu.Lock()
 			gotReq = req
 			rmu.Unlock()
@@ -364,7 +364,7 @@ func TestWorker_prefersRequestedFormat_rawSelector(t *testing.T) {
 
 func TestWorker_blockPausesAndStopsClaiming(t *testing.T) {
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, call int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			if call == 0 {
 				return nil, ytdlp.ErrBlocked
 			}
@@ -422,10 +422,10 @@ func TestWorker_blockPausesAndStopsClaiming(t *testing.T) {
 // ends up with a real title/channel — normalizing yt-dlp's "public" too.
 func TestWorker_metadataPreflightPopulatesTitle(t *testing.T) {
 	runner := &fakeRunner{
-		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+		metaFn: func(_ context.Context, _ string) (*ytdlp.Meta, error) {
 			return &ytdlp.Meta{Title: "Resolved Title", ChannelID: "UC123", Channel: "Some Channel", Availability: "public"}, nil
 		},
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
 		},
 	}
@@ -466,10 +466,10 @@ func TestWorker_metadataPreflightPopulatesTitle(t *testing.T) {
 // become a scan target the user never asked for.
 func TestWorker_metadataPreflightCachesChannel(t *testing.T) {
 	runner := &fakeRunner{
-		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+		metaFn: func(_ context.Context, _ string) (*ytdlp.Meta, error) {
 			return &ytdlp.Meta{Title: "T", ChannelID: "UC123", Channel: "Some Channel", Availability: "public"}, nil
 		},
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
 		},
 	}
@@ -512,10 +512,10 @@ func TestWorker_metadataPreflightCachesChannel(t *testing.T) {
 // working unchanged.
 func TestWorker_metadataPreflightWithoutChannelStore(t *testing.T) {
 	runner := &fakeRunner{
-		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+		metaFn: func(_ context.Context, _ string) (*ytdlp.Meta, error) {
 			return &ytdlp.Meta{Title: "T", ChannelID: "UC123", Channel: "Some Channel"}, nil
 		},
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
 		},
 	}
@@ -543,10 +543,10 @@ func TestWorker_metadataPreflightWithoutChannelStore(t *testing.T) {
 // the problem surfaces on Activity instead of blocking the user at add time.
 func TestWorker_metadataPreflightPausesOnNoCookie(t *testing.T) {
 	runner := &fakeRunner{
-		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+		metaFn: func(_ context.Context, _ string) (*ytdlp.Meta, error) {
 			return nil, ytdlp.ErrNoCookie
 		},
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, _ ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			t.Errorf("Download called, but the preflight should have paused before downloading")
 			return &ytdlp.Result{MediaPath: "/m.mp4", FormatUsed: "f"}, nil
 		},
@@ -577,7 +577,7 @@ func TestWorker_metadataPreflightPausesOnNoCookie(t *testing.T) {
 // calling Resume() directly, per the task.
 func TestWorker_resumeAfterCookieRepasteUnwedgesQueue(t *testing.T) {
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, call int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			if call == 0 {
 				// First attempt is blocked (expired/absent cookie); the worker
 				// pauses and requeues without burning an attempt.
@@ -615,7 +615,7 @@ func TestWorker_resumeAfterCookieRepasteUnwedgesQueue(t *testing.T) {
 
 func TestWorker_terminalFailsImmediately(t *testing.T) {
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, _ ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return nil, &ytdlp.TerminalError{Reason: "private"}
 		},
 	}
@@ -652,7 +652,7 @@ func TestWorker_retryableRetriesThenFails(t *testing.T) {
 	var backoffCalls []int
 	var bmu sync.Mutex
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, _ ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return nil, &ytdlp.RetryableError{Reason: "rate limited"}
 		},
 	}
@@ -697,7 +697,7 @@ func TestWorker_cancelRunningJob(t *testing.T) {
 	started := make(chan struct{})
 	var once sync.Once
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(ctx context.Context, _ int, _ ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			once.Do(func() { close(started) })
 			// Block until the worker cancels this job's context (as a real
 			// killed child would), then surface the cancellation.
@@ -733,7 +733,7 @@ func TestWorker_cancelRunningJob(t *testing.T) {
 // already finished — so callers (the HTTP handler) can tell an unknown or
 // already-settled job apart from a real cancel.
 func TestWorker_cancelUnknownJob_returnsFalse(t *testing.T) {
-	h := newHarness(t, &fakeRunner{fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+	h := newHarness(t, &fakeRunner{fn: func(_ context.Context, _ int, _ ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 		return &ytdlp.Result{MediaPath: "/x.mp4", FormatUsed: "f"}, nil
 	}}, nil)
 
@@ -750,7 +750,7 @@ func TestWorker_cancelUnknownJob_returnsFalse(t *testing.T) {
 // fires the Cancel deterministically inside that early window.
 func TestWorker_cancelDuringEarlyWindowNotOverwritten(t *testing.T) {
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, _ ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			// Must never be reached: the cancel lands in preflight, before the
 			// download starts. If it runs, it would (wrongly) report success.
 			return &ytdlp.Result{MediaPath: "/should/not/happen.mp4", FormatUsed: "f"}, nil
@@ -794,7 +794,7 @@ func TestWorker_cancelDuringEarlyWindowNotOverwritten(t *testing.T) {
 
 func TestWorker_watchdogKillsHungDownload(t *testing.T) {
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(ctx context.Context, call int, _ ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			if call == 0 {
 				// Produce no progress and hang until the watchdog cancels the
 				// context (killing the child), then surface it.
@@ -822,7 +822,7 @@ func TestWorker_watchdogKillsHungDownload(t *testing.T) {
 // must NOT be killed: each progress line resets the inactivity timer.
 func TestWorker_progressResetsWatchdog(t *testing.T) {
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(ctx context.Context, _ int, _ ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			// Emit progress every ~4ms for well beyond one 20ms watchdog
 			// window; if the reset works the context is never cancelled.
 			for i := 0; i < 15; i++ {
@@ -861,7 +861,7 @@ func TestWorker_pacerWaitDoesNotTripWatchdog(t *testing.T) {
 	const watchdog = 20 * time.Millisecond
 	runner := &fakeRunner{
 		manualStart: true,
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(ctx context.Context, _ int, _ ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			// Queue for several watchdog windows with nothing to report, the
 			// way a background call waits its turn behind others.
 			select {
@@ -893,11 +893,11 @@ func TestWorker_pacerWaitDoesNotTripWatchdog(t *testing.T) {
 func TestWorker_pacerWaitDoesNotTripPreflightCap(t *testing.T) {
 	runner := &fakeRunner{
 		manualStart: true,
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(ctx context.Context, _ int, _ ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			ytdlp.SignalStart(ctx)
 			return &ytdlp.Result{MediaPath: "/m/vid.mp4", FormatUsed: "f"}, nil
 		},
-		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+		metaFn: func(ctx context.Context, _ string) (*ytdlp.Meta, error) {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -941,7 +941,7 @@ func TestWorker_pacerWaitDoesNotTripPreflightCap(t *testing.T) {
 // finish the job, and LowDisk() must clear.
 func TestWorker_lowDiskPausesClaimingAndResumesWhenFreed(t *testing.T) {
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
 		},
 	}
@@ -951,7 +951,7 @@ func TestWorker_lowDiskPausesClaimingAndResumesWhenFreed(t *testing.T) {
 
 	h := newHarness(t, runner, func(d *Deps) {
 		d.MediaDir = "/media"
-		d.FreeBytes = func(dir string) (uint64, error) {
+		d.FreeBytes = func(_ string) (uint64, error) {
 			freeMu.Lock()
 			defer freeMu.Unlock()
 			return free, nil
@@ -989,13 +989,13 @@ func TestWorker_lowDiskPausesClaimingAndResumesWhenFreed(t *testing.T) {
 // even with almost no free space reported.
 func TestWorker_nonPositiveMinFreeDisablesGuard(t *testing.T) {
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
 		},
 	}
 	h := newHarness(t, runner, func(d *Deps) {
 		d.MediaDir = "/media"
-		d.FreeBytes = func(dir string) (uint64, error) { return 1, nil } // 1 byte free
+		d.FreeBytes = func(_ string) (uint64, error) { return 1, nil } // 1 byte free
 	})
 	// Force a non-positive floor directly in the store (the API rejects this,
 	// but the worker must not wedge if a bad value ever lands there).
@@ -1046,7 +1046,7 @@ func TestClassifyErrPausedRequeuesWithoutAttempt(t *testing.T) {
 // contract: the job goes back to 'pending' with attempts UNCHANGED — a
 // kill-switch pause never burns an attempt.
 func TestClassifyErrPaused_StoreBacked(t *testing.T) {
-	h := newHarness(t, &fakeRunner{fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+	h := newHarness(t, &fakeRunner{fn: func(_ context.Context, _ int, _ ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 		return &ytdlp.Result{MediaPath: "/x.mp4", FormatUsed: "f"}, nil
 	}}, nil)
 	id := h.enqueue(t, "vid", 0)
@@ -1129,7 +1129,7 @@ func TestWorker_success_ResetsFailMonitor(t *testing.T) {
 	}}
 
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, _ ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return &ytdlp.Result{MediaPath: "/m/vid.mp4", FormatUsed: "f"}, nil
 		},
 	}
@@ -1154,7 +1154,7 @@ func TestWorker_success_ResetsFailMonitor(t *testing.T) {
 // independent signals. Clearing the predicate lets the queue drain.
 func TestWorker_youtubePausedGateBlocksClaiming(t *testing.T) {
 	runner := &fakeRunner{
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
 		},
 	}
@@ -1430,7 +1430,7 @@ func TestProcess_scheduledWorkStaysOnTheBackgroundLane(t *testing.T) {
 func TestWorker_metadataWriteFailureRetries(t *testing.T) {
 	var h *harness
 	runner := &fakeRunner{
-		metaFn: func(ctx context.Context, rawURL string) (*ytdlp.Meta, error) {
+		metaFn: func(_ context.Context, _ string) (*ytdlp.Meta, error) {
 			// Drop the guard on the second probe so the retry can complete;
 			// the first probe leaves it armed and its Upsert aborts.
 			if h.runner.metaCalls() > 1 {
@@ -1440,7 +1440,7 @@ func TestWorker_metadataWriteFailureRetries(t *testing.T) {
 			}
 			return &ytdlp.Meta{Title: "Resolved Title", Availability: "public"}, nil
 		},
-		fn: func(ctx context.Context, call int, req ytdlp.DownloadReq, onProgress func(ytdlp.Progress)) (*ytdlp.Result, error) {
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
 			return &ytdlp.Result{MediaPath: "/m/" + req.VideoID + ".mp4", FormatUsed: "f"}, nil
 		},
 	}

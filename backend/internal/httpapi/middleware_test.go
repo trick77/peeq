@@ -11,7 +11,7 @@ import (
 func TestLogging_recordsMethodPathStatusAndDuration(t *testing.T) {
 	// Given
 	logs := captureLogs(t)
-	h := logging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := logging(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
 
@@ -30,7 +30,7 @@ func TestLogging_recordsMethodPathStatusAndDuration(t *testing.T) {
 func TestLogging_neverRecordsTheQueryString(t *testing.T) {
 	// Given: the OIDC callback, whose query carries a live auth code.
 	logs := captureLogs(t)
-	h := logging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	h := logging(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 
 	// When
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=SUPERSECRETCODE&state=xyz", nil)
@@ -53,7 +53,7 @@ func TestLogging_levelReflectsOutcome(t *testing.T) {
 	cases := map[int]string{200: "level=INFO", 404: "level=WARN", 500: "level=ERROR"}
 	for status, wantLevel := range cases {
 		logs := captureLogs(t)
-		h := logging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := logging(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(status)
 		}))
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/x", nil))
@@ -66,7 +66,7 @@ func TestLogging_levelReflectsOutcome(t *testing.T) {
 func TestLogging_skipsHealthz(t *testing.T) {
 	// Given
 	logs := captureLogs(t)
-	h := logging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	h := logging(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 
 	// When
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
@@ -206,7 +206,7 @@ func TestMiddlewareComposition_panicStillProducesAnAccessLogLine(t *testing.T) {
 	// below to recovery(logging(h)) to see this test fail against the old
 	// order.
 	logs := captureLogs(t)
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		panic("boom")
 	})
 	wrapped := logging(recovery(h))
@@ -238,7 +238,7 @@ func TestMiddlewareComposition_panicStillProducesAnAccessLogLine(t *testing.T) {
 func TestRecovery_turnsPanicsInto500AndLogsThem(t *testing.T) {
 	// Given
 	logs := captureLogs(t)
-	h := recovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := recovery(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		panic("boom")
 	}))
 	rec := httptest.NewRecorder()

@@ -48,7 +48,7 @@ var chromeVersions = []string{
 // handling untouched. This helper exists for Phase 3 direct-request code
 // (subtitles, Shorts checks); it is intentionally unused by Runner today.
 func RandomUserAgent() string {
-	version := chromeVersions[rand.IntN(len(chromeVersions))]
+	version := chromeVersions[rand.IntN(len(chromeVersions))] //nolint:gosec // picks a user-agent string to vary, not a secret
 	return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" +
 		version + " Safari/537.36"
 }

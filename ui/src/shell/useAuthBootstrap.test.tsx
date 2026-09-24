@@ -4,6 +4,7 @@ import { useAuthBootstrap } from "./useAuthBootstrap";
 import { getMe } from "../api";
 import { notifyAuthExpired } from "../api/http";
 import { writeSignedInHint } from "../signedInHint";
+import type { User } from "../api/types";
 
 vi.mock("../api", () => ({ getMe: vi.fn() }));
 vi.mock("../signedInHint", () => ({
@@ -11,7 +12,7 @@ vi.mock("../signedInHint", () => ({
   writeSignedInHint: vi.fn(),
 }));
 
-const user = { id: "u1", email: "a@b.c" };
+const user = { id: "u1", email: "a@b.c" } as User;
 
 describe("useAuthBootstrap", () => {
   beforeEach(() => {
