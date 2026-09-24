@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/sse"
@@ -686,14 +687,52 @@ func TestDownloads_postEnqueueStoreError_500(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("POST /api/downloads (enqueue store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
 	}
-	// The video row itself must still have been saved, even though the
-	// enqueue that would have made it downloadable failed.
+	// Row, status and job are one transaction: a failed enqueue leaves no
+	// half-made 'queued' row that nothing would ever pick up.
 	video, err := deps.Videos.Get("dQw4w9WgXcQ")
 	if err != nil {
 		t.Fatalf("get video: %v", err)
 	}
-	if video == nil {
-		t.Fatal("expected the video row to exist despite the enqueue failure")
+	if video != nil {
+		t.Fatalf("expected the video row to be rolled back with the failed enqueue, got %+v", video)
+	}
+}
+
+// TestDownloads_postSettlesPendingLedgerRow asserts an add by URL moves the
+// video's pending Inbox row to 'queued' along with the enqueue. The path
+// never touched the ledger, so the Inbox kept offering a video that was
+// already queued, and approving it there enqueued a second job.
+func TestDownloads_postSettlesPendingLedgerRow(t *testing.T) {
+	runner := &fakeDownloadsRunner{meta: &ytdlp.Meta{ID: "dQw4w9WgXcQ", Title: "t"}}
+	deps, db := downloadsTestDepsDB(t, runner)
+	if _, err := db.Exec(`INSERT INTO channels (id, name) VALUES ('UC1', 'C')`); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO channel_videos (video_id, channel_id, title, url, state) VALUES ('dQw4w9WgXcQ', 'UC1', 'T', 'u', 'pending')`); err != nil {
+		t.Fatalf("seed ledger: %v", err)
+	}
+	deps.Ledger = channelvideos.New(db)
+	if err := deps.Ledger.SetThumbnail("dQw4w9WgXcQ", "image/jpeg", []byte("poster")); err != nil {
+		t.Fatalf("seed poster: %v", err)
+	}
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	rec := postDownload(t, h, sessionCookie, "https://youtu.be/dQw4w9WgXcQ")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/downloads status = %d, want 201, body = %s", rec.Code, rec.Body.String())
+	}
+	var state string
+	if err := db.QueryRow(`SELECT state FROM channel_videos WHERE video_id = 'dQw4w9WgXcQ'`).Scan(&state); err != nil || state != "queued" {
+		t.Fatalf("ledger state = %q err=%v, want queued", state, err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM download_jobs WHERE video_id = 'dQw4w9WgXcQ'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("jobs = %d err=%v, want exactly 1", n, err)
+	}
+	// The row left the Inbox, so its cached poster goes too.
+	if th, err := deps.Ledger.GetThumbnail("dQw4w9WgXcQ"); err != nil || th != nil {
+		t.Fatalf("poster should be reclaimed, got %+v err=%v", th, err)
 	}
 }
 

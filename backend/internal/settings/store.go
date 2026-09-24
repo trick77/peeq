@@ -11,13 +11,11 @@ import (
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/cookie"
+	"github.com/trick77/peeq/internal/store"
 )
 
 // DBTX is the subset of *sql.DB used by the settings store.
-type DBTX interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
+type DBTX = store.DBTX
 
 // ActivityRecorder records a cookie/access transition for the Activity feed.
 // Narrow and nil-safe like the download/scan/summarize workers' own recorders;

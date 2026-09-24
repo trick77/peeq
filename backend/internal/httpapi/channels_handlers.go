@@ -1189,24 +1189,31 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	// policy; a manual pick from Pending is a one-off that follows the global
 	// preset.
 	//
-	// If this video was already downloaded while still sitting on the Pending
-	// list (e.g. added manually via the video URL), do NOT re-enqueue a
-	// duplicate: just clear it from Pending and report it back as already
-	// downloaded.
+	// If this video is already in the pipeline while still sitting on the
+	// Pending list (queued or downloading after an add by URL or from the
+	// extension, or downloaded outright), do NOT enqueue a duplicate: just
+	// clear it from Pending and report where it is. The queued/downloading
+	// half of this guard is also what makes a retry of THIS request safe: for
+	// an 'ignored' row the ledger write below runs after the enqueue has
+	// committed, and a retry after that write failed lands here.
 	v, err := s.videos.Get(e.VideoID)
 	if err != nil {
-		// A store fault must not read as "not downloaded": that path would
-		// overwrite a downloaded row with 'queued' and enqueue a duplicate.
+		// A store fault must not read as "not in the pipeline": that path
+		// would overwrite the row with 'queued' and enqueue a duplicate.
 		serverError(w, r, err, "load video failed")
 		return
 	}
-	if v != nil && v.Status == videos.StatusDownloaded {
+	if v != nil && alreadyInQueue(v.Status) {
 		if err := s.ledger.SetState(e.VideoID, channelvideos.StateQueued); err != nil {
 			serverError(w, r, err, "update pending failed")
 			return
 		}
 		s.removePendingThumbnail(e.VideoID)
-		writeJSON(w, map[string]string{"status": "already_downloaded"})
+		status := "queued"
+		if v.Status == videos.StatusDownloaded {
+			status = "already_downloaded"
+		}
+		writeJSON(w, map[string]string{"status": status})
 		return
 	}
 	// The title is normalised again on the way out of the ledger. Entries
@@ -1214,27 +1221,25 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	// string, and this is where such an entry becomes a video row — the row is
 	// new here, so cleaning it stays within "new videos only". The ledger row
 	// itself is left as it was.
-	if err := s.videos.Upsert(videos.Video{
+	// Row, status and job in one transaction (videos.Store.EnqueueDownload);
+	// a pending ledger row moves to 'queued' inside it. An 'ignored' row is
+	// left alone by the transaction on purpose (it is a user decision) and
+	// is moved separately below.
+	if _, err := s.videos.UpsertAndEnqueueDownload(videos.Video{
 		ID:              e.VideoID,
 		URL:             e.URL,
 		Title:           ytdlp.NormalizeTitle(e.Title),
 		ChannelID:       e.ChannelID,
 		DurationSeconds: int64(e.DurationSeconds),
-	}); err != nil {
-		serverError(w, r, err, "save video failed")
-		return
-	}
-	if err := s.videos.SetStatus(e.VideoID, videos.StatusQueued, ""); err != nil {
-		serverError(w, r, err, "save video failed")
-		return
-	}
-	if _, err := s.jobs.Enqueue(e.VideoID, downloadPriority); err != nil {
+	}, downloadPriority); err != nil {
 		serverError(w, r, err, "enqueue failed")
 		return
 	}
-	if err := s.ledger.SetState(e.VideoID, channelvideos.StateQueued); err != nil {
-		serverError(w, r, err, "update pending failed")
-		return
+	if e.State == channelvideos.StateIgnored {
+		if err := s.ledger.SetState(e.VideoID, channelvideos.StateQueued); err != nil {
+			serverError(w, r, err, "update pending failed")
+			return
+		}
 	}
 	s.removePendingThumbnail(e.VideoID)
 	writeJSON(w, map[string]string{"status": "queued"})
