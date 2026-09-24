@@ -999,10 +999,9 @@ func TestDownloads_requireAuth(t *testing.T) {
 	}
 }
 
-// TestDownloads_listJoinsVideosInOneRead pins the batched join: a job whose
-// video row is gone still lists (untitled), and the titles come from one
-// GetMany rather than one Get per job.
-func TestDownloads_listJoinsVideosInOneRead(t *testing.T) {
+// TestDownloads_listsJobsWhoseVideoIsGone pins the batched join's shape: a
+// job whose video row is gone still lists, untitled, beside a titled one.
+func TestDownloads_listsJobsWhoseVideoIsGone(t *testing.T) {
 	runner := &fakeDownloadsRunner{meta: &ytdlp.Meta{ID: "dQw4w9WgXcQ", Title: "t"}}
 	deps, db := downloadsTestDepsDB(t, runner)
 	h := New(deps)
@@ -1013,12 +1012,17 @@ func TestDownloads_listJoinsVideosInOneRead(t *testing.T) {
 	if _, err := db.Exec(`UPDATE videos SET title = 'Named' WHERE id = 'dQw4w9WgXcQ'`); err != nil {
 		t.Fatal(err)
 	}
-	// A second job whose video row no longer exists (the FK cascade is off in
-	// this seed on purpose: the row is inserted directly).
-	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+	// A second job whose video row no longer exists. The pragma binds to one
+	// pooled connection, so the insert must run on that same connection.
+	conn, err := db.Conn(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO download_jobs (video_id, state) VALUES ('gone', 'failed')`); err != nil {
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(context.Background(), `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(context.Background(), `INSERT INTO download_jobs (video_id, state) VALUES ('gone', 'pending')`); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/downloads", nil)

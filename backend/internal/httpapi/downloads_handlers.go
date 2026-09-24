@@ -249,12 +249,14 @@ func (s *server) enqueueDownloadByURL(rawURL string, requeueExisting bool) (item
 	}, false, nil
 }
 
-// finishedJobsWindow is how many done or canceled jobs the queue list still
-// carries. The page reads pending, running and failed; this is a margin.
+// finishedJobsWindow is how many terminal (done, failed, canceled) jobs the
+// queue list still carries. The page renders pending and running; this is
+// a margin for what just finished.
 const finishedJobsWindow = 20
 
-// handleDownloadsList returns the whole download queue (every state, not
-// just pending), joined with each job's video title/channel for display.
+// handleDownloadsList returns the download queue — every pending and running
+// job, plus the newest finishedJobsWindow terminal ones — joined with each
+// job's video title/channel for display.
 func (s *server) handleDownloadsList(w http.ResponseWriter, r *http.Request) {
 	if s.jobs == nil {
 		writeJSON(w, []downloadItem{})
@@ -266,11 +268,11 @@ func (s *server) handleDownloadsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ids := make([]string, 0, len(all))
-	for _, j := range all {
-		ids = append(ids, j.VideoID)
+	index, err := s.videoIndex(idsOf(all, func(j jobs.Job) string { return j.VideoID }))
+	if err != nil {
+		serverError(w, r, err, "list downloads failed")
+		return
 	}
-	index := s.videoIndex(ids)
 	items := make([]downloadItem, 0, len(all))
 	for _, j := range all {
 		item := downloadItem{

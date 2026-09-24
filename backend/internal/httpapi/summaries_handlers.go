@@ -89,11 +89,11 @@ func (s *server) writeSummaryList(w http.ResponseWriter, r *http.Request, list f
 		return
 	}
 
-	ids := make([]string, 0, len(all))
-	for _, j := range all {
-		ids = append(ids, j.VideoID)
+	index, err := s.videoIndex(idsOf(all, func(j summaryjobs.Job) string { return j.VideoID }))
+	if err != nil {
+		serverError(w, r, err, errMsg)
+		return
 	}
-	index := s.videoIndex(ids)
 	items := make([]summaryItem, 0, len(all))
 	for _, j := range all {
 		item := summaryItem{

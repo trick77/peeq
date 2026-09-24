@@ -388,14 +388,14 @@ func TestListQueue_boundsFinishedJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListQueue: %v", err)
 	}
-	if len(got) != 3+1+2+20 {
-		t.Fatalf("len = %d, want 26 (6 active + 20 finished)", len(got))
+	if len(got) != 3+1+20 {
+		t.Fatalf("len = %d, want 24 (4 active + 20 terminal)", len(got))
 	}
 	finished := 0
 	newestDone := int64(0)
 	for _, j := range got {
 		switch j.State {
-		case StateDone, StateCanceled:
+		case StateDone, StateFailed, StateCanceled:
 			finished++
 			if j.ID > newestDone {
 				newestDone = j.ID
@@ -414,8 +414,11 @@ func TestListQueue_boundsFinishedJobs(t *testing.T) {
 	if newestDone != lastID {
 		t.Fatalf("newest finished id in window = %d, want %d", newestDone, lastID)
 	}
-	// Zero window: active jobs only.
-	if got, err := s.ListQueue(0); err != nil || len(got) != 6 {
-		t.Fatalf("ListQueue(0) = %d rows err=%v, want 6", len(got), err)
+	// Zero (or negative) window: active jobs only. A negative LIMIT would
+	// mean "no limit" to SQLite, which is the unbounded read this replaces.
+	for _, w := range []int{0, -1} {
+		if got, err := s.ListQueue(w); err != nil || len(got) != 4 {
+			t.Fatalf("ListQueue(%d) = %d rows err=%v, want 4", w, len(got), err)
+		}
 	}
 }
