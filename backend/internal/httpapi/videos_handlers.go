@@ -550,8 +550,19 @@ func (s *server) handleResumeVideo(w http.ResponseWriter, r *http.Request) {
 // which handles conditional requests and byte-range requests (the player
 // needs Range support for seeking).
 func (s *server) handleStreamVideo(w http.ResponseWriter, r *http.Request) {
-	v, ok := s.lookupVideo(w, r)
-	if !ok {
+	// A player re-issues range requests throughout playback, so this reads
+	// the three columns it needs rather than the whole row.
+	if s.videos == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "videos are not configured")
+		return
+	}
+	v, err := s.videos.MediaRef(r.PathValue("id"))
+	if err != nil {
+		serverError(w, r, err, "load video failed")
+		return
+	}
+	if v == nil {
+		writeJSONError(w, http.StatusNotFound, "video not found")
 		return
 	}
 	if v.MediaPath == "" {
@@ -638,11 +649,14 @@ func attachmentDisposition(name string) string {
 // 404 covers both "no video" and "video has no poster". Videos deleted to
 // reclaim space keep theirs: a tombstone takes the media file, not the card.
 func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
-	v, ok := s.lookupVideo(w, r)
-	if !ok {
+	// No video lookup first: the thumbnail read answers "no such video" and
+	// "no thumbnail" alike with a 404, and this route is hit once per card
+	// in the grid.
+	if s.videos == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "videos are not configured")
 		return
 	}
-	serveThumbnail(w, r, s.videos, v.ID, imageOwnedHour)
+	serveThumbnail(w, r, s.videos, r.PathValue("id"), imageOwnedHour)
 }
 
 // serveStoredImage writes one image held in the database — a video poster, a

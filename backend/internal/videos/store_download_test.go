@@ -349,3 +349,25 @@ func TestTombstone_errorsWhenShareTableMissing(t *testing.T) {
 		t.Fatal("Tombstone should surface the revoke-link failure")
 	}
 }
+
+// TestMediaRef pins the small read the media range handler makes on every
+// request during playback, instead of the full row with its subqueries.
+func TestMediaRef(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Upsert(Video{ID: "v1", URL: "u", Title: "Named"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetDownloaded("v1", DownloadedResult{MediaPath: "UC/v1.mp4"}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	ref, err := s.MediaRef("v1")
+	if err != nil || ref == nil {
+		t.Fatalf("MediaRef: %v %v", ref, err)
+	}
+	if ref.ID != "v1" || ref.Title != "Named" || ref.MediaPath != "UC/v1.mp4" {
+		t.Fatalf("ref = %+v", ref)
+	}
+	if ref, err := s.MediaRef("nope"); err != nil || ref != nil {
+		t.Fatalf("unknown id: %+v %v, want nil, nil", ref, err)
+	}
+}

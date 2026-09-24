@@ -275,3 +275,30 @@ func TestLedger_summaryGaveUpReadsTheLatestJobOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestCountPendingForChannel pins the count the channel page shows: the
+// detail handler used to load every pending row (three correlated
+// subqueries each) just to take len() of the slice.
+func TestCountPendingForChannel(t *testing.T) {
+	s := newTestStore(t)
+	seedChannel(t, s, "UC1")
+	seedChannel(t, s, "UC2")
+	seed := func(id, ch, state string) {
+		t.Helper()
+		if _, err := s.db.Exec(`INSERT INTO channel_videos (video_id, channel_id, title, url, state) VALUES (?, ?, 'T', 'u', ?)`, id, ch, state); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seed("a", "UC1", "pending")
+	seed("b", "UC1", "pending")
+	seed("c", "UC1", "ignored")
+	seed("d", "UC2", "pending")
+	n, err := s.CountPendingForChannel("UC1")
+	if err != nil || n != 2 {
+		t.Fatalf("CountPendingForChannel(UC1) = %d err=%v, want 2", n, err)
+	}
+	n, err = s.CountPendingForChannel("UCnone")
+	if err != nil || n != 0 {
+		t.Fatalf("CountPendingForChannel(UCnone) = %d err=%v, want 0", n, err)
+	}
+}
