@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Rail, type ViewId } from "./shell/Rail";
 import { SignIn } from "./shell/SignIn";
+import { useAuthBootstrap } from "./shell/useAuthBootstrap";
 import { takeAuthFailed } from "./authError";
-import { readSignedInHint, writeSignedInHint } from "./signedInHint";
 import {
-  getMe,
   listDownloads,
   cookieHealth,
   downloadsStatus,
@@ -18,7 +17,7 @@ import {
 import type { DownloadsStatus, SummaryEventData } from "./api/downloads";
 import { getYtdlpVersion, type YtdlpVersion } from "./api/ytdlp";
 import type { SummaryStatus } from "./api/enums";
-import type { ActivityEvent, Job, SummaryJob, User } from "./api/types";
+import type { ActivityEvent, Job, SummaryJob } from "./api/types";
 import { Library } from "./views/Library";
 import { Add } from "./views/Add";
 import { Player } from "./views/Player";
@@ -64,12 +63,6 @@ function readRailCollapsed(): boolean {
 // At module load, before any effect or route read can rewrite the URL — see
 // takeAuthFailed for why it is consumed rather than merely read.
 const AUTH_FAILED = takeAuthFailed();
-
-// How long a session check may take before a hinted browser stops being shown
-// nothing and gets the checking card instead. Long enough that a healthy
-// backend never reaches it — the flash the hint removes lasts a fraction of
-// this — short enough that a slow or hung one is never a blank page.
-const SLOW_CHECK_MS = 600;
 
 function writeRailCollapsed(collapsed: boolean) {
   try {
@@ -297,12 +290,8 @@ export function App() {
       persistedVideoId,
     ],
   );
-  const [user, setUser] = useState<User | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
-  // Read once, on mount: what the check answers next is allowed to change the
-  // hint in storage, but not what this render was told to expect.
-  const [signedInHint] = useState(readSignedInHint);
-  const [authError, setAuthError] = useState(false);
+  const { user, authChecked, authError, checkSlow, signedInHint, expired } =
+    useAuthBootstrap();
   const [jobs, setJobs] = useState<Job[]>([]);
   // undefined until the first listPending() lands. The rail greys Inbox out on
   // a real 0, so a 0 default would flash the item dim on every cold load.
@@ -428,44 +417,6 @@ export function App() {
   useEffect(() => {
     jobsRef.current = jobs;
   }, [jobs]);
-
-  useEffect(() => {
-    let active = true;
-    getMe()
-      .then((u) => {
-        if (active) setUser(u);
-        // Resolving at all means the server answered — a user, or a 401 that
-        // says the session is really gone. Either way the hint now knows what
-        // the next reload should expect. Deliberately not in .catch(): see
-        // writeSignedInHint.
-        writeSignedInHint(!!u);
-      })
-      .catch(() => {
-        // getMe() rejecting (backend down, network error, or a non-401
-        // failure the client surfaced as a thrown error) must never become
-        // an unhandled rejection — treat it the same as "not signed in".
-        if (active) setAuthError(true);
-      })
-      .finally(() => {
-        if (active) setAuthChecked(true);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  // The hint buys silence for a quick check, not for an arbitrarily long one.
-  // /api/auth/me can take seconds on a cold-started backend, and can hang
-  // outright on a server that accepts the connection and never answers —
-  // getMe() has no timeout of its own. Painting nothing for that whole stretch
-  // trades a brief flash for a page that looks broken, so once the check stops
-  // being quick the checking card comes back and says what is happening.
-  const [checkSlow, setCheckSlow] = useState(false);
-  useEffect(() => {
-    if (authChecked) return;
-    const timer = setTimeout(() => setCheckSlow(true), SLOW_CHECK_MS);
-    return () => clearTimeout(timer);
-  }, [authChecked]);
 
   useEffect(() => {
     if (!authChecked || !user) return;
@@ -748,7 +699,9 @@ export function App() {
   }
 
   if (!user) {
-    return <SignIn unreachable={authError} failed={AUTH_FAILED} />;
+    return (
+      <SignIn unreachable={authError} failed={AUTH_FAILED} expired={expired} />
+    );
   }
 
   function openVideo(id: string) {

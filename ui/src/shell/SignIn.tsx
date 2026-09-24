@@ -66,6 +66,12 @@ export type SignInProps = {
    * sign-in screen, which reads as "the button did nothing".
    */
   failed?: boolean;
+  /**
+   * The session was live and a request came back 401. The card is the same
+   * one a cold visitor gets, so without a line saying why it is here the
+   * swap reads as the app logging the user out for no reason.
+   */
+  expired?: boolean;
 };
 
 /**
@@ -78,7 +84,12 @@ export type SignInProps = {
  * the scrim over the image, so the picture can stay bright without the sign-in
  * ever being dimmed to compensate.
  */
-export function SignIn({ checking, unreachable, failed }: SignInProps) {
+export function SignIn({
+  checking,
+  unreachable,
+  failed,
+  expired,
+}: SignInProps) {
   return (
     <div className="signin">
       <img className="signin-cover" src="/signin-cover.webp" alt="" />
@@ -98,6 +109,11 @@ export function SignIn({ checking, unreachable, failed }: SignInProps) {
         {failed && !unreachable ? (
           <div className="errline" role="alert">
             Sign-in didn't complete. Try again.
+          </div>
+        ) : null}
+        {expired && !unreachable && !failed ? (
+          <div className="errline" role="alert">
+            Your session expired. Sign in again to continue.
           </div>
         ) : null}
         {checking ? (

@@ -4,11 +4,43 @@
 // modules are thin enough not to need loom's one-off-per-endpoint style.
 
 // AuthExpiredError signals a 401 from an authenticated endpoint — the app
-// treats it as "session expired" and should route to sign-in.
+// treats it as "session expired" and routes to sign-in. The routing happens
+// through the listener below, not through callers: every view catches errors
+// to show a message, and none of them is the right place to know about
+// sessions. So the throw is for the caller that wants to stop what it was
+// doing; the listener is for the shell that owns the user.
 export class AuthExpiredError extends Error {
   constructor() {
     super("auth expired");
   }
+}
+
+const authExpiredListeners = new Set<() => void>();
+
+// onAuthExpired registers fn to run on any 401 and returns its unsubscribe.
+// The shell (useAuthBootstrap) is the one listener that matters, but a set
+// means no later registration can silently pre-empt it.
+export function onAuthExpired(fn: () => void): () => void {
+  authExpiredListeners.add(fn);
+  return () => {
+    authExpiredListeners.delete(fn);
+  };
+}
+
+// notifyAuthExpired runs every registered listener. A no-op when nobody
+// listens (static render, module tests). Exported for the shell's tests; the
+// api modules go through throwAuthExpired so a 401 can never be mapped
+// without the notification.
+export function notifyAuthExpired(): void {
+  for (const fn of authExpiredListeners) fn();
+}
+
+// throwAuthExpired is the ONE way a 401 becomes an AuthExpiredError: notify
+// the shell, then throw for the caller. Every 401 mapping (here, stream.ts,
+// and any raw fetch a component still does) goes through it.
+export function throwAuthExpired(): never {
+  notifyAuthExpired();
+  throw new AuthExpiredError();
 }
 
 // ApiError is thrown for any other non-2xx response. It carries the HTTP
@@ -30,7 +62,7 @@ export async function expectJSON<T>(
   fallbackMessage: string,
 ): Promise<T> {
   if (response.status === 401) {
-    throw new AuthExpiredError();
+    throwAuthExpired();
   }
   if (!response.ok) {
     throw new ApiError(
@@ -51,7 +83,7 @@ export async function expectNoContent(
   fallbackMessage: string,
 ): Promise<void> {
   if (response.status === 401) {
-    throw new AuthExpiredError();
+    throwAuthExpired();
   }
   if (!response.ok) {
     throw new ApiError(
