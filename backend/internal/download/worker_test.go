@@ -1027,7 +1027,7 @@ func TestClassifyErrPausedRequeuesWithoutAttempt(t *testing.T) {
 	w := newTestWorker(t)
 	job := &jobs.Job{ID: 1, VideoID: "v1", Attempts: 0}
 	video := &videos.Video{ID: "v1"}
-	w.classify(context.Background(), job, video, ytdlp.ErrPaused, true)
+	w.classify(job, video, ytdlp.ErrPaused, true)
 
 	if w.Paused() {
 		t.Error("kill-switch pause must not set the cookie-pause flag")
@@ -1061,7 +1061,7 @@ func TestClassifyErrPaused_StoreBacked(t *testing.T) {
 		t.Fatalf("get video: video=%v err=%v", video, err)
 	}
 
-	h.worker.classify(context.Background(), claimed, video, ytdlp.ErrPaused, true)
+	h.worker.classify(claimed, video, ytdlp.ErrPaused, true)
 
 	j := h.jobState(t, id)
 	if j.State != "pending" {
@@ -1090,13 +1090,13 @@ func TestFailMonitorFailedOnCountWorthy_ResetOnSuccess(t *testing.T) {
 	w := newTestWorker(t, withFailMonitor(fm))
 
 	// An unclassified exec error (default branch) -> Fail(videoID).
-	w.classify(context.Background(), &jobs.Job{ID: 1, VideoID: "v1", MaxAttempts: 3}, &videos.Video{ID: "v1"}, errors.New("boom: some new extractor error"), true)
+	w.classify(&jobs.Job{ID: 1, VideoID: "v1", MaxAttempts: 3}, &videos.Video{ID: "v1"}, errors.New("boom: some new extractor error"), true)
 	if len(fails) != 1 || fails[0] != "v1" {
 		t.Fatalf("fails=%v, want [v1]", fails)
 	}
 
 	// A terminal error must NOT count.
-	w.classify(context.Background(), &jobs.Job{ID: 2, VideoID: "v2"}, &videos.Video{ID: "v2"}, &ytdlp.TerminalError{Reason: "private"}, true)
+	w.classify(&jobs.Job{ID: 2, VideoID: "v2"}, &videos.Video{ID: "v2"}, &ytdlp.TerminalError{Reason: "private"}, true)
 	if len(fails) != 1 {
 		t.Fatalf("terminal error counted: fails=%v", fails)
 	}
@@ -1111,7 +1111,7 @@ func TestClassify_preflightDoesNotFeedFailMonitor(t *testing.T) {
 	fm := &fakeMonitor{onFail: func(id string) { fails = append(fails, id) }}
 	w := newTestWorker(t, withFailMonitor(fm))
 
-	w.classify(context.Background(), &jobs.Job{ID: 1, VideoID: "v1", MaxAttempts: 3}, &videos.Video{ID: "v1"}, errors.New("boom: transient metadata blip"), false)
+	w.classify(&jobs.Job{ID: 1, VideoID: "v1", MaxAttempts: 3}, &videos.Video{ID: "v1"}, errors.New("boom: transient metadata blip"), false)
 
 	if len(fails) != 0 {
 		t.Fatalf("preflight failure fed the FailMonitor: fails=%v, want none", fails)

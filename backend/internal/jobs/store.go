@@ -12,7 +12,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 )
 
 // ErrNotRunning is returned by Finish, Bump, and Fail when their guarded
@@ -37,6 +39,9 @@ type Job struct {
 	EnqueuedAt  string
 	StartedAt   string
 	FinishedAt  string
+	// NextAttemptAt is the wall-clock floor before which a requeued job is
+	// not claimable (see BumpAfter); empty means claimable now.
+	NextAttemptAt string
 }
 
 // Store persists the download queue.
@@ -52,21 +57,22 @@ func New(db *sql.DB) *Store {
 // selectColumns is the shared column list for every row read, in Job field
 // order, so scanRow can be reused by ClaimNext and List.
 const selectColumns = `id, video_id, state, priority, attempts, max_attempts,
-	last_error, log_tail, enqueued_at, started_at, finished_at`
+	last_error, log_tail, enqueued_at, started_at, finished_at, next_attempt_at`
 
 // scanRow scans one download_jobs row (in selectColumns order) into a Job,
 // mapping NULL started_at/finished_at to empty strings.
 func scanRow(sc interface{ Scan(...any) error }) (Job, error) {
 	var j Job
-	var startedAt, finishedAt sql.NullString
+	var startedAt, finishedAt, nextAttemptAt sql.NullString
 	if err := sc.Scan(
 		&j.ID, &j.VideoID, &j.State, &j.Priority, &j.Attempts, &j.MaxAttempts,
-		&j.LastError, &j.LogTail, &j.EnqueuedAt, &startedAt, &finishedAt,
+		&j.LastError, &j.LogTail, &j.EnqueuedAt, &startedAt, &finishedAt, &nextAttemptAt,
 	); err != nil {
 		return Job{}, err
 	}
 	j.StartedAt = startedAt.String
 	j.FinishedAt = finishedAt.String
+	j.NextAttemptAt = nextAttemptAt.String
 	return j, nil
 }
 
@@ -103,6 +109,7 @@ SET state = 'running', started_at = datetime('now')
 WHERE id = (
 	SELECT id FROM download_jobs
 	WHERE state = 'pending'
+	  AND (next_attempt_at IS NULL OR next_attempt_at <= datetime('now'))
 	ORDER BY priority DESC, enqueued_at ASC, id ASC
 	LIMIT 1
 )
@@ -189,11 +196,29 @@ WHERE id = ? AND state = 'running'`,
 // job canceled out from under the worker is not resurrected to pending;
 // returns ErrNotRunning (and writes nothing) when the guard matches no row.
 func (s *Store) Bump(id int64, attempts int, lastErr string) error {
+	return s.BumpAfter(id, attempts, lastErr, 0)
+}
+
+// BumpAfter is Bump with a backoff: the job is requeued but not claimable
+// until delay has passed, as a wall-clock stamp on the row (next_attempt_at)
+// rather than a sleep in the worker — so the only download goroutine moves on
+// to the next job instead of holding the whole queue for the wait, and the
+// wait survives a restart. A non-positive delay clears the stamp, which is
+// also what a plain Bump writes: a requeue that must not wait (a pause the
+// loop's own gate parks) never inherits an earlier retry's stamp. The stamp
+// has SQLite's one-second granularity, so a positive delay is rounded UP to
+// whole seconds — a caller asking for any wait at all gets at least one.
+func (s *Store) BumpAfter(id int64, attempts int, lastErr string, delay time.Duration) error {
+	var modifier any // NULL clears the stamp
+	if delay > 0 {
+		modifier = fmt.Sprintf("+%d seconds", int(math.Ceil(delay.Seconds())))
+	}
 	res, err := s.db.ExecContext(context.Background(), `
 UPDATE download_jobs
-SET state = 'pending', attempts = ?, last_error = ?, started_at = NULL
+SET state = 'pending', attempts = ?, last_error = ?, started_at = NULL,
+    next_attempt_at = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END
 WHERE id = ? AND state = 'running'`,
-		attempts, lastErr, id,
+		attempts, lastErr, modifier, modifier, id,
 	)
 	if err != nil {
 		return fmt.Errorf("bump job %d: %w", id, err)
