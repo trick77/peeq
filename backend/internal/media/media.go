@@ -174,10 +174,18 @@ func RemoveVideoFiles(mediaDir, mediaPath string) {
 //
 // Both tombstone paths — the manual DELETE endpoint and the retention sweeper —
 // go through here, so the two can never diverge.
-func RemoveTombstonedVideoFiles(mediaDir, mediaPath string) {
-	if mediaPath != "" {
-		if safe, err := SafeMediaPath(mediaDir, mediaPath); err == nil {
-			_ = os.Remove(safe)
-		}
+func RemoveTombstonedVideoFiles(mediaDir, mediaPath string) error {
+	if mediaPath == "" {
+		return nil
 	}
+	safe, err := SafeMediaPath(mediaDir, mediaPath)
+	if err != nil {
+		return fmt.Errorf("remove tombstoned media: %w", err)
+	}
+	// Already gone is the goal state, not a failure: a row can be tombstoned
+	// twice, or the file swept by hand.
+	if err := os.Remove(safe); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove tombstoned media: %w", err)
+	}
+	return nil
 }

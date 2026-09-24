@@ -1378,9 +1378,23 @@ func TestVideosDelete_unknownVideo_404(t *testing.T) {
 // TestVideosDelete_storeError_500 covers the s.videos.Tombstone error
 // branch: a trigger blocks the status column update Tombstone relies on.
 func TestVideosDelete_storeError_500(t *testing.T) {
-	deps, _, db := videosTestDepsDB(t)
-	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+	deps, mediaDir, db := videosTestDepsDB(t)
+	// A real file under MediaDir: the row is written before the file is
+	// removed, so a failed tombstone must leave the file where the
+	// still-'downloaded' row says it is.
+	videoDir := filepath.Join(mediaDir, "chan1", "v1")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mediaPath := filepath.Join(videoDir, "v1.mp4")
+	if err := os.WriteFile(mediaPath, []byte("fake video bytes"), 0o644); err != nil {
+		t.Fatalf("write media file: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
 		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
 	}
 	if _, err := db.Exec(`CREATE TRIGGER block_status_update BEFORE UPDATE OF status ON videos BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`); err != nil {
 		t.Fatalf("create trigger: %v", err)
@@ -1391,6 +1405,9 @@ func TestVideosDelete_storeError_500(t *testing.T) {
 	rec := doReq(t, h, cookie, http.MethodDelete, "/api/videos/v1", nil)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("DELETE /api/videos/v1 (store error) status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(mediaPath); err != nil {
+		t.Fatalf("media file should survive a failed tombstone, stat: %v", err)
 	}
 }
 
@@ -2098,5 +2115,38 @@ func TestVideosCounts_noStoreConfigured_zeroed(t *testing.T) {
 		if cats, ok := got.Categories[f]; !ok || cats == nil {
 			t.Errorf("categories[%s] = %v,%v", f, cats, ok)
 		}
+	}
+}
+
+// TestVideosDelete_removeFailure_stillTombstones asserts a media file that
+// cannot be removed does not fail the delete: the row is the source of truth
+// and is already tombstoned; the orphan is logged for the operator.
+func TestVideosDelete_removeFailure_stillTombstones(t *testing.T) {
+	logs := captureLogs(t)
+	deps, mediaDir := videosTestDeps(t)
+	// A non-empty directory where the file should be makes os.Remove fail.
+	mediaPath := filepath.Join(mediaDir, "chan1", "v1", "v1.mp4")
+	if err := os.MkdirAll(filepath.Join(mediaPath, "inner"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "chan1"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodDelete, "/api/videos/v1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+	}
+	v, err := deps.Videos.Get("v1")
+	if err != nil || v == nil || v.Status != videos.StatusTombstoned {
+		t.Fatalf("video should be tombstoned, got %+v err=%v", v, err)
+	}
+	if !strings.Contains(logs.String(), "tombstoned media removal failed") {
+		t.Fatalf("log should carry the orphaned file, got: %s", logs.String())
 	}
 }

@@ -125,10 +125,10 @@ func (s *Sweeper) sweepAndLog() {
 // SweepOnce runs one sweep pass: it loads the current retention_days,
 // queries every watched/non-favorite/non-tombstoned video whose watched_at
 // is older than the cutoff, skips any the NowPlayingGuard reports active,
-// and tombstones the rest — unlinking media from disk first via the same
-// media.RemoveTombstonedVideoFiles path the manual DELETE endpoint uses, then
-// calling videos.Store.Tombstone to clear media_path and mark the row deleted
-// while keeping it for watched history.
+// and tombstones the rest — calling videos.Store.Tombstone to clear media_path
+// and mark the row deleted while keeping it for watched history, then removing
+// the media from disk via the same media.RemoveTombstonedVideoFiles path the
+// manual DELETE endpoint uses.
 func (s *Sweeper) SweepOnce() error {
 	ctx := context.Background()
 	cfg, err := s.deps.Settings.Get(ctx)
@@ -160,9 +160,18 @@ func (s *Sweeper) SweepOnce() error {
 			s.deps.Logger.Info("retention sweep: skipping currently-playing video", "video_id", v.ID)
 			continue
 		}
-		media.RemoveTombstonedVideoFiles(s.deps.MediaDir, v.MediaPath)
+		// Row first, file second, for the same reason as the manual DELETE
+		// endpoint: a failed tombstone must leave the file where the row says
+		// it is, and a file that will not go is an orphan to log, not a reason
+		// to keep the row 'downloaded'.
 		if err := s.deps.Videos.Tombstone(v.ID); err != nil {
 			s.deps.Logger.Error("retention sweep: tombstone failed", "video_id", v.ID, "err", err)
+			continue
+		}
+		// The path goes in the log because the row no longer holds it: this
+		// line is the only place the orphan can be found from.
+		if err := media.RemoveTombstonedVideoFiles(s.deps.MediaDir, v.MediaPath); err != nil {
+			s.deps.Logger.Warn("retention sweep: media removal failed", "video_id", v.ID, "path", v.MediaPath, "err", err)
 			continue
 		}
 		s.deps.Logger.Info("retention sweep: tombstoned video", "video_id", v.ID, "watched_at", v.WatchedAt)
@@ -170,6 +179,7 @@ func (s *Sweeper) SweepOnce() error {
 	}
 	// Silence rule: only a sweep that actually reclaimed at least one video is
 	// worth a row. The sweeper ticks hourly and is a no-op almost every time.
+	// A video whose file would not go is not counted: nothing was reclaimed.
 	if tombstoned > 0 && s.deps.Activity != nil {
 		noun := "videos"
 		if tombstoned == 1 {
