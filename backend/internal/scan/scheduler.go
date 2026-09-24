@@ -731,23 +731,44 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	// listed records every id this pass's listing returned, so the off-listing
 	// re-check can tell what it has already covered.
 	listed := make(map[string]bool, len(entries))
+	// One batched read of the ledger rows for everything listed, instead of a
+	// Get per entry — a pass used to cost a few hundred statements per channel
+	// here. The whole row, not just its existence: an 'unavailable' row is the
+	// one kind of known video a scan must still act on, so the state has to be
+	// in hand. The videos-table check stays a point read, but only on the write
+	// path below, which a few entries per pass reach at most: batching it too
+	// would snapshot it before a loop that can block on throttled probes.
+	ids := make([]string, 0, len(entries))
 	for _, e := range entries {
-		listed[e.ID] = true
-		// Read the whole row, not just its existence: an 'unavailable' row is
-		// the one kind of known video a scan must still act on, so the state
-		// has to be in hand here.
-		row, err := s.d.Ledger.Get(e.ID)
-		if err != nil {
-			return err
+		if !listed[e.ID] {
+			listed[e.ID] = true
+			ids = append(ids, e.ID)
 		}
-		if row != nil {
+	}
+	known, err := s.d.Ledger.GetMany(ids)
+	if err != nil {
+		return err
+	}
+	handled := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		// A tab can list the same id twice. The per-entry Get this loop used
+		// to do absorbed the repeat (it found the row just inserted); the
+		// snapshot cannot, so the repeat is skipped here.
+		if handled[e.ID] {
+			continue
+		}
+		handled[e.ID] = true
+		if row := known[e.ID]; row != nil {
 			// Dedup vs ledger — but heal the row's date first. Rows written
 			// before migration 0008 have none, and a known video is never
 			// revisited anywhere else, so this is the only chance an item
-			// already sitting in the inbox has to gain one. Fills once, then
-			// no-ops; see Ledger.SetPublishedAt.
-			if err := s.d.Ledger.SetPublishedAt(e.ID, e.PublishedAt); err != nil {
-				return err
+			// already sitting in the inbox has to gain one. Only a row still
+			// without a date is written; Ledger.SetPublishedAt's own guard is
+			// the second line of defence.
+			if row.PublishedAt == "" && e.PublishedAt != "" {
+				if err := s.d.Ledger.SetPublishedAt(e.ID, e.PublishedAt); err != nil {
+					return err
+				}
 			}
 			if row.State != channelvideos.StateUnavailable {
 				continue
@@ -781,8 +802,9 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 			baselineCount++
 		case isUnfinishedStream(e):
 			// Record NOTHING for a stream that has not finished. 'seen'
-			// is terminal — Ledger.Exists matches on video_id with no state
-			// predicate, and nothing anywhere revisits a seen row — so writing
+			// is terminal — the ledger dedup above (Ledger.GetMany) matches on
+			// video_id with no state predicate, and nothing anywhere revisits
+			// a seen row — so writing
 			// one here would lose the stream permanently, including after it
 			// ends and becomes an ordinary video. That is silent data loss on a
 			// channel whose uploads are mostly livestreams: every launch stream

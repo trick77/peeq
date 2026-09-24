@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/trick77/peeq/internal/store"
 )
 
 // Filter narrows retrieval to a subset of the library — the structured half of a
@@ -63,7 +65,7 @@ func (f Filter) predicates(alias string) ([]string, []any) {
 	if len(f.ChannelIDs) > 0 || len(f.ChannelNames) > 0 {
 		var arms []string
 		if len(f.ChannelIDs) > 0 {
-			arms = append(arms, col("channel_id")+" IN ("+placeholders(len(f.ChannelIDs))+")")
+			arms = append(arms, col("channel_id")+" IN ("+store.Placeholders(len(f.ChannelIDs))+")")
 			args = append(args, toAny(f.ChannelIDs)...)
 		}
 		if len(f.ChannelNames) > 0 {
@@ -71,7 +73,7 @@ func (f Filter) predicates(alias string) ([]string, []any) {
 			// exact name. Gated on channel_id = '' so it can never widen a
 			// by-id match into a by-name one.
 			arms = append(arms, "("+col("channel_id")+" = '' AND "+
-				col("channel_name")+" IN ("+placeholders(len(f.ChannelNames))+"))")
+				col("channel_name")+" IN ("+store.Placeholders(len(f.ChannelNames))+"))")
 			args = append(args, toAny(f.ChannelNames)...)
 		}
 		conds = append(conds, "("+strings.Join(arms, " OR ")+")")
@@ -115,7 +117,7 @@ func (f Filter) predicates(alias string) ([]string, []any) {
 	}
 
 	if len(f.VideoIDs) > 0 {
-		conds = append(conds, col("id")+" IN ("+placeholders(len(f.VideoIDs))+")")
+		conds = append(conds, col("id")+" IN ("+store.Placeholders(len(f.VideoIDs))+")")
 		args = append(args, toAny(f.VideoIDs)...)
 	}
 	return conds, args
@@ -160,10 +162,6 @@ func (s *Store) CountVideos(ctx context.Context, f Filter) (LibraryCount, error)
 		return LibraryCount{}, fmt.Errorf("count videos: %w", err)
 	}
 	return out, nil
-}
-
-func placeholders(n int) string {
-	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
 func toAny(ss []string) []any {

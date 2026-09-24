@@ -13,8 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"time"
+
+	"github.com/trick77/peeq/internal/store"
 )
 
 // ErrNotRunning is returned by Finish, Bump, and Fail when their guarded
@@ -274,8 +275,7 @@ func (s *Store) ActiveIDsForVideos(videoIDs []string) ([]int64, error) {
 	if len(videoIDs) == 0 {
 		return nil, nil
 	}
-	ph := strings.Repeat("?,", len(videoIDs))
-	ph = ph[:len(ph)-1]
+	ph := store.Placeholders(len(videoIDs))
 	args := make([]any, len(videoIDs))
 	for i, v := range videoIDs {
 		args[i] = v
