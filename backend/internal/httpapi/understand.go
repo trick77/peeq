@@ -306,11 +306,18 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 		if errors.Is(err, context.DeadlineExceeded) || cctx.Err() == context.DeadlineExceeded {
 			status = understandTimedOut
 		}
+		// The diag carries only the status into the ask trace; the cause is
+		// logged here or it is lost. WARN: the answer degrades to the raw
+		// question and still ships. The question itself is not logged.
+		slog.Warn("understand failed", "status", status, "model", model, "ms", elapsed, "err", redactErr(err))
 		return queryUnderstanding{}, understandDiag{status: status, ms: elapsed, model: model}
 	}
 
 	u, dropped, ok := parseUnderstanding(raw)
 	if !ok {
+		// Same status as an outage in the trace, so the log is what tells the
+		// two apart. The reply is not logged: it paraphrases the question.
+		slog.Warn("understand failed", "status", understandFailed, "model", model, "ms", elapsed, "reason", "unparseable reply", "reply_len", len(raw))
 		return queryUnderstanding{}, understandDiag{status: understandFailed, ms: elapsed, model: model}
 	}
 	// A topic that merely restates the question buys nothing and costs a lane.

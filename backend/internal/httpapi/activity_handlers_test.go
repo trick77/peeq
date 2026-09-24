@@ -339,3 +339,19 @@ func TestActivity_upcomingBacklogDoesNotCrowdOutTheSchedule(t *testing.T) {
 		t.Fatalf("truncated = %d, want 0 — the backlog must not consume the cap", resp.Truncated)
 	}
 }
+
+// TestActivity_upcomingStoreErrorIs500 asserts the schedule does not
+// silently shrink: a store fault used to be swallowed and answered as a 200
+// with whatever the other query returned.
+func TestActivity_upcomingStoreErrorIs500(t *testing.T) {
+	deps, _, _, _, _, _, db := activityTestDeps(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if _, err := db.Exec(`DROP TABLE subscriptions`); err != nil {
+		t.Fatal(err)
+	}
+	rec := getActivityJSON(t, h, cookie, "/api/activity/upcoming")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}

@@ -1046,10 +1046,16 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 		for i, rf := range refs {
 			vids[i] = rf.VideoID
 		}
-		if jobIDs, err := s.jobs.ActiveIDsForVideos(vids); err == nil {
-			for _, jid := range jobIDs {
-				s.worker.Cancel(jid)
-			}
+		// Nothing has been deleted yet, so failing here is safe — and
+		// necessary: a running yt-dlp child must not outlive the rows it is
+		// downloading for.
+		jobIDs, err := s.jobs.ActiveIDsForVideos(vids)
+		if err != nil {
+			serverError(w, r, err, "delete failed")
+			return
+		}
+		for _, jid := range jobIDs {
+			s.worker.Cancel(jid)
 		}
 	}
 	// 3. Delete rows (FK-cascades jobs, subscription, ledger).

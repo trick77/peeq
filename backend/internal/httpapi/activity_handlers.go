@@ -89,8 +89,9 @@ type upcomingResponse struct {
 // handleActivityUpcoming serves peeq's own timed schedule: a live projection
 // over the existing schedules (never stored). It gathers the soonest channel
 // scans and metadata refreshes, merges them, caps at 20, and reports how many
-// were dropped for the edge label. Everything is best-effort: a store that
-// errors simply contributes nothing rather than failing the whole projection.
+// were dropped for the edge label. A store that errors fails the request: a
+// projection that silently dropped one of its sources would show a schedule
+// with half its rows missing and no sign that anything was wrong.
 //
 // Pending downloads and summaries used to be projected here too, as ordered
 // (untimed) items. Up next now renders those from the jobs and summaries the
@@ -100,25 +101,31 @@ type upcomingResponse struct {
 // of every timed one in Merge and shared the same budget of 20, so a backlog of
 // 20+ pending downloads used to return no scheduled items at all — the schedule
 // section vanished exactly when peeq was busiest.
-func (s *server) handleActivityUpcoming(w http.ResponseWriter, _ *http.Request) {
+func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) {
 	var items []activity.UpcomingItem
 
 	if s.channels != nil {
-		if scans, err := s.channels.ScanDueSoon(upcomingCap); err == nil {
-			for _, c := range scans {
-				items = append(items, activity.UpcomingItem{
-					At: c.At, Kind: activity.KindScan, SubjectID: c.ChannelID,
-					Subject: c.Name, Summary: "channel scan",
-				})
-			}
+		scans, err := s.channels.ScanDueSoon(upcomingCap)
+		if err != nil {
+			serverError(w, r, err, "load upcoming failed")
+			return
 		}
-		if metas, err := s.channels.MetaDueSoon(upcomingCap); err == nil {
-			for _, c := range metas {
-				items = append(items, activity.UpcomingItem{
-					At: c.At, Kind: activity.KindChannelMeta, SubjectID: c.ChannelID,
-					Subject: c.Name, Summary: "metadata refresh",
-				})
-			}
+		for _, c := range scans {
+			items = append(items, activity.UpcomingItem{
+				At: c.At, Kind: activity.KindScan, SubjectID: c.ChannelID,
+				Subject: c.Name, Summary: "channel scan",
+			})
+		}
+		metas, err := s.channels.MetaDueSoon(upcomingCap)
+		if err != nil {
+			serverError(w, r, err, "load upcoming failed")
+			return
+		}
+		for _, c := range metas {
+			items = append(items, activity.UpcomingItem{
+				At: c.At, Kind: activity.KindChannelMeta, SubjectID: c.ChannelID,
+				Subject: c.Name, Summary: "metadata refresh",
+			})
 		}
 	}
 	merged, truncated := activity.Merge(items, upcomingCap)
