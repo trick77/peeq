@@ -17,7 +17,7 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - Short lowercase messages; variables go in attrs (`snake_case`: `job_id`, `video_id`, `path`).
 - Every 500 goes through `serverError(w, r, err, "client message")` — it logs the cause, returns only the generic message. 4xx uses `writeJSONError`, no handler-level log needed — the request middleware records every request, 4xx at WARN, 5xx at ERROR.
 - A 500 therefore deliberately emits two lines: `request failed` (the cause, from `serverError`) and `request` (the access line, from the middleware). Don't "deduplicate" by deleting one — they answer different questions.
-- **Never log a full URL, `RequestURI()`, or a query string.** The OIDC callback carries a live auth `code`. Log `r.URL.Path`. Wrap errors that may embed a URL in `redactErr()`.
+- **Never log a full URL, `RequestURI()`, or a query string.** The OIDC callback carries a live auth `code`. Log `r.URL.Path`. The process's slog handler runs `logx.RedactAttr` on every `err` attr, so a URL in an error never reaches a log line whole; still wrap an error that may embed a URL in `logx.RedactErr()` where its text goes elsewhere (an Activity row, a client message).
 - Level via `BACKEND_LOG_LEVEL` (debug/info/warn/error), read in `main()` before anything else.
 
 ## Commands

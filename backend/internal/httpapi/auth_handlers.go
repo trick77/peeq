@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/logx"
 )
 
 // handleAuthLogin starts a login. In dev mode (DevAuthClaims.Subject set) it
@@ -39,7 +40,7 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		// exchange rejected, token verification failed) are otherwise
 		// indistinguishable from the outside, which makes a misconfigured
 		// provider undebuggable.
-		slog.Warn("oidc callback failed", "err", redactErr(err))
+		slog.Warn("oidc callback failed", "err", logx.RedactErr(err))
 		http.Redirect(w, r, "/?auth_error=oidc_callback_failed", http.StatusFound)
 		return
 	}
@@ -71,7 +72,7 @@ func (s *server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		if err := s.authSvc.Revoke(r.Context(), cookie.Value); err != nil {
 			// The cookie is cleared regardless, but a session left live in
 			// the DB is security-relevant — don't let it vanish silently.
-			slog.Error("session revoke failed", "err", redactErr(err))
+			slog.Error("session revoke failed", "err", logx.RedactErr(err))
 		}
 	}
 	http.SetCookie(w, s.authSvc.ClearCookie())

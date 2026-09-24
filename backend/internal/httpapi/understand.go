@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/peeq/internal/logx"
 	"github.com/trick77/peeq/internal/videos"
 )
 
@@ -309,7 +310,7 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 		// The diag carries only the status into the ask trace; the cause is
 		// logged here or it is lost. WARN: the answer degrades to the raw
 		// question and still ships. The question itself is not logged.
-		slog.Warn("understand failed", "status", status, "model", model, "ms", elapsed, "err", redactErr(err))
+		slog.Warn("understand failed", "status", status, "model", model, "ms", elapsed, "err", logx.RedactErr(err))
 		return queryUnderstanding{}, understandDiag{status: status, ms: elapsed, model: model}
 	}
 
