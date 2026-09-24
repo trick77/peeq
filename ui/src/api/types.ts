@@ -263,6 +263,10 @@ export type DownloadProgressEvent = {
   eta: string;
 };
 
+// DownloadProgress is what the shell keeps per job from those events: the
+// same fields minus the id, which is the map key.
+export type DownloadProgress = Omit<DownloadProgressEvent, "job_id">;
+
 // Settings mirrors settings.Settings (the non-secret view — the cookie body
 // itself is never present in this shape, only its status/timestamp).
 export type Settings = {

@@ -189,7 +189,7 @@ export function UpNext({
    */
   search?: string;
   onSearchChange?: (value: string) => void;
-  onCancel: (jobId: number) => void;
+  onCancel: (jobId: number) => Promise<void>;
   onOpenChannel?: (channelId: string) => void;
   /** Opens a video in the player, as History's rows do. Optional for tests. */
   onOpenVideo?: (videoId: string) => void;
@@ -231,6 +231,20 @@ export function UpNext({
     Record<string, { previousAt: string; busy: boolean }>
   >({});
   const [skipError, setSkipError] = useState<string | null>(null);
+  // A cancel that failed. Shown in the same notice as a failed skip: the
+  // row it belongs to has usually gone by the time the call comes back.
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const cancelJob = useCallback(
+    (jobId: number) => {
+      setCancelError(null);
+      onCancel(jobId).catch((e: unknown) => {
+        setCancelError(
+          `Couldn’t cancel that download. ${(e as Error).message ?? ""}`.trim(),
+        );
+      });
+    },
+    [onCancel],
+  );
   // now is captured once per render pass for the relative labels; it does not
   // tick, which is fine for a schedule measured in minutes and hours.
   const now = Date.now();
@@ -627,9 +641,9 @@ export function UpNext({
       {/* Above the timeline rather than on the row that failed: the row it
           belongs to may have moved or gone by the time the call comes back, and
           a notice that moves with it would be easy to miss. */}
-      {skipError ? (
+      {skipError || cancelError ? (
         <div className="ag-edge ag-edge-err" role="status">
-          {skipError}
+          {skipError ?? cancelError}
         </div>
       ) : null}
 
@@ -654,7 +668,7 @@ export function UpNext({
                     job={row.job}
                     progress={progressByJobId?.[row.job.job_id]}
                     live
-                    onCancel={onCancel}
+                    onCancel={cancelJob}
                     onOpenVideo={onOpenVideo}
                     channelBit={channelBit}
                     stalled={stalled}
@@ -686,7 +700,7 @@ export function UpNext({
                     job={row.job}
                     progress={undefined}
                     live={false}
-                    onCancel={onCancel}
+                    onCancel={cancelJob}
                     onOpenVideo={onOpenVideo}
                     channelBit={channelBit}
                     stalled={stalled}
