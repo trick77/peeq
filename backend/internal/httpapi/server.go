@@ -170,6 +170,11 @@ type Deps struct {
 	// settles, successfully or not. Test-only: it exists so a test can wait
 	// for the goroutine instead of sleeping. nil in production.
 	OnChannelResolved func(channelID string)
+
+	// ResolveCap bounds a channel metadata resolve once yt-dlp has started.
+	// Test-only: zero means the production default (defaultResolveCap); a test
+	// that needs a short cap sets it on its own server instead of a global.
+	ResolveCap time.Duration
 }
 
 // SearchEmbedder embeds free-text search queries into vectors comparable
@@ -262,6 +267,8 @@ type server struct {
 	onResumeYoutube func()
 
 	onChannelResolved func(channelID string)
+
+	resolveCap time.Duration
 }
 
 // New returns the fully wired HTTP handler.
@@ -318,6 +325,11 @@ func New(d Deps) http.Handler {
 		onResumeYoutube: d.OnResumeYoutube,
 
 		onChannelResolved: d.OnChannelResolved,
+
+		resolveCap: d.ResolveCap,
+	}
+	if s.resolveCap <= 0 {
+		s.resolveCap = defaultResolveCap
 	}
 	if s.metadata == nil && s.channels != nil && s.channelResolver != nil {
 		s.metadata = &channelmeta.Refresher{
