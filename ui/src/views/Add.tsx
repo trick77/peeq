@@ -15,7 +15,15 @@ import { isChannelURL } from "../youtube";
 // fades on its own — no preview box, since the metadata isn't known yet.
 // A pasted channel link adds the channel (POST /api/channels) instead of
 // queuing a download — subscribing is left to the Channels view.
-export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
+export function Add({
+  onQueued,
+  onPendingChanged,
+}: {
+  onQueued: (videoId: string) => void;
+  // A pasted URL can be a video the inbox is still holding; queuing it moves
+  // that row out, so the rail's count is re-read.
+  onPendingChanged?: () => void;
+}) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +71,7 @@ export function Add({ onQueued }: { onQueued: (videoId: string) => void }) {
       } else {
         const job = await addDownload(trimmed);
         onQueued(job.video_id);
+        onPendingChanged?.();
         showConfirm("Sent to Up next");
         setUrl("");
       }

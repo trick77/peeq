@@ -129,6 +129,7 @@ function PlayerImpl({
   onDeleted,
   onOpenChannel,
   onQueued,
+  onPendingChanged,
   onMediaKnown,
   summaryOrigin,
   onBackFromSummary,
@@ -162,6 +163,9 @@ function PlayerImpl({
   // and poll reflect it at once. Same reason as Library's: the video has just
   // left the ready-only library and the rail is the only thing that will say so.
   onQueued?: () => void;
+  // onPendingChanged — a decision on the summary page (Download/Ignore) moved
+  // an item out of the inbox; passed through to UnfetchedVideo.
+  onPendingChanged?: () => void;
   // onMediaKnown — reports whether the video this page opened has a file, once
   // the fetch says so. App records where a video was opened FROM before anyone
   // can know that, because a search result may be either; this is the answer
@@ -747,6 +751,7 @@ function PlayerImpl({
           summaryOrigin === "search" ? "Back to search" : "Back to inbox"
         }
         onQueued={onQueued}
+        onPendingChanged={onPendingChanged}
         onDismissed={onBackFromSummary}
         inboxOrder={inboxOrder}
         onOpenInboxVideo={onOpenInboxVideo}

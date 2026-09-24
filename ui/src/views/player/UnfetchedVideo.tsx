@@ -31,6 +31,7 @@ export function UnfetchedVideo({
   onBack,
   backLabel = "Back to inbox",
   onQueued,
+  onPendingChanged,
   onDismissed,
   inboxOrder,
   onOpenInboxVideo,
@@ -49,6 +50,9 @@ export function UnfetchedVideo({
   // onQueued fires after Download succeeds, so App can seed the queue poll
   // exactly as the Inbox's own button does.
   onQueued?: () => void;
+  // onPendingChanged fires after either decision: the item left the inbox,
+  // and the rail's count is the shell's to re-read.
+  onPendingChanged?: () => void;
   // onDismissed fires after Ignore, so the caller can leave a page whose
   // subject no longer exists — the row and its summary are deleted server-side.
   onDismissed?: () => void;
@@ -81,6 +85,7 @@ export function UnfetchedVideo({
       } else {
         await ignorePending(video.id);
       }
+      onPendingChanged?.();
       // Deciding moves you on. That is the whole point of opening these pages
       // one after another, and it is why Ignore does not simply call
       // onDismissed: going back to the grid after every decision is exactly the

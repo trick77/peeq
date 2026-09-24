@@ -71,4 +71,17 @@ describe("Add", () => {
     });
     expect(addChannel).not.toHaveBeenCalled();
   });
+
+  it("reports a queued video as an inbox change", async () => {
+    const user = userEvent.setup();
+    const onPendingChanged = vi.fn();
+    render(<Add onQueued={() => {}} onPendingChanged={onPendingChanged} />);
+    await user.type(
+      screen.getByLabelText("Video or channel URL"),
+      "https://www.youtube.com/watch?v=abc12345678",
+    );
+    await user.click(screen.getByRole("button"));
+    await waitFor(() => expect(addDownload).toHaveBeenCalled());
+    await waitFor(() => expect(onPendingChanged).toHaveBeenCalledTimes(1));
+  });
 });

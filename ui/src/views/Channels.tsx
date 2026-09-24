@@ -128,7 +128,12 @@ export function Channels({
   onOpenChannel,
   search = "",
   onSearchChange,
+  onPendingChanged,
 }: {
+  // onPendingChanged — a deleted channel takes its inbox items with it
+  // (channel_videos cascades) and records no activity event, so the rail's
+  // count is the shell's to re-read.
+  onPendingChanged?: () => void;
   // onOpenChannel — optional: wired by App (Task 11), rendered as channel
   // name links in Task 15.
   onOpenChannel?: (id: string) => void;
@@ -328,6 +333,7 @@ export function Channels({
     setDeleteBusy(true);
     try {
       await deleteChannel(c.id);
+      onPendingChanged?.();
       invalidateLoads();
       setChannels((prev) => prev.filter((x) => x.id !== c.id));
       // The counts and the review band read the unfiltered list, so a deleted
