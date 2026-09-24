@@ -146,10 +146,24 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	}()
 
 	video, err := w.d.Videos.Get(job.VideoID)
-	if err != nil || video == nil {
-		w.d.Logger.Warn("summarize worker: video missing", "job_id", job.ID, "video_id", job.VideoID, "err", err)
-		_ = w.d.Jobs.Finish(job.ID, summaryjobs.StateFailed, "video missing")
-		return true, err
+	if err != nil {
+		// A read error is not a missing video. Marking the job failed here
+		// used to make one SQLITE_BUSY permanent: EnqueueMissing skips any
+		// video that has a job row, so nothing would ever queue it again. It
+		// takes the same path as any other failed step — the retry ladder, and
+		// on the last attempt the error status and Activity row a reader can
+		// act on. The video's identity is all failJob needs from the row.
+		return true, w.failJob(ctx, job, &videos.Video{ID: job.VideoID}, run, "load video: "+err.Error())
+	}
+	if video == nil {
+		// Defensive: summary_jobs cascades on the video's delete, so a job
+		// without its row cannot happen through the store. Finish it rather
+		// than retry a read that can never succeed.
+		w.d.Logger.Warn("summarize worker: video missing", "job_id", job.ID, "video_id", job.VideoID)
+		if ferr := w.d.Jobs.Finish(job.ID, summaryjobs.StateFailed, "video missing"); ferr != nil {
+			w.d.Logger.Error("summarize worker: finish missing video", "job_id", job.ID, "err", ferr)
+		}
+		return true, nil
 	}
 
 	// No subtitles => clean terminal no_transcript state, not an error. Checked
