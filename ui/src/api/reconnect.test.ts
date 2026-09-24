@@ -21,7 +21,7 @@ afterEach(() => {
 function closesImmediately(
   opened = true,
 ): Connect & { mock: ReturnType<typeof vi.fn> } {
-  const mock = vi.fn(async () => {});
+  const mock = vi.fn(async (..._args: unknown[]) => {});
   const connect = ((onEvent, signal, onOpen) => {
     if (opened) onOpen();
     return mock(onEvent, signal);
