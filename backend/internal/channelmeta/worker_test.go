@@ -127,6 +127,35 @@ func runUntilResolved(t *testing.T, w *Worker, r *fakeResolver) bool {
 // gate tests pass a short one rather than sitting for two seconds each.
 func runUntilResolvedWithin(t *testing.T, w *Worker, r *fakeResolver, within time.Duration) bool {
 	t.Helper()
+	return runUntil(t, w, func() bool { return len(r.calls()) > 0 }, within)
+}
+
+// runUntilOutcome drives Run until the recorder holds an event, then cancels.
+// A test whose resolve FAILS must wait for this rather than for the resolver
+// call: the worker treats a context cancelled during a failed refresh as a
+// process shutdown and records nothing, on purpose, so cancelling the instant
+// the resolver is entered races the outcome it wants to assert.
+func runUntilOutcome(t *testing.T, w *Worker, rec *fakeMetaRecorder) bool {
+	t.Helper()
+	return runUntil(t, w, func() bool {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return len(rec.events) > 0
+	}, 2*time.Second)
+}
+
+// runUntilSettled drives Run until the channel's next refresh moved off the
+// seeded slot, i.e. the worker settled it — see runUntilOutcome for why a
+// failing refresh cannot be cancelled on the resolver call alone.
+func runUntilSettled(t *testing.T, w *Worker, s *channels.Store, channelID, seeded string) bool {
+	t.Helper()
+	return runUntil(t, w, func() bool { return nextMetaRefreshAt(t, s, channelID) != seeded }, 2*time.Second)
+}
+
+// runUntil drives Run until cond holds (or within passes), then cancels and
+// waits for Run to return, so whatever the loop was doing has finished.
+func runUntil(t *testing.T, w *Worker, cond func() bool, within time.Duration) bool {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
@@ -136,7 +165,7 @@ func runUntilResolvedWithin(t *testing.T, w *Worker, r *fakeResolver, within tim
 	}()
 	deadline := time.After(within)
 	for {
-		if len(r.calls()) > 0 {
+		if cond() {
 			cancel()
 			<-done
 			return true
@@ -214,8 +243,8 @@ func TestWorker_failedRefreshIsStillRescheduled(t *testing.T) {
 	r := &fakeResolver{err: errors.New("channel unavailable")}
 	w := newTestWorker(t, s, r, Deps{})
 
-	if !runUntilResolved(t, w, r) {
-		t.Fatal("worker never attempted the due channel")
+	if !runUntilSettled(t, w, s, "UCa", "2026-07-15 12:00:00") {
+		t.Fatal("worker never settled the due channel")
 	}
 
 	assertRescheduled(t, s, "UCa", "a failed refresh")
@@ -243,8 +272,8 @@ func TestWorker_failureDoesNotFeedTheDeadScanCounter(t *testing.T) {
 	r := &fakeResolver{err: errors.New("channel unavailable")}
 	w := newTestWorker(t, s, r, Deps{})
 
-	if !runUntilResolved(t, w, r) {
-		t.Fatal("worker never attempted the due channel")
+	if !runUntilSettled(t, w, s, "UCa", "2026-07-15 12:00:00") {
+		t.Fatal("worker never settled the due channel")
 	}
 
 	var deadScans int
@@ -614,8 +643,9 @@ func (f *fakeMetaRecorder) Record(e activity.Event) {
 
 // TestWorker_failedRefreshRecordsActivity is the Activity-feed half of the
 // failed-refresh path: a failure records one channel_meta/warn row (a routine
-// success records nothing — only failures are surfaced). runUntilResolved's
-// <-done waits for the whole refresh (record included) to finish.
+// success records nothing — only failures are surfaced). runUntilOutcome
+// cancels only once the record exists, since a cancel that lands during the
+// failed refresh is read as a shutdown and records nothing.
 func TestWorker_failedRefreshRecordsActivity(t *testing.T) {
 	s := newTestStore(t)
 	r := &fakeResolver{err: errors.New("channel unavailable")}
@@ -623,8 +653,8 @@ func TestWorker_failedRefreshRecordsActivity(t *testing.T) {
 	w := newTestWorker(t, s, r, Deps{Activity: rec})
 	seedDue(t, s, "UCfail")
 
-	if !runUntilResolved(t, w, r) {
-		t.Fatal("resolver was never called")
+	if !runUntilOutcome(t, w, rec) {
+		t.Fatal("the failed refresh was never recorded")
 	}
 
 	rec.mu.Lock()
@@ -806,8 +836,8 @@ func TestWorker_ordinaryFailureIsNotReportedAsAStall(t *testing.T) {
 	w := newTestWorker(t, s, r, Deps{Activity: rec})
 	seedDue(t, s, "UCplain")
 
-	if !runUntilResolved(t, w, r) {
-		t.Fatal("resolver was never called")
+	if !runUntilOutcome(t, w, rec) {
+		t.Fatal("the failed refresh was never recorded")
 	}
 
 	rec.mu.Lock()
