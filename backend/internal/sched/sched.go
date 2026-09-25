@@ -1,7 +1,8 @@
 // Package sched holds the pieces every peeq background loop needs and each had
 // grown its own copy of: a cancellable sleep, a jittered repeat interval, the
-// pseudo-random source that feeds the jitter, and the slot arithmetic that
-// spreads a fleet of channels evenly across its cycle.
+// pseudo-random source that feeds the jitter, the slot arithmetic that
+// spreads a fleet of channels evenly across its cycle, and the cookie and
+// kill-switch gate a loop asks before it talks to YouTube (YouTubeGate).
 //
 // The download worker, the scan scheduler and the channel-metadata refresher
 // are deliberately separate loops with unrelated cadences, but they space

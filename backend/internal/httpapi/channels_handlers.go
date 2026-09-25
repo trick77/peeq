@@ -12,6 +12,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/media"
+	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
@@ -948,10 +949,10 @@ func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]string{"status": "blocked", "reason": msg})
 			return
 		}
-		// Mirror the scan loop's own cookie gate, AllowAnonymous included: without
-		// that escape hatch this endpoint reports "blocked" on a missing cookie
-		// while the loop behind it is scanning anonymously without complaint.
-		if status := s.settings.CookieStatus(r.Context()); status != "valid" && !s.allowAnonymous {
+		// The scan loop's own cookie rule (sched.CookieAllows), escape hatch
+		// included: a rule of its own here drifted from the loop's, so this
+		// endpoint said "blocked" for a channel the loop was scanning.
+		if !sched.CookieAllows(s.settings.CookieStatus(r.Context()), s.allowAnonymous) {
 			writeJSON(w, map[string]string{
 				"status": "blocked",
 				"reason": "Your YouTube cookie needs refreshing before Peeq can scan this channel.",
