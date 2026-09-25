@@ -13,6 +13,7 @@ import (
 	// the context, the heartbeat, and the token formatting, so an embed line
 	// reads like a chat line. llm depends on nothing in peeq, so no cycle.
 	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/peeq/internal/sched"
 )
 
 // EmbedModel is the deployment every vector in this database was produced by.
@@ -207,12 +208,8 @@ func (c *EmbedClient) EmbedBatched(ctx context.Context, inputs []string, gap tim
 		if start > 0 && gap > 0 {
 			// Context-aware: a shutdown mid-backfill should stop here rather
 			// than sleep out the remaining batches.
-			t := time.NewTimer(gap)
-			select {
-			case <-ctx.Done():
-				t.Stop()
+			if !sched.Sleep(ctx, gap) {
 				return nil, ctx.Err()
-			case <-t.C:
 			}
 		}
 		end := min(start+maxEmbedInputs, len(inputs))
