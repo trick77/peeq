@@ -368,6 +368,15 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	ytChapters := decodeChapters(video.Chapters)
 	kctx, done := run.step("keypoints")
 	chapters, keyPoints, err := w.d.Summarizer.KeyPoints(kctx, summary, forSummary.Cues, ytChapters)
+	if errors.Is(err, ErrKeyPointsUnparsable) {
+		// The model answered with something other than JSON. A video with no
+		// key points is better than a failed job, but the drop must be visible
+		// and attributable — every chapter and key point is gone at once, and
+		// without this line it looks like a video the model found nothing in.
+		w.d.Logger.Warn("summarize worker: key points reply was not JSON; storing none",
+			append(run.ident(), "err", err)...)
+		chapters, keyPoints, err = nil, nil, nil
+	}
 	if err != nil {
 		// Moving embedding after this step means a video whose key-points call
 		// keeps failing would never be indexed at all — unfindable, with no

@@ -243,12 +243,12 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 			return
 		}
 		if err := s.d.Channels.ClearScanRequest(sub.ChannelID, sub.ScanRequestedAt); err != nil {
-			s.d.Logger.Error("scan: clear scan request failed", "channel", sub.ChannelID, "err", err)
+			s.d.Logger.Error("scan: clear scan request failed", "channel_id", sub.ChannelID, "err", err)
 		}
 	}()
 	defer func() {
 		if r := recover(); r != nil {
-			s.d.Logger.Error("scan: recovered from panic", "channel", sub.ChannelID, "panic", r)
+			s.d.Logger.Error("scan: recovered from panic", "channel_id", sub.ChannelID, "panic", r)
 			// A panic records nothing today, which is right for an automatic pass
 			// (the operator has the ERROR above) but not for a requested one: the
 			// user is watching a "Queued" button and would otherwise wait forever.
@@ -314,7 +314,7 @@ func (s *Scheduler) scanChannel(ctx context.Context, sub *channels.Subscription)
 			}
 			s.recordScanFail(sub.ChannelID, requested, "scan failed")
 		}
-		s.d.Logger.Warn("scan failed; backing off", "channel", sub.ChannelID, "err", err)
+		s.d.Logger.Warn("scan failed; backing off", "channel_id", sub.ChannelID, "err", err)
 		s.backoff(sub.ChannelID)
 	}
 }
@@ -348,7 +348,7 @@ func (s *Scheduler) staleUnsubscribe(ctx context.Context, channelID, reason stri
 		// only ever delays a future unsubscribe, never causes a wrong one,
 		// so applying it unconditionally here cannot itself be unsafe.
 		if err := s.d.Channels.ResetDeadScan(channelID); err != nil {
-			s.d.Logger.Error("scan: reset dead scan failed", "channel", channelID, "err", err)
+			s.d.Logger.Error("scan: reset dead scan failed", "channel_id", channelID, "err", err)
 		}
 		return
 	}
@@ -368,7 +368,7 @@ func (s *Scheduler) staleUnsubscribe(ctx context.Context, channelID, reason stri
 	}
 	n, err := s.d.Channels.RecordDeadScan(channelID)
 	if err != nil {
-		s.d.Logger.Error("scan: record dead scan failed", "channel", channelID, "err", err)
+		s.d.Logger.Error("scan: record dead scan failed", "channel_id", channelID, "err", err)
 		return
 	}
 	if n < channels.DeadScanThreshold {
@@ -376,10 +376,10 @@ func (s *Scheduler) staleUnsubscribe(ctx context.Context, channelID, reason stri
 	}
 	at := s.d.Now().UTC().Format(sqlTimeLayout)
 	if err := s.d.Channels.AutoUnsubscribe(channelID, channels.ReasonDeleted, at); err != nil {
-		s.d.Logger.Error("scan: auto unsubscribe failed", "channel", channelID, "err", err)
+		s.d.Logger.Error("scan: auto unsubscribe failed", "channel_id", channelID, "err", err)
 		return
 	}
-	s.d.Logger.Info("scan: auto-unsubscribed dead channel", "channel", channelID, "reason", channels.ReasonDeleted, "dead_scans", n)
+	s.d.Logger.Info("scan: auto-unsubscribed dead channel", "channel_id", channelID, "reason", channels.ReasonDeleted, "dead_scans", n)
 	s.recordActivity(activity.Event{
 		Kind: activity.KindScan, Outcome: activity.OutcomeWarn,
 		SubjectID: channelID, Subject: s.channelName(channelID),
@@ -448,7 +448,7 @@ func (s *Scheduler) backoff(channelID string) {
 	d := sched.JitteredInterval(scanBackoff, scanBackoffJitter, time.Minute, s.rand)
 	next := s.d.Now().Add(d).UTC().Format(sqlTimeLayout)
 	if err := s.d.Channels.Backoff(channelID, next); err != nil {
-		s.d.Logger.Error("scan: backoff failed", "channel", channelID, "err", err)
+		s.d.Logger.Error("scan: backoff failed", "channel_id", channelID, "err", err)
 	}
 }
 
@@ -641,7 +641,7 @@ func (s *Scheduler) recheckParkedOffListing(
 			continue
 		}
 		s.d.Logger.Info("scan: parked video is reachable again",
-			"channel", sub.ChannelID, "video_id", row.VideoID)
+			"channel_id", sub.ChannelID, "video_id", row.VideoID)
 		if sub.Autodownload {
 			queued++
 		} else {
@@ -925,7 +925,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	// auto-unsubscription) and the shared failure streak (Reset() clears the
 	// whole shared streak globally, not just for this channel).
 	if err := s.d.Channels.ResetDeadScan(sub.ChannelID); err != nil {
-		s.d.Logger.Error("scan: reset dead scan failed", "channel", sub.ChannelID, "err", err)
+		s.d.Logger.Error("scan: reset dead scan failed", "channel_id", sub.ChannelID, "err", err)
 	}
 	if s.d.FailMonitor != nil {
 		s.d.FailMonitor.Reset()
@@ -951,7 +951,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	// — newly parked, re-confirmed, or revived — so the number answers "how
 	// much of this channel is walled off from me?" rather than only reporting
 	// change.
-	s.d.Logger.Info("scan complete", "channel", sub.ChannelID,
+	s.d.Logger.Info("scan complete", "channel_id", sub.ChannelID,
 		"listed", len(entries), "streams", streamCount, "new", newCount,
 		"backlog", backlogCount, "unavailable", unavailableCount)
 
@@ -1066,7 +1066,7 @@ func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool)
 	case err == nil:
 		answered = true
 	case ytdlp.IsMissingTab(err):
-		s.d.Logger.Debug("scan: channel has no videos tab", "channel", ucid)
+		s.d.Logger.Debug("scan: channel has no videos tab", "channel_id", ucid)
 		uploads = nil
 	default:
 		// Return before spending a second throttled call on a channel whose
@@ -1080,12 +1080,12 @@ func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool)
 	case errors.Is(serr, ytdlp.ErrBlocked), errors.Is(serr, ytdlp.ErrCookieExpired):
 		return nil, 0, fmt.Errorf("scan: list streams %s: %w", ucid, serr)
 	case ytdlp.IsMissingTab(serr):
-		s.d.Logger.Debug("scan: channel has no streams tab", "channel", ucid)
+		s.d.Logger.Debug("scan: channel has no streams tab", "channel_id", ucid)
 	case baseline:
 		return nil, 0, fmt.Errorf("scan: baseline list streams %s: %w", ucid, serr)
 	default:
 		s.d.Logger.Warn("scan: listing streams failed, using uploads only",
-			"channel", ucid, "err", serr)
+			"channel_id", ucid, "err", serr)
 	}
 
 	// A baseline pass where NEITHER tab could be read learned nothing, and must
@@ -1283,7 +1283,7 @@ func (s *Scheduler) enqueueAuto(e ytdlp.ChannelEntry, sub *channels.Subscription
 func (s *Scheduler) nextScanAt(channelID string) string {
 	rank, count, err := s.d.Channels.SubscriptionRank(channelID)
 	if err != nil {
-		s.d.Logger.Error("scan: subscription rank failed", "channel", channelID, "err", err)
+		s.d.Logger.Error("scan: subscription rank failed", "channel_id", channelID, "err", err)
 		return s.d.Now().Add(scanInterval).UTC().Format(sqlTimeLayout)
 	}
 	return NextScanAt(s.d.Now(), rank, count)
