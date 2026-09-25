@@ -219,7 +219,7 @@ func (h *scanHarness) useJobs(j JobEnqueuer) {
 
 // nowStr is the harness's fixed clock in SQLite text form.
 func (h *scanHarness) nowStr() string {
-	return fixedNow.Format(sqlTimeLayout)
+	return fixedNow.Format(store.TimeLayout)
 }
 
 // addAndSubscribe adds ucid and subscribes it with a next_scan_at in the
@@ -2050,7 +2050,7 @@ func (h *scanHarness) nextScanAtOf(ucid string) time.Time {
 		`SELECT next_scan_at FROM subscriptions WHERE channel_id = ?`, ucid).Scan(&raw); err != nil {
 		h.t.Fatalf("read next_scan_at for %s: %v", ucid, err)
 	}
-	at, err := time.ParseInLocation(sqlTimeLayout, raw, time.UTC)
+	at, err := store.ParseTime(raw)
 	if err != nil {
 		h.t.Fatalf("next_scan_at for %s is %q, which will not parse: %v", ucid, raw, err)
 	}
@@ -2099,7 +2099,7 @@ func TestScan_alreadyOnItsSlotStaysOnIt(t *testing.T) {
 	onSlot := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
 	h.sched.d.Now = func() time.Time { return onSlot }
 
-	sub, _ := h.channels.ClaimDue(onSlot.Format(sqlTimeLayout))
+	sub, _ := h.channels.ClaimDue(onSlot.Format(store.TimeLayout))
 	if sub == nil {
 		t.Fatal("expected a due subscription")
 	}
@@ -2187,7 +2187,7 @@ func TestScan_rescheduleSurvivesALostRankQuery(t *testing.T) {
 	}
 
 	got := h.sched.nextScanAt("UC1")
-	if want := fixedNow.Add(24 * time.Hour).Format(sqlTimeLayout); got != want {
+	if want := fixedNow.Add(24 * time.Hour).Format(store.TimeLayout); got != want {
 		t.Fatalf("fell back to %q, want a plain interval out (%q)", got, want)
 	}
 }

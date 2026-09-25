@@ -7,6 +7,7 @@ import (
 
 	"github.com/trick77/peeq/internal/channelmeta"
 	"github.com/trick77/peeq/internal/scan"
+	"github.com/trick77/peeq/internal/store"
 )
 
 // The Up next page lists peeq's own timed housekeeping — the channel scans and
@@ -40,10 +41,6 @@ import (
 // looks at a channel the user is already subscribed to, which "Scan now" and
 // skipping twice can do anyway.
 
-// skipTimeLayout is the SQLite datetime text form the schedule columns are
-// stored in — the same layout the two background loops write and compare.
-const skipTimeLayout = "2006-01-02 15:04:05"
-
 // skipAnchor is the instant a skip measures its next slot from: the later of
 // now and the occurrence being skipped.
 //
@@ -65,7 +62,7 @@ const skipTimeLayout = "2006-01-02 15:04:05"
 // A stored value that will not parse falls back to now rather than failing the
 // request: a bogus column should not make the row unskippable.
 func skipAnchor(now time.Time, scheduled string) time.Time {
-	if at, err := time.Parse(skipTimeLayout, scheduled); err == nil && at.After(now) {
+	if at, err := store.ParseTime(scheduled); err == nil && at.After(now) {
 		return at
 	}
 	return now
@@ -105,8 +102,8 @@ func (s *server) skipTarget(w http.ResponseWriter, r *http.Request) (id string, 
 		// two background loops compare against datetime('now'), and text that
 		// is not in that form would not sort or compare — it would quietly
 		// remove the channel from its own rotation.
-		if _, err := time.Parse(skipTimeLayout, req.At); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "at must be a UTC timestamp of the form 2006-01-02 15:04:05")
+		if _, err := store.ParseTime(req.At); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "at must be a UTC timestamp of the form "+store.TimeLayout)
 			return "", "", false
 		}
 	}

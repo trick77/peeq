@@ -26,6 +26,7 @@ import (
 	"github.com/trick77/peeq/internal/failmonitor"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
@@ -43,8 +44,7 @@ const (
 	// path. Small next to the hour it scatters: this is a retry, not a place
 	// to re-spread the fleet, which the next successful scan does anyway.
 	scanBackoffJitter = 15 * time.Minute
-	autoPriority      = 0                     // below manual (10), matching Phase 1
-	sqlTimeLayout     = "2006-01-02 15:04:05" // SQLite datetime('now') text form (UTC)
+	autoPriority      = 0 // below manual (10), matching Phase 1
 	// pendingThumbPrefetchTimeout bounds one best-effort thumbnail prefetch
 	// (across its retries and the hqdefault fallback). It is also the most a
 	// single job can hold one of the prefetchDrainers, which is why there is
@@ -173,7 +173,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 			}
 			continue
 		}
-		nowStr := s.d.Now().UTC().Format(sqlTimeLayout)
+		nowStr := s.d.Now().UTC().Format(store.TimeLayout)
 		sub, err := s.d.Channels.ClaimDue(nowStr)
 		if err != nil {
 			s.d.Logger.Error("scan: claim due failed", "err", err)
@@ -355,7 +355,7 @@ func (s *Scheduler) staleUnsubscribe(ctx context.Context, channelID, reason stri
 	if n < channels.DeadScanThreshold {
 		return
 	}
-	at := s.d.Now().UTC().Format(sqlTimeLayout)
+	at := s.d.Now().UTC().Format(store.TimeLayout)
 	if err := s.d.Channels.AutoUnsubscribe(channelID, channels.ReasonDeleted, at); err != nil {
 		s.d.Logger.Error("scan: auto unsubscribe failed", "channel_id", channelID, "err", err)
 		return
@@ -420,7 +420,7 @@ func (s *Scheduler) channelName(channelID string) string {
 // and the scan that finally succeeds is what puts the channel back on its slot.
 func (s *Scheduler) backoff(channelID string) {
 	d := sched.JitteredInterval(scanBackoff, scanBackoffJitter, time.Minute, s.rand)
-	next := s.d.Now().Add(d).UTC().Format(sqlTimeLayout)
+	next := s.d.Now().Add(d).UTC().Format(store.TimeLayout)
 	if err := s.d.Channels.Backoff(channelID, next); err != nil {
 		s.d.Logger.Error("scan: backoff failed", "channel_id", channelID, "err", err)
 	}
@@ -675,7 +675,7 @@ func (s *Scheduler) recheckDue(unavailableAt string) bool {
 	if unavailableAt == "" {
 		return true
 	}
-	parked, err := time.Parse(sqlTimeLayout, unavailableAt)
+	parked, err := store.ParseTime(unavailableAt)
 	if err != nil {
 		return true
 	}
@@ -890,7 +890,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	}
 
 	next := s.nextScanAt(sub.ChannelID)
-	lastScanned := s.d.Now().UTC().Format(sqlTimeLayout)
+	lastScanned := s.d.Now().UTC().Format(store.TimeLayout)
 	if err := s.d.Channels.MarkScanned(sub.ChannelID, baseline, lastScanned, next, sub.ScanRequestedAt); err != nil {
 		return err
 	}
@@ -1151,7 +1151,7 @@ func isBackCatalogue(publishedAt, baselinedAt string) bool {
 	if err != nil {
 		return false
 	}
-	base, err := time.Parse(sqlTimeLayout, baselinedAt)
+	base, err := store.ParseTime(baselinedAt)
 	if err != nil {
 		return false
 	}
@@ -1258,7 +1258,7 @@ func (s *Scheduler) nextScanAt(channelID string) string {
 	rank, count, err := s.d.Channels.SubscriptionRank(channelID)
 	if err != nil {
 		s.d.Logger.Error("scan: subscription rank failed", "channel_id", channelID, "err", err)
-		return s.d.Now().Add(scanInterval).UTC().Format(sqlTimeLayout)
+		return s.d.Now().Add(scanInterval).UTC().Format(store.TimeLayout)
 	}
 	return NextScanAt(s.d.Now(), rank, count)
 }
@@ -1287,7 +1287,7 @@ func (s *Scheduler) nextScanAt(channelID string) string {
 // matter how often it is skipped.
 func NextScanAt(now time.Time, rank, count int) string {
 	slot := sched.Slot(rank, count, scanInterval)
-	return sched.NextSlotAfter(now.Add(scanInterval/2), scanInterval, slot).Format(sqlTimeLayout)
+	return sched.NextSlotAfter(now.Add(scanInterval/2), scanInterval, slot).Format(store.TimeLayout)
 }
 
 // sleep waits d unless ctx is cancelled first. It returns false if ctx was

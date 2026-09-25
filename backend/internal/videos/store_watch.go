@@ -196,7 +196,7 @@ func (s *Store) RestartRetentionClock(id string) error {
 // SweepCandidates returns videos eligible for the retention sweeper
 // (Task 12): downloaded, watched, not favorited, and last watched strictly
 // before cutoff (an absolute point in time, formatted
-// "2006-01-02 15:04:05" UTC to match the format datetime('now') stores in
+// store.TimeLayout (UTC) to match the format datetime('now') stores in
 // watched_at — the caller computes cutoff from settings.RetentionDays and
 // its own clock, so the sweeper stays testable without depending on
 // SQLite's notion of "now"). Oldest-watched first, so the sweeper's log

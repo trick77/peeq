@@ -18,12 +18,9 @@ import (
 
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/media"
+	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
-
-// sqlTimeLayout is SQLite's datetime('now') text form (UTC), matching the
-// layout every other peeq package writes timestamps in.
-const sqlTimeLayout = "2006-01-02 15:04:05"
 
 // Resolver resolves a canonicalized channel url to its identity via yt-dlp:
 // the authoritative UCID and display name, the description, the subscriber
@@ -73,7 +70,7 @@ func (f *Refresher) logger() *slog.Logger {
 // The returned error is the resolve failure itself. Callers that ran this for
 // a user who is waiting report it; background paths only log it.
 func (f *Refresher) Resolve(ctx context.Context, channelID string, cached *channels.Channel) error {
-	now := time.Now().UTC().Format(sqlTimeLayout)
+	now := store.FormatTime(time.Now())
 	// PathEscape, not raw concatenation: an id reaches this from a URL path
 	// segment, and Go's ServeMux hands back the DECODED value — so a "%2F" in
 	// the request turns into a real "/" here and a crafted id would otherwise

@@ -86,7 +86,7 @@ func TestResolve_expiredToken(t *testing.T) {
 	}
 	// Force the expiry into the past — cheaper and deterministic vs sleeping.
 	if _, err := db.Exec(`UPDATE share_links SET expires_at = ? WHERE token = ?`,
-		time.Now().UTC().Add(-time.Minute).Format(sqliteTime), link.Token); err != nil {
+		time.Now().UTC().Add(-time.Minute).Format(store.TimeLayout), link.Token); err != nil {
 		t.Fatalf("expire link: %v", err)
 	}
 	_, ok, err := s.Resolve(ctx, link.Token)
@@ -153,7 +153,7 @@ func TestUpsert_newTokenAfterExpiry(t *testing.T) {
 	}
 	// Force the first link past its expiry, then re-share.
 	if _, err := db.Exec(`UPDATE share_links SET expires_at = ? WHERE token = ?`,
-		time.Now().UTC().Add(-time.Minute).Format(sqliteTime), first.Token); err != nil {
+		time.Now().UTC().Add(-time.Minute).Format(store.TimeLayout), first.Token); err != nil {
 		t.Fatalf("expire link: %v", err)
 	}
 	second, err := s.Upsert(ctx, "vid1", time.Hour)
@@ -257,7 +257,7 @@ func TestGetByVideo_ignoresExpiredLink(t *testing.T) {
 		t.Fatalf("Upsert: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE share_links SET expires_at = ? WHERE token = ?`,
-		time.Now().UTC().Add(-time.Minute).Format(sqliteTime), link.Token); err != nil {
+		time.Now().UTC().Add(-time.Minute).Format(store.TimeLayout), link.Token); err != nil {
 		t.Fatalf("expire: %v", err)
 	}
 	if l, err := s.GetByVideo(ctx, "vid1"); err != nil || l != nil {

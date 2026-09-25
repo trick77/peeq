@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/trick77/peeq/internal/store"
 )
 
 // Cache-Control values for the routes that hand the browser bytes rather than
@@ -76,10 +78,10 @@ const (
 func (s *server) shareImageCacheControl(r *http.Request, videoID string) string {
 	seconds := shareImageMaxAge
 	if link, err := s.shareLinks.GetByVideo(r.Context(), videoID); err == nil && link != nil && link.ExpiresAt != "" {
-		// Stored as a UTC datetime string (sharelink.sqliteTime), so an
+		// Stored as a UTC datetime string (store.TimeLayout), so an
 		// unparsable value means the row is not what this code thinks it is —
 		// keep the ceiling rather than inventing a window from a zero time.
-		if exp, perr := time.Parse("2006-01-02 15:04:05", link.ExpiresAt); perr == nil {
+		if exp, perr := store.ParseTime(link.ExpiresAt); perr == nil {
 			if remaining := int(time.Until(exp).Seconds()); remaining < seconds {
 				seconds = max(remaining, 0)
 			}

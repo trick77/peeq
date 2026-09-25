@@ -14,6 +14,7 @@ import (
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
 )
 
@@ -142,7 +143,7 @@ func (s *Sweeper) SweepOnce() error {
 	}
 
 	cutoff := s.deps.Now().Add(-time.Duration(cfg.RetentionDays) * 24 * time.Hour)
-	cutoffUTC := cutoff.UTC().Format("2006-01-02 15:04:05")
+	cutoffUTC := store.FormatTime(cutoff)
 
 	candidates, err := s.deps.Videos.SweepCandidates(cutoffUTC)
 	if err != nil {

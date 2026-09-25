@@ -7,6 +7,7 @@ import (
 
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
@@ -75,7 +76,7 @@ func backdate(t *testing.T, h *scanHarness, videoID string) {
 	parked := fixedNow.Add(-unavailableRecheckWindow - time.Hour)
 	if _, err := h.db.Exec(
 		`UPDATE channel_videos SET unavailable_at = ? WHERE video_id = ?`,
-		parked.Format(sqlTimeLayout), videoID,
+		parked.Format(store.TimeLayout), videoID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +366,7 @@ func TestScan_recheckDue_missingStampErrsTowardOffering(t *testing.T) {
 	if !h.sched.recheckDue("not a timestamp") {
 		t.Fatal("unparsable stamp must be due")
 	}
-	if h.sched.recheckDue(fixedNow.Format(sqlTimeLayout)) {
+	if h.sched.recheckDue(fixedNow.Format(store.TimeLayout)) {
 		t.Fatal("a row parked just now must not be due")
 	}
 }

@@ -28,6 +28,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/trick77/peeq/internal/store"
 )
 
 // tokenBytes is the raw entropy per grant token. Twice sharelink's 16, because
@@ -35,10 +37,6 @@ import (
 // appears inside a <video> src — so there is no compactness to trade against.
 // base64url-encodes to a 43-char path segment.
 const tokenBytes = 32
-
-// sqliteTime is the UTC datetime layout grant expiries are stored in, matching
-// share_links and sessions so `expires_at > datetime('now')` compares correctly.
-const sqliteTime = "2006-01-02 15:04:05"
 
 // DefaultTTL is how long a minted grant stays valid. It has to outlive a whole
 // viewing, not just the request that mints it: the receiver keeps issuing range
@@ -93,7 +91,7 @@ func (s *Store) Mint(ctx context.Context, videoID string, ttl time.Duration) (to
 	if err != nil {
 		return "", "", err
 	}
-	expiresAt = time.Now().UTC().Add(ttl).Format(sqliteTime)
+	expiresAt = time.Now().UTC().Add(ttl).Format(store.TimeLayout)
 	if _, err := s.db.ExecContext(ctx, `
 INSERT INTO playback_grants (token, video_id, expires_at)
 VALUES (?, ?, ?)`, token, videoID, expiresAt); err != nil {
