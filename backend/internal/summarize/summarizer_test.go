@@ -2,11 +2,7 @@ package summarize
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -47,25 +43,7 @@ func (f *fakeCompleter) Complete(_ context.Context, m []llm.Message) (string, er
 // id or a label — and nothing else; "it reasons shallowly" is true of calls that
 // must not move.
 func TestClassifyRunsOnTheGateDeploymentAndTheSummaryDoesNot(t *testing.T) {
-	var models []string
-	var maxTokens []any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &body)
-		models = append(models, body["model"].(string))
-		maxTokens = append(maxTokens, body["max_tokens"])
-		io.WriteString(w, "data: "+
-			`{"choices":[{"delta":{"content":"science","role":"assistant"},"finish_reason":null,"index":0}]}`+"\n\n"+
-			"data: "+`{"choices":[{"delta":{"content":null},"finish_reason":"stop","index":0}],"usage":null}`+"\n\n"+
-			"data: [DONE]\n\n")
-	}))
-	defer srv.Close()
-
-	client, err := llm.NewClient(llm.Config{BaseURL: srv.URL}, srv.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
+	client, stub := newStubChat(t, "science")
 	s := New(client)
 
 	if _, err := s.Classify(context.Background(), "A title", "A summary.",
@@ -75,20 +53,22 @@ func TestClassifyRunsOnTheGateDeploymentAndTheSummaryDoesNot(t *testing.T) {
 	// Asserted against ModelFor rather than a literal id. The gate and default
 	// deployments hold the same id today, so a literal here would pass for the
 	// wrong reason and stop testing anything the moment they are split again.
-	if want := llm.ModelFor(llm.ShortGate(context.Background())); models[0] != want {
-		t.Fatalf("classify ran on %q, want the gate deployment %q", models[0], want)
+	reqs := stub.requests()
+	if want := llm.ModelFor(llm.ShortGate(context.Background())); reqs[0]["model"] != want {
+		t.Fatalf("classify ran on %q, want the gate deployment %q", reqs[0]["model"], want)
 	}
 	// The cap it went without until now: one id needs a couple of tokens, and an
 	// endpoint that starts explaining itself instead had nothing to stop it.
-	if got, ok := maxTokens[0].(float64); !ok || int(got) != classifyMaxTokens {
-		t.Fatalf("classify max_tokens = %v, want %d", maxTokens[0], classifyMaxTokens)
+	if got, ok := reqs[0]["max_tokens"].(float64); !ok || int(got) != classifyMaxTokens {
+		t.Fatalf("classify max_tokens = %v, want %d", reqs[0]["max_tokens"], classifyMaxTokens)
 	}
 
 	if _, err := s.SummarizeText(context.Background(), "a short transcript"); err != nil {
 		t.Fatal(err)
 	}
-	if want := llm.ModelFor(context.Background()); models[1] != want {
-		t.Fatalf("the summary ran on %q, want the default deployment %q", models[1], want)
+	reqs = stub.requests()
+	if want := llm.ModelFor(context.Background()); reqs[1]["model"] != want {
+		t.Fatalf("the summary ran on %q, want the default deployment %q", reqs[1]["model"], want)
 	}
 }
 

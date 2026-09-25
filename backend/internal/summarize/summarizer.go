@@ -151,12 +151,15 @@ const (
 	// byte under the client's header timeout instead of prefilling for minutes.
 	defaultSummaryChunkTokens = 48000
 
-	// summaryMaxTokens bounds the summary call. It runs at the default max
-	// reasoning effort (this is the summary a person reads), so the cap must fit
-	// reasoning plus a
-	// ~190-word answer — generous, but far below a runaway (a keypoints call once
-	// spent 44k). It is a spiral backstop, not a length target. Measured at max on
-	// a 6.7k-token transcript: 144 reasoning tokens, 364 completion.
+	// summaryMaxTokens bounds the three summary calls: the single pass, and
+	// the coarse map and reduce a long transcript takes instead. All run at
+	// the default max reasoning effort (this is the summary a person reads),
+	// so the cap must fit reasoning plus a ~190-word answer — generous, but far
+	// below a runaway (a keypoints call once spent 44k). It is a spiral
+	// backstop, not a length target. Measured at max: the single pass on a
+	// 6.7k-token transcript, 144 reasoning tokens, 364 completion; one map
+	// section on a full 48k chunk (46621 prompt tokens), 185 reasoning, 339
+	// completion. Lowering it tightens the map too.
 	summaryMaxTokens = 8000
 
 	// keypointsMaxTokens bounds the keypoints JSON. Every cap here now has to
@@ -294,23 +297,35 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 	// this, and reasoning is cheap enough that trimming it would trade summary
 	// quality for tokens nobody is counting.
 	//
-	// Uncapped, which is the one call that still is — see classifyMaxTokens. That
-	// looks alarming next to the default max effort, so it was measured at the
-	// worst input this path can produce: a full defaultSummaryChunkTokens chunk,
-	// 46621 prompt tokens, at max. It answered in 185 reasoning + 339 completion
-	// tokens, finish "stop", 7.4s. Output length tracks the "~120 words" the
-	// prompt asks for, not the input size, so there is nothing here for a cap to
-	// catch. Add one only if that stops being true.
+	// Capped and guarded like the other two summary calls. This was the one
+	// call left uncapped, on a measurement (see summaryMaxTokens: a full chunk
+	// answers in a few hundred tokens, output tracks the "~120 words" asked
+	// for, not the input size). The cap catches nothing in the ordinary case;
+	// it is the backstop for a reasoning spiral, the failure mode a keypoints
+	// call once showed by spending 44k tokens, and 8000 is ~15x the measured
+	// worst here. FailOnEarlyFinish tolerates a cut at the cap (a section cut
+	// short still feeds the reduce) but rejects a filtered or refused section,
+	// which must not flow into the reader's summary any more than it may on
+	// the single pass. A section that comes back EMPTY — the cap spent on
+	// reasoning, or nothing said — is an error too: the reduce would otherwise
+	// write a summary with that stretch of the video silently missing, and
+	// the job would be marked done. The spiral is stochastic, so the retry
+	// usually clears it.
 	sections := make([]string, 0, len(chunks))
-	for _, ch := range chunks {
-		out, err := s.c.Complete(ctx, []llm.Message{
+	mapCtx := llm.WithMaxTokens(llm.FailOnEarlyFinish(ctx), summaryMaxTokens)
+	for i, ch := range chunks {
+		out, err := s.c.Complete(mapCtx, []llm.Message{
 			{Role: "system", Content: coarseSectionSystemPrompt},
 			{Role: "user", Content: ch.Text},
 		})
 		if err != nil {
 			return "", fmt.Errorf("summarize map: %w", err)
 		}
-		sections = append(sections, strings.TrimSpace(out))
+		section := strings.TrimSpace(out)
+		if section == "" {
+			return "", fmt.Errorf("summarize map: model returned an empty section (%d of %d)", i+1, len(chunks))
+		}
+		sections = append(sections, section)
 	}
 	// The reduce is the reader-facing summary too, so it carries the same guards
 	// as the single-pass call: full reasoning effort (see there), FailOnEarlyFinish

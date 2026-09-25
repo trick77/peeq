@@ -221,6 +221,12 @@ func FailOnEarlyFinish(ctx context.Context) context.Context {
 	return context.WithValue(ctx, failEarlyKey{}, true)
 }
 
+// FailOnEarlyFinishFrom reports whether ctx asks for FailOnEarlyFinish.
+// Exported for the same reason ShortGateFrom is: a test that fakes the
+// completer sees a context, not the wire, and has to be able to assert what
+// a call site asked for.
+func FailOnEarlyFinishFrom(ctx context.Context) bool { return failOnEarlyFinishFrom(ctx) }
+
 func failOnEarlyFinishFrom(ctx context.Context) bool {
 	v, ok := ctx.Value(failEarlyKey{}).(bool)
 	return ok && v
