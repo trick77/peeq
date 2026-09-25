@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useTransient } from "../hooks/useTransient";
 import { Icon } from "../icons";
 import { Button, Spinner, t } from "../ui";
 import {
@@ -101,7 +102,9 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
   const [freshToken, setFreshToken] = useState<string | null>(null);
   const [tokenConfirming, setTokenConfirming] = useState(false);
   const [tokenBusy, setTokenBusy] = useState(false);
-  const [tokenCopied, setTokenCopied] = useState(false);
+  // "Copied" on the token button, briefly. Its timer used to leak on unmount.
+  const tokenCopiedTick = useTransient<true>(1600);
+  const tokenCopied = tokenCopiedTick.value === true;
   const [tokenError, setTokenError] = useState<string | null>(null);
 
   // Every settings response this page receives is adopted here: shown, and
@@ -279,8 +282,7 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
     } catch {
       // Clipboard access can be denied; the token is selectable on screen.
     }
-    setTokenCopied(true);
-    setTimeout(() => setTokenCopied(false), 1600);
+    tokenCopiedTick.show(true);
   }
 
   async function handleUpdateYtdlp() {

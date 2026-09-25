@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
+import { useTransient } from "../hooks/useTransient";
 import { Icon } from "../icons";
 import { Button } from "../ui";
 import {
@@ -27,30 +28,15 @@ export function Add({
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<string | null>(null);
-  // `leaving` drives the fade-out: after the line has been up a few seconds we
-  // flip it on to run the exit animation, then unmount a beat later.
-  const [leaving, setLeaving] = useState(false);
-  // Hold the pending timers so a fast second submit resets the countdown
-  // instead of stacking, and so none fire after the view unmounts.
-  const fadeTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
-
-  function clearTimers() {
-    fadeTimers.current.forEach(clearTimeout);
-    fadeTimers.current = [];
-  }
-
-  useEffect(() => clearTimers, []);
-
-  function showConfirm(message: string) {
-    clearTimers();
-    setConfirm(message);
-    setLeaving(false);
-    fadeTimers.current.push(
-      setTimeout(() => setLeaving(true), 4000),
-      setTimeout(() => setConfirm(null), 4300),
-    );
-  }
+  // The confirmation line under the form. It is up for a few seconds, then
+  // fades: `leaving` runs the exit animation for its last beat, and a fast
+  // second submit restarts the countdown rather than stacking.
+  const {
+    value: confirm,
+    leaving,
+    show: showConfirm,
+    clear: clearConfirm,
+  } = useTransient<string>(4300, { fadeMs: 300 });
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -58,9 +44,7 @@ export function Add({
     if (!trimmed || busy) return;
     setBusy(true);
     setError(null);
-    clearTimers();
-    setConfirm(null);
-    setLeaving(false);
+    clearConfirm();
     try {
       if (isChannelURL(trimmed)) {
         const channel = await addChannel(trimmed, false);

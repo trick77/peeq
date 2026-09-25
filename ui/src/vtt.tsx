@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
+import { useTransient } from "./hooks/useTransient";
 import type { ReactNode } from "react";
 
 // The WebVTT parsing and transcript-rendering helpers, shared by the Player's
@@ -265,31 +266,25 @@ export function useCopyTranscript(): {
   error: string;
   copy: (cues: Cue[]) => Promise<void>;
 } {
-  const [copied, setCopied] = useState(false);
+  const copiedTick = useTransient<true>(COPY_CONFIRM_MS);
   const [error, setError] = useState("");
-  const timer = useRef<number | undefined>(undefined);
+  const { show: showCopied, clear: clearCopied } = copiedTick;
 
-  useEffect(() => {
-    return () => window.clearTimeout(timer.current);
-  }, []);
+  const copy = useCallback(
+    async (cues: Cue[]) => {
+      try {
+        await navigator.clipboard.writeText(transcriptToText(cues));
+        setError("");
+        showCopied(true);
+      } catch {
+        // Clipboard writes fail on an insecure origin or a denied permission;
+        // the .txt download next to the button is the way out either way.
+        clearCopied();
+        setError("Copy failed — download the .txt instead.");
+      }
+    },
+    [showCopied, clearCopied],
+  );
 
-  const copy = useCallback(async (cues: Cue[]) => {
-    try {
-      await navigator.clipboard.writeText(transcriptToText(cues));
-      setError("");
-      setCopied(true);
-      window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(
-        () => setCopied(false),
-        COPY_CONFIRM_MS,
-      );
-    } catch {
-      // Clipboard writes fail on an insecure origin or a denied permission;
-      // the .txt download next to the button is the way out either way.
-      setCopied(false);
-      setError("Copy failed — download the .txt instead.");
-    }
-  }, []);
-
-  return { copied, error, copy };
+  return { copied: copiedTick.value === true, error, copy };
 }

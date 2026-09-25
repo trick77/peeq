@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { parseSqlUTC } from "../format";
+import { useTransient } from "../hooks/useTransient";
 import { Icon } from "../icons";
 import { Button } from "../ui";
 import {
@@ -104,12 +105,13 @@ export function ShareControl({
 }: Props) {
   const [ttl, setTtl] = useState<ShareTTL>(() => bucketTtl(status));
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
+  // "Copied" on the button, for a couple of seconds.
+  const copiedTick = useTransient<true>(2000);
+  const copied = copiedTick.value === true;
   const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLSpanElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
-  const copyTimer = useRef<number | undefined>(undefined);
 
   // Re-seed the selected chip when the status changes. status often arrives
   // asynchronously (the Player mounts this with {shared:false} and fills it in
@@ -154,13 +156,11 @@ export function ShareControl({
   // Reset the transient popover state each time it closes.
   useEffect(() => {
     if (!open) {
-      setCopied(false);
+      copiedTick.clear();
       setArmed(false);
       setError(null);
     }
   }, [open]);
-
-  useEffect(() => () => window.clearTimeout(copyTimer.current), []);
 
   async function share(next: ShareTTL) {
     setBusy(true);
@@ -194,9 +194,7 @@ export function ShareControl({
     if (!status.url) return;
     try {
       await navigator.clipboard.writeText(absoluteUrl(status.url));
-      setCopied(true);
-      window.clearTimeout(copyTimer.current);
-      copyTimer.current = window.setTimeout(() => setCopied(false), 2000);
+      copiedTick.show(true);
     } catch {
       setError("Copy failed — select and copy the link by hand.");
     }
