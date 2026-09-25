@@ -259,6 +259,20 @@ func (s *Store) Get(videoID string) (*Entry, error) {
 	return &e, nil
 }
 
+// CountPending is the Inbox badge: how many rows await a decision. A COUNT
+// rather than len(ListPending()), which carried every row's metadata and
+// three correlated subqueries per row for a number the shell refreshes on
+// every activity event.
+func (s *Store) CountPending() (int, error) {
+	var n int
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM channel_videos WHERE state = 'pending'`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count pending: %w", err)
+	}
+	return n, nil
+}
+
 // ListPending returns every entry in state 'pending', newest discovered
 // first (ties broken by video_id descending for determinism). It LEFT JOINs
 // channels so each entry carries the human-readable channel name (empty when

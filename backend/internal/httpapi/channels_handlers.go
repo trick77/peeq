@@ -1089,6 +1089,22 @@ type pendingItem struct {
 	ThumbnailVersion string `json:"thumbnail_version,omitempty"`
 }
 
+// handlePendingCount answers the Inbox badge with just the number. The
+// shell refreshes it on every activity event and used to download the
+// whole pending list — thumbnails' metadata included — to take its length.
+func (s *server) handlePendingCount(w http.ResponseWriter, r *http.Request) {
+	if s.ledger == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		return
+	}
+	n, err := s.ledger.CountPending()
+	if err != nil {
+		serverError(w, r, err, "count pending failed")
+		return
+	}
+	writeJSON(w, map[string]int{"count": n})
+}
+
 // handlePendingList returns every ledger entry in state 'pending'. Mirrors
 // handleChannelsList's nil-503 behavior: an unconfigured ledger must report
 // unavailable, not silently return an empty list (a 200+[] response is

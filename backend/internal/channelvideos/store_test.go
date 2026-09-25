@@ -302,3 +302,23 @@ func TestCountPendingForChannel(t *testing.T) {
 		t.Fatalf("CountPendingForChannel(UCnone) = %d err=%v, want 0", n, err)
 	}
 }
+
+// TestCountPending pins the Inbox badge's number across channels and states.
+func TestCountPending(t *testing.T) {
+	s := newTestStore(t)
+	seedChannel(t, s, "UC1")
+	seedChannel(t, s, "UC2")
+	for _, row := range [][2]string{{"a", "pending"}, {"b", "ignored"}, {"c", "pending"}, {"d", "queued"}} {
+		ch := "UC1"
+		if row[0] == "c" {
+			ch = "UC2"
+		}
+		if _, err := s.db.Exec(`INSERT INTO channel_videos (video_id, channel_id, title, url, state) VALUES (?, ?, 'T', 'u', ?)`, row[0], ch, row[1]); err != nil {
+			t.Fatalf("seed %s: %v", row[0], err)
+		}
+	}
+	n, err := s.CountPending()
+	if err != nil || n != 2 {
+		t.Fatalf("CountPending() = %d err=%v, want 2", n, err)
+	}
+}

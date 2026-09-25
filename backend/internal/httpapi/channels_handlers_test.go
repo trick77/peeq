@@ -3588,3 +3588,34 @@ func TestChannelDetail_pendingCount(t *testing.T) {
 		t.Fatalf("pending_count = %d, want 2, body = %s", got.PendingCount, rec.Body.String())
 	}
 }
+
+// TestPendingCount pins GET /api/pending/count: the badge's number, its 503
+// without a ledger, and its 500 on a store fault.
+func TestPendingCount(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	seedChannelAndPending(t, deps, "UC1", "p1")
+	seedChannelAndPending(t, deps, "UC1", "p2")
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	get := func(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/pending/count", nil)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := get(t, h)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"count":2}` {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if rec := get(t, New(Deps{AuthService: deps.AuthService, AuthMiddleware: deps.AuthMiddleware, Settings: deps.Settings, DevAuthClaims: deps.DevAuthClaims})); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no ledger: status = %d, want 503", rec.Code)
+	}
+	if _, err := deps.Channels.DB().Exec(`DROP TABLE channel_videos`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := get(t, h); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("store fault: status = %d, want 500", rec.Code)
+	}
+}
