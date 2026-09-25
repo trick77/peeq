@@ -42,3 +42,4 @@ Cookies.binarycookies
 
 # Local Claude Code settings
 .claude/
+.agents/
