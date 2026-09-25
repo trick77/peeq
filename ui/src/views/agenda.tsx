@@ -1,4 +1,5 @@
 import { type IconName } from "../icons";
+import { parseSqlUTC } from "../format";
 
 // agenda — the vocabulary Up next and History share. Both pages describe the
 // same work, one before it happens and one after, so the wording, the icons and
@@ -6,11 +7,6 @@ import { type IconName } from "../icons";
 // Veritasium" while it is scheduled and something else once it is logged would
 // make the two pages look like two apps. Split out of the old Activity view,
 // which owned all of this when it was the only page rendering an agenda.
-
-// parseUTC reads the backend's "2006-01-02 15:04:05" UTC text into a Date.
-export function parseUTC(at: string): Date {
-  return new Date(at.replace(" ", "T") + "Z");
-}
 
 // relTime renders a compact relative label against now. Coarse on purpose — an
 // agenda is about sequence, not exact clock times. Future and past are worded
@@ -37,8 +33,8 @@ export function relTime(date: Date, now: number): string {
 // "ago" wording.
 export function plannedWhen(atStr: string | undefined, now: number): string {
   if (!atStr) return "up next";
-  const secs = Math.round((parseUTC(atStr).getTime() - now) / 1000);
-  return secs < 60 ? "soon" : relTime(parseUTC(atStr), now);
+  const secs = Math.round((parseSqlUTC(atStr).getTime() - now) / 1000);
+  return secs < 60 ? "soon" : relTime(parseSqlUTC(atStr), now);
 }
 
 // clockOf renders a backend timestamp as a wall clock in the viewer's zone. The
@@ -46,7 +42,7 @@ export function plannedWhen(atStr: string | undefined, now: number): string {
 // the date — the day separator (History) or the bucket heading (Up next) above
 // it already carries that.
 export function clockOf(at: string): string {
-  const d = parseUTC(at);
+  const d = parseSqlUTC(at);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 

@@ -1,4 +1,4 @@
-import type { SponsorblockSegment } from "./components/Scrubber";
+import type { SponsorblockSegment } from "./api/types";
 
 // NowPlaying is everything the dock needs to describe what is playing that it
 // cannot read off the <video> element itself.

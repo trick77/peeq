@@ -1,18 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { parseSqlUTC } from "../format";
 import { listActivity, type ActivityEvent } from "../api";
 import { SearchField } from "../components/SearchField";
 import { Icon } from "../icons";
 import { PillStrip } from "../components/PillStrip";
 import { DOT } from "../sep";
 import { Button } from "../ui";
-import {
-  clockOf,
-  kindOf,
-  leadCap,
-  parseUTC,
-  relTime,
-  subjectNode,
-} from "./agenda";
+import { clockOf, kindOf, leadCap, relTime, subjectNode } from "./agenda";
 
 // History — the durable log of what peeq's workers actually did, newest first.
 // A pure record: nothing here is actionable, so the page carries no buttons.
@@ -95,7 +89,7 @@ function dayKeyOfDate(d: Date): string {
 
 // dayKeyOf is the same for an event's backend timestamp.
 function dayKeyOf(at: string): string {
-  return dayKeyOfDate(parseUTC(at));
+  return dayKeyOfDate(parseSqlUTC(at));
 }
 
 const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -117,11 +111,9 @@ const MONTH = [
 // dayLabel names a separator. The two days anyone reads by name get it; older
 // ones get a date, and yesterday gets both so the transition is never a guess.
 function dayLabel(key: string, now: number): string {
-  // Keyed straight off the Date. Round-tripping through toISOString() looked
-  // harmless but produced a string already ending in "Z", which parseUTC then
-  // appended a second "Z" to — an Invalid Date, so both keys read
-  // "NaN-NaN-NaN", never matched, and the two labels anyone actually reads
-  // never appeared.
+  // Keyed straight off the Date rather than through a stamp string: the key
+  // is derived from a Date everywhere else too, and one form for it is what
+  // keeps "today" and "yesterday" matching the event keys.
   const today = dayKeyOfDate(new Date(now));
   const yesterday = dayKeyOfDate(new Date(now - 86400_000));
   const [y, m, d] = key.split("-").map(Number);
@@ -472,7 +464,7 @@ export function History({
                         </div>
                       </div>
                       <span className="ag-when">
-                        {relTime(parseUTC(e.at), now)}
+                        {relTime(parseSqlUTC(e.at), now)}
                       </span>
                     </div>
                   );

@@ -13,6 +13,10 @@ import {
   shortWatchLink,
   videoLabel,
   watchURL,
+  parseSqlUTC,
+  formatRuntime,
+  formatSubscribers,
+  formatStamp,
 } from "./format";
 
 // A fixed "now" so the relative output is deterministic. daysSince (which
@@ -227,7 +231,62 @@ describe("resolutionLabel", () => {
   });
 });
 
+describe("parseSqlUTC", () => {
+  it("reads the SQLite text form as UTC", () => {
+    expect(parseSqlUTC("2026-03-01 09:00:00").toISOString()).toBe(
+      "2026-03-01T09:00:00.000Z",
+    );
+  });
+  it("leaves ISO and date-only stamps to Date", () => {
+    expect(parseSqlUTC("2026-03-01T09:00:00Z").toISOString()).toBe(
+      "2026-03-01T09:00:00.000Z",
+    );
+    expect(parseSqlUTC("2026-03-01").toISOString()).toBe(
+      "2026-03-01T00:00:00.000Z",
+    );
+  });
+  it("hands back an invalid Date for junk, never throws", () => {
+    expect(Number.isNaN(parseSqlUTC("soon").getTime())).toBe(true);
+  });
+});
+
+describe("formatRuntime", () => {
+  it("shows minutes below an hour, whole hours above", () => {
+    expect(formatRuntime(45 * 60)).toBe("45 min");
+    expect(formatRuntime(3599)).toBe("60 min");
+    expect(formatRuntime(3600)).toBe("1 h");
+    expect(formatRuntime(2 * 3600 + 1800)).toBe("3 h");
+  });
+});
+
+describe("formatSubscribers", () => {
+  it("renders the way YouTube does", () => {
+    expect(formatSubscribers(undefined)).toBe("—");
+    expect(formatSubscribers(0)).toBe("—");
+    expect(formatSubscribers(-1)).toBe("—");
+    expect(formatSubscribers(812)).toBe("812");
+    expect(formatSubscribers(7_200)).toBe("7.2K");
+    expect(formatSubscribers(412_000)).toBe("412K");
+    expect(formatSubscribers(999_999)).toBe("1M");
+    expect(formatSubscribers(7_200_000)).toBe("7.2M");
+  });
+});
+
+describe("formatStamp", () => {
+  it("renders a stored stamp as a local date, and nothing for nothing", () => {
+    expect(formatStamp(undefined)).toBe("");
+    expect(formatStamp("soon")).toBe("");
+    expect(formatStamp("2026-03-01 09:00:00")).toBe(
+      new Date("2026-03-01T09:00:00Z").toLocaleDateString(),
+    );
+  });
+});
+
 describe("formatSize", () => {
+  it("has a terabyte tier", () => {
+    expect(formatSize(3 * 1024 ** 4)).toBe("3.0 TB");
+  });
+
   it("keeps one decimal for GB and whole units below", () => {
     expect(formatSize(1.4 * 1024 ** 3)).toBe("1.4 GB");
     expect(formatSize(412 * 1024 ** 2)).toBe("412 MB");

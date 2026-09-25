@@ -109,11 +109,7 @@ export type Video = {
   // Absent (undefined, via omitempty) when there are none. Player.tsx skips
   // the [start_time, end_time) ranges whose category is in AUTO_SKIP and marks
   // the rest on the scrubber.
-  sponsorblock_segments?: {
-    category: string;
-    start_time: number;
-    end_time: number;
-  }[];
+  sponsorblock_segments?: SponsorblockSegment[];
   // summary/chapters/key_points/summary_status/audio_language/has_subtitles
   // mirror the Task 14 summarization fields added to httpapi.videoDTO —
   // chapters/key_points arrive as arrays (never omitted, just empty).
@@ -252,6 +248,15 @@ export type SummaryJob = {
   channel_id?: string;
   state: SummaryJobState;
   last_error?: string;
+};
+
+// SponsorblockSegment is one SponsorBlock range on a video, as the API sends
+// it: seconds from the start, the category the community filed it under. The
+// scrubber marks them all; the player skips the categories in AUTO_SKIP.
+export type SponsorblockSegment = {
+  category: string;
+  start_time: number;
+  end_time: number;
 };
 
 // DownloadProgressEvent mirrors the payload of the SSE "progress" event

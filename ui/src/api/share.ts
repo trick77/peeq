@@ -2,8 +2,7 @@ import { api } from "./http";
 import { withVersion } from "./videos";
 import type { Chapter, KeyPoint } from "./types";
 import type { SummaryStatus } from "./enums";
-// The segment shape is owned by the Scrubber, which both players render.
-import type { SponsorblockSegment } from "../components/Scrubber";
+import type { SponsorblockSegment } from "./types";
 
 // ShareTTL is the fixed set of link lifetimes the share popover offers. The
 // empty string / "never" mean the link never expires. These strings are the
