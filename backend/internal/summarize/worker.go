@@ -24,11 +24,6 @@ type Embedder interface {
 	EmbedBatched(ctx context.Context, inputs []string, gap time.Duration) ([][]float32, error)
 }
 
-// ActivityRecorder records a summary outcome for the Activity feed. Nil-safe.
-type ActivityRecorder interface {
-	Record(activity.Event)
-}
-
 // WorkerDeps are the worker's collaborators and tunables. The stores,
 // Summarizer, and Embedder are required; the rest have safe defaults applied
 // in NewWorker.
@@ -51,7 +46,7 @@ type WorkerDeps struct {
 	// client can filter to the open video.
 	OnPhase func(videoID, status, phase string)
 	// Activity, when set, records each terminal summary for the Activity feed.
-	Activity ActivityRecorder
+	Activity activity.Recorder
 }
 
 // Worker is the single-concurrency summarization+embedding loop: the twin of
@@ -461,19 +456,12 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 
 	run.finished("done")
 	_ = w.d.Jobs.Finish(job.ID, summaryjobs.StateDone, "")
-	w.recordActivity(activity.Event{
+	activity.Record(w.d.Activity, activity.Event{
 		Kind: activity.KindSummary, Outcome: activity.OutcomeOK,
 		SubjectID: video.ID, Subject: video.Title, Summary: "summarized",
 		Detail: fmt.Sprintf("%d key points", len(keyPoints)),
 	})
 	return true, nil
-}
-
-// recordActivity records a summary event for the Activity feed, nil-safe.
-func (w *Worker) recordActivity(e activity.Event) {
-	if w.d.Activity != nil {
-		w.d.Activity.Record(e)
-	}
 }
 
 // analysisRun carries the logging state of one video's analysis: who it is,
@@ -873,7 +861,7 @@ func (w *Worker) failJob(ctx context.Context, job *summaryjobs.Job, video *video
 	// 'failed'). Most failJob calls requeue to 'pending' — a retry, not news; a
 	// row on every one would flood the feed.
 	if terminal {
-		w.recordActivity(activity.Event{
+		activity.Record(w.d.Activity, activity.Event{
 			Kind: activity.KindSummary, Outcome: activity.OutcomeFail,
 			SubjectID: video.ID, Subject: video.Title, Summary: "summary failed",
 			Detail: msg,
@@ -917,7 +905,7 @@ func (w *Worker) requeueJob(ctx context.Context, job *summaryjobs.Job, video *vi
 	// reads as complete forever while its chapters, highlights or search index are
 	// permanently missing, with no trace anywhere but the log.
 	if terminal {
-		w.recordActivity(activity.Event{
+		activity.Record(w.d.Activity, activity.Event{
 			Kind: activity.KindSummary, Outcome: activity.OutcomeWarn,
 			SubjectID: video.ID, Subject: video.Title,
 			Summary: step + " failed", Detail: msg,

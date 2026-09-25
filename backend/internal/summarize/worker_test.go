@@ -395,7 +395,7 @@ func TestProcessOneReturnsErrorOnEmbedFailure(t *testing.T) {
 }
 
 // fakeActivityRecorder captures the events failJob records. Satisfies the
-// summarize.ActivityRecorder interface.
+// activity.Recorder interface.
 type fakeActivityRecorder struct{ events []activity.Event }
 
 func (f *fakeActivityRecorder) Record(e activity.Event) { f.events = append(f.events, e) }

@@ -75,6 +75,11 @@ func New(db *sql.DB) *Store { return &Store{db: db} }
 // error here is logged at ERROR and swallowed. The caller passes no id/at — the
 // row's id is assigned by AUTOINCREMENT and its timestamp by the column default.
 func (s *Store) Record(e Event) {
+	// A nil *Store is a Recorder that records nothing, so activity.Record's
+	// promise holds for a typed nil too, not only for an untyped one.
+	if s == nil {
+		return
+	}
 	// RETURNING gives us the assigned id AND the column-default timestamp in one
 	// round trip, so the SSE-fanned event below carries exactly the `at` the row
 	// was persisted with — no time.Now() drift against datetime('now').

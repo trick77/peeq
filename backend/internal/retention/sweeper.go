@@ -17,11 +17,6 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 )
 
-// ActivityRecorder records a retention outcome for the Activity feed. Nil-safe.
-type ActivityRecorder interface {
-	Record(activity.Event)
-}
-
 // NowPlayingGuard reports whether a video is currently being streamed, so
 // the sweeper can skip it even if it otherwise qualifies for deletion.
 // StreamAccessTracker is the production implementation, fed by the video
@@ -69,7 +64,7 @@ type Deps struct {
 	// Activity, when set, records a sweep for the Activity feed — but only when
 	// it actually reclaimed something (the silence rule: an hourly no-op sweep
 	// writes nothing).
-	Activity ActivityRecorder
+	Activity activity.Recorder
 	// Logger is used for sweep errors and per-video deletion logging.
 	Logger *slog.Logger
 }
@@ -180,12 +175,12 @@ func (s *Sweeper) SweepOnce() error {
 	// Silence rule: only a sweep that actually reclaimed at least one video is
 	// worth a row. The sweeper ticks hourly and is a no-op almost every time.
 	// A video whose file would not go is not counted: nothing was reclaimed.
-	if tombstoned > 0 && s.deps.Activity != nil {
+	if tombstoned > 0 {
 		noun := "videos"
 		if tombstoned == 1 {
 			noun = "video"
 		}
-		s.deps.Activity.Record(activity.Event{
+		activity.Record(s.deps.Activity, activity.Event{
 			Kind: activity.KindRetention, Outcome: activity.OutcomeOK,
 			Summary: fmt.Sprintf("reclaimed %d %s", tombstoned, noun),
 			Detail:  fmt.Sprintf("older than %d days", cfg.RetentionDays),

@@ -17,13 +17,6 @@ import (
 // DBTX is the subset of *sql.DB used by the settings store.
 type DBTX = store.DBTX
 
-// ActivityRecorder records a cookie/access transition for the Activity feed.
-// Narrow and nil-safe like the download/scan/summarize workers' own recorders;
-// nil in tests, the shared *activity.Store in prod.
-type ActivityRecorder interface {
-	Record(activity.Event)
-}
-
 // Settings is the non-secret view of the settings singleton row.
 // Intentionally has no field for cookie_text: the pasted cookie is
 // write-only over the API, so it must never be a value this struct can hand
@@ -73,7 +66,7 @@ type Store struct {
 	// Activity, when set, records cookie/access state transitions for the
 	// Activity feed. Set post-construction in main.go (like activity.Store's own
 	// OnRecord); nil disables recording, so every caller and test is safe.
-	Activity ActivityRecorder
+	Activity activity.Recorder
 }
 
 // New returns a settings store backed by db.
@@ -211,7 +204,7 @@ func (s *Store) recordAccessTransition(old, newStatus string) {
 		// Other transitions (e.g. -> "absent") are not access events worth a row.
 		return
 	}
-	s.Activity.Record(e)
+	activity.Record(s.Activity, e)
 }
 
 // CookieCredentials returns the raw cookie text and status, for wiring the

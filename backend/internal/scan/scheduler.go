@@ -23,6 +23,7 @@ import (
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/failmonitor"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
@@ -72,24 +73,6 @@ type JobEnqueuer interface {
 	Enqueue(videoID string, priority int) (int64, error)
 }
 
-// FailMonitor is the subset of *failmonitor.Monitor the scheduler uses to
-// feed the auto-pause heuristic. Nil disables it (tests that don't care).
-// Mirrors the download package's FailMonitor interface of the same shape —
-// the two consumers dedup independently, keyed by their own entity kind
-// (video id for downloads, channel id for scans).
-type FailMonitor interface {
-	Fail(entityID string)
-	Reset()
-}
-
-// ActivityRecorder records a background-work event for the Activity feed.
-// Narrow and nil-safe (like FailMonitor): tests leave it nil, main.go wires the
-// one shared *activity.Store. The scheduler declares its own so it does not have
-// to import a concrete recorder.
-type ActivityRecorder interface {
-	Record(activity.Event)
-}
-
 // Deps are the scheduler's collaborators and tunables. The stores, Lister,
 // and CookieStatus are required; the rest have safe defaults applied in New.
 type Deps struct {
@@ -116,9 +99,9 @@ type Deps struct {
 	YoutubePaused func(ctx context.Context) bool
 	// FailMonitor feeds the auto-pause heuristic: Fail(channelID) on a
 	// count-worthy scan failure, Reset() on a clean pass.
-	FailMonitor FailMonitor
+	FailMonitor failmonitor.Sink
 	// Activity records scan outcomes for the Activity feed. Optional (nil = off).
-	Activity     ActivityRecorder
+	Activity     activity.Recorder
 	Now          func() time.Time // injectable clock (defaults to time.Now)
 	PollInterval time.Duration    // idle re-check (default 30s)
 	Logger       *slog.Logger
@@ -380,18 +363,11 @@ func (s *Scheduler) staleUnsubscribe(ctx context.Context, channelID, reason stri
 		return
 	}
 	s.d.Logger.Info("scan: auto-unsubscribed dead channel", "channel_id", channelID, "reason", channels.ReasonDeleted, "dead_scans", n)
-	s.recordActivity(activity.Event{
+	activity.Record(s.d.Activity, activity.Event{
 		Kind: activity.KindScan, Outcome: activity.OutcomeWarn,
 		SubjectID: channelID, Subject: s.channelName(channelID),
 		Summary: "auto-unsubscribed", Detail: fmt.Sprintf("gone on %d scans in a row", n),
 	})
-}
-
-// recordActivity records a scan event for the Activity feed, nil-safe.
-func (s *Scheduler) recordActivity(e activity.Event) {
-	if s.d.Activity != nil {
-		s.d.Activity.Record(e)
-	}
 }
 
 // recordScanFail records a scan failure with its classified reason. The
@@ -407,7 +383,7 @@ func (s *Scheduler) recordScanFail(channelID string, requested bool, reason stri
 	if requested {
 		summary = "check failed"
 	}
-	s.recordActivity(activity.Event{
+	activity.Record(s.d.Activity, activity.Event{
 		Kind: activity.KindScan, Outcome: activity.OutcomeFail,
 		SubjectID: channelID, Subject: s.channelName(channelID),
 		Summary: summary, Detail: reason,
@@ -964,7 +940,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	// check ran at all.
 	switch {
 	case baseline:
-		s.recordActivity(activity.Event{
+		activity.Record(s.d.Activity, activity.Event{
 			Kind: activity.KindScan, Outcome: activity.OutcomeOK,
 			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
 			Summary: fmt.Sprintf("baselined %d videos", baselineCount),
@@ -980,7 +956,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		if backlogCount > 0 {
 			parts = append(parts, fmt.Sprintf("%d older skipped", backlogCount))
 		}
-		s.recordActivity(activity.Event{
+		activity.Record(s.d.Activity, activity.Event{
 			Kind: activity.KindScan, Outcome: activity.OutcomeOK,
 			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
 			Summary: fmt.Sprintf("%d new", newCount), Detail: strings.Join(parts, ", "),
@@ -997,7 +973,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		// many at once, and on a first pass over a subscription list it was the
 		// same sentence down six consecutive rows, crowding out the counts that
 		// actually differed. The word "older" carries it.
-		s.recordActivity(activity.Event{
+		activity.Record(s.d.Activity, activity.Event{
 			Kind: activity.KindScan, Outcome: activity.OutcomeOK,
 			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
 			Summary: fmt.Sprintf("%d older videos skipped", backlogCount),
@@ -1008,7 +984,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		// nothing-new receipt — the row that turns "the button did nothing" into
 		// "peeq looked, and there was nothing there". Read from the in-memory
 		// subscription: MarkScanned above has already cleared the column.
-		s.recordActivity(activity.Event{
+		activity.Record(s.d.Activity, activity.Event{
 			Kind: activity.KindScan, Outcome: activity.OutcomeOK,
 			SubjectID: sub.ChannelID, Subject: s.channelName(sub.ChannelID),
 			Summary: "checked on request", Detail: "nothing new",
