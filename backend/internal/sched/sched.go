@@ -1,8 +1,9 @@
 // Package sched holds the pieces every peeq background loop needs and each had
 // grown its own copy of: a cancellable sleep, a jittered repeat interval, the
-// pseudo-random source that feeds the jitter, the slot arithmetic that
-// spreads a fleet of channels evenly across its cycle, and the cookie and
-// kill-switch gate a loop asks before it talks to YouTube (YouTubeGate).
+// pseudo-random source that feeds the jitter, and the slot arithmetic that
+// spreads a fleet of channels evenly across its cycle. Standard library only,
+// on purpose: any package can take Sleep without pulling in the store. The
+// cookie and kill-switch gate lives in ytgate for that reason.
 //
 // The download worker, the scan scheduler and the channel-metadata refresher
 // are deliberately separate loops with unrelated cadences, but they space
@@ -25,8 +26,14 @@ import (
 // honestly: a loop that computed a zero delay must not keep going round after
 // its context is done.
 func Sleep(ctx context.Context, d time.Duration) bool {
+	// Checked before arming a timer: select over an already-fired timer AND an
+	// already-cancelled ctx picks a ready case at random, so a cancelled caller
+	// with a tiny d would proceed half the time.
+	if ctx.Err() != nil {
+		return false
+	}
 	if d <= 0 {
-		return ctx.Err() == nil
+		return true
 	}
 	t := time.NewTimer(d)
 	defer t.Stop()

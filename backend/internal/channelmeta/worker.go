@@ -10,6 +10,7 @@ import (
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/peeq/internal/ytgate"
 )
 
 const (
@@ -79,7 +80,7 @@ type Deps struct {
 type Worker struct {
 	d Deps
 	// gate is the per-pass cookie and kill-switch check, built from Deps.
-	gate sched.YouTubeGate
+	gate ytgate.Gate
 }
 
 // NewWorker builds a Worker, filling in defaults for the optional Deps.
@@ -96,7 +97,7 @@ func NewWorker(d Deps) *Worker {
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}
-	return &Worker{d: d, gate: sched.YouTubeGate{CookieStatus: d.CookieStatus, AllowAnonymous: d.AllowAnonymous, Paused: d.YoutubePaused}}
+	return &Worker{d: d, gate: ytgate.Gate{CookieStatus: d.CookieStatus, AllowAnonymous: d.AllowAnonymous, Paused: d.YoutubePaused}}
 }
 
 // Run is the refresh loop; it blocks until ctx is cancelled. Each pass is
@@ -112,7 +113,7 @@ func (w *Worker) Run(ctx context.Context) {
 		// Without the cookie half a cookieless install would burn a failed
 		// refresh on every channel and, worse, stamp each one as attempted.
 		// Re-read each poll, so a pasted cookie or a cleared switch resumes
-		// refreshing by itself. See sched.YouTubeGate.
+		// refreshing by itself. See ytgate.Gate.
 		if !w.gate.Open(ctx) {
 			if !w.sleep(ctx, w.d.PollInterval) {
 				return

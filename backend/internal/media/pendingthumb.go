@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/trick77/peeq/internal/sched"
 )
 
 // A pending (inbox) video has no downloaded media yet, so unlike a finished
@@ -71,10 +73,8 @@ func FetchPendingThumbnail(ctx context.Context, videoID, recordedURL string) (st
 				break
 			}
 			if attempt < pendingThumbRetries {
-				select {
-				case <-ctx.Done():
+				if !sched.Sleep(ctx, time.Duration(attempt)*pendingThumbBackoff) {
 					return "", nil, ctx.Err()
-				case <-time.After(time.Duration(attempt) * pendingThumbBackoff):
 				}
 			}
 		}

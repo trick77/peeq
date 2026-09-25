@@ -12,6 +12,7 @@ import (
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/rag"
+	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/subtitles"
 	"github.com/trick77/peeq/internal/summaryjobs"
 	"github.com/trick77/peeq/internal/videos"
@@ -103,14 +104,8 @@ func (w *Worker) Run(ctx context.Context) {
 		if did {
 			gap = w.d.VideoDelay
 		}
-		if gap > 0 {
-			t := time.NewTimer(gap)
-			select {
-			case <-ctx.Done():
-				t.Stop()
-				return
-			case <-t.C:
-			}
+		if !sched.Sleep(ctx, gap) {
+			return
 		}
 	}
 }

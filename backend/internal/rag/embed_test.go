@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trick77/llmwire"
 )
@@ -230,5 +231,40 @@ func TestEmbed_statusErrorsKeepLlmwiresChain(t *testing.T) {
 	}
 	if !errors.Is(err, llmwire.ErrRateLimited) {
 		t.Errorf("errors.Is(err, ErrRateLimited) = false; the chain to llmwire is cut")
+	}
+}
+
+// TestEmbedBatchedStopsBetweenBatchesOnCancel: a shutdown during a backfill
+// stops at the next gap instead of sending the remaining batches.
+func TestEmbedBatchedStopsBetweenBatchesOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Input []string `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		requests++
+		cancel() // the process is shutting down while this batch is answered
+		data := make([]map[string]any, 0, len(req.Input))
+		for i := range req.Input {
+			data = append(data, map[string]any{"index": i, "embedding": []float32{0}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+	}))
+	defer srv.Close()
+
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
+	inputs := make([]string, 150)
+	for i := range inputs {
+		inputs[i] = "t" + strconv.Itoa(i)
+	}
+	_, err := c.EmbedBatched(ctx, inputs, time.Millisecond)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1: no batch may be sent after the cancel", requests)
 	}
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/peeq/internal/ytgate"
 )
 
 const (
@@ -126,7 +127,7 @@ type Scheduler struct {
 	// thumbs feeds the thumbnail drainer Run owns; see thumbs.go.
 	thumbs chan thumbJob
 	// gate is the per-pass cookie and kill-switch check, built from Deps.
-	gate sched.YouTubeGate
+	gate ytgate.Gate
 }
 
 // New builds a Scheduler, filling in defaults for the optional Deps fields.
@@ -145,7 +146,7 @@ func New(d Deps) *Scheduler {
 	}
 	return &Scheduler{
 		d: d, rand: sched.PseudoRand(), thumbs: make(chan thumbJob, prefetchQueueSize),
-		gate: sched.YouTubeGate{CookieStatus: d.CookieStatus, AllowAnonymous: d.AllowAnonymous, Paused: d.YoutubePaused},
+		gate: ytgate.Gate{CookieStatus: d.CookieStatus, AllowAnonymous: d.AllowAnonymous, Paused: d.YoutubePaused},
 	}
 }
 
@@ -166,7 +167,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 		// Cookie and kill-switch gates: no valid cookie (unless the dev-only
 		// anonymous escape hatch is on) or youtube_paused → skip this pass.
 		// Re-read each poll, so a pasted cookie or a cleared switch resumes
-		// scanning by itself. See sched.YouTubeGate.
+		// scanning by itself. See ytgate.Gate.
 		if !s.gate.Open(ctx) {
 			if !s.sleep(ctx, s.d.PollInterval) {
 				return

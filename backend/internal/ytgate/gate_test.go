@@ -1,4 +1,4 @@
-package sched
+package ytgate
 
 import (
 	"context"
@@ -30,22 +30,22 @@ func TestCookieAllows(t *testing.T) {
 	}
 }
 
-func TestYouTubeGate_Open(t *testing.T) {
+func TestGate_Open(t *testing.T) {
 	ctx := context.Background()
 	status := func(s string) func(context.Context) string { return func(context.Context) string { return s } }
 	paused := func(p bool) func(context.Context) bool { return func(context.Context) bool { return p } }
 	cases := []struct {
 		name string
-		gate YouTubeGate
+		gate Gate
 		want bool
 	}{
-		{"valid cookie, no switch", YouTubeGate{CookieStatus: status(settings.CookieValid)}, true},
-		{"absent cookie", YouTubeGate{CookieStatus: status(settings.CookieAbsent)}, false},
-		{"absent cookie, anonymous allowed", YouTubeGate{CookieStatus: status(settings.CookieAbsent), AllowAnonymous: true}, true},
-		{"stale cookie, anonymous allowed", YouTubeGate{CookieStatus: status(settings.CookieStale), AllowAnonymous: true}, false},
-		{"valid cookie, paused", YouTubeGate{CookieStatus: status(settings.CookieValid), Paused: paused(true)}, false},
-		{"valid cookie, not paused", YouTubeGate{CookieStatus: status(settings.CookieValid), Paused: paused(false)}, true},
-		{"anonymous but paused", YouTubeGate{CookieStatus: status(settings.CookieAbsent), AllowAnonymous: true, Paused: paused(true)}, false},
+		{"valid cookie, no switch", Gate{CookieStatus: status(settings.CookieValid)}, true},
+		{"absent cookie", Gate{CookieStatus: status(settings.CookieAbsent)}, false},
+		{"absent cookie, anonymous allowed", Gate{CookieStatus: status(settings.CookieAbsent), AllowAnonymous: true}, true},
+		{"stale cookie, anonymous allowed", Gate{CookieStatus: status(settings.CookieStale), AllowAnonymous: true}, false},
+		{"valid cookie, paused", Gate{CookieStatus: status(settings.CookieValid), Paused: paused(true)}, false},
+		{"valid cookie, not paused", Gate{CookieStatus: status(settings.CookieValid), Paused: paused(false)}, true},
+		{"anonymous but paused", Gate{CookieStatus: status(settings.CookieAbsent), AllowAnonymous: true, Paused: paused(true)}, false},
 	}
 	for _, c := range cases {
 		if got := c.gate.Open(ctx); got != c.want {
@@ -55,11 +55,11 @@ func TestYouTubeGate_Open(t *testing.T) {
 }
 
 // A gate without a cookie source must fail loud, not open.
-func TestYouTubeGate_nilCookieStatusPanics(t *testing.T) {
+func TestGate_nilCookieStatusPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {
 			t.Fatal("a nil CookieStatus must not fail open")
 		}
 	}()
-	YouTubeGate{}.Open(context.Background())
+	Gate{}.Open(context.Background())
 }
