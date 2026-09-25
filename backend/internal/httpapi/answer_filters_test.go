@@ -499,8 +499,8 @@ func TestChooseExcerptsPrefersSummariesWhenComparing(t *testing.T) {
 	}
 	testee := &server{videos: deps.Videos}
 
-	plain := testee.chooseExcerpts(hits, false)
-	compare := testee.chooseExcerpts(hits, true)
+	plain := testee.chooseExcerpts(newVideoLookup(testee.videos, hits), hits, false)
+	compare := testee.chooseExcerpts(newVideoLookup(testee.videos, hits), hits, true)
 
 	countSummaries := func(cs []excerptCandidate) int {
 		n := 0

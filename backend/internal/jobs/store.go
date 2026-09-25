@@ -297,12 +297,30 @@ func (s *Store) ActiveIDsForVideos(videoIDs []string) ([]int64, error) {
 	return ids, rows.Err()
 }
 
-// List returns all jobs in claim order (priority DESC, enqueued_at ASC, id
-// ASC), regardless of state.
-func (s *Store) List() ([]Job, error) {
+// ListQueue returns the download queue in claim order (priority DESC,
+// enqueued_at ASC, id ASC): every pending and running job, plus the newest
+// finishedWindow terminal ones (done, failed, canceled). Nothing prunes
+// download_jobs — a row goes only when its video is deleted, and a
+// re-enqueue inserts a fresh row beside the old one — so listing every
+// state was a read that grew with every job ever created. The page renders
+// pending and running as upcoming work; the terminal window is a margin
+// for what just finished, not a history. A negative window means none.
+func (s *Store) ListQueue(finishedWindow int) ([]Job, error) {
+	finishedWindow = max(finishedWindow, 0) // SQLite reads a negative LIMIT as "no limit"
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT `+selectColumns+` FROM download_jobs
-		 ORDER BY priority DESC, enqueued_at ASC, id ASC`)
+		`SELECT `+selectColumns+` FROM (
+		    SELECT `+selectColumns+` FROM download_jobs
+		     WHERE state IN (?, ?)
+		    UNION ALL
+		    SELECT * FROM (
+		        SELECT `+selectColumns+` FROM download_jobs
+		         WHERE state IN (?, ?, ?)
+		         ORDER BY id DESC
+		         LIMIT ?
+		    )
+		 )
+		 ORDER BY priority DESC, enqueued_at ASC, id ASC`,
+		StatePending, StateRunning, StateDone, StateFailed, StateCanceled, finishedWindow)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}

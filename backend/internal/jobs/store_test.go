@@ -3,6 +3,7 @@ package jobs
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -176,7 +177,7 @@ func TestFinish_marksFailedTerminally(t *testing.T) {
 		t.Fatalf("claim after finish: got %+v, want nil (failed is terminal)", job)
 	}
 
-	jobs, err := s.List()
+	jobs, err := s.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -221,7 +222,7 @@ func TestGuardedWrites_noOpWhenNotRunning(t *testing.T) {
 		t.Fatalf("Fail on canceled row = %v, want ErrNotRunning", err)
 	}
 
-	jobs, err := s.List()
+	jobs, err := s.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -258,7 +259,7 @@ func TestFail_recordsAttemptsAndFails(t *testing.T) {
 	if job, err := s.ClaimNext(); err != nil || job != nil {
 		t.Fatalf("claim after fail: job=%v err=%v, want nil,nil", job, err)
 	}
-	jobs, err := s.List()
+	jobs, err := s.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -339,7 +340,7 @@ func TestCancel_onlyPendingOrRunning(t *testing.T) {
 		t.Fatalf("cancel unknown: ok=%v err=%v, want ok=false err=nil", ok, err)
 	}
 
-	jobs, err := s.List()
+	jobs, err := s.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -352,5 +353,72 @@ func TestCancel_onlyPendingOrRunning(t *testing.T) {
 	}
 	if states[doneID] != "done" {
 		t.Fatalf("done job state = %q, want done (Cancel must not touch terminal jobs)", states[doneID])
+	}
+}
+
+// TestListQueue_boundsFinishedJobs pins the shape the queue page reads:
+// every pending, running and failed job, plus only the newest few done or
+// canceled ones. Nothing prunes download_jobs, so List() grew with every job
+// ever created and the handler joined each one to its video.
+func TestListQueue_boundsFinishedJobs(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	seed := func(id, state string) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO videos (id, url) VALUES (?, ?) ON CONFLICT DO NOTHING`, id, "u"); err != nil {
+			t.Fatalf("seed video: %v", err)
+		}
+		if _, err := db.Exec(`INSERT INTO download_jobs (video_id, state) VALUES (?, ?)`, id, state); err != nil {
+			t.Fatalf("seed job %s: %v", id, err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		seed(fmt.Sprintf("p%d", i), StatePending)
+	}
+	seed("r0", StateRunning)
+	for i := 0; i < 2; i++ {
+		seed(fmt.Sprintf("f%d", i), StateFailed)
+	}
+	for i := 0; i < 50; i++ {
+		seed(fmt.Sprintf("d%d", i), StateDone)
+	}
+	seed("c0", StateCanceled)
+
+	got, err := s.ListQueue(20)
+	if err != nil {
+		t.Fatalf("ListQueue: %v", err)
+	}
+	if len(got) != 3+1+20 {
+		t.Fatalf("len = %d, want 24 (4 active + 20 terminal)", len(got))
+	}
+	finished := 0
+	newestDone := int64(0)
+	for _, j := range got {
+		switch j.State {
+		case StateDone, StateFailed, StateCanceled:
+			finished++
+			if j.ID > newestDone {
+				newestDone = j.ID
+			}
+		}
+	}
+	if finished != 20 {
+		t.Fatalf("finished rows = %d, want 20", finished)
+	}
+	// The window keeps the NEWEST finished jobs: the canceled one was the last
+	// insert, so it must be in.
+	var lastID int64
+	if err := db.QueryRow(`SELECT MAX(id) FROM download_jobs`).Scan(&lastID); err != nil {
+		t.Fatal(err)
+	}
+	if newestDone != lastID {
+		t.Fatalf("newest finished id in window = %d, want %d", newestDone, lastID)
+	}
+	// Zero (or negative) window: active jobs only. A negative LIMIT would
+	// mean "no limit" to SQLite, which is the unbounded read this replaces.
+	for _, w := range []int{0, -1} {
+		if got, err := s.ListQueue(w); err != nil || len(got) != 4 {
+			t.Fatalf("ListQueue(%d) = %d rows err=%v, want 4", w, len(got), err)
+		}
 	}
 }

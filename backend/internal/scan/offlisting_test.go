@@ -64,7 +64,7 @@ func TestScan_parkedVideoOffListing_autodownloadQueuesFromTheLedgerRow(t *testin
 	if st := h.ledgerState("v1"); st != channelvideos.StateQueued {
 		t.Fatalf("v1 state = %q, want %q", st, channelvideos.StateQueued)
 	}
-	jobsList, _ := h.jobs.List()
+	jobsList, _ := h.jobs.ListQueue(100)
 	if len(jobsList) != 1 {
 		t.Fatalf("jobs = %d, want 1", len(jobsList))
 	}
@@ -319,7 +319,7 @@ func TestScan_parkedVideoOffListing_alreadyDownloaded_isNotRequeued(t *testing.T
 	if !v.HasThumbnail {
 		t.Fatal("the poster was lost by a re-queue of a finished video")
 	}
-	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
+	if jobsList, _ := h.jobs.ListQueue(100); len(jobsList) != 0 {
 		t.Fatalf("jobs = %d, want 0 — the video is already on disk", len(jobsList))
 	}
 	// Settled rather than left parked, so the probe budget stops being spent on

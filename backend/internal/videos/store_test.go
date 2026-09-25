@@ -3,6 +3,7 @@ package videos
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1317,5 +1318,49 @@ func TestList_errorDoesNotEchoQuery(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "filter=") {
 		t.Fatalf("error should still name the enumerated options: %v", err)
+	}
+}
+
+// TestGetMany_missingIDsAbsent pins the batched read the list endpoints use
+// instead of one Get per row: absent ids are simply missing from the map,
+// duplicates and an empty input cost nothing.
+func TestGetMany_missingIDsAbsent(t *testing.T) {
+	s := newTestStore(t)
+	for _, id := range []string{"a", "b"} {
+		if err := s.Upsert(Video{ID: id, URL: "u", Title: "T" + id}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	got, err := s.GetMany([]string{"a", "missing", "b", "a"})
+	if err != nil {
+		t.Fatalf("GetMany: %v", err)
+	}
+	if len(got) != 2 || got["a"] == nil || got["b"] == nil || got["a"].Title != "Ta" {
+		t.Fatalf("got %+v", got)
+	}
+	if _, ok := got["missing"]; ok {
+		t.Fatal("missing id should be absent, not nil-valued")
+	}
+	empty, err := s.GetMany(nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty input: %v %v", empty, err)
+	}
+}
+
+// TestGetMany_chunksLargeInputs drives the batch past one chunk so the
+// IN-list split is exercised.
+func TestGetMany_chunksLargeInputs(t *testing.T) {
+	s := newTestStore(t)
+	ids := make([]string, 0, 1201)
+	for i := 0; i < 1201; i++ {
+		id := fmt.Sprintf("v%04d", i)
+		if err := s.Upsert(Video{ID: id, URL: "u"}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	got, err := s.GetMany(ids)
+	if err != nil || len(got) != 1201 {
+		t.Fatalf("len = %d err=%v, want 1201", len(got), err)
 	}
 }

@@ -146,7 +146,7 @@ func (h *harness) enqueue(t *testing.T, videoID string, priority int) int64 {
 
 func (h *harness) jobState(t *testing.T, id int64) jobs.Job {
 	t.Helper()
-	all, err := h.jobs.List()
+	all, err := h.jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}

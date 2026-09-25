@@ -296,7 +296,7 @@ func TestChooseExcerptsSpreadsAcrossVideos(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.chooseExcerpts(hits, false)
+	got := testee.chooseExcerpts(newVideoLookup(testee.videos, hits), hits, false)
 
 	if len(got) != answerMaxSources {
 		t.Fatalf("chose %d excerpts, want %d", len(got), answerMaxSources)
@@ -337,7 +337,7 @@ func TestChooseExcerptsKeepsSlotsForDepth(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.chooseExcerpts(hits, false)
+	got := testee.chooseExcerpts(newVideoLookup(testee.videos, hits), hits, false)
 
 	if len(got) != answerMaxSources {
 		t.Fatalf("chose %d excerpts, want %d", len(got), answerMaxSources)
@@ -373,7 +373,7 @@ func TestChooseExcerptsFillsUpWhenFewVideosMatch(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.chooseExcerpts(hits, false)
+	got := testee.chooseExcerpts(newVideoLookup(testee.videos, hits), hits, false)
 
 	if len(got) != answerMaxSourcesPerVideo {
 		t.Fatalf("chose %d excerpts from one video, want %d", len(got), answerMaxSourcesPerVideo)
@@ -398,7 +398,7 @@ func TestChooseExcerptsKeepsFusedOrder(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.chooseExcerpts(hits, false)
+	got := testee.chooseExcerpts(newVideoLookup(testee.videos, hits), hits, false)
 
 	gotOrder := make([]string, 0, len(got))
 	for _, c := range got {
@@ -849,7 +849,7 @@ func TestCoverageVideosCollapsesAndOrders(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.coverageVideos(hits, allRelevant(hits))
+	got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, allRelevant(hits))
 
 	ids := make([]string, 0, len(got))
 	for _, v := range got {
@@ -876,7 +876,7 @@ func TestCoverageVideosCapsVideosNotChunks(t *testing.T) {
 	}
 
 	testee := &server{videos: deps.Videos}
-	got := testee.coverageVideos(hits, allRelevant(hits))
+	got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, allRelevant(hits))
 
 	if len(got) != coverageMaxVideos {
 		t.Fatalf("coverage carried %d videos, want %d", len(got), coverageMaxVideos)
@@ -901,7 +901,7 @@ func TestCoverageVideosKeepsTheExcerptVideos(t *testing.T) {
 	hits := []rag.Hit{{VideoID: "cited", Ordinal: 0}}
 
 	testee := &server{videos: deps.Videos}
-	if got := testee.coverageVideos(hits, allRelevant(hits)); len(got) != 1 || got[0].ID != "cited" {
+	if got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, allRelevant(hits)); len(got) != 1 || got[0].ID != "cited" {
 		t.Errorf("coverage = %+v, want the excerpt video kept for the client to subtract", got)
 	}
 }
@@ -938,7 +938,7 @@ func TestCoverageVideosExcludesFloorOnlyVideos(t *testing.T) {
 
 	testee := &server{videos: deps.Videos}
 	relevant, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
-	got := testee.coverageVideos(hits, relevant)
+	got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, relevant)
 
 	if len(got) != 1 || got[0].ID != "geometry" {
 		t.Errorf("coverage = %+v, want only the video a lane above the floor found", got)
@@ -959,7 +959,7 @@ func TestCoverageVideosKeepsStrongKeywordRungs(t *testing.T) {
 
 	testee := &server{videos: deps.Videos}
 	relevant, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
-	if got := testee.coverageVideos(hits, relevant); len(got) != 1 {
+	if got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, relevant); len(got) != 1 {
 		t.Errorf("coverage = %+v, want the content-rung video kept", got)
 	}
 }
@@ -978,7 +978,7 @@ func TestCoverageVideosEmptyWhenOnlyTheFloorRan(t *testing.T) {
 
 	testee := &server{videos: deps.Videos}
 	relevant, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
-	if got := testee.coverageVideos(hits, relevant); len(got) != 0 {
+	if got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, relevant); len(got) != 0 {
 		t.Errorf("coverage = %+v, want empty", got)
 	}
 }
@@ -1336,7 +1336,7 @@ func TestCoverageVideosExcludesDistantSemanticOnlyVideos(t *testing.T) {
 
 	testee := &server{videos: deps.Videos}
 	relevant, barred := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
-	got := testee.coverageVideos(hits, relevant)
+	got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, relevant)
 
 	if len(got) != 1 || got[0].ID != "near" {
 		t.Errorf("coverage = %+v, want only the video the question is actually near", got)
@@ -1362,7 +1362,7 @@ func TestCoverageVideosDistanceBarSparesKeywordEvidence(t *testing.T) {
 
 	testee := &server{videos: deps.Videos}
 	relevant, barred := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
-	got := testee.coverageVideos(hits, relevant)
+	got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, relevant)
 	if len(got) != 1 {
 		t.Errorf("coverage = %+v, want the strict-rung video kept", got)
 	}
@@ -1386,7 +1386,7 @@ func TestCoverageVideosKeepsAVideoWithBothWeakAndStrongEvidence(t *testing.T) {
 
 	testee := &server{videos: deps.Videos}
 	relevant, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
-	got := testee.coverageVideos(hits, relevant)
+	got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, relevant)
 	if len(got) != 1 {
 		t.Errorf("coverage = %+v, want the video its keyword evidence earned", got)
 	}
@@ -1468,12 +1468,12 @@ func TestCoverageBarOptsOutWithUnboundedKNN(t *testing.T) {
 
 	// Bounded: the bar applies.
 	bounded, _ := relevantVideos(lanes, -1, rag.DefaultMaxDistance)
-	if got := testee.coverageVideos(hits, bounded); len(got) != 0 {
+	if got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, bounded); len(got) != 0 {
 		t.Errorf("coverage = %+v, want the distant video barred when bounded", got)
 	}
 	// Opted out: no floor at all, visible or otherwise.
 	unbounded, barred := relevantVideos(lanes, -1, -1)
-	if got := testee.coverageVideos(hits, unbounded); len(got) != 1 {
+	if got := testee.coverageVideos(newVideoLookup(testee.videos, hits), hits, unbounded); len(got) != 1 {
 		t.Errorf("coverage = %+v, want no bar when the operator asked for unbounded KNN", got)
 	}
 	if len(barred) != 0 {
@@ -1489,5 +1489,29 @@ func TestCoverageDiagDistinguishesNeverRanFromEmpty(t *testing.T) {
 	}
 	if got := (coverageDiag{ran: true}).String(); got != "0/0 barred=0" {
 		t.Errorf("empty coverage logged %q, want the zeroes spelled out", got)
+	}
+}
+
+// TestVideoLookup_noStoreAndPreloadFailure pins the lookup's two degraded
+// shapes: without a store every get is nil, and a failed preload falls back
+// to per-id reads (which fail the same way here) without panicking.
+func TestVideoLookup_noStoreAndPreloadFailure(t *testing.T) {
+	hits := []rag.Hit{{VideoID: "v1"}, {VideoID: "v2"}}
+	if got := newVideoLookup(nil, hits).get("v1"); got != nil {
+		t.Fatalf("no store: get = %+v, want nil", got)
+	}
+	deps, db, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE videos RENAME COLUMN title TO title_x`); err != nil {
+		t.Fatal(err)
+	}
+	l := newVideoLookup(deps.Videos, hits)
+	if len(l.seen) != 0 {
+		t.Fatalf("a failed preload should cache nothing, got %d", len(l.seen))
+	}
+	if got := l.get("v1"); got != nil {
+		t.Fatalf("get after a failed preload = %+v, want nil", got)
 	}
 }

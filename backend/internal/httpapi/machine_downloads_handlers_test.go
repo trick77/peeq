@@ -85,7 +85,7 @@ func TestMachineDownloads_enqueuesWithAValidToken(t *testing.T) {
 	if v.URL != "https://www.youtube.com/watch?v=dQw4w9WgXcQ" {
 		t.Fatalf("video url = %q, want the canonical watch url", v.URL)
 	}
-	all, err := deps.Jobs.List()
+	all, err := deps.Jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestMachineDownloads_rejectsWithoutAValidToken(t *testing.T) {
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("status = %d, want 401, body = %s", rec.Code, rec.Body.String())
 			}
-			all, err := deps.Jobs.List()
+			all, err := deps.Jobs.ListQueue(100)
 			if err != nil {
 				t.Fatalf("list jobs: %v", err)
 			}
@@ -156,7 +156,7 @@ func TestMachineDownloads_rejectsBadURLs(t *testing.T) {
 			if got["error"] != tc.want {
 				t.Fatalf("error = %q, want %q", got["error"], tc.want)
 			}
-			all, err := deps.Jobs.List()
+			all, err := deps.Jobs.ListQueue(100)
 			if err != nil {
 				t.Fatalf("list jobs: %v", err)
 			}
@@ -208,7 +208,7 @@ func TestDownloads_malformedBody_400(t *testing.T) {
 	}
 
 	// Nothing enqueued by either malformed request.
-	all, err := deps.Jobs.List()
+	all, err := deps.Jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestMachineDownloads_alreadyInQueueIsADuplicateNoOp(t *testing.T) {
 	if v.Status != videos.StatusDownloaded {
 		t.Fatalf("video status = %q, want it left at %q", v.Status, videos.StatusDownloaded)
 	}
-	all, err := deps.Jobs.List()
+	all, err := deps.Jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestMachineDownloads_failedVideoReEnqueues(t *testing.T) {
 	if v.Status != videos.StatusQueued {
 		t.Fatalf("video status = %q, want %q", v.Status, videos.StatusQueued)
 	}
-	all, err := deps.Jobs.List()
+	all, err := deps.Jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestDownloads_sessionRouteStillReQueuesExisting(t *testing.T) {
 	if v.Status != videos.StatusQueued {
 		t.Fatalf("video status = %q, want %q (session route re-queues)", v.Status, videos.StatusQueued)
 	}
-	all, err := deps.Jobs.List()
+	all, err := deps.Jobs.ListQueue(100)
 	if err != nil {
 		t.Fatalf("list jobs: %v", err)
 	}

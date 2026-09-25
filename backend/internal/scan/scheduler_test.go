@@ -320,7 +320,7 @@ func TestScan_firstRunBaseline_queuesNothing(t *testing.T) {
 	if p, _ := h.ledger.ListPending(); len(p) != 0 {
 		t.Fatalf("baseline pending = %d, want 0", len(p))
 	}
-	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
+	if jobsList, _ := h.jobs.ListQueue(100); len(jobsList) != 0 {
 		t.Fatalf("baseline jobs = %d, want 0", len(jobsList))
 	}
 	if st := h.ledgerState("v1"); st != "seen" {
@@ -366,7 +366,7 @@ func TestScan_subsequentNewVideo_pendingVsAutodownload(t *testing.T) {
 	if st := h.ledgerStateOrAbsent("up"); st != "" {
 		t.Fatalf("upcoming state = %q, want no row", st)
 	}
-	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
+	if jobsList, _ := h.jobs.ListQueue(100); len(jobsList) != 0 {
 		t.Fatalf("non-autodownload must not enqueue; got %d jobs", len(jobsList))
 	}
 }
@@ -514,7 +514,7 @@ func TestScan_postLiveStreamDeferred(t *testing.T) {
 			t.Fatalf("%s state = %q, want no row", id, st)
 		}
 	}
-	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
+	if jobsList, _ := h.jobs.ListQueue(100); len(jobsList) != 0 {
 		t.Fatalf("unsettled streams must not be downloaded; got %d jobs", len(jobsList))
 	}
 }
@@ -706,7 +706,7 @@ func TestScan_autodownloadEnqueuesWithFormatOverride(t *testing.T) {
 	if v == nil || v.Status != "queued" || v.RequestedFormat != "bestvideo+bestaudio" {
 		t.Fatalf("video = %+v", v)
 	}
-	jobsList, _ := h.jobs.List()
+	jobsList, _ := h.jobs.ListQueue(100)
 	if len(jobsList) != 1 || jobsList[0].Priority != 0 {
 		t.Fatalf("jobs = %+v, want one at priority 0", jobsList)
 	}
@@ -790,7 +790,7 @@ func TestScan_autodownload_notEnqueued_whenChannelNotAdded(t *testing.T) {
 	if err := h.sched.scanOnce(context.Background(), sub); err != nil {
 		t.Fatal(err)
 	}
-	if jobsList, _ := h.jobs.List(); len(jobsList) != 0 {
+	if jobsList, _ := h.jobs.ListQueue(100); len(jobsList) != 0 {
 		t.Fatalf("must not enqueue a download for a not-added channel; got %+v", jobsList)
 	}
 	if v, _ := h.videos.Get("newv"); v != nil {
@@ -1992,7 +1992,7 @@ func TestScan_backCatalogue_autodownloadDoesNotDownloadHistory(t *testing.T) {
 	if st := h.ledgerState("newvod01"); st != "queued" {
 		t.Fatalf("new vod state = %q, want queued", st)
 	}
-	jobsList, _ := h.jobs.List()
+	jobsList, _ := h.jobs.ListQueue(100)
 	if len(jobsList) != 1 {
 		t.Fatalf("jobs = %d, want exactly 1 (only the genuinely new vod)", len(jobsList))
 	}

@@ -511,7 +511,10 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// which is not a comparison at all — and channelResolution.Ambiguous keeps
 	// one uncertain name that matched several channels out of it.
 	selectStart := time.Now()
-	sources, vids, excerpts, chosen := s.buildAnswerContext(hits, len(ch.Matched) > 1 && !ch.Ambiguous)
+	// One batch read for every video the hits touch serves both the excerpt
+	// choice and the coverage list below.
+	lookup := newVideoLookup(s.videos, hits)
+	sources, vids, excerpts, chosen := s.buildAnswerContext(lookup, hits, len(ch.Matched) > 1 && !ch.Ambiguous)
 	// One row for fusing and choosing together, because they are one idea to a
 	// reader: the two searches came back and this is what was kept out of them.
 	// Split apart they would be two adjacent rows with no tool between them,
@@ -561,7 +564,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	for _, h := range chosen {
 		relevant[h.VideoID] = true
 	}
-	coverage := s.coverageVideos(hits, relevant)
+	coverage := s.coverageVideos(lookup, hits, relevant)
 	// Netted off AFTER the excerpt videos are added back, so this counts what the
 	// bar actually removed rather than what it merely objected to.
 	barred := 0
@@ -712,14 +715,14 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 // fragments are the worst possible evidence for that — each one a sentence out
 // of the middle of an argument. Whole summaries, one per video across more
 // videos, are what a comparison is actually made of.
-func (s *server) buildAnswerContext(hits []rag.Hit, compare bool) ([]answerSource, []answerVideo, []string, []rag.Hit) {
+func (s *server) buildAnswerContext(lookup *videoLookup, hits []rag.Hit, compare bool) ([]answerSource, []answerVideo, []string, []rag.Hit) {
 	sources := make([]answerSource, 0, answerMaxSources)
 	vids := make([]answerVideo, 0, answerMaxSources)
 	excerpts := make([]string, 0, answerMaxSources)
 	chosen := make([]rag.Hit, 0, answerMaxSources)
 	seenVideo := make(map[string]bool)
 
-	for _, c := range s.chooseExcerpts(hits, compare) {
+	for _, c := range s.chooseExcerpts(lookup, hits, compare) {
 		chosen = append(chosen, c.hit)
 		if !seenVideo[c.hit.VideoID] {
 			seenVideo[c.hit.VideoID] = true
@@ -847,8 +850,7 @@ func relevantVideos(lanes []rag.Lane, excludeLane int, searchMaxDistance float64
 	return out, barred
 }
 
-func (s *server) coverageVideos(hits []rag.Hit, relevant map[string]bool) []answerVideo {
-	lookup := &videoLookup{store: s.videos, seen: make(map[string]*videos.Video)}
+func (s *server) coverageVideos(lookup *videoLookup, hits []rag.Hit, relevant map[string]bool) []answerVideo {
 	seen := make(map[string]bool)
 	out := make([]answerVideo, 0, coverageMaxVideos)
 	for _, h := range hits {
@@ -911,9 +913,32 @@ type videoLookup struct {
 	seen  map[string]*videos.Video
 }
 
+// newVideoLookup reads the videos behind hits in one batch up front; get
+// then answers from memory and only reaches the store for an id the batch
+// did not cover (or could not read — errors are not cached, so a retry gets
+// another chance).
+func newVideoLookup(store *videos.Store, hits []rag.Hit) *videoLookup {
+	l := &videoLookup{store: store, seen: make(map[string]*videos.Video, len(hits))}
+	if store == nil {
+		return l
+	}
+	ids := idsOf(hits, func(h rag.Hit) string { return h.VideoID })
+	if index, err := store.GetMany(ids); err != nil {
+		slog.Warn("answer: video preload failed", "count", len(ids), "err", err)
+	} else {
+		for id, v := range index {
+			l.seen[id] = v
+		}
+	}
+	return l
+}
+
 func (l *videoLookup) get(id string) *videos.Video {
 	if v, ok := l.seen[id]; ok {
 		return v
+	}
+	if l.store == nil {
+		return nil
 	}
 	v, err := l.store.Get(id)
 	if err != nil {
@@ -967,12 +992,11 @@ func (l *videoLookup) get(id string) *videos.Video {
 // it. The two normal passes still run afterwards over whatever slots are left,
 // so a video with no summary indexed is not silently excluded from a comparison
 // — it just contributes transcript, as it always did.
-func (s *server) chooseExcerpts(hits []rag.Hit, compare bool) []excerptCandidate {
+func (s *server) chooseExcerpts(lookup *videoLookup, hits []rag.Hit, compare bool) []excerptCandidate {
 	// A chapter chunk repeats the transcript of its own span, so the same words
 	// can arrive twice under two kinds. Spending two of twelve slots on one
 	// passage would crowd out a genuinely different one.
 	seen := make(map[string]bool)
-	lookup := &videoLookup{store: s.videos, seen: make(map[string]*videos.Video)}
 	cands := make([]excerptCandidate, 0, len(hits))
 	for _, h := range hits {
 		// A summary chunk describes the whole video and is stored at second 0

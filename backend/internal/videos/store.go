@@ -341,6 +341,57 @@ func (s *Store) Get(id string) (*Video, error) {
 	return &v, nil
 }
 
+// getManyChunk bounds one IN list. SQLite's default variable limit is far
+// higher, but a list endpoint never needs more than a few hundred rows at
+// once and a bounded statement keeps the planner's work predictable.
+const getManyChunk = 500
+
+// GetMany reads the given videos in a few statements instead of one Get per
+// id, for the list endpoints that join job rows to titles. Ids with no row
+// are absent from the map; duplicates and an empty input cost nothing.
+func (s *Store) GetMany(ids []string) (map[string]*Video, error) {
+	out := make(map[string]*Video, len(ids))
+	uniq := make([]string, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			uniq = append(uniq, id)
+		}
+	}
+	for start := 0; start < len(uniq); start += getManyChunk {
+		end := min(start+getManyChunk, len(uniq))
+		chunk := uniq[start:end]
+		args := make([]any, len(chunk))
+		marks := make([]string, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+			marks[i] = "?"
+		}
+		// The only non-constant spliced in is the placeholder list; every id
+		// travels as a bound argument.
+		query := "SELECT " + videoColumns + " " + videoFrom + " WHERE v.id IN (" + strings.Join(marks, ",") + ")" //nolint:gosec // placeholders only
+		rows, err := s.db.QueryContext(context.Background(), query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get videos: %w", err)
+		}
+		for rows.Next() {
+			v, err := scanVideo(rows)
+			if err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("get videos: scan: %w", err)
+			}
+			out[v.ID] = &v
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("get videos: iterate: %w", err)
+		}
+		_ = rows.Close()
+	}
+	return out, nil
+}
+
 // ListOptions narrows videos.Store.List. Every field is optional; the zero
 // value means "every video, newest first" — the pre-existing behavior.
 type ListOptions struct {
