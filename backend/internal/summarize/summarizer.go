@@ -432,7 +432,7 @@ func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subti
 		// The worker owns the log line: it knows which video this is, which
 		// this function does not, and a line without the video id cannot be
 		// acted on.
-		return nil, nil, fmt.Errorf("%w: %v (reply_chars=%d, reply_head=%q)", ErrKeyPointsUnparsable, err, len(raw), head(raw, 120))
+		return nil, nil, fmt.Errorf("%w: %w (reply_chars=%d, reply_head=%q)", ErrKeyPointsUnparsable, err, len(raw), head(raw, 120))
 	}
 
 	if wantChapters {
