@@ -446,24 +446,16 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		// minutes of that is ordinary on a busy Runner. Timing from entry made a
 		// queued probe fail for being patient — and with a shorter fuse than the
 		// download path's ten minutes, so it bit first.
-		metaCtx, metaCancel := context.WithCancel(jobCtx)
-		metaCap := ytdlp.NewDeferredTimer(w.deps.MetadataTimeout, metaCancel)
-		meta, merr := w.deps.Runner.Metadata(ytdlp.WithStartHook(metaCtx, metaCap.Start), video.URL)
-		// stop() reports false once the timer has fired, which is how the cap is
-		// told apart from any other error: the message the user sees on Activity
-		// should say the probe stalled, not repeat a bare "context canceled".
 		//
-		// Called unconditionally and BEFORE the && chain rather than inside it:
-		// stop is what disarms the timer, so short-circuiting past it on the
-		// success path would leave an AfterFunc holding metaCancel alive for the
-		// rest of the cap.
-		stoppedInTime := metaCap.Stop()
-		// merr != nil is part of the test because a cap that genuinely fired
-		// killed the process, so Metadata cannot also have succeeded. Without it,
-		// a timer expiring in the sliver between a successful return and stop()
-		// would throw away good metadata and retry a job that was already done.
-		capFired := merr != nil && !stoppedInTime && metaCtx.Err() != nil && jobCtx.Err() == nil
-		metaCancel()
+		// capFired is how the cap is told apart from any other error: the
+		// message the user sees on Activity should say the probe stalled, not
+		// repeat a bare "context canceled". See ytdlp.CallWithCap.
+		var meta *ytdlp.Meta
+		capFired, merr := ytdlp.CallWithCap(jobCtx, w.deps.MetadataTimeout, func(c context.Context) error {
+			var err error
+			meta, err = w.deps.Runner.Metadata(c, video.URL)
+			return err
+		})
 		if w.wasCanceled() {
 			w.settleCanceled(job, video)
 			return
