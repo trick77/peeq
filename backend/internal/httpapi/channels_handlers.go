@@ -537,17 +537,10 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 		// reservation queue but not the throttle, so an interactive call still
 		// waits — and a cap armed on entry counted that wait as though yt-dlp
 		// were already hung. It runs from the process actually starting now.
-		rctx, cancel := context.WithCancel(ytdlp.WithInteractive(context.Background()))
-		defer cancel()
-		bound := ytdlp.NewDeferredTimer(s.resolveCap, cancel)
-		err := s.metadata.Resolve(ytdlp.WithStartHook(rctx, bound.Start), channelID, cached)
-		stoppedInTime := bound.Stop()
+		stalled, err := ytdlp.CallWithCap(ytdlp.WithInteractive(context.Background()), s.resolveCap,
+			func(c context.Context) error { return s.metadata.Resolve(c, channelID, cached) })
 		if err != nil {
-			// rctx.Err() alongside stoppedInTime: Stop reports false both for a
-			// timer that fired and for one never armed, and never-armed is the
-			// ordinary case when the call returns before reaching exec. Only
-			// the timer cancels rctx, so that is what tells the two apart.
-			if !stoppedInTime && rctx.Err() != nil {
+			if stalled {
 				slog.Warn("channel resolve stalled", "channel_id", channelID, "after", s.resolveCap)
 			}
 			slog.Warn("channel resolve failed", "channel_id", channelID, "err", err)
@@ -609,26 +602,18 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	// reason: "yt-dlp's throttle, then two image fetches" says outright that
 	// most of the elapsed time can be wait rather than work, and counting the
 	// wait against the process lands in that same resolve_ok = 0 path.
-	rctx, cancel := context.WithCancel(
-		ytdlp.WithInteractive(context.WithoutCancel(r.Context())))
-	defer cancel()
-	bound := ytdlp.NewDeferredTimer(s.resolveCap, cancel)
-	err = s.metadata.Resolve(ytdlp.WithStartHook(rctx, bound.Start), id, c)
-	stoppedInTime := bound.Stop()
+	var stalled bool
+	stalled, err = ytdlp.CallWithCap(ytdlp.WithInteractive(context.WithoutCancel(r.Context())), s.resolveCap,
+		func(cctx context.Context) error { return s.metadata.Resolve(cctx, id, c) })
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
 			writeJSONError(w, http.StatusConflict, "cookie required")
 			return
 		}
 		// A fired cap surfaces as a bare "context canceled", which tells the
-		// reader nothing — 504 and a sentence do.
-		//
-		// rctx.Err() alongside stoppedInTime: Stop reports false both for a
-		// timer that fired and for one never armed, and never-armed is the
-		// ordinary case for any resolve that failed before reaching exec. Only
-		// the timer cancels rctx. Without that term every ordinary resolve
-		// failure would be reported as a timeout.
-		if !stoppedInTime && rctx.Err() != nil {
+		// reader nothing — 504 and a sentence do. See ytdlp.CallWithCap for
+		// how a stall is told apart from an ordinary resolve failure.
+		if stalled {
 			slog.Warn("channel refresh stalled", "channel_id", id, "after", s.resolveCap)
 			writeJSONError(w, http.StatusGatewayTimeout,
 				"refresh timed out: YouTube did not answer in "+s.resolveCap.String())

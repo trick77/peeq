@@ -219,30 +219,20 @@ func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
 	// Resolve makes exactly one Runner call (Resolver.ResolveChannel), so the
 	// hook fires once and the cap then covers that call plus the two image
 	// fetches after it, which is the work this bound is actually about.
-	rctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	bound := ytdlp.NewDeferredTimer(w.d.ResolveTimeout, cancel)
-	err = w.d.Refresher.Resolve(ytdlp.WithStartHook(withParent(rctx, ctx), bound.Start), channelID, cached)
-	// Stop unconditionally, and NOT inside the && below: it is what disarms the
-	// timer, so short-circuiting past it on the success path would leave an
-	// AfterFunc holding cancel alive for the rest of the cap.
-	stoppedInTime := bound.Stop()
+	//
+	// A cap that fired means yt-dlp really did stall — the hook only arms the
+	// timer once the process is running — so it is reported as such rather
+	// than as the bare "context canceled" it surfaces as. See ytdlp.CallWithCap
+	// for how a stall is told apart from a gate refusal and from a shutdown.
+	var stalled bool
+	stalled, err = ytdlp.CallWithCap(ctx, w.d.ResolveTimeout, func(c context.Context) error {
+		return w.d.Refresher.Resolve(withParent(c, ctx), channelID, cached)
+	})
 	if err != nil && ctx.Err() != nil {
 		// Shutdown mid-refresh: not a failure, not a stall. See the deferred
 		// settle above for why nothing is written.
 		return
 	}
-	// A cap that fired means yt-dlp really did stall — the hook only arms the
-	// timer once the process is running — so this says so rather than reporting
-	// the bare "context canceled" it surfaces as.
-	//
-	// Stop() reporting false is NOT enough on its own: it says the same thing
-	// for a timer that fired and for one that was never armed, and never-armed
-	// is the ordinary outcome whenever the call returns before reaching exec —
-	// the pause gate, the cookie gate, or a resolver that failed outright.
-	// rctx.Err() is what separates them, since only the timer cancels it. The
-	// ctx.Err() == nil term keeps an outer shutdown from being read as a stall.
-	stalled := err != nil && !stoppedInTime && rctx.Err() != nil && ctx.Err() == nil
 	if err != nil {
 		summary := "metadata refresh failed"
 		if stalled {
