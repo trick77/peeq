@@ -142,6 +142,8 @@ type Scheduler struct {
 	rand         func() float64
 	// thumbs feeds the thumbnail drainer Run owns; see thumbs.go.
 	thumbs chan thumbJob
+	// gate is the per-pass cookie and kill-switch check, built from Deps.
+	gate sched.YouTubeGate
 }
 
 // New builds a Scheduler, filling in defaults for the optional Deps fields.
@@ -158,7 +160,10 @@ func New(d Deps) *Scheduler {
 	if d.listSize <= 0 {
 		d.listSize = defaultListSize
 	}
-	return &Scheduler{d: d, rand: sched.PseudoRand(), thumbs: make(chan thumbJob, prefetchQueueSize)}
+	return &Scheduler{
+		d: d, rand: sched.PseudoRand(), thumbs: make(chan thumbJob, prefetchQueueSize),
+		gate: sched.YouTubeGate{CookieStatus: d.CookieStatus, AllowAnonymous: d.AllowAnonymous, Paused: d.YoutubePaused},
+	}
 }
 
 // Run is the scan loop; it blocks until ctx is cancelled. Each pass is
@@ -175,18 +180,11 @@ func (s *Scheduler) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		// Cookie gate: no valid cookie → don't scan (don't hammer), UNLESS the
-		// dev-only anonymous escape hatch is enabled, in which case the poll
-		// proceeds without a cookie exactly like ytdlp.Runner's cookieGate.
-		if s.d.CookieStatus(ctx) != "valid" && !s.d.AllowAnonymous {
-			if !s.sleep(ctx, s.d.PollInterval) {
-				return
-			}
-			continue
-		}
-		// Kill-switch gate: youtube_paused → skip this pass. Re-checked each
-		// poll, so clearing the flag resumes scanning automatically.
-		if s.d.YoutubePaused != nil && s.d.YoutubePaused(ctx) {
+		// Cookie and kill-switch gates: no valid cookie (unless the dev-only
+		// anonymous escape hatch is on) or youtube_paused → skip this pass.
+		// Re-read each poll, so a pasted cookie or a cleared switch resumes
+		// scanning by itself. See sched.YouTubeGate.
+		if !s.gate.Open(ctx) {
 			if !s.sleep(ctx, s.d.PollInterval) {
 				return
 			}

@@ -85,6 +85,8 @@ type Deps struct {
 // jittered interval, so there is nothing here to scatter.
 type Worker struct {
 	d Deps
+	// gate is the per-pass cookie and kill-switch check, built from Deps.
+	gate sched.YouTubeGate
 }
 
 // NewWorker builds a Worker, filling in defaults for the optional Deps.
@@ -101,7 +103,7 @@ func NewWorker(d Deps) *Worker {
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}
-	return &Worker{d: d}
+	return &Worker{d: d, gate: sched.YouTubeGate{CookieStatus: d.CookieStatus, AllowAnonymous: d.AllowAnonymous, Paused: d.YoutubePaused}}
 }
 
 // Run is the refresh loop; it blocks until ctx is cancelled. Each pass is
@@ -112,25 +114,13 @@ func (w *Worker) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		// Cookie gate: no valid cookie → don't call YouTube, UNLESS the
-		// dev-only anonymous escape hatch is enabled. Without this a
-		// cookieless install would burn a failed refresh on every channel,
-		// and (worse) stamp each one as attempted.
-		//
-		// CookieStatus is called unconditionally, matching scan.Scheduler: a
-		// nil-check here would make a caller that forgot to wire it fail OPEN
-		// — silently disabling the gate and calling YouTube with an absent,
-		// stale or blocked cookie. A nil dependency should take the process
-		// down at the first pass, not quietly remove a protection.
-		if w.d.CookieStatus(ctx) != "valid" && !w.d.AllowAnonymous {
-			if !w.sleep(ctx, w.d.PollInterval) {
-				return
-			}
-			continue
-		}
-		// Kill-switch gate: youtube_paused → skip this pass. Re-checked each
-		// poll, so clearing the flag resumes refreshing automatically.
-		if w.d.YoutubePaused != nil && w.d.YoutubePaused(ctx) {
+		// Cookie and kill-switch gates: no valid cookie (unless the dev-only
+		// anonymous escape hatch is on) or youtube_paused → skip this pass.
+		// Without the cookie half a cookieless install would burn a failed
+		// refresh on every channel and, worse, stamp each one as attempted.
+		// Re-read each poll, so a pasted cookie or a cleared switch resumes
+		// refreshing by itself. See sched.YouTubeGate.
+		if !w.gate.Open(ctx) {
 			if !w.sleep(ctx, w.d.PollInterval) {
 				return
 			}
