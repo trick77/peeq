@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { StageToastView, useStageToast } from "../components/StageToast";
 import { Icon } from "../icons";
 import { Spinner, tocGridStyle } from "../ui";
 import {
@@ -80,17 +81,7 @@ export function Share({ token }: { token: string | null }) {
     null,
   );
   // The transient "Skipped ad · 0:45" notice over the stage.
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimerRef = useRef<number | undefined>(undefined);
-
-  // Clear a pending toast timer on unmount so it can't fire into a gone tree.
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current !== undefined) {
-        window.clearTimeout(toastTimerRef.current);
-      }
-    };
-  }, []);
+  const { toast, show: showToast } = useStageToast();
 
   useEffect(() => {
     if (!token) {
@@ -174,16 +165,6 @@ export function Share({ token }: { token: string | null }) {
   const chapters = video.chapters ?? [];
   const segments = video.sponsorblock_segments ?? [];
 
-  // showToast puts a message over the stage briefly. A later toast replaces an
-  // earlier one rather than stacking, so the timer is always reset.
-  function showToast(text: string) {
-    setToast(text);
-    if (toastTimerRef.current !== undefined) {
-      window.clearTimeout(toastTimerRef.current);
-    }
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 2600);
-  }
-
   function handleLoadedMetadata() {
     const el = videoRef.current;
     // Open the subtitle gate first, ahead of everything else, so it still
@@ -256,10 +237,7 @@ export function Share({ token }: { token: string | null }) {
                 />
               )}
             </video>
-            <div className={`stage-toast${toast ? " show" : ""}`} role="status">
-              <Icon name="skipForward" size="15px" />
-              {toast}
-            </div>
+            <StageToastView toast={toast} />
             {/* The scrubber earns its place here only for the SponsorBlock
                 bands — the <video> keeps its native controls, which already
                 seek. It is skipped entirely for a video with no segments, so a

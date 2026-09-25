@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, memo } from "react";
 import { createPortal } from "react-dom";
-import { Icon, type IconName } from "../icons";
+import { Icon } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
 import { AUTO_SKIP, Scrubber, categoryLabel } from "../components/Scrubber";
 import { SleepTimer } from "../components/SleepTimer";
@@ -41,6 +41,7 @@ import { DetailsCard } from "./player/DetailsCard";
 import { MOBILE_QUERY, useMediaQuery } from "../shell/useMediaQuery";
 import { MetaHeader } from "./player/MetaHeader";
 import { useResumeSync } from "./player/useResumeSync";
+import { StageToastView, useStageToast } from "../components/StageToast";
 import { park, useParkedAt, videoHostNode } from "../videoHost";
 import type { NowPlaying } from "../nowPlaying";
 
@@ -245,18 +246,10 @@ function PlayerImpl({
   // the ANSWER changing, not on the parent re-rendering.
   const onMediaKnownRef = useRef(onMediaKnown);
   onMediaKnownRef.current = onMediaKnown;
-  // toast — the transient notice over the video stage. It began as the
-  // SponsorBlock skip message and now carries action failures too, hence the
-  // icon and tone: tone drives the styling, so a failure stays red even if it
-  // later picks a more specific icon, and an advisory that happens to use the
-  // warning glyph doesn't turn red by accident. `error` is not an option for
-  // failures — a non-null error replaces the whole player view (see the early
-  // return below), and losing the video is worse than the failure itself.
-  const [toast, setToast] = useState<{
-    text: string;
-    icon: IconName;
-    tone: "info" | "warn";
-  } | null>(null);
+  // The stage toast — see StageToast. `error` is not an option for failures:
+  // a non-null error replaces the whole player view (see the early return
+  // below), and losing the video is worse than the failure itself.
+  const { toast, show: showToast, clear: clearToast } = useStageToast();
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [ccOn, setCcOn] = useState(false);
@@ -387,7 +380,6 @@ function PlayerImpl({
   // (it *is* the preference), which re-runs that effect and would otherwise
   // immediately re-apply the default on top of the user's click.
   const ccAppliedForRef = useRef<string | null>(null);
-  const toastTimerRef = useRef<number | undefined>(undefined);
   // Sleep timer — "stop playing in N minutes", for watching in bed.
   //
   // It is a budget of milliseconds drained by wall-clock deltas, not a
@@ -412,7 +404,7 @@ function PlayerImpl({
     resumeAppliedRef.current = false;
     setVideo(null);
     setError(null);
-    setToast(null);
+    clearToast();
     setCurrentTime(0);
     setDuration(0);
     setCcOn(false);
@@ -548,14 +540,6 @@ function PlayerImpl({
     if (!video?.id) return;
     onMediaKnownRef.current?.(video.id, !!video.has_media);
   }, [video?.id, video?.has_media]);
-
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current !== undefined) {
-        window.clearTimeout(toastTimerRef.current);
-      }
-    };
-  }, []);
 
   // Live summary status (Task 10): the initial getVideo load above only
   // captures summary_status at mount time — without this, a "Summarizing…"
@@ -797,14 +781,10 @@ function PlayerImpl({
     positionKnownRef.current = true;
   }
 
-  // showToast puts a message over the stage for a few seconds. A later toast
-  // replaces an earlier one, so the timer is always reset rather than stacked
-  // — two overlapping notices would otherwise leave the second one dismissed
-  // early by the first one's timeout.
+  // A toast raised from an async continuation must check openVideoIdRef
+  // first: after the user has moved on it both misattributes the message and
+  // paints over the next video's stage.
   //
-  // Callers reached from an async continuation must check openVideoIdRef
-  // first: a toast raised after the user has moved on both misattributes the
-  // message and schedules a timer the unmount cleanup can no longer clear.
   // failToast is showToast for an action that failed after an await: only if
   // the video it was about is still the one open, and always in the warning
   // shape. `error` is never an option for these — a non-null error replaces
@@ -812,14 +792,6 @@ function PlayerImpl({
   // losing the video is worse than the failure itself.
   function failToast(id: string, text: string) {
     if (openVideoIdRef.current === id) showToast(text, "warning", "warn");
-  }
-
-  function showToast(text: string, icon: IconName, tone: "info" | "warn") {
-    setToast({ text, icon, tone });
-    if (toastTimerRef.current !== undefined) {
-      window.clearTimeout(toastTimerRef.current);
-    }
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 2600);
   }
 
   // armSleep is the SleepTimer pill's only entry point: minutes to start a
@@ -1464,15 +1436,7 @@ function PlayerImpl({
               ) : null}
             </div>
           )}
-          <div
-            className={`stage-toast${toast ? " show" : ""}${
-              toast?.tone === "warn" ? " warn" : ""
-            }`}
-            role="status"
-          >
-            <Icon name={toast?.icon ?? "skipForward"} size="15px" />
-            {toast?.text}
-          </div>
+          <StageToastView toast={toast} />
           {/* Nothing to scrub without a file: the bar would render a played
               fill that can never move and a seek that lands nowhere. */}
           {video.has_media && (
