@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/failmonitor"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/settings"
@@ -224,7 +225,7 @@ func (f *fakeMonitor) Reset() {
 }
 
 // withFailMonitor is a newTestWorker option that injects a FailMonitor.
-func withFailMonitor(fm FailMonitor) func(*Deps) {
+func withFailMonitor(fm failmonitor.Sink) func(*Deps) {
 	return func(d *Deps) { d.FailMonitor = fm }
 }
 

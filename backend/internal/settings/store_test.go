@@ -309,7 +309,7 @@ func TestGet_neverCarriesTheAPIToken(t *testing.T) {
 }
 
 // fakeRecorder captures the access rows SetCookie emits, for the transition
-// tests below. Satisfies the settings.ActivityRecorder interface.
+// tests below. Satisfies the activity.Recorder interface.
 type fakeRecorder struct{ events []activity.Event }
 
 func (f *fakeRecorder) Record(e activity.Event) { f.events = append(f.events, e) }

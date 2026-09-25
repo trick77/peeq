@@ -21,6 +21,7 @@ import (
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/failmonitor"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/mediaprobe"
@@ -58,23 +59,12 @@ type Runner interface {
 	Metadata(ctx context.Context, rawURL string) (*ytdlp.Meta, error)
 }
 
-// FailMonitor is the subset of *failmonitor.Monitor the worker uses to feed
-// the auto-pause heuristic. Nil disables it (tests that don't care).
-type FailMonitor interface {
-	Fail(entityID string)
-	Reset()
-}
-
-// ActivityRecorder records a download outcome for the Activity feed. Narrow and
-// nil-safe like FailMonitor; nil in tests, the shared *activity.Store in prod.
-type ActivityRecorder interface {
-	Record(activity.Event)
-}
-
 // SummaryEnqueuer is the subset of *summaryjobs.Store the worker needs to
-// queue a summary job after a successful download. Declaring it here (rather
-// than importing the concrete type) keeps the worker testable with a spy and
-// avoids an import cycle back to the summaryjobs package.
+// queue a summary job after a successful download. Declared here rather than
+// imported because importing summaryjobs would be an import cycle. The
+// failure monitor and the activity recorder come from their own packages
+// (failmonitor.Sink, activity.Recorder) — both import nothing of ours, so
+// they can be shared without one.
 type SummaryEnqueuer interface {
 	Enqueue(videoID string) (int64, error)
 }
@@ -202,9 +192,9 @@ type Deps struct {
 	YoutubePaused func() bool
 	// FailMonitor, when set, is fed a Fail(videoID) on each count-worthy
 	// failure and Reset() on each success, driving auto-pause.
-	FailMonitor FailMonitor
+	FailMonitor failmonitor.Sink
 	// Activity, when set, records each terminal download for the Activity feed.
-	Activity ActivityRecorder
+	Activity activity.Recorder
 }
 
 // Worker is the download loop. Construct with New and drive with Run; other
@@ -889,7 +879,7 @@ func (w *Worker) succeed(ctx context.Context, job *jobs.Job, video *videos.Video
 	if w.deps.FailMonitor != nil {
 		w.deps.FailMonitor.Reset()
 	}
-	w.recordActivity(activity.Event{
+	activity.Record(w.deps.Activity, activity.Event{
 		Kind: activity.KindDownload, Outcome: activity.OutcomeOK,
 		SubjectID: video.ID, Subject: firstNonEmpty(video.Title, video.ID), Summary: "downloaded",
 		Detail: humanSize(res.FilesizeBytes),
@@ -1036,13 +1026,6 @@ func (w *Worker) storeThumbnail(videoID, thumbPath string) {
 	_ = os.Remove(safe)
 }
 
-// recordActivity records a download event for the Activity feed, nil-safe.
-func (w *Worker) recordActivity(e activity.Event) {
-	if w.deps.Activity != nil {
-		w.deps.Activity.Record(e)
-	}
-}
-
 // humanSize renders a byte count as a compact KB/MB/GB string for a download's
 // activity detail. A sub-megabyte file must not read as "0 MB" (that looks like
 // an empty/failed download), so it falls through to KB. Zero bytes (yt-dlp did
@@ -1099,7 +1082,7 @@ func (w *Worker) fail(job *jobs.Job, video *videos.Video, attempts int, msg stri
 		if subject == "" {
 			subject = video.ID
 		}
-		w.recordActivity(activity.Event{
+		activity.Record(w.deps.Activity, activity.Event{
 			Kind: activity.KindDownload, Outcome: activity.OutcomeFail,
 			SubjectID: video.ID, Subject: subject, Summary: "download failed",
 			Detail: msg,
@@ -1173,7 +1156,7 @@ func (w *Worker) park(video *videos.Video, reason string) bool {
 	// way its download does, so the videos row is usually still blank here
 	// while the ledger carries what the channel listing said.
 	subject := firstNonEmpty(row.Title, video.Title, video.ID)
-	w.recordActivity(activity.Event{
+	activity.Record(w.deps.Activity, activity.Event{
 		Kind: activity.KindDownload, Outcome: activity.OutcomeFail,
 		SubjectID: video.ID, Subject: subject, Summary: "not available",
 		Detail: gateDetail(reason),

@@ -605,7 +605,7 @@ func runYtdlpVersionCheckTicker(
 	interval time.Duration,
 	fetchLatest func(context.Context) (string, error),
 	status *ytdlp.StatusCache,
-	rec *activity.Store,
+	rec activity.Recorder,
 ) {
 	// Track the release last reported so the Activity record fires only when a
 	// release is newly discovered (the silence rule): most checks find the same
@@ -669,8 +669,8 @@ func runYtdlpVersionCheckTicker(
 		// declaration: an update that was already pending before this process
 		// started is not news, and logging it again on every restart is exactly
 		// the noise the silence rule exists to keep out of the agenda.
-		if !firstSighting && rec != nil {
-			rec.Record(activity.Event{
+		if !firstSighting {
+			activity.Record(rec, activity.Event{
 				Kind: activity.KindYtdlp, Outcome: activity.OutcomeWarn,
 				Summary: "yt-dlp " + latest + " available",
 				Detail:  "Installed " + installed + ". Update from Settings.",

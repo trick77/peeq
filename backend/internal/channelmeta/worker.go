@@ -11,13 +11,6 @@ import (
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
-// ActivityRecorder records a metadata-refresh outcome for the Activity feed.
-// Nil-safe. Only failures are recorded — a routine weekly refresh succeeding is
-// the definition of no-news, so recording it would just be noise.
-type ActivityRecorder interface {
-	Record(activity.Event)
-}
-
 const (
 	// refreshInterval is how long a subscribed channel's metadata is allowed
 	// to stand before it is re-read. A week: names, artwork and subscriber
@@ -60,7 +53,7 @@ type Deps struct {
 	// kill-switch).
 	YoutubePaused func(ctx context.Context) bool
 	// Activity, when set, records a FAILED metadata refresh for the Activity feed.
-	Activity     ActivityRecorder
+	Activity     activity.Recorder
 	Now          func() time.Time // injectable clock (defaults to time.Now)
 	PollInterval time.Duration    // defaults to pollInterval
 	// ResolveTimeout bounds one refresh, measured from the moment yt-dlp starts
@@ -251,16 +244,14 @@ func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
 				"channel_id", channelID, "after", w.d.ResolveTimeout)
 		}
 		w.d.Logger.Warn("channel metadata refresh failed", "channel_id", channelID, "err", err)
-		if w.d.Activity != nil {
-			name := cached.Name
-			if name == "" {
-				name = channelID
-			}
-			w.d.Activity.Record(activity.Event{
-				Kind: activity.KindChannelMeta, Outcome: activity.OutcomeWarn,
-				SubjectID: channelID, Subject: name, Summary: summary,
-			})
+		name := cached.Name
+		if name == "" {
+			name = channelID
 		}
+		activity.Record(w.d.Activity, activity.Event{
+			Kind: activity.KindChannelMeta, Outcome: activity.OutcomeWarn,
+			SubjectID: channelID, Subject: name, Summary: summary,
+		})
 		return
 	}
 	w.d.Logger.Info("channel metadata refreshed", "channel_id", channelID)
