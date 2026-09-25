@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { parseSqlUTC } from "../format";
 import { Icon } from "../icons";
 import { Button } from "../ui";
 import {
@@ -21,7 +22,7 @@ const TTLS: { id: ShareTTL; label: string }[] = [
 // remaining (rounded up), or null when the link never expires.
 export function daysUntil(expiresAt: string | undefined): number | null {
   if (!expiresAt) return null;
-  const exp = new Date(expiresAt.replace(" ", "T") + "Z").getTime();
+  const exp = parseSqlUTC(expiresAt).getTime();
   if (Number.isNaN(exp)) return null;
   return Math.max(0, Math.ceil((exp - Date.now()) / 86_400_000));
 }

@@ -11,69 +11,20 @@ import {
   refreshChannel,
 } from "../api/channels";
 import { CookieRequiredError } from "../api/downloads";
-import { formatAge, gradientClassFor } from "../format";
+import {
+  formatAge,
+  gradientClassFor,
+  formatRuntime,
+  formatSubscribers,
+  formatStamp,
+  formatSize,
+} from "../format";
 import type { ActivityEvent, ChannelDetail } from "../api/types";
 import { ArchiveTab } from "./channel/ArchiveTab";
 import { NewTab } from "./channel/NewTab";
 import { SettingsTab } from "./channel/SettingsTab";
 
 type TabId = "archive" | "new" | "settings";
-
-// formatRuntime renders a total duration as whole hours ("61 h"), falling
-// back to minutes below an hour so a small channel does not read "0 h".
-export function formatRuntime(seconds: number): string {
-  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
-  return `${Math.round(seconds / 3600)} h`;
-}
-
-// formatBytes renders a size in the largest unit that keeps it readable.
-// Binary (1024-based) units, matching how disk usage is shown elsewhere
-// in peeq — a decimal GB here would read the wrong number vs. the OS.
-export function formatBytes(bytes: number): string {
-  const TB = 1024 ** 4;
-  const GB = 1024 ** 3;
-  const MB = 1024 ** 2;
-  const KB = 1024;
-  if (bytes >= TB) return `${(bytes / TB).toFixed(1)} TB`;
-  if (bytes >= GB) return `${(bytes / GB).toFixed(1)} GB`;
-  if (bytes >= MB) return `${Math.round(bytes / MB)} MB`;
-  return `${Math.round(bytes / KB)} kB`;
-}
-
-// formatSubscribers renders a subscriber count the way YouTube itself does —
-// "7.2M", "412K" — because that is the number the user recognises from the
-// channel page they came from. undefined means YouTube never reported one
-// (the channel hides it, or peeq has never read the channel), which is a
-// different thing from zero and reads as "—".
-export function formatSubscribers(n: number | undefined): string {
-  if (!n || n < 0) return "—";
-  // One decimal below 100 of a unit ("7.2M"), whole numbers above it
-  // ("412K") — more precision than that is noise on a number this large.
-  const short = (v: number) =>
-    v >= 100 ? String(Math.round(v)) : v.toFixed(1).replace(/\.0$/, "");
-  if (n >= 1_000_000) return `${short(n / 1_000_000)}M`;
-  if (n >= 1000) {
-    const k = short(n / 1000);
-    // Rounding can push a count just under a million over the boundary
-    // (999,999 → "1000K"), which is not how anyone writes it.
-    return k === "1000" ? "1M" : `${k}K`;
-  }
-  return String(n);
-}
-
-// formatStamp renders one of peeq's stored timestamps as a plain local date.
-// The stored form has no zone marker but is always UTC, so the "Z" is what
-// stops the browser reading it as local time and shifting the date. The space
-// between date and time is swapped for a "T" first, for the reason parseSqlUTC
-// in channel/schedule.ts spells out: "2026-07-26 08:00:00Z" is not ISO 8601 and
-// only parses by engine leniency, so an engine that refuses it would print an
-// empty date here rather than the stamp.
-export function formatStamp(stored: string | undefined): string {
-  if (!stored) return "";
-  const d = new Date(stored.replace(" ", "T") + "Z");
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString();
-}
 
 // ScanStamp is the "when did peeq last look for new videos" segment. It is its
 // own component because it belongs to BOTH the healthy reading and the failed
@@ -496,7 +447,9 @@ export function Channel({
                 <div className="l">runtime</div>
               </div>
               <div className="chan-stat">
-                <div className="k">{formatBytes(detail.disk_bytes)}</div>
+                <div className="k">
+                  {formatSize(detail.disk_bytes) || "0 B"}
+                </div>
                 <div className="l">on disk</div>
               </div>
               <div className="chan-stat">

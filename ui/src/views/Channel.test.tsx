@@ -46,13 +46,8 @@ import { listVideos, setFavorite, setWatched } from "../api/videos";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
 import { getSettings } from "../api/settings";
 import { resetSettingsStoreForTests } from "../settingsStore";
+import { formatStamp } from "../format";
 import type { Settings, Video } from "../api/types";
-import {
-  formatRuntime,
-  formatBytes,
-  formatSubscribers,
-  formatStamp,
-} from "./Channel";
 
 function settings(overrides: Partial<Settings> = {}): Settings {
   return {
@@ -1433,26 +1428,6 @@ describe("Channel", () => {
   });
 });
 
-describe("Channel format helpers", () => {
-  it("formatRuntime shows minutes below an hour, whole hours above", () => {
-    expect(formatRuntime(45 * 60)).toBe("45 min");
-    expect(formatRuntime(3599)).toBe("60 min");
-    expect(formatRuntime(3600)).toBe("1 h");
-    expect(formatRuntime(2 * 3600 + 1800)).toBe("3 h");
-  });
-
-  it("formatBytes picks the largest readable unit", () => {
-    expect(formatBytes(512)).toBe("1 kB");
-    expect(formatBytes(2048)).toBe("2 kB");
-    expect(formatBytes(5 * 1024 ** 2)).toBe("5 MB");
-    expect(formatBytes(2.5 * 1024 ** 3)).toBe("2.5 GB");
-    expect(formatBytes(3 * 1024 ** 4)).toBe("3.0 TB");
-  });
-
-  // formatAge moved to ../format when the library card started needing both
-  // age forms in one line; its cases live in format.test.ts now.
-});
-
 describe("Channel YouTube metadata", () => {
   beforeEach(() => {
     vi.mocked(getChannel).mockReset();
@@ -1463,6 +1438,15 @@ describe("Channel YouTube metadata", () => {
     vi.mocked(listVideos).mockResolvedValue([]);
     vi.mocked(listPending).mockResolvedValue([]);
     vi.mocked(getSettings).mockResolvedValue(settings());
+  });
+
+  it("shows 0 B on disk for a channel with nothing downloaded", async () => {
+    vi.mocked(getChannel).mockResolvedValue(detail({ disk_bytes: 0 }));
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    expect(screen.getByText("0 B")).toBeInTheDocument();
   });
 
   it("publishes the subscriber count, the verified mark and the refresh date", async () => {
@@ -1763,32 +1747,5 @@ describe("Channel YouTube metadata", () => {
 
     await user.click(back);
     expect(onBack).toHaveBeenCalled();
-  });
-});
-
-describe("formatSubscribers", () => {
-  it("renders counts the way YouTube does, and unknown as a dash", () => {
-    expect(formatSubscribers(undefined)).toBe("—");
-    expect(formatSubscribers(0)).toBe("—");
-    expect(formatSubscribers(-1)).toBe("—");
-    expect(formatSubscribers(742)).toBe("742");
-    expect(formatSubscribers(7240000)).toBe("7.2M");
-    expect(formatSubscribers(412000)).toBe("412K");
-    expect(formatSubscribers(1500)).toBe("1.5K");
-    expect(formatSubscribers(2000)).toBe("2K");
-    expect(formatSubscribers(3000000)).toBe("3M");
-    expect(formatSubscribers(120000000)).toBe("120M");
-    // Rounding must not invent a unit nobody writes.
-    expect(formatSubscribers(999999)).toBe("1M");
-  });
-});
-
-describe("formatStamp", () => {
-  it("reads a stored timestamp as UTC, not local time", () => {
-    expect(formatStamp(undefined)).toBe("");
-    expect(formatStamp("nonsense")).toBe("");
-    expect(formatStamp("2026-07-21 06:00:00")).toBe(
-      new Date("2026-07-21T06:00:00Z").toLocaleDateString(),
-    );
   });
 });

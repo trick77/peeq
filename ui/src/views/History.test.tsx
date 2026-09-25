@@ -686,7 +686,7 @@ describe("History regressions", () => {
   });
 
   // dayLabel round-tripped `now` through toISOString(), which already ends in
-  // "Z"; parseUTC then appended a second one, giving an Invalid Date. Both the
+  // "Z"; the parser of the day appended a second one, giving an Invalid Date. Both the
   // today and yesterday keys read "NaN-NaN-NaN", matched nothing, and the two
   // labels anyone actually reads never rendered. Fixed dates in the other test
   // could not catch it — only an event stamped relative to now can.

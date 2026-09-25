@@ -80,10 +80,22 @@ export function summaryPhaseLabel(phase: string | undefined): string {
 // means daysSince and both formatters get it for free, whatever they are
 // handed.
 function parseStamp(iso: string): number {
-  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(iso)
-    ? iso.replace(" ", "T") + "Z"
-    : iso;
-  return new Date(normalized).getTime();
+  return parseSqlUTC(iso).getTime();
+}
+
+// parseSqlUTC turns a timestamp the backend sends into a Date. SQLite's
+// datetime('now') text ("2026-03-01 09:00:00") is UTC with no zone marker,
+// and JS reads that space-separated form as LOCAL time; the space is swapped
+// for a "T" (the bare "…Z" suffix on the space form is not ISO 8601 and only
+// parses by engine leniency) and the "Z" appended. Any other shape — a
+// date-only published_at, a true ISO stamp — is handed to Date as it is.
+// Every place that reads a stored stamp goes through here; the same fix used
+// to be spelled out at each call site.
+export function parseSqlUTC(stamp: string): Date {
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(stamp)
+    ? stamp.replace(" ", "T") + "Z"
+    : stamp;
+  return new Date(normalized);
 }
 
 // daysBetween returns the whole number of days elapsed from `from` (an ISO
@@ -224,6 +236,7 @@ export function resolutionLabel(height: number | undefined): string {
 // caller.
 export function formatSize(bytes: number | undefined): string {
   if (!bytes || bytes <= 0) return "";
+  if (bytes >= 1024 ** 4) return `${(bytes / 1024 ** 4).toFixed(1)} TB`;
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -374,4 +387,41 @@ export function languageLabel(raw: string | undefined): string {
     displayNames ??= null;
     return tag.toUpperCase();
   }
+}
+
+// formatRuntime renders a total duration as whole hours ("61 h"), falling
+// back to minutes below an hour so a small channel does not read "0 h".
+export function formatRuntime(seconds: number): string {
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  return `${Math.round(seconds / 3600)} h`;
+}
+
+// formatSubscribers renders a subscriber count the way YouTube itself does —
+// "7.2M", "412K" — because that is the number the user recognises from the
+// channel page they came from. undefined means YouTube never reported one
+// (the channel hides it, or peeq has never read the channel), which is a
+// different thing from zero and reads as "—".
+export function formatSubscribers(n: number | undefined): string {
+  if (!n || n < 0) return "—";
+  // One decimal below 100 of a unit ("7.2M"), whole numbers above it
+  // ("412K") — more precision than that is noise on a number this large.
+  const short = (v: number) =>
+    v >= 100 ? String(Math.round(v)) : v.toFixed(1).replace(/\.0$/, "");
+  if (n >= 1_000_000) return `${short(n / 1_000_000)}M`;
+  if (n >= 1000) {
+    const k = short(n / 1000);
+    // Rounding can push a count just under a million over the boundary
+    // (999,999 → "1000K"), which is not how anyone writes it.
+    return k === "1000" ? "1M" : `${k}K`;
+  }
+  return String(n);
+}
+
+// formatStamp renders one of peeq's stored timestamps as a plain local date,
+// or "" for nothing / an unreadable stamp.
+export function formatStamp(stored: string | undefined): string {
+  if (!stored) return "";
+  const d = parseSqlUTC(stored);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString();
 }

@@ -1,3 +1,4 @@
+import { parseSqlUTC } from "../../format";
 import type { ChannelDetail, ScanResult } from "../../api/types";
 import { DOT } from "../../sep";
 
@@ -18,14 +19,6 @@ import { DOT } from "../../sep";
 // with "Checked" / "Never checked" / "next check", which is the same species
 // of confusion as the single "Refreshed" stamp that hid the scan date — one
 // event wearing several names, so no two surfaces obviously talk about it.
-
-// parseSqlUTC turns the backend's SQLite text timestamp ("2026-07-25 06:11:14",
-// always UTC, no zone suffix) into a Date. The space-separated form is not ISO
-// 8601, so appending "Z" alone leans on engine leniency; swapping the space for
-// a "T" first makes it a form every engine parses per spec.
-function parseSqlUTC(s: string): Date {
-  return new Date(s.replace(" ", "T") + "Z");
-}
 
 // isScanQueued reports whether this channel is waiting to be scanned: its next
 // scan is due at or before now, so the loop will claim it on its next poll.

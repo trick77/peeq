@@ -1,11 +1,7 @@
 import type { MouseEvent } from "react";
 import { formatDuration } from "../format";
 
-export type SponsorblockSegment = {
-  category: string;
-  start_time: number;
-  end_time: number;
-};
+import type { SponsorblockSegment } from "../api/types";
 
 // AUTO_SKIP is the set of categories the player jumps past on its own: paid
 // sponsor reads, unpaid self-promotion, and "like and subscribe" reminders.
