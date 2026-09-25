@@ -1683,3 +1683,58 @@ func TestReprocess_enqueueFails_500_rowUntouched(t *testing.T) {
 		t.Fatalf("reset should have rolled back with the failed enqueue: %+v", v)
 	}
 }
+
+// TestSearch_videoReadError_500 pins the preload's fault policy: the search
+// cannot be answered without the videos behind its hits.
+func TestSearch_videoReadError_500(t *testing.T) {
+	deps, db, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "physics talk"}); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{{Ordinal: 0, Text: "a chunk about entropy", StartSeconds: 5}})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if _, err := db.Exec(`ALTER TABLE videos RENAME COLUMN title TO title_x`); err != nil {
+		t.Fatalf("rename column: %v", err)
+	}
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=entropy&mode=find", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSearch_readsPastThePreloadLazily pins the fallback: the preload covers
+// the first k distinct hit videos, and a hit beyond them (reached here
+// because the first video's row is gone while its chunks remain) is read on
+// demand, so the result is still found.
+func TestSearch_readsPastThePreloadLazily(t *testing.T) {
+	deps, db, ragStore := searchTestDepsWithStores(t)
+	for _, id := range []string{"v1", "v2"} {
+		if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "u", Title: "talk " + id}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+		seedChunks(t, ragStore, id, []rag.ChunkRow{{Ordinal: 0, Text: "a chunk about entropy in " + id, StartSeconds: 5}})
+	}
+	// Remove v1's row but keep its chunks, on one connection so the pragma
+	// and the delete share it.
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(context.Background(), `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(context.Background(), `DELETE FROM videos WHERE id = 'v1'`); err != nil {
+		t.Fatal(err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/search?q=entropy&mode=find&k=1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "v2") || strings.Contains(rec.Body.String(), `"v1"`) {
+		t.Fatalf("v2 should be found past the preload and v1 skipped, body = %s", rec.Body.String())
+	}
+}

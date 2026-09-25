@@ -1491,3 +1491,27 @@ func TestCoverageDiagDistinguishesNeverRanFromEmpty(t *testing.T) {
 		t.Errorf("empty coverage logged %q, want the zeroes spelled out", got)
 	}
 }
+
+// TestVideoLookup_noStoreAndPreloadFailure pins the lookup's two degraded
+// shapes: without a store every get is nil, and a failed preload falls back
+// to per-id reads (which fail the same way here) without panicking.
+func TestVideoLookup_noStoreAndPreloadFailure(t *testing.T) {
+	hits := []rag.Hit{{VideoID: "v1"}, {VideoID: "v2"}}
+	if got := newVideoLookup(nil, hits).get("v1"); got != nil {
+		t.Fatalf("no store: get = %+v, want nil", got)
+	}
+	deps, db, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE videos RENAME COLUMN title TO title_x`); err != nil {
+		t.Fatal(err)
+	}
+	l := newVideoLookup(deps.Videos, hits)
+	if len(l.seen) != 0 {
+		t.Fatalf("a failed preload should cache nothing, got %d", len(l.seen))
+	}
+	if got := l.get("v1"); got != nil {
+		t.Fatalf("get after a failed preload = %+v, want nil", got)
+	}
+}
