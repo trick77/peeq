@@ -229,28 +229,12 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	// subscribe=false succeeds and leaves the existing subscription intact —
 	// echoing the request would tell the caller "not subscribed" about a
 	// channel that is subscribed and will keep being scanned.
-	subscribed, err := s.channelSubscribed(ucid)
+	sub, err := s.channels.GetSubscription(ucid)
 	if err != nil {
 		serverError(w, r, err, "load subscription state failed")
 		return
 	}
-	writeJSONStatus(w, http.StatusCreated, map[string]any{"id": ucid, "name": name, "subscribed": subscribed})
-}
-
-// channelSubscribed reports whether channelID currently has a subscription
-// row. It reuses the List("subscribed") + scan pattern handleChannelsPut
-// already relies on rather than adding a store method for one caller.
-func (s *server) channelSubscribed(channelID string) (bool, error) {
-	items, err := s.channels.List("subscribed")
-	if err != nil {
-		return false, err
-	}
-	for i := range items {
-		if items[i].ID == channelID {
-			return true, nil
-		}
-	}
-	return false, nil
+	writeJSONStatus(w, http.StatusCreated, map[string]any{"id": ucid, "name": name, "subscribed": sub != nil})
 }
 
 // handleChannelsList returns the channels worth showing, optionally narrowed
@@ -481,12 +465,12 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 			out.NextScanAt = sub.NextScanAt
 		}
 		if s.ledger != nil {
-			pending, perr := s.ledger.ListPendingForChannel(id)
+			n, perr := s.ledger.CountPendingForChannel(id)
 			if perr != nil {
 				serverError(w, r, perr, "load pending failed")
 				return
 			}
-			out.PendingCount = len(pending)
+			out.PendingCount = n
 		}
 	}
 

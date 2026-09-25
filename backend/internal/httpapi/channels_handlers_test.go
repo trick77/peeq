@@ -599,7 +599,7 @@ func TestChannelDetail_getSubscriptionError_500(t *testing.T) {
 // failure for an added channel is a 500. GetSubscription must still
 // succeed (sub can legitimately be nil — added but not subscribed), so
 // only the channel_videos table is dropped.
-func TestChannelDetail_listPendingError_500(t *testing.T) {
+func TestChannelDetail_pendingCountError_500(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{UCID: "UCs", Name: "S"}})
 	h := New(deps)
 	if rec := postJSON(t, h, "/api/channels", map[string]any{"url": "https://www.youtube.com/@s"}); rec.Code != http.StatusCreated {
@@ -3558,5 +3558,33 @@ func TestChannelsDelete_activeJobsError_500(t *testing.T) {
 	}
 	if c, _ := h.channels.Get("UC1"); c == nil {
 		t.Fatal("channel was deleted although its jobs could not be read")
+	}
+}
+
+// TestChannelDetail_pendingCount pins the count on the channel page, which
+// is now a COUNT rather than the length of the full pending list.
+func TestChannelDetail_pendingCount(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	seedChannelAndPending(t, deps, "UCcount", "p1")
+	seedChannelAndPending(t, deps, "UCcount", "p2")
+	if _, err := deps.Channels.DB().Exec(`UPDATE channels SET added_at = datetime('now') WHERE id = 'UCcount'`); err != nil {
+		t.Fatal(err)
+	}
+	h := New(deps)
+	req := httptest.NewRequest(http.MethodGet, "/api/channels/UCcount", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		PendingCount int `json:"pending_count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.PendingCount != 2 {
+		t.Fatalf("pending_count = %d, want 2, body = %s", got.PendingCount, rec.Body.String())
 	}
 }

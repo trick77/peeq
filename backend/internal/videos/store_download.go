@@ -2,6 +2,8 @@ package videos
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/trick77/peeq/internal/store"
@@ -192,4 +194,29 @@ func (s *Store) Tombstone(id string) error {
 		return fmt.Errorf("tombstone video %s: commit: %w", id, err)
 	}
 	return nil
+}
+
+// MediaRef is what the media range handler needs from a video: where the
+// file is and what to call it on a save-to-disk.
+type MediaRef struct {
+	ID        string
+	Title     string
+	MediaPath string
+}
+
+// MediaRef reads just the three columns the range handler uses. A player
+// re-issues range requests throughout playback, and the full row (with its
+// correlated subqueries and the summary text) was read on every one of
+// them. (nil, nil) when no such video exists.
+func (s *Store) MediaRef(id string) (*MediaRef, error) {
+	var ref MediaRef
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT id, title, media_path FROM videos WHERE id = ?`, id).Scan(&ref.ID, &ref.Title, &ref.MediaPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("media ref %s: %w", id, err)
+	}
+	return &ref, nil
 }

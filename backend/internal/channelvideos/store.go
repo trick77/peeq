@@ -283,6 +283,20 @@ ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_a
 	return scanPendingEntries(rows)
 }
 
+// CountPendingForChannel is the number the channel page shows beside its
+// Inbox link. A COUNT rather than len(ListPendingForChannel(...)): the list
+// carries three correlated subqueries per row for a page that only wanted
+// the number.
+func (s *Store) CountPendingForChannel(channelID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM channel_videos WHERE channel_id = ? AND state = 'pending'`, channelID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count pending for channel %s: %w", channelID, err)
+	}
+	return n, nil
+}
+
 // ListPendingForChannel is ListPending scoped to one channel. The
 // idx_channel_videos_channel index already supports this predicate.
 func (s *Store) ListPendingForChannel(channelID string) ([]Entry, error) {
