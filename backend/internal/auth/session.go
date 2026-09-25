@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/trick77/peeq/internal/store"
 )
 
 // SessionCookieName is the browser cookie holding the raw (unhashed) session
@@ -177,11 +179,11 @@ func hashToken(token string) string {
 }
 
 func formatTime(t time.Time) string {
-	return t.UTC().Format("2006-01-02 15:04:05")
+	return store.FormatTime(t)
 }
 
 func parseDBTime(value string) (time.Time, error) {
-	t, err := time.ParseInLocation("2006-01-02 15:04:05", value, time.UTC)
+	t, err := store.ParseTime(value)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse db time: %w", err)
 	}

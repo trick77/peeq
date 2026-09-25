@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/store"
 )
 
 // seedSkippableChannel creates a subscribed channel with both schedule columns
@@ -199,8 +200,8 @@ func TestSkip_neverMovesAnOccurrenceEarlier(t *testing.T) {
 	cookie := loginAndGetCookie(t, h)
 	// The far end of each jitter spread: 30h for the scan (max 27h), 8 days for
 	// the refresh (max 7.5 days).
-	scanAt := time.Now().UTC().Add(30 * time.Hour).Format(skipTimeLayout)
-	metaAt := time.Now().UTC().Add(8 * 24 * time.Hour).Format(skipTimeLayout)
+	scanAt := time.Now().UTC().Add(30 * time.Hour).Format(store.TimeLayout)
+	metaAt := time.Now().UTC().Add(8 * 24 * time.Hour).Format(store.TimeLayout)
 	seedSkippableChannel(t, ch, "UCx", scanAt, metaAt)
 
 	scanResp := decodeSkip(t, postSkip(t, h, cookie, "/api/channels/UCx/skip-scan", ""))
@@ -374,13 +375,13 @@ func TestSkipAnchor_choosesTheLaterInstantAndToleratesJunk(t *testing.T) {
 	// A future instant wins: measuring from now instead would pull the next
 	// occurrence in rather than push it out.
 	future := now.Add(3 * time.Hour)
-	if got := skipAnchor(now, future.Format(skipTimeLayout)); !got.Equal(future) {
+	if got := skipAnchor(now, future.Format(store.TimeLayout)); !got.Equal(future) {
 		t.Errorf("future stored instant: got %v, want %v", got, future)
 	}
 
 	// A past instant loses — an overdue row must not skip to a moment that has
 	// already been and gone.
-	past := now.Add(-3 * time.Hour).Format(skipTimeLayout)
+	past := now.Add(-3 * time.Hour).Format(store.TimeLayout)
 	if got := skipAnchor(now, past); !got.Equal(now) {
 		t.Errorf("past stored instant: got %v, want %v", got, now)
 	}
@@ -415,7 +416,7 @@ func TestSkipScan_landsExactlyOneCycleLater(t *testing.T) {
 	// the wall clock.
 	scanSlot := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	metaSlot := time.Unix(scanSlot.Unix()/604800*604800, 0).UTC().Add(12 * time.Hour)
-	const layout = skipTimeLayout
+	const layout = store.TimeLayout
 	seedSkippableChannel(t, ch, "UCx", scanSlot.Format(layout), metaSlot.Format(layout))
 
 	scan := decodeSkip(t, postSkip(t, h, cookie, "/api/channels/UCx/skip-scan", ""))

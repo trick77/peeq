@@ -8,6 +8,7 @@ import (
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/sched"
+	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
@@ -35,7 +36,6 @@ const (
 	// and two image fetches, but it is left where it was: shortening it is a
 	// separate decision from fixing what it measures.
 	resolveTimeout = 5 * time.Minute
-	// sqlTimeLayout is declared in refresher.go.
 )
 
 // Deps are the worker's collaborators. Refresher and Channels are required.
@@ -139,10 +139,10 @@ func (w *Worker) Run(ctx context.Context) {
 // already showing a name and an avatar can wait, one showing nothing cannot
 // wait *instead* of it.
 func (w *Worker) claim() *channels.Channel {
-	now := w.d.Now().UTC().Format(sqlTimeLayout)
-	store := w.d.Refresher.Channels
+	now := w.d.Now().UTC().Format(store.TimeLayout)
+	ch := w.d.Refresher.Channels
 
-	due, err := store.ClaimDueMetadata(now)
+	due, err := ch.ClaimDueMetadata(now)
 	if err != nil {
 		w.d.Logger.Error("channel metadata: claim due failed", "err", err)
 		return nil
@@ -150,7 +150,7 @@ func (w *Worker) claim() *channels.Channel {
 	if due != nil {
 		return due
 	}
-	unresolved, err := store.ClaimUnresolved(now)
+	unresolved, err := ch.ClaimUnresolved(now)
 	if err != nil {
 		w.d.Logger.Error("channel metadata: claim unresolved failed", "err", err)
 		return nil
@@ -258,7 +258,7 @@ func (w *Worker) settle(channelID string) {
 	if err := w.d.Refresher.Channels.MarkMetaRefreshed(channelID, next); err != nil {
 		w.d.Logger.Error("channel metadata: reschedule failed", "channel_id", channelID, "err", err)
 	}
-	now := w.d.Now().UTC().Format(sqlTimeLayout)
+	now := w.d.Now().UTC().Format(store.TimeLayout)
 	if err := w.d.Refresher.Channels.MarkResolveAttemptedIfUnset(channelID, now); err != nil {
 		w.d.Logger.Error("channel metadata: record attempt failed", "channel_id", channelID, "err", err)
 	}
@@ -279,7 +279,7 @@ func (w *Worker) nextRefreshAt(channelID string) string {
 	rank, count, err := w.d.Refresher.Channels.SubscriptionRank(channelID)
 	if err != nil {
 		w.d.Logger.Error("channel metadata: subscription rank failed", "channel_id", channelID, "err", err)
-		return w.d.Now().Add(refreshInterval).UTC().Format(sqlTimeLayout)
+		return w.d.Now().Add(refreshInterval).UTC().Format(store.TimeLayout)
 	}
 	return NextRefreshAt(w.d.Now(), rank, count)
 }
@@ -321,7 +321,7 @@ func (w *Worker) nextRefreshAt(channelID string) string {
 // for twenty lines would tie two schedulers together that share only an idea.
 func NextRefreshAt(now time.Time, rank, count int) string {
 	slot := sched.Slot(rank, count, refreshInterval) + scanSlotOffset(count)
-	return sched.NextSlotAfter(now.Add(refreshInterval/2), refreshInterval, slot).Format(sqlTimeLayout)
+	return sched.NextSlotAfter(now.Add(refreshInterval/2), refreshInterval, slot).Format(store.TimeLayout)
 }
 
 // scanSlotOffset is half the width of one scan slot — the shift that lands a

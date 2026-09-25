@@ -125,7 +125,7 @@ func TestResolve_expiredToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
-	past := time.Now().UTC().Add(-time.Hour).Format(sqliteTime)
+	past := time.Now().UTC().Add(-time.Hour).Format(store.TimeLayout)
 	if _, err := db.Exec(`UPDATE playback_grants SET expires_at = ? WHERE token = ?`, past, token); err != nil {
 		t.Fatalf("age the grant: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestPruneExpired_removesOnlyDeadGrants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mint dead: %v", err)
 	}
-	past := time.Now().UTC().Add(-time.Hour).Format(sqliteTime)
+	past := time.Now().UTC().Add(-time.Hour).Format(store.TimeLayout)
 	if _, err := db.Exec(`UPDATE playback_grants SET expires_at = ? WHERE token = ?`, past, dead); err != nil {
 		t.Fatalf("age the grant: %v", err)
 	}

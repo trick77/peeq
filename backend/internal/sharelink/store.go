@@ -20,16 +20,14 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/trick77/peeq/internal/store"
 )
 
 // tokenBytes is the raw entropy per share token. 16 bytes (128 bits) is ample
 // for a capability URL that also expires and can be revoked, and base64url-
 // encodes to a compact 22-char path segment.
 const tokenBytes = 16
-
-// sqliteTime is the UTC datetime layout share expiries are stored in, matching
-// the sessions table so `expires_at > datetime('now')` compares correctly.
-const sqliteTime = "2006-01-02 15:04:05"
 
 // Store persists share links.
 type Store struct {
@@ -72,7 +70,7 @@ func (s *Store) Upsert(ctx context.Context, videoID string, ttl time.Duration) (
 	var expires sql.NullString
 	if ttl > 0 {
 		expires = sql.NullString{
-			String: time.Now().UTC().Add(ttl).Format(sqliteTime),
+			String: time.Now().UTC().Add(ttl).Format(store.TimeLayout),
 			Valid:  true,
 		}
 	}

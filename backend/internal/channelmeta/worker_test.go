@@ -874,7 +874,7 @@ func TestWorker_spreadsTheFleetAcrossTheWeek(t *testing.T) {
 	seen := map[time.Duration]bool{}
 	for i := 0; i < fleet; i++ {
 		id := fmt.Sprintf("UC%d", i)
-		at, err := time.ParseInLocation(sqlTimeLayout, nextMetaRefreshAt(t, s, id), time.UTC)
+		at, err := time.ParseInLocation(store.TimeLayout, nextMetaRefreshAt(t, s, id), time.UTC)
 		if err != nil {
 			t.Fatalf("%s: %v", id, err)
 		}
@@ -907,7 +907,7 @@ func TestNextRefreshAt_landsBetweenScans(t *testing.T) {
 	for _, count := range []int{1, 4, 12, 44} {
 		scanWidth := day / time.Duration(count)
 		for rank := 0; rank < count; rank++ {
-			at, err := time.ParseInLocation(sqlTimeLayout, NextRefreshAt(now, rank, count), time.UTC)
+			at, err := time.ParseInLocation(store.TimeLayout, NextRefreshAt(now, rank, count), time.UTC)
 			if err != nil {
 				t.Fatalf("count=%d rank=%d: %v", count, rank, err)
 			}

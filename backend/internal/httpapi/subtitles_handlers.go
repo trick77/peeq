@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/trick77/peeq/internal/store"
 )
 
 // handleVideoSubtitles serves the video's WebVTT captions from the row that
@@ -38,7 +40,7 @@ func serveTranscript(w http.ResponseWriter, r *http.Request, s *server, videoID 
 		writeJSONError(w, http.StatusNotFound, "no subtitles for this video")
 		return
 	}
-	modTime, terr := time.Parse("2006-01-02 15:04:05", t.UpdatedAt)
+	modTime, terr := store.ParseTime(t.UpdatedAt)
 	if terr != nil {
 		modTime = time.Time{}
 	}

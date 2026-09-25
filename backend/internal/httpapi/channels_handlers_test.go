@@ -22,6 +22,7 @@ import (
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
@@ -835,7 +836,7 @@ func (h *channelsDeleteHarness) seedChannel(id string) {
 	if err := h.channels.Upsert(channels.Channel{ID: id, Name: id}); err != nil {
 		panic(err)
 	}
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	now := time.Now().UTC().Format(store.TimeLayout)
 	if err := h.channels.MarkAdded(id, now); err != nil {
 		panic(err)
 	}
@@ -1715,7 +1716,7 @@ func TestChannelScan_setsNextScanAt(t *testing.T) {
 	if err := deps.Settings.SetCookie(context.Background(), "", "valid"); err != nil {
 		t.Fatalf("seed valid cookie: %v", err)
 	}
-	future := time.Now().UTC().Add(6 * time.Hour).Format("2006-01-02 15:04:05")
+	future := time.Now().UTC().Add(6 * time.Hour).Format(store.TimeLayout)
 	if err := deps.Channels.Backoff("UCs", future); err != nil {
 		t.Fatalf("push scan into the future: %v", err)
 	}
@@ -1735,7 +1736,7 @@ func TestChannelScan_setsNextScanAt(t *testing.T) {
 	// the channel is actually claimable now — not merely that the timestamp
 	// moved earlier than +6h. A wrong-but-still-future offset would pass the
 	// check above yet leave the channel unclaimable, silently doing nothing.
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	now := time.Now().UTC().Format(store.TimeLayout)
 	claimed, err := deps.Channels.ClaimDue(now)
 	if err != nil {
 		t.Fatalf("ClaimDue: %v", err)

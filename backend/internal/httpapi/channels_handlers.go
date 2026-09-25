@@ -13,6 +13,7 @@ import (
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/sched"
+	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
@@ -197,7 +198,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		Description: info.Description,
 		Subscribers: info.Subscribers,
 		Verified:    info.Verified,
-		ResolvedAt:  time.Now().UTC().Format("2006-01-02 15:04:05"),
+		ResolvedAt:  store.FormatTime(time.Now()),
 	}); err != nil {
 		serverError(w, r, err, "adding the channel failed")
 		return
@@ -212,7 +213,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	s.storeChannelImage(r.Context(), ucid, channels.ImageAvatar, info.AvatarURL)
 	s.storeChannelImage(r.Context(), ucid, channels.ImageBanner, info.BannerURL)
 
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	now := store.FormatTime(time.Now())
 	if err := s.channels.MarkAdded(ucid, now); err != nil {
 		serverError(w, r, err, "adding the channel failed")
 		return
@@ -642,7 +643,7 @@ func (s *server) handleChannelsDismissDormant(w http.ResponseWriter, r *http.Req
 		return
 	}
 	id := r.PathValue("id")
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	now := store.FormatTime(time.Now())
 	ok, err := s.channels.DismissDormant(id, now)
 	if err != nil {
 		serverError(w, r, err, "dismiss dormant failed")
@@ -700,7 +701,7 @@ func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Reques
 		serverError(w, r, err, "clear auto-unsubscribe failed")
 		return
 	}
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	now := store.FormatTime(time.Now())
 	if err := s.channels.Subscribe(id, now); err != nil {
 		serverError(w, r, err, "subscribe failed")
 		return
@@ -867,7 +868,7 @@ func (s *server) handleChannelsSubscribe(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusNotFound, "channel not added")
 		return
 	}
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	now := store.FormatTime(time.Now())
 	if c.AddedAt == "" {
 		hasDownloads, err := s.channels.HasDownloads(id)
 		if err != nil {
@@ -961,7 +962,7 @@ func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	now := store.FormatTime(time.Now())
 	// RequestScan, not Backoff: besides pulling the schedule into the past it
 	// records that someone is waiting, which is what earns this pass an activity
 	// row even when it finds nothing new.

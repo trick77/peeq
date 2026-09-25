@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/media"
+	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
 )
 
@@ -660,7 +661,7 @@ func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
 // lazy-fetch path; a content hash is right on every path. ServeContent reads the
 // header we set here, so it must go on before the call.
 func serveStoredImage(w http.ResponseWriter, r *http.Request, mime string, data []byte, updatedAt string) {
-	modTime, err := time.Parse("2006-01-02 15:04:05", updatedAt)
+	modTime, err := store.ParseTime(updatedAt)
 	if err != nil {
 		// An unparsable stamp only costs conditional requests, never the image:
 		// a zero time makes ServeContent skip the Last-Modified header.
@@ -674,12 +675,12 @@ func serveStoredImage(w http.ResponseWriter, r *http.Request, mime string, data 
 // share-page endpoints so the two cannot drift. The caller passes its own
 // Cache-Control because that is the one thing the two do not share: the library
 // route is behind a session and the share route is behind a link.
-func serveThumbnail(w http.ResponseWriter, r *http.Request, store *videos.Store, videoID string, policy imagePolicy) {
-	if store == nil {
+func serveThumbnail(w http.ResponseWriter, r *http.Request, vs *videos.Store, videoID string, policy imagePolicy) {
+	if vs == nil {
 		writeJSONError(w, http.StatusNotFound, "thumbnail not available")
 		return
 	}
-	t, err := store.GetThumbnail(videoID)
+	t, err := vs.GetThumbnail(videoID)
 	if err != nil {
 		serverError(w, r, err, "thumbnail not available")
 		return
