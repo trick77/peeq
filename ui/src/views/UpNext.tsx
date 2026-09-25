@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useJobProgress } from "../shell/progressStore";
+import { useNow } from "../hooks/useNow";
 import { Button } from "../ui";
 import { PillStrip } from "../components/PillStrip";
 import {
@@ -241,9 +242,11 @@ export function UpNext({
     },
     [onCancel],
   );
-  // now is captured once per render pass for the relative labels; it does not
-  // tick, which is fine for a schedule measured in minutes and hours.
-  const now = Date.now();
+  // now feeds the relative labels and the bucketing. Read once a minute, not
+  // per render: a fresh Date.now() every render made the grouping memo below
+  // recompute on every keystroke and every progress tick, and a value that
+  // never moved would leave "in 5 minutes" up long after the five were gone.
+  const now = useNow(60_000);
   const q = search.trim();
   // Starts at "all" on every mount rather than persisting: a filter remembered
   // from last time would answer a narrower question without saying so.
@@ -447,7 +450,6 @@ export function UpNext({
       bucket: b,
       items: by.get(b) as UpcomingItem[],
     }));
-    // now is a render-scoped constant; recomputing per render is the point.
   }, [scheduled, now, q]);
 
   // The lanes, split by state rather than by kind, and narrowed by BOTH

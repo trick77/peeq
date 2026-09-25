@@ -165,21 +165,17 @@ export function Library({
   const [videos, setVideos] = useState<Video[]>([]);
   const { settings } = useSettings();
   const [error, setError] = useState<string | null>(null);
-  // Two effects fetch the filtered list — the one watching the chips and the
-  // one watching the queue — and only the chip effect cancels itself when the
-  // user changes a chip. Without a shared epoch, a queue-triggered request
-  // issued just before a chip click can resolve AFTER the chip's own request
-  // and repaint the grid with the previous filter's rows while the new chip
-  // stays highlighted. Every filtered fetch claims an epoch; a response that no
-  // longer holds the latest one is dropped.
-  const filteredEpoch = useRef(0);
-  // The counts have exactly the same problem, and needed their own epoch: two
-  // effects call setCounts (the query's own, and the queue's), and the
-  // queue-triggered one carries whatever query was in the box when the download
-  // finished. Type on past it and its late response would repaint every chip
-  // with the older query's numbers — where the grid self-corrects on the next
-  // keystroke, the counts would sit wrong until the query changed again.
-  const countsEpoch = useRef(0);
+  // Each list has exactly one fetching effect, and the queue's refetch is a
+  // dependency of it rather than a second effect. That is what makes the
+  // `active` cleanup enough: any change — a chip, a keystroke, a download
+  // finishing — re-runs the effect and cancels the response of the run before,
+  // so a slow request can never repaint over a newer one.
+  //
+  // queueSeen tells the effects whether this run is the queue's doing. A
+  // background refetch must neither clear an error the user is reading (a
+  // failed toggle on a card) nor surface its own failure over a grid the user
+  // never touched; the list stays as it was and the next change tries again.
+  const queueSeen = useRef(queueSignal);
 
   // Settings (for the "Expires in N days" calc) load once — nothing the user
   // does on this page changes them. The download queue used to be loaded here
@@ -204,16 +200,16 @@ export function Library({
   const [countsTick, setCountsTick] = useState(0);
   useEffect(() => {
     let active = true;
-    const epoch = ++countsEpoch.current;
     getVideoCounts({ q: debouncedQuery })
       .then((c) => {
-        if (active && epoch === countsEpoch.current) setCounts(c);
+        if (active) setCounts(c);
       })
       .catch(() => {});
     return () => {
       active = false;
     };
-  }, [debouncedQuery, countsTick]);
+    // queueSignal: a download finishing changes the numbers — see below.
+  }, [debouncedQuery, countsTick, queueSignal]);
 
   // Debounce the search box so typing "abyss" fires one request, not five.
   useEffect(() => {
@@ -225,19 +221,26 @@ export function Library({
   // search query, or sort changes.
   useEffect(() => {
     let active = true;
-    setError(null);
-    const epoch = ++filteredEpoch.current;
+    const byQueue = queueSeen.current !== queueSignal;
+    queueSeen.current = queueSignal;
+    if (!byQueue) setError(null);
     listVideos({ filter, category, q: debouncedQuery, sort })
       .then((v) => {
-        if (active && epoch === filteredEpoch.current) setVideos(v);
+        if (active) setVideos(v);
       })
       .catch((e: Error) => {
-        if (active && epoch === filteredEpoch.current) setError(e.message);
+        if (active && !byQueue) setError(e.message);
       });
     return () => {
       active = false;
     };
-  }, [filter, category, debouncedQuery, sort]);
+    // queueSignal: a video only enters the Library once its download
+    // finishes, so the list is refetched when the set of jobs in flight
+    // changes. App owns the single SSE subscription and the queue poll and
+    // hands that set down as a string; it is a dependency of the two fetch
+    // effects rather than a third effect of its own, so a change is one
+    // request per list, with the same epoch guard as every other refetch.
+  }, [filter, category, debouncedQuery, sort, queueSignal]);
 
   // If the selected category vanishes when the top chip changes (e.g. no
   // Music among Unwatched), fall back to All categories so the grid isn't
@@ -257,50 +260,6 @@ export function Library({
       setCategory("all");
     }
   }, [filter, counts, debouncedQuery]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // A video only enters the Library once its download finishes, so the list
-  // has to refresh when one does. App.tsx already owns the single SSE
-  // subscription and the queue poll for the whole session, so rather than run
-  // a second copy of both here, it hands down which jobs are in flight: when
-  // that set changes, something started or finished and both lists are
-  // refetched.
-  const mounted = useRef(false);
-  useEffect(() => {
-    // Skip the first run. queueSignal has not changed yet — this is mount, and
-    // the two effects above have already fetched both lists. Refetching here
-    // would double every page load.
-    if (!mounted.current) {
-      mounted.current = true;
-      return;
-    }
-    let active = true;
-    const epoch = ++filteredEpoch.current;
-    const countsClaim = ++countsEpoch.current;
-    // Carries the query for the same reason the counts' own effect does: without
-    // it, a download finishing would quietly swap search-scoped counts back for
-    // whole-library ones while the query is still in the box. `active` alone is
-    // not enough of a guard: this effect only re-runs on queueSignal, so its
-    // cleanup does not fire when the user types — the epoch is what drops this
-    // response once a newer query has claimed the counts.
-    getVideoCounts({ q: debouncedQuery })
-      .then((c) => {
-        if (active && countsClaim === countsEpoch.current) setCounts(c);
-      })
-      .catch(() => {});
-    listVideos({ filter, category, q: debouncedQuery, sort })
-      .then((v) => {
-        if (active && epoch === filteredEpoch.current) setVideos(v);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-    // filter/category/query/sort are deliberately NOT dependencies: their own
-    // effect above already refetches on a change, and repeating them here
-    // would double every request the user makes while a download runs. The
-    // epoch above is what keeps a late response from that effect out of the way.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queueSignal]);
 
   function applyLocalUpdate(id: string, patch: Partial<Video>) {
     setVideos((prev) =>
@@ -361,9 +320,9 @@ export function Library({
       await redownload(id);
       // Only tell App — do NOT refetch here. The video is 'queued' now, which
       // the ready-only list excludes, so its card must leave the grid; but the
-      // refetch belongs to the queue effect, not to this handler. onQueued
-      // updates App's jobs, which changes queueSignal, which fires that effect
-      // to refetch both lists against the CURRENT filter. Doing the refetch
+      // refetch belongs to the list effects, not to this handler. onQueued
+      // updates App's jobs, which changes queueSignal, which re-runs those
+      // effects against the CURRENT filter. Doing the refetch
       // here instead would fetch with this handler's stale-closure filter: if
       // the user changed the chip during the redownload request, this handler
       // would resolve last, claim the newest epoch, and paint the grid with the
