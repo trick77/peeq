@@ -205,12 +205,10 @@ func (c *EmbedClient) EmbedBatched(ctx context.Context, inputs []string, gap tim
 	}
 	out := make([][]float32, 0, len(inputs))
 	for start := 0; start < len(inputs); start += maxEmbedInputs {
-		if start > 0 && gap > 0 {
-			// Context-aware: a shutdown mid-backfill should stop here rather
-			// than sleep out the remaining batches.
-			if !sched.Sleep(ctx, gap) {
-				return nil, ctx.Err()
-			}
+		// Context-aware: a shutdown mid-backfill stops here rather than sleep
+		// out the remaining batches. A non-positive gap is no wait at all.
+		if start > 0 && !sched.Sleep(ctx, gap) {
+			return nil, ctx.Err()
 		}
 		end := min(start+maxEmbedInputs, len(inputs))
 		vecs, err := c.Embed(ctx, inputs[start:end])

@@ -154,3 +154,15 @@ func TestNextSlotAfter_degeneratePeriod(t *testing.T) {
 		t.Fatalf("got %v, want the anchor back", got)
 	}
 }
+
+// A cancelled context must lose to a timer that is already due: otherwise a
+// caller with a tiny wait proceeds after shutdown half the time.
+func TestSleep_cancelledContextAlwaysWins(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for i := 0; i < 200; i++ {
+		if Sleep(ctx, time.Nanosecond) {
+			t.Fatal("Sleep reported a completed wait on a cancelled context")
+		}
+	}
+}

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/trick77/peeq/internal/sched"
 )
 
 // minThrottleFloor is the hard, non-negotiable minimum wait time between
@@ -522,25 +524,13 @@ func (r *Runner) now() time.Time {
 // ctx is cancelled first, in which case it returns ctx.Err() immediately
 // instead of blocking for the full duration.
 func defaultSleep(ctx context.Context, d time.Duration) error {
-	// A zero or negative wait is now reachable: on an idle Runner throttle
-	// grants the current instant. Check ctx first and return without arming a
-	// timer, because select over an already-fired timer AND an already-cancelled
-	// ctx picks a ready case at random — a cancelled caller would proceed half
-	// the time.
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if d <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
+	// A zero or negative wait is reachable: on an idle Runner throttle grants
+	// the current instant. sched.Sleep checks ctx before arming a timer, so a
+	// cancelled caller never proceeds on an already-due slot.
+	if !sched.Sleep(ctx, d) {
 		return ctx.Err()
 	}
+	return nil
 }
 
 // exec runs the yt-dlp binary with args, after the gates and the throttle
