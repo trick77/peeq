@@ -412,60 +412,32 @@ func run() error {
 	// available yt-dlp update without a GitHub call per request.
 	ytdlpStatus := ytdlp.NewStatusCache()
 
-	// Bound all nine background goroutines' lifetimes to the process: the
-	// download worker, the retention sweeper, the yt-dlp version-check ticker,
-	// the scan scheduler, the summarize worker, the channel-metadata
-	// refresher, the SponsorBlock refresher, the media-probe worker and the
-	// inbox caption fetcher. workerWG.Wait() below (after serve returns, i.e.
-	// after ctx is cancelled) blocks until all nine have actually observed
-	// ctx.Done() and returned, rather than exiting the process out from under
-	// them. All nine loops exit promptly on ctx.Done(), so this wait is short.
+	// Bound every long-running loop started here to the process. workerWG.Wait()
+	// below (after serve returns, i.e. after ctx is cancelled) blocks until each
+	// loop has actually observed ctx.Done() and returned, rather than exiting the
+	// process out from under it. Every loop exits promptly on ctx.Done(), so the
+	// wait is short. One helper rather than a hand-kept Add(N) and nine copied
+	// closures: the count cannot drift from the starts.
 	var workerWG sync.WaitGroup
-	workerWG.Add(9)
-	go func() {
-		defer workerWG.Done()
-		slog.Info("download worker started")
-		worker.Run(ctx)
-	}()
-	go func() {
-		defer workerWG.Done()
-		slog.Info("retention sweeper started")
-		sweeper.Run(ctx)
-	}()
-	go func() {
-		defer workerWG.Done()
+	startWorker := func(name string, run func(context.Context)) {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			slog.Info("worker started", "worker", name)
+			run(ctx)
+		}()
+	}
+	startWorker("download worker", worker.Run)
+	startWorker("retention sweeper", sweeper.Run)
+	startWorker("yt-dlp version check", func(ctx context.Context) {
 		runYtdlpVersionCheckTicker(ctx, cfg.YtdlpDir, ytdlpCheckInterval, ytdlp.LatestVersion, ytdlpStatus, activityStore)
-	}()
-	go func() {
-		defer workerWG.Done()
-		slog.Info("scan scheduler started")
-		scheduler.Run(ctx)
-	}()
-	go func() {
-		defer workerWG.Done()
-		slog.Info("summarize worker started")
-		summarizeWorker.Run(ctx)
-	}()
-	go func() {
-		defer workerWG.Done()
-		slog.Info("channel metadata refresher started")
-		metaWorker.Run(ctx)
-	}()
-	go func() {
-		defer workerWG.Done()
-		slog.Info("sponsorblock refresher started")
-		sponsorblockWorker.Run(ctx)
-	}()
-	go func() {
-		defer workerWG.Done()
-		slog.Info("media probe worker started")
-		mediaprobeWorker.Run(ctx)
-	}()
-	go func() {
-		defer workerWG.Done()
-		slog.Info("inbox caption fetcher started")
-		captionWorker.Run(ctx)
-	}()
+	})
+	startWorker("scan scheduler", scheduler.Run)
+	startWorker("summarize worker", summarizeWorker.Run)
+	startWorker("channel metadata refresher", metaWorker.Run)
+	startWorker("sponsorblock refresher", sponsorblockWorker.Run)
+	startWorker("media probe worker", mediaprobeWorker.Run)
+	startWorker("inbox caption fetcher", captionWorker.Run)
 
 	slog.Info("SSE hub ready")
 
@@ -655,7 +627,7 @@ func runYtdlpVersionCheckTicker(
 
 		got := status.Get()
 		if boot {
-			slog.Info("yt-dlp version check started",
+			slog.Info("yt-dlp version checked",
 				"version", installed, "latest", latest, "interval", interval)
 		}
 		if !got.UpdateAvailable() {
