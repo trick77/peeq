@@ -412,7 +412,7 @@ func run() error {
 	// available yt-dlp update without a GitHub call per request.
 	ytdlpStatus := ytdlp.NewStatusCache()
 
-	// Bound every background goroutine's lifetime to the process. workerWG.Wait()
+	// Bound every long-running loop started here to the process. workerWG.Wait()
 	// below (after serve returns, i.e. after ctx is cancelled) blocks until each
 	// loop has actually observed ctx.Done() and returned, rather than exiting the
 	// process out from under it. Every loop exits promptly on ctx.Done(), so the
@@ -423,7 +423,7 @@ func run() error {
 		workerWG.Add(1)
 		go func() {
 			defer workerWG.Done()
-			slog.Info(name + " started")
+			slog.Info("worker started", "worker", name)
 			run(ctx)
 		}()
 	}
@@ -627,7 +627,7 @@ func runYtdlpVersionCheckTicker(
 
 		got := status.Get()
 		if boot {
-			slog.Info("yt-dlp version check started",
+			slog.Info("yt-dlp version checked",
 				"version", installed, "latest", latest, "interval", interval)
 		}
 		if !got.UpdateAvailable() {
