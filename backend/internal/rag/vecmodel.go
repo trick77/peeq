@@ -38,8 +38,9 @@ func recordedEmbedModel(ctx context.Context, q queryer) (string, error) {
 //
 // With no vectors stored there is nothing to mismatch: the configured model is
 // recorded, replacing any earlier one, so an empty library (new, or emptied by
-// deletes) may switch models freely and only a write that stores vectors pins
-// one. With vectors but nothing recorded it records a model first: the one the
+// deletes) may switch to another model of the same width and only a write
+// that stores vectors pins one. The width itself is fixed by the vec_chunks
+// migration and checked separately (CheckVecWidth), empty table or not. With vectors but nothing recorded it records a model first: the one the
 // indexed videos name when they all name the same one (a database indexed
 // before the record existed), otherwise the configured one (a history that
 // cannot say).
