@@ -160,7 +160,14 @@ const (
 	// which on a long video run to hundreds of entries. Set well clear of that
 	// so it never truncates legitimate JSON, which would parse as empty and
 	// silently drop every point.
-	keypointsMaxAnswerTokens = 12000
+	//
+	// Larger than the answer alone needs, on purpose: this call runs at the
+	// model's default reasoning, which can think far past the allowance a
+	// profile adds for it, and that thinking eats into the same cap. So the
+	// answer cap also carries the reasoning slack, keeping the wire cap at or
+	// above the 16000-token total this call had when reasoning was counted by
+	// hand (TestKeyPoints_wireCapKeepsTheOldTotalHeadroom).
+	keypointsMaxAnswerTokens = 15000
 
 	// classifyMaxAnswerTokens bounds the category call, which answers with a
 	// single id.
