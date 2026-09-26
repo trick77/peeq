@@ -9,6 +9,7 @@ require (
 	github.com/trick77/llmwire v0.0.39
 	golang.org/x/image v0.46.0
 	golang.org/x/oauth2 v0.37.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -17,5 +18,4 @@ require (
 	github.com/tetratelabs/wazero v1.9.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

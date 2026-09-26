@@ -6,7 +6,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/trick77/peeq/internal/rag"
 )
@@ -323,82 +326,60 @@ func TestLoad_searchMaxDistance(t *testing.T) {
 	}
 }
 
-// Compose forwards environment variables one by one, and reads .env only for
-// ${} interpolation — so a setting this package honours but compose.yaml never
-// names is unreachable in a deployed stack, silently. That cost a diagnosis
-// cycle: BACKEND_SEARCH_MAX_DISTANCE was set in .env, read by nobody, and the
-// backend kept its compiled default while the logs looked identical.
-//
-// Rather than duplicate the list, this reads both files: every BACKEND_ name
-// mentioned in config.go has to appear in compose.yaml, except the dev-auth
-// ones, which belong to `go run` and not to a container.
-func TestComposeForwardsEverySettingConfigReads(t *testing.T) {
-	devOnly := map[string]bool{
-		"BACKEND_DEV_USER_SUBJECT":  true,
-		"BACKEND_DEV_USER_USERNAME": true,
-		"BACKEND_DEV_USER_EMAIL":    true,
-		"BACKEND_DEV_USER_NAME":     true,
-	}
+// composeFiles are every compose file in the repo root.
+var composeFiles = []string{"compose.yaml", "compose.dev.yaml"}
 
-	source, err := os.ReadFile("config.go")
-	if err != nil {
-		t.Fatalf("read config.go: %v", err)
-	}
-	compose, err := os.ReadFile(filepath.Join("..", "..", "..", "compose.yaml"))
-	if err != nil {
-		t.Fatalf("read compose.yaml: %v", err)
-	}
-
-	name := regexp.MustCompile(`BACKEND_[A-Z0-9_]+`)
-	forwarded := map[string]bool{}
-	for _, m := range name.FindAllString(string(compose), -1) {
-		forwarded[m] = true
-	}
-
-	missing := map[string]bool{}
-	for _, m := range name.FindAllString(string(source), -1) {
-		if !devOnly[m] && !forwarded[m] {
-			missing[m] = true
-		}
-	}
-	for m := range missing {
-		t.Errorf("%s is read by config but compose.yaml never forwards it, so setting "+
-			"it in .env does nothing — add it to the environment block", m)
+// Compose reads .env for ${} interpolation only; a variable reaches the
+// container only through env_file or an environment entry. Forwarding them one
+// by one cost a diagnosis cycle (BACKEND_SEARCH_MAX_DISTANCE set in .env, read
+// by nobody) and would make every new provider key a compose edit. So every
+// service loads .env whole, optional so a stack without one still parses, and
+// any BACKEND_* or LLMWIRE_* variable in it reaches peeq unlisted.
+func TestComposeLoadsDotEnvIntoPeeq(t *testing.T) {
+	for _, file := range composeFiles {
+		t.Run(file, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "..", "..", file))
+			if err != nil {
+				t.Fatalf("read %s: %v", file, err)
+			}
+			var doc struct {
+				Services map[string]struct {
+					EnvFile []struct {
+						Path     string `yaml:"path"`
+						Required *bool  `yaml:"required"`
+					} `yaml:"env_file"`
+				} `yaml:"services"`
+			}
+			if err := yaml.Unmarshal(raw, &doc); err != nil {
+				t.Fatalf("parse %s: %v", file, err)
+			}
+			peeq, ok := doc.Services["peeq"]
+			if !ok {
+				t.Fatalf("%s has no peeq service", file)
+			}
+			for _, ef := range peeq.EnvFile {
+				if ef.Path == ".env" && ef.Required != nil && !*ef.Required {
+					return
+				}
+			}
+			t.Fatalf("%s: peeq does not load .env via env_file {path: .env, required: false}", file)
+		})
 	}
 }
 
-// Compose warns "variable is not set. Defaulting to a blank string" for every
-// "${VAR}" it cannot resolve, on every command — so an OPTIONAL setting written
-// without a default turns `docker compose up` into a wall of warnings about
-// variables nobody was required to set. "${VAR:-}" forwards the same empty
-// string silently.
-//
-// Only settings with no default belong in the bare form: a missing
-// BACKEND_SESSION_SECRET is worth shouting about, and does. This pins the ones
-// that are genuinely optional.
-func TestComposeGivesOptionalSettingsADefault(t *testing.T) {
-	optional := []string{
-		"BACKEND_SEARCH_MAX_DISTANCE",
-		"BACKEND_ASK_CALL_TIMEOUT",
-		"BACKEND_CHAT_CALL_TIMEOUT",
-		"BACKEND_CHAT_STREAM_IDLE_TIMEOUT",
-		"BACKEND_SUMMARIZE_REQUEST_DELAY",
-		"BACKEND_SUMMARIZE_VIDEO_DELAY",
-		"BACKEND_SUMMARIZE_SUMMARY_TOKENS",
-		"BACKEND_ALLOW_ANONYMOUS_YOUTUBE",
-		"BACKEND_GATE_MODEL",
-	}
-	compose, err := os.ReadFile(filepath.Join("..", "..", "..", "compose.yaml"))
-	if err != nil {
-		t.Fatalf("read compose.yaml: %v", err)
-	}
-	for _, name := range optional {
-		if strings.Contains(string(compose), "${"+name+"}") {
-			t.Errorf("%s is interpolated as ${%s} with no default, so compose warns "+
-				"about it on every command — write ${%s:-}", name, name, name)
+// Compose warns "variable is not set" for every bare "${VAR}" it cannot
+// resolve, on every command. With .env loaded whole, the environment block
+// keeps only values compose sets or defaults itself, so every interpolation
+// left in it carries a default.
+func TestComposeInterpolationsCarryADefault(t *testing.T) {
+	bare := regexp.MustCompile(`\$\{[A-Z0-9_]+\}`)
+	for _, file := range composeFiles {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "..", file))
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
 		}
-		if !strings.Contains(string(compose), "${"+name+":-") {
-			t.Errorf("%s is not forwarded with a default; expected ${%s:-}", name, name)
+		for _, m := range bare.FindAllString(string(raw), -1) {
+			t.Errorf("%s interpolates %s with no default; drop it (env_file carries .env) or write ${NAME:-default}", file, m)
 		}
 	}
 }
