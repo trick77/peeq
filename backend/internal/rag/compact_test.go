@@ -411,3 +411,32 @@ func TestVideoChunkWrites_warnOfBloatTheyLeave(t *testing.T) {
 	}
 	wantAll(t, out.String(), `msg="vector index bloated, compacted at next boot"`, "video_id=v1")
 }
+
+// Outside a KNN query vec0 answers rowid IN (…) with a full scan, so a copy
+// batch shaped that way walks the whole table per batch. The copy reads each
+// vector by rowid = ?, a point lookup.
+func TestCompactCopyOut_readsEachVectorByPointLookup(t *testing.T) {
+	db := vecDB(t)
+	churnVectors(t, db, 10, 10)
+	rows, err := db.Query(`EXPLAIN QUERY PLAN `+copyOutSelect, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var plan []string
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	joined := strings.Join(plan, " | ")
+	// vec0's plan number is the index number: 3 is its rowid point lookup,
+	// 0 the full scan the rowid IN (…) shape gets (checked by hand:
+	// "SCAN vec_chunks VIRTUAL TABLE INDEX 0:1").
+	if !strings.Contains(joined, "SCAN v VIRTUAL TABLE INDEX 3:") || strings.Contains(joined, "INDEX 0:") {
+		t.Errorf("plan = %q, want vec_chunks read by a rowid point lookup", joined)
+	}
+}

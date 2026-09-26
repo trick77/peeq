@@ -145,12 +145,10 @@ func compactVectors(ctx context.Context, db *sql.DB, p *compactProgress) (VecCom
 		return c, err
 	}
 	// Both copies go in rowid batches, walked on vec_chunks_rowids (a plain
-	// table, so the range is an index seek), each vector read by rowid.
+	// table, so the range is an index seek), each vector read by rowid = ?.
 	// vec_chunks has one column, embedding (0001_init.sql).
 	p.begin("copying vectors out", c.Rows)
-	if err := copyBatches(ctx, tx, p, exec, `INSERT INTO vec_compact_keep (id, embedding)
-		SELECT rowid, embedding FROM vec_chunks WHERE rowid IN
-		(SELECT rowid FROM vec_chunks_rowids WHERE rowid > ? ORDER BY rowid LIMIT ?)`,
+	if err := copyBatches(ctx, tx, p, exec, `INSERT INTO vec_compact_keep (id, embedding) `+copyOutSelect,
 		`SELECT MAX(id) FROM vec_compact_keep`); err != nil {
 		return c, err
 	}
@@ -184,6 +182,12 @@ func compactVectors(ctx context.Context, db *sql.DB, p *compactProgress) (VecCom
 	c.Compacted = true
 	return c, nil
 }
+
+// copyOutSelect reads the next batch of vectors after a rowid. Never rowid IN
+// (…): outside a KNN query vec0 answers that with a full scan, so every batch
+// would walk the whole table. rowid = ? is a point lookup.
+const copyOutSelect = `SELECT r.rowid, (SELECT v.embedding FROM vec_chunks v WHERE v.rowid = r.rowid)
+		FROM vec_chunks_rowids r WHERE r.rowid > ? ORDER BY r.rowid LIMIT ?`
 
 // copyBatches runs insert, which copies the next compactBatch rows after a
 // rowid, until it copies none; last reads the highest rowid copied so far.
