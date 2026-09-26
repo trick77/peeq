@@ -35,8 +35,8 @@ type VecCompaction struct {
 // and the rowid join to transcript_chunks is unaffected. One transaction: a
 // failure leaves the table as it was.
 //
-// Boot only. The transaction holds the write lock for the whole copy — 9.6 s
-// for 14k vectors on a laptop — past the store's busy_timeout, so beside a
+// Boot only. The transaction holds the write lock for the whole copy —
+// minutes at that size — far past the store's busy_timeout, so beside a
 // running worker it fails their writes with "database is locked". Writes warn
 // instead (WarnVectorBloat).
 func CompactVectors(ctx context.Context, db *sql.DB) (VecCompaction, error) {
