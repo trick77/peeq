@@ -142,3 +142,58 @@ func TestReplaceVideoChunks_recordsAndGuardsTheModel(t *testing.T) {
 		t.Fatal("a write from a different model must be refused")
 	}
 }
+
+// With no vectors stored there is nothing a model could mismatch: an empty
+// library may switch models freely, and only a write that stores vectors pins
+// one.
+func TestCheckEmbedModel_emptyLibraryMaySwitchModels(t *testing.T) {
+	_, s := vecModelDB(t)
+	ctx := context.Background()
+	if err := s.CheckEmbedModel(ctx, "model-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CheckEmbedModel(ctx, "model-b"); err != nil {
+		t.Fatalf("empty library refused a switch: %v", err)
+	}
+	if got := recorded(t, s); got != "model-b" {
+		t.Fatalf("recorded = %q, want model-b", got)
+	}
+}
+
+// Deleting every video's chunks empties the table; the old record must not
+// hold a new model hostage.
+func TestCheckEmbedModel_libraryEmptiedByDeletesMaySwitchModels(t *testing.T) {
+	_, s := vecModelDB(t)
+	ctx := context.Background()
+	if err := indexWith(t, s, "v1", "model-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteVideoChunks(ctx, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CheckEmbedModel(ctx, "model-b"); err != nil {
+		t.Fatalf("emptied library refused a switch: %v", err)
+	}
+	if got := recorded(t, s); got != "model-b" {
+		t.Fatalf("recorded = %q, want model-b", got)
+	}
+	if err := indexWith(t, s, "v2", "model-b"); err != nil {
+		t.Fatalf("write under the new model refused: %v", err)
+	}
+}
+
+// The remedy must say to reset embed_rev: rebuilding the table alone leaves
+// every video marked indexed, so nothing would re-embed.
+func TestCheckEmbedModel_remedyResetsEmbedRev(t *testing.T) {
+	_, s := vecModelDB(t)
+	if err := indexWith(t, s, "v1", "model-a"); err != nil {
+		t.Fatal(err)
+	}
+	err := s.CheckEmbedModel(context.Background(), "model-b")
+	if err == nil || !strings.Contains(err.Error(), "embed_rev") {
+		t.Fatalf("err = %v, want the remedy to reset embed_rev", err)
+	}
+	if err := CheckVecWidth(1536, "m", 8); err == nil || !strings.Contains(err.Error(), "embed_rev") {
+		t.Fatalf("width err = %v, want the remedy to reset embed_rev", err)
+	}
+}

@@ -36,11 +36,26 @@ func recordedEmbedModel(ctx context.Context, q queryer) (string, error) {
 // CheckEmbedModel refuses a configured embedding model other than the one the
 // stored vectors came from, width notwithstanding.
 //
-// With nothing recorded it records a model first: the one the indexed videos
-// name when they all name the same one (a database indexed before the record
-// existed), otherwise the configured one (an empty database, or a history that
+// With no vectors stored there is nothing to mismatch: the configured model is
+// recorded, replacing any earlier one, so an empty library (new, or emptied by
+// deletes) may switch models freely and only a write that stores vectors pins
+// one. With vectors but nothing recorded it records a model first: the one the
+// indexed videos name when they all name the same one (a database indexed
+// before the record existed), otherwise the configured one (a history that
 // cannot say).
 func (s *Store) CheckEmbedModel(ctx context.Context, model string) error {
+	var hasVectors bool
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM transcript_chunks)`).Scan(&hasVectors); err != nil {
+		return fmt.Errorf("rag: count stored vectors: %w", err)
+	}
+	if !hasVectors {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO vec_model (id, model) VALUES (1, ?)
+			ON CONFLICT(id) DO UPDATE SET model = excluded.model`, model); err != nil {
+			return fmt.Errorf("rag: record vec_model: %w", err)
+		}
+		return nil
+	}
 	stored, err := s.RecordedEmbedModel(ctx)
 	if err != nil {
 		return err
@@ -55,7 +70,7 @@ func (s *Store) CheckEmbedModel(ctx context.Context, model string) error {
 	}
 	return fmt.Errorf("vec_chunks holds vectors from %s, but BACKEND_EMBED_MODEL=%s; "+
 		"either set BACKEND_EMBED_MODEL back to %s, or re-index: ship a migration that clears "+
-		"vec_chunks and vec_model and re-embed every video", stored, model, stored)
+		"vec_chunks and vec_model and sets embed_rev = 0 on every video, so each is re-embedded", stored, model, stored)
 }
 
 // adoptEmbedModel records the model for a database that has none recorded.

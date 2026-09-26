@@ -45,7 +45,8 @@ func CheckVecWidth(built int, model string, dim int) error {
 	}
 	return fmt.Errorf("vec_chunks is built for %d-wide vectors, but BACKEND_EMBED_MODEL=%s returns %d; "+
 		"either set BACKEND_EMBED_MODEL back to a %d-wide model, or re-index: ship a migration that "+
-		"rebuilds vec_chunks at %d and re-embed every video", built, model, dim, built, dim)
+		"rebuilds vec_chunks at %d, clears vec_model and sets embed_rev = 0 on every video, so each is "+
+		"re-embedded", built, model, dim, built, dim)
 }
 
 // defaultEmbedTimeout bounds one embeddings call end to end. Embeddings are
